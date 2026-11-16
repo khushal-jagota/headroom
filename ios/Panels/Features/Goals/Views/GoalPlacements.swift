@@ -1,100 +1,199 @@
 import SwiftUI
 
-/// Workspace is the web sidebar. Each active goal belongs inside its holder card.
+/// Workspace keeps the web's optional, bounded, one-line goal rows.
 struct WorkspaceGoals: View {
     let holder: GoalHolder
     let goals: [GoalRecord]
+    var rows: [GoalRecord]? = nil
+    var window: ViewWindow? = nil
+    var onPage: (String, String) -> Void = { _, _ in }
+    var railNamespace: Namespace.ID? = nil
+    var railExitingIDs: Set<String> = []
+    var railEnteringIDs: Set<String> = []
+    var railEnterVisible = true
+    var previewChanged: (Bool) -> Void = { _ in }
     let open: (AppRoute) -> Void
     @Environment(AppStore.self) private var store
-    @State private var sessions = PageSessionCollection()
-    private var visibleGoals: [GoalRecord] { holder.goals(in: goals).filter(\.active) }
+    private var visibleGoals: [GoalRecord] { rows ?? holder.goals(in: goals).filter(\.active) }
+    private var sessions: PageSessionCollection { store.goalEdits.goals }
     var body: some View {
         VStack(spacing: 0) {
             ForEach(visibleGoals) { goal in
-                if let session = sessions.session(goal.id, server: store.baseURL) { GoalWorkspaceRow(goal: goal, session: session, open: open) }
+                if let session = sessions.session(goal.id, server: store.baseURL) {
+                    GoalWorkspaceRow(goal: goal, session: session, previewChanged: previewChanged, open: open)
+                        .modifier(WorkspaceRailGeometry(id: "goal:\(goal.id)", namespace: railNamespace, exiting: railExitingIDs, entering: railEnteringIDs, enterVisible: railEnterVisible))
+                }
             }
+            WorkspaceWindowPages(window: window, label: "Goals", onPage: onPage)
+                .padding(.horizontal, PanelsTheme.Web.Rail.textInset)
         }.task(id: "\(store.baseURL):\(visibleGoals.map(\.id))") {
             sessions.update(visibleGoals, api: store.client, resources: store.resources)
         }.onChange(of: sessions.unfinishedKeys) { _, _ in sessions.prune() }
     }
 }
+
 private struct GoalWorkspaceRow: View {
     let goal: GoalRecord
     let session: PageSession
+    var previewChanged: (Bool) -> Void = { _ in }
+    var previewTone = false
     let open: (AppRoute) -> Void
     @Environment(AppStore.self) private var store
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var showingPreview = false
+    @State private var destination: AppRoute?
     private var accepted: GoalRecord { session.goal ?? goal }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            link
-            GoalSaveFailure(session: session)
-            if let chart = GoalPresentation.primaryChart(accepted), !chart["manual"].isNull { GoalManualFailure(editor: session.manual(chart)) }
-        }
-    }
-    private var link: some View {
-        NavigationLink(value: AppRoute.goal(goal.id)) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(accepted.title).panelsScaledFont(size: 15, weight: .medium).foregroundStyle(PanelsTheme.strong)
-                    Spacer(minLength: 8)
-                    Text(reading).panelsScaledFont(size: 12).foregroundStyle(PanelsTheme.Goal.tone(accepted.status))
-                }
-                Text(accepted.deadline.map { "By " + GoalPresentation.date($0) } ?? "No deadline")
-                    .panelsScaledFont(size: 11).foregroundStyle(PanelsTheme.Goal.tone(GoalPresentation.deadlineTone(accepted.deadline, completed: accepted.completed, today: accepted.statusDate)))
-            }.frame(maxWidth: .infinity, minHeight: 60, alignment: .leading).contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityIdentifier("workspace-goal-\(goal.id)")
-            .contextMenu {
-                Button("Open") { open(.goal(goal.id)) }
-                Group {
-                    if accepted.kind == "binary", GoalPresentation.primaryChecklist(accepted) == nil {
-                        Button(accepted.completed ? "Mark not done" : "Mark done") { Task { await session.save(["completed": .bool(!accepted.completed)]) } }
-                    }
-                    if let chart = GoalPresentation.primaryChart(accepted), !chart["manual"].isNull {
-                        ForEach(Array(chart["manual"]["increments"].array.enumerated()), id: \.offset) { _, value in
-                            if let delta = value.number {
-                                Button("Add " + GoalChartPresentation.number(delta, decimals: 6, trim: true) + GoalChartPresentation.suffix(chart)) {
-                                    Task { let manual = session.manual(chart); await manual.refresh(); await manual.write(delta: delta); await session.refresh() }
-                                }
-                            }
+        Button { open(.goal(goal.id)) } label: {
+            HStack(spacing: 12) {
+                Text(accepted.title).panelsScaledFont(size: PanelsTheme.Web.Rail.goalSize)
+                    .lineLimit(typeSize.isAccessibilitySize ? nil : 1).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                WorkspaceGoalRowState(goal: accepted, readings: session.readings, preview: previewTone)
+                    .fixedSize(horizontal: true, vertical: false)
+            }.foregroundStyle(PanelsTheme.Web.railRow)
+                .frame(maxWidth: .infinity, minHeight: PanelsTheme.Web.Rail.goalRowHeight, alignment: .leading)
+                .padding(.horizontal, PanelsTheme.Web.Rail.textInset).contentShape(Rectangle())
+        }.buttonStyle(WorkspaceRailButtonStyle())
+            .highPriorityGesture(LongPressGesture().onEnded { _ in showingPreview = true })
+            .accessibilityIdentifier("workspace-goal-\(goal.id)")
+            .accessibilityAction(named: "Preview") { showingPreview = true }
+            .sheet(isPresented: $showingPreview, onDismiss: {
+                previewChanged(false)
+                if let destination { self.destination = nil; open(destination) }
+            }) {
+                NavigationStack {
+                    ScrollView { GoalPeek(session: session).padding(PanelsTheme.Web.Rail.previewPadding) }
+                        .background(PanelsTheme.Web.rail)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) { Button("Done") { showingPreview = false } }
+                            ToolbarItem(placement: .primaryAction) { Button("Open") { destination = .goal(goal.id); showingPreview = false } }
                         }
-                    }
-                }
-            } preview: {
-                GoalPeek(session: session).frame(width: 340).environment(store)
+                }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+                    .onAppear { previewChanged(true) }
             }
             .task(id: store.baseURL) { await session.follow() }
     }
+}
+
+/// GoalRowState.svelte chooses exactly one visible state, in this order.
+private struct WorkspaceGoalRowState: View {
+    let goal: GoalRecord
+    let readings: GoalReadings?
+    var preview = false
+    private var chart: GoalJSON? { GoalPresentation.primaryChart(goal) }
+    private var headline: GoalChartHeadline? {
+        guard let chart, goal.kind != "binary" else { return nil }
+        let projection = readings?.charts[chart.id] ?? .null
+        let data = GoalChartPresentation.data(chart, values: readings?.values ?? [], range: "all", projection: projection)
+        return GoalChartPresentation.headline(chart, data: data, projection: projection)
+    }
+    private var readingTone: String {
+        if goal.kind == "binary" { return goal.status }
+        guard let chart, let headline else { return "neutral" }
+        return GoalChartPresentation.tone(chart, headline: headline)
+    }
     private var reading: String {
-        guard let chart = GoalPresentation.primaryChart(accepted), chart.kind != "binary" else { return GoalPresentation.statusText(accepted) }
-        let projection = session.readings?.charts[chart.id] ?? .null
-        let data = GoalChartPresentation.data(chart, values: session.readings?.values ?? [], range: "all", projection: projection)
-        return GoalChartPresentation.format(chart, GoalChartPresentation.headline(chart, data: data, projection: projection).value)
+        if goal.kind == "binary" { return GoalPresentation.statusText(goal) }
+        guard let chart, let headline, headline.value != nil else { return "No current reading" }
+        if !chart["binding"].isNull && (headline.target == nil || headline.comparison == nil) {
+            return readings?.charts[chart.id]?["category_summary"]["comparison"].isNull == false ? "Comparison unavailable" : "No target"
+        }
+        guard headline.target != nil else { return chart["expectation"].isNull ? "No target" : "Expected reading unavailable" }
+        let within = (chart["direction"].string ?? (chart.kind == "time-budget" ? "atmost" : "atleast")) == "atmost"
+        return readingTone == "good" ? (within ? "Within limit" : "On target") : (within ? "Above limit" : "Below target")
+    }
+    private var state: (String, Color) {
+        if readingTone == "bad" { return (reading, PanelsTheme.Web.error) }
+        if let checklist = GoalPresentation.primaryChecklist(goal), goal.status != "bad" {
+            let items = checklist["items"].array
+            return ("\(items.filter { $0["state"].text == "done" }.count) of \(items.count) done", PanelsTheme.Web.tertiary)
+        }
+        if let deadline = goal.deadline {
+            return ("Due " + GoalPresentation.date(deadline), preview ? PanelsTheme.Web.tertiary : PanelsTheme.Web.goalTone(GoalPresentation.deadlineTone(deadline, completed: goal.completed, today: goal.statusDate)))
+        }
+        return (reading, preview || readingTone == "neutral" ? PanelsTheme.Web.tertiary : PanelsTheme.Web.goalTone(readingTone))
+    }
+    var body: some View {
+        Text(state.0).panelsScaledFont(size: PanelsTheme.Web.smallSize, relativeTo: .caption)
+            .foregroundStyle(state.1).monospacedDigit()
     }
 }
 
+/// Shared sheet content keeps real Goal controls interactive and keeps pending edits in AppStore.
 private struct GoalPeek: View {
     let session: PageSession
     @Environment(AppStore.self) private var store
     @State private var project = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
             if let goal = session.goal {
                 HStack(spacing: 8) {
                     if !project.isEmpty { Text(project); Text("·") }
-                    Text(goal.deadline.map { "By " + GoalPresentation.date($0) } ?? "No deadline")
-                        .foregroundStyle(PanelsTheme.Goal.tone(GoalPresentation.deadlineTone(goal.deadline, completed: goal.completed, today: goal.statusDate)))
-                }.font(.caption).foregroundStyle(PanelsTheme.Goal.faint)
-                Text(goal.title).panelsScaledFont(size: 22, weight: .semibold).foregroundStyle(PanelsTheme.strong)
-                if let checklist = GoalPresentation.primaryChecklist(goal) { GoalChecklist(block: checklist, session: session, preview: true) }
-                else if let chart = GoalPresentation.primaryChart(goal) { GoalChart(block: chart, session: session, integrated: true, preview: true) }
+                    Text(goal.deadline.map { "Due " + GoalPresentation.date($0) } ?? "No deadline")
+                        .foregroundStyle(PanelsTheme.Web.goalTone(GoalPresentation.deadlineTone(goal.deadline, completed: goal.completed, today: goal.statusDate)))
+                }.panelsScaledFont(size: PanelsTheme.Web.smallSize, relativeTo: .caption).foregroundStyle(PanelsTheme.Web.tertiary)
+                Text(goal.title).panelsScaledFont(size: PanelsTheme.Web.Rail.titleSize, relativeTo: .title3, weight: .semibold).foregroundStyle(PanelsTheme.Web.strong)
+                WorkspaceGoalPrimary(session: session)
             }
-        }.padding(24).background(PanelsTheme.surface).allowsHitTesting(false)
-            .task {
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .task(id: store.baseURL) {
                 let handle = store.resources.handle(GoalResources.projects)
                 handle.acquire(); defer { handle.release() }; await handle.refresh()
                 project = handle.value?["projects"].array.first { $0.id == session.goal?.projectId }?["name"].text ?? ""
                 do { try await Task.sleep(for: .seconds(365 * 24 * 60 * 60)) } catch { }
             }
+    }
+}
+
+private struct WorkspaceGoalPrimary: View {
+    let session: PageSession
+    var chartTitle: String? = nil
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let goal = session.goal {
+                if let checklist = GoalPresentation.primaryChecklist(goal) {
+                    GoalChecklist(block: checklist, session: session)
+                } else if let chart = GoalPresentation.primaryChart(goal) {
+                    GoalChart(block: chartTitle.map { chart.setting("title", .string($0)) } ?? chart, session: session, integrated: true)
+                }
+                GoalSaveFailure(session: session)
+                if let error = session.readError { LoadErrorView(message: error) { await session.refresh() } }
+            }
+        }
+    }
+}
+
+struct WorkspaceHolderGoalPreview: View {
+    let holder: GoalHolder
+    let goals: [GoalRecord]
+    let open: (AppRoute) -> Void
+    @Environment(AppStore.self) private var store
+    private var visibleGoals: [GoalRecord] { holder.goals(in: goals).filter(\.active) }
+    private var sessions: PageSessionCollection { store.goalEdits.goals }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if visibleGoals.count == 1, let goal = visibleGoals.first,
+               GoalPresentation.primaryChecklist(goal) != nil || GoalPresentation.primaryChart(goal) != nil,
+               let session = sessions.session(goal.id, server: store.baseURL) {
+                WorkspaceGoalPrimary(session: session, chartTitle: goal.title)
+                    .task(id: store.baseURL) { await session.follow() }
+            } else {
+                ForEach(visibleGoals) { goal in
+                    if let session = sessions.session(goal.id, server: store.baseURL) {
+                        Button { open(.goal(goal.id)) } label: {
+                            HStack(spacing: 12) {
+                                Text((session.goal ?? goal).title).panelsScaledFont(size: PanelsTheme.Web.Rail.goalSize).lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                WorkspaceGoalRowState(goal: session.goal ?? goal, readings: session.readings, preview: true)
+                            }.frame(minHeight: PanelsTheme.Web.Rail.goalRowHeight).contentShape(Rectangle())
+                        }.buttonStyle(WorkspaceRailButtonStyle()).task(id: store.baseURL) { await session.follow() }
+                    }
+                }
+            }
+        }.task(id: "\(store.baseURL):\(visibleGoals.map(\.id))") {
+            sessions.update(visibleGoals, api: store.client, resources: store.resources)
+        }.onChange(of: sessions.unfinishedKeys) { _, _ in sessions.prune() }
     }
 }
 

@@ -229,6 +229,248 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
     }
 
+    /// One connected proof for adjacent native targets, interactive sheets and scoped windows.
+    /// Reuses the DESIGN_REVIEW server; screenshots are review artifacts, not pixel assertions.
+    @MainActor func testWorkspaceSidebarParity() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "workspace-fixture")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base, "-panels.goals-sidebar-rows", "NO"]
+        app.launch()
+        defer { app.terminate() }
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+        let wren = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Wren release")).firstMatch
+        let science = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Science site")).firstMatch
+        let tag = app.descendants(matching: .any).matching(identifier: "workspace-goal-status-release").firstMatch
+        let notes = app.descendants(matching: .any).matching(identifier: "workspace-ticket-notes").firstMatch
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        let workspaceTree = XCTAttachment(string: app.debugDescription)
+        workspaceTree.name = "workspace-parity-initial-accessibility-tree"
+        workspaceTree.lifetime = .keepAlways; add(workspaceTree)
+        XCTAssertTrue(wren.exists); XCTAssertTrue(science.exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-weekly").firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-onboarding").firstMatch.exists)
+        XCTAssertTrue(notes.exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-testers").firstMatch.exists, "Focus must retain unread Agent work")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-ticket-build").firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-ticket-article").firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-goal-release").firstMatch.exists, "Ordinary goal rows start off")
+        XCTAssertFalse(app.buttons["Focus"].exists); XCTAssertFalse(app.switches["Focus"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Review"].exists)
+        XCTAssertTrue(app.tabBars.buttons["More"].exists)
+        XCTAssertTrue(workspace.isSelected)
+        capture(app, "workspace-parity-default")
+
+        tag.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["goal-screen"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["goal-check-first"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any)["orchestrator-screen"].exists)
+        app.buttons["detail-back"].tap()
+        XCTAssertTrue(wren.waitForExistence(timeout: 8)); wren.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
+        app.buttons["detail-back"].tap()
+        XCTAssertTrue(notes.waitForExistence(timeout: 8))
+        wren.press(forDuration: 1)
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 8))
+        let firstCheck = app.buttons["goal-check-first"]
+        XCTAssertTrue(firstCheck.waitForExistence(timeout: 8))
+        let previewTree = XCTAttachment(string: app.debugDescription)
+        previewTree.name = "workspace-parity-preview-accessibility-tree"
+        previewTree.lifetime = .keepAlways; add(previewTree)
+        XCTAssertEqual(app.buttons.matching(identifier: "goal-check-first").count, 1,
+                       "The preview must expose one checkbox, with no retained detail duplicate")
+        if !firstCheck.isHittable { app.swipeUp() }
+        let checkboxReady = NSPredicate { _, _ in
+            MainActor.assumeIsolated { firstCheck.exists && firstCheck.isHittable }
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: checkboxReady, object: nil)], timeout: 5), .completed,
+                       "Wait for the sheet's expansion/scroll gesture to finish before tapping")
+        firstCheck.tap()
+        XCTAssertTrue(app.staticTexts["Explain the change."].waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-interactive-checklist")
+        let goalWrites = try await recordedWrites(base)
+        XCTAssertEqual(goalWrites.count, 1, "Preview must only perform the requested checklist write")
+        let goalWrite = try XCTUnwrap(goalWrites.first as? [String: Any])
+        XCTAssertEqual(goalWrite["path"] as? String, "/api/goals/release")
+        let goalBody = try XCTUnwrap(goalWrite["body"] as? [String: Any])
+        XCTAssertEqual(Set(goalBody.keys), ["page", "expected_revision"])
+        XCTAssertEqual(goalBody["expected_revision"] as? Int, 1)
+        let page = try XCTUnwrap(goalBody["page"] as? [String: Any])
+        let blocks = try XCTUnwrap(page["blocks"] as? [[String: Any]])
+        let items = try XCTUnwrap(blocks.first?["items"] as? [[String: Any]])
+        XCTAssertEqual(items.first?["id"] as? String, "first")
+        XCTAssertEqual(items.first?["state"] as? String, "done")
+        XCTAssertEqual(items.last?["state"] as? String, "blocked")
+
+        try await proof(base, "workspace-update")
+        // The existing loopback stream emits each second. Admit two frames while held.
+        try await Task.sleep(for: .milliseconds(2200))
+        XCTAssertTrue(done.exists, "A structural snapshot must not tear down the open preview")
+        XCTAssertTrue(app.buttons["Open"].isHittable, "The held preview remains interactive")
+        done.tap()
+        XCTAssertTrue(wren.waitForNonExistence(timeout: 8), "The removed holder leaves only after the preview is dismissed")
+        capture(app, "workspace-parity-after-preview-release")
+        try await proof(base, "workspace-restore")
+        XCTAssertTrue(wren.waitForExistence(timeout: 8))
+
+        XCTAssertTrue(science.exists)
+        if !science.isHittable { app.swipeUp() }
+        science.press(forDuration: 1)
+        XCTAssertTrue(done.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["goal-chart-words"].waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-chart-preview")
+        done.tap()
+
+        try await proof(base, "workspace-pages")
+        let next = app.buttons["Next"].firstMatch
+        XCTAssertTrue(next.waitForExistence(timeout: 8))
+        if !next.isHittable { app.swipeUp() }
+        XCTAssertTrue(next.isHittable); next.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-page-two").firstMatch.waitForExistence(timeout: 8))
+        let (requestsData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/workspace-requests")!)
+        let requests = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestsData) as? [[String: Any]])
+        XCTAssertTrue(requests.contains { request in
+            let owner = request["owner"] as? [String: Any]
+            return request["section"] as? String == "rail_tickets" && owner?["kind"] as? String == "manager"
+                && owner?["id"] as? String == "wren" && request["anchor"] as? String == "workspace-next"
+        })
+        app.descendants(matching: .any).matching(identifier: "workspace-settled").firstMatch.tap()
+        let settled = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Previous release")).firstMatch
+        XCTAssertTrue(settled.waitForExistence(timeout: 8)); settled.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
+        app.buttons["detail-back"].tap()
+        let reopen = app.buttons["Reopen Previous release"]
+        XCTAssertTrue(reopen.waitForExistence(timeout: 8)); reopen.tap()
+        XCTAssertTrue(reopen.waitForNonExistence(timeout: 8))
+        let writes = try await recordedWrites(base)
+        XCTAssertEqual(writes.count, 2)
+        let reopening = try XCTUnwrap(writes.last as? [String: Any])
+        XCTAssertEqual(reopening["path"] as? String, "/api/managers/settled-one/settled")
+        let reopeningBody = try XCTUnwrap(reopening["body"] as? [String: Any])
+        XCTAssertEqual(Set(reopeningBody.keys), ["settled"])
+        XCTAssertEqual(reopeningBody["settled"] as? Bool, false)
+        capture(app, "workspace-parity-settled-dock")
+
+        // One-off visual review in the same host, using the existing standard text-size argument.
+        app.terminate()
+        try await proof(base, "workspace-fixture")
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+        XCTAssertTrue(tag.waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-accessibility-text")
+        if !wren.isHittable { app.swipeUp() }
+        XCTAssertTrue(wren.isHittable); wren.press(forDuration: 1)
+        XCTAssertTrue(done.waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-accessibility-preview")
+        XCTAssertTrue(done.isHittable)
+        done.tap()
+        // System Reduce Motion is reviewed separately in the parent's admitted lane window.
+        app.terminate()
+        try await proof(base, "workspace-reset")
+    }
+
+    /// One-off explicit-Open and real system Reduce Motion review; no new test host.
+    @MainActor func testWorkspacePreviewOpenAndSystemMotion() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "workspace-fixture")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base, "-panels.goals-sidebar-rows", "NO"]
+        defer { app.terminate() }
+        let wren = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Wren release")).firstMatch
+
+        try await configureSystemReduceMotion(false)
+        app.launch()
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+        XCTAssertTrue(wren.waitForExistence(timeout: 8)); wren.press(forDuration: 1)
+        let open = app.buttons["Open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any)["orchestrator-screen"].exists,
+                       "Long press must leave the rail under the sheet")
+        XCTAssertEqual(app.buttons.matching(identifier: "goal-check-first").count, 1)
+        capture(app, "workspace-explicit-open-before")
+        open.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Done"].waitForNonExistence(timeout: 8))
+        capture(app, "workspace-explicit-open-destination")
+        app.buttons["detail-back"].tap()
+        XCTAssertTrue(wren.waitForExistence(timeout: 8))
+
+        for reduced in [false, true] {
+            if reduced {
+                app.terminate()
+                try await configureSystemReduceMotion(true)
+                app.launch()
+                XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+                XCTAssertTrue(wren.waitForExistence(timeout: 8))
+            }
+            let mode = reduced ? "reduced" : "normal"
+            // Settings is the preference authority; this app was relaunched after the change.
+            // The UI-test runner's UIKit getter is not the Panels process's environment.
+            capture(app, "workspace-motion-" + mode + "-before")
+            try await proof(base, "start/workspace-motion-" + mode)
+            try await proof(base, "workspace-update")
+            XCTAssertTrue(wren.waitForNonExistence(timeout: 8))
+            capture(app, "workspace-motion-" + mode + "-removed")
+            try await proof(base, "workspace-restore")
+            XCTAssertTrue(wren.waitForExistence(timeout: 8))
+            capture(app, "workspace-motion-" + mode + "-restored")
+            try await proof(base, "stop")
+        }
+        app.terminate()
+        try await configureSystemReduceMotion(false)
+        try await proof(base, "workspace-reset")
+    }
+
+    @MainActor private func configureSystemReduceMotion(_ enabled: Bool) async throws {
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launch()
+        defer { settings.terminate() }
+        let reduceMotion = settings.switches["Reduce Motion"]
+        if !reduceMotion.exists {
+            let motion = settings.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@", "Motion")).firstMatch
+            if !motion.exists {
+                let accessibility = settings.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label == %@", "Accessibility")).firstMatch
+                for _ in 0..<4 where !accessibility.isHittable { settings.swipeUp() }
+                XCTAssertTrue(accessibility.waitForExistence(timeout: 5)); accessibility.tap()
+            }
+            XCTAssertTrue(motion.waitForExistence(timeout: 5)); motion.tap()
+        }
+        XCTAssertTrue(reduceMotion.waitForExistence(timeout: 5))
+        let switchBefore = XCTAttachment(string: "Before toggle: value=\(reduceMotion.value ?? "nil"); frame=\(reduceMotion.frame)\n" + settings.debugDescription)
+        switchBefore.name = enabled ? "workspace-system-motion-on-before-tree" : "workspace-system-motion-off-before-tree"
+        switchBefore.lifetime = .keepAlways; add(switchBefore)
+        let expectedValue = enabled ? "1" : "0"
+        if reduceMotion.value as? String != expectedValue {
+            // Settings exposes the labelled row as a Switch; touch its trailing thumb.
+            reduceMotion.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
+        let actualPreference = NSPredicate { _, _ in
+            MainActor.assumeIsolated {
+                reduceMotion.value as? String == expectedValue
+            }
+        }
+        let preferenceResult = await XCTWaiter.fulfillment(of: [XCTNSPredicateExpectation(predicate: actualPreference, object: nil)], timeout: 5)
+        let preferenceEvidence = XCTAttachment(string: "Settings Reduce Motion switch=\(reduceMotion.value ?? "nil"); frame=\(reduceMotion.frame); expected=\(enabled); UI-test runner UIKit getter=\(UIAccessibility.isReduceMotionEnabled) (diagnostic only; not the Panels process)")
+        preferenceEvidence.name = enabled ? "workspace-system-motion-on-values" : "workspace-system-motion-off-values"
+        preferenceEvidence.lifetime = .keepAlways; add(preferenceEvidence)
+        capture(settings, enabled ? "workspace-system-reduce-motion-on" : "workspace-system-reduce-motion-off")
+        XCTAssertEqual(preferenceResult, .completed,
+                       "The actual Settings switch must confirm system Reduce Motion before relaunching Panels")
+    }
+
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {
         // Existence alone admitted an infinite/zero frame in the earlier review run.
         let ready = NSPredicate { _, _ in

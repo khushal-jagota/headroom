@@ -112,6 +112,29 @@ extension NavigationPresentation {
         }
     }
 
+    /// A settled window can carry lean rows. Its exact member order owns this list.
+    func workspaceSettledManagers(in snapshot: ViewSnapshot) -> [ManagerSummary]? {
+        guard let window = snapshot.window("settled") else { return nil }
+        var rows: [String: ViewManagerValue] = [:]
+        var knowledge: [String: ConversationKnowledge] = [:]
+        for record in snapshot.content.records {
+            switch record {
+            case .manager(let id, let row): rows[id] = row
+            case .conversation(let id, let value): knowledge[id] = ConversationKnowledge(value)
+            default: break
+            }
+        }
+        return window.members.compactMap { member in
+            guard member.kind == "manager", let row = rows[member.id], row.settled else { return nil }
+            let facts = row.conversationId.flatMap { knowledge[$0] }
+            return ManagerSummary(id: member.id, title: row.title, projectId: row.projectId ?? "", project: "",
+                                  settled: true, createdAt: row.createdAt, updatedAt: row.updatedAt,
+                                  awaitingReply: facts?.messageForOwner ?? false, awaitingAnswer: facts?.awaitingAnswer ?? false,
+                                  awaitingApproval: false, awaitingAgentApproval: false, agentState: "idle",
+                                  conversationSignal: NavigationSignal(facts).conversationSignal)
+        }
+    }
+
     /// Membership comes from each parent's rail window, never from rows another window loaded.
     func workspaceTickets(in snapshot: ViewSnapshot) -> [TicketSummary]? {
         guard snapshot.window("rail_parents") != nil else { return nil }
@@ -157,7 +180,7 @@ extension NavigationReviewMessage {
 
 extension NavigationTicket {
     var summary: TicketSummary {
-        TicketSummary(locale: locale, id: id, title: title, workerType: workerType, stage: stage, ticketStatus: ticketStatus, isBacklogged: isBacklogged,
+        TicketSummary(locale: locale, machineId: machineId, id: id, title: title, workerType: workerType, stage: stage, ticketStatus: ticketStatus, isBacklogged: isBacklogged,
                       blocked: blocked, recapPreview: recapPreview, activityAt: activityAt,
                       projectId: projectId, project: project, manager: manager, managerId: managerId, managerTitle: managerTitle,
                       awaitingReply: awaitingReply ?? false, awaitingAnswer: awaitingAnswer ?? false, awaitingApproval: awaitingApproval,

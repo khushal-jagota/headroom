@@ -11,7 +11,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .yours: "Yours"
         case .errored: "Errored"
         case .agent: "Agent"
-        case .agentApproval: "Awaiting an agent’s approval"
+        case .agentApproval: "Awaiting an agent's approval"
         case .other: "Other"
         }
     }
@@ -25,6 +25,8 @@ struct WorkspaceTicketGroup: Identifiable {
 }
 
 enum WorkspaceGrouping {
+    // Match the navigation contract's title locale without a dependency on its transport types.
+    private static let titleOrderingLocale = Locale(identifier: "en-US")
     static func section(for ticket: TicketSummary) -> WorkspaceSection? {
         if ticket.integrityError != nil { return .errored }
         guard !ticket.isBacklogged, ticket.blocked != true, ticket.ticketStatus != "blocked", ticket.stage != "done" else { return nil }
@@ -54,7 +56,8 @@ enum WorkspaceGrouping {
             let survivors = (previous.first { $0.section == section }?.tickets ?? []).compactMap { byID[$0.id] }
             let survivorIDs = Set(survivors.map(\.id))
             let arrivals = fresh.filter { !survivorIDs.contains($0.id) }.sorted {
-                let titleOrder = $0.title.localizedCaseInsensitiveCompare($1.title)
+                if ($0.activityAt ?? 0) != ($1.activityAt ?? 0) { return ($0.activityAt ?? 0) > ($1.activityAt ?? 0) }
+                let titleOrder = $0.title.compare($1.title, options: [.caseInsensitive], locale: titleOrderingLocale)
                 return titleOrder == .orderedSame ? $0.id < $1.id : titleOrder == .orderedAscending
             }
             return WorkspaceTicketGroup(section: section, tickets: survivors + arrivals)
