@@ -123,6 +123,8 @@ jobs:
           executor_runtime="$EXECUTOR_ROOT/tmp/build/runtime"
           test -s "$executor_runtime/web/dist/index.html"
           test ! -e "$executor_runtime/web/node_modules"
+          test ! -e "$executor_runtime/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl"
+          test -x "$executor_runtime/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude"
           # Compare retained contributors with the removed-byte count in job.log.
           du --apparent-size -sb "$executor_runtime"/* \
             "$executor_runtime/server/node_modules" \
@@ -130,6 +132,9 @@ jobs:
             "$executor_runtime/web/dist" \
             "$EXECUTOR_ROOT/tmp/build/panels-linux-executor.tar.gz" \
             | sort -nr | tee "$EXECUTOR_EVIDENCE/payload-bytes.txt"
+          du --apparent-size -ab "$executor_runtime/server/node_modules" \
+            "$executor_runtime/agent_backends/node_modules" \
+            | sort -nr | awk 'NR<=60' | tee "$EXECUTOR_EVIDENCE/largest-paths.txt"
           LINUX_EXECUTOR
       - name: Preserve Linux executor admission evidence only
         if: always()

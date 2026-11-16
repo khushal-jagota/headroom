@@ -126,7 +126,7 @@ async function remove_anchored(
   ancestors?: ReadonlyMap<string, { dev: number; ino: number }>,
 ): Promise<void> {
   if (process.platform === 'darwin') {
-    remove_darwin_workspace(root, signal, identity, parent_identity, ancestors);
+    await remove_darwin_workspace(root, signal, identity, parent_identity, ancestors);
     return;
   }
   const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;

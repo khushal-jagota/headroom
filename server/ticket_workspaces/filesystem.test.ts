@@ -11,7 +11,7 @@ import {
   renameSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, sep } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
 import {
   retry_retired_workspaces,
@@ -23,7 +23,7 @@ import {
   workspace_identity,
   prepare_workspace,
 } from './filesystem.ts';
-import { git } from './filesystem/shared.ts';
+import { git, ticket_match } from './filesystem/shared.ts';
 import { RETENTION_SECONDS } from './contracts.ts';
 import type { WorkspaceOptions } from './contracts.ts';
 
@@ -52,7 +52,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 let root: string;
-const ticket = 't_01234567';
+// A nested fixture belongs to its enclosing Ticket. The private root still
+// bounds every filesystem operation, while product ownership checks remain intact.
+const ticket =
+  realpathSync(tmpdir())
+    .split(sep)
+    .reverse()
+    .map((part) => ticket_match.exec(part)?.[1])
+    .find((owner) => owner !== undefined) ?? 't_01234567';
 // Every product entry and Git call is admitted against this test's fresh physical root.
 function admit(path: string): string {
   path = resolve(path);
@@ -312,7 +319,6 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   },
 );
 
-
 test.skipIf(process.platform !== 'darwin')(
   'native Mac retirement retry removes the recorded workspace and scratch snapshot',
   async () => {
@@ -327,9 +333,12 @@ test.skipIf(process.platform !== 'darwin')(
     if ('reason' in target) throw new Error(target.reason);
     renameSync(path, target.path);
     const prune = vi.fn(() => true);
-    expect(await retry_retired_workspaces(dirname(target.path), {
-      ...options, prune_ticket_scratch: prune,
-    })).toEqual({ removed: [target.path], skipped: [] });
+    expect(
+      await retry_retired_workspaces(dirname(target.path), {
+        ...options,
+        prune_ticket_scratch: prune,
+      }),
+    ).toEqual({ removed: [target.path], skipped: [] });
     expect(prune).toHaveBeenCalledWith(ticket, [`${ticket}-saved`]);
     expect(existsSync(target.path)).toBe(false);
   },
@@ -338,7 +347,9 @@ test.skipIf(process.platform !== 'darwin')(
 test.skipIf(process.platform !== 'darwin')(
   'native Mac no-follow removal preserves a replaced descendant and its symlink target',
   async () => {
-    const path = folder(), nested = join(path, 'nested'), outside = join(root, 'preserved');
+    const path = folder(),
+      nested = join(path, 'nested'),
+      outside = join(root, 'preserved');
     mkdirSync(nested);
     mkdirSync(outside);
     writeFileSync(join(nested, 'original.txt'), 'original');
@@ -354,7 +365,9 @@ test.skipIf(process.platform !== 'darwin')(
       expect(await cleanup_ticket_folder(path, options)).toBeNull();
       expect(injected).toBe(true);
       expect(readFileSync(join(outside, 'sentinel.txt'), 'utf8')).toBe('must survive');
-      expect(readFileSync(join(root, 'detached-original', 'original.txt'), 'utf8')).toBe('original');
+      expect(readFileSync(join(root, 'detached-original', 'original.txt'), 'utf8')).toBe(
+        'original',
+      );
     } finally {
       swap.before_native_open = undefined;
     }
@@ -379,6 +392,33 @@ test.skipIf(process.platform !== 'darwin')(
       expect(opens).toBe(2);
       expect(existsSync(path)).toBe(true);
       expect(existsSync(join(root, 'detached-original'))).toBe(true);
+    } finally {
+      swap.before_native_open = undefined;
+    }
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'native Mac removal yields to cancellation before it deletes held directory contents',
+  async () => {
+    const path = folder();
+    writeFileSync(join(path, 'preserved.txt'), 'must survive');
+    const cancellation = new AbortController();
+    let scheduled = false;
+    swap.before_native_open = (name) => {
+      if (scheduled || name !== ticket) return;
+      scheduled = true;
+      setImmediate(() => cancellation.abort());
+    };
+    try {
+      await expect(
+        cleanup_ticket_folder(path, {
+          ...options,
+          signal: cancellation.signal,
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      expect(scheduled).toBe(true);
+      expect(readFileSync(join(path, 'preserved.txt'), 'utf8')).toBe('must survive');
     } finally {
       swap.before_native_open = undefined;
     }

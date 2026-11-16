@@ -140,19 +140,24 @@ async function install_app_dependencies(
       '@anthropic-ai/claude-code@latest',
       '@openai/codex@latest',
     ]);
-  if (await exists(join(root, 'web/package.json'))) {
+  if (await exists(join(root, 'web/package.json')))
     await run('web', ['npm', 'run', 'build', '--prefix', join(root, 'web')]);
-    // The server serves web/dist. Browser build tools are not runtime dependencies.
-    const build_dependencies = join(root, 'web/node_modules');
-    if (await exists(build_dependencies)) {
+  // The supported Linux runtime uses glibc. Keep its SDK binary and all Codex tools.
+  // The server serves web/dist, so browser build tools are no longer needed either.
+  for (const name of [
+    'web/node_modules',
+    'server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl',
+  ]) {
+    const unused_dependency = join(root, name);
+    if (await exists(unused_dependency)) {
       let removed_bytes = 0;
-      for (const path of await app_tree_paths(build_dependencies)) {
+      for (const path of await app_tree_paths(unused_dependency)) {
         assert_release_execution(execution);
         const info = await lstat(path);
         if (info.isFile()) removed_bytes += info.size;
       }
-      await remove_owned_tree(build_dependencies);
-      console.error(`Browser build dependencies removed before sealing: ${removed_bytes} bytes`);
+      await remove_owned_tree(unused_dependency);
+      console.error(`Unused dependency removed before sealing: ${name}: ${removed_bytes} bytes`);
     }
   }
 }

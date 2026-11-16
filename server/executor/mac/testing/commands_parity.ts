@@ -223,10 +223,10 @@ async function managed_workspace_phase(): Promise<unknown> {
     const folder = join(paths.artifacts, state.ticket_id);
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
     try {
-      Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+      Object.defineProperty(process, 'platform', { ...platform, value: 'freebsd' });
       await runner.cleanup_workspaces([state], Math.floor(now / 1000));
-      assert.equal(grants, 0, 'Darwin preservation must precede authorization');
-      assert.equal(stops, 0, 'Darwin preservation must not stop a child');
+      assert.equal(grants, 0, 'Unsupported-platform preservation must precede authorization');
+      assert.equal(stops, 0, 'Unsupported-platform preservation must not stop a child');
       assert.ok(existsSync(folder));
     } finally {
       Object.defineProperty(process, 'platform', platform);

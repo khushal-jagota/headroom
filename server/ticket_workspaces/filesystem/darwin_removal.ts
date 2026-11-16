@@ -1,5 +1,6 @@
 import { fstatSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import {
   close_native_descriptor,
   directory_open_flags,
@@ -20,13 +21,13 @@ function check_identity(descriptor: number, expected?: Identity): void {
 }
 
 /** Darwin has no procfs descriptor paths. Keep every removal relative to an open inode. */
-export function remove_darwin_workspace(
+export async function remove_darwin_workspace(
   root: string,
   signal?: AbortSignal,
   identity?: Identity,
   parent_identity?: Identity,
   ancestors?: ReadonlyMap<string, Identity>,
-): void {
+): Promise<void> {
   let parent = open_directory_descriptor('/');
   try {
     let cursor = '/';
@@ -40,7 +41,8 @@ export function remove_darwin_workspace(
       check_identity(parent, ancestors?.get(cursor));
     }
     check_identity(parent, parent_identity);
-    function remove_entry(parent: number, name: string, expected?: Identity): void {
+    async function remove_entry(parent: number, name: string, expected?: Identity): Promise<void> {
+      await setImmediate(undefined, { signal });
       signal?.throwIfAborted();
       let directory: number;
       try {
@@ -56,7 +58,9 @@ export function remove_darwin_workspace(
       try {
         check_identity(directory, expected);
         const opened = fstatSync(directory);
-        for (const child of read_directory_names(directory)) remove_entry(directory, child);
+        await setImmediate(undefined, { signal });
+        signal?.throwIfAborted();
+        for (const child of read_directory_names(directory)) await remove_entry(directory, child);
         signal?.throwIfAborted();
         const attached = open_relative(parent, name, directory_open_flags);
         try {
@@ -69,7 +73,7 @@ export function remove_darwin_workspace(
         close_native_descriptor(directory);
       }
     }
-    remove_entry(parent, basename(root), identity);
+    await remove_entry(parent, basename(root), identity);
   } finally {
     close_native_descriptor(parent);
   }

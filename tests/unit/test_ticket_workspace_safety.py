@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 try:
     from development_safety.contracts import SafetyRefusal
+    from development_safety.launcher import _node_lookup_paths
     from development_safety.scanner import Mount, _check_paths
 finally:
     sys.path.pop(0)
@@ -119,6 +120,28 @@ def test_managed_ticket_checkout_admission_preserves_storage_protection(tmp_path
     clone_dependency = clone / ".venv"
     clone_dependency.mkdir()
     _check_paths([clone, clone_dependency], [deployed], mounts)
+
+    # Node ancestor lookup names can be absent under protected Ticket storage.
+    # Package destinations remain checked even before npm creates them.
+    package = clone / "server"
+    package.mkdir()
+    lookups = _node_lookup_paths(package)
+    assert package / "node_modules" in lookups
+    assert clone_owner / "node_modules" not in lookups
+    _check_paths(lookups, [deployed], mounts)
+    ancestor_modules = clone_owner / "node_modules"
+    ancestor_modules.mkdir()
+    with pytest.raises(SafetyRefusal):
+        _check_paths(_node_lookup_paths(package), [deployed], mounts)
+    ancestor_modules.rmdir()
+    ancestor_modules.symlink_to(installed, target_is_directory=True)
+    with pytest.raises(SafetyRefusal):
+        _check_paths(_node_lookup_paths(package), [deployed], mounts)
+    ancestor_modules.unlink()
+    ancestor_modules.symlink_to(installed / "absent", target_is_directory=True)
+    with pytest.raises(SafetyRefusal):
+        _check_paths(_node_lookup_paths(package), [deployed], mounts)
+    ancestor_modules.unlink()
     clone_alias = clone_dependency / "installed"
     clone_alias.symlink_to(installed, target_is_directory=True)
     with pytest.raises(SafetyRefusal):

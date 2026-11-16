@@ -140,6 +140,23 @@ def node_environment(tree: Path, package: Path, env: Mapping[str, str]) -> None:
                 refuse(config, "unsupported npm configuration", f"Unsupported config key: {key}")
 
 
+def _node_lookup_paths(destination: Path) -> list[Path]:
+    # npm can write the package destination even before it exists. Ancestors are
+    # read-only lookup candidates: absent directories cannot supply Node code.
+    lookups = [destination / "node_modules"]
+    for parent in destination.parents:
+        candidate = parent / "node_modules"
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            refuse(candidate, "Node lookup evidence", f"Cannot inspect lookup path: {error}")
+        # lstat retains dangling links for the scanner's normal refusal.
+        lookups.append(candidate)
+    return lookups
+
+
 def node_safety(tree: Path, package: str, env: Mapping[str, str]) -> Path:
     if package not in PACKAGES:
         refuse(tree, "npm command grammar", "Prefix must be web or agent_backends.")
@@ -147,7 +164,7 @@ def node_safety(tree: Path, package: str, env: Mapping[str, str]) -> Path:
     node_environment(tree, destination, env)
     check_tree(tree, environment=env)
     check_tree(destination, environment=env)
-    lookups = [base / "node_modules" for base in (destination, *destination.parents)]
+    lookups = _node_lookup_paths(destination)
     node = shutil.which("node", path=env.get("PATH", os.defpath))
     if not node:
         refuse(destination, "executable lookup", "node is absent from PATH.")
