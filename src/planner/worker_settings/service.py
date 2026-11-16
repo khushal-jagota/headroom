@@ -33,6 +33,7 @@ from planner.managed_skills import (
     write_skill_source,
 )
 from planner.skill_versions import capture_skill_version
+from planner.tickets.logic.recap import validate_recap
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
     ManagedSkill,
@@ -551,6 +552,7 @@ def update_chief_recap(conn: sqlite3.Connection, payload: dict[str, Any]) -> Man
         raise PlannerError(
             ErrorCode.validation, "Chief recap requires exactly one string recap", {}
         )
+    validate_recap(payload["recap"])
     conn.execute(
         "UPDATE chief_settings SET recap = ? WHERE employee_id = ?",
         (payload["recap"], CHIEF_SETTINGS_KEY),

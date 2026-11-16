@@ -18,6 +18,7 @@ from planner.managers.contracts import (
     ManagerDeletion,
     ManagerLaunchConfiguration,
 )
+from planner.tickets.logic.recap import validate_recap
 
 
 class ManagerRead(NamedTuple):
@@ -247,6 +248,7 @@ def update_manager(
         assignments = list(stored_edits)
         values: list[str | int | None] = [stored_edits[field] for field in assignments]
         if "recap" in stored_edits:
+            validate_recap(stored_edits["recap"] or "")
             assignments.append("recap_updated_at")
             recap = stored_edits["recap"]
             values.append(now if recap is not None and recap.strip() else None)
