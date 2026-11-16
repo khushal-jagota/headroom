@@ -1,0 +1,8 @@
+{
+  "extends": "../server/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "typeRoots": ["../server/node_modules/@types"]
+  },
+  "include": ["dev_setup*.mts"]
+}
