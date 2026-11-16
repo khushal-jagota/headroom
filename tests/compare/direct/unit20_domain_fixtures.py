@@ -13,6 +13,7 @@ from typing import Any, cast
 import httpx
 from tests.compare.direct import unit20_cli as cli
 from tests.compare.runner import Normalizer, rows
+from tests.support.launch_identity import agent_headers
 from tests.support.server import ServerHandle
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -70,14 +71,7 @@ def api(
     body: Any = None,
     identity: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    headers = (
-        {}
-        if identity is None
-        else {
-            "X-Plan-Actor": "worker",
-            "X-Plan-Ticket-ID": identity["ticket_id"],
-        }
-    )
+    headers = {} if identity is None else agent_headers(handle, "worker", identity["ticket_id"])
     with httpx.Client(trust_env=False, follow_redirects=False, timeout=30) as client:
         response = client.request(method, handle.base + path, json=body, headers=headers)
     assert response.status_code == 200, (method, path, response.status_code, response.text)

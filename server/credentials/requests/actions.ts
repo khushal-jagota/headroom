@@ -43,30 +43,6 @@ export function origin_conversation(sql: ReadSql, ctx: RequestContext): string {
   else current = null;
   if (current !== origin)
     throw new PlannerError('agent_forbidden', 'the requesting conversation is no longer current');
-  const row = sql.get<{ identity_environment_variables: string }>(
-    'SELECT identity_environment_variables FROM conversations WHERE conversation_id=?',
-    [origin],
-  );
-  if (row === undefined)
-    throw new PlannerError('agent_forbidden', 'the requesting conversation is absent');
-  const parsed: unknown = JSON.parse(row.identity_environment_variables);
-  const identity = (Array.isArray(parsed) ? Object.fromEntries(parsed) : parsed) as Record<
-    string,
-    unknown
-  >;
-  const actor = identity.PLAN_ACTOR;
-  const matches =
-    (principal.kind === 'ticket' &&
-      actor === 'worker' &&
-      identity.PLAN_TICKET_ID === principal.id) ||
-    (principal.kind === 'chief' && actor === 'chief') ||
-    (principal.kind === 'manager' &&
-      actor === 'manager' &&
-      identity.PLAN_MANAGER_ID === principal.id);
-  const conversation_id =
-    'PLAN_CONVERSATION_ID' in identity ? identity.PLAN_CONVERSATION_ID : origin;
-  if (!matches || conversation_id !== origin)
-    throw new PlannerError('agent_forbidden', 'the requesting conversation identity differs');
   return origin;
 }
 export function public_credential(metadata: CredentialMetadata): RequestCredential {

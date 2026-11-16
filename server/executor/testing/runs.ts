@@ -540,7 +540,7 @@ if (spec.mode === 'machines') {
       registry.as_factory(),
     );
     const start = new ResolvedConversationStart({
-      conversation_id: 'routing',
+      conversation_id: 'drain',
       backend_key: 'codex',
       model: 'fixture',
       reasoning_effort: null,
@@ -875,7 +875,7 @@ try {
   const router = new LocaleBackendChildFactory(database, local, remote);
   for (const ticket of [spec.ticket, spec.local_ticket, null]) {
     const start = new ResolvedConversationStart({
-      conversation_id: 'routing',
+      conversation_id: ticket === spec.ticket ? 'drain' : 'routing',
       backend_key: 'codex',
       model: 'fixture',
       reasoning_effort: null,

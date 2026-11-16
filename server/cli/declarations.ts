@@ -4,7 +4,7 @@ import { Argument, Command, Help, InvalidArgumentError, Option } from 'commander
 
 export interface ValueParser {
   (text: string): unknown;
-  kind: 'string' | 'integer' | 'boolean' | 'choice' | 'path' | 'uuid';
+  kind: 'string' | 'integer' | 'boolean' | 'choice' | 'path' | 'uuid' | 'file';
   choices?: string[];
   min?: number;
   max?: number;
@@ -14,6 +14,10 @@ export interface ValueParser {
 export const text: ValueParser = Object.assign((value: string) => value, {
   kind: 'string' as const,
 });
+export const readable_file: ValueParser = Object.assign(
+  (value: string) => (value === '-' ? value : readable_path('file', true)(value)),
+  { kind: 'file' as const },
+);
 export const boolean: ValueParser = Object.assign(
   (value: string) => {
     const normalized = value.trim().toLowerCase();

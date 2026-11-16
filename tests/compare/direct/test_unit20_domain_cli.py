@@ -33,6 +33,7 @@ from tests.compare.direct.unit20_cli import (
 )
 from tests.compare.direct.unit20_wire import _body, compare_wire, wire_view
 from tests.compare.runner import Normalizer, backup_database, substitute
+from tests.support.launch_identity import agent_headers
 from tests.support.measure_sources import NOW, configured_source
 from tests.support.server import ServerHandle
 from tests.support.server_fixtures import _start_server, _stop_server
@@ -520,7 +521,7 @@ def _decision_operation_proof(
         assert len(saved["ticket_decision_operations"]) == 1
         replies = [
             client.get(path), client.post(path, json=command),
-            client.get(path, headers={"X-Plan-Actor": "chief"}),
+            client.get(path, headers=agent_headers(handle, "chief")),
         ]
         assert all(reply.status_code == 200 for reply in replies), [r.text for r in replies]
         envelopes = [envelope, *(reply.json() for reply in replies)]

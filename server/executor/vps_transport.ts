@@ -4,7 +4,8 @@ import type { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { Clock } from '../core/clock.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
-import { legacyActor, PlannerError } from '../core/contracts.ts';
+import { PlannerError } from '../core/contracts.ts';
+import { with_in_process_request_context } from '../core/authority/identity.ts';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
@@ -397,8 +398,6 @@ export class VpsExecutor {
     if (!READABLE_PATHS.some((prefix) => read.path.startsWith(prefix)))
       throw new PlannerError('validation', 'unsupported executor read');
     const principal = this.runs.authority(read.child);
-    const headers: Record<string, string> = { 'x-plan-actor': legacyActor(principal) };
-    if (principal.kind === 'ticket') headers['x-plan-ticket-id'] = principal.id;
     const params = new URLSearchParams();
     for (const [name, value] of Object.entries(read.params)) {
       const values = Array.isArray(value) ? value : [value];
@@ -420,12 +419,15 @@ export class VpsExecutor {
     target.search = params.toString();
     const controller = new AbortController();
     const answer = await observe_promise(
-      this.app.inject({
-        method: 'GET',
-        url: target.pathname + target.search,
-        headers,
-        signal: controller.signal,
-      }),
+      with_in_process_request_context(
+        { principal, conversationId: read.child.conversation_id },
+        () =>
+          this.app.inject({
+            method: 'GET',
+            url: target.pathname + target.search,
+            signal: controller.signal,
+          }),
+      ),
       LIVE_READ_SERVER_LIMIT_SECONDS * 1000,
     );
     if (!answer.completed) {

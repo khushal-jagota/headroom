@@ -9,11 +9,23 @@ import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { rates_proxy_for } from '../conversation/usage/proxy.ts';
 import { parse_numeric_json } from '../core/http/numeric_json.ts';
+import {
+  LAUNCH_TOKEN_ENVIRONMENT_NAME,
+  UNIDENTIFIED_LAUNCH_TOKEN,
+} from '../agent_identity/contracts.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { CliFailure, human_error } from './errors.ts';
 import { ExecutorValidationError } from '../executor/protocol_errors.ts';
 import { executor_client_settings } from '../core/config.ts';
 import type { IpcResponse } from '../executor/wire.generated.ts';
+
+/** Role variables remain context. Only the launch credential authenticates transport. */
+export function authentication_headers(env: NodeJS.ProcessEnv): Record<string, string> {
+  const token = env[LAUNCH_TOKEN_ENVIRONMENT_NAME]?.trim();
+  if (LAUNCH_TOKEN_ENVIRONMENT_NAME in env)
+    return { Authorization: `Bearer ${token || UNIDENTIFIED_LAUNCH_TOKEN}` };
+  return env.PLAN_ACTOR?.trim() ? { Authorization: `Bearer ${UNIDENTIFIED_LAUNCH_TOKEN}` } : {};
+}
 
 export interface TransportLimits {
   connect_ms: number;
@@ -345,17 +357,7 @@ async function request(
               : String(value),
         );
     }
-    const headers: Record<string, string> = {};
-    const actor = env.PLAN_ACTOR?.trim();
-    if (actor) {
-      headers['X-Plan-Actor'] = actor;
-      if (actor === 'worker' && env.PLAN_TICKET_ID?.trim())
-        headers['X-Plan-Ticket-ID'] = env.PLAN_TICKET_ID.trim();
-      if (actor === 'manager' && env.PLAN_MANAGER_ID?.trim())
-        headers['X-Plan-Manager-ID'] = env.PLAN_MANAGER_ID.trim();
-      if (env.PLAN_CONVERSATION_ID?.trim())
-        headers['X-Plan-Conversation-ID'] = env.PLAN_CONVERSATION_ID.trim();
-    }
+    const headers = authentication_headers(env);
     if (options.json_body !== undefined) headers['Content-Type'] = 'application/json';
     return await read_request(
       url,

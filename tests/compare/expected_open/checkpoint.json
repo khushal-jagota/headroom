@@ -4,7 +4,7 @@
   "tests/compare/direct/test_unit16_launch.py::test_unit16_launch_values": "launch tokens: provider launch environment lacks PLAN_LAUNCH_TOKEN=unidentified",
   "tests/compare/direct/test_unit17_startup.py::test_unit17_startup_environment": "launch tokens: provider launch environment lacks PLAN_LAUNCH_TOKEN=unidentified",
   "tests/compare/direct/test_unit18_adapter.py::test_unit18_adapter_real_core_parity": "launch tokens: launch environment assertion lacks PLAN_LAUNCH_TOKEN=unidentified",
-  "tests/compare/direct/test_unit20_cli.py::test_unit20_declarations_match_fresh_python": "launch tokens: new api.input_json File parameter is absent from the legacy declaration adapter",
+  "tests/compare/direct/test_unit20_cli.py::test_unit20_declarations_match_fresh_python": "catch-up proposal guidance: TypeScript lacks proposal revise --message and --body-file options and handler",
   "tests/compare/direct/test_unit20_cli.py::test_unit20_every_help_and_group_usage": "launch tokens: new credential-carrying api command is not yet in TypeScript CLI",
   "tests/compare/direct/test_unit20_cli.py::test_unit20_same_python_host_populated_sequence[python]": "launch tokens: worker recap call uses role headers without an issued conversation credential",
   "tests/compare/direct/test_unit20_cli.py::test_unit20_same_python_host_populated_sequence[typescript]": "launch tokens: worker recap call uses role headers without an issued conversation credential",

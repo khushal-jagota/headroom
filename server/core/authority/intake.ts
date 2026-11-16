@@ -265,7 +265,7 @@ export function requestAdmission(
     if (!protectedRead) return;
   }
   if (route === '/api/measures/read' || route === '/api/datasets/read') return;
-  const caller = requestContext(request).principal;
+  const caller = requestContext(request, sql).principal;
   if (route === '/api/resource-body' || route === '/api/resource-versions') {
     const query = object(request.query);
     let keys: unknown;
@@ -293,5 +293,13 @@ export function requestAdmission(
     !route.startsWith('/files/')
       ? object(request.body)
       : {};
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && caller.kind === 'unidentified') {
+    const target = object(body.target);
+    if (route !== '/api/messages/send' || target.kind !== 'chief')
+      throw new PlannerError(
+        'agent_forbidden',
+        'this request has no Panels identity, so it can only read and send a message to the Chief. For a direct API operation, use `panels api METHOD PATH --input-json -`; the CLI sends the conversation credential automatically. An agent without a launch credential resumes through its Panels conversation. Khushal uses the Panels web app or the iOS app.',
+      );
+  }
   admitCommand(sql, caller, request.method, route, params, body, deps);
 }

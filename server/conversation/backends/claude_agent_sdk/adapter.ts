@@ -1,3 +1,7 @@
+import {
+  LAUNCH_TOKEN_ENVIRONMENT_NAME,
+  UNIDENTIFIED_LAUNCH_TOKEN,
+} from '../../../agent_identity/contracts.ts';
 /** One selected Claude CLI child, persistent session, and backend event stream. */
 import { randomUUID } from 'node:crypto';
 import { observe_shutdown } from '../../shutdown.ts';
@@ -173,6 +177,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   ): ClaudeSdkOptions {
     const environment = Object.fromEntries([
       ...(this.launch.environment_overrides ?? []),
+      [LAUNCH_TOKEN_ENVIRONMENT_NAME, UNIDENTIFIED_LAUNCH_TOKEN],
       ...(start.role_materials?.identity_environment_variables ?? []),
     ]);
     return {

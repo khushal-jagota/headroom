@@ -1,3 +1,4 @@
+import { authenticated_local_child } from '../agent_identity/launch.ts';
 /** The only adapter-selection point, with explicit environment composition still required. */
 import type { ConversationCompositionContext } from '../core/start.ts';
 import { dirname, join } from 'node:path';
@@ -92,7 +93,7 @@ export function compose_production_backends(
   const local_only = (factory: ProductionBackendChildFactory): ProductionBackendChildFactory => {
     const guarded: ProductionBackendChildFactory = (values) => {
       require_execution(values.resolved_start.conversation_id);
-      return factory(values);
+      return authenticated_local_child(factory(values), context.database);
     };
     const recover = factory.recover,
       runs = factory.retained_runs;
@@ -103,7 +104,8 @@ export function compose_production_backends(
           options?: Parameters<RetainedBackendChildFactory['recover']>[1],
         ) {
           require_execution(reference.conversation_id);
-          return recover.call(factory, reference, options);
+          const child = recover.call(factory, reference, options);
+          return child === null ? null : authenticated_local_child(child, context.database);
         },
       });
     if (typeof runs === 'function')

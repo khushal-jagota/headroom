@@ -110,7 +110,7 @@ export function request_headers(
     if (
       HOP.has(name) ||
       connection.has(name) ||
-      ['host', 'forwarded', 'origin'].includes(name) ||
+      ['host', 'forwarded', 'origin', 'authorization'].includes(name) ||
       ['tailscale-', 'x-plan-', 'x-forwarded-', 'proxy-'].some((p) => name.startsWith(p))
     )
       continue;

@@ -1,3 +1,4 @@
+import { issue_launch_token } from '../agent_identity/data.ts';
 /** Startup and shutdown own one record runtime and retain its lease through cleanup. */
 import { dirname, join, resolve } from 'node:path';
 import type { FastifyListenOptions } from 'fastify';
@@ -606,8 +607,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-plan-actor': 'chief',
-        'x-plan-conversation-id': id,
+        authorization: `Bearer ${issue_launch_token(f.database, id)}`,
       },
       body: JSON.stringify({
         request_id,

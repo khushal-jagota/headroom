@@ -14,8 +14,9 @@ declarations and does not initialize a server, database, or provider.
 `work_commands.ts` owns `send-message`, `project`, `ticket`, `manager`, `worker`,
 `worker-type`, and `skill`. Other groups use handlers under their domains.
 Operator and executor commands share the same declaration tree, including hidden
-commands. Transport forwards the caller's environment identity without inventing
-another principal.
+commands. Transport sends the private launch credential automatically. Role variables
+remain context. The hidden `api` command shares that transport for routes without
+a dedicated command.
 
 Goal and holder-page schema guidance lives in `server/goals/cli/guidance.json` and
 `server/managers/page_cli/guidance.json`. Their commands import those JSON documents

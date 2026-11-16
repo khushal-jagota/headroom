@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 import pytest
 from tests.compare import runner
+from tests.support.launch_identity import agent_headers
 from tests.support.synthetic_homes import create_synthetic_homes, synthetic_home_environment
 from tests.unit.test_dataset_persistence import dataset
 from tests.unit.test_manager_wakes import _item_and_ticket
@@ -303,7 +304,9 @@ def seed(conn: sqlite3.Connection, workspace: Path) -> dict[str, str]:
     return ids
 
 
-def requests(ids: dict[str, str]) -> tuple[list[JsonDict], list[str]]:
+def requests(
+    ids: dict[str, str], manager_headers: dict[str, str]
+) -> tuple[list[JsonDict], list[str]]:
     manager_path = f"/api/managers/{ids['manager']}/page"
     goal_path = f"/api/goals/{ids['goal']}"
     workspace = f"/api/managers/{ids['manager']}/workspace-content"
@@ -392,7 +395,7 @@ def requests(ids: dict[str, str]) -> tuple[list[JsonDict], list[str]]:
             "expected_write_revision": 3,
             "value": -7.25,
         },
-        headers={"X-Plan-Actor": "manager", "X-Plan-Manager-ID": ids["manager"]},
+        headers=manager_headers,
         capture="manager_write",
     )
     add("GET", manager_path + "/readings", capture="manager_corrected")
@@ -480,7 +483,7 @@ def test_unit12_populated_holder_pages(
         create_schema(fixture)
         ids = seed(fixture, tmp_path / "record-workspace")
         fixture.commit()
-        calls, captures = requests(ids)
+        calls, captures = requests(ids, agent_headers(fixture, "manager", ids["manager"]))
         view = {
             "projection_version": 7,
             "scope_generation": 1,

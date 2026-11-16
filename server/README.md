@@ -45,14 +45,7 @@ Startup installs signal handlers before asynchronous setup. Before a writer open
 
 Area preparation retains the exact new Ticket integrity faults from one audit. The owned recovery flight sends their ordinary owner-to-Chief system notices before lost-background-task notices and automatic recovery. A failed notice logs and does not stop startup. App and environment shutdown record each actual identity before callbacks, so a late setup continuation never closes the same identity again. A stop after successful listen is normal shutdown. A pre-listen failure remains a startup error.
 
-`PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS` enables the existing opt-in identity refusal;
-it defaults to false and cannot be enabled by YAML. The application consumes the
-variable when loading its actual process environment, before agents inherit it.
-A supervisor must load configuration from an environment copy and preserve the flag
-for its application child. Unidentified loopback callers need same-user socket-holder
-evidence outside the exact agent cgroups. Trusted owners, identified actors and
-non-loopback callers keep the source bypass rules. The accepted TypeScript service
-name and rollback prerequisite are recorded in [DEVIATIONS.md](DEVIATIONS.md).
+Agent requests authenticate with private conversation launch tokens. Trusted ingress supplies the owner identity. On a hosted server, unidentified callers can read and send a message to Chief. Identity-free local calls retain owner access. A failed credential never inherits owner access. There is no process or cgroup peer check.
 
 The default peer resolver refuses before constructing its proc context or doing I/O
 when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy

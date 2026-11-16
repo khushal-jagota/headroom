@@ -2,7 +2,6 @@
 import { readFile } from 'node:fs/promises';
 import { update_repository_configuration } from '../core/config.ts';
 import { is_os_error } from '../core/system_errors.ts';
-import { splitlines } from '../core/unidentified_agent_calls/logic.ts';
 import type { ProductionEnvironmentFactory } from './production_contracts.ts';
 import { resolved_path } from './paths.ts';
 import { create_release_staging } from './updates/staging.ts';
@@ -15,7 +14,7 @@ import { MAC_HOME } from './release/contracts.ts';
 
 /** Python selects the unified cgroup's service leaf and excludes the user manager. */
 export function own_service_unit(cgroup: string): string | null {
-  for (const line of splitlines(cgroup)) {
+  for (const line of cgroup.split(/\r?\n/)) {
     const separator = line.indexOf('::');
     if (separator < 0 || line.slice(0, separator) !== '0') continue;
     const path = line.slice(separator + 2).replace(/\/+$/u, '');

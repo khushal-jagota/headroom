@@ -16,6 +16,7 @@ from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
 
 import httpx
+from tests.support.launch_identity import agent_environment
 from tests.support.server import ServerHandle
 from tests.support.synthetic_homes import create_synthetic_homes
 
@@ -163,6 +164,15 @@ def environment(host: CliHost, identity: dict[str, str], root: Path) -> dict[str
         # Python names a direct fixture owner with a blank actor. "owner" is
         # not a wire principal. This explicit test identity is no CLI default.
         result["PLAN_ACTOR"] = "" if actor == "owner" else actor
+    if actor in {"chief", "worker", "manager"}:
+        result.update(agent_environment(
+            host.handle,
+            actor,
+            identity.get("ticket_id") if actor == "worker" else identity.get("manager_id"),
+            conversation_id=identity.get("conversation_id"),
+        ))
+    elif actor == "unidentified":
+        result["PLAN_LAUNCH_TOKEN"] = "unidentified"
     for key in ("ticket_id", "manager_id", "conversation_id"):
         if key in identity:
             result["PLAN_" + key.upper()] = identity[key]
