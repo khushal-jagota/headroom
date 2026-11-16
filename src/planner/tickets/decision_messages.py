@@ -101,8 +101,18 @@ def pending_ticket_ids(conn: sqlite3.Connection) -> list[str]:
     return [
         str(row[0])
         for row in conn.execute(
-            "SELECT DISTINCT ticket_id FROM ticket_decision_messages "
-            "WHERE delivery_status IN ('pending','sending','queued')"
+            "SELECT DISTINCT ticket_id FROM ticket_decision_messages m "
+            "WHERE m.rowid=(SELECT first.rowid FROM ticket_decision_messages first "
+            "WHERE first.ticket_id=m.ticket_id AND first.delivery_status!='delivered' "
+            "ORDER BY first.created_at,first.rowid LIMIT 1) AND "
+            "(delivery_status IN ('pending','sending','queued') OR "
+            "(delivery_status IN ('uncertain','refused','discarded') AND "
+            "(SELECT kind FROM conversation_events e "
+            "WHERE e.conversation_id=m.conversation_id "
+            "AND json_extract(e.payload,'$.sender_message_id')=m.sender_message_id "
+            "AND e.kind IN ('prompt','prompt_delivery_refused',"
+            "'prompt_delivery_uncertain','prompt_discarded') "
+            "ORDER BY e.sequence DESC LIMIT 1)='prompt'))"
         )
     ]
 

@@ -87,6 +87,7 @@ def test_canonical_route_body_and_worker_actor(
         input=json.dumps(body) if body is not None else None,
         env={
             "PLAN_ACTOR": "worker",
+            "PLAN_LAUNCH_TOKEN": "synthetic-launch-secret",
             "PLAN_TICKET_ID": "ticket-cli-fixture",
             "PLAN_MANAGER_ID": "",
             "PLAN_SPRINT_ITEM_ID": "",
@@ -102,7 +103,7 @@ def test_canonical_route_body_and_worker_actor(
         "http://cli-fixture.invalid" + path,
         body,
     )
-    assert kwargs["headers"] == {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "ticket-cli-fixture"}
+    assert kwargs["headers"] == {"Authorization": "Bearer synthetic-launch-secret"}
 
 
 @pytest.mark.parametrize(

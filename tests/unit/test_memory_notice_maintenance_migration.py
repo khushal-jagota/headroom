@@ -36,7 +36,7 @@ def _prompt(text: str, sender_label: str, **identity: object) -> dict[str, objec
     return {"text": text, "sender_label": sender_label, "mode": "queue", **identity}
 
 
-# Each history is one work turn, the automatic /compact that set the watermark at 2, and
+# Each history has an old activity watermark at 2, a compaction event at 4, and
 # then the prompt that ended the recorded activity at 9.
 LATEST_PROMPT = {
     "notice_only": _prompt(
@@ -94,7 +94,7 @@ def test_only_notice_only_activity_loses_its_compaction_eligibility(tmp_path: Pa
                 "automatically_compacted_through_sequence FROM conversations"
             )
         }
-    assert watermarks == {"notice_only": (9, 2), "owner_message": (2, 2), "owner_compact": (2, 2)}
+    assert watermarks == {"notice_only": (9, 4), "owner_message": (2, 4), "owner_compact": (2, 4)}
     due = asyncio.run(
         ConversationStore(path).conversations_due_for_automatic_compaction(
             due_at_or_before=ACTIVITY_AT, activity_after=ACTIVITY_AT - 600

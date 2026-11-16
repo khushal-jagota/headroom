@@ -188,6 +188,39 @@ async def _first_server_with_running_turns(
                 workspace_folder=Path("/tmp/workspace"),
             )
         )
+        if sender_message_id is not None:
+            # A notice is admitted only for a claimed Ticket with an unanswered
+            # working-turn compaction after an earlier worker-step prompt.
+            with connect(str(db_path)) as conn:
+                conn.execute(
+                    "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+                    "field_values,created_at,updated_at,conversation_id,worker_step_claim,"
+                    "workflow_json) VALUES (?,?,'coding','hermes','needs_implementation',"
+                    "'needs_implementation','{}',0,0,?,'out',?)",
+                    (f"t-{conversation_id}", "Worker", conversation_id, preset_workflow_json(conn)),
+                )
+                conn.execute(
+                    "INSERT INTO conversation_events VALUES (?,1,'prompt',?,0)",
+                    (
+                        conversation_id,
+                        json.dumps({"text": "step", "sender_label": "Panels", "mode": "queue",
+                                    "sender_message_id": "worker_step_message_first"}),
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO conversation_events VALUES (?,2,'turn_ended',?,0)",
+                    (conversation_id, json.dumps({"ending": "completed", "error_summary": None})),
+                )
+                conn.execute(
+                    "INSERT INTO conversation_events VALUES (?,3,'context_compacted','{}',0)",
+                    (conversation_id,),
+                )
+                conn.execute(
+                    "UPDATE conversations SET latest_sequence=3, "
+                    "automatically_compacted_through_sequence=3, "
+                    "working_turn_compacted_through_sequence=3 WHERE conversation_id=?",
+                    (conversation_id,),
+                )
         fate = await harness.system.send(
             conversation_id,
             text_message_content("work"),
@@ -339,7 +372,9 @@ def test_a_memory_notice_turn_adopted_after_a_vps_restart_stays_maintenance(
                     standard_error_tail=None,
                 ),
             )
-            assert await _turn_endings(restarted, "mac") == [ConversationTurnEnding.completed]
+            assert await _turn_endings(restarted, "mac") == [
+                ConversationTurnEnding.completed, ConversationTurnEnding.completed
+            ]
             record = await restarted.store.read_conversation("mac")
             assert record is not None
             assert record.latest_agent_activity_sequence == (
@@ -573,7 +608,9 @@ def test_a_mac_restart_recovers_one_drained_conversation_once(
                 for event in await harness.events("mac-a")
                 if isinstance(event.payload, PromptEventPayload)
             ]
-            assert prompts == ["work", RECOVERY_TEXT]
+            assert len(prompts) == 2 and prompts[0] == "work"
+            assert prompts[1].startswith(RECOVERY_TEXT)
+            assert "panels api METHOD PATH --input-json - --json" in prompts[1]
             assert ConversationEventKind.prompt_delivery_refused not in (
                 await harness.recorded_kinds("mac-a")
             )

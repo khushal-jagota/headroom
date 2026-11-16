@@ -76,7 +76,8 @@ from planner.tickets.contracts import TicketLocale
 
 @pytest.mark.parametrize("backend", [ConversationBackendKey.claude, ConversationBackendKey.hermes])
 def test_native_worker_context_reaches_actual_provider_prompts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: ConversationBackendKey
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: ConversationBackendKey,
+    executor_transport_home: Path,
 ) -> None:
     async def exercise() -> None:
         for name, directory in (
@@ -159,7 +160,7 @@ def test_native_worker_context_reaches_actual_provider_prompts(
         )
         clients: list[_ScriptedClaudeSdkClient] = []
         commands: list[tuple[ChildCommand, CommandOutcome]] = []
-        control = ScriptedAcpAgentControl(str(tmp_path / "agent.sock"))
+        control = ScriptedAcpAgentControl(str(executor_transport_home / "agent.sock"))
 
         def make_client(options: Any) -> _ScriptedClaudeSdkClient:
             client = _ScriptedClaudeSdkClient(

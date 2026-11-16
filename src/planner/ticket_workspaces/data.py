@@ -3,7 +3,6 @@
 import sqlite3
 
 from planner.ticket_workspaces.contracts import (
-    RETENTION_SECONDS,
     WorkspaceIdentity,
     WorkspaceState,
 )
@@ -100,7 +99,6 @@ def authorize_retirement(
     if (
         current != state
         or state.ended_at is None
-        or now < state.ended_at + RETENTION_SECONDS
     ):
         return False
     if conn.execute(
@@ -140,7 +138,7 @@ def has_workspace_activity(conn: sqlite3.Connection, ticket_id: str) -> bool:
             "SELECT 1 FROM conversation_lifecycle_facts f "
             "WHERE f.conversation_id=c.conversation_id "
             "AND ((f.kind='turn' AND f.status IN ('intent','running','unknown')) "
-            "OR (f.kind='attempt' AND f.status IN ('intent','unknown')) "
+            "OR (f.kind='attempt' AND f.status='intent') "
             "OR (f.kind='request' AND f.status IN ('pending','answering')))) OR EXISTS("
             "SELECT 1 FROM conversation_background_tasks b "
             "WHERE b.conversation_id=c.conversation_id)) "

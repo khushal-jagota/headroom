@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import httpx
 
+from planner.agent_identity.contracts import (
+    LAUNCH_TOKEN_ENVIRONMENT_NAME,
+    UNIDENTIFIED_LAUNCH_TOKEN,
+)
 from planner.cli.errors import exit_with_human_error
 
 if TYPE_CHECKING:
@@ -36,27 +40,13 @@ def _url(path: str) -> str:
 
 
 def _headers() -> dict[str, str]:
-    """Say who this process is, and let the server decide what that may do.
-
-    One position per caller, read from the environment it was launched with. A command
-    used to pick between two of these, which is the two-doors shape inside the tool: the
-    same operation claimed a different identity depending on which name you typed.
-    Nothing is claimed here that the environment does not say.
-    """
-    actor = os.environ.get("PLAN_ACTOR", "").strip()
-    ticket_id = os.environ.get("PLAN_TICKET_ID", "").strip()
-    manager_id = os.environ.get("PLAN_MANAGER_ID", "").strip()
-    if not actor:
-        return {}
-    headers = {"X-Plan-Actor": actor}
-    if actor == "worker" and ticket_id:
-        headers["X-Plan-Ticket-ID"] = ticket_id
-    if actor == "manager" and manager_id:
-        headers["X-Plan-Manager-ID"] = manager_id
-    conversation_id = os.environ.get("PLAN_CONVERSATION_ID", "").strip()
-    if conversation_id:
-        headers["X-Plan-Conversation-ID"] = conversation_id
-    return headers
+    """Forward the launch credential without interpreting role context as authority."""
+    token = os.environ.get(LAUNCH_TOKEN_ENVIRONMENT_NAME, "").strip()
+    if LAUNCH_TOKEN_ENVIRONMENT_NAME in os.environ:
+        return {"Authorization": f"Bearer {token or UNIDENTIFIED_LAUNCH_TOKEN}"}
+    if os.environ.get("PLAN_ACTOR", "").strip():
+        return {"Authorization": f"Bearer {UNIDENTIFIED_LAUNCH_TOKEN}"}
+    return {}
 
 
 def send(

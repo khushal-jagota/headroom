@@ -20,7 +20,7 @@ Importantly, remember agents are really smart. You do not need to spell everythi
 - **needs\_what\_good\_looks\_like\_at\_each\_stage** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
 - **needs\_model\_and\_effort** — the collaborative choice of explicit backend, model, and reasoning effort used when this worker starts.
 - **needs\_drafting** — the artifacts: the structured preset and its generated specialist skill preview.
-- **needs\_consequences** — the owner or Chief saves the approved preset and verifies the generated skill. No restart is necessary.
+- **needs\_consequences** — finish the authorized repository work and record the verified result. The owner or Chief saves the preset during the final Drafting review.
 
 (`needs_brief` and `done` are the universal bookends every worker shares.)
 
@@ -47,7 +47,7 @@ Decide the new worker's stages before touching any files. The work in Purpose an
 - The **alternatives you weighed**.
 - What you **included or excluded, and why** — a stage earns its place only as a real, separately-reviewable beat; if two always get approved together, they're one.
 
-Match the stages to how the work actually breaks. Most work also splits **doing the core thing** from **making it live / its downstream effects** — this very ticket does: draft the artifacts, then register and provision them. That seam is usually a natural stage boundary; look for it in the worker you're designing.
+Match the stages to how the work actually breaks. Put the final decision before worker-owned Consequences, then Done. Complete required owner-only actions during the final review. Consequences performs only the authorized follow-through and records its verified result.
 
 ### needs\_what\_good\_looks\_like\_at\_each\_stage — the design substance (the crux)
 
@@ -69,19 +69,15 @@ The record holds `worker_type`, `label`, `guidance`, `stages`, `fields`, and `pr
 
 Copy the approved Model and Effort values into `profile`. Include a `skill` block with the specialist description. Panels generates the specialist body from the structured record. Do not provide an independently edited Markdown body. Include the generated preview for review.
 
-### needs\_consequences — land it
+During the final Drafting review, hand the exact record and generated skill preview to the owner or Chief. They review the content and save the approved preset with `panels worker-type save`. Ticket Workers cannot write presets or skills.
 
-A Worker type is a reusable preset. Each Ticket owns the stages it copies. Existing Tickets keep their stages when the preset changes.
+Read the record back with `panels worker-type show <type>`. Confirm that creation offers it and that its generated skill matches the reviewed preview. The owner or Chief accepts Drafting only after these checks succeed. No restart is necessary.
 
-1. Hand the exact approved record to the owner or Chief for `panels worker-type save`. Ticket Workers cannot write presets or skills.
-2. Read it back with `panels worker-type show <type>`.
-3. Confirm that `panels worker-type list` names it and that creation offers it.
-4. Read the generated specialist skill and compare it with the reviewed preview.
-5. Update the repository seed through the ordinary branch route for fresh installations.
+### needs\_consequences — finish the follow-through
 
-The `profile` carries the backend, model and reasoning effort approved in Model and Effort. There is no second copy of them to keep in step.
+Update the repository seed through the ordinary branch route for fresh installations. Existing Tickets keep their saved workflows when a preset changes.
 
-A good **Consequences** is a short, verified report: what was saved, what `panels worker-type show` reports, and how you confirmed the worker is live.
+Record what was saved, what the live store reports, and the completed repository work. Submit the verified report with `panels worker propose`. The ceiling holder reviews it before the Ticket reaches Done. If the approved work cannot finish, request help and preserve the actual result.
 
 ### Working disciplines
 

@@ -80,7 +80,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
         ticket_status:'errored',is_backlogged:row.is_backlogged,blocked:false,integrity_error:row.integrity_error,
         activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
         awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
-        awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:'errored',waiting_to_closeout:false,
+        awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:'errored',
         gating_field:null,recap:row.recap,recap_preview:row.recap_preview,
         manager:parent===null ? {kind:'chief',id:'chief'} : {kind:'manager',id:parent},
         manager_id:parent,manager_title:parent===null ? null : managersById.get(parent)?.title ?? null}];
@@ -94,7 +94,6 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
       awaiting_approval:parked && owner,awaiting_agent_approval:parked && !owner,assigned:row.stage_ownership==='user',
       agent_state:agentState(row.ticket_status,row.stage,knowledge),
-      waiting_to_closeout:row.gating_field==='consequences' && row.ticket_status==='empty',
       gating_field:row.gating_field,recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,
       manager:parent === null ? {kind:'chief',id:'chief'} : {kind:'manager',id:parent},
       manager_id:parent,manager_title:parent === null ? null : managersById.get(parent)?.title ?? null}];

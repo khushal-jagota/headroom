@@ -177,15 +177,17 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     row.click()
     worker_hash = page.evaluate("location.hash")
     expect(page.locator(f'[data-screen="ticket"][data-ticket-id="{ticket["id"]}"]')).to_be_visible()
-    # Settle accepts pointer input only after the owner enters the header.
-    card.locator(".identity").hover()
+    # Focus keeps Settle interactive even if the header moves before the click.
+    settle_button = card.get_by_role("button", name=f"Settle {item['title']}", exact=True)
+    settle_button.focus()
+    expect(settle_button).to_be_focused()
     with page.expect_response(
         lambda response: (
             response.url.endswith(f"/api/managers/{item['id']}/settled")
             and response.request.method == "PATCH"
         )
     ) as write:
-        card.get_by_role("button", name=f"Settle {item['title']}", exact=True).click()
+        settle_button.click()
     assert write.value.ok
     # Keep this membership proof outside the intentional Worker-hover freeze.
     page.mouse.move(1000, 50)

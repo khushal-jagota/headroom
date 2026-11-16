@@ -37,7 +37,7 @@ def run(browser, urls):
             "label": label,
             "stages": stage_rows,
             "advance": {stages[i][0]: stages[i + 1][0] for i in range(len(stages) - 1)},
-            "ceiling_range": [stage for stage, _, _ in stages],
+            "ceiling_range": [stage for stage, _, field in stages if field is not None],
             "default_ceiling": stages[1][0],
             "worker_profile_id": f"panels-worker-{worker_type}",
             "default_backend": "codex",
@@ -116,8 +116,8 @@ def run(browser, urls):
         "t_findings": ticket(
             "t_findings", "exploration", "needs_findings", "findings", "Evidence", 2
         ),
-        "t_consequences": ticket(
-            "t_consequences", "exploration", "needs_consequences", "consequences", "Applied", 3
+        "t_final_follow_up": ticket(
+            "t_final_follow_up", "exploration", "needs_consequences", "consequences", "Completed follow-up", 3
         ),
         "t_brief": ticket("t_brief", "coding", "needs_brief", "brief", "Kickoff request", 5),
         "t_review_replace": ticket(
@@ -482,7 +482,7 @@ def run(browser, urls):
         else:
             assert panel.locator(".listbox-picker-list").evaluate("list => list.scrollHeight>list.clientHeight"), panel.evaluate("p => ({panel:p.getBoundingClientRect().toJSON(),doc:p.closest('.ticket-doc').getBoundingClientRect().toJSON(),list:p.querySelector('.listbox-picker-list').outerHTML,style:p.getAttribute('style')})")
             page.get_by_role("listbox").press("End")
-            last = panel.locator('[data-ceiling-picker-choice="done"]')
+            last = panel.locator('[data-ceiling-picker-choice="needs_design_12"]')
             assert last.evaluate("""row => {
                 const r=row.getBoundingClientRect(), p=row.closest('[data-ceiling-picker-panel]').getBoundingClientRect();
                 return r.top>=p.top && r.bottom<=p.bottom;
@@ -626,7 +626,7 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     expect(proposal).to_have_text("Local edit")
     open_approval()
-    page.locator('[data-ceiling-picker-choice="done"]').click()
+    page.locator('[data-ceiling-picker-choice="needs_consequences"]').click()
     page.evaluate("fetch('/api/test/replace-coding', {method: 'POST'})")
     page.evaluate("window.__refresh()")
     expect(proposal).to_have_text("Replacement result")
@@ -649,17 +649,18 @@ def run(browser, urls):
     wait_count(approvals, 2)
     assert approvals[-1]["body"]["expected_proposal_revision"] == 1
     assert approvals[-1]["body"]["next_ceiling"] == "needs_answer"
-    # Terminal approval uses the exact visible revision, edited text, and saved reviewer
-    # in both real card hosts, without another ceiling or reviewer choice.
-    tickets["t_consequences"]["pending_proposal"]["revision"] = 7
-    tickets["t_consequences"]["pending_proposal_revision"] = 7
-    for host_kind, ticket_id in [("ticket", "t_consequences"), ("review", "t_failure")]:
+    # Final decision approval uses the visible revision and edited text in both
+    # real card hosts, without another ceiling or reviewer choice.
+    tickets["t_final_follow_up"]["pending_proposal"]["revision"] = 7
+    tickets["t_final_follow_up"]["pending_proposal_revision"] = 7
+    for host_kind, ticket_id in [("ticket", "t_final_follow_up"), ("review", "t_failure")]:
+        expected_field = tickets[ticket_id]["pending_proposal"]["field"]
         if host_kind == "ticket":
-            page.evaluate("window.__showTicket('t_consequences')")
+            page.evaluate("window.__showTicket('t_final_follow_up')")
         else:
             tickets[ticket_id]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
-            page.evaluate("window.__showReview('t_failure', 'consequences')")
-        expect(block()).to_have_attribute("data-field", "consequences")
+            page.evaluate("([id, field]) => window.__showReview(id, field)", [ticket_id, expected_field])
+        expect(block()).to_have_attribute("data-field", expected_field)
         # Reviewer-only routing stays available at the final gate and never approves.
         count = len(approvals)
         if host_kind == "ticket":
@@ -671,7 +672,6 @@ def run(browser, urls):
             page.evaluate("window.__refresh()")
             expect(block().locator("[data-reviewer-heading]")).to_have_text("User")
             assert len(approvals) == count
-        expected_holder = dict(tickets[ticket_id]["ceiling_holder"])
         expected_revision = tickets[ticket_id]["pending_proposal"]["revision"]
         proposal = block().locator("[contenteditable]")
         edited_body = "Edited terminal result" if host_kind == "ticket" else "Edited retry"
@@ -705,11 +705,9 @@ def run(browser, urls):
         expect(page.get_by_role("listbox")).to_have_count(0)
         assert approvals[-1] == {
             "ticket_id": ticket_id,
-            "field": "consequences",
+            "field": expected_field,
             "body": {
                 "message": None,
-                "next_ceiling": "none",
-                "next_holder": expected_holder,
                 "expected_proposal_revision": expected_revision,
                 "edited_body": edited_body,
             },
@@ -741,7 +739,7 @@ def run(browser, urls):
     page.evaluate("window.__showReview('t_review_replace', 'plan')")
     expect(block().locator("[contenteditable]")).to_have_text("Original Review plan")
     open_approval()
-    page.locator('[data-ceiling-picker-choice="done"]').click()
+    page.locator('[data-ceiling-picker-choice="needs_consequences"]').click()
     page.evaluate("fetch('/api/test/replace-review', {method: 'POST'})")
     page.evaluate("window.__refresh()")
     expect(block().locator("[contenteditable]")).to_have_text("Replacement Review plan")

@@ -50,7 +50,7 @@ import XCTest
         let detail = try APIClient.decoder().decode(TicketDetail.self, from: ticket)
         let proposal = try XCTUnwrap(detail.pendingProposal)
         ReviewStub.state.reset(ticket: ticket, manifest: Data("""
-        {"worker_types":[{"worker_type":"\(detail.workerType ?? "")","stages":[{"id":"\(detail.stage)","label":"Current"},{"id":"needs_implementation","label":"Next gate"},{"id":"done","label":"Done"}],"advance":{"\(detail.stage)":"needs_implementation"},"fields":[{"id":"\(proposal.field)","label":"Proposal"}],"ceiling_range":["needs_implementation","done"]}]}
+        {"worker_types":[{"worker_type":"\(detail.workerType ?? "")","stages":[{"id":"\(detail.stage)","label":"Current"},{"id":"needs_implementation","label":"Next gate"},{"id":"done","label":"Done"}],"advance":{"\(detail.stage)":"needs_implementation"},"fields":[{"id":"\(proposal.field)","label":"Proposal"}],"ceiling_range":["\(detail.stage)","needs_implementation","done"]}]}
         """.utf8))
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReviewStub.self]
@@ -69,7 +69,7 @@ import XCTest
         LocalStore.shared.saveDraft("An old proposal edit", server: "https://review.invalid", id: identity + ":edit")
         let decision = ReviewDecision()
         await decision.load(item: item, api: api)
-        XCTAssertEqual(decision.approvalStages.map(\.id), decision.manifest?.stages.map(\.id) ?? [])
+        XCTAssertEqual(decision.approvalStages.map(\.id), decision.manifest?.stages.filter { $0.id != "done" }.map(\.id) ?? [])
         XCTAssertEqual(decision.nextStage, "needs_implementation")
         let accepted = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(accepted)
@@ -107,7 +107,7 @@ import XCTest
         let (decision, api, _) = try await setupDecision()
         let ticket = try XCTUnwrap(decision.ticket)
         let proposal = try XCTUnwrap(decision.proposal)
-        XCTAssertTrue(decision.approvalStages.contains { $0.id == ticket.stage }, "Review exposes the current stage as a scope choice even when outside the approval ceiling range")
+        XCTAssertTrue(decision.approvalStages.contains { $0.id == ticket.stage }, "Review exposes the current stage as a scope choice when the server offers it")
         let policy = try APIClient.decoder().decode(ReviewWorkerManifest.self, from: Data("""
         {"stages":[{"id":"earlier","label":"Earlier"},{"id":"waiting","label":"Waiting"},{"id":"next","label":"Next"},{"id":"done","label":"Done"}],"advance":{"waiting":"next"},"fields":[],"ceiling_range":["earlier","waiting","next","done"]}
         """.utf8))

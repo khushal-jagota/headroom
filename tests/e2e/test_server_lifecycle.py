@@ -303,7 +303,7 @@ def test_foreign_pattern_signal_is_visible_and_dogfood_still_stops(
     port = int(listener.getsockname()[1])
     handoff_path = fixture.control_socket.parent / "dogfood-listener-handoff.sock"
     handoff = _bind_listener_handoff(handoff_path)
-    control_socket = Path(f"/tmp/panels-dogfood-proof-{uuid.uuid4().hex}.sock")
+    control_socket = fixture.control_socket.parent / "dogfood.sock"
     env = _environment(tmp_path / "dogfood", port, control_socket, handoff_path)
     log = tmp_path / "dogfood.log"
     try:

@@ -15,6 +15,10 @@ from typing import Any
 import pytest
 from tests.support.conversation_codex_scripted_app_server import scripted_app_server_launch
 
+from planner.agent_identity.contracts import (
+    LAUNCH_TOKEN_ENVIRONMENT_NAME,
+    UNIDENTIFIED_LAUNCH_TOKEN,
+)
 from planner.conversation.backends.codex_app_server import login
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,
@@ -224,7 +228,12 @@ async def _notice_bench(
         child_environment = launched["launched"]["environment"]
         assert child_environment["HOME"] == os.environ["HOME"]
         assert child_environment["CODEX_HOME"] == os.environ["CODEX_HOME"]
-        assert not any("API_KEY" in name or "TOKEN" in name for name in child_environment)
+        assert child_environment[LAUNCH_TOKEN_ENVIRONMENT_NAME] == UNIDENTIFIED_LAUNCH_TOKEN
+        assert not any(
+            "API_KEY" in name or "TOKEN" in name
+            for name in child_environment
+            if name != LAUNCH_TOKEN_ENVIRONMENT_NAME
+        )
         # Synthetic immutable history, not a reconstruction of provider activity.
         compacted = await store.append_event("c", ContextCompactedEventPayload())
         with bench.connect() as conn:

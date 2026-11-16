@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { decisionRecovery, decisionIdentity, recallReviewDecision, recoverReviewDecision, savedReviewDecisions, submitReviewDecision, validateDecisionResponse, type ReviewDecision } from "../src/lib/review/decision";
+import { decisionRefusals, decisionIdentity, recallReviewDecision, recoverReviewDecision, recoverSavedReviewDecisions, savedReviewDecisions, submitReviewDecision, validateDecisionResponse, type ReviewDecision } from "../src/lib/review/decision";
 import type { SavedDecision } from "../src/lib/review/contracts";
 import { queryClient } from "../src/lib/queryClient";
 import { fetchJson } from "../src/lib/api";
@@ -61,7 +61,7 @@ it("looks up the exact operation without cache after lost POST and accepts its r
   transport.mockResolvedValueOnce(receipt(original));
   await recoverReviewDecision(original);
   expect(transport).toHaveBeenCalledTimes(3);
-  expect(transport.mock.calls[2]).toEqual([`/api/tickets/ticket/decision-operations/${original.operationId}`, { cache: "no-store" }]);
+  expect(transport.mock.calls[2]).toEqual([`/api/tickets/ticket/decision-operations/${original.operationId}`, { cache: "no-store", signal: expect.any(AbortSignal) }]);
   expect(recallReviewDecision(identity)).toBeNull();
 });
 
@@ -72,7 +72,7 @@ it("retains closed-tab recovery in durable storage and replays only its frozen c
   expect(savedReviewDecisions()).toEqual([original]);
   transport.mockResolvedValueOnce(absent).mockResolvedValueOnce(receipt(original));
   await recoverReviewDecision(savedReviewDecisions()[0]);
-  expect(transport.mock.calls[3]).toEqual(transport.mock.calls[1]);
+  expect(transport.mock.calls[3][1]).toMatchObject({ method: "POST", body: original.command });
   expect(transport.mock.calls[3][1]?.body).toEqual(original.command);
   expect(original.command.message).toBe(decision().body.message);
 });
@@ -103,8 +103,8 @@ it("surfaces a terminal changed-proposal refusal and permits a distinct correcte
   transport.mockResolvedValueOnce(receipt(original, "refused"));
   vi.mocked(queryClient.invalidateQueries).mockImplementationOnce(async () => {
     // Refresh can remove the old proposal card. Its refusal already lives above it.
-    expect(get(decisionRecovery)).toContainEqual(expect.objectContaining({
-      saved: original, terminal: true, error: expect.objectContaining({ message: "Approval did not apply: This changed, review again" })
+    expect(get(decisionRefusals)).toContainEqual(expect.objectContaining({
+      saved: original, error: expect.objectContaining({ message: "Approval did not apply: This changed, review again" })
     }));
   });
   await expect(recoverReviewDecision(original)).rejects.toThrow("This changed, review again");
@@ -112,6 +112,20 @@ it("surfaces a terminal changed-proposal refusal and permits a distinct correcte
   transport.mockResolvedValueOnce(absent).mockRejectedValueOnce(new Error("next unknown"));
   await expect(submitReviewDecision("ticket", "what_changes", decision("corrected"))).rejects.toThrow();
   expect(recallReviewDecision(identity)?.operationId).not.toBe(original.operationId);
+});
+
+it("re-checks saved decisions quietly: an unanswered one stays saved, a refused one reaches its proposal", async () => {
+  const original = await pending();
+  transport.mockRejectedValueOnce(new Error("still no answer"));
+  await expect(recoverSavedReviewDecisions()).resolves.toBeUndefined();
+  expect(recallReviewDecision(identity)).toEqual(original);
+  expect(get(decisionRefusals)).toEqual([]);
+  // Every lookup and send carries a time limit, so a request that never answers cannot hold a decision.
+  expect(transport.mock.calls.at(-1)?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  transport.mockResolvedValueOnce(receipt(original, "refused"));
+  await recoverSavedReviewDecisions();
+  expect(recallReviewDecision(identity)).toBeNull();
+  expect(get(decisionRefusals)).toHaveLength(1);
 });
 
 it("requires receipt identity and exclusive terminal outcomes", async () => {

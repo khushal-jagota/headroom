@@ -160,8 +160,8 @@ def test_conftest_refuses_residual_path_before_test_import(tmp_path: Path) -> No
         f"sys.path.insert(0, {str(ROOT / 'scripts')!r})\n"
         "import test_runtime\n"
         "original = test_runtime.environment_for\n"
-        "def broken_default(root, environment):\n"
-        "    answer = original(root, environment)\n"
+        "def broken_default(root, environment, **kwargs):\n"
+        "    answer = original(root, environment, **kwargs)\n"
         f"    answer['PLAN_UNKNOWN_PATH'] = {str(alias)!r}\n"
         "    return answer\n"
         "test_runtime.environment_for = broken_default\n"
@@ -228,3 +228,22 @@ def test_runtime_hops_retain_original_and_current_protected_roots(tmp_path: Path
         assert str(root / "hermes/skills") in inventory.roots
     assert str(home / "selected-codex/skills") in inventory.roots
     assert str(changed_home / "selected-codex/skills") in inventory.roots
+
+
+def test_runtime_socket_stays_usable_and_is_removed_with_long_storage_parent(
+    tmp_path: Path,
+) -> None:
+    import socket
+
+    from test_runtime import RuntimeIsolation
+
+    parent = tmp_path / ("long-storage-" * 8)
+    parent.mkdir()
+    with RuntimeIsolation({}, parent=parent) as runtime:
+        socket_path = Path(runtime.environment["PLAN_SERVER_CONTROL_SOCKET"])
+        socket_directory = socket_path.parent
+        assert socket_directory.stat().st_mode & 0o077 == 0
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(socket_path))
+        assert socket_path.exists()
+    assert not socket_directory.exists()

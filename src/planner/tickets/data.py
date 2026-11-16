@@ -34,6 +34,7 @@ from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import decision_messages, derivation
 from planner.tickets.contracts import (
+    NO_FURTHER,
     EmployeeLaunchConfiguration,
     NextCeiling,
     PendingTicketProposal,
@@ -61,6 +62,7 @@ from planner.tickets.logic import (
     review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.tickets.logic.recap import validate_recap
 from planner.tickets.proposal_contention import begin_proposal
 from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
 from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
@@ -73,7 +75,11 @@ from planner.worker_types.contracts import (
     TicketWorkflowDefinition,
     WorkflowDefinition,
 )
-from planner.worker_types.registry import WorkerTypeRegistry, validate_workflow
+from planner.worker_types.registry import (
+    WorkerTypeRegistry,
+    validate_completion_stage,
+    validate_workflow,
+)
 from planner.worker_types.store import workflow_from_preset, workflow_from_row, workflow_to_json
 
 
@@ -1069,6 +1075,7 @@ def create_ticket(
             raise PlannerError(
                 ErrorCode.validation, "a custom workflow cannot select a specialist skill"
             )
+    validate_completion_stage(workflow)
     worker_type_definition = workflow
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
@@ -1105,6 +1112,8 @@ def create_ticket(
             manager_kind=manager_kind,
             manager_id=manager_id,
         )
+        if stated_ceiling is not None:
+            admission.validate_creation_ceiling(stated_ceiling)
         ceiling = (
             default_ceiling
             if stated_ceiling is None
@@ -1396,6 +1405,8 @@ def mark_worker_step_claim_errored(
     now: int,
     error_reason: str,
     notify_supervisor: bool = True,
+    decision_proposal_revision: int | None = None,
+    decision_delivery: bool = False,
 ) -> bool:
     """Expose one failed claim, unless a later claim transition replaced it.
 
@@ -1406,6 +1417,14 @@ def mark_worker_step_claim_errored(
     """
     with _txn_without_nested_savepoint(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
+        # A receipt for an older decision cannot change a newer proposal's control
+        # state. Legacy feedback has no revision; preserve an existing proposal.
+        if decision_delivery and (
+            (decision_proposal_revision is None and ticket.pending_proposal is not None)
+            or (decision_proposal_revision is not None
+                and ticket.pending_proposal_revision > decision_proposal_revision)
+        ):
+            return False
         if ticket.worker_step_claim is not expected_claim:
             return False
         if ticket.worker_step_claim_revision != expected_claim_revision:
@@ -1544,7 +1563,7 @@ def accept_proposal(
     now: int,
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
-    next_holder: Principal,
+    next_holder: Principal | None = None,
     expected_proposal_revision: int | None = None,
     message: str | None = None,
     decision_id: str | None = None,
@@ -1560,6 +1579,22 @@ def accept_proposal(
             conn, ticket_id
         )
         decision_messages.validate_request(message, expected_proposal_revision, decision_id)
+        # Receipt identity keeps the original ceiling, including historical completion
+        # stops. Field aliases still name the same request as their Stage ids.
+        request_ceiling = next_ceiling
+        if (
+            request_ceiling is not None
+            and request_ceiling != NO_FURTHER
+            and request_ceiling not in worker_type_definition.stage_ids()
+        ):
+            try:
+                request_ceiling = worker_type_definition.stage_gated_by(request_ceiling)
+            except PlannerError as exc:
+                raise PlannerError(
+                    ErrorCode.scope_invalid,
+                    "unknown next_ceiling",
+                    {"next_ceiling": request_ceiling},
+                ) from exc
         request = decision_messages.request_json(
             principal,
             ticket_id=ticket_id,
@@ -1568,8 +1603,12 @@ def accept_proposal(
             message=message,
             expected_proposal_revision=expected_proposal_revision,
             edited_body=edited_body,
-            next_ceiling=next_ceiling,
-            next_holder={"kind": next_holder.kind.value, "id": next_holder.id},
+            next_ceiling=request_ceiling,
+            next_holder=(
+                None
+                if next_holder is None
+                else {"kind": next_holder.kind.value, "id": next_holder.id}
+            ),
         )
         if decision_messages.is_replay(conn, decision_id, request):
             return ticket
@@ -1582,18 +1621,21 @@ def accept_proposal(
                 "the visible proposal changed; read it again before accepting",
                 {"ticket_id": ticket_id},
             )
+        resolved_ceiling = admission.parse_next_ceiling(
+            request_ceiling, worker_type_definition, current_stage=ticket.stage
+        )
         decision = resolution.decide_accept(
             ticket,
             field,
             edited_body,
-            next_ceiling,
+            resolved_ceiling,
             next_holder,
             worker_type_definition=worker_type_definition,
             approval=_explicit_approval(conn, principal),
         )
         _validate_review_holder(
             conn,
-            next_holder,
+            decision.ceiling_holder,
             ticket_id=ticket.id,
             manager_kind=ticket.manager_kind,
             manager_id=ticket.manager_id,
@@ -2000,6 +2042,7 @@ def edit_ticket(
         # The recap and settled field values are whole documents set through the same
         # Ticket edit door as scalar fields.
         if "recap" in edit:
+            validate_recap(edit["recap"])
             changes.append(("recap", "recap", ticket.recap, edit["recap"]))
             changes.append(
                 (

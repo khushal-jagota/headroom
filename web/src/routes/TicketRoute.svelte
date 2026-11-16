@@ -41,6 +41,7 @@
   import RequestRecapAction from "../components/RequestRecapAction.svelte";
   import RecapSlot from "../components/RecapSlot.svelte";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
+  import DecisionFeedbackDelivery from "../components/DecisionFeedbackDelivery.svelte";
   import type { InlineEditDraft } from "../lib/inlineEditDraft";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -391,6 +392,7 @@
               {/each}
             </div>
           {/if}
+          <DecisionFeedbackDelivery ticket={detail} />
           {#if headerError}<ErrorLine error={headerError} />{/if}
         </header>
 

@@ -2743,6 +2743,47 @@ def _conversation_repairs(browser, url):
     page.close()
 
 
+def _paste_keeps_composer_on_floor(browser, url):
+    """A pasted draft grows the composer upward; the page behind it never scrolls.
+
+    The dock stands on the host's bottom edge, so a host that can scroll takes the dock with
+    it. Chrome reveals the caret of a pasted draft by scrolling every ancestor it can, and a
+    clipped host can still scroll unless it is `overflow: clip`. The hosts below end in the
+    hidden loading status a real list carries (absolutely placed, outside the document's own
+    scroller), which is what gives the clipped host room to scroll. Only a real browser
+    paste, in a real layout with motion on, shows it.
+    """
+    import time
+
+    started = time.perf_counter()
+    context = browser.new_context(viewport={"width": 1000, "height": 800}, reduced_motion="no-preference")
+    context.grant_permissions(["clipboard-read", "clipboard-write"])
+    try:
+        for route in ("manager", "ticket"):
+            page = context.new_page()
+            page.goto(url + ("?ticket=1" if route == "ticket" else ""), wait_until="domcontentloaded")
+            host = ".manager-page" if route == "manager" else ".ticket-page"
+            # The dock has measured the host and floated the zone once it names the state.
+            page.wait_for_selector(f'{host}[data-conversation-dock-state="rest"]')
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            bottom = "() => document.querySelector('[data-conversation-composer]').getBoundingClientRect().bottom"
+            before = page.evaluate(bottom)
+            page.locator("[data-conversation-input]").click()
+            page.evaluate("text => navigator.clipboard.writeText(text)", "pasted words that wrap onto many lines " * 18)
+            page.keyboard.press("Control+V")
+            page.wait_for_function(
+                "() => document.querySelector('[data-conversation-input]').getBoundingClientRect().height > 100"
+            )
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            scrolled = page.evaluate(f"() => document.querySelector('{host}').scrollTop")
+            assert scrolled == 0, (route, "the page scrolled", scrolled)
+            assert abs(page.evaluate(bottom) - before) <= 1, (route, "the composer left the floor", before, page.evaluate(bottom))
+            page.close()
+    finally:
+        context.close()
+        print(f"Paste keeps the composer on the floor: {time.perf_counter() - started:.3f}s", flush=True)
+
+
 def _manager_recap_header(browser, url):
     """The real header must remeasure its read-only recap after its typography changes."""
     import time
@@ -4325,6 +4366,7 @@ def run(browser, urls):
             print('Focused overlay menu proof only; other conversation scenarios were not run.',flush=True)
             return
         _manager_recap_header(browser, urls[0])
+        _paste_keeps_composer_on_floor(browser, urls[0])
         _owner_width_frames(browser, urls[0])
         _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])
@@ -4343,7 +4385,7 @@ def _machine_evidence(browser, url):
     page.goto(url+"?machines",wait_until="domcontentloaded")
     expect(page.locator('[data-machine-notice]')).to_have_count(0)
     expect(page.locator("button.machine-identity")).to_have_count(0)
-    expect(page.get_by_role("img", name="Runs on Mac")).to_be_visible()
+    expect(page.locator(".ticket-row .machine-identity")).to_have_count(0)
     expect(page.locator('[data-conversation-id="vps-conversation"] [data-conversation-signal="working"]')).to_be_visible()
     expect(page.locator('[data-conversation-id="machine-conversation"] [data-conversation-signal="working"]')).to_have_count(0)
     assert page.locator('.ticket-row button, .ticket-row a').count()==0

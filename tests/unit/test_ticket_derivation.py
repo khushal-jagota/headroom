@@ -45,8 +45,8 @@ def _stored(
         (WorkerStepClaim.out, True, True, TicketStatus.awaiting_approval),
         (WorkerStepClaim.errored, False, False, TicketStatus.errored),
         (WorkerStepClaim.errored, False, True, TicketStatus.errored),
-        (WorkerStepClaim.errored, True, False, TicketStatus.errored),
-        (WorkerStepClaim.errored, True, True, TicketStatus.errored),
+        (WorkerStepClaim.errored, True, False, TicketStatus.awaiting_approval),
+        (WorkerStepClaim.errored, True, True, TicketStatus.awaiting_approval),
     ],
 )
 def test_the_rule_answers_one_status_for_every_combination_of_stored_facts(

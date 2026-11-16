@@ -13,17 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 from urllib.parse import urlsplit
 
-from planner.core.authctx import (
-    AUTHENTICATED_OWNER_SCOPE_KEY,
-    PLAN_ACTOR_SCOPE_KEY,
-    PLAN_CONVERSATION_ID_SCOPE_KEY,
-    PLAN_MANAGER_ID_SCOPE_KEY,
-    PLAN_TICKET_ID_SCOPE_KEY,
-    X_PLAN_ACTOR,
-    X_PLAN_CONVERSATION_ID,
-    X_PLAN_MANAGER_ID,
-    X_PLAN_TICKET_ID,
-)
+from planner.core.authctx import AUTHENTICATED_OWNER_SCOPE_KEY
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
 
@@ -104,17 +94,6 @@ class TrustedIngressMiddleware:
                 scope[TRUSTED_LOGIN_SCOPE_KEY] = login
                 scope[AUTHENTICATED_OWNER_SCOPE_KEY] = True
 
-                if str(scope.get("path", "")).startswith("/api/updates"):
-                    await self.app(scope, receive, send)
-                    return
-                scope = _without_header(scope, X_PLAN_CONVERSATION_ID)
-                scope[PLAN_CONVERSATION_ID_SCOPE_KEY] = None
-                scope = _without_header(scope, X_PLAN_ACTOR)
-                scope = _without_header(scope, X_PLAN_TICKET_ID)
-                scope = _without_header(scope, X_PLAN_MANAGER_ID)
-                scope[PLAN_ACTOR_SCOPE_KEY] = None
-                scope[PLAN_TICKET_ID_SCOPE_KEY] = None
-                scope[PLAN_MANAGER_ID_SCOPE_KEY] = None
 
         await self.app(scope, receive, send)
 
@@ -162,15 +141,6 @@ def _duplicate_singleton_security_header(scope: dict[str, Any]) -> str | None:
             return name
         seen.add(name)
     return None
-
-
-def _without_header(scope: dict[str, Any], header_name: str) -> dict[str, Any]:
-    lowered = header_name.lower().encode("latin1")
-    copied = dict(scope)
-    copied["headers"] = [
-        (name, value) for name, value in scope.get("headers", ()) if name.lower() != lowered
-    ]
-    return copied
 
 
 def executor_ingress_claim(scope: Mapping[str, Any]) -> str:

@@ -29,7 +29,7 @@ from fastapi import FastAPI
 def short_transport_root() -> Iterator[Path]:
     """Keep Unix sockets below macOS's path limit, regardless of test name."""
     with tempfile.TemporaryDirectory(
-        prefix="ex-", dir=Path(tempfile.gettempdir()).resolve()
+        prefix="ex-", dir=Path("/tmp").resolve()
     ) as root:
         yield Path(root)
 

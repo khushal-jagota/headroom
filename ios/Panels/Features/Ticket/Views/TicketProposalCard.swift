@@ -75,9 +75,10 @@ import Observation
         return value
     }
 
-    func approve(_ snapshot: Snapshot, ceiling: String, holder: Principal) throws {
+    func approve(_ snapshot: Snapshot, ceiling: String? = nil, holder: Principal? = nil) throws {
         let approval = ReviewApproval(expectedProposalRevision: snapshot.proposal.revision,
-            editedBody: nil, nextCeiling: ceiling, nextHolder: holder)
+            editedBody: nil, nextCeiling: snapshot.presentation.finalApproval ? nil : ceiling,
+            nextHolder: snapshot.presentation.finalApproval ? nil : holder)
         try enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
             ticketID: snapshot.presentation.ticket.id, proposal: snapshot.proposal, approval: approval,
             guidance: snapshot.guidance?.text, draftID: snapshot.guidance?.draftID,
@@ -134,7 +135,7 @@ struct TicketProposalCard: View {
             }
             .sheet(isPresented: $decision.approvalOpen, onDismiss: { decision.scopeChange.releasePresentation() }) {
                 if let snapshot = decision.snapshot {
-                    DecisionApprovalSheet(stages: ReviewWorkerManifest(workflow: snapshot.presentation.manifest).stages,
+                    DecisionApprovalSheet(stages: ReviewWorkerManifest(workflow: snapshot.presentation.manifest).approvalBoundaries,
                         nextStage: snapshot.presentation.manifest.advance?[snapshot.presentation.ticket.stage] ?? "done",
                         holder: snapshot.presentation.ticket.ceilingHolder, managerID: snapshot.presentation.ticket.managerId,
                         checkCurrent: decision.scopeChange.needsCheck ? {
@@ -157,7 +158,7 @@ struct TicketProposalCard: View {
             }
             .sheet(isPresented: $decision.reviewerOpen, onDismiss: { decision.scopeChange.releasePresentation() }) {
                 if let snapshot = decision.snapshot {
-                    DecisionApprovalSheet(stages: ReviewWorkerManifest(workflow: snapshot.presentation.manifest).stages,
+                    DecisionApprovalSheet(stages: ReviewWorkerManifest(workflow: snapshot.presentation.manifest).approvalBoundaries,
                         nextStage: snapshot.presentation.manifest.advance?[snapshot.presentation.ticket.stage] ?? "done",
                         holder: snapshot.presentation.ticket.ceilingHolder, managerID: snapshot.presentation.ticket.managerId, reviewerOnly: true,
                         checkCurrent: decision.scopeChange.needsCheck ? {
@@ -189,8 +190,8 @@ struct TicketDecisionDock: View {
             noteEnabled: !decision.pending && decision.matches(presentation: presentation, proposal: proposal, api: store.client),
             onApprove: {
                 let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
-                if nextStage == "done" {
-                    do { try decision.approve(snapshot, ceiling: "done", holder: presentation.ticket.ceilingHolder) }
+                if presentation.finalApproval {
+                    do { try decision.approve(snapshot) }
                     catch { decision.error = error.localizedDescription }
                 } else {
                     decision.approvalFlow = DecisionApprovalFlow()

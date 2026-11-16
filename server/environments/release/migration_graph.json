@@ -3,11 +3,17 @@
     "actual_compaction_boundaries": [
       "merge_iphone_staging"
     ],
+    "agent_launch_tokens": [
+      "proposal_before_errored_claim"
+    ],
     "automatic_start_lookup": [
       "worker_cleanup_recheck"
     ],
     "canonical_manager_identities": [
       "retire_explicit_reply_requirement"
+    ],
+    "consequences_without_approval": [
+      "actual_compaction_boundaries"
     ],
     "executor_mailboxes": [
       "canonical_manager_identities"
@@ -54,8 +60,14 @@
     "notification_message_context": [
       "native_shared_decision_notes"
     ],
+    "proposal_before_errored_claim": [
+      "consequences_without_approval"
+    ],
     "recap_freshness": [
       "ticket_decision_messages"
+    ],
+    "restore_consequences_review": [
+      "agent_launch_tokens"
     ],
     "retire_executor_websocket_tables": [
       "stall_alarm_preference"
@@ -88,6 +100,6 @@
       "recap_freshness"
     ]
   },
-  "source_digest": "112099d8d3698c6545d29e2e30f80ede9c703dd22a6ec983322f576ae6f187a1",
+  "source_digest": "21d619e34f4b95aff0074e792ecbe7ccb8624f9a4b9330a905faf93dbc33320e",
   "version": 1
 }

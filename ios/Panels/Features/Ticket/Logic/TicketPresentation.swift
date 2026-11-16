@@ -17,6 +17,7 @@ struct TicketPresentation {
         else if ticket.assigned == true || currentStage?.ownershipMode == "user" { prefix = "Your step:" }
         else if ticket.stage == "needs_brief" { prefix = "Waiting for" }
         else if ticket.ticketStatus == "agent" || ticket.agentState == "working" { prefix = "Currently working on" }
+        else if currentField == "consequences" { prefix = "At" }
         else { prefix = "Waiting at" }
         return "\(prefix) \(label)"
     }
@@ -26,9 +27,10 @@ struct TicketPresentation {
         return current > gate
     }
     var completedCount: Int { manifest.fields.filter { isComplete($0.id) }.count }
+    var finalApproval: Bool { ReviewWorkerManifest(workflow: manifest).isFinalApproval(at: ticket.stage) }
     var ceilingOptions: [TicketWorkerType.Stage] {
         let start = manifest.stages.firstIndex { $0.id == ticket.stage } ?? 0
-        return Array(manifest.stages.dropFirst(start))
+        return Array(manifest.stages.dropFirst(start)).filter { !$0.isTerminal && manifest.ceilingRange?.contains($0.id) == true }
     }
     var ceilingLabel: String {
         ticket.ceiling == "none" ? "No further" : manifest.stages.first { $0.id == ticket.ceiling }?.label ?? ticket.ceiling

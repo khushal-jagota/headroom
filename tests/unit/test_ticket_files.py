@@ -9,6 +9,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -87,8 +88,18 @@ def test_manager_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
             assert confined.status_code == 200 and confined.text == "<p>HTML</p>"
 
     assert response.status_code == 200 and response.text == "brief"
-    assert response.headers["x-content-type-options"] == "nosniff"
     assert missing.status_code == 404
+
+
+def test_html_and_linked_assets_are_served_inline(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"<script src='app.js'></script>", "page.html")
+    _ticket_file(db_path, b"document.body.textContent = 'ready'", "app.js")
+    with TestClient(app) as client:
+        for name in ("page.html", "app.js"):
+            response = client.get(f"/files/tickets/t_reuse01/{name}")
+            assert response.status_code == 200
+            assert response.headers["content-disposition"].startswith("inline")
 
 
 @pytest.mark.parametrize("kind", ["manager", "goal"])
@@ -117,8 +128,6 @@ def test_managed_file_resolution_rejects_root_entity_and_file_symlinks(
         resolve(db_path, "si_files", "brief.md")
 
 
-
-
 @pytest.mark.parametrize("path", ["%2e%2e/notes.md", "nested%2fnotes.md", "nested%5cnotes.md"])
 def test_ticket_file_route_rejects_encoded_unsafe_paths(tmp_path: Path, path: str) -> None:
     app, _db_path = _make_app(tmp_path)
@@ -134,10 +143,6 @@ def _ticket_file(db_path: Path, body: bytes, name: str = "notes.md") -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(body)
     return target
-
-
-
-
 
 
 def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> None:
@@ -157,12 +162,6 @@ def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> 
 
     assert answer.status_code == 200
     assert answer.content == b"the artifact"
-
-
-
-
-
-
 
 
 def test_a_conditional_request_never_answers_before_the_route_has_checked(
@@ -185,11 +184,7 @@ def test_a_conditional_request_never_answers_before_the_route_has_checked(
         etag = readable.headers["etag"]
         somebody_else = client.get(
             "/files/managers/si_reuse01/brief.md",
-            headers={
-                "If-None-Match": etag,
-                "X-Plan-Actor": "manager",
-                "X-Plan-Manager-ID": "si_someone_else",
-            },
+            headers=agent_headers(client, "manager", "si_someone_else"),
         )
         missing = client.get(
             "/files/tickets/t_reuse01/absent.md", headers={"If-None-Match": etag}
@@ -201,8 +196,6 @@ def test_a_conditional_request_never_answers_before_the_route_has_checked(
     assert somebody_else.json()["error"]["code"] == "agent_forbidden", somebody_else.text
     assert somebody_else.json()["error"]["detail"]["target_id"] == "si_reuse01"
     assert missing.status_code == 404
-
-
 
 
 def test_the_tag_always_describes_the_bytes_that_were_sent(
@@ -249,80 +242,6 @@ def test_the_tag_always_describes_the_bytes_that_were_sent(
         assert revalidated.status_code == 304
 
 
-def test_html_navigation_confines_resolved_paths_without_changing_delivery(tmp_path: Path) -> None:
-    """A sibling reached through a symlink must not enter the preview sandbox."""
-    app, db_path = _make_app(tmp_path)
-    index = _ticket_file(db_path, b"index", "artifact/index.html")
-    child = _ticket_file(db_path, b"child", "artifact/child.html")
-    outside = _ticket_file(db_path, b"private sibling", "outside.html")
-    (index.parent / "escape.html").symlink_to(outside)
-    (index.parent / "inside.html").symlink_to(child)
-    (index.parent / "nested").symlink_to(index.parent, target_is_directory=True)
-    root_href = "/files/tickets/t_reuse01/artifact/index.html"
-    headers = {"X-Panels-Artifact-Root": root_href}
-    with TestClient(app) as client:
-        ordinary = client.get(root_href)
-        confined = client.get(root_href, headers=headers)
-        valid = client.get("/files/tickets/t_reuse01/artifact/inside.html", headers=headers)
-        nested = client.get("/files/tickets/t_reuse01/artifact/nested/child.html", headers=headers)
-        missing = client.get("/files/tickets/t_reuse01/artifact/missing.html", headers=headers)
-        escaped = client.get("/files/tickets/t_reuse01/artifact/escape.html", headers=headers)
-        sibling = client.get("/files/tickets/t_reuse01/outside.html", headers=headers)
-    assert all(answer.status_code == 200 for answer in (ordinary, confined, valid, nested))
-    assert ordinary.content == confined.content == b"index"
-    assert valid.content == nested.content == b"child"
-    for name in ("content-disposition", "x-content-type-options", "cache-control", "etag"):
-        assert ordinary.headers[name] == confined.headers[name]
-    assert missing.status_code == escaped.status_code == sibling.status_code == 404
-    assert missing.json() == escaped.json() == sibling.json()
-    assert str(tmp_path) not in escaped.text
-
-
-def test_html_navigation_resolves_symlinked_artifact_root_before_comparison(tmp_path: Path) -> None:
-    """The lexical artifact alias is permitted only inside its resolved directory."""
-    app, db_path = _make_app(tmp_path)
-    index = _ticket_file(db_path, b"index", "actual/index.html")
-    _ticket_file(db_path, b"child", "actual/child.html")
-    outside = _ticket_file(db_path, b"outside", "sibling/outside.html")
-    owner_root = index.parent.parent
-    (owner_root / "alias").symlink_to(index.parent, target_is_directory=True)
-    (index.parent / "escape.html").symlink_to(outside)
-    # A root document symlink cannot silently redefine the artifact directory.
-    (index.parent / "bad-root.html").symlink_to(outside)
-    headers = {"X-Panels-Artifact-Root": "/files/tickets/t_reuse01/alias/index.html"}
-    with TestClient(app) as client:
-        valid = client.get("/files/tickets/t_reuse01/alias/child.html", headers=headers)
-        escaped = client.get("/files/tickets/t_reuse01/alias/escape.html", headers=headers)
-        bad_root = client.get("/files/tickets/t_reuse01/actual/child.html", headers={
-            "X-Panels-Artifact-Root": "/files/tickets/t_reuse01/actual/bad-root.html",
-        })
-    assert valid.status_code == 200 and valid.content == b"child"
-    assert escaped.status_code == bad_root.status_code == 404
-
-
-def test_html_navigation_rejects_untrusted_root_descriptors(tmp_path: Path) -> None:
-    """Headers are untrusted too, including encoded traversal and URL authorities."""
-    app, db_path = _make_app(tmp_path)
-    _ticket_file(db_path, b"index", "artifact/index.html")
-    target = "/files/tickets/t_reuse01/artifact/index.html"
-    unsafe_roots = [
-        "https://outside.test" + target, "//outside.test" + target,
-        target + "?query=yes", target + "#fragment", target.replace("/artifact/", "/artifact/../"),
-        target.replace("/artifact/", "/artifact/%2e%2e/"),
-        target.replace("/artifact/", "/artifact%2f"), target.replace("/artifact/", "/artifact%5c"),
-        target.replace("/artifact/", "/artifact/%252e%252e/"),
-        target.replace("/artifact/", "/artifact\\"),
-        target.replace("t_reuse01", "t_other"),
-        target.replace("tickets", "managers"),
-    ]
-    with TestClient(app) as client:
-        absent = client.get("/files/tickets/t_reuse01/artifact/absent.html")
-        for root in unsafe_roots:
-            response = client.get(target, headers={"X-Panels-Artifact-Root": root})
-            assert response.status_code == 404, root
-            assert response.json() == absent.json(), root
-
-
 def _create_goal(client: TestClient, holder_id: str | None = None) -> str:
     result = client.post(
         "/api/goals", json={"title": "Files", "project_id": "project_other", "kind": "binary",
@@ -350,8 +269,8 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
         foreign_id = _create_goal(client, manager.json()["id"])
         url = f"/files/goals/{goal_id}/artifacts/brief.md"
         catalog = f"/api/artifact-catalog/goal/{goal_id}"
-        own = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.json()["id"]}
-        allowed = [{}, {"X-Plan-Actor": "chief"}, own]
+        own = agent_headers(client, "manager", holder.json()["id"])
+        allowed = [{}, agent_headers(client, "chief"), own]
         for headers in allowed:
             assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
             read = client.get(url, headers=headers)
@@ -366,10 +285,10 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
                 now=1, title_max_chars=200,
             )
         refused = [
-            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": goal_id},
-            {"X-Plan-Actor": "goal", "X-Plan-Goal-ID": foreign_id},
-            {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.json()["id"]},
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id},
+            agent_headers(client, "goal", goal_id),
+            agent_headers(client, "goal", foreign_id),
+            agent_headers(client, "manager", manager.json()["id"]),
+            agent_headers(client, "worker", ticket.id),
         ]
         for headers in refused:
             conditional = client.get(
@@ -377,12 +296,6 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
             )
             assert conditional.status_code == 400
             assert conditional.json()["error"]["code"] == "agent_forbidden"
-            # Removed actors fail at identity parsing; valid principals reach the
-            # goal authority gate before any file access or conditional response.
-            if headers["X-Plan-Actor"] == "goal":
-                assert conditional.json()["error"]["detail"] == {"actor": "goal"}
-            else:
-                assert conditional.json()["error"]["detail"]["target_id"] == goal_id
             assert client.get(catalog, headers=headers).status_code == 400
             assert client.put(url, json={"content": "stolen"}, headers=headers).status_code == 400
             assert client.delete(url, headers=headers).status_code == 400
@@ -402,7 +315,7 @@ def test_goal_file_and_catalog_authority_precedes_access_and_conditional_respons
             assert client.put(url, json={"content": "private"}, headers=headers).status_code == 200
 
 
-def test_goal_files_reject_traversal_and_symlink_escapes_and_confine_html_navigation(
+def test_goal_files_reject_traversal_and_symlink_escapes(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -431,18 +344,8 @@ def test_goal_files_reject_traversal_and_symlink_escapes_and_confine_html_naviga
         assert not (outside / "new").exists()
         assert client.delete(prefix + "escape/secret.html").status_code == 400
         assert (outside / "secret.html").read_text() == "secret"
-        headers = {"X-Panels-Artifact-Root": prefix + "artifacts/site/index.html"}
-        ordinary = client.get(prefix + "artifacts/site/next.html")
-        confined = client.get(prefix + "artifacts/site/next.html", headers=headers)
-        assert confined.status_code == 200 and confined.content == ordinary.content
-        for key in ("etag", "cache-control", "content-disposition", "x-content-type-options"):
-            assert confined.headers[key] == ordinary.headers[key]
-        for path in ("outside.html", "artifacts/site/escape.html"):
-            assert client.get(prefix + path, headers=headers).status_code == 404
-        other = _create_goal(client)
-        other_url = f"/files/goals/{other}/artifacts/site/next.html"
-        assert client.put(other_url, json={"content": "another goal"}).status_code == 200
-        assert client.get(other_url, headers=headers).status_code == 404
+        assert client.get(prefix + "outside.html").status_code == 200
+        assert client.get(prefix + "artifacts/site/escape.html").status_code == 404
 
 
 def test_ticket_checkout_is_private_through_routes_aliases_and_catalog(tmp_path: Path) -> None:

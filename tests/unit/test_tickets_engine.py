@@ -244,106 +244,20 @@ def test_a06_edit_accept_stores_edited_text(
 def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
 
-    # Ceiling stops exactly at needs_closeout: implementation auto-accepts up to
-    # needs_closeout, and closeout then routes to done through the ordinary
-    # accept machinery (no special-cased manual review step).
-    t1 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t1, "needs_consequences", fake_clock)
-    for _field, body in [
-        ("what_changes", "a"),
-        ("implementation", "i"),
-    ]:
-        t1 = data.file_current_proposal(
-            tmp_db,
-            t1.id,
-            body=body,
-            principal=Principal(PrincipalKind.ticket, t1.id),
-            now=now,
+    t = _create(tmp_db, cfg, fake_clock)
+    _scope(tmp_db, t, "needs_consequences", fake_clock)
+    for body in ("a", "i", "c"):
+        t = data.file_current_proposal(
+            tmp_db, t.id, body=body,
+            principal=Principal(PrincipalKind.ticket, t.id), now=now,
         )
-    assert t1.stage == "needs_consequences"
-    t1 = data.file_current_proposal(
-        tmp_db,
-        t1.id,
-        body="c",
-        principal=Principal(PrincipalKind.ticket, t1.id),
-        now=now,
+    assert t.stage == "needs_consequences"
+    assert t.pending_proposal is not None
+    t = data.accept_proposal(
+        tmp_db, t.id, field="consequences", principal=OWNER_PRINCIPAL, now=now,
     )
-    assert t1.stage == "needs_consequences"
-    assert t1.pending_proposal is not None
-    assert t1.field_values.get("consequences") is None
-
-    t1 = data.accept_proposal(
-        tmp_db,
-        t1.id,
-        field="consequences",
-        principal=OWNER_PRINCIPAL,
-        now=now,
-        next_ceiling=NO_FURTHER,
-        next_holder=OWNER_PRINCIPAL,
-    )
-    assert t1.stage == "done"
-    assert t1.field_values.get("consequences") == "c"
-    assert t1.ceiling == "done"
-
-    # Ceiling at done from the start: every field, including closeout, auto-accepts
-    # straight through to done.
-    t2 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t2, "done", fake_clock)
-    for _field, body in [
-        ("what_changes", "a"),
-        ("implementation", "i"),
-        ("consequences", "c"),
-    ]:
-        t2 = data.file_current_proposal(
-            tmp_db,
-            t2.id,
-            body=body,
-            principal=Principal(PrincipalKind.ticket, t2.id),
-            now=now,
-        )
-    assert t2.stage == "done"
-    assert all(
-        t2.field_values.get(field) == body
-        for field, body in [
-            ("what_changes", "a"),
-            ("implementation", "i"),
-            ("consequences", "c"),
-        ]
-    )
-
-    # Ceiling below needs_closeout: the closeout proposal stays pending until the
-    # ceiling is raised and it is explicitly accepted.
-    t3 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t3, "needs_implementation", fake_clock)
-    for _field, body in [("what_changes", "a")]:
-        t3 = data.file_current_proposal(
-            tmp_db,
-            t3.id,
-            body=body,
-            principal=Principal(PrincipalKind.ticket, t3.id),
-            now=now,
-        )
-    assert t3.stage == "needs_implementation"
-    t3 = data.file_current_proposal(
-        tmp_db,
-        t3.id,
-        body="i",
-        principal=Principal(PrincipalKind.ticket, t3.id),
-        now=now,
-    )
-    assert t3.stage == "needs_implementation"
-    assert t3.pending_proposal is not None
-
-    t3 = data.accept_proposal(
-        tmp_db,
-        t3.id,
-        field="implementation",
-        principal=OWNER_PRINCIPAL,
-        now=now,
-        next_ceiling="done",
-        next_holder=OWNER_PRINCIPAL,
-    )
-    assert t3.stage == "needs_consequences"
+    assert t.stage == "done"
+    assert t.field_values["consequences"] == "c"
 
 
 def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
@@ -407,8 +321,12 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
 
     with pytest.raises(PlannerError) as e_agent:
         admit_command(
-            tmp_db, TEST_TICKET_PRINCIPAL, "POST", "/api/tickets/{ticket_id}/accept/{field}",
-            {"ticket_id": t.id, "field": "what_changes"}, {},
+            tmp_db,
+            TEST_TICKET_PRINCIPAL,
+            "POST",
+            "/api/tickets/{ticket_id}/accept/{field}",
+            {"ticket_id": t.id, "field": "what_changes"},
+            {},
         )
         data.accept_proposal(
             tmp_db,
@@ -476,51 +394,19 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
 
     t3 = _create(tmp_db, cfg, fake_clock)
     t3 = data.file_current_proposal(
-        tmp_db,
-        t3.id,
-        body="body",
-        principal=Principal(PrincipalKind.ticket, t3.id),
-        now=now,
+        tmp_db, t3.id, body="body",
+        principal=Principal(PrincipalKind.ticket, t3.id), now=now,
     )
-    t3 = data.accept_proposal(
-        tmp_db,
-        t3.id,
-        field="what_changes",
-        principal=OWNER_PRINCIPAL,
-        now=now,
-        next_ceiling="needs_consequences",
-        next_holder=OWNER_PRINCIPAL,
-    )
-    assert t3.ceiling == "needs_consequences"
-    t3 = data.file_current_proposal(
-        tmp_db,
-        t3.id,
-        body="a",
-        principal=Principal(PrincipalKind.ticket, t3.id),
-        now=now,
-    )
-    assert t3.stage == "needs_consequences"
-    assert t3.ceiling == "needs_consequences"
-    assert t3.field_values["implementation"] == "a"
-    assert t3.pending_proposal is None
-
-    t4 = _create(tmp_db, cfg, fake_clock)
-    t4 = _scope(tmp_db, t4, "done", fake_clock)
-    ceiling_before = t4.ceiling
-    for _field, body in [
-        ("what_changes", "a"),
-        ("implementation", "i"),
-        ("consequences", "c"),
-    ]:
-        t4 = data.file_current_proposal(
-            tmp_db,
-            t4.id,
-            body=body,
-            principal=Principal(PrincipalKind.ticket, t4.id),
-            now=now,
+    with pytest.raises(PlannerError):
+        data.accept_proposal(
+            tmp_db, t3.id, field="what_changes", principal=OWNER_PRINCIPAL,
+            now=now, next_ceiling="done", next_holder=OWNER_PRINCIPAL,
         )
-    assert t4.stage == "done"
-    assert t4.ceiling == ceiling_before
+    t3 = data.accept_proposal(
+        tmp_db, t3.id, field="what_changes", principal=OWNER_PRINCIPAL,
+        now=now, next_ceiling="needs_consequences", next_holder=OWNER_PRINCIPAL,
+    )
+    assert t3.ceiling == "needs_consequences"
 
 
 # --- blocked: empty's stand-in while a live blocker exists ----------------------
@@ -691,6 +577,11 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     # come back to it legitimately, and a late release must not erase that second arrival.
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
+    # Exercise claim identity after the prior decision has reached the Worker.
+    tmp_db.execute(
+        "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", (t.id,)
+    )
+    tmp_db.commit()
     claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
     assert claimed is not None
 

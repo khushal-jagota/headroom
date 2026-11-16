@@ -232,7 +232,7 @@ def _valid_principal_example(raw: object, *, manager: bool) -> bool:
         return False
     try:
         kind = PrincipalKind(raw["kind"])
-        if not isinstance(raw["id"], str):
+        if kind is PrincipalKind.unidentified or not isinstance(raw["id"], str):
             return False
         Principal(kind, raw["id"])
     except (ValueError, TypeError):

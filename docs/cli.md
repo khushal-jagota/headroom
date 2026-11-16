@@ -4,9 +4,18 @@
 
 ## Who is calling
 
-The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket or Manager id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. See [Who may act](authority.md).
+The command name grants nothing. Headroom gives each agent conversation a private launch token in its environment. The CLI sends it automatically; the server resolves the conversation and its current principal. Role and workspace ids are context, not credentials. The server admits or refuses that caller with the same rule as the browser. On the live host, a terminal with no identity is unidentified: it can read and send a message to Chief, and nothing else. Owner writes go through the web app or the iOS app. See [Who may act](authority.md).
 
 Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
+
+If an operation has no dedicated command, use `panels api METHOD PATH --input-json FILE --json`. Use `-` for JSON on stdin. This command sends the same conversation credential as every other Panels command. Agents do not copy tokens or construct identity headers. On a remote Worker, the existing executor transport still decides which operations are supported.
+
+For example, Chief writes its recap with:
+
+```sh
+printf '%s\n' '{"recap":"The current work awaits a decision."}' |
+  panels api PUT /api/workers/chief-of-staff/recap --input-json - --json
+```
 
 ## What it is made of
 
@@ -17,7 +26,7 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
   - `page` reads and edits Manager and Chief documents. `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
 - **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
-- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, and `worker-type`.
+- **Hidden commands** that a specialist skill or an operator names when needed: `serve`, `skill`, `worker-type`, and `api`.
 - **Server lifecycle commands**, also hidden, that use the server's local sockets instead of HTTP. `restart` asks the supervisor, over its control socket, to replace the application. `server-event-loop-tasks` asks the application, over its own socket beside that one, what it is waiting on: each asyncio task on its event loop, with its name, coroutine, the line it is awaiting, and its age, oldest first. A stall inside a task leaves every thread idle, so a stack dump cannot show it. The command only reads. A very long list stops at a size limit and says how many tasks it left out. A loop blocked by synchronous code cannot answer; a stack dump shows that case.
 
 ## How reads and writes work
@@ -34,6 +43,8 @@ Ticket and Manager lists include each recap and its age. Missing recaps and unkn
 
 A Manager workspace read identifies the document that the browser displays and gives its edit command. It keeps the purpose, recap, held goals, artifacts, and Tickets distinct. `page show` and `page edit` select a Manager or Chief. `page schema` describes their shared document format. A sole held goal remains a goal edit through `goal`. A page edit replaces the complete document, so an agent preserves unrelated content. Optional captured revisions protect Goal and holder-page edits from replacing newer documents.
 
+To send a proposal back, use `panels ticket proposal ID revise --body-file guidance.md` or `--message` with inline guidance. Use `--body-file -` to read stdin. A separate message does not replace this guidance.
+
 Proposal accept and revise commands pin the revision from their own read. Optional `--expected-proposal-revision N` instead protects the proposal that the caller inspected earlier. Existing invocations remain valid. Older clients can omit revisions, but omission cannot protect an earlier read.
 
 ## What the CLI feeds
@@ -48,8 +59,8 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 
 ## Code
 
-- `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and identity headers.
+- `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and launch credential.
 - `src/planner/server_lifecycle/control.py`: the control socket and its messages. `event_loop_tasks.py`: the event loop tasks and the creation times it reads.
 - Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
 
-_Last verified: 2026-11-14._
+_Last verified: 2026-11-16._

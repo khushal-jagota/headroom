@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_conversation_api import _FakeBackend, _FakeBackendChild
 from tests.unit.test_sprint_item_supervisors import _app
 
@@ -68,7 +69,7 @@ def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
         response = client.post(
             "/api/managers",
             json={"title": "Kickoff", "project_id": "project_vylo", "goal": goal},
-            headers={"X-Plan-Actor": "chief"} if actor == "chief" else {},
+            headers=agent_headers(client, "chief") if actor == "chief" else {},
         )
         assert response.status_code == 200, response.text
         item = response.json()

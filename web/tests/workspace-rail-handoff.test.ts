@@ -36,7 +36,7 @@ describe('bounded rail handoff',()=>{
     for(const context of ['new-runtime','new-scope','new-window']) {
       expect(group(railHandoff(held.state,empty,held.rail,new Map([['chief',context]]),2).rail)).toBe('empty');
     }
-    for(const extra of [{awaiting_approval:true},{awaiting_answer:true},{assigned:true},{agent_state:'errored' as const},{waiting_to_closeout:true},{stage:'done'},{blocked:true},{is_backlogged:true}]) {
+    for(const extra of [{awaiting_approval:true},{awaiting_answer:true},{assigned:true},{agent_state:'errored' as const},{stage:'done'},{blocked:true},{is_backlogged:true}]) {
       const incoming=buildWorkspaceRail([ticket('a',{ticket_status:'empty',...extra})]);
       expect(railHandoff(held.state,incoming,held.rail,contexts,2).retained.size).toBe(0);
     }

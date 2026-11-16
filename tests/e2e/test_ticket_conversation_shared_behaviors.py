@@ -4,6 +4,7 @@ A mocked pane cannot prove that browser writes reach canonical queue/answer
 writers, or that a mounted Ticket pane reflects the canonical result.
 Only the backend wire is scripted. No installed provider participates.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,6 +21,7 @@ from tests.e2e.test_conversation_signals import (  # noqa: F401
     signal_server,
 )
 from tests.support.connected_rows import _bind, _propose
+from tests.support.launch_identity import agent_headers
 
 
 def _create_ticket_conversation(
@@ -421,11 +423,7 @@ def test_private_credential_save_survives_reload_and_reaches_the_actual_wire(
     requested_name = "Panels_provider_production"
     response = httpx.post(
         server.base + "/api/credentials/requests",
-        headers={
-            "X-Plan-Actor": "worker",
-            "X-Plan-Ticket-ID": ticket_id,
-            "X-Plan-Conversation-ID": conversation_id,
-        },
+        headers=agent_headers(server, "worker", ticket_id, conversation_id=conversation_id),
         json={
             "request_id": request_id,
             "name": requested_name,
@@ -495,8 +493,7 @@ def test_private_credential_save_survives_reload_and_reaches_the_actual_wire(
         assert metadata.revision == 1
         assert secret.encode() not in credential_data.read_encrypted(conn, metadata.id).ciphertext
     events = httpx.get(
-        server.base + f"/api/conversation/conversations/{conversation_id}/events",
-        timeout=10,
+        server.base + f"/api/conversation/conversations/{conversation_id}/events", timeout=10,
     ).json()["events"]
     assert secret not in json.dumps(events)
     delivered = httpx.get(

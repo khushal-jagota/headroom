@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 
 from planner.conversation.contracts import PromptDeliveryQueued
 from planner.core.authctx import RequestContext
@@ -69,10 +70,10 @@ def test_recap_request_http_authority_and_clear_before_send(
 
     monkeypatch.setattr(service, "send_message", capture_send)
     owner: dict[str, str] = {}
-    chief = {"X-Plan-Actor": "chief"}
-    manager = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": own.id}
-    other_manager = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": foreign.id}
-    worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id}
+    chief = agent_headers(tmp_db, "chief")
+    manager = agent_headers(tmp_db, "manager", own.id)
+    other_manager = agent_headers(tmp_db, "manager", foreign.id)
+    worker = agent_headers(tmp_db, "worker", ticket.id)
     cases = (
         (owner, "chief", "chief", None, "the owner"),
         (owner, "manager", own.id, None, "the owner"),

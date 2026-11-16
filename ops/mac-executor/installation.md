@@ -26,13 +26,11 @@ Developer ID distribution and notarization remain separate work.
 The GitHub CLI must be installed and authenticated for access to the release repository.
 Provider login remains a separate step. Tailscale must reach the same home's trusted HTTPS origin.
 
-On that home, use the owner login and run:
+In the home's web app, open Settings → Machines, choose Add a machine, and name the machine (for example "Studio Mac"). The page shows the join command and its private credential once, each with a copy button. The command uses the home's configured trusted HTTPS origin. Run the command on the new machine, then paste the credential at its private prompt.
 
-```sh
-panels machine join-command "Studio Mac" --home https://HOME-ORIGIN
-```
+The same step is also available from a terminal that has owner authority, with `panels machine join-command "Studio Mac" --home https://HOME-ORIGIN`.
 
-Use the same owner command for a Linux x86_64 machine. The executor reports its host platform after credential authentication.
+Use the same join command for a Linux x86_64 machine. The executor reports its host platform after credential authentication.
 On Linux, the bootstrap selects the Linux executor archive and its systemd user service.
 Linux needs Node 22 or newer and an active systemd user manager. No native Mac tools are required.
 Enable user lingering if that service must start after reboot without a login.

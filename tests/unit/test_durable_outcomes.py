@@ -9,9 +9,10 @@ from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core import authority
-from planner.core.authctx import _classify
+from planner.core.authctx import RequestContext
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.clock import TestClock as Clock
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import PlannerError
 from planner.managers import data
 from planner.tickets import data as tickets
@@ -38,9 +39,9 @@ def test_ticket_classification_preserves_existing_authority(
     valid = _ticket(tmp_db, manager.id, "Valid")
     stale = _ticket(tmp_db, manager.id, "Completed since selection")
     advance_ticket(tmp_db, stale.id, new_stage="done", principal=OWNER_PRINCIPAL, now=2)
-    worker = _classify("worker", valid.id)
+    worker = RequestContext(Principal(PrincipalKind.ticket, valid.id))
     # A Ticket classifies itself, and no longer any Ticket that happens to exist.
-    stale_worker = _classify("worker", stale.id)
+    stale_worker = RequestContext(Principal(PrincipalKind.ticket, stale.id))
     with pytest.raises(PlannerError):
         require_above_or_self(tmp_db, worker.principal, authority.ticket(stale.id))
         tickets.classify_ticket(
@@ -59,7 +60,7 @@ def test_ticket_classification_preserves_existing_authority(
         now=3,
     )
     assert tickets.read_ticket(tmp_db, stale.id).manager_id == other.id
-    supervisor = _classify("manager", None, manager.id)
+    supervisor = RequestContext(Principal(PrincipalKind.manager, manager.id))
     require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))
     tickets.classify_ticket(
         tmp_db, valid.id, manager_id=other.id, principal=OWNER_PRINCIPAL, now=4

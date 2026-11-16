@@ -165,7 +165,8 @@ struct DecisionGuidance: Sendable, Equatable {
     var proposal: TicketProposal? { ticket?.pendingProposal }
     var canReturn: Bool { proposal?.field != "brief" && ticket?.conversationId != nil }
     var nextStage: String? { manifest?.advance[ticket?.stage ?? ""] }
-    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.stages ?? [] }
+    var approvalStages: [ReviewWorkerManifest.Stage] { manifest?.approvalBoundaries ?? [] }
+    var finalApproval: Bool { manifest?.isFinalApproval(at: ticket?.stage ?? "") == true }
     var ready: Bool { proposal != nil && !changed && !busy && !resolved && nextStage != nil && !approvalStages.isEmpty }
 
     static func matches(_ lhs: TicketProposal, _ rhs: TicketProposal) -> Bool {
@@ -237,16 +238,19 @@ struct DecisionGuidance: Sendable, Equatable {
             ticketID: ticket.id, proposal: proposal, loadedServer: draftServer, loadedIdentity: draftIdentity, draftUpdatedAt: updated)
     }
 
-    func approve(api: APIClient, ceiling: String, holder: Principal, guidance: DecisionGuidance? = nil) async -> Bool {
-        guard ready, let ticket, let proposal, manifest?.ceilingRange.contains(ceiling) == true,
-              manifest?.selectionApprovesPending(ceiling: ceiling, waitingStage: ticket.stage) == true else { return false }
+    func approve(api: APIClient, ceiling: String? = nil, holder: Principal? = nil, guidance: DecisionGuidance? = nil) async -> Bool {
+        guard ready, let ticket, let proposal else { return false }
+        if !finalApproval {
+            guard let ceiling, let _ = holder, manifest?.ceilingRange.contains(ceiling) == true,
+                  manifest?.selectionApprovesPending(ceiling: ceiling, waitingStage: ticket.stage) == true else { return false }
+        }
         guard guidance == nil || guidance?.matches(server: LocalStore.server(api.baseURL), ticketID: ticket.id, proposal: proposal) == true else {
             error = "The proposal changed. Close approval and review it again."
             return false
         }
         let body = ReviewApproval(expectedProposalRevision: proposal.revision,
                                   editedBody: nil,
-                                  nextCeiling: ceiling, nextHolder: holder)
+                                  nextCeiling: finalApproval ? nil : ceiling, nextHolder: finalApproval ? nil : holder)
         return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
             ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text, draftID: guidance?.draftID, decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
             ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)

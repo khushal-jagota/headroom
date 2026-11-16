@@ -329,7 +329,7 @@ export interface ReplayPage {
 
 export type ViewSection = "rail_parents" | "rail_tickets" | "children" | "settled" | "unread" | "review" | "goals";
 
-export type ViewGroup = "all" | "awaiting_approval" | "awaiting_answer" | "assigned" | "awaiting_reply" | "errored" | "backlog" | "agent" | "waiting_to_closeout" | "status_awaiting_approval" | "empty" | "blocked" | "done";
+export type ViewGroup = "all" | "awaiting_approval" | "awaiting_answer" | "assigned" | "awaiting_reply" | "errored" | "backlog" | "agent" | "status_awaiting_approval" | "empty" | "blocked" | "done";
 
 export interface ViewOwner {
   kind: "chief" | "manager" | "ticket" | "goal";
@@ -339,7 +339,7 @@ export interface ViewOwner {
 export interface ViewWindowRequest {
   section: "rail_parents" | "rail_tickets" | "children" | "settled" | "unread" | "review" | "goals";
   owner: ViewOwner | null;
-  group: "all" | "awaiting_approval" | "awaiting_answer" | "assigned" | "awaiting_reply" | "errored" | "backlog" | "agent" | "waiting_to_closeout" | "status_awaiting_approval" | "empty" | "blocked" | "done";
+  group: "all" | "awaiting_approval" | "awaiting_answer" | "assigned" | "awaiting_reply" | "errored" | "backlog" | "agent" | "status_awaiting_approval" | "empty" | "blocked" | "done";
   child_filter: "all" | "active" | "backlogged" | "done";
   anchor: string | null;
   direction: "after" | "before";

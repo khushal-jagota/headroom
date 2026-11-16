@@ -6,6 +6,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_manager_wakes import _item_and_ticket
 
 from planner.core.clock import TestClock as FakeClock
@@ -427,7 +428,7 @@ def test_assigned_worker_can_manage_taken_definitions(
     worker = Principal(PrincipalKind.ticket, ticket_id)
     identifier = source(tmp_db, responsible=Principal(PrincipalKind.manager, manager_id))
     measure = taken(tmp_db, identifier, principal=worker)
-    headers = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": other_ticket_id}
+    headers = agent_headers(tmp_db, "worker", other_ticket_id)
     with TestClient(_app(tmp_db)) as client:
         denied = client.post(
             "/api/measures",

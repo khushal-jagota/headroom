@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 from typing import Literal, cast
@@ -56,29 +55,6 @@ def origin_conversation(conn: sqlite3.Connection, ctx: RequestContext) -> str:
     if current != origin:
         raise PlannerError(
             ErrorCode.agent_forbidden, "the requesting conversation is no longer current"
-        )
-    row = conn.execute(
-        "SELECT identity_environment_variables FROM conversations WHERE conversation_id=?",
-        (origin,),
-    ).fetchone()
-    if row is None:
-        raise PlannerError(ErrorCode.agent_forbidden, "the requesting conversation is absent")
-    identity = dict(json.loads(row[0]))
-    actor = identity.get("PLAN_ACTOR")
-    matches = (
-        principal.kind == PrincipalKind.ticket
-        and actor == "worker"
-        and identity.get("PLAN_TICKET_ID") == principal.id
-        or principal.kind == PrincipalKind.chief
-        and actor == "chief"
-        or principal.kind == PrincipalKind.manager
-        and actor == "manager"
-        and identity.get("PLAN_MANAGER_ID")
-        == principal.id
-    )
-    if not matches or identity.get("PLAN_CONVERSATION_ID", origin) != origin:
-        raise PlannerError(
-            ErrorCode.agent_forbidden, "the requesting conversation identity differs"
         )
     return origin
 

@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.support.navigation_current import current_navigation_database
 from tests.unit.test_dataset_persistence import candidate, collect, dataset
 from tests.unit.test_goal_pages import create
@@ -64,13 +65,13 @@ def test_delete_api_allows_owner_chief_and_holder_but_rejects_other_manager(
     with TestClient(_app(tmp_db)) as client:
         for headers in (
             {},
-            {"X-Plan-Actor": "chief"},
-            {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.id},
+            agent_headers(tmp_db, "chief"),
+            agent_headers(tmp_db, "manager", holder.id),
         ):
             goal = create(tmp_db, holder_kind="manager", holder_id=holder.id)
             denied = client.delete(
                 f"/api/goals/{goal.id}",
-                headers={"X-Plan-Actor": "manager", "X-Plan-Manager-ID": other.id},
+                headers=agent_headers(tmp_db, "manager", other.id),
             )
             assert denied.status_code == 400, denied.text
             assert denied.json()["error"]["code"] == "agent_forbidden"
@@ -82,7 +83,7 @@ def test_delete_api_allows_owner_chief_and_holder_but_rejects_other_manager(
         chief_goal = create(tmp_db)
         denied = client.delete(
             f"/api/goals/{chief_goal.id}",
-            headers={"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.id},
+            headers=agent_headers(tmp_db, "manager", holder.id),
         )
         assert denied.status_code == 400
 

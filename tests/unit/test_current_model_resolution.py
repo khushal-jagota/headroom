@@ -287,6 +287,14 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
                 next_ceiling="none",
                 next_holder=OWNER_PRINCIPAL,
             )
+            # This test exercises the next worker step, after decision feedback has
+            # been delivered. Otherwise the first start delivers that feedback and
+            # never reaches the worker readiness and claim path under test.
+            conn.execute(
+                "UPDATE ticket_decision_messages SET delivery_status='delivered' "
+                "WHERE ticket_id=?", (ticket.id,)
+            )
+            conn.commit()
 
             async def run() -> WorkerStepStartResult:
                 return await start_ready_worker_step(
@@ -337,6 +345,9 @@ def test_real_readiness_admits_exact_tokens_with_offline_advisory_catalog(
             result = await run()
             assert result.started
             current = tickets.read_ticket(conn, ticket.id)
+            from planner.tickets.contracts import WorkerStepClaim
+
+            assert current.worker_step_claim is WorkerStepClaim.out
             if missing_saved_model:
                 assert current.employee_backend == profile.default_backend
                 assert current.employee_launch_model == profile.default_model

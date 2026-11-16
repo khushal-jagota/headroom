@@ -1122,6 +1122,107 @@ def test_commit_before_ack_replay_returns_first_receipt_and_one_domain_event(
     asyncio.run(run())
 
 
+def test_executor_send_back_replays_lost_receipt_and_delivers_guidance_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gap: component receipts do not prove a remote decision and its actual prompt
+    survive a lost HTTPS reply together. Reuse the one TLS host, native child and
+    receipt-cut fixture; no provider or browser is added.
+    """
+    from planner.conversation.message_content import message_content_text
+    from planner.runtime.decision_message_delivery import deliver_ticket_decision_messages
+    from planner.tickets import data as ticket_data
+    from planner.worker_types.configuration import configured_worker_type_registry
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            child = harness.child
+            # Model an authorized supervisor child using the existing transport
+            # fixture. An ordinary Worker cannot decide even its own proposal.
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                connection.execute(
+                    "UPDATE executor_child_assignments SET principal_kind='chief',"
+                    "principal_id='chief' WHERE executor_incarnation=? AND child_id=?",
+                    (child.reference.executor_incarnation, child.reference.child_id),
+                )
+                connection.commit()
+                parked = ticket_data.file_current_proposal(
+                    connection, harness.ticket_id, body="Please review this brief",
+                    principal=Principal(PrincipalKind.ticket, harness.ticket_id), now=3,
+                )
+            guidance = "Preserve this exact revision guidance café\nSecond line"
+            submission_id = "send-back-lost-reply"
+            harness.endpoint.cut_submission = submission_id
+            response = await asyncio.wait_for(
+                harness.mac.gateway.handle(IpcRequest(
+                    submission_id, IpcOperation.write,
+                    child.reference.child_id, child.capability,
+                    {"operation": "ticket.send_back", "arguments": {
+                        "ticket_id": harness.ticket_id,
+                        "body": {"message": guidance,
+                                 "expected_proposal_revision": parked.pending_proposal_revision},
+                    }},
+                )),
+                8,
+            )
+            assert response.error is None and response.unconfirmed is None
+            await harness.wait_settled("Send-back receipt did not replay")
+            assert harness.endpoint.cut_count == 1
+            assert harness.endpoint.seen_submissions[submission_id] >= 2
+            with contextlib.closing(connect(harness.endpoint.db_path)) as connection:
+                changed = ticket_data.read_ticket(connection, harness.ticket_id)
+                assert changed.pending_proposal is None
+                assert changed.stage == parked.stage
+                notes = connection.execute(
+                    "SELECT message FROM ticket_decision_messages WHERE ticket_id=?",
+                    (harness.ticket_id,),
+                ).fetchall()
+                assert [row["message"] for row in notes] == [guidance]
+            retry = await harness.mac.gateway.handle(IpcRequest(
+                "send-back-retry", IpcOperation.retry,
+                child.reference.child_id, child.capability,
+                {"submission_id": submission_id},
+            ))
+            assert retry.result == response.result and retry.error is None
+
+            received_prompts: list[str] = []
+            original_prompt = harness.native.write_prompt
+
+            async def capture_prompt(
+                turn_token: TurnToken, content: MessageContent, **arguments: object
+            ) -> BackendPromptAccepted:
+                received_prompts.append(message_content_text(content))
+                return await original_prompt(turn_token, content, **arguments)
+
+            monkeypatch.setattr(harness.native, "write_prompt", capture_prompt)
+            await harness.end_turn()
+            await deliver_ticket_decision_messages(
+                harness.ticket_id,
+                connect_database=lambda: connect(harness.endpoint.db_path),
+                conversation_system=harness.system,
+                worker_type_registry=configured_worker_type_registry(),
+                now=RealClock().now_unix,
+            )
+            await eventually(
+                lambda: sum(guidance in prompt for prompt in received_prompts) == 1,
+                "Exact send-back guidance never reached the native Worker prompt",
+            )
+            await deliver_ticket_decision_messages(
+                harness.ticket_id,
+                connect_database=lambda: connect(harness.endpoint.db_path),
+                conversation_system=harness.system,
+                worker_type_registry=configured_worker_type_registry(),
+                now=RealClock().now_unix,
+            )
+            await harness.wait_settled("Decision prompt did not settle")
+            assert sum(guidance in prompt for prompt in received_prompts) == 1
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
 INPUT_ANSWERS = (UserInputAnswer("q_two", ("Red", "Blue")), UserInputAnswer("q_one", ("Yes",)))
 
 
@@ -2164,7 +2265,19 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
+        lease_waiting, release_lease = asyncio.Event(), asyncio.Event()
+        lease = harness.mac.client.lease
+
+        async def held_lease(request: Any) -> Any:
+            lease_waiting.set()
+            await release_lease.wait()
+            return await lease(request)
+
+        monkeypatch.setattr(harness.mac.client, "lease", held_lease)
         try:
+            # Wait until any earlier lease has finished and the next is held before
+            # it reaches the VPS. No accepted lease can erase the refusal meanwhile.
+            await asyncio.wait_for(lease_waiting.wait(), 5)
             harness.transport_app.state.mac_updates = MacUpdateService(
                 tmp_path / "mac-updates",
                 FileUpdateAttemptStore(tmp_path / "update-attempt.json"),
@@ -2227,6 +2340,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
                 assert check.target is None
             assert positions() == before
             # The current Mac's next accepted lease clears the refusal.
+            release_lease.set()
             await eventually(
                 lambda: harness.endpoint.health().presence == "present",
                 "The current Mac's lease did not clear the old Mac's refusal",
@@ -2241,6 +2355,7 @@ def test_old_websocket_is_refused_needs_update_while_update_route_serves_it(
             assert harness.native.start_count == 1
             await harness.wait_settled("The current Mac's work did not settle")
         finally:
+            release_lease.set()
             await harness.close()
 
     asyncio.run(run())
@@ -3146,6 +3261,145 @@ def test_local_cancel_revokes_saved_answer_before_native_wait_across_restart(
         finally:
             if interrupt is not None and not interrupt.done():
                 interrupt.cancel()
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_claude_initialize_timeout_preserves_ordered_prompt_across_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real mailbox and journal carry one prompt across a failed native start.
+
+    Unit tests cannot show that the queued prompt remains behind the start command
+    and is delivered once through the executor transport after replacement.
+    """
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+
+    monkeypatch.setattr("planner.executor.mac_runner.CLAUDE_START_RETRY_DELAY_SECONDS", 0.01)
+    events: list[str] = []
+    children: list[ScriptedNativeChild] = []
+
+    class TimeoutThenReady(ScriptedNativeChild):
+        async def start(
+            self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        ) -> None:
+            events.append(f"start-{len(children)}")
+            await super().start(resolved_start, vendor_session_cursor=vendor_session_cursor)
+            if len(children) == 1:
+                raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+        async def stop(self) -> None:
+            events.append("stop")
+            await super().stop()
+
+        async def write_prompt(
+            self, turn_token: TurnToken, content: MessageContent, **arguments: object
+        ) -> BackendPromptAccepted:
+            events.append("prompt")
+            return await super().write_prompt(turn_token, content, **arguments)
+
+    def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+        del resolved
+
+        def create(**arguments: object) -> BackendChild:
+            child = TimeoutThenReady()
+            child.sink = cast(BackendEventSink, arguments["event_sink"])
+            children.append(child)
+            return cast(BackendChild, child)
+
+        return cast(BackendChildFactory, create)
+
+    async def run() -> None:
+        harness = await boot(
+            tmp_path, monkeypatch, native_factory=factory,
+            backend_key=ConversationBackendKey.claude,
+        )
+        try:
+            assert events == ["start-1", "stop", "start-2", "prompt"]
+            assert len(children) == 2
+            assert [child.prompt_count for child in children] == [0, 1]
+            assert len(harness.mailbox_commands("start")) == 1
+            assert len(harness.mailbox_commands("write_prompt")) == 1
+            await harness.wait_settled("recovered command outcomes did not drain")
+            assert [child.prompt_count for child in children] == [0, 1]
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+def test_mac_restart_during_claude_start_retry_does_not_replay_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process restart while a start retry waits must not duplicate its prompt."""
+    from planner.conversation.backends.contracts import ClaudeInitializeTimeout
+
+    monkeypatch.setattr("planner.executor.mac_runner.CLAUDE_START_RETRY_DELAY_SECONDS", 30)
+    fast_leases(monkeypatch)
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch, backend_key=ConversationBackendKey.claude)
+        stopped = asyncio.Event()
+        attempted: list[ScriptedNativeChild] = []
+        sending: asyncio.Task[Any] | None = None
+        try:
+            await harness.system.kill("c_scripted")
+            delivered: list[str] = []
+            write_prompt = harness.native.write_prompt
+
+            async def record_prompt(
+                turn: TurnToken, content: MessageContent, **arguments: object
+            ) -> BackendPromptAccepted:
+                delivered.append(
+                    "\n".join(piece.text for piece in content if isinstance(piece, MessageText))
+                )
+                return await write_prompt(turn, content, **arguments)
+
+            monkeypatch.setattr(harness.native, "write_prompt", record_prompt)
+
+            class TimedOutChild(ScriptedNativeChild):
+                async def start(
+                    self, resolved_start: ResolvedConversationStart, *,
+                    vendor_session_cursor: str | None,
+                ) -> None:
+                    await super().start(resolved_start, vendor_session_cursor=vendor_session_cursor)
+                    raise ClaudeInitializeTimeout("Control request timeout: initialize")
+
+                async def stop(self) -> None:
+                    await super().stop()
+                    stopped.set()
+
+            def factory(resolved: ResolvedConversationStart) -> BackendChildFactory:
+                del resolved
+
+                def create(**arguments: object) -> BackendChild:
+                    child = TimedOutChild()
+                    child.sink = cast(BackendEventSink, arguments["event_sink"])
+                    attempted.append(child)
+                    return cast(BackendChild, child)
+
+                return cast(BackendChildFactory, create)
+
+            harness.mac.runner.factory = factory
+            sending = asyncio.create_task(harness.system.send(
+                "c_scripted", text_message_content("Pending retry"), sender_label="Test"
+            ))
+            await asyncio.wait_for(stopped.wait(), 5)
+            await harness.stop_mac()
+            replacement = harness.new_mac()
+            # Any fresh start after recovery uses the ordinary scripted child.
+            replacement.runner.factory = native_factory_for(harness.native)
+            await harness.start_mac(replacement)
+            await asyncio.wait_for(sending, 15)
+            await harness.wait_settled("restart did not settle", seconds=15)
+            assert len(attempted) == 1
+            assert attempted[0].prompt_count == 0
+            assert sum("Pending retry" in text for text in delivered) <= 1
+        finally:
+            if sending is not None and not sending.done():
+                sending.cancel()
+                await asyncio.gather(sending, return_exceptions=True)
             await harness.close()
 
     asyncio.run(run())

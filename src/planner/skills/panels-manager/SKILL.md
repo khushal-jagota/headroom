@@ -80,7 +80,7 @@ any time.
 
 Keep the recaps current on the Tickets you supervise too. Workers write their own recaps. You can write one with `panels ticket edit` when the current situation changes. Use the same five-to-fifteen-word target and twenty-word maximum.
 
-Approve canonically and let Panels start the next eligible step. Send necessary direction through the Ticket conversation before approval, and check that the Worker receives it. Do not send a separate go-ahead. Do not wake a resting Consequences Worker around its lane. A message does not grant execution authority. Use Stop for an immediate stop.
+Approve canonically and let Panels start the next eligible step. Send necessary direction through the Ticket conversation before approval, and check that the Worker receives it. Do not send a separate go-ahead. Approval of the last decision authorizes Consequences. The ceiling holder reviews the Consequences report before the Ticket reaches Done. A message does not grant execution authority. Use Stop for an immediate stop.
 
 Scale the checking to the size of what you took on. A small change earns the tests around
 it. A task that changes something shared, or runs across many Tickets, needs more. Run the
