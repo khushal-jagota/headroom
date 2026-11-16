@@ -34,3 +34,7 @@ jobs:
         run: |
           scripts/dev pytest tests/unit/test_instrument.py tests/unit/test_backend_cli_build.py tests/unit/test_test_runtime.py
           scripts/dev mypy scripts/tree_environment.py scripts/dev_launcher.py
+      - name: Check cached setup
+        run: |
+          node server/node_modules/typescript/bin/tsc --noEmit -p scripts/tsconfig.json
+          node --test scripts/dev_setup.test.mts
