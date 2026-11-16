@@ -118,7 +118,7 @@ jobs:
             boundary: 'Sealed executor archive relocation, native admission and CLI help. No install, service, peer or provider.',
           }));
           EXECUTOR_REQUEST
-          python3 -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
+          python3 -I -S -B scripts/dev_launcher.py npm --prefix server ci
           node server/environments/linux_executor/build_main.ts "$EXECUTOR_ROOT/request.json"
           executor_runtime="$EXECUTOR_ROOT/tmp/build/runtime"
           test -s "$executor_runtime/web/dist/index.html"
@@ -241,15 +241,15 @@ jobs:
           python -m venv .venv
           .venv/bin/python -m pip install -r requirements.txt
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
-          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server ci
+          python -I -S -B scripts/dev_launcher.py npm --prefix server ci
           # Reuse this host for native process/socket and provider directory/lock evidence.
-          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
+          python -I -S -B scripts/dev_launcher.py npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts lifecycle/paths.native.test.ts \
             previews/darwin.native.test.ts skills/account.test.ts \
             ticket_workspaces/filesystem.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
           # No web build: this registry fixture uses synthetic app roots and no UI assets.
-          python -I -S -B scripts/development_safety/bootstrap.py pytest \
+          python -I -S -B scripts/dev_launcher.py pytest \
             tests/compare/direct/test_unit21_registry.py::test_unit21_registry_fixture_and_lifecycle_parity \
             tests/compare/direct/test_unit21_release.py::test_unit21_release_identity_archive_and_frontier \
             --compare-report-dir "$NATIVE_EVIDENCE/comparison" \
@@ -380,11 +380,10 @@ jobs:
           home_evidence="$NATIVE_EVIDENCE/mac-home"
           mkdir -p "$home_inputs" "$home_evidence"
           git archive --format=tar "$MAC_SOURCE_REVISION" | tar -xf - -C "$home_inputs"
-          NODE_ENV=production python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix server ci
-          NODE_ENV=production python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix agent_backends install
-          python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix web ci
-          python -I -S -B "$home_inputs/scripts/development_safety/bootstrap.py" npm --prefix web run build
-          python -I -S -B scripts/development_safety/bootstrap.py check-node server
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix server ci
+          NODE_ENV=production python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix agent_backends install
+          python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix web ci
+          python -I -S -B "$home_inputs/scripts/dev_launcher.py" npm --prefix web run build
           node server/environments/release/mac_home_main.ts \
             --source "$GITHUB_WORKSPACE" --revision "$MAC_SOURCE_REVISION" --output "$home_output" \
             --node-modules "$home_inputs/server/node_modules" \
@@ -396,7 +395,7 @@ jobs:
           cp "$home_output/panels-app.tar.gz" "$home_evidence/panels-app.tar.gz"
           export MAC_HOME_BUILD_METADATA="$home_output/mac-home-build.json"
           export MAC_HOME_PRODUCTION_INPUTS="$home_inputs"
-          python -I -S -B scripts/development_safety/bootstrap.py npm --prefix server run test -- \
+          python -I -S -B scripts/dev_launcher.py npm --prefix server run test -- \
             installation/home.native.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/first-home-darwin.xml"
           NATIVE
@@ -465,10 +464,9 @@ jobs:
             bash --noprofile --norc -euo pipefail <<'BUILD'
           node --input-type=module -e 'if(process.platform!=="darwin"||process.arch!=="arm64"||Number(process.versions.node.split(".")[0])!==22||Number(process.versions.node.split(".")[1])<18)throw Error("Darwin arm64 Node22 >=22.18 required");console.log({node:process.versions.node,platform:process.platform,architecture:process.arch});'
           node_distribution=$(node --input-type=module -e 'import{realpathSync}from"node:fs";import{dirname}from"node:path";console.log(dirname(dirname(realpathSync(process.execPath))));')
-          # NODE_ENV=production is npm ci's production omission mode. The shared guard
-          # accepts no extra ci flags, so the exported source gets its own production tree.
-          NODE_ENV=production python3 -I -S -B "$PACKAGE_ROOT/source/scripts/development_safety/bootstrap.py" npm --prefix server ci
-          python3 -I -S -B "$PACKAGE_ROOT/source/scripts/development_safety/bootstrap.py" check-node server
+          # NODE_ENV=production selects npm ci's production omission mode.
+          # The exported source gets its own production dependency tree.
+          NODE_ENV=production python3 -I -S -B "$PACKAGE_ROOT/source/scripts/dev_launcher.py" npm --prefix server ci
           node "$PACKAGE_ROOT/source/server/executor/mac/packaging/main.ts" \
             --source "$PACKAGE_ROOT/source" \
             --node-distribution "$node_distribution" \

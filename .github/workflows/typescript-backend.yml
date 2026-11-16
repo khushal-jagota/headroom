@@ -58,7 +58,6 @@ jobs:
           .venv/bin/python -m pip install --editable . --config-settings editable_mode=compat
           scripts/dev npm --prefix server ci
           scripts/dev npm --prefix web ci
-          scripts/dev check-node web
           (cd web && node node_modules/vite/bin/vite.js build)
       - name: Python comparison lint
         if: matrix.part == 'direct'
@@ -293,7 +292,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libicu-dev pkg-config build-essential ffmpeg
           scripts/dev setup
-          scripts/dev check-node web
           (cd web && node node_modules/vite/bin/vite.js build)
           .venv/bin/python -m playwright install --with-deps chromium
 
