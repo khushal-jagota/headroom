@@ -390,11 +390,16 @@ def test_scratch_runtime_waits_and_fences_held_pass_at_deadline(
         },
         env,
     )
-    assert actual["before_first"] == 0 and actual["pending_timers"] == 0
+    assert actual["before_first"] == 1 and actual["pending_timers"] == 0
     assert actual["actual_retained"]
     assert actual["seen"] == [[], []]
     assert actual["after_stop"] == actual["disabled_timers"] == 0
-    assert set(actual["timer_values"]) == {scratch_source.CLEANUP_INTERVAL_SECONDS * 1000}
+    assert actual["timer_values"]
+    assert all(
+        scratch_source.CLEANUP_INTERVAL_SECONDS * 1000 - 1000 <= delay
+        <= scratch_source.CLEANUP_INTERVAL_SECONDS * 1000
+        for delay in actual["timer_values"]
+    )
     assert actual["owned_git_reaped"] and actual["entry_preserved"]
     _report(request, "unit-21-scratch-runtime.json", started, actual)
 

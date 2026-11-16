@@ -11,6 +11,7 @@
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_domain_same_python_host[python]": "launch tokens: generic conversation starts can no longer assign agent identity",
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_domain_same_python_host[typescript]": "launch tokens: generic conversation starts can no longer assign agent identity",
   "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_real_preview_cli": "launch tokens: seed request uses role claims without a credential",
+  "tests/compare/direct/test_unit20_domain_cli.py::test_unit20_worker_cleanup_cli": "launch tokens: cleanup owner JSON/text legs match; new Python CLI Bearer credentials are ignored by the pre-token TypeScript API in the denied-caller leg (run43916363997)",
   "tests/compare/direct/test_unit21_updates.py::test_owner_routes_populated_mac_reads_and_deployment_snapshot_match_python": "launch tokens: legacy named actor headers become unidentified in Python owner-route refusals",
   "tests/compare/direct/test_unit22_retained.py::test_retained_core_matches_fresh_python": "launch tokens: recovery prompt now includes credential-aware panels api guidance",
   "tests/compare/direct/test_unit22_runs.py::test_machine_run_custody_and_retained_recovery": "launch tokens: canonical principal routing ignores fixture-only role environment",

@@ -474,6 +474,8 @@ def _proposal_revision_cli_proof(
         ]
         if action == "accept":
             argv += ["--ceiling", "needs_consequences", "--kickoff-title", "Must not change"]
+        if action == "revise":
+            argv += ["--body-file", "-"]
         step = {
             "kind": "cli", "argv": argv, "identity": {"actor": "owner"},
             "stdin": "Keep the current proposal", "exit_code": 1,

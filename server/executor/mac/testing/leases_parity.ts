@@ -185,8 +185,13 @@ export async function leases(input: {
       async lease() {
         return decode_json(accepted_reply, 'LeaseReply');
       },
-      async workspace_states() {
-        throw new Error('Refresh failure must prevent reads');
+      async workspace_states(ids) {
+        // Final cleanup reads lifecycle first, then refreshes custody. Let that
+        // read succeed so the held failure still proves refresh settlement.
+        return {
+          states: ids.map((ticket_id) => ({ ticket_id, ended_at: null, deleted: false })),
+          at_vps_ms: 1700000000000,
+        };
       },
     },
     runner: {

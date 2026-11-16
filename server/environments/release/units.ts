@@ -154,6 +154,7 @@ function environment_bundle(
   const values: Record<string, string> = {
     ...options.environment,
     PLAN_CONFIG_PATH: absolute(options.config_path),
+    PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS: '1',
     ...addresses,
   };
   delete values.RUNTIME_DIRECTORY;

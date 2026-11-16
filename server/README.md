@@ -48,17 +48,29 @@ Area preparation retains the exact new Ticket integrity faults from one audit. T
 On a host behind trusted ingress, an unnamed caller receives owner authority only
 through the configured owner's ingress. Other unnamed callers can read and message
 Chief. Other writes refuse before domain actions. A source server without trusted
-ingress retains the local owner default. The process-peer guard and its environment
-switch are removed.
+ingress retains the local owner default. The separate launch-token Ticket owns
+removal of the legacy peer guard described below.
 
-The separate launch-token port remains expected-open. Until that port lands, named
-agents retain the role-header contract. Exact comparison gaps live in
-`tests/compare/expected_open/launch-tokens.md`.
+`PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS` enables the existing opt-in identity refusal;
+it defaults to false and cannot be enabled by YAML. The application consumes the
+variable when loading its actual process environment, before agents inherit it.
+A supervisor must load configuration from an environment copy and preserve the flag
+for its application child. Unidentified loopback callers need same-user socket-holder
+evidence outside the exact agent cgroups. Trusted owners, identified actors and
+non-loopback callers keep the source bypass rules. The accepted TypeScript service
+name and rollback prerequisite are recorded in [DEVIATIONS.md](DEVIATIONS.md).
 
-The raw WebSocket preview upgrade requires Tailscale-owner ingress.
-`executor/app_transport.ts` handles the obsolete executor connect upgrade through
-trusted executor ingress and refuses it before acceptance. There is no general
-application WebSocket route.
+The default peer resolver refuses before constructing its proc context or doing I/O
+when `VITEST=true`, `PYTEST_CURRENT_TEST` is present, or `PLAN_TEST_MODE` is a truthy
+test-mode value. Tests can supply an explicit private `PeerLookupContext` to exercise
+the resolver. The current raw WebSocket preview upgrade requires Tailscale-owner
+ingress. `executor/app_transport.ts` handles the obsolete executor connect upgrade
+through trusted executor ingress and refuses it before acceptance.
+There is no general application WebSocket route.
+
+One direct comparison reuses Python's synthetic proc fixtures and Fastify injection, without a listener or database.
+It covers peer evidence, bypasses, refusal values, config consumption and the default test I/O guard. Its body takes 0.51 seconds, with zero skill-tree guard receipts.
+TypeScript, Ruff and mypy pass. Added helpers total 423 lines against 426 product lines (99.3%).
 
 ## How an area adds itself
 

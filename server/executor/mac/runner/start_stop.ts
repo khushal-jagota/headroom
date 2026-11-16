@@ -7,7 +7,7 @@ import {
   ClaudeInitializationTimeout,
 } from '../../../conversation/backends/contracts.ts';
 import { setTimeout as pause } from 'node:timers/promises';
-import { CLAUDE_START_RETRY_DELAY_SECONDS } from '../configuration.ts';
+import { CLAUDE_START_RETRY_DELAY_SECONDS } from './configuration.ts';
 import { FifoLock } from '../../../conversation/runtime/state.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';

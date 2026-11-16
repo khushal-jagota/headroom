@@ -53,6 +53,7 @@ export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'PLAN_TRUSTED_INGRESS_PROVIDER',
   'PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN',
   'PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN',
+  'PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS',
   'PLAN_GROQ_API_KEY',
   'PLAN_APNS_KEY_PATH',
   'PLAN_APNS_KEY_ID',
@@ -85,6 +86,7 @@ export interface Config {
   dispatcher_lock_path: string;
   logs_dir: string;
   backup_dir: string;
+  refuse_unidentified_agent_calls: boolean;
   trusted_ingress_provider: string | null;
   trusted_ingress_allowed_login: string | null;
   trusted_ingress_canonical_origin: string | null;
@@ -249,6 +251,13 @@ export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
   paths: { readonly home?: string; readonly admit_path?: (path: string) => string } = {},
 ): Config {
+  const refusalFlag = env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS ?? '0';
+  const refuse_unidentified_agent_calls = parseConfigBoolean(
+    refusalFlag,
+    'refuse_unidentified_agent_calls',
+    refusalFlag.trim(),
+  );
+  if (env === process.env) delete process.env.PLAN_REFUSE_UNIDENTIFIED_AGENT_CALLS;
   path ??= env.PLAN_CONFIG_PATH ?? 'config.yaml';
   path = paths.admit_path?.(path) ?? path;
   const file: unknown = existsSync(path) ? parse(readFileSync(path, 'utf8')) : {};
@@ -407,6 +416,7 @@ export function loadConfig(
     ),
     logs_dir: text('logs_dir', 'PLAN_LOGS_DIR', 'data/logs'),
     backup_dir: text('backup_dir', 'PLAN_BACKUP_DIR', 'data/backups'),
+    refuse_unidentified_agent_calls,
     trusted_ingress_provider: provider,
     trusted_ingress_allowed_login: login,
     trusted_ingress_canonical_origin: origin,

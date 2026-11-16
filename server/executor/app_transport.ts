@@ -12,6 +12,11 @@ import { trusted_ingress_login } from '../core/http/middleware.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { integer_text, decimal_digit } from '../core/python_integer.ts';
 import { strip_unicode_space } from '../core/whitespace.ts';
+import {
+  admit_unidentified_call,
+  websocket_refusal,
+} from '../core/unidentified_agent_calls/admission.ts';
+import type { Endpoint } from '../core/unidentified_agent_calls/contracts.ts';
 import { UpdateConflict } from '../environments/updates/attempts.ts';
 import {
   authenticate_executor,
@@ -607,6 +612,19 @@ function install_old_websocket_refusal(app: FastifyInstance, services: ExecutorH
         if (!(error instanceof PlannerError)) throw error;
         return close_before_accept(socket, { code: 1008, reason: error.message });
       }
+      const endpoint = (host?: string, port?: number): Endpoint | null =>
+        host === undefined || port === undefined ? null : [host, port];
+      const connection = request.socket;
+      const admitted = await admit_unidentified_call(config.refuse_unidentified_agent_calls, {
+        kind: 'websocket',
+        authenticated_owner: trusted_login !== null,
+        headers: [...headers].flatMap(([name, values]) =>
+          values.map((value) => [name, value] as const),
+        ),
+        client: endpoint(connection.remoteAddress, connection.remotePort),
+        server: endpoint(connection.localAddress, connection.localPort),
+      });
+      if (!admitted.admitted) return close_before_accept(socket, websocket_refusal());
       let machine_id: string;
       try {
         machine_id = authenticated_machine(request, trusted_login, services);
