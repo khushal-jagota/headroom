@@ -146,15 +146,16 @@ async function stop() {
   log = undefined;
 }
 async function web() {
-  const python = (await readdir(join(source, '.venv/lib'))).find((name) =>
-    name.startsWith('python'),
-  )!;
-  const driver = join(
-    source,
-    '.venv/lib',
-    python,
-    'site-packages/playwright/driver/package/index.mjs',
+  const { stdout } = await execute(
+    join(source, '.venv/bin/python'),
+    [
+      '-c',
+      'from pathlib import Path; import playwright; print(Path(playwright.__file__).resolve().parent / "driver/package/index.mjs")',
+    ],
+    { env: environment, timeout: 15_000, maxBuffer: 1024 * 1024 },
   );
+  const driver = stdout.trim();
+  assert.ok(driver, 'The installed Playwright package did not resolve its Node driver');
   const { chromium } = await import(pathToFileURL(driver).href);
   const browser = await chromium.launch({ headless: true, env: environment });
   try {
