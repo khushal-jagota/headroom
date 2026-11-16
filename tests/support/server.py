@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ class ServerHandle:
     log_path: Path
     port: int
     control_socket_path: Path
+    socket_directory: tempfile.TemporaryDirectory[str] | None = None
 
     @property
     def owner_cookies(self) -> dict[str, str]:

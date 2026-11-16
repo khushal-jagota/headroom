@@ -82,6 +82,15 @@ def test_video_upload_early_send_and_native_range_playback(
 
     page.on("response", record_range)
     held_transfers: list[Route] = []
+    reservations: list[Response] = []
+    page.on(
+        "response",
+        lambda r: (
+            reservations.append(r)
+            if r.request.method == "POST" and r.url.endswith("/video-uploads")
+            else None
+        ),
+    )
     page.route("**/video-uploads/*/bytes", lambda route: held_transfers.append(route))
     page.locator("[data-conversation-file-input]").set_input_files(video)
     expect(page.locator("[data-conversation-attachments]")).to_contain_text(
@@ -98,6 +107,8 @@ def test_video_upload_early_send_and_native_range_playback(
     # The pending row can paint before the upload request reaches its route.
     transfer_deadline = time.monotonic() + WAIT_MS / 1000
     while not held_transfers and time.monotonic() < transfer_deadline:
+        refused = [r for r in reservations if not r.ok]
+        assert not refused, f"Reservation refused: {refused[0].status} {refused[0].text()}"
         page.wait_for_timeout(50)
     assert len(held_transfers) == 1
     evidence = Path(
@@ -117,7 +128,7 @@ def test_video_upload_early_send_and_native_range_playback(
     expect(player).to_be_visible(timeout=WAIT_MS)
     page.wait_for_function(
         '() => { const v = document.querySelector("[data-media-viewer] video");'
-        'return v && v.readyState >= 1 && v.duration >= 3.9; }',
+        "return v && v.readyState >= 1 && v.duration >= 3.9; }",
         timeout=WAIT_MS,
     )
     href = player.get_attribute("src")
@@ -132,7 +143,7 @@ def test_video_upload_early_send_and_native_range_playback(
     player.evaluate("(video) => { video.currentTime = 2; }")
     page.wait_for_function(
         '() => { const v = document.querySelector("[data-media-viewer] video");'
-        'return v && !v.seeking && v.currentTime >= 1.9; }',
+        "return v && !v.seeking && v.currentTime >= 1.9; }",
         timeout=WAIT_MS,
     )
     events = httpx.get(

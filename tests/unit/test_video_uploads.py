@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -51,6 +53,18 @@ async def chunks(*parts: bytes) -> AsyncIterator[bytes]:
 
 async def accept_probe(path: Path, filename: str) -> str:
     return "video/mp4"
+
+
+def test_reservation_is_refused_below_the_production_free_space_floor(
+    intake: VideoUploadService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "FREE_SPACE_FLOOR_BYTES", 5 * 1024**3)
+    free = 5 * 1024**3 + 7
+    monkeypatch.setattr(shutil, "disk_usage", lambda _: SimpleNamespace(free=free))
+    with pytest.raises(VideoUploadError, match="Not enough free disk space") as refused:
+        intake.reserve(reservation(8))
+    assert refused.value.status_code == 507
+    assert intake.reserve(reservation(7)).state == "reserved"
 
 
 def test_concurrent_reservations_do_not_double_spend(

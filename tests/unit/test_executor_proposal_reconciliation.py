@@ -91,8 +91,12 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
             # Consequences is no longer a selectable stop. Grant the remainder after
             # creation to keep this case about below-ceiling executor settlement.
             ticket = data.edit_ticket(
-                tmp_db, ticket.id, edit=TicketEdit(ceiling="done"), principal=OWNER_PRINCIPAL,
-                title_max_chars=TITLE_MAX_CHARS, now=1,
+                tmp_db,
+                ticket.id,
+                edit=TicketEdit(ceiling="done"),
+                principal=OWNER_PRINCIPAL,
+                title_max_chars=TITLE_MAX_CHARS,
+                now=1,
             )
         worker = Principal(PrincipalKind.ticket, ticket.id)
         ticket = data.file_current_proposal(
@@ -190,6 +194,12 @@ def test_mac_user_owned_proposal_and_receipt_settle_once_then_replay_after_advan
         advanced = data.read_ticket(tmp_db, ticket.id)
         assert advanced.stage == next_stage
         assert advanced.field_values[field] == "Shared answer Ω\nExact work"
+        # The next claim follows delivery of the approval when one was required.
+        tmp_db.execute(
+            "UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?",
+            (ticket.id,),
+        )
+        tmp_db.commit()
         next_claim = data.claim_ticket_for_worker_step(
             tmp_db,
             ticket.id,

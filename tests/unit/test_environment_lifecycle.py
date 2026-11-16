@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import hashlib
-import os
 import shutil
 import subprocess
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -13,9 +13,11 @@ from planner.environments.contracts import EnvironmentManifest, EnvironmentValid
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 
 
-def test_staging_reset_refuses_while_instance_lifecycle_is_owned(tmp_path: Path) -> None:
+def test_staging_reset_refuses_while_instance_lifecycle_is_owned(
+    tmp_path: Path, short_environment_root: Path
+) -> None:
     repository = _repository(tmp_path, "staging-repo")
-    root = _environment_root(tmp_path)
+    root = short_environment_root
     prepared = materialize.prepare_environment_instance(
         kind="staging",
         environment_root=root,
@@ -39,10 +41,11 @@ def test_staging_reset_refuses_while_instance_lifecycle_is_owned(tmp_path: Path)
 
 def test_staging_operations_never_read_the_live_manifest(
     tmp_path: Path,
+    short_environment_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    live_root = _environment_root(tmp_path) / "deployments"
-    staging_root = _environment_root(tmp_path) / "coding"
+    live_root = short_environment_root / "deployments"
+    staging_root = short_environment_root / "coding"
     staging_repository = _repository(tmp_path, "staging-repo")
     materialize.prepare_environment_instance(
         kind="live",
@@ -79,10 +82,11 @@ def test_staging_operations_never_read_the_live_manifest(
 
 def test_reset_failure_keeps_previous_staging_data(
     tmp_path: Path,
+    short_environment_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = _repository(tmp_path, "staging-repo")
-    root = _environment_root(tmp_path)
+    root = short_environment_root
     prepared = materialize.prepare_environment_instance(
         kind="staging", environment_root=root, repository_roots=(repository,)
     )
@@ -110,17 +114,10 @@ def _repository(tmp_path: Path, name: str) -> Path:
     return repository.resolve()
 
 
-def _environment_root(tmp_path: Path) -> Path:
-    """A short, already-resolved root for a real environment estate.
-
-    Resolved because the code resolves an environment root before measuring the control
-    socket inside it against the AF_UNIX path limit, and ``/tmp`` is a symlink on macOS —
-    the eight characters that resolution adds are on their own enough to push the socket
-    over. Short for the same reason: the whole of that path has to fit in 103 bytes, so
-    the test's identity goes in as a digest rather than as its name.
-    """
-    digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
-    return Path(os.environ.get("TMPDIR", "/tmp")).resolve() / f"pe-{os.getpid()}-{digest}"
+@pytest.fixture
+def short_environment_root() -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(prefix="pe-", dir=Path("/tmp").resolve()) as root:
+        yield Path(root)
 
 
 def _test_port(tmp_path: Path) -> int:
