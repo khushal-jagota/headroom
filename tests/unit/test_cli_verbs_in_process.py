@@ -160,6 +160,22 @@ def api(
     return cli_app[2]
 
 
+def test_api_command_writes_chief_recap_with_automatic_identity(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
+    """The raw API escape hatch must preserve the issued Chief credential and JSON body."""
+    recap = "Chief checks the next decision — ready for review."
+    written = cli(
+        server,
+        "api", "PUT", "/api/workers/chief-of-staff/recap", "--input-json", "-",
+        actor="chief",
+        stdin=json.dumps({"recap": recap}),
+    )
+    assert written["recap"] == recap
+    read_back = cli(server, "api", "GET", "/api/workers/chief-of-staff/settings", actor="chief")
+    assert read_back["recap"] == recap
+
+
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
     server: ServerHandle,
     cli: Callable[..., JsonObject],

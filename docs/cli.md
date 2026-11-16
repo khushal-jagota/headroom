@@ -8,6 +8,15 @@ The command name grants nothing. Headroom gives each agent conversation a privat
 
 Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
 
+If an operation has no dedicated command, use `panels api METHOD PATH --input-json FILE --json`. Use `-` for JSON on stdin. This command sends the same conversation credential as every other Panels command. Agents do not copy tokens or construct identity headers. On a remote Worker, the existing executor transport still decides which operations are supported.
+
+For example, Chief writes its recap with:
+
+```sh
+printf '%s\n' '{"recap":"The current work awaits a decision."}' |
+  panels api PUT /api/workers/chief-of-staff/recap --input-json - --json
+```
+
 ## What it is made of
 
 - **Ordinary roots**, shown in help, for people and supervising agents:
@@ -17,7 +26,7 @@ Manager commands accept `panels manager` and `--manager`. The old Sprint Item an
   - `page` reads and edits Manager and Chief documents. `goal` edits [goal](goals.md) pages. `measure`, `dataset`, and `measure-source` maintain [project measures](measures.md). `credential` lists and requests [credentials](credentials.md). `attention` reads [historical attention](attention.md).
   - `executor`, `environment`, and `preview` serve the operator: the [Mac executor](executor.md), [environments](environments.md), and [previews](previews.md).
 - **The Worker group**, hidden from ordinary help: read my Ticket, file a proposal, set a recap. A Worker can file a proposal. Accepting one is `ticket proposal`, for a caller who stands above the Ticket.
-- **Hidden groups** that a specialist skill or an operator names when needed: `serve`, `skill`, and `worker-type`.
+- **Hidden commands** that a specialist skill or an operator names when needed: `serve`, `skill`, `worker-type`, and `api`.
 - **Server lifecycle commands**, also hidden, that use the server's local sockets instead of HTTP. `restart` asks the supervisor, over its control socket, to replace the application. `server-event-loop-tasks` asks the application, over its own socket beside that one, what it is waiting on: each asyncio task on its event loop, with its name, coroutine, the line it is awaiting, and its age, oldest first. A stall inside a task leaves every thread idle, so a stack dump cannot show it. The command only reads. A very long list stops at a size limit and says how many tasks it left out. A loop blocked by synchronous code cannot answer; a stack dump shows that case.
 
 ## How reads and writes work

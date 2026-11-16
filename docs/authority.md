@@ -10,9 +10,11 @@ The server knows four kinds of caller: the **owner** (Khushal), **Chief**, a **M
 
 Each agent conversation receives a private launch credential. The CLI sends it automatically. The server checks its hash and resolves the caller from the conversation’s current Ticket, Chief or Manager association. Role names, ids and `X-Plan-*` headers grant no authority. A missing, invalid or revoked agent credential never makes an agent the owner.
 
+Agents use `panels api` when no dedicated command covers a route. This keeps the credential inside the same automatic transport as ordinary commands. Recap requests and deployment recovery prompts give agents that command rather than an unauthenticated HTTP instruction.
+
 On the live host, the owner is the caller Tailscale Serve vouches for. The browser and the iPhone app reach Headroom through Tailscale Serve, which adds Khushal's login header. This owner path is separate from agent credentials.
 
-An unidentified caller stands above nothing. It can read what any caller can read and send a message to Chief. Other writes are refused. An agent whose launch credential is missing must restart through Panels. A terminal without identity, the stall watchdog and the background Hermes gateway use unidentified access on the live host.
+An unidentified caller stands above nothing. It can read what any caller can read and send a message to Chief. Other writes are refused. The refusal directs an agent to the authenticated CLI API command instead of hand-built headers. Panels supplies a resumed child with its credential. A terminal without identity, the stall watchdog and the background Hermes gateway use unidentified access on the live host.
 
 A server without trusted ingress, such as staging or a local checkout, retains owner access for a call with no identity. An attempted agent call with an invalid credential or old identity headers stays unidentified there too.
 

@@ -130,6 +130,7 @@ def test_tailscale_owner_writes_and_a_local_call_with_no_identity_only_reads(
         assert write.status_code == 400, write.text
         assert write.json()["error"]["code"] == "agent_forbidden"
         assert "launch credential" in write.json()["error"]["message"]
+        assert "panels api METHOD PATH" in write.json()["error"]["message"]
     # Admitted: whatever the delivery answers, it is not the identity refusal.
     assert to_chief.status_code == 200, to_chief.text
 

@@ -78,7 +78,9 @@ Values accept fractions between -9007199254740991 and 9007199254740991, inclusiv
 
 ## Lifecycle
 
-A conversation has at most one child process. After a server restart, the home first checks the previous child’s ownership. A Mac agent can keep its turn, open asks included. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
+A conversation has at most one child process. During a server restart, local native processes stop. Startup checks ownership and automatically resumes eligible interrupted conversations in fresh processes with new credentials. Cleanup that remains unproven keeps the conversation fenced.
+
+An executor agent can keep its process, turn and open asks across a home restart. Its existing capability keeps working. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
 
 A Mac Claude start that times out during initialization can recover before the waiting message is delivered. The [executor](executor.md#commands-and-output) keeps the message in order and only replaces a child after proving cleanup. This does not retry a message that may have reached an agent.
 

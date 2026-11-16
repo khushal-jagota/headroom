@@ -27,7 +27,9 @@ RECAP_REQUEST_MESSAGE = (
     "File a short, top-level recap with your recap tool. "
     "Do not send the user a message. "
     "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
-    "Chief: `PUT /api/workers/chief-of-staff/recap`."
+    'Chief: pipe one JSON object `{"recap":"your short recap"}` into '
+    "`panels api PUT /api/workers/chief-of-staff/recap --input-json -`. "
+    "The command sends your conversation credential automatically."
 )
 
 # Every agent Panels runs keeps a recap, so every agent can be asked for a fresh one. The

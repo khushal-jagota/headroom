@@ -245,7 +245,9 @@ def test_a_recap_request_clears_the_line_it_replaces_and_queues_behind_a_refused
         "File a short, top-level recap with your recap tool. "
         "Do not send the user a message. "
         "Workers: `panels worker recap`. Managers: `panels manager set <manager-id> recap`. "
-        "Chief: `PUT /api/workers/chief-of-staff/recap`.\nRequested by Chief."
+        'Chief: pipe one JSON object `{"recap":"your short recap"}` into '
+        "`panels api PUT /api/workers/chief-of-staff/recap --input-json -`. "
+        "The command sends your conversation credential automatically.\nRequested by Chief."
     )
     owner = Principal(PrincipalKind.owner, "owner")
     worker = Principal(PrincipalKind.ticket, "t_worker")
