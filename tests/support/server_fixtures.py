@@ -16,6 +16,7 @@ from pathlib import Path
 import httpx
 import pytest
 from test_runtime import environment_for, validate_environment
+from tests.support.launch_identity import agent_environment
 from tests.support.server import (
     FAKE_NOW,
     PLAN_BIN,
@@ -360,6 +361,8 @@ def cli(tmp_path: Path) -> Callable[..., JsonObject]:
             env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
+        if actor is not None or ticket_id is not None:
+            env.update(agent_environment(server, actor or "worker", ticket_id))
         validate_environment(env)
         proc = subprocess.run(
             [str(PLAN_BIN), *args, "--json"],

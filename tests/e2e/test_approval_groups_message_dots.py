@@ -26,6 +26,7 @@ from tests.support.connected_rows import _bind
 from tests.support.connected_rows import _conversation as _conversation
 from tests.support.connected_rows import _message as _message
 from tests.support.connected_rows import _post as _post
+from tests.support.launch_identity import agent_headers
 from tests.support.server_fixtures import (
     owner_read_traced_rail_server as owner_read_traced_rail_server,
 )
@@ -84,7 +85,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         response = httpx.post(
             server.base + f"/api/tickets/{ticket['id']}/propose",
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
+            headers=agent_headers(server, "worker", ticket["id"]),
             json={"body": "Consistent group membership.", "recap": "Ready."},
             timeout=10,
         )

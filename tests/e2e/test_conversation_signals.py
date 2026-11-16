@@ -25,6 +25,7 @@ from tests.e2e.harness import (
     capture_success,
 )
 from tests.support.connected_rows import _bind
+from tests.support.launch_identity import agent_headers
 from tests.support.server_fixtures import signal_server as signal_server
 
 EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/message-precedence-revision"
@@ -143,7 +144,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     )
     proposed = httpx.post(
         server.base + f"/api/tickets/{ticket['id']}/propose",
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
+        headers=agent_headers(server, "worker", ticket["id"]),
         json={"body": "Quiet approval remains visible.", "recap": "Browser signal proof."},
         timeout=10,
     )

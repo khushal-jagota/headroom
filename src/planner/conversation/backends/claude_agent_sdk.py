@@ -105,6 +105,10 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 from claude_agent_sdk._version import __version__ as claude_sdk_version
 from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
+from planner.agent_identity.contracts import (
+    LAUNCH_TOKEN_ENVIRONMENT_NAME,
+    UNIDENTIFIED_LAUNCH_TOKEN,
+)
 from planner.conversation.backends.cli_compatibility import (
     BackendCliIncompatible,
     ensure_cli_compatible,
@@ -2298,9 +2302,10 @@ def _identity_environment(
     inherits whole. Nothing else is added here — least of all ``HOME``.
     """
     role_materials = resolved_start.role_materials
-    if role_materials is None:
-        return ()
-    return role_materials.identity_environment_variables
+    environment = {LAUNCH_TOKEN_ENVIRONMENT_NAME: UNIDENTIFIED_LAUNCH_TOKEN}
+    if role_materials is not None:
+        environment.update(role_materials.identity_environment_variables)
+    return tuple(environment.items())
 
 
 def _composer_catalog_from_the_handshake(

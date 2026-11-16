@@ -28,6 +28,8 @@ A conversation is one agent, working in one folder, with a permanent record of w
 ```
 The backend's own session id is internal and can be rebound without anything outside the system noticing.
 
+Panels gives a local agent a private launch credential for its current conversation. It enters only the child’s environment, after saved launch settings have been written. The database keeps its hash, never the token. A new child receives a fresh credential from its canonical association, including after a restart. Reset revokes the old conversation’s authority while preserving its notebook. Generic conversation starts cannot choose a privileged identity. Remote children retain the executor’s existing per-child capability; a local token never enters an executor command.
+
 Claude and Codex run from owner-maintained CLI installations outside the app. Settings → Backends shows their installed and latest versions on the VPS. Only the owner can update them there. Updates change the selected user-local installation, and new agent processes use that version. A failed lookup of newer releases does not stop ordinary conversations. Before each backend starts, it checks its selected CLI. If that CLI lacks a required feature, the backend names the required update. The adapter reads only the protocol fields it needs and ignores unrelated additions. The feature minimums and their reasons live in `conversation/backends/cli_compatibility.py`. Mac CLI updates stay local to the Mac.
 
 ## How a send works
@@ -145,4 +147,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-16._

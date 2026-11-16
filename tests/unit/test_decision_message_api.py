@@ -8,6 +8,7 @@ note, visible revision, and retry identity through the parser to durable storage
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.unit.test_ticket_create_api import create_api as create_api
 
@@ -55,7 +56,7 @@ def test_authenticated_manager_owns_the_exact_decision_note_and_retry(
         "sender": {"kind": "owner", "id": "owner"},
         "sender_label": "User",
     }
-    headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.id}
+    headers = agent_headers(client, "manager", manager.id)
     path = f"/api/tickets/{ticket.id}/accept/what_changes"
     stale = client.post(
         path,
@@ -90,7 +91,7 @@ def test_authenticated_manager_owns_the_exact_decision_note_and_retry(
     )
     # Historical final commands named the completion stop. Its field alias must
     # still recover that exact decision after the report moves the Ticket to Done.
-    worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id}
+    worker = agent_headers(client, "worker", ticket.id)
     proposed = client.post(
         f"/api/tickets/{ticket.id}/propose",
         json={"body": "Verified implementation"}, headers=worker,

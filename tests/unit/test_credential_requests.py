@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from tests.support.launch_identity import agent_headers
 from tests.unit.test_conversation_api import _Harness
 from tests.unit.test_conversation_system import _link_test_ticket_to_conversation
 
@@ -52,7 +53,10 @@ from planner.runtime.logic.conversation_start_resolution import worker_conversat
 
 SECRET = "request-secret-never-in-transcript-2834"
 SECOND = "request-fresh-secret-7463"
-HEADERS = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_failed", "X-Plan-Conversation-ID": "c"}
+
+
+def worker_headers(host: _Harness) -> dict[str, str]:
+    return agent_headers(host.db_path, "worker", "t_failed", conversation_id="c")
 
 
 def request_body(name: str = "Panels_posthog_production", **changes: object) -> dict[str, object]:
@@ -157,7 +161,9 @@ def test_request_outlives_turn_and_concurrent_resolution_is_one_private_write(
         await start(host, busy=True)
         body = request_body()
         async with host.client() as client:
-            created = await client.post("/api/credentials/requests", json=body, headers=HEADERS)
+            created = await client.post(
+                "/api/credentials/requests", json=body, headers=worker_headers(host)
+            )
             assert created.status_code == 200, created.text
             await host.complete_turn("c")
             request_id = str(body["request_id"])
@@ -166,7 +172,7 @@ def test_request_outlives_turn_and_concurrent_resolution_is_one_private_write(
             denied = await client.post(
                 url + "/save",
                 json={"name": body["name"], "value": SECRET, "expected_revision": None},
-                headers=HEADERS,
+                headers=worker_headers(host),
             )
             assert denied.json()["error"]["code"] == "agent_forbidden"
             assert SECRET not in denied.text
@@ -184,10 +190,14 @@ def test_request_outlives_turn_and_concurrent_resolution_is_one_private_write(
             result = (await client.get(url)).json()
             assert result["state"] in {"saved", "rejected"}
             assert result["delivery"]["status"] == "started"
-            replay = await client.post("/api/credentials/requests", json=body, headers=HEADERS)
+            replay = await client.post(
+                "/api/credentials/requests", json=body, headers=worker_headers(host)
+            )
             assert replay.json() == result
             changed = await client.post(
-                "/api/credentials/requests", json={**body, "use": "Different work"}, headers=HEADERS
+                "/api/credentials/requests",
+                json={**body, "use": "Different work"},
+                headers=worker_headers(host),
             )
             assert changed.status_code == 400
             assert SECRET not in changed.text
@@ -238,7 +248,9 @@ def test_replacement_conflict_requires_review_and_atomic_failure_keeps_request_p
             },
         )
         async with host.client() as client:
-            created = await client.post("/api/credentials/requests", json=body, headers=HEADERS)
+            created = await client.post(
+                "/api/credentials/requests", json=body, headers=worker_headers(host)
+            )
             assert created.status_code == 200, created.text
             credentials.replace_credential(
                 conn,
@@ -327,7 +339,9 @@ def test_reuse_queue_drain_and_discard_update_original_card(host: _Harness) -> N
         )
         async with host.client() as client:
             first = request_body("reuse_me")
-            response = await client.post("/api/credentials/requests", json=first, headers=HEADERS)
+            response = await client.post(
+                "/api/credentials/requests", json=first, headers=worker_headers(host)
+            )
             assert response.json()["state"] == "reused"
             assert response.json()["delivery"]["status"] == "queued"
             retry = await client.post(
@@ -341,7 +355,9 @@ def test_reuse_queue_drain_and_discard_update_original_card(host: _Harness) -> N
             ).json()
             assert delivered["delivery"]["status"] == "started"
             second = request_body("reuse_me")
-            again = await client.post("/api/credentials/requests", json=second, headers=HEADERS)
+            again = await client.post(
+                "/api/credentials/requests", json=second, headers=worker_headers(host)
+            )
             assert again.json()["delivery"]["status"] == "queued"
             held = await host.system.held_prompts("c")
             assert await host.system.discard_held_prompt("c", held[0].held_prompt_id)
@@ -369,7 +385,9 @@ def test_only_proven_refusal_retries_delivery_without_another_save(host: _Harnes
         async with host.client() as client:
             body = request_body()
             assert (
-                await client.post("/api/credentials/requests", json=body, headers=HEADERS)
+                await client.post(
+                    "/api/credentials/requests", json=body, headers=worker_headers(host)
+                )
             ).status_code == 200
             url = f"/api/credentials/requests/{body['request_id']}"
             host.backend("c").spawn_fails = True
@@ -389,7 +407,9 @@ def test_only_proven_refusal_retries_delivery_without_another_save(host: _Harnes
             assert len(host.backend("c").written_texts) == 1
             await host.complete_turn("c")
             second = request_body()
-            await client.post("/api/credentials/requests", json=second, headers=HEADERS)
+            await client.post(
+                "/api/credentials/requests", json=second, headers=worker_headers(host)
+            )
             host.backend("c").write_fails = True
             uncertain_url = f"/api/credentials/requests/{second['request_id']}"
             uncertain = await client.post(uncertain_url + "/reject")
@@ -415,10 +435,14 @@ def test_lost_intent_and_lost_queue_restart_as_uncertain_without_a_send(host: _H
         )
         async with host.client() as client:
             queued = request_body()
-            await client.post("/api/credentials/requests", json=queued, headers=HEADERS)
+            await client.post(
+                "/api/credentials/requests", json=queued, headers=worker_headers(host)
+            )
             await client.post(f"/api/credentials/requests/{queued['request_id']}/reject")
             intent = request_body()
-            await client.post("/api/credentials/requests", json=intent, headers=HEADERS)
+            await client.post(
+                "/api/credentials/requests", json=intent, headers=worker_headers(host)
+            )
             await host.system.record_events_transaction(
                 "c",
                 lambda conn: actions.reject(
@@ -450,8 +474,8 @@ def test_origin_rejects_foreign_missing_and_retired_conversation(host: _Harness)
         async with host.client() as client:
             for headers in (
                 {},
-                {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_failed"},
-                {**HEADERS, "X-Plan-Conversation-ID": "other"},
+                {"Authorization": "Bearer missing-conversation-token"},
+                {"Authorization": "Bearer invalid-token", "X-Plan-Conversation-ID": "other"},
             ):
                 denied = await client.post(
                     "/api/credentials/requests", json=request_body(), headers=headers
@@ -461,13 +485,14 @@ def test_origin_rejects_foreign_missing_and_retired_conversation(host: _Harness)
                     and denied.json()["error"]["code"] == "agent_forbidden"
                 ), denied.text
             pending = request_body()
-            await client.post("/api/credentials/requests", json=pending, headers=HEADERS)
+            issued_worker = worker_headers(host)
+            await client.post("/api/credentials/requests", json=pending, headers=issued_worker)
             conn = connect(str(host.db_path))
             conn.execute("UPDATE tickets SET conversation_id=NULL WHERE id='t_failed'")
             conn.commit()
             conn.close()
             denied = await client.post(
-                "/api/credentials/requests", json=request_body(), headers=HEADERS
+                "/api/credentials/requests", json=request_body(), headers=issued_worker
             )
             assert denied.json()["error"]["code"] == "agent_forbidden"
             rejected = await client.post(
@@ -502,7 +527,9 @@ def test_canceled_http_owner_write_still_delivers_before_a_racing_reset(
         monkeypatch.setattr(host.system, "send", gated_call(original, entered, release))
         async with host.client() as client:
             request = request_body()
-            await client.post("/api/credentials/requests", json=request, headers=HEADERS)
+            await client.post(
+                "/api/credentials/requests", json=request, headers=worker_headers(host)
+            )
             resolving = asyncio.create_task(
                 client.post(f"/api/credentials/requests/{request['request_id']}/reject")
             )
@@ -561,14 +588,14 @@ def test_header_reuse_matches_required_header_before_bypassing_owner_input(host:
             mismatched = await client.post(
                 "/api/credentials/requests",
                 json=request_body("Header_key", auth_kind="header", header_name="Authorization"),
-                headers=HEADERS,
+                headers=worker_headers(host),
             )
             assert mismatched.status_code == 400 and "explicit replacement" in mismatched.text
             assert SECRET not in mismatched.text
             correct = await client.post(
                 "/api/credentials/requests",
                 json=request_body("Header_key", auth_kind="header", header_name="X-Api-Key"),
-                headers=HEADERS,
+                headers=worker_headers(host),
             )
             assert correct.json()["state"] == "reused"
             assert SECRET not in correct.text
@@ -598,7 +625,9 @@ def test_request_transaction_and_receipt_companions_use_production_signal_admiss
             await start(host, busy=True)
             async with host.client() as client:
                 body = request_body()
-                created = await client.post("/api/credentials/requests", json=body, headers=HEADERS)
+                created = await client.post(
+                    "/api/credentials/requests", json=body, headers=worker_headers(host)
+                )
                 assert created.status_code == 200, created.text
                 resolved = await client.post(
                     f"/api/credentials/requests/{body['request_id']}/save",
@@ -699,11 +728,9 @@ def test_owner_resolution_after_manager_deletion_is_refused_without_resurrecting
             created = await client.post(
                 "/api/credentials/requests",
                 json=request,
-                headers={
-                    "X-Plan-Actor": "manager",
-                    "X-Plan-Manager-ID": manager.id,
-                    "X-Plan-Conversation-ID": "manager-origin",
-                },
+                headers=agent_headers(
+                    host.db_path, "manager", manager.id, conversation_id="manager-origin"
+                ),
             )
             assert created.status_code == 200, created.text
             await manager_service.delete_manager(
@@ -762,11 +789,9 @@ def test_manager_deletion_waits_for_an_admitted_result_delivery(
             created = await client.post(
                 "/api/credentials/requests",
                 json=request,
-                headers={
-                    "X-Plan-Actor": "manager",
-                    "X-Plan-Manager-ID": manager.id,
-                    "X-Plan-Conversation-ID": "manager-origin",
-                },
+                headers=agent_headers(
+                    host.db_path, "manager", manager.id, conversation_id="manager-origin"
+                ),
             )
             assert created.status_code == 200, created.text
             resolving = asyncio.create_task(

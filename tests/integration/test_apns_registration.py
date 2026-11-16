@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -40,7 +41,7 @@ def test_authenticated_registration_is_durable_validated_and_revocable(tmp_path:
     for headers, expected in (
         ({}, 400),
         ({"Tailscale-User-Login": "stranger@example.com"}, 403),
-        ({"X-Plan-Actor": "chief"}, 400),
+        (agent_headers(database, "chief"), 400),
     ):
         assert client.put(ENDPOINT, json=DEVICE, headers=headers).status_code == expected
         assert (

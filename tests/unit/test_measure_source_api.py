@@ -15,6 +15,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from tests.support.api_app import _app
+from tests.support.launch_identity import agent_headers
 from tests.support.measure_sources import configured_source
 
 from planner.cli.main import main
@@ -264,7 +265,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
     source_body = _guidance("measure-source", "schema")["examples"]["goal_source"]
     measure_body = _guidance("measure", "schema")["examples"]["taken_daily_count"]
     chart_body = _guidance("goal", "schema", "edit")["examples"]["primary_line_chart"]
-    foreign_headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": foreign.id}
+    foreign_headers = agent_headers(tmp_db, "manager", foreign.id)
     sentinel = "private-provider-value-do-not-echo"
 
     def invalid(response: Any, *fragments: str) -> None:
@@ -287,7 +288,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                 client.post(
                     "/api/goals",
                     json={"project_id": "project_vylo", "title": sentinel, **extra},
-                    headers={"X-Plan-Actor": "chief"},
+                    headers=agent_headers(tmp_db, "chief"),
                 ),
                 missing,
                 "panels goal schema create",
@@ -296,7 +297,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         for name in ("binary_goal", "checklist_goal"):
             body = deepcopy(goal_examples[name])
             body["project_id"] = "project_vylo"
-            response = client.post("/api/goals", json=body, headers={"X-Plan-Actor": "chief"})
+            response = client.post("/api/goals", json=body, headers=agent_headers(tmp_db, "chief"))
             assert response.status_code == 200, response.text
             assert response.json()["kind"] == "binary"
             assert (
@@ -318,8 +319,9 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                     # These complete-page examples apply to their matching fictional
                     # create example; real pages must retain all accepted content.
                     changed = client.patch(
-                        f"/api/goals/{accepted['id']}", json=edit,
-                        headers={"X-Plan-Actor": "chief"},
+                        f"/api/goals/{accepted['id']}",
+                        json=edit,
+                        headers=agent_headers(tmp_db, "chief"),
                     )
                     assert changed.status_code == 200, changed.text
                     accepted = changed.json()
@@ -329,7 +331,7 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
                     assert accepted["completed"] is False
                     assert accepted["active"] is True
                 reread = client.get(
-                    f"/api/goals/{accepted['id']}", headers={"X-Plan-Actor": "chief"}
+                    f"/api/goals/{accepted['id']}", headers=agent_headers(tmp_db, "chief")
                 )
                 assert reread.status_code == 200, reread.text
                 assert reread.json()["page"] == saved_page
@@ -339,11 +341,11 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
             goal_body["completion_rule"]["actual"]["measure_id"]
         )
         goal_body.update(holder_kind="manager", holder_id=manager.id)
-        created = client.post("/api/goals", json=goal_body, headers={"X-Plan-Actor": "chief"})
+        created = client.post("/api/goals", json=goal_body, headers=agent_headers(tmp_db, "chief"))
         assert created.status_code == 200, created.text
         goal = created.json()
         goal_id = goal["id"]
-        headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": manager.id}
+        headers = agent_headers(tmp_db, "manager", manager.id)
         source_body["project_id"] = "project_vylo"
         source_body["responsible"]["id"] = goal_id
 
@@ -545,9 +547,13 @@ def test_published_examples_complete_writes_and_diagnose_recorded_failures(
         assert manual.json()["source_id"] is None
         minimal = client.post(
             "/api/goals",
-            headers={"X-Plan-Actor": "chief"},
-            json={"title": "Defaults", "project_id": "project_vylo",
-                  "kind": "binary", "primary_checklist_block_id": None},
+            headers=agent_headers(tmp_db, "chief"),
+            json={
+                "title": "Defaults",
+                "project_id": "project_vylo",
+                "kind": "binary",
+                "primary_checklist_block_id": None,
+            },
         )
         assert minimal.status_code == 200, minimal.text
         assert minimal.json()["primary_chart"] is None
@@ -700,7 +706,8 @@ def test_explicit_participants_constructor_executes_registered_lifespan(tmp_db: 
 
 
 def test_goal_holder_authority_covers_definitions_scripts_runs_and_schedule(
-    tmp_db: Connection, fake_clock: FakeClock,
+    tmp_db: Connection,
+    fake_clock: FakeClock,
 ) -> None:
     from tests.unit.test_goal_pages import create
 
@@ -716,13 +723,13 @@ def test_goal_holder_authority_covers_definitions_scripts_runs_and_schedule(
     own = create(tmp_db, holder_kind="manager", holder_id=holder.id)
     other = create(tmp_db, holder_kind="manager", holder_id=foreign_holder.id)
     actor = Principal(PrincipalKind.goal, own.id)
-    headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": holder.id}
-    other_headers = {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": foreign_holder.id}
+    headers = agent_headers(tmp_db, "manager", holder.id)
+    other_headers = agent_headers(tmp_db, "manager", foreign_holder.id)
     managed, _ = configured_source(tmp_db)
     with TestClient(_app(tmp_db)) as client:
         retired_goal = client.patch(
             f"/api/goals/{own.id}",
-            headers={"X-Plan-Actor": "goal", "X-Plan-Goal-ID": own.id},
+            headers=agent_headers(tmp_db, "goal", own.id),
             json={"expected_revision": own.revision, "title": "Retired actor"},
         )
         assert retired_goal.json()["error"]["code"] == "agent_forbidden"

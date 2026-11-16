@@ -364,6 +364,11 @@ def test_kill_withdraws_a_stalled_initial_input_without_a_round_trip(
                     ),
                 )
             )
+            tmp_db.execute(
+                "UPDATE tickets SET conversation_id=? WHERE id=?",
+                ("c_killed", ticket.id),
+            )
+            tmp_db.commit()
             sending = asyncio.create_task(
                 system.send("c_killed", text_message_content("old"), sender_label="Owner")
             )

@@ -4,7 +4,7 @@
 
 ## Who is calling
 
-The command name grants nothing. The process environment says who is calling: Headroom sets the actor, the Ticket or Manager id, and the conversation id when it starts an agent. The server admits or refuses that caller with the same rule as the browser. On the live host, a terminal with no identity is unidentified: it can read and send a message to Chief, and nothing else. Owner writes go through the web app or the iOS app. See [Who may act](authority.md).
+The command name grants nothing. Headroom gives each agent conversation a private launch token in its environment. The CLI sends it automatically; the server resolves the conversation and its current principal. Role and workspace ids are context, not credentials. The server admits or refuses that caller with the same rule as the browser. On the live host, a terminal with no identity is unidentified: it can read and send a message to Chief, and nothing else. Owner writes go through the web app or the iOS app. See [Who may act](authority.md).
 
 Manager commands accept `panels manager` and `--manager`. The old Sprint Item and Orchestrator spellings are removed.
 
@@ -50,7 +50,7 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 
 ## Code
 
-- `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and identity headers.
+- `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and launch credential.
 - `src/planner/server_lifecycle/control.py`: the control socket and its messages. `event_loop_tasks.py`: the event loop tasks and the creation times it reads.
 - Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
 

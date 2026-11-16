@@ -24,6 +24,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from tests.support.conversation_test_loop import conversation_test_loop, run_conversation_test
+from tests.support.launch_identity import agent_headers
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.api import (
@@ -920,7 +921,7 @@ def test_owner_read_position_persists_and_refuses_employee_updates(
                 await client.post(
                     "/api/conversation/conversations/c/owner-read",
                     json={"through_sequence": 1},
-                    headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_one"},
+                    headers=agent_headers(harness.db_path, "worker", "t_one"),
                 )
 
     _run(exercise)
@@ -1782,7 +1783,8 @@ def test_explicit_usage_refresh_preserves_observation_after_all_failure_outcomes
 
 
 def test_backend_updates_require_owner_before_an_update_can_run(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch,
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from planner.conversation.snapshot import BackendUpdateOutcome, BackendUpdateResult
 
@@ -1799,7 +1801,7 @@ def test_backend_updates_require_owner_before_an_update_can_run(
             with pytest.raises(PlannerError, match="only to the owner"):
                 await client.post(
                     f"{CONVERSATION_PREFIX}/backends/claude/update",
-                    headers={"X-Plan-Actor": "chief"},
+                    headers=agent_headers(harness.db_path, "chief"),
                 )
             assert called == []
             response = await client.post(f"{CONVERSATION_PREFIX}/backends/claude/update")

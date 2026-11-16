@@ -394,12 +394,14 @@ def test_removed_goal_conversation_boundaries_reject_before_resolution() -> None
     from fastapi import Request
 
     from planner.conversation.history.api import history_page
-    from planner.core.authctx import _classify
+    from planner.core.authctx import request_context
     from planner.message_delivery.api import _principal
 
     with pytest.raises(PlannerError, match="unknown message recipient"):
         _principal({"kind": "goal", "id": "goal_old"})
-    with pytest.raises(PlannerError, match="does not name a Panels principal"):
-        _classify("goal")
+    context = request_context(Request({
+        "type": "http", "headers": [(b"x-plan-actor", b"goal")],
+    }))
+    assert context.principal.kind is PrincipalKind.unidentified
     with pytest.raises(PlannerError, match="unknown conversation history owner"):
         asyncio.run(history_page(Request({"type": "http"}), "goal", "goal_old"))

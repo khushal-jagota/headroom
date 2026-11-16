@@ -51,7 +51,7 @@ def request_headers(
         name = key.lower()
         if (
             name in _HOP | connection
-            or name in {"host", "forwarded", "origin"}
+            or name in {"host", "forwarded", "origin", "authorization"}
             or name.startswith(("tailscale-", "x-plan-", "x-forwarded-", "proxy-"))
         ):
             continue

@@ -92,6 +92,10 @@ from acp.schema import (
 from acp.transports import spawn_stdio_transport
 
 from planner import __version__
+from planner.agent_identity.contracts import (
+    LAUNCH_TOKEN_ENVIRONMENT_NAME,
+    UNIDENTIFIED_LAUNCH_TOKEN,
+)
 from planner.conversation.backends.contracts import (
     AgentMessageCompleted,
     AgentMessageDelta,
@@ -346,6 +350,7 @@ def _child_environment(
     }
     environment.update(launch.environment_overrides)
     environment.update(_access_environment(resolved_start.access))
+    environment[LAUNCH_TOKEN_ENVIRONMENT_NAME] = UNIDENTIFIED_LAUNCH_TOKEN
     role_materials = resolved_start.role_materials
     if role_materials is not None:
         environment.update(role_materials.identity_environment_variables)

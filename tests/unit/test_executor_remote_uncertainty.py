@@ -69,6 +69,13 @@ def test_each_native_start_reads_current_database_snapshot(
         tmp_path,
         ConversationAccess.full,
     )
+    from planner.conversation.storage import ensure_started_conversation_record
+
+    ensure_started_conversation_record(tmp_db, start, created_at=1)
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id=? WHERE id=?", (start.conversation_id, ticket.id)
+    )
+    tmp_db.commit()
     commands: list[ChildCommand] = []
 
     async def send(command: ChildCommand) -> CommandOutcome:
