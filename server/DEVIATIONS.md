@@ -853,3 +853,6 @@ prompt names the checkout separately from the launch folder.
 The Mac command comparison asserts the TypeScript launch folder and the prepared
 checkout before it maps the recorded path to Python's checkout path for the remaining
 custody comparison. Focused launch tests check the real request and prompt paths.
+The home Worker abort comparison likewise asserts the stored Ticket launch folder
+and the explicit checkout prompt before it normalizes only those two differences.
+The remaining conversation rows and abort custody compare exactly with Python.
