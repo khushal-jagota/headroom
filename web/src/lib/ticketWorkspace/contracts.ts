@@ -23,6 +23,12 @@ export interface WorkspaceFieldSummary {
   revision: string;
 }
 
+export interface UnresolvedDecisionFeedback {
+  decision_id: string;
+  status: "uncertain" | "refused" | "discarded";
+  message: string;
+}
+
 export interface WorkflowControlStage {
   id: string;
   label: string;
@@ -77,7 +83,7 @@ export interface ValidWorkspaceTicket {
   field_values: Record<string, string>;
   field_summaries: Record<string, WorkspaceFieldSummary>;
   field_approvals: Record<string, TicketFieldApproval>;
-  unresolved_decision_feedback: Array<Record<string, string>>;
+  unresolved_decision_feedback: Array<UnresolvedDecisionFeedback>;
   pending_proposal: WorkspaceProposal | null;
   created_at: number;
   updated_at: number;
