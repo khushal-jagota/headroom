@@ -1,3 +1,3 @@
-# Temporary catch-up gaps
+# Catch-up comparison coverage
 
-No expected failures remain after the catch-up and private launch-token ports combine. The retained cases run without expected-failure marks.
+The frozen-staging catch-up and private launch-token ports are combined. All retained checkpoint cases run as normal tests. The temporary checkpoint ledger and expected-failure marker hook are removed.
