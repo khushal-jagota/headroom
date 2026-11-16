@@ -23,7 +23,6 @@ struct ReviewChiefMessage: View {
             }
             .font(PanelsTheme.TypeScale.small)
             .frame(minHeight: 44)
-            .screenTextEntryInteraction()
         }
         .accessibilityIdentifier("review.chief")
         .task(id: "\(store.baseURL)|\(isActive)") {

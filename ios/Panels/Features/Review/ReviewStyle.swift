@@ -49,8 +49,8 @@ struct DecisionProposalCard: View {
                         .frame(minHeight: 28)
                 }.buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.text)
                     .accessibilityIdentifier("decision.reviewer")
-            }.panelsScaledFont(size: 12.5, weight: .medium).screenTextEntryInteraction()
-            DecisionMarkdown(source: text, baseURL: baseURL).screenTextEntryInteraction()
+            }.panelsScaledFont(size: 12.5, weight: .medium)
+            DecisionMarkdown(source: text, baseURL: baseURL)
         }.padding(PanelsTheme.Web.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PanelsTheme.Web.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
@@ -192,21 +192,20 @@ struct DecisionNoteActions: View {
                 }.ignoresSafeArea(.container, edges: .bottom)
             }
             .foregroundStyle(PanelsTheme.Web.text)
-            .screenTextEntryInteraction()
-            .onChange(of: noteEnabled) { _, enabled in if !enabled { _ = textEntry?.endEditing() } }
+            .onChange(of: noteEnabled) { _, enabled in if !enabled { textEntry?.endEditing() } }
             .onChange(of: focusRequest) { _, _ in textEntry?.requestFocus(inputID) }
-            .onChange(of: blurRequest) { _, _ in _ = textEntry?.endEditing() }
+            .onChange(of: blurRequest) { _, _ in textEntry?.endEditing() }
     }
     @ViewBuilder private var actionButtons: some View {
         if showsSendBack {
             Button {
                 if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { textEntry?.requestFocus(inputID) }
-                else { _ = textEntry?.endEditing(); onSendBack() }
+                else { textEntry?.endEditing(); onSendBack() }
             } label: { actionLabel("Send it back", active: busyAction == "back") }
                 .disabled(!ready || !canReturn || !noteEnabled || busyAction != nil)
                 .accessibilityIdentifier("review.sendBack")
         }
-        Button { _ = textEntry?.endEditing(); onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
+        Button { textEntry?.endEditing(); onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
             .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
     }
     private func actionLabel(_ title: String, active: Bool) -> some View {

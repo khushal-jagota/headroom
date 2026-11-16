@@ -66,7 +66,7 @@ struct ConversationComposer: View {
             } catch { model.error = error.localizedDescription }
         }
         .onChange(of: capturingSpeech) { _, capturing in
-            if capturing { _ = textEntry?.endEditing() }
+            if capturing { textEntry?.endEditing() }
             onCaptureChanged?(capturing)
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
@@ -146,7 +146,6 @@ struct ConversationComposer: View {
         .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
         .animation(reduceMotion ? nil : ConversationLayout.shapeMotion, value: card)
         .foregroundStyle(PanelsTheme.text)
-        .screenTextEntryInteraction()
     }
     private var controls: some View {
             HStack(spacing: 0) {
@@ -190,7 +189,7 @@ struct ConversationComposer: View {
     }
 
     @ViewBuilder private var configurationControls: some View {
-        Button { _ = textEntry?.endEditing(); modelSheet = true } label: {
+        Button { textEntry?.endEditing(); modelSheet = true } label: {
             HStack(spacing: 4) {
                 ConversationBackendMark(backend: model.backendKey ?? "codex")
                 Text(model.selectedModel?.components(separatedBy: "/").last ?? "Model").lineLimit(1)
@@ -248,7 +247,7 @@ struct ConversationComposer: View {
         }
     }
     private func startVoice() {
-        _ = textEntry?.endEditing()
+        textEntry?.endEditing()
         let prefix = model.draft
         Task { await speech.start { model.updateSpeechTranscript($0, prefix: prefix) } }
     }

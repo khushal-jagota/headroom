@@ -926,10 +926,8 @@ receipt, including edits that restore the same text.
 
 Each visible screen owns focus for its conversation fields and decision notes.
 Review shares one owner across the note and reply fields on its current card.
-In chat and Review, a tap on inert background ends editing without clearing the draft or attachments.
-Links, controls, selectable text, and inputs keep their own interactions.
+Taps in the chat transcript and Review scroll areas clear that screen's focus.
+Those scroll areas also support interactive keyboard dismissal.
 
-Chat and artifact navigation first release the outgoing screen's native input.
-A completed return leaves the parent unfocused until another input tap.
-A canceled back swipe keeps editing on the current screen.
-Expanded drafts, including the Goal composer, retain their existing shape and content.
+Chat and artifact navigation clear the outgoing screen's focus before the route changes.
+Drafts, attachments, and expanded composers, including the Goal composer, retain their existing content and shape.

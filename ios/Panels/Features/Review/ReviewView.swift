@@ -43,10 +43,10 @@ struct ReviewView: View {
     }
 
     var body: some View {
-        ScreenTextEntryScope(dismissesBackgroundTaps: true) { _ in reviewContent }
+        ScreenTextEntryScope { textEntry in reviewContent(textEntry: textEntry) }
     }
 
-    private var reviewContent: some View {
+    private func reviewContent(textEntry: ScreenTextEntryContext) -> some View {
         Group {
             if savedWork.key?.server != server { Color.clear }
             else if let card = shownCard {
@@ -72,13 +72,13 @@ struct ReviewView: View {
                                 }
                                 .buttonStyle(ReviewActionStyle())
                                 .accessibilityIdentifier("review.revisitSkipped")
-                                .screenTextEntryInteraction()
                             }
                         }
                         .padding(.horizontal, ReviewStyle.gutter)
                         .padding(.vertical, PanelsTheme.Space.xl)
                         .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                     }
+                    .simultaneousGesture(TapGesture().onEnded { textEntry.endEditing() })
                     .scrollDismissesKeyboard(.interactively)
                     .panelsRefreshable { await store.refresh() }
                 }
@@ -291,6 +291,7 @@ private struct ReviewCardView: View {
                         })
             }
             .accessibilityIdentifier("review-content")
+            .simultaneousGesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollDisabled(leaving || messages.contains { messageStates[$0.id]?.sending == true })
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -365,7 +366,7 @@ private struct ReviewCardView: View {
                 }
             }
         }.buttonStyle(.plain).panelsScaledFont(size: 13.5, weight: .medium)
-            .foregroundStyle(PanelsTheme.Web.secondary).frame(minHeight: 44).screenTextEntryInteraction()
+            .foregroundStyle(PanelsTheme.Web.secondary).frame(minHeight: 44)
         Text(decision?.ticket?.title ?? card.title).panelsScaledFont(size: 26, relativeTo: .title, weight: .semibold)
             .tracking(-0.26).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
             .foregroundStyle(PanelsTheme.Web.strong).frame(maxWidth: .infinity, alignment: .leading)
@@ -373,7 +374,7 @@ private struct ReviewCardView: View {
             Text((try? AttributedString(markdown: recap)) ?? AttributedString(recap))
                 .panelsScaledFont(size: 14).lineSpacing(6).foregroundStyle(PanelsTheme.Web.text)
                 .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
-                .accessibilityLabel("Recap").accessibilityValue(recap).screenTextEntryInteraction()
+                .accessibilityLabel("Recap").accessibilityValue(recap)
         }
         }
     }
@@ -466,7 +467,7 @@ private struct ReviewProposalSection: View {
             if decision.error != nil {
                 Button(decision.changed ? "Reload proposal" : "Try again") {
                     Task { await store.refresh(); await decision.load(item: item, api: store.client, discardDraft: decision.changed) }
-                }.disabled(decision.busy).panelsScaledFont(size: 12.5).screenTextEntryInteraction()
+                }.disabled(decision.busy).panelsScaledFont(size: 12.5)
             }
         }
         .task(id: "\(store.baseURL)|\(store.connectionSession)|\(isActive)") {
@@ -546,7 +547,7 @@ private struct ReviewDecisionDock: View {
                 Button("Retry") { Task { append(await voice.transcribe(api: api)) } }
             case .idle: EmptyView()
             }
-        }.foregroundStyle(PanelsTheme.muted).screenTextEntryInteraction()
+        }.foregroundStyle(PanelsTheme.muted)
     }
     private func append(_ transcript: String?) {
         if transcript != nil { decision.refreshVoiceDraft() }

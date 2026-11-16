@@ -66,11 +66,11 @@ struct ReviewMessageSection: View {
                         ScreenTextEntryNavigationLink("Open conversation", value: AppRoute.conversation(owner: owner, id: id))
                             .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.openConversation")
                     }
-                }.screenTextEntryInteraction()
+                }
             } else if decision.error == nil { ScreenLoadingView(title: "messages") }
             if let error = decision.error {
                 Text(error).foregroundStyle(PanelsTheme.error)
-                if !decision.loaded { Button("Try again") { Task { await decision.load(item: live, api: store.client) } }.screenTextEntryInteraction() }
+                if !decision.loaded { Button("Try again") { Task { await decision.load(item: live, api: store.client) } } }
             }
         }
         // Read again as the part is shown: a message arriving while it is on screen
@@ -135,6 +135,5 @@ private struct ReviewMessageContent: View {
             }
         }
         .reviewArtifactLinks()
-        .screenTextEntryInteraction()
     }
 }

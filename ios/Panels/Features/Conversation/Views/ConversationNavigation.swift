@@ -39,7 +39,7 @@ struct ConversationNavigation: ViewModifier {
                 surface(isPage: false, textEntry: textEntry)
             }
             .navigationDestination(isPresented: $opened) {
-                ScreenTextEntryScope(dismissesBackgroundTaps: true) { childEntry in
+                ScreenTextEntryScope { childEntry in
                     surface(isPage: true, textEntry: childEntry)
                         .toolbar(.hidden, for: .navigationBar)
                         .toolbar(.hidden, for: .tabBar)
@@ -226,7 +226,7 @@ private struct ConversationSurface: View {
     private var header: some View {
         HStack(spacing: 0) {
             if isPage {
-                AgentPageControls(beforeBack: { _ = textEntry?.endEditing() }) {
+                AgentPageControls(beforeBack: { textEntry?.endEditing() }) {
                     Menu {
                         Picker("Conversation lens", selection: $model.lens) {
                             ForEach(ConversationLens.allCases, id: \.self) { lens in
@@ -273,7 +273,6 @@ private struct ConversationSurface: View {
         .foregroundStyle(PanelsTheme.faint)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-header")
-        .screenTextEntryInteraction()
     }
 
     private var bottom: some View {
@@ -290,7 +289,7 @@ private struct ConversationSurface: View {
                                 Button { changeQueue(held, discard: true) } label: {
                                     Image(systemName: "xmark").font(.system(size: 18)).frame(width: 44, height: 44)
                                 }.accessibilityLabel("Remove queued message")
-                            }.screenTextEntryInteraction()
+                            }
                         }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 12)
                             .background(PanelsTheme.recessed, in: RoundedRectangle(cornerRadius: 12))
                     }
@@ -336,6 +335,7 @@ struct ConversationThread: View {
         model.visibleReadBoundary(rowIDs: visibleRowIDs, active: active && appeared)
     }
     @Environment(AppStore.self) private var store
+    @Environment(\.screenTextEntry) private var textEntry
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
     @State private var position = ScrollPosition(edge: .bottom)
@@ -346,7 +346,7 @@ struct ConversationThread: View {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     if model.older != nil {
                         Button("Earlier messages") { Task { await model.loadOlder(using: store.client) } }
-                            .disabled(model.loadingOlder).frame(maxWidth: .infinity, minHeight: 44).screenTextEntryInteraction()
+                            .disabled(model.loadingOlder).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     ForEach(model.rows) { row in
                         HStack {
@@ -356,18 +356,16 @@ struct ConversationThread: View {
                                     Text(sender).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                                 }
                                 if row.item?.body?.reference != nil, let item = row.item, model.expandedBodies[item.key] == nil {
-                                    Button("Read message") { Task { await model.loadBody(item, using: store.client) } }.screenTextEntryInteraction()
+                                    Button("Read message") { Task { await model.loadBody(item, using: store.client) } }
                                     if let error = model.bodyErrors[item.key] {
                                         Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
                                     }
                                 } else if !row.text.isEmpty {
                                     Text((try? AttributedString(markdown: row.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: store.baseURL)) ?? AttributedString(row.text))
                                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                        .screenTextEntryInteraction()
                                 }
                                 if !row.attachments.isEmpty {
                                     ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
-                                        .screenTextEntryInteraction()
                                 }
                                 if let note = row.note, note != "Sent" {
                                     HStack {
@@ -390,7 +388,7 @@ struct ConversationThread: View {
                                                 Button("Keep waiting", role: .cancel) { recoveryID = nil }
                                             }
                                         }
-                                    }.font(PanelsTheme.TypeScale.small).frame(minHeight: 28).screenTextEntryInteraction()
+                                    }.font(PanelsTheme.TypeScale.small).frame(minHeight: 28)
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
                             if !row.own { Spacer(minLength: 0) }
@@ -422,6 +420,7 @@ struct ConversationThread: View {
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(scrollPolicy.shouldFollowContent ? .bottom : .top, for: .sizeChanges)
+            .simultaneousGesture(TapGesture().onEnded { textEntry?.endEditing() })
             .scrollDismissesKeyboard(.interactively)
             .scrollPosition($position)
             .onScrollPhaseChange { old, phase, context in
@@ -484,7 +483,6 @@ struct ConversationThread: View {
                         .accessibilityValue(scrollPolicy.hasNewOutput ? "New output" : "")
                         .accessibilityHint("Scroll to the latest message")
                         .padding(.trailing, 16).padding(.bottom, 16)
-                        .screenTextEntryInteraction()
                         .transition(.opacity)
                     }
                 }
