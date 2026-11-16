@@ -107,7 +107,7 @@ def run(browser, urls):
                     "needs_outcome": "needs_consequences",
                     "needs_consequences": "done",
                 },
-                ceiling_range=["needs_brief", "needs_outcome", "needs_consequences", "done"],
+                ceiling_range=["needs_brief", "needs_outcome", "done"],
                 default_ceiling="needs_brief",
                 worker_profile_id="panels-worker-personal-task",
                 default_backend="codex",
@@ -1057,7 +1057,7 @@ def run(browser, urls):
     expect(page.locator("[data-approval-block] .error-line")).to_contain_text(
         "Server refused this action"
     )
-    expect(page.locator("[data-approval-block] .error-code")).to_have_text("validation")
+    expect(page.locator("[data-approval-block] .error-line")).to_have_attribute("data-error-code", "validation")
     assert len(ceiling_writes) == 1 and approvals == []
     ceiling_writes.clear()
     refuse_scope_save = False
@@ -1106,7 +1106,7 @@ def run(browser, urls):
     snapshot_unavailable = True
     drive("window.__refresh()")
     expect(page.locator(".ticket-title [data-conversation-signal]")).to_have_count(0)
-    expect(page.locator("[data-worker-live-card] h2")).to_have_text("Waiting at Closeout")
+    expect(page.locator("[data-worker-live-card] h2")).to_have_text("At Closeout")
     expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Canonical masthead")
     retained_conversation["value"]["attention"]["current"]["signal"]["message_for_owner"] = True
     retained_conversation["value"]["attention"]["durable"]["message_for_owner"] = True
@@ -1586,8 +1586,8 @@ def run(browser, urls):
     assert len(approval_attempts) == 6
     assert all(row == approval_attempts[0] for row in approval_attempts)
     assert not review_note_sends
-    assert approvals[0]["next_ceiling"] == "none"
-    assert approvals[0]["next_holder"] == {"kind": "owner", "id": "owner"}
+    assert "next_ceiling" not in approvals[0]
+    assert "next_holder" not in approvals[0]
     assert approvals[0]["expected_proposal_revision"] == 2
     assert approvals[0]["message"] == original_note
     assert approvals[0]["edited_body"] == "Retained local draft"
@@ -1600,6 +1600,10 @@ def run(browser, urls):
         and value["expected_proposal_revision"] == 2
     )
     journal_key = 'panels:decision-operation:v1:["t_review",2]'
+    # Finish the original receipt before simulating a crash's leftover journal.
+    # Otherwise its in-flight recovery can race the two tabs under test.
+    page.wait_for_function("key => localStorage.getItem(key) === null", arg=journal_key)
+    expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
     saved_operation = {
         "version": 1, "ticketId": "t_review", "operationId": applied_operation,
         "command": {"decision": "approve", "field": "success_condition", **approvals[0]},
@@ -1706,8 +1710,8 @@ def run(browser, urls):
     wait_for_write(lambda: len(approvals) == 2)
     assert approvals[1]["expected_proposal_revision"] == 3
     assert approvals[1]["edited_body"] == "Edited replacement body"
-    assert approvals[1]["next_ceiling"] == "none"
-    assert approvals[1]["next_holder"] == {"kind": "owner", "id": "owner"}
+    assert "next_ceiling" not in approvals[1]
+    assert "next_holder" not in approvals[1]
     expect(remaining).to_have_count(1)
     remaining.locator("[data-skip]").click()
     expect(page.locator("[data-review-card]")).to_have_count(0)
@@ -2023,8 +2027,8 @@ def run(browser, urls):
     expect(message_card.locator("[data-review-message-sequence]")).to_have_count(121)
     expect(reply).to_have_value("Keep these words")
     assert approvals[-1]["expected_proposal_revision"] == 1
-    assert approvals[-1]["next_ceiling"] == "none"
-    assert approvals[-1]["next_holder"] == ticket["ceiling_holder"]
+    assert "next_ceiling" not in approvals[-1]
+    assert "next_holder" not in approvals[-1]
     assert review_read == 0
     ticket.update(ticket_status="awaiting_approval", pending_proposal={"field":"success_condition","body":"A separate decision","created_at":500,"revision":1})
     drive("window.__refresh()")

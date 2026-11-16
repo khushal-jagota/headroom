@@ -36,10 +36,9 @@ struct ManagerTicket: Codable, Identifiable, Sendable {
     let awaitingAgentApproval: Bool
     var agentState: String
     let assigned: Bool
-    let waitingToCloseout: Bool?
     let activityAt: Double?
     var conversationSignal: ConversationSignal?
-    enum CodingKeys: String, CodingKey { case integrityError, locale, id, title, recap, recapPreview, stage, ticketStatus, workerType, isBacklogged, blocked, hasPendingProposal, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, agentState, assigned, waitingToCloseout, activityAt, conversationSignal }
+    enum CodingKeys: String, CodingKey { case integrityError, locale, id, title, recap, recapPreview, stage, ticketStatus, workerType, isBacklogged, blocked, hasPendingProposal, awaitingReply, awaitingAnswer, awaitingApproval, awaitingAgentApproval, agentState, assigned, activityAt, conversationSignal }
 }
 
 extension ManagerTicket {
@@ -68,7 +67,6 @@ extension ManagerTicket {
         awaitingAgentApproval = try required(Bool.self, .awaitingAgentApproval, broken: false)
         agentState = try required(String.self, .agentState, broken: "errored")
         assigned = try required(Bool.self, .assigned, broken: false)
-        waitingToCloseout = try c.decodeIfPresent(Bool.self, forKey: .waitingToCloseout)
         activityAt = try c.decodeIfPresent(Double.self, forKey: .activityAt)
         conversationSignal = try c.decodeIfPresent(ConversationSignal.self, forKey: .conversationSignal)
     }

@@ -5,7 +5,7 @@ A Manager is an agent that holds one direction and the Tickets that serve it. It
 ## What a Manager is made of
 
 - **A goal**: the sentence that says why this Manager exists. This is a field on the Manager, not a [goal](goals.md) with a deadline and a page.
-- **A recap**: the current status line. Each new recap replaces the old one.
+- **A recap**: the current status line. Each new recap replaces the old one. The server refuses a recap that is longer than 80 characters or that names an internal ID. See [Tickets](tickets.md).
 - **A page document**: the overview that the Manager keeps for Khushal, with text, checklists, charts, layouts, and Tickets.
 - **An optional project.** A Manager's project is also the effective project of its Tickets.
 - **Child Tickets**: the Tickets assigned to it.

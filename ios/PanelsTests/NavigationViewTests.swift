@@ -92,8 +92,7 @@ final class NavigationViewTests: XCTestCase {
 
         let consequences = sourceTicket(["conversation_id": NSNull(), "gating_field": "consequences"])
         let closing = try XCTUnwrap(NavigationPresentation(try snapshot([consequences, sourceManager, project("project", "Project")]).content.records).tickets.first)
-        XCTAssertTrue(closing.waitingToCloseout)
-        XCTAssertEqual(WorkspaceGrouping.section(for: closing.summary), .consequences)
+        XCTAssertEqual(WorkspaceGrouping.section(for: closing.summary), .other)
     }
 
     func testTicketLocaleSurvivesDecodeAndMappingBeforeRuntimeMark() throws {

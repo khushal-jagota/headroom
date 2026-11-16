@@ -10,11 +10,30 @@ from tests.support.ticket_workspace_git import _git, _layout
 
 from planner.ticket_workspaces import filesystem
 from planner.ticket_workspaces.contracts import WorkspaceState
-from planner.ticket_workspaces.filesystem import prepare_workspace, retire_workspace
+from planner.ticket_workspaces.filesystem import prepare_workspace as prepare_current_workspace
+from planner.ticket_workspaces.filesystem import retire_workspace
+
+
+def prepare_workspace(folder: Path, repository: Path | None, ticket_id: str) -> Path:
+    """Exercise legacy linked-worktree recovery with its existing ownership marker."""
+    if repository is not None and not (folder / ".panels-workspace.json").exists():
+        identity = filesystem.workspace_identity(folder)
+        marker_path = folder / ".panels-workspace.json"
+        marker = json.loads(marker_path.read_text())
+        marker.update(
+            repository=str(repository.resolve()),
+            branch=f"ticket/{ticket_id}-workspace-{identity.workspace_id[:12]}",
+            worktree=str(folder.resolve() / "worktree"),
+            preparing=True,
+            initial_commit=_git(repository, "rev-parse", "HEAD").strip(),
+        )
+        filesystem._write_json(marker_path, marker)
+    return prepare_current_workspace(folder, repository, ticket_id)
 
 
 def test_replacement_repairs_retired_worktree_registration_before_reusing_its_path(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = _layout(tmp_path)
     folder = tmp_path / "files/tickets/t_aaaaaaaa"
@@ -113,7 +132,8 @@ def test_preparation_recovers_only_its_recorded_interrupted_git_or_directory_cre
 
 
 def test_interrupted_partial_checkout_is_not_adopted_until_index_and_files_are_complete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     layout = _layout(tmp_path)
     (layout.repository / "present.txt").write_text("original present file")
@@ -196,3 +216,84 @@ def test_repository_selection_refuses_malformed_or_ambiguous_children(tmp_path: 
     _git(other, "init", "-q")
     with pytest.raises(RuntimeError, match="select the repository folder explicitly"):
         filesystem.repository_root(project)
+
+
+def test_new_clone_uses_fresh_remote_without_shared_git_storage(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    repository = layout.repository
+    old = _git(repository, "rev-parse", "HEAD").strip()
+    _git(repository, "commit", "-q", "--allow-empty", "-m", "new remote")
+    new = _git(repository, "rev-parse", "HEAD").strip()
+    _git(repository, "push", "-q", "origin", "HEAD:staging")
+    _git(repository, "reset", "-q", "--hard", old)
+    (repository / "local.txt").write_text("unfinished")
+    folder = tmp_path / "files/tickets/t_aaaaaaaa"
+    checkout = prepare_current_workspace(folder, repository, folder.name)
+    assert _git(checkout, "rev-parse", "HEAD").strip() == new
+    assert (checkout / ".git").is_dir()
+    assert not (checkout / ".git/objects/info/alternates").exists()
+    assert _git(repository, "rev-parse", "HEAD").strip() == old
+    assert (repository / "local.txt").read_text() == "unfinished"
+    _git(repository, "remote", "set-url", "origin", str(tmp_path / "missing"))
+    assert prepare_current_workspace(folder, repository, folder.name) == checkout
+    another = tmp_path / "files/tickets/t_bbbbbbbb"
+    with pytest.raises(RuntimeError, match="Cannot clone"):
+        prepare_current_workspace(another, repository, another.name)
+    assert not (another / "worktree").exists()
+
+
+def test_panels_clone_uses_staging_without_project_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    layout = _layout(tmp_path)
+    origin = _git(layout.repository, "remote", "get-url", "origin").strip()
+    _git(layout.repository, "push", "-q", "origin", "HEAD:main")
+    _git(Path(origin), "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(layout.repository, "commit", "-q", "--allow-empty", "-m", "staging")
+    wanted = _git(layout.repository, "rev-parse", "HEAD").strip()
+    _git(layout.repository, "push", "-q", "origin", "HEAD:staging")
+    monkeypatch.setattr(filesystem, "_PANELS_ORIGIN", origin)
+    folder = tmp_path / "files/tickets/t_aaaaaaaa"
+    ambiguous = tmp_path / "ambiguous"
+    for name in ("one", "two"):
+        (ambiguous / name / ".git").mkdir(parents=True)
+    checkout = prepare_current_workspace(folder, ambiguous, folder.name, panels_project=True)
+    resumed = prepare_current_workspace(folder, ambiguous, folder.name, panels_project=True)
+    assert resumed == checkout
+    assert _git(checkout, "rev-parse", "HEAD").strip() == wanted
+
+
+def test_cleanup_of_single_branch_clone_with_unfetched_remote_branch(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    origin = _git(layout.repository, "remote", "get-url", "origin").strip()
+    folder = tmp_path / "files/tickets/t_aaaaaaaa"
+    checkout = prepare_current_workspace(folder, layout.repository, folder.name)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", origin, str(other)], check=True)
+    _git(other, "checkout", "-q", "--orphan", "unrelated")
+    _git(
+        other,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "unrelated",
+    )
+    _git(other, "push", "-q", "origin", "HEAD:unrelated")
+    # The checkout's ordinary fetch is limited to staging. The unrelated advertised
+    # object must not make a remotely preserved checkout impossible to retire.
+    assert filesystem.reason_to_keep(checkout) is None
+
+
+def test_cleanup_ignores_ancestor_ticket_names_but_detects_nested_owners(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root = tmp_path / "t_bbbbbbbb-scratch" / "t_aaaaaaaa"
+    checkout = prepare_current_workspace(root, layout.repository, root.name)
+    assert filesystem.workspace_ticket_owners(root) == ("t_aaaaaaaa",)
+    nested = checkout / "t_cccccccc"
+    _git(checkout, "init", "-q", str(nested))
+    assert set(filesystem.workspace_ticket_owners(root)) == {"t_aaaaaaaa", "t_cccccccc"}

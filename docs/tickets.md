@@ -14,35 +14,38 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 - **Blockers**, other Tickets that must be Done before this one may start a step.
 - **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
 
+A recap is 80 characters at most. The server refuses a recap that names an internal ID: a Ticket or Manager ID, a Git commit hash, or a UUID. The refusal is one line that says what to rewrite. Manager and Chief recaps follow the same rule. Recaps stored before the rule stay as they are, and an empty recap is always allowed.
+
 ## How a stage advances
 
 ```text
 Worker files a proposal for the current stage
-                │
-        proposal resolver
-         │                 │
-  stage before the     stage at or past
-  ceiling              the ceiling
-         │                 │
-  text settles,        proposal parks for the holder
-  next stage           │
-                       ├─ approve: text settles, next stage,
-                       │  and the approver sets the next ceiling and holder
-                       └─ send back: stage stays, optional guidance
-                          goes out with the Worker's next step
+                    │
+             proposal resolver
+          ┌─────────┴──────────┐
+     Consequences         decision stage
+          │                    │
+ verified report settles   ceiling decides
+          │                 │         │
+         Done           auto-settle   review
+                            │         │
+                         next stage ◄─┘
 ```
+
 
 A proposal waits briefly for a busy database before it changes the record. If that wait expires, the sender receives a retryable refusal. Headroom never repeats a proposal commit after an uncertain result.
 
-Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Every approval moves exactly one stage and names how far the Worker may go next, so the ceiling is chosen again at each gate.
+Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Each approval moves one stage.
 
-By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later ceiling up front, but never Done.
+Earlier approvals name the next ceiling and holder. Approval of the last decision authorizes Consequences through Done without another reviewer choice. The Worker performs the authorized follow-through, verifies it, and submits its report. The resolver settles that report automatically and finishes the Ticket.
+
+By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later decision ceiling up front, but never Consequences or Done.
 
 On a collaborative stage, the person can also complete the gate directly, without a Worker proposal. That uses the same resolver and still moves one stage. A reply typed into the conversation never decides a proposal. Approval and Send back enforce any supplied proposal revision in the same write as the decision. Protected decision receipts retain an exact command and its outcome for the Ticket's lifetime. Repeating that command returns its saved result, even after the Ticket advances.
 
 The browser and iPhone use protected decisions on Review and Ticket pages. The older accept and reject routes remain available to the CLI and existing callers through the same proposal writers. Those routes do not provide receipt recovery.
 
-Each settled stage remembers who approved it: a named person or agent, or auto-accepted when it settled below the ceiling. Editing the text clears that approval.
+Each settled stage remembers who approved it: a named person or agent, or auto-accepted when it settled below the ceiling or completed Consequences. Editing the text clears that approval.
 
 ## Ceiling, holder, and assignment
 
@@ -56,7 +59,7 @@ Moving a Ticket to another Manager can make the old holder illegal. Then the hol
 
 ## How status is read
 
-A Ticket stores one control fact, the worker-step claim: at rest, out, or errored. [Worker steps](worker-steps.md) owns it. Everything a person calls status is derived on read, in this order: errored, awaiting approval, agent (a step is out), blocked (at rest behind an unfinished blocker), and empty (ready for the next step). Whether the agent is working right now is a separate question, answered by the conversation.
+A Ticket stores one control fact, the worker-step claim: at rest, out, or errored. [Worker steps](worker-steps.md) owns it. Everything a person calls status is derived on read, in this order: errored, awaiting approval, agent (a step is out), blocked (at rest behind an unfinished blocker), and empty (ready for the next step). Whether the agent is working right now is a separate question, answered by the conversation. Consequences uses these same activity and status facts. It has no separate waiting group.
 
 The navigation index stores each Ticket's derived status with its other facts, in the same transaction as each write. Ticket and Manager list reads take status from there instead of deriving it again for every Ticket. See [Live screens](live-updates.md).
 

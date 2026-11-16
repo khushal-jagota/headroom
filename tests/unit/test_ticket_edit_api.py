@@ -334,3 +334,19 @@ def _backend_snapshot(
         update_advisory=None,
         diagnoses=(),
     )
+
+
+def test_recap_write_refuses_ids_and_keeps_stored_recap(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_ticket(db_path)
+    with TestClient(app) as client:
+        ok = client.patch(f"/api/tickets/{ticket_id}", json={"recap": "Plain recap."})
+        assert ok.status_code == 200, ok.text
+        refused = client.patch(
+            f"/api/tickets/{ticket_id}", json={"recap": f"Waiting on {ticket_id}."}
+        )
+        assert refused.status_code == 400
+        assert refused.json()["error"]["message"].startswith("Recap names an ID")
+        assert client.get(f"/api/tickets?detail=full&id={ticket_id}").json()["recap"] == (
+            "Plain recap."
+        )

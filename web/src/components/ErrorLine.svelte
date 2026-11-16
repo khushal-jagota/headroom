@@ -4,7 +4,6 @@
   let { error }: { error: unknown } = $props();
 </script>
 
-<div class="error-line">
-  <span class="error-code">{errorCode(error)}</span>
+<div class="error-line" data-error-code={errorCode(error)}>
   <span class="error-message">{errorMessage(error)}</span>
 </div>

@@ -55,7 +55,7 @@ import Observation
                 guard approval.expectedProposalRevision == proposal.revision else { throw OutgoingStore.StoreError.invalidTransition }
                 command = DecisionCommand(decision: "approve", field: proposal.field, expectedProposalRevision: proposal.revision,
                     editedBody: approval.editedBody, nextCeiling: approval.nextCeiling,
-                    nextHolder: DecisionHolder(kind: approval.nextHolder.kind, id: approval.nextHolder.id), message: work.guidance)
+                    nextHolder: approval.nextHolder.map { DecisionHolder(kind: $0.kind, id: $0.id) }, message: work.guidance)
             } else if work.kind == .sendBack {
                 command = DecisionCommand(decision: "send_back", field: proposal.field, expectedProposalRevision: proposal.revision, message: work.guidance)
             } else { throw OutgoingStore.StoreError.invalidTransition }

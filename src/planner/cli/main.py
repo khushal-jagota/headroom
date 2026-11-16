@@ -1330,7 +1330,13 @@ def _approve_ticket_proposal(
         http.fail_validation(
             "the visible proposal changed; read it again before accepting", as_json
         )
-    if ceiling is None:
+    next_stage = manifest["advance"].get(stage)
+    final_approval = next_stage == "done" or (
+        isinstance(next_stage, str)
+        and _gating_field_for_stage(manifest, next_stage) == "consequences"
+        and manifest["advance"].get(next_stage) == "done"
+    )
+    if ceiling is None and not final_approval:
         http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
         if field != BRIEF_FIELD_ID:
@@ -1344,11 +1350,12 @@ def _approve_ticket_proposal(
     field_payload: dict[str, Any] = {
         "expected_proposal_revision": revision,
         "decision_id": f"{tid}:{revision}:accept",
-        "next_ceiling": ceiling,
-        "next_holder": (
-            resolve_holder(holder, as_json) if holder is not None else caller_principal(as_json)
-        ),
     }
+    if not final_approval:
+        field_payload["next_ceiling"] = ceiling
+        field_payload["next_holder"] = (
+            resolve_holder(holder, as_json) if holder is not None else caller_principal(as_json)
+        )
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
     if kickoff_note_file is not None:

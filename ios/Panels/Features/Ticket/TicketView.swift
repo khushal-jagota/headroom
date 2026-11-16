@@ -167,7 +167,7 @@ struct TicketView: View {
                     .panelsScaledFont(size: 15, weight: .semibold)
                     .foregroundStyle(presentation.ticket.agentState == "errored" ? PanelsTheme.Web.error : PanelsTheme.Web.strong)
                     .accessibilityAddTraits(.isHeader)
-                if !presentation.terminal {
+                if !presentation.terminal && presentation.currentField != "consequences" {
                     Button { scopeOpen = true } label: {
                         HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
                             Text("Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")

@@ -46,7 +46,6 @@ extension FeedbackTicket {
         if agentState == "errored" { return "Errored" }
         if ticketStatus == "agent" || agentState == "working" { return "Agent" }
         if ticketStatus == "errored" { return "Errored" }
-        if ticketStatus == "empty" && stage == "needs_consequences" { return "Waiting on Consequences" }
         let label = stage.replacingOccurrences(of: "_", with: " ")
         return label.prefix(1).uppercased() + label.dropFirst()
     }

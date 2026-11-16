@@ -622,8 +622,14 @@ def create_app(
         from planner.conversation.system import SqliteProcessConversationSystem
         from planner.ticket_workspaces.cleanup import clean_for_database
         from planner.ticket_workspaces.contracts import WorkspaceIdentity
+        from planner.ticket_workspaces.lifecycle_monitor import (
+            ended_ticket_snapshot,
+            monitor_lifecycle,
+        )
+        from planner.ticket_workspaces.reporting import RetainedWorkspaceReporter
 
         logger = logging.getLogger(__name__)
+        reporter = RetainedWorkspaceReporter()
         loop = asyncio.get_running_loop()
 
         def retire_local_children(
@@ -637,21 +643,20 @@ def create_app(
             )
             return future.result()
 
-        while True:
-            await asyncio.sleep(ticket_scratch.CLEANUP_INTERVAL_SECONDS)
-            try:
-                result = await asyncio.to_thread(
-                    clean_for_database,
-                    config.db_path,
-                    clock.now_unix(),
-                    extra_roots=layout.folders if layout is not None else (),
-                    retire_local_children=retire_local_children,
-                )
-            except Exception:
-                logger.exception("Ticket scratch cleanup failed")
-                continue
-            for kept in result.skipped:
-                logger.warning("Ticket scratch kept: %s (%s)", kept["path"], kept["reason"])
+        async def cleanup() -> None:
+            result = await asyncio.to_thread(
+                clean_for_database,
+                config.db_path,
+                clock.now_unix(),
+                extra_roots=layout.folders if layout is not None else (),
+                retire_local_children=retire_local_children,
+            )
+            reporter.report(logger, result.skipped)
+
+        await monitor_lifecycle(
+            lambda: ended_ticket_snapshot(config.db_path), cleanup,
+            ticket_scratch.CLEANUP_INTERVAL_SECONDS,
+        )
 
     navigation_delivery = create_delivery_runtime(config.db_path)
     scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)

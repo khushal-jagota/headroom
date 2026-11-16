@@ -43,7 +43,6 @@ struct NavigationTicket: Sendable {
     let awaitingAgentApproval: Bool
     let assigned: Bool
     let agentState: String?
-    let waitingToCloseout: Bool
     let gatingField: String?
     let recap: String
     let recapPreview: String
@@ -193,7 +192,7 @@ struct NavigationPresentation: Sendable {
                     isBacklogged: row.isBacklogged, blocked: false, terminal: false, createdAt: row.createdAt, activityAt: row.updatedAt,
                     conversationId: row.conversationId, signal: NavigationSignal(facts), awaitingReply: facts?.messageForOwner,
                     awaitingAnswer: facts?.awaitingAnswer, awaitingApproval: false, awaitingAgentApproval: false, assigned: false,
-                    agentState: "errored", waitingToCloseout: false, gatingField: nil, recap: row.recap, recapPreview: row.recapPreview,
+                    agentState: "errored", gatingField: nil, recap: row.recap, recapPreview: row.recapPreview,
                     manager: manager, managerId: parent, managerTitle: parentRow?.title, projectId: row.projectId, project: project)
             }
             let owner = row.ceilingHolder == ViewPrincipal(kind: "owner", id: "owner")
@@ -204,7 +203,7 @@ struct NavigationPresentation: Sendable {
                 awaitingReply: facts?.messageForOwner, awaitingAnswer: facts?.awaitingAnswer,
                 awaitingApproval: parked && owner, awaitingAgentApproval: parked && !owner, assigned: row.stageOwnership == "user",
                 agentState: Self.agentState(status: row.ticketStatus, stage: row.stage, facts),
-                waitingToCloseout: row.gatingField == "consequences" && row.ticketStatus == "empty", gatingField: row.gatingField,
+                gatingField: row.gatingField,
                 recap: row.recap, recapPreview: row.recapPreview, manager: manager, managerId: parent, managerTitle: parentRow?.title,
                 projectId: row.projectId, project: project)
         }
