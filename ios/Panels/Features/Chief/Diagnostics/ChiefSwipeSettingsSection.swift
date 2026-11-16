@@ -3,7 +3,7 @@ import UIKit
 
 struct ChiefSwipeSettingsSection: View {
     @State private var log = ChiefSwipeLog.shared
-    @State private var export: Export?
+    @Binding var export: ChiefSwipeLogExport?
     @State private var error: String?
 
     var body: some View {
@@ -17,7 +17,7 @@ struct ChiefSwipeSettingsSection: View {
                 .accessibilityValue("\(log.recordCount)")
                 .accessibilityIdentifier("chief-swipe-count")
             Button("Share Log", systemImage: "square.and.arrow.up") {
-                do { export = Export(url: try log.export()); error = nil }
+                do { export = ChiefSwipeLogExport(url: try log.export()); error = nil }
                 catch { self.error = "Could not prepare the diagnostic log." }
             }.disabled(log.recordCount == 0)
                 .accessibilityIdentifier("chief-swipe-share")
@@ -33,13 +33,12 @@ struct ChiefSwipeSettingsSection: View {
         } footer: {
             Text("Chief swipes only. No page text. Keeps up to 1 MiB for 24 hours. Share only when you choose.")
         }.listRowBackground(PanelsTheme.raised)
-            .onAppear { log.refresh() }
-            .sheet(item: $export) { ChiefSwipeShareSheet(url: $0.url) }
     }
-    private struct Export: Identifiable { let id = UUID(); let url: URL }
 }
 
-private struct ChiefSwipeShareSheet: UIViewControllerRepresentable {
+struct ChiefSwipeLogExport: Identifiable { let id = UUID(); let url: URL }
+
+struct ChiefSwipeShareSheet: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: [url], applicationActivities: nil)
