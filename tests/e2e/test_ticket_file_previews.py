@@ -339,9 +339,9 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     frame.get_by_role("link", name="Outside directory").click(timeout=WAIT_MS)
     frame.get_by_role("heading", name="HTML File").wait_for(timeout=WAIT_MS)
 
-    document.write_text("<h1>Refreshed artifact</h1>", encoding="utf-8")
+    (root / "page.html").write_text("<h1>Refreshed page</h1>", encoding="utf-8")
     artifact.locator("[data-ticket-artifact-refresh]").click(timeout=WAIT_MS)
-    frame.get_by_role("heading", name="Refreshed artifact").wait_for(timeout=WAIT_MS)
+    frame.get_by_role("heading", name="Refreshed page").wait_for(timeout=WAIT_MS)
     assert page.evaluate("window.__artifactInPlaceMarker") == "kept"
     assert page.locator(ticket_selector).count() == 1
     assert artifact.is_visible()
