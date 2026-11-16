@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from tests.support.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
+from tests.support.launch_identity import agent_environment, agent_headers
 from tests.support.probe import seed_probe_worker_type
 
 from planner.cli.main import main as cli_main
@@ -127,13 +128,15 @@ def cli_app(
                 env["PLAN_ACTOR"] = actor
             if manager_id is not None:
                 env["PLAN_MANAGER_ID"] = manager_id
+            if actor is not None or ticket_id is not None:
+                env.update(
+                    agent_environment(server.db_path, actor or "worker", manager_id or ticket_id)
+                )
             result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
             assert result.exit_code == 0, result.output
             return cast(JsonObject, json.loads(result.stdout))
 
         yield server, invoke, ApiHelper(client)
-
-
 
 
 @pytest.fixture
@@ -157,10 +160,20 @@ def api(
     return cli_app[2]
 
 
-
-
-
-
+def test_api_command_writes_chief_recap_with_automatic_identity(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
+    """The raw API escape hatch must preserve the issued Chief credential and JSON body."""
+    recap = "Chief checks the next decision — ready for review."
+    written = cli(
+        server,
+        "api", "PUT", "/api/workers/chief-of-staff/recap", "--input-json", "-",
+        actor="chief",
+        stdin=json.dumps({"recap": recap}),
+    )
+    assert written["recap"] == recap
+    read_back = cli(server, "api", "GET", "/api/workers/chief-of-staff/settings", actor="chief")
+    assert read_back["recap"] == recap
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
@@ -235,18 +248,8 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
     assert stored["employee_backend"] == "codex"
     assert stored["employee_launch_model"] == "gpt-99-sol"
 
-
-
-
-
     # `trouble` only accepts writes during an active claimed worker step. The refusal
     # assertion above covers its argument parsing. Writer tests cover the active path.
-
-
-
-
-
-
 
 
 @pytest.mark.parametrize(
@@ -299,6 +302,7 @@ def test_structured_ticket_create_keeps_the_brief(
         assert detail["pending_proposal"]["field"] == "brief"
         assert detail["pending_proposal"]["body"] == body["brief"]
         assert detail["stage"] == "needs_brief"
+
 
 def test_manager_settlement_filters_before_paging(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
@@ -364,7 +368,9 @@ def test_manager_settlement_filters_before_paging(
 
 
 def test_cleanup_recheck_inspects_one_ticket_without_starting_even_after_it_ends(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper,
+    server: ServerHandle,
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from unittest.mock import AsyncMock
@@ -390,9 +396,10 @@ def test_cleanup_recheck_inspects_one_ticket_without_starting_even_after_it_ends
     first = cli(server, "ticket", "recheck-worker-cleanup", ticket_id)
     scope = CleanupResult(False, "").scope
     assert first == {"complete": False, "reason": "Recorded tool remains", "scope": scope}
-    denied = api.client.post(f"/api/tickets/{ticket_id}/recheck-worker-cleanup", headers={
-        "X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id,
-    })
+    denied = api.client.post(
+        f"/api/tickets/{ticket_id}/recheck-worker-cleanup",
+        headers=agent_headers(server.db_path, "worker", ticket_id),
+    )
     assert denied.status_code == 400
     assert denied.json()["error"]["code"] == "agent_forbidden"
     assert checks == [ticket_id]

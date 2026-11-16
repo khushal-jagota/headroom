@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.in_memory_conversation_system import InMemoryConversationSystem
+from tests.support.launch_identity import agent_headers
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.clock import build_clock
@@ -205,7 +206,7 @@ def test_a_worker_may_not_declare_a_worker_type(client: tuple[TestClient, Path])
     response = test_client.post(
         "/api/worker-types",
         json=_arrival_record(coding),
-        headers={"X-Plan-Actor": "worker"},
+        headers=agent_headers(test_client, "worker"),
     )
 
     assert response.status_code != 200, response.text
@@ -236,7 +237,7 @@ def test_chief_recap_is_writable_by_the_owner_and_the_chief(
 
     chief_recap = "Chief wrote this."
     response = test_client.put(
-        write_path, json={"recap": chief_recap}, headers={"X-Plan-Actor": "chief"}
+        write_path, json={"recap": chief_recap}, headers=agent_headers(test_client, "chief")
     )
     assert response.status_code == 200, response.text
     assert test_client.get(settings_path).json()["recap"] == chief_recap
@@ -244,8 +245,8 @@ def test_chief_recap_is_writable_by_the_owner_and_the_chief(
     assert response.status_code == 200, response.text
 
     for headers in (
-        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_recap"},
-        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_recap"},
+        agent_headers(test_client, "worker", "t_recap"),
+        agent_headers(test_client, "sprint_item_supervisor", "si_recap"),
     ):
         response = test_client.put(write_path, json={"recap": "unauthorized"}, headers=headers)
         assert response.status_code == 400, response.text
@@ -336,12 +337,14 @@ def test_skill_write_authority_is_preserved_at_every_http_entrypoint(
         ("post", "/api/worker-types", dict(coding, skill={"description": "authority checked"})),
     ]
     for method, path, payload in writes:
-        chief = test_client.request(method, path, json=payload, headers={"X-Plan-Actor": "chief"})
+        chief = test_client.request(
+            method, path, json=payload, headers=agent_headers(test_client, "chief")
+        )
         assert chief.status_code == 200, chief.text
         before = test_client.get("/api/skills").json()
         for headers in (
-            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
-            {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+            agent_headers(test_client, "worker", "t_denied"),
+            agent_headers(test_client, "sprint_item_supervisor", "si_denied"),
         ):
             refused = test_client.request(method, path, json=payload, headers=headers)
             assert refused.status_code == 400, refused.text
@@ -431,9 +434,9 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
     payload = {"skills": [{"name": "batch-role", "source_text": source}]}
     before = test_client.get("/api/skills").json()
     for headers in (
-        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
-        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
-        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+        agent_headers(test_client, "worker", "t_denied"),
+        agent_headers(test_client, "manager", "si_denied"),
+        agent_headers(test_client, "sprint_item_supervisor", "si_denied"),
     ):
         result = test_client.post("/api/skills/apply", json=payload, headers=headers)
         assert result.status_code == 400, result.text
@@ -452,7 +455,7 @@ def test_reviewed_skill_batch_accepts_owner_and_chief_but_refuses_other_agents(
         ]
     }
     accepted = test_client.post(
-        "/api/skills/apply", json=chief_payload, headers={"X-Plan-Actor": "chief"}
+        "/api/skills/apply", json=chief_payload, headers=agent_headers(test_client, "chief")
     )
     assert accepted.status_code == 200, accepted.text
     assert test_client.get("/api/skills/batch-role").json()["source_text"] == chief_source
@@ -465,8 +468,8 @@ def test_skill_delete_and_file_write_refuse_agents_and_accept_the_chief(
     test_client, db_path = client
     file_body = {"path": "notes/extra.md", "content": "supporting"}
     for headers in (
-        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
-        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+        agent_headers(test_client, "worker", "t_denied"),
+        agent_headers(test_client, "manager", "si_denied"),
     ):
         deleted = test_client.delete("/api/skills/probe-worker", headers=headers)
         written = test_client.put("/api/skills/panels/files", json=file_body, headers=headers)
@@ -476,7 +479,7 @@ def test_skill_delete_and_file_write_refuse_agents_and_accept_the_chief(
     skills_home = db_path.parent / "skills"
     assert (skills_home / "probe-worker" / "SKILL.md").is_file()
     assert not (skills_home / "panels" / "notes").exists()
-    chief = {"X-Plan-Actor": "chief"}
+    chief = agent_headers(test_client, "chief")
     written = test_client.put("/api/skills/panels/files", json=file_body, headers=chief)
     assert written.status_code == 200, written.text
     assert (skills_home / "panels" / "notes" / "extra.md").read_text() == "supporting"
@@ -555,7 +558,7 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
         conn.commit()
 
     for path in ("/api/worker-types/general", "/api/worker-types/coding"):
-        response = test_client.delete(path, headers={"X-Plan-Actor": "worker"})
+        response = test_client.delete(path, headers=agent_headers(test_client, "worker"))
         assert response.json()["error"]["code"] == "agent_forbidden", response.text
     refused = test_client.delete("/api/worker-types/general")
     assert refused.status_code == 400, refused.text
@@ -566,7 +569,9 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
             "UPDATE tickets SET employee_launch_model='gpt-6.1-sol' WHERE id=?", (running.id,)
         )
         conn.commit()
-    deleted = test_client.delete("/api/worker-types/general", headers={"X-Plan-Actor": "chief"})
+    deleted = test_client.delete(
+        "/api/worker-types/general", headers=agent_headers(test_client, "chief")
+    )
     assert deleted.json() == {"worker_type": "general", "deleted": True}, deleted.text
 
     assert test_client.get("/api/worker-types/general").status_code == 404
@@ -612,7 +617,7 @@ def test_removing_a_type_leaves_its_tickets_on_their_own_workflow(
     proposed = test_client.post(
         f"/api/tickets/{running.id}/propose",
         json={"body": "The historical work can continue."},
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": running.id},
+        headers=agent_headers(test_client, "worker", running.id),
     )
     assert proposed.status_code == 200, proposed.text
     assert proposed.json()["pending_proposal"]["field"] == "work_done"

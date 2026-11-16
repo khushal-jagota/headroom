@@ -216,7 +216,10 @@ def admit_command(
 
 _UNIDENTIFIED_WRITE_REFUSAL = (
     "this request has no Panels identity, so it can only read and send a message to the "
-    "Chief. An agent restores PLAN_ACTOR and its Ticket or Manager id. Khushal uses the "
+    "Chief. For a direct API operation, use `panels api METHOD PATH --input-json -`; "
+    "the CLI sends the conversation credential automatically. "
+    "An agent without a launch credential resumes through its Panels conversation. "
+    "Khushal uses the "
     "Panels web app or the iOS app."
 )
 

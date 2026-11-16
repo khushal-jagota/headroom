@@ -13,6 +13,7 @@ import httpx
 import pytest
 from playwright.sync_api import BrowserContext, Page, Route, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
+from tests.support.launch_identity import agent_headers
 from tests.support.server_fixtures import rail_server  # noqa: F401
 
 BODY = "The compact approval card preserves the visible proposal."
@@ -21,7 +22,7 @@ BODY = "The compact approval card preserves the visible proposal."
 def _propose(server: ServerHandle, ticket_id: str, body: str) -> None:
     response = httpx.post(
         server.base + f"/api/tickets/{ticket_id}/propose",
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+        headers=agent_headers(server, "worker", ticket_id),
         json={"body": body, "recap": "Review the same isolated proposal on both hosts."},
         timeout=10,
     )

@@ -38,6 +38,10 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
+from planner.agent_identity.contracts import (
+    LAUNCH_TOKEN_ENVIRONMENT_NAME,
+    UNIDENTIFIED_LAUNCH_TOKEN,
+)
 from planner.conversation.backends.cli_compatibility import (
     BackendCliIncompatible,
     ensure_cli_compatible,
@@ -670,6 +674,7 @@ def child_environment(
     """
     environment = dict(os.environ)
     environment.update(dict(overrides))
+    environment[LAUNCH_TOKEN_ENVIRONMENT_NAME] = UNIDENTIFIED_LAUNCH_TOKEN
     environment.update(dict(identity))
     refuse_a_duplicated_codex_login(environment)
     return environment

@@ -129,7 +129,8 @@ def test_tailscale_owner_writes_and_a_local_call_with_no_identity_only_reads(
     for write in writes:
         assert write.status_code == 400, write.text
         assert write.json()["error"]["code"] == "agent_forbidden"
-        assert "PLAN_ACTOR" in write.json()["error"]["message"]
+        assert "launch credential" in write.json()["error"]["message"]
+        assert "panels api METHOD PATH" in write.json()["error"]["message"]
     # Admitted: whatever the delivery answers, it is not the identity refusal.
     assert to_chief.status_code == 200, to_chief.text
 
@@ -216,27 +217,28 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     assert allowed_ticket_file.status_code == 200
 
 
-def test_manager_identity_accepts_only_current_names() -> None:
-    import pytest
+def test_self_declared_identity_names_never_authenticate() -> None:
+    from planner.core.authctx import request_context
 
-    from planner.core.authctx import RequestContext, request_context
-    from planner.core.errors import PlannerError
-
-    def context(headers: dict[str, str]) -> RequestContext:
-        return request_context(Request({
-            "type": "http",
-            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
-        }))
-
-    current = context({"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_one"})
-    assert current.principal.kind.value == "manager"
-    assert current.principal.id == "si_one"
     for headers in (
+        {"X-Plan-Actor": "chief"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_one"},
         {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_one"},
         {"X-Plan-Actor": "manager", "X-Plan-Sprint-Item-ID": "si_one"},
+        {"X-Plan-Conversation-ID": "spoofed"},
     ):
-        with pytest.raises(PlannerError, match="does not name a Panels principal"):
-            context(headers)
+        context = request_context(
+            Request(
+                {
+                    "type": "http",
+                    "headers": [
+                        (key.lower().encode(), value.encode()) for key, value in headers.items()
+                    ],
+                }
+            )
+        )
+        assert context.principal.kind.value == "unidentified"
+        assert context.conversation_id is None
 
 
 def test_hosted_owner_strips_manager_identity(tmp_path: Path) -> None:
@@ -309,6 +311,7 @@ def test_native_routes_require_hosted_identity_and_reject_browser_origin() -> No
             [*valid, ("Origin", CANONICAL_ORIGIN)],
         ):
             assert client.get("/native-admission", headers=headers).status_code == 403
+
 
 def test_preview_gate_requires_explicit_edge_evidence_even_on_safe_reads() -> None:
     """Ordinary local-owner access must never accidentally admit application traffic."""

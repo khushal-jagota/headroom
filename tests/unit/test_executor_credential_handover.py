@@ -23,6 +23,7 @@ import aiohttp
 import httpx
 import pytest
 from fastapi import FastAPI
+from tests.support.launch_identity import agent_headers
 
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
@@ -380,12 +381,13 @@ def test_operator_registration_and_replacement_refuse_worker_authority(tmp_path:
         with closing(connect(database)) as conn:
             create_schema(conn)
         app = FastAPI()
+        app.state.config = SimpleNamespace(db_path=database)
         app.state.conn_factory = lambda: connect(database)
         app.include_router(router, prefix="/api")
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as http:
-            worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_01234567"}
+            worker = agent_headers(app, "worker", "t_01234567")
             with pytest.raises(PlannerError):
                 await http.post("/api/machines", headers=worker, json={"name": "Forbidden"})
             registered = await http.post("/api/machines", json={"name": "Second Mac"})

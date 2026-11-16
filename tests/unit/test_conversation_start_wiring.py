@@ -402,7 +402,16 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
             sender_label="loop",
         )
 
+        from planner.agent_identity.data import authenticate_launch_token, issue_launch_token
+
+        token = issue_launch_token(tmp_db, conversation_id)
+        assert authenticate_launch_token(tmp_db, token) is not None
         await reset_ticket_conversation(system, tmp_db, ticket.id, now=30)
+        assert authenticate_launch_token(tmp_db, token) is None
+        assert tmp_db.execute(
+            "SELECT count(*) FROM agent_launch_tokens WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()[0] == 0
 
         assert system.backend_cancellations(conversation_id) == 1
         assert await system.is_running(conversation_id) is False

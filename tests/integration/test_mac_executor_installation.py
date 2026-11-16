@@ -100,6 +100,7 @@ def test_standard_install_replaces_same_version_and_preserves_full_worker_cli(
         HOME=str(paths.home),
         PLAN_TICKET_ID="t_fixture",
         PLAN_ACTOR="worker",
+        PLAN_LAUNCH_TOKEN="installation-synthetic-launch-secret",
     )
     # Eager CLI help never imports the executor's actual runtime or the transport client.
     # Resolve that dependency closure from installed wheels under an isolated
@@ -187,8 +188,8 @@ assert 'planner.core.db' not in sys.modules
     class FixtureHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             requests.append(self.path)
-            assert self.headers["X-Plan-Actor"] == "worker"
-            assert self.headers["X-Plan-Ticket-ID"] == "t_fixture"
+            assert self.headers["Authorization"] == "Bearer installation-synthetic-launch-secret"
+            assert self.headers.get("X-Plan-Actor") is None
             # The Ticket carries its own saved workflow, so worker-self is the only read.
             assert self.path == "/api/tickets/t_fixture/worker-self"
             response: dict[str, object] = {

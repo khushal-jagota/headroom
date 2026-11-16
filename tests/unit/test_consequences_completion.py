@@ -9,6 +9,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from tests.support.launch_identity import agent_headers
+from tests.unit.test_ticket_create_api import create_api as create_api
+from tests.unit.test_ticket_workflow_contract import _custom_workflow
 
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import (
@@ -26,6 +30,84 @@ from planner.worker_types.store import (
     workflow_from_preset,
     workflow_to_json,
 )
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_final_decision_replay_and_consequences_review(
+    create_api: tuple[TestClient, Path],
+    protected: bool,
+) -> None:
+    client, _ = create_api
+    profile = client.get("/api/worker-types/coding").json()["profile"]
+    workflow = _custom_workflow()
+    # The shared field, not a coding-specific Stage id, owns the completion rule.
+    workflow["stages"][-2]["id"] = "land_the_result"
+    created = client.post(
+        "/api/tickets",
+        json={
+            "title": "Finish the evidence review",
+            "worker_type": None,
+            "workflow": workflow,
+            "employee_backend": profile["default_backend"],
+            "employee_launch_model": profile["default_model"],
+            "brief": "Compare the evidence.",
+            "ceiling": "needs_evidence",
+            "locale": "vps",
+        },
+    )
+    assert created.status_code == 200, created.text
+    ticket_id = created.json()["id"]
+    assert "land_the_result" in created.json()["workflow"]["ceiling_range"]
+    worker = agent_headers(client, "worker", ticket_id)
+    proposal = client.post(
+        f"/api/tickets/{ticket_id}/propose",
+        json={"body": "The records agree."},
+        headers=worker,
+    )
+    revision = proposal.json()["pending_proposal"]["revision"]
+    if protected:
+        approval_path = f"/api/tickets/{ticket_id}/decision-operations/final"
+        approval_body = {
+            "decision": "approve",
+            "field": "evidence",
+            "expected_proposal_revision": revision,
+        }
+    else:
+        approval_path = f"/api/tickets/{ticket_id}/accept/evidence"
+        approval_body = {
+            "expected_proposal_revision": revision,
+            "decision_id": "legacy-final",
+        }
+    approved = client.post(approval_path, json=approval_body)
+    assert approved.status_code == 200, approved.text
+    if protected:
+        assert approved.json()["receipt"]["outcome"] == "applied", approved.text
+    else:
+        assert approved.json()["stage"] == "land_the_result"
+    completed = client.post(
+        f"/api/tickets/{ticket_id}/propose",
+        json={"body": "Verified the saved result."},
+        headers=worker,
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["stage"] == "land_the_result"
+    pending = completed.json()["pending_proposal"]
+    assert pending["field"] == "consequences"
+    final = client.post(
+        f"/api/tickets/{ticket_id}/accept/consequences",
+        json={"expected_proposal_revision": pending["revision"]},
+    )
+    assert final.status_code == 200, final.text
+    assert final.json()["stage"] == "done"
+    assert final.json()["field_values"]["consequences"] == "Verified the saved result."
+    # Completion changes the current Stage, but never the original command identity.
+    repeated = client.post(approval_path, json=approval_body)
+    assert repeated.status_code == 200, repeated.text
+    if protected:
+        assert repeated.json() == approved.json()
+    else:
+        assert repeated.json()["stage"] == "done"
+        assert repeated.json()["field_values"] == final.json()["field_values"]
 
 
 def test_consequences_report_waits_for_holder_and_acceptance_finishes(

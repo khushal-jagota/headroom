@@ -12,7 +12,7 @@ from planner.core.migrations.versions.consequences_without_approval import (
 )
 
 revision = "restore_consequences_review"
-down_revision = "proposal_before_errored_claim"
+down_revision = "agent_launch_tokens"
 branch_labels = None
 depends_on = None
 

@@ -153,9 +153,14 @@ def _reads_app() -> FastAPI:
 
     @app.get("/api/tickets")
     async def tickets(request: Request) -> dict[str, object]:
+        from planner.core.authctx import request_context
+        from planner.core.contracts import principal_legacy_actor
+
+        context = request_context(request)
+        assert request.headers.get("X-Plan-Actor") is None
         return {
-            "actor": request.headers.get("X-Plan-Actor"),
-            "ticket": request.headers.get("X-Plan-Ticket-ID"),
+            "actor": principal_legacy_actor(context.principal),
+            "ticket": context.principal.id,
             "status": request.query_params.get("status"),
         }
 

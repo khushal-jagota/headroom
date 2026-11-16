@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi import FastAPI
+from tests.support.launch_identity import agent_headers
 
 from planner.conversation.video_uploads import config
 from planner.conversation.video_uploads import service as service_module
@@ -158,6 +159,8 @@ def test_owner_only_raw_upload_http_boundary(
 ) -> None:
     monkeypatch.setattr(service_module, "probe_video", accept_probe)
     app = FastAPI()
+    app.state.conn_factory = lambda: connect(intake.db_path)
+    app.state.config = SimpleNamespace(db_path=intake.db_path)
 
     async def authorize(destination: UploadDestination) -> None:
         assert destination.id == "t_test"
@@ -172,7 +175,7 @@ def test_owner_only_raw_upload_http_boundary(
                 await client.post(
                     "/api/conversation/video-uploads",
                     json=reservation().model_dump(),
-                    headers={"X-Plan-Actor": "chief"},
+                    headers=agent_headers(intake.db_path, "chief"),
                 )
             response = await client.post(
                 "/api/conversation/video-uploads", json=reservation().model_dump()
