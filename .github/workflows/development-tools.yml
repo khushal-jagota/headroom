@@ -2,7 +2,7 @@ name: Development tools
 
 on:
   pull_request:
-    branches: [staging, main, sweep/guard-sweep, feature/typescript-backend]
+    branches: [staging, main, sweep/guard-sweep]
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:

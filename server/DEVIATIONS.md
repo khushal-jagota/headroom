@@ -843,3 +843,16 @@ Darwin updates select only the nested Mac home receipt and artifact, and use lau
 They retain the existing barrier, attempt writer, exact schema frontier, app swap and restore owners.
 Every Darwin update takes a verified backup before launch. Native job and descendant-birth evidence must prove retirement before replacement.
 An accepted healthy release remains installed when an auxiliary job fails. The terminal record includes that failure.
+
+## Ticket Worker launch folder
+
+At the owner's request, TypeScript starts managed Ticket Workers in the Ticket folder
+on the home and Mac executor. Python still starts them in its `worktree/` checkout.
+Workspace preparation, ownership, and checkout location stay the same. The Worker
+prompt names the checkout separately from the launch folder.
+The Mac command comparison asserts the TypeScript launch folder and the prepared
+checkout before it maps the recorded path to Python's checkout path for the remaining
+custody comparison. Focused launch tests check the real request and prompt paths.
+The home Worker abort comparison likewise asserts the stored Ticket launch folder
+and the explicit checkout prompt before it normalizes only those two differences.
+The remaining conversation rows and abort custody compare exactly with Python.

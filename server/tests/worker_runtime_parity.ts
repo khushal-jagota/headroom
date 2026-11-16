@@ -1,4 +1,6 @@
 /** Export-only companion for the direct Worker comparison in tests/compare/direct/. */
+import assert from 'node:assert/strict';
+import { dirname, join } from 'node:path';
 import { run as custody_parity } from '../conversation/testing/custody_parity.ts';
 import { createDatabase } from '../core/database/index.ts';
 import { load_worker_runtime_definitions } from '../worker_types/configuration.ts';
@@ -61,7 +63,31 @@ export async function run_worker_runtime_parity(
             'ticket_conversations',
             'agents',
             'conversations',
-          ].map((table) => [table, sql.all(`SELECT * FROM ${table} ORDER BY 1,2`)]),
+          ].map((table) => {
+            const records = sql.all<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY 1,2`);
+            if (
+              table === 'conversations' &&
+              input.mode === 'abort' &&
+              input.kind === 'ticket' &&
+              !input.existing
+            ) {
+              const folder = join(dirname(input.db_path), 'files', 'tickets', input.ticket_id);
+              const launch_text = `Panels starts you in the Ticket folder: ${folder}. `;
+              for (const record of records) {
+                assert.equal(record.workspace_folder, folder);
+                assert.equal(typeof record.role_text, 'string');
+                const role_text = record.role_text as string;
+                assert.ok(role_text.includes(launch_text));
+                assert.ok(
+                  role_text.includes(`Panels supplies this worktree: ${join(folder, 'worktree')}.`),
+                );
+                // Assert the intentional launch difference before comparing shared abort custody.
+                record.workspace_folder = join(folder, 'worktree');
+                record.role_text = role_text.replace(launch_text, '');
+              }
+            }
+            return [table, records];
+          }),
         ),
       );
     }
