@@ -1,7 +1,7 @@
 name: Xcode compilation cache
 on:
   pull_request:
-    branches: [feature/typescript-backend]
+    branches: [feature/typescript-backend, staging]
     paths:
       - server/executor/mac/runner/xcode_cache.ts
       - server/executor/mac/runner/localization.ts

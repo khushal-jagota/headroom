@@ -2,7 +2,7 @@ name: TypeScript backend checkpoint
 
 on:
   pull_request:
-    branches: [feature/typescript-backend]
+    branches: [feature/typescript-backend, staging]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [feature/typescript-backend]
