@@ -229,6 +229,140 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
     }
 
+    /// One connected proof for adjacent native targets, interactive sheets and scoped windows.
+    /// Reuses the DESIGN_REVIEW server; screenshots are review artifacts, not pixel assertions.
+    @MainActor func testWorkspaceSidebarParity() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        try await proof(base, "workspace-fixture")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base, "-panels.goals-sidebar-rows", "NO"]
+        app.launch()
+        defer { app.terminate() }
+        let workspace = app.tabBars.buttons["Workspace"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+        let wren = app.buttons.matching(identifier: "workspace-orchestrator")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Wren release")).firstMatch
+        let science = app.buttons.matching(identifier: "workspace-orchestrator")
+            .matching(NSPredicate(format: "label CONTAINS %@", "Science site")).firstMatch
+        let tag = app.buttons["workspace-goal-status-release"]
+        let notes = app.buttons["workspace-ticket-notes"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        XCTAssertTrue(wren.exists); XCTAssertTrue(science.exists)
+        XCTAssertTrue(app.buttons["workspace-ticket-weekly"].exists)
+        XCTAssertTrue(app.buttons["workspace-ticket-onboarding"].exists)
+        XCTAssertTrue(notes.exists)
+        XCTAssertTrue(app.buttons["workspace-ticket-testers"].exists, "Focus must retain unread Agent work")
+        XCTAssertFalse(app.buttons["workspace-ticket-build"].exists)
+        XCTAssertFalse(app.buttons["workspace-ticket-article"].exists)
+        XCTAssertFalse(app.buttons["workspace-goal-release"].exists, "Ordinary goal rows start off")
+        XCTAssertFalse(app.buttons["Focus"].exists); XCTAssertFalse(app.switches["Focus"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Review"].exists)
+        XCTAssertTrue(app.tabBars.buttons["More"].exists)
+        XCTAssertTrue(workspace.isSelected)
+        capture(app, "workspace-parity-default")
+
+        tag.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["goal-screen"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["goal-check-first"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.descendants(matching: .any)["orchestrator-screen"].exists)
+        app.buttons["detail-back"].tap()
+        XCTAssertTrue(wren.waitForExistence(timeout: 8)); wren.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
+        app.buttons["detail-back"].tap()
+        XCTAssertTrue(notes.waitForExistence(timeout: 8))
+        wren.press(forDuration: 1)
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 8))
+        let firstCheck = app.buttons["goal-check-first"]
+        XCTAssertTrue(firstCheck.waitForExistence(timeout: 8))
+        if !firstCheck.isHittable { app.swipeUp() }
+        XCTAssertTrue(firstCheck.isHittable); firstCheck.tap()
+        XCTAssertTrue(app.staticTexts["Explain the change."].waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-interactive-checklist")
+        let goalWrites = try await recordedWrites(base)
+        XCTAssertEqual(goalWrites.count, 1, "Preview must only perform the requested checklist write")
+        let goalWrite = try XCTUnwrap(goalWrites.first as? [String: Any])
+        XCTAssertEqual(goalWrite["path"] as? String, "/api/goals/release")
+        let goalBody = try XCTUnwrap(goalWrite["body"] as? [String: Any])
+        XCTAssertEqual(Set(goalBody.keys), ["page", "expected_revision"])
+        XCTAssertEqual(goalBody["expected_revision"] as? Int, 1)
+        let page = try XCTUnwrap(goalBody["page"] as? [String: Any])
+        let blocks = try XCTUnwrap(page["blocks"] as? [[String: Any]])
+        let items = try XCTUnwrap(blocks.first?["items"] as? [[String: Any]])
+        XCTAssertEqual(items.first?["id"] as? String, "first")
+        XCTAssertEqual(items.first?["state"] as? String, "done")
+        XCTAssertEqual(items.last?["state"] as? String, "blocked")
+
+        try await proof(base, "workspace-update")
+        // The existing loopback stream emits each second. Admit two frames while held.
+        try await Task.sleep(for: .milliseconds(2200))
+        XCTAssertTrue(done.exists, "A structural snapshot must not tear down the open preview")
+        XCTAssertTrue(app.buttons["Open"].isHittable, "The held preview remains interactive")
+        done.tap()
+        XCTAssertTrue(wren.waitForNonExistence(timeout: 8), "The removed holder leaves only after the preview is dismissed")
+        capture(app, "workspace-parity-after-preview-release")
+        try await proof(base, "workspace-restore")
+        XCTAssertTrue(wren.waitForExistence(timeout: 8))
+
+        XCTAssertTrue(science.exists)
+        if !science.isHittable { app.swipeUp() }
+        science.press(forDuration: 1)
+        XCTAssertTrue(done.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["goal-chart-words"].waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-chart-preview")
+        done.tap()
+
+        try await proof(base, "workspace-pages")
+        let next = app.buttons["Next"].firstMatch
+        XCTAssertTrue(next.waitForExistence(timeout: 8))
+        if !next.isHittable { app.swipeUp() }
+        XCTAssertTrue(next.isHittable); next.tap()
+        XCTAssertTrue(app.buttons["workspace-ticket-page-two"].waitForExistence(timeout: 8))
+        let (requestsData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/workspace-requests")!)
+        let requests = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestsData) as? [[String: Any]])
+        XCTAssertTrue(requests.contains { request in
+            let owner = request["owner"] as? [String: Any]
+            return request["section"] as? String == "rail_tickets" && owner?["kind"] as? String == "manager"
+                && owner?["id"] as? String == "wren" && request["anchor"] as? String == "workspace-next"
+        })
+        app.buttons["workspace-settled"].tap()
+        let settled = app.buttons.matching(NSPredicate(format: "label == %@", "Previous release")).firstMatch
+        XCTAssertTrue(settled.waitForExistence(timeout: 8)); settled.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
+        app.buttons["detail-back"].tap()
+        let reopen = app.buttons["Reopen Previous release"]
+        XCTAssertTrue(reopen.waitForExistence(timeout: 8)); reopen.tap()
+        XCTAssertTrue(reopen.waitForNonExistence(timeout: 8))
+        let writes = try await recordedWrites(base)
+        XCTAssertEqual(writes.count, 2)
+        let reopening = try XCTUnwrap(writes.last as? [String: Any])
+        XCTAssertEqual(reopening["path"] as? String, "/api/managers/settled-one/settled")
+        let reopeningBody = try XCTUnwrap(reopening["body"] as? [String: Any])
+        XCTAssertEqual(Set(reopeningBody.keys), ["settled"])
+        XCTAssertEqual(reopeningBody["settled"] as? Bool, false)
+        capture(app, "workspace-parity-settled-dock")
+
+        // One-off visual review in the same host, using the existing standard text-size argument.
+        app.terminate()
+        try await proof(base, "workspace-fixture")
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
+        XCTAssertTrue(tag.waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-accessibility-text")
+        if !wren.isHittable { app.swipeUp() }
+        XCTAssertTrue(wren.isHittable); wren.press(forDuration: 1)
+        XCTAssertTrue(done.waitForExistence(timeout: 8))
+        capture(app, "workspace-parity-accessibility-preview")
+        XCTAssertTrue(done.isHittable)
+        done.tap()
+        // System Reduce Motion is reviewed separately in the parent's admitted lane window.
+        app.terminate()
+        try await proof(base, "workspace-reset")
+    }
+
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {
         // Existence alone admitted an infinite/zero frame in the earlier review run.
         let ready = NSPredicate { _, _ in

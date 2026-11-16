@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var section = "Config"
+    @AppStorage("panels.goals-sidebar-rows") private var showGoalsInSidebarRows = false
     @State private var notificationEditor = NotificationPreferenceEditor()
     private var workerResource: ResourceHandle<SettingsWorkers> { store.resources.handle(SettingsResources.workers) }
     private var skillResource: ResourceHandle<SettingsSkills> { store.resources.handle(SettingsResources.skills) }
@@ -61,6 +62,11 @@ struct SettingsView: View {
     }
     private var configuration: some View {
         Group {
+            Section {
+                Toggle("Show goals in sidebar rows", isOn: $showGoalsInSidebarRows)
+                    .accessibilityIdentifier("settings-goals-sidebar-rows")
+            }.listRowBackground(PanelsTheme.raised)
+
             if let workers {
                 Section {
                     LabeledContent("Mac executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown")

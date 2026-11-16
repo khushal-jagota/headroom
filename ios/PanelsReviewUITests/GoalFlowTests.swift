@@ -9,7 +9,7 @@ final class GoalFlowTests: XCTestCase {
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
         let app = XCUIApplication()
-        app.launchArguments = ["--conversation-stub", base]
+        app.launchArguments = ["--conversation-stub", base, "-panels.goals-sidebar-rows", "YES"]
         app.launch(); defer { app.terminate() }
         let workspace = app.tabBars.buttons["Workspace"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 15)); workspace.tap()

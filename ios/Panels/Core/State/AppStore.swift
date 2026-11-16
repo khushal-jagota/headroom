@@ -13,6 +13,9 @@ import Observation
     var managers: [ManagerSummary] = []
     var tickets: [TicketSummary] = []
     var workspaceLoaded = false
+    var workspaceSettled: [ManagerSummary] = []
+    /// The coherent publication that supplies the currently retained Workspace rows.
+    private(set) var workspaceView: ViewSnapshot?
     /// Per Workspace card (manager id, or "chief"), the active tickets its rail window
     /// counts but did not load: the shared row budget can cut a card short.
     var workspaceHidden: [String: Int] = [:]
@@ -93,7 +96,7 @@ import Observation
         self.baseURL = baseURL
         resources.configure(api: client)
         UserDefaults.standard.set(baseURL.absoluteString, forKey: "panels.baseURL")
-        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; chiefSignal = nil; review = nil; counts = nil; view = nil
+        managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; workspaceSettled = []; workspaceView = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
         errors = [:]
         restore()
@@ -216,10 +219,11 @@ import Observation
     private func admit(_ snapshot: ViewSnapshot, persist: Bool = true) {
         let presentation = NavigationPresentation(snapshot.content.records)
         if let managers = presentation.workspaceManagers(in: snapshot), let tickets = presentation.workspaceTickets(in: snapshot) {
-            self.managers = managers; self.tickets = tickets; workspaceLoaded = true
+            self.managers = managers; self.tickets = tickets; workspaceLoaded = true; workspaceView = snapshot
             workspaceHidden = Dictionary(snapshot.content.windows.filter { $0.request.section == "rail_tickets" && $0.request.group == "all" }
                 .map { ($0.request.owner?.id ?? "chief", max(0, $0.total - $0.members.count)) }, uniquingKeysWith: { first, _ in first })
         }
+        if let settled = presentation.workspaceSettledManagers(in: snapshot) { workspaceSettled = settled }
         chiefSignal = presentation.chief?.signal.conversationSignal
         review = presentation.reviewQueue(in: snapshot)
         counts = snapshot.content.counts

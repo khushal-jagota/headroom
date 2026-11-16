@@ -2,6 +2,18 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testPreviewStatusDecodesPendingRequestsElapsedStartAndBackgroundWork() throws {
+        let json = #"{"authority":"current","turn_running":false,"rest":{"plan_progress":{},"latest_turn":{"started_at_unix_milliseconds":1234}},"pending_permission":{"kind":"permission","request_id":"p","row_key":"row","source_sequence":1},"pending_user_input":{"kind":"user_input","request_id":"u","row_key":"input","source_sequence":2},"background_tasks":[{"task_id":"task","task_description":"Build"}]}"#
+        let status = try APIClient.decoder().decode(ConversationStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(status.pendingPermission?.requestId, "p")
+        XCTAssertEqual(status.pendingUserInput?.requestId, "u")
+        XCTAssertEqual(status.rest.latestTurn?.startedAtUnixMilliseconds, 1234)
+        XCTAssertTrue(status.hasBackgroundTaskAfterTheTurn)
+        let runningJSON = json.replacingOccurrences(of: #""turn_running":false"#, with: #""turn_running":true"#)
+        let running = try APIClient.decoder().decode(ConversationStatus.self, from: Data(runningJSON.utf8))
+        XCTAssertFalse(running.hasBackgroundTaskAfterTheTurn, "A task during its live turn does not count as work after the turn")
+    }
+
     func testRemoteAnswerEvidenceDoesNotClaimApplicationWhilePending() throws {
         for (fate, text) in [("saved", "delivery to Mac is pending"), ("applied", "applied on Mac"), ("unconfirmed", "Application is unconfirmed")] {
             let json = "{\"kind\":\"permission_ask\",\"title\":\"Approve command\",\"state\":\"answered\",\"answer_fate\":\"\(fate)\"}"

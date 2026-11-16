@@ -431,6 +431,122 @@ def main() -> int:
             recording.communicate(timeout=15)
             state["recording"] = None
 
+    def select_workspace_fixture() -> None:
+        # Explicit selection leaves all other DESIGN_REVIEW journeys unchanged.
+        if not state.get("workspace_fixture"):
+            state["workspace_baseline"] = (copy.deepcopy(tickets), copy.deepcopy(goals))
+        state.update(
+            workspace_fixture=True,
+            workspace_moved=False,
+            workspace_pages=False,
+            workspace_reopened=[],
+            writes=[],
+            workspace_requests=[],
+        )
+        tickets.clear()
+        for identity, title, parent, status in [
+            ("weekly", "Review the weekly summary", None, "approval"),
+            ("onboarding", "Check the onboarding flow", "wren", "approval"),
+            ("notes", "Choose the release notes", "wren", "assigned"),
+            ("build", "Prepare build 9", "wren", "working"),
+            ("testers", "Confirm the tester list", "wren", "unread"),
+            ("article", "Publish the sleep article", "science", "agent_approval"),
+            ("page-two", "Review the second page", "wren", "approval"),
+        ]:
+            ticket = copy.deepcopy(base_ticket)
+            ticket.update(
+                id=identity,
+                title=title,
+                recap="",
+                worker_type="coding",
+                stage="needs_what_changes",
+                ceiling="needs_what_changes",
+                ceiling_holder=dict(kind="owner", id="owner"),
+                conversation_id="stub",
+                pending_proposal=None,
+                proof_parent=parent,
+                proof_status=status,
+            )
+            tickets[identity] = ticket
+        goals["release"].update(
+            holder_kind="manager",
+            holder_id="wren",
+            status="bad",
+            title="Ship Wren",
+            deadline=None,
+            completed=False,
+            page=dict(
+                kind="headroom.page",
+                version=1,
+                title="Ship Wren",
+                summary="",
+                blocks=[copy.deepcopy(checklist)],
+            ),
+        )
+        goals["words"].update(
+            holder_kind="manager",
+            holder_id="science",
+            status="good",
+            title="Publish Science",
+            deadline=None,
+        )
+
+    def workspace_records() -> dict[tuple[str, str], dict[str, Any]]:
+        records = {
+            ("chief", "chief"): dict(
+                kind="chief", id="chief", value=dict(label="Chief of Staff", conversation_id="stub")
+            ),
+            ("project", "wren"): dict(kind="project", id="wren", value=dict(name="Wren")),
+        }
+        for identity, title, settled in [
+            ("wren", "Wren release", False),
+            ("science", "Science site", False),
+            ("settled-one", "Previous release", True),
+            ("settled-two", "Earlier research", True),
+        ]:
+            records[("manager", identity)] = dict(
+                kind="manager",
+                id=identity,
+                value=dict(
+                    title=title,
+                    recap="",
+                    recap_preview="",
+                    recap_reference=None,
+                    created_at=1,
+                    updated_at=1,
+                    project_id="wren",
+                    settled=settled and identity not in state["workspace_reopened"],
+                    conversation_id="stub",
+                ),
+            )
+        for ticket in tickets.values():
+            record = ticket_record(ticket, None)
+            value = record["value"]
+            status = ticket["proof_status"]
+            if ticket["id"] == "notes" and state["workspace_moved"]:
+                status = "approval"
+            value.update(
+                manager_kind="manager" if ticket["proof_parent"] else "chief",
+                manager_id=ticket["proof_parent"],
+                project_id="wren",
+                ticket_status="awaiting_approval"
+                if status in ("approval", "agent_approval")
+                else "agent",
+                stage_ownership="user" if status == "assigned" else "worker",
+                conversation_id=ticket["id"],
+                ceiling_holder=dict(kind="manager", id="science")
+                if status == "agent_approval"
+                else dict(kind="owner", id="owner"),
+            )
+            if status == "assigned":
+                value["ticket_status"] = "empty"
+            records[("ticket", ticket["id"])] = record
+            conversation = conversation_record(ticket["id"], 0, 1 if status == "unread" else None)
+            conversation["value"]["attention"]["current"]["signal"]["working"] = status == "working"
+            records[("conversation", ticket["id"])] = conversation
+        records[("conversation", "stub")] = conversation_record("stub", 0, None)
+        return records
+
     def ticket_record(ticket: dict[str, Any], proposal: dict[str, Any] | None) -> dict[str, Any]:
         return {
             "kind": "ticket",
@@ -602,6 +718,9 @@ def main() -> int:
                 cards[key] = min(cards.get(key, waiting), waiting)
         for identity, read, unread_at in conversations:
             records[("conversation", identity)] = conversation_record(identity, read, unread_at)
+        if state.get("workspace_fixture"):
+            records = workspace_records()
+            cards = {}
         order = sorted(
             cards,
             key=lambda key: (cards[key], "message" if key[0] == "address" else "ticket", key[1]),
@@ -618,17 +737,59 @@ def main() -> int:
                 members = [
                     ("manager", key) for key in ["design-panels", "design-wren", "design-write"]
                 ]
+            previous_anchor = next_anchor = None
+            total = (
+                len(members)
+                if DESIGN_REVIEW
+                else (len(order) if window["section"] == "review" else 0)
+            )
+            if state.get("workspace_fixture"):
+                section = window["section"]
+                owner_id = (window.get("owner") or {}).get("id")
+                members = []
+                if section == "rail_parents":
+                    members = [
+                        ("manager", key)
+                        for key in (
+                            ["science"] if state["workspace_moved"] else ["wren", "science"]
+                        )
+                        + state["workspace_reopened"]
+                    ]
+                elif section == "rail_tickets":
+                    ids = [
+                        key
+                        for key, ticket in tickets.items()
+                        if (ticket["proof_parent"] or "chief") == owner_id and key != "page-two"
+                    ]
+                    if owner_id == "wren" and state["workspace_pages"]:
+                        if window.get("anchor") == "workspace-next":
+                            ids = ["page-two"]
+                            previous_anchor = "workspace-first"
+                        else:
+                            next_anchor = "workspace-next"
+                    members = [("ticket", key) for key in ids]
+                elif section == "goals":
+                    members = [
+                        ("goal", goal["id"])
+                        for goal in (goals["release"], goals["words"])
+                        if goal["holder_id"] == owner_id
+                    ]
+                elif section == "settled":
+                    members = [
+                        ("manager", key)
+                        for key in ["settled-one", "settled-two"]
+                        if key not in state["workspace_reopened"]
+                    ]
+                total = len(members) + (1 if next_anchor else 4 if previous_anchor else 0)
+                state["workspace_requests"].append(copy.deepcopy(window))
             windows.append(
                 {
                     "window_id": json.dumps([window["section"], window["owner"]]),
                     "request": window,
                     "members": [{"kind": kind, "id": identity} for kind, identity in members],
-                    "total": (
-                        len(members) if DESIGN_REVIEW
-                        else (len(order) if window["section"] == "review" else 0)
-                    ),
-                    "previous": None,
-                    "next": None,
+                    "total": total,
+                    "previous": previous_anchor,
+                    "next": next_anchor,
                     "forward_overlap": None,
                     "backward_overlap": None,
                 }
@@ -654,7 +815,9 @@ def main() -> int:
                 "out_claims": 0,
                 "review": len(order),
                 "unread": 0,
-                "settled": 0,
+                "settled": 2 - len(state["workspace_reopened"])
+                if state.get("workspace_fixture")
+                else 0,
             },
             "review_context": review_context,
             "review_summary": {"skipped": 0, "new": len(order)},
@@ -773,6 +936,38 @@ def main() -> int:
             query = parse_qs(urlparse(self.path).query)
             if path.startswith("/proof/"):
                 name = path.removeprefix("/proof/")
+                if DESIGN_REVIEW and name == "workspace-fixture":
+                    with lock:
+                        select_workspace_fixture()
+                    self.respond({})
+                    return
+                if (
+                    DESIGN_REVIEW
+                    and state.get("workspace_fixture")
+                    and name.startswith("workspace-")
+                ):
+                    with lock:
+                        if name == "workspace-update":
+                            state["workspace_moved"] = True
+                        elif name == "workspace-restore":
+                            state["workspace_moved"] = False
+                        elif name == "workspace-reset":
+                            baseline_tickets, baseline_goals = state.pop("workspace_baseline")
+                            tickets.clear()
+                            tickets.update(baseline_tickets)
+                            goals.clear()
+                            goals.update(baseline_goals)
+                            state["workspace_fixture"] = False
+                        elif name == "workspace-pages":
+                            state["workspace_pages"] = True
+                        elif name == "workspace-requests":
+                            self.respond(state["workspace_requests"])
+                            return
+                        else:
+                            self.respond({"error": "Unknown Workspace proof action"}, 400)
+                            return
+                    self.respond({})
+                    return
                 if DESIGN_REVIEW and name == "scopes":
                     self.respond(state.get("scope_writes", []))
                     return
@@ -941,7 +1136,7 @@ def main() -> int:
             page = dict(
                 match_count=0, return_count=0, limit=30, offset=0, complete=True, next_offset=None
             )
-            if DESIGN_REVIEW and path == "/api/goals":
+            if DESIGN_REVIEW and not state.get("workspace_fixture") and path == "/api/goals":
                 design_goals = []
                 for key, status in [("design-panels", "good"), ("design-wren", "bad")]:
                     goal = goal_record(key, "Reach the next milestone", "binary")
@@ -954,16 +1149,18 @@ def main() -> int:
                     )
                 )
                 return
-            if GOALS_SMOKE and path == "/api/goals":
+            if (GOALS_SMOKE or state.get("workspace_fixture")) and path == "/api/goals":
                 self.respond(
                     dict(
-                        goals=list(goals.values()),
+                        goals=[goals["release"], goals["words"]]
+                        if state.get("workspace_fixture")
+                        else list(goals.values()),
                         status_date="2026-11-04",
                         next_refresh_at=time.time() + 3600,
                     )
                 )
                 return
-            if GOALS_SMOKE and path.startswith("/api/goals/"):
+            if (GOALS_SMOKE or state.get("workspace_fixture")) and path.startswith("/api/goals/"):
                 key = path.split("/")[3]
                 if path.endswith("/readings"):
                     values = (
@@ -995,12 +1192,14 @@ def main() -> int:
                 if key in goals and len(path.split("/")) == 4:
                     self.respond(goals[key])
                     return
-            if GOALS_SMOKE and path == "/api/measures/words/manual-state":
+            if (
+                GOALS_SMOKE or state.get("workspace_fixture")
+            ) and path == "/api/measures/words/manual-state":
                 response = copy.deepcopy(manual)
                 response["date"] = query.get("date", [manual["date"]])[0]
                 self.respond(response)
                 return
-            if GOALS_SMOKE and path == "/api/projects":
+            if (GOALS_SMOKE or state.get("workspace_fixture")) and path == "/api/projects":
                 self.respond(dict(projects=[dict(id="project_personal", name="Personal")]))
                 return
             if GOALS_SMOKE and path == "/files/goals/kit/proof.md":
@@ -1011,15 +1210,69 @@ def main() -> int:
                 self.end_headers()
                 self.wfile.write(content)
                 return
+            if state.get("workspace_fixture") and path == "/api/machines":
+                self.respond(
+                    dict(
+                        machines=[
+                            dict(
+                                machine_id="75a49e78-97de-4e28-8dc5-79646761c46f",
+                                name="Home",
+                                icon="house",
+                                color="blue",
+                                is_home=True,
+                                available=True,
+                                waiting_tickets=0,
+                            )
+                        ]
+                    )
+                )
+                return
+            if state.get("workspace_fixture") and path == "/api/executor/health":
+                self.respond(dict(mode="local"))
+                return
+            if state.get("workspace_fixture") and path == "/api/conversation/backends":
+                self.respond(dict(backends=[dict(backend_key="codex", installed=True,
+                    available_models=[dict(model_id="sol", display_name="Sol", enabled=True)],
+                    reasoning_effort_options=["medium"], default_model_id="sol",
+                    default_reasoning_effort="medium")]))
+                return
+            if state.get("workspace_fixture") and path.startswith("/api/managers/"):
+                identity = path.split("/")[3]
+                record = workspace_records().get(("manager", identity))
+                if record and path.endswith("/conversation"):
+                    self.respond(dict(conversation_id="stub"))
+                    return
+                if record and path.endswith("/workspace-content"):
+                    self.respond(dict(goal="", recap=""))
+                    return
+                if record and path.endswith("/workspace"):
+                    manager = json.loads(
+                        (ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text()
+                    )
+                    manager.update(
+                        id=identity,
+                        title=record["value"]["title"],
+                        goal="",
+                        recap="",
+                        tickets=[],
+                        artifacts=[],
+                        project="Wren",
+                        project_id="wren",
+                    )
+                    manager["manager"]["conversation_id"] = "stub"
+                    self.respond(manager)
+                    return
             if REPLACEMENT_SMOKE and path == "/api/goals":
                 value = {
                     "goals": [],
                     "status_date": "2026-11-14",
                     "next_refresh_at": time.time() + 3600,
                 }
-            elif REPLACEMENT_SMOKE and path.endswith("/page"):
+            elif (REPLACEMENT_SMOKE or state.get("workspace_fixture")) and path.endswith("/page"):
                 value = {"page": {"blocks": []}, "page_revision": 1}
-            elif REPLACEMENT_SMOKE and path.endswith("/page/readings"):
+            elif (REPLACEMENT_SMOKE or state.get("workspace_fixture")) and path.endswith(
+                "/page/readings"
+            ):
                 value = {"values": [], "sources": []}
             elif path == "/api/managers":
                 value = {"managers": [], "page": page}
@@ -1134,6 +1387,16 @@ def main() -> int:
         def do_PATCH(self) -> None:
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
+            if state.get("workspace_fixture") and path.startswith("/api/managers/"):
+                identity = path.split("/")[3]
+                if identity in ("settled-one", "settled-two") and body == {"settled": False}:
+                    state["workspace_reopened"].append(identity)
+                    state["writes"].append(dict(path=path, body=body))
+                    (output / "workspace-proof-writes.json").write_text(json.dumps(state["writes"]))
+                    self.respond({})
+                    return
+                self.respond({"error": "Unexpected Manager write"}, 400)
+                return
             if DESIGN_REVIEW and path.startswith("/api/tickets/") and path.split("/")[3] in tickets:
                 with lock:
                     ticket = tickets[path.split("/")[3]]
@@ -1142,12 +1405,15 @@ def main() -> int:
                     state.setdefault("scope_writes", []).append(dict(path=path, body=body))
                     self.respond(ticket)
                 return
-            if not GOALS_SMOKE or not path.startswith("/api/goals/"):
+            if not (GOALS_SMOKE or state.get("workspace_fixture")) or not path.startswith(
+                "/api/goals/"
+            ):
                 self.respond({}, 404)
                 return
             with lock:
                 goal = goals[path.split("/")[3]]
                 state["goal_patch_attempts"] += 1
+                wire_body = copy.deepcopy(body)
                 if body.pop("expected_revision") != goal["revision"]:
                     self.respond(dict(error=dict(message="This goal changed.")), 409)
                     return
@@ -1158,7 +1424,9 @@ def main() -> int:
                     goal["completed"] = bool(items) and all(
                         item["state"] == "done" for item in items
                     )
-                state["writes"].append(dict(path=path, body=body))
+                state["writes"].append(
+                    dict(path=path, body=wire_body if state.get("workspace_fixture") else body)
+                )
                 (output / "operations.json").write_text(json.dumps(state["writes"]))
                 self.respond(goal)
 
