@@ -14,6 +14,8 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 - **Blockers**, other Tickets that must be Done before this one may start a step.
 - **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
 
+A recap is 80 characters at most. The server refuses a recap that names an internal ID: a Ticket or Manager ID, a Git commit hash, or a UUID. The refusal is one line that says what to rewrite. Manager and Chief recaps follow the same rule. Recaps stored before the rule stay as they are, and an empty recap is always allowed.
+
 ## How a stage advances
 
 ```text

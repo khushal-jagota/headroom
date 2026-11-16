@@ -34,6 +34,7 @@ from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import decision_messages, derivation
 from planner.tickets.contracts import (
+    NO_FURTHER,
     EmployeeLaunchConfiguration,
     NextCeiling,
     PendingTicketProposal,
@@ -61,6 +62,7 @@ from planner.tickets.logic import (
     review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.tickets.logic.recap import validate_recap
 from planner.tickets.proposal_contention import begin_proposal
 from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
 from planner.worker_settings.service import read_worker_launch_defaults_for_ticket_creation
@@ -1575,6 +1577,22 @@ def accept_proposal(
             conn, ticket_id
         )
         decision_messages.validate_request(message, expected_proposal_revision, decision_id)
+        # Receipt identity keeps the original ceiling, including historical completion
+        # stops. Field aliases still name the same request as their Stage ids.
+        request_ceiling = next_ceiling
+        if (
+            request_ceiling is not None
+            and request_ceiling != NO_FURTHER
+            and request_ceiling not in worker_type_definition.stage_ids()
+        ):
+            try:
+                request_ceiling = worker_type_definition.stage_gated_by(request_ceiling)
+            except PlannerError as exc:
+                raise PlannerError(
+                    ErrorCode.scope_invalid,
+                    "unknown next_ceiling",
+                    {"next_ceiling": request_ceiling},
+                ) from exc
         request = decision_messages.request_json(
             principal,
             ticket_id=ticket_id,
@@ -1583,7 +1601,7 @@ def accept_proposal(
             message=message,
             expected_proposal_revision=expected_proposal_revision,
             edited_body=edited_body,
-            next_ceiling=next_ceiling,
+            next_ceiling=request_ceiling,
             next_holder=(
                 None
                 if next_holder is None
@@ -1601,11 +1619,14 @@ def accept_proposal(
                 "the visible proposal changed; read it again before accepting",
                 {"ticket_id": ticket_id},
             )
+        resolved_ceiling = admission.parse_next_ceiling(
+            request_ceiling, worker_type_definition, current_stage=ticket.stage
+        )
         decision = resolution.decide_accept(
             ticket,
             field,
             edited_body,
-            next_ceiling,
+            resolved_ceiling,
             next_holder,
             worker_type_definition=worker_type_definition,
             approval=_explicit_approval(conn, principal),
@@ -2019,6 +2040,7 @@ def edit_ticket(
         # The recap and settled field values are whole documents set through the same
         # Ticket edit door as scalar fields.
         if "recap" in edit:
+            validate_recap(edit["recap"])
             changes.append(("recap", "recap", ticket.recap, edit["recap"]))
             changes.append(
                 (
