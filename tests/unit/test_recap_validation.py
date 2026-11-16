@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from sqlite3 import Connection
+
 import pytest
 
+from planner.core.clock import Clock
 from planner.core.contracts import PlannerError
 from planner.core.ids import new_id
+from planner.managers import data as managers_data
 from planner.tickets.logic.recap import RECAP_MAX_CHARS, validate_recap
+from planner.worker_settings.service import update_chief_recap
 
 ACCEPTED = [
     "",
@@ -42,3 +47,19 @@ def test_cap_counts_trimmed_text() -> None:
     validate_recap(" " + "a" * RECAP_MAX_CHARS + " ")
     with pytest.raises(PlannerError, match=r"Recap is 81 characters\. Rewrite it in 80 or fewer\."):
         validate_recap("a" * (RECAP_MAX_CHARS + 1))
+
+
+def test_manager_and_chief_recap_writes_refuse_ids(tmp_db: Connection, fake_clock: Clock) -> None:
+    """The Ticket door is proven over HTTP elsewhere. Manager and Chief have their own writers."""
+    manager = managers_data.create_manager(
+        tmp_db, title="Own work", project_id="project_vylo", clock=fake_clock
+    )
+    managers_data.update_manager(tmp_db, manager.id, edits={"recap": "Plain."}, clock=fake_clock)
+    with pytest.raises(PlannerError, match="names an ID"):
+        managers_data.update_manager(
+            tmp_db, manager.id, edits={"recap": f"Blocked on {new_id('t')}."}, clock=fake_clock
+        )
+    with pytest.raises(PlannerError, match="names an ID"):
+        update_chief_recap(tmp_db, {"recap": "See 2f417385a."})
+    assert update_chief_recap(tmp_db, {"recap": "Plain."}).recap == "Plain."
+    assert managers_data.read_manager(tmp_db, manager.id).recap == "Plain."
