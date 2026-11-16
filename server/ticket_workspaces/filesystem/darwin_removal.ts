@@ -1,4 +1,4 @@
-import { fstatSync } from 'node:fs';
+import { constants, fstatSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import {
@@ -8,6 +8,7 @@ import {
   open_relative,
   read_directory_names,
   rmdir_relative,
+  stat_darwin_entry,
   unlink_relative,
 } from '../../executor/mac/platform.ts';
 
@@ -44,19 +45,18 @@ export async function remove_darwin_workspace(
     async function remove_entry(parent: number, name: string, expected?: Identity): Promise<void> {
       await setImmediate(undefined, { signal });
       signal?.throwIfAborted();
-      let directory: number;
-      try {
-        directory = open_relative(parent, name, directory_open_flags);
-      } catch (error) {
-        // An expected directory must remain the same directory. Other entries are
-        // unlinked relative to their parent and never followed, including symlinks.
-        if (expected || !['ENOTDIR', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? ''))
-          throw error;
+      const entry = stat_darwin_entry(parent, name);
+      if ((entry.mode & constants.S_IFMT) !== constants.S_IFDIR) {
+        if (expected) throw new Error('Workspace directory changed before removal');
+        // All non-directory types, including sockets, FIFOs and symlinks, use
+        // unlinkat without opening or following the entry.
         unlink_relative(parent, name);
         return;
       }
+      const directory = open_relative(parent, name, directory_open_flags);
       try {
         check_identity(directory, expected);
+        check_identity(directory, entry);
         const opened = fstatSync(directory);
         await setImmediate(undefined, { signal });
         signal?.throwIfAborted();

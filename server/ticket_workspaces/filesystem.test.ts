@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   mkdirSync,
   realpathSync,
+  lstatSync,
   existsSync,
   writeFileSync,
   readFileSync,
@@ -11,6 +12,13 @@ import {
   renameSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
+import { BackendCommands } from '../conversation/snapshot/commands.ts';
+import {
+  open_directory_descriptor,
+  close_native_descriptor,
+  stat_darwin_entry,
+} from '../executor/mac/platform.ts';
 import { join, dirname, resolve, sep } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
 import {
@@ -362,7 +370,7 @@ test.skipIf(process.platform !== 'darwin')(
       symlinkSync(outside, nested, 'dir');
     };
     try {
-      expect(await cleanup_ticket_folder(path, options)).toBeNull();
+      await expect(cleanup_ticket_folder(path, options)).rejects.toThrow(/ENOTDIR|ELOOP/);
       expect(injected).toBe(true);
       expect(readFileSync(join(outside, 'sentinel.txt'), 'utf8')).toBe('must survive');
       expect(readFileSync(join(root, 'detached-original', 'original.txt'), 'utf8')).toBe(
@@ -421,6 +429,54 @@ test.skipIf(process.platform !== 'darwin')(
       expect(readFileSync(join(path, 'preserved.txt'), 'utf8')).toBe('must survive');
     } finally {
       swap.before_native_open = undefined;
+    }
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'native Mac metadata classifies sockets and FIFOs without opening them before removal',
+  async () => {
+    const path = folder(),
+      socket = join(path, 's'),
+      fifo = join(path, 'pipe');
+    const server = createServer(),
+      commands = new BackendCommands();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(socket, () => resolve());
+      });
+      const created = await commands.run(['/usr/bin/mkfifo', fifo], { timeout_seconds: 5 });
+      expect(created.exit_code, created.standard_error).toBe(0);
+      writeFileSync(join(path, 'regular'), 'saved');
+      mkdirSync(join(path, 'directory'));
+      symlinkSync('regular', join(path, 'link'));
+      const descriptor = open_directory_descriptor(path);
+      try {
+        for (const name of ['s', 'pipe', 'regular', 'directory', 'link']) {
+          const actual = lstatSync(join(path, name));
+          expect(stat_darwin_entry(descriptor, name)).toEqual({
+            dev: actual.dev,
+            ino: actual.ino,
+            mode: actual.mode,
+          });
+        }
+      } finally {
+        close_native_descriptor(descriptor);
+      }
+      expect(lstatSync(socket).isSocket()).toBe(true);
+      expect(lstatSync(fifo).isFIFO()).toBe(true);
+      expect(await cleanup_ticket_folder(path, options)).toBeNull();
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      try {
+        await commands.shutdown();
+      } finally {
+        if (server.listening)
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
+      }
     }
   },
 );
