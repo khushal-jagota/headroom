@@ -8,13 +8,13 @@ import {
   constants,
   mkdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Part2Spec } from './part2_parity.ts';
-import type { WorkerSupervisor as Supervisor } from '../../../worker_supervision/service.ts';
 import type { WorkerScratch as Scratch } from '../../worker_scratch.ts';
 import * as records from '../../../worker_supervision/records.ts';
 import { cleanup_result } from '../../../worker_supervision/inspection.ts';
@@ -104,46 +104,36 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const runtime = options.runtime;
     const context = await runtime.context(runtime.clock() + 5);
-    const owner = (await context.primitives.snapshot(runtime.clock() + 5)).get(process.pid);
-    if (owner === undefined) denied();
-    await records.write(path, {
-      version: 1,
-      ticket_id: environment.PLAN_TICKET_ID!,
-      conversation_id: environment.PLAN_CONVERSATION_ID!,
-      host: context.host.host,
-      boot: context.host.boot,
-      owner,
-      root: null,
-      processes: [],
-      isolated: false,
-      state: 'pending',
-      launch_phase: 'pending',
-    });
-    const supervisor = Object.assign(Object.create(WorkerSupervisor.prototype) as Supervisor, {
-      path,
+    // Keep the real instance: argv uses the supervisor's private runtime to
+    // choose its launch transport. Only custody execution stays scripted here.
+    const supervisor = await originalCreate.call(
+      WorkerSupervisor,
+      { ...environment, PLAN_WORKER_PROCESS_ROOT: directory },
       working_directory,
-      environment: { ...environment, PLAN_WORKER_PROCESS_ROOT: directory },
-    });
+      options,
+    );
+    if (supervisor == null) return denied();
+    // Keep the shared fixture's exact journal identity across both adapters.
+    renameSync(supervisor.path, path);
+    Object.defineProperty(supervisor, 'path', { value: path });
+    const record_path = path;
     const started = async (pid: number) => {
       const root = (await context.primitives.snapshot(runtime.clock() + 5)).get(pid);
       if (root === undefined) denied();
-      const record = await records.read(path);
+      const record = await records.read(record_path);
       Object.assign(record, { root, processes: [root], state: 'running' });
-      await records.write(path, record);
+      await records.write(record_path, record);
     };
     let stopped = false;
     const stop = async (native_stop?: () => Promise<void>) => {
       if (stopped) return cleanup_result(true, 'Owned scripted child ended');
       await native_stop?.();
       stopped = true;
-      const record = await records.read(path);
+      const record = await records.read(record_path);
       record.state = 'complete';
       record.reason = 'Owned scripted child ended';
-      await records.write(path, record);
-      appendFileSync(
-        spec.trace,
-        `${JSON.stringify({ kind: 'contained-stop', record_path: path })}\n`,
-      );
+      await records.write(record_path, record);
+      appendFileSync(spec.trace, `${JSON.stringify({ kind: 'contained-stop', record_path })}\n`);
       return cleanup_result(true, 'Owned scripted child ended');
     };
     Object.assign(supervisor, {
@@ -153,7 +143,7 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
       cancel_unspawned: () => stop(),
       settled: async () => {},
       identity: async () => {
-        const record = await records.read(path);
+        const record = await records.read(record_path);
         return record.root == null
           ? null
           : {
@@ -161,7 +151,7 @@ export async function install_owned_launch_boundary(spec: Part2Spec): Promise<()
               birth: record.root.birth,
               boot: record.boot!,
               unit: null,
-              supervision_record: path,
+              supervision_record: record_path,
             };
       },
     });

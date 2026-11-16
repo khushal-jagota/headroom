@@ -1,5 +1,6 @@
 /** Source-paired run custody and restart recovery without a host or native child. */
 import { readFileSync } from 'node:fs';
+import { CLEANUP_SCOPE } from '../../worker_supervision/inspection.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
 import { TestClock } from '../../core/clock.ts';
@@ -602,6 +603,7 @@ if (spec.mode === 'machines') {
     result = {
       before,
       acknowledgement,
+      cleanup_scope: CLEANUP_SCOPE,
       cleanup,
       workspaces,
       loaded,
