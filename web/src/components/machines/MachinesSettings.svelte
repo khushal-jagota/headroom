@@ -17,6 +17,26 @@
   let color = $state<MachineColor>("jade");
   let saving = $state(false);
   let error = $state<string | null>(null);
+  type JoinGrant = {machine_id: string; home_url: string; command: string; credential: string};
+  let adding = $state(false);
+  let newName = $state("");
+  let creating = $state(false);
+  let addError = $state<unknown>(null);
+  let grant = $state<JoinGrant | null>(null);
+  let copied = $state<string | null>(null);
+  function startAdding() { adding = true; newName = ""; addError = null; grant = null; copied = null; }
+  function finishAdding() { adding = false; grant = null; }
+  async function createJoinCommand() {
+    creating = true; addError = null;
+    try {
+      grant = await mutateJson<JoinGrant>("/api/machines/join-command", {method: "POST", body: {name: newName.trim()}});
+    } catch (cause) { addError = cause; }
+    finally { creating = false; }
+  }
+  async function copy(label: string, text: string) {
+    await navigator.clipboard.writeText(text);
+    copied = label;
+  }
   function edit(machine: Machine) {
     editing = machine.machine_id; name = machine.name; icon = machine.icon; color = machine.color; error = null;
   }
@@ -56,6 +76,30 @@
       </div>
     {/each}
   {/if}
+  <div class="add-machine" data-add-machine>
+    {#if !adding}
+      <Button onclick={startAdding}>Add a machine</Button>
+    {:else if !grant}
+      <form onsubmit={(event) => {event.preventDefault(); void createJoinCommand();}}>
+        <label>New machine name<input bind:value={newName} required maxlength="80" disabled={creating} /></label>
+        {#if addError}<ErrorLine error={addError} />{/if}
+        <div class="edit-actions"><Button type="submit" disabled={creating || !newName.trim()}>{creating ? "Creating…" : "Create join command"}</Button><Button variant="ghost" disabled={creating} onclick={finishAdding}>Cancel</Button></div>
+      </form>
+    {:else}
+      <div class="join-grant" data-join-grant>
+        <p>Check that this is your home's address before you share anything: <strong>{grant.home_url}</strong></p>
+        <p>1. On the new machine, signed in to the GitHub CLI, run:</p>
+        <pre>{grant.command}</pre>
+        <Button variant="ghost" onclick={() => copy("command", grant!.command)}>{copied === "command" ? "Copied" : "Copy command"}</Button>
+        <p>2. When it asks for the credential, paste this:</p>
+        <pre data-join-credential>{grant.credential}</pre>
+        <Button variant="ghost" onclick={() => copy("credential", grant!.credential)}>{copied === "credential" ? "Copied" : "Copy credential"}</Button>
+        <p class="warning">This credential is shown once and cannot be shown again. Keep it private; replacing the credential revokes it.</p>
+        <p>3. After the command finishes, remove its temporary script: <code>rm -- "$panels_join_script"</code></p>
+        <Button onclick={finishAdding}>Done</Button>
+      </div>
+    {/if}
+  </div>
 </section>
 <style>
   .machines-settings { margin-top:var(--space-6); }
@@ -72,6 +116,10 @@
   label { display:flex; flex-direction:column; gap:var(--space-1); }
   input,select { background:var(--surface-input); border:1px solid var(--border-input); border-radius:var(--radius-sm); color:var(--tone-primary); padding:var(--space-2); font:inherit; }
   fieldset { border:0; margin:0; padding:0; }
+  .add-machine { margin-top:var(--space-4); max-width:var(--page-measure); }
+  .add-machine form { margin-left:0; }
+  pre { margin:var(--space-2) 0; padding:var(--space-3); background:var(--surface-input); border:1px solid var(--border-input); border-radius:var(--radius-sm); white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--type-sm); color:var(--tone-primary); }
+  .warning { color:var(--tone-strong); }
   .color-palette,.edit-actions { display:flex; gap:var(--space-2); flex-wrap:wrap; }
   .color-option { display:flex; padding:var(--space-2); background:none; border:1px solid transparent; border-radius:var(--radius-sm); cursor:pointer; }
   .color-option[aria-pressed="true"] { border-color:var(--tone-secondary); background:var(--interaction-hover); }
