@@ -67,7 +67,7 @@ _INLINE_MEDIA_TYPES = _INLINE_IMAGE_TYPES | frozenset(
 )
 
 
-@router.get("/files/tickets/{ticket_id}/{file_path:path}")
+@router.api_route("/files/tickets/{ticket_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> Response:
     _reject_raw_encoded_unsafe_path(request)
     try:
@@ -88,7 +88,10 @@ async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> R
     media_type = (
         mimetypes.guess_type(ticket_file.name)[0] or "application/octet-stream"
     )
-    disposition = "inline" if _may_inline(media_type) else "attachment"
+    disposition = (
+        "inline" if request.scope.get("panels.artifact_origin") or _may_inline(media_type)
+        else "attachment"
+    )
     response = FileResponse(
         ticket_file,
         media_type=media_type,
@@ -99,8 +102,11 @@ async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> R
     return await _reusable(request, response, ticket_file, media_type)
 
 
-@router.get("/files/sprint-items/{manager_id}/{file_path:path}", include_in_schema=False)
-@router.get("/files/managers/{manager_id}/{file_path:path}")
+@router.api_route(
+    "/files/sprint-items/{manager_id}/{file_path:path}",
+    methods=["GET", "HEAD"], include_in_schema=False,
+)
+@router.api_route("/files/managers/{manager_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_manager_file(
     request: Request, manager_id: str, file_path: str
 ) -> Response:
@@ -122,7 +128,10 @@ async def get_manager_file(
     media_type = (
         mimetypes.guess_type(managed_file.name)[0] or "application/octet-stream"
     )
-    disposition = "inline" if _may_inline(media_type) else "attachment"
+    disposition = (
+        "inline" if request.scope.get("panels.artifact_origin") or _may_inline(media_type)
+        else "attachment"
+    )
     response = FileResponse(
         managed_file,
         media_type=media_type,
@@ -133,7 +142,7 @@ async def get_manager_file(
     return await _reusable(request, response, managed_file, media_type)
 
 
-@router.get("/files/goals/{goal_id}/{file_path:path}")
+@router.api_route("/files/goals/{goal_id}/{file_path:path}", methods=["GET", "HEAD"])
 async def get_goal_file(
     request: Request, goal_id: str, file_path: str
 ) -> Response:
@@ -156,7 +165,10 @@ async def get_goal_file(
     media_type = (
         mimetypes.guess_type(managed_file.name)[0] or "application/octet-stream"
     )
-    disposition = "inline" if _may_inline(media_type) else "attachment"
+    disposition = (
+        "inline" if request.scope.get("panels.artifact_origin") or _may_inline(media_type)
+        else "attachment"
+    )
     response = FileResponse(
         managed_file,
         media_type=media_type,

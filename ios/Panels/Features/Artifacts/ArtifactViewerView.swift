@@ -13,6 +13,7 @@ struct ArtifactViewerView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @State private var document: ArtifactDocument?
+    @State private var htmlURL: URL?
     @State private var image: UIImage?
     @State private var error: String?
     @State private var isLoading = true
@@ -106,16 +107,22 @@ struct ArtifactViewerView: View {
 
     @ViewBuilder private func content(_ document: ArtifactDocument) -> some View {
         switch target.kind {
-        case .html where document.text != nil:
+        case .html where htmlURL != nil || document.text != nil:
             VStack(spacing: 0) {
                 Picker("Preview width", selection: $desktopPreview) {
                     Text("Phone width").tag(false)
                     Text("Fit desktop").tag(true)
                 }.pickerStyle(.segmented).padding(PanelsTheme.Space.md)
                     .accessibilityIdentifier("artifact-preview-width")
-                ArtifactWebView(source: document.text!, url: document.remoteURL, desktopPreview: desktopPreview, openLink: follow, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
-                    .id(renderVersion)
-                    .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
+                Group {
+                    if let htmlURL {
+                        ArtifactWebView(url: htmlURL, desktopPreview: desktopPreview, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
+                    } else if let text = document.text {
+                        LegacyArtifactWebView(source: text, url: document.remoteURL, desktopPreview: desktopPreview, openLink: follow, failed: { error = $0 }, ready: { webReady = true }, reload: { Task { await load() } })
+                    }
+                }
+                .id(renderVersion)
+                .overlay { if !webReady && showLoading { RingSpinner("Opening preview…").padding().background(PanelsTheme.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md)) } }
             }
         case .markdown where document.text != nil:
             ArtifactMarkdownView(source: document.text!, baseURL: document.remoteURL).panelsRefreshable { await load() }
@@ -153,13 +160,14 @@ struct ArtifactViewerView: View {
         isLoading = true
         defer { isLoading = false }
         do {
+            let previewURL = target.kind == .html ? try await store.client.artifactPreviewURL(target) : nil
             let result = try await store.client.artifactDocument(target)
             let image = target.kind == .image ? await Task.detached(priority: .userInitiated) {
                 UIImage(contentsOfFile: result.localURL.path)
             }.value : nil
             try Task.checkCancellation()
             self.image = image
-            document = result; error = nil; webReady = false; renderVersion += 1
+            document = result; htmlURL = previewURL; error = nil; webReady = false; renderVersion += 1
         } catch {
             if !Task.isCancelled {
                 self.error = error.localizedDescription

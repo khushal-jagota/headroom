@@ -14,6 +14,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
+from planner.core.errors import PlannerError
 from planner.core.server import create_app
 from planner.files import api
 from planner.files.contracts import ManagerFile
@@ -22,7 +23,9 @@ from planner.files.logic.paths import resolve_goal_file, resolve_manager_file
 from planner.tickets.data import create_ticket
 
 
-def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
+def _make_app(
+    tmp_path: Path, artifact_origin: str | None = None, *, hosted: bool = False,
+) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))
@@ -33,6 +36,14 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
         env={
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(db_path),
+            **({"PLAN_ARTIFACT_ORIGIN": artifact_origin} if artifact_origin else {}),
+            **({"PLAN_ARTIFACT_PANELS_ORIGIN": "http://testserver"}
+               if artifact_origin and not hosted else {}),
+            **({
+                "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+                "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "owner@example.com",
+                "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.example",
+            } if hosted else {}),
         },
     )
     clock = build_clock(config)
@@ -134,6 +145,49 @@ def _ticket_file(db_path: Path, body: bytes, name: str = "notes.md") -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(body)
     return target
+
+
+def test_artifact_origin_serves_files_but_not_owner_commands(tmp_path: Path) -> None:
+    """A page can load its assets, but cannot use either host to issue owner writes."""
+    app, db_path = _make_app(tmp_path, "http://artifact.test:9001")
+    _ticket_file(db_path, b"<p>page</p>", "index.html")
+    with TestClient(app) as client:
+        url = "/files/tickets/t_reuse01/index.html"
+        original = client.get(url)
+        artifact = client.get(url, headers={"host": "artifact.test:9001"})
+        assert original.headers["content-disposition"].startswith("attachment")
+        assert artifact.headers["content-disposition"].startswith("inline")
+        assert artifact.text == original.text
+        assert client.get("/api/health", headers={"host": "artifact.test:9001"}).status_code == 403
+        assert client.post(url, headers={"host": "artifact.test:9001"}).status_code == 403
+        cross_origin = client.post("/api/anything", headers={"origin": "http://artifact.test:9001"})
+        assert cross_origin.status_code == 403
+        cross_site_read = client.get("/api/health", headers={"sec-fetch-site": "same-site"})
+        assert cross_site_read.status_code == 403
+        assert client.get("/api/artifact-origin").json() == {"origin": "http://artifact.test:9001"}
+
+
+def test_hosted_artifact_origin_requires_trusted_owner(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path, "https://artifacts.example:8443", hosted=True)
+    _ticket_file(db_path, b"page", "index.html")
+    with TestClient(app) as client:
+        path = "/files/tickets/t_reuse01/index.html"
+        headers = {"host": "artifacts.example:8443"}
+        assert client.get(path, headers=headers).status_code == 403
+        other = client.get(path, headers={**headers, "tailscale-user-login": "other"})
+        assert other.status_code == 403
+        owner = client.get(path, headers={**headers, "tailscale-user-login": "owner@example.com"})
+        assert owner.status_code == 200
+        assert owner.headers["content-disposition"].startswith("inline")
+
+
+@pytest.mark.parametrize("origin", ["https://panels.example:8443", "https://other.example:443"])
+def test_artifact_origin_rejects_shared_host_and_default_port(origin: str) -> None:
+    with pytest.raises(PlannerError):
+        load_config(env={
+            "PLAN_ARTIFACT_ORIGIN": origin,
+            "PLAN_ARTIFACT_PANELS_ORIGIN": "https://panels.example",
+        })
 
 
 

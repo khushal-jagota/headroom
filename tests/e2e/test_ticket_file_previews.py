@@ -575,3 +575,48 @@ def test_a_video_preview_shows_a_poster_then_plays_and_seeks(
     played = video.evaluate("node => [node.currentTime, node.duration, node.readyState]")
     assert played[0] >= 1.9, played
     assert played[1] > 2.5, played
+
+
+def test_isolated_artifact_origin_allows_page_features_but_blocks_panels_writes(
+    server_factory: Callable[..., ServerHandle],
+    context_factory: Callable[[], BrowserContext],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """Real origins prove browser storage, fetch, and form boundaries together."""
+    started = time.monotonic()
+    def env(base: str) -> dict[str, str]:
+        return {
+            "PLAN_ARTIFACT_ORIGIN": f"http://localhost:{int(base.rsplit(":", 1)[1])}",
+            "PLAN_ARTIFACT_PANELS_ORIGIN": base,
+        }
+    server = server_factory(trusted_ingress_env=env)
+    ticket = cli(server, "ticket", "create", "--input-json", "-", stdin=json.dumps({
+        "worker_type": "coding", "title": "Artifact origin example", "brief": "Example",
+        "manager": {"kind": "chief", "id": "chief"},
+    }), settle_brief=True)["id"]
+    root = server.db_path.parent / "files" / "tickets" / ticket / "artifacts"
+    root.mkdir(parents=True)
+    (root / "data.txt").write_text("network works")
+    (root / "demo.html").write_text('''<!doctype html><title>Artifact origin example</title>
+      <h1>Artifact page</h1><p id="network">waiting</p><p id="storage">waiting</p>
+      <form id="attack" method="post" target="receipt" action="''' + server.base + '''/api/tickets">
+      <button>Send to Panels</button></form>
+      <iframe name="receipt"></iframe><script>
+      document.querySelector('#storage').textContent=localStorage.getItem('proof') || 'empty';
+      localStorage.setItem('proof','storage works');
+      fetch('data.txt').then(r=>r.text()).then(t=>document.querySelector('#network').textContent=t);
+      </script>''')
+    context = context_factory()
+    page = context.new_page()
+    page.goto(f"{server.base}/#/preview?source=ticket&ticket={ticket}&path=artifacts%2Fdemo.html")
+    frame = page.frame_locator('iframe[data-file-preview-html]')
+    expect(frame.locator('#network')).to_have_text('network works', timeout=20000)
+    expect(frame.locator('#storage')).to_have_text('empty')
+    page.reload()
+    expect(frame.locator('#storage')).to_have_text('storage works', timeout=20000)
+    with page.expect_response(
+        lambda r: r.url == server.base + '/api/tickets' and r.request.method == 'POST'
+    ) as response:
+        frame.locator('button').click()
+    assert response.value.status == 403
+    print(f'ARTIFACT_ORIGIN_BROWSER_SECONDS={time.monotonic()-started:.2f}')

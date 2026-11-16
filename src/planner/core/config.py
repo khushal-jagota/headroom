@@ -82,6 +82,8 @@ class Config:
     provision_account_skills: bool | None = None
     # Live ingress only. Consume the environment input before agent children start.
     refuse_unidentified_agent_calls: bool = False
+    artifact_origin: str | None = None
+    artifact_panels_origin: str | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -295,6 +297,42 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         test_mode=test_mode,
     )
 
+    artifact_origin = _optional_str_value(cfg, env, "artifact_origin", "PLAN_ARTIFACT_ORIGIN")
+    artifact_panels_origin = trusted_ingress_canonical_origin or _optional_str_value(
+        cfg, env, "artifact_panels_origin", "PLAN_ARTIFACT_PANELS_ORIGIN"
+    )
+    if artifact_origin is not None:
+        if artifact_panels_origin is None:
+            raise PlannerError(
+                ErrorCode.validation, "artifact origin requires Panels browser origin"
+            )
+        parsed_panels = urlsplit(artifact_panels_origin)
+        if (parsed_panels.scheme not in ("http", "https") or not parsed_panels.hostname
+                or parsed_panels.username or parsed_panels.password
+                or parsed_panels.path not in ("", "/") or parsed_panels.query
+                or parsed_panels.fragment):
+            raise PlannerError(ErrorCode.validation, "invalid Panels browser origin")
+        artifact_panels_origin = f"{parsed_panels.scheme}://{parsed_panels.netloc}"
+        parsed_artifact = urlsplit(artifact_origin)
+        try:
+            valid_port = parsed_artifact.port
+        except ValueError as exc:
+            raise PlannerError(ErrorCode.validation, "invalid artifact origin port") from exc
+        if (parsed_artifact.scheme not in ("http", "https") or not parsed_artifact.hostname
+                or parsed_artifact.username or parsed_artifact.password
+                or parsed_artifact.path not in ("", "/") or parsed_artifact.query
+                or parsed_artifact.fragment or valid_port is None
+                or (parsed_artifact.scheme == "http" and valid_port == 80)
+                or (parsed_artifact.scheme == "https" and valid_port == 443)):
+            raise PlannerError(
+                ErrorCode.validation, "artifact_origin must be an HTTP origin with an explicit port"
+            )
+        artifact_origin = f"{parsed_artifact.scheme}://{parsed_artifact.netloc}"
+        if parsed_artifact.hostname == parsed_panels.hostname:
+            raise PlannerError(
+                ErrorCode.validation, "artifact origin must use a different hostname"
+            )
+
     app_sha = _optional_str_value(cfg, env, "app_sha", "PLAN_APP_SHA")
     if app_sha is not None:
         try:
@@ -372,6 +410,8 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         trusted_ingress_provider=trusted_ingress_provider,
         trusted_ingress_allowed_login=trusted_ingress_allowed_login,
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
+        artifact_origin=artifact_origin,
+        artifact_panels_origin=artifact_panels_origin,
         test_mode=test_mode,
         fake_now=fake_now,
         executor_id=executor_id,

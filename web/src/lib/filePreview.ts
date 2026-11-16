@@ -6,9 +6,9 @@ import {
 } from "./conversation/pendingFiles";
 
 export type FilePreviewTarget =
-  | { kind: "ticket-file"; ticketId: string; path: string }
-  | { kind: "manager-file"; managerId: string; path: string }
-  | { kind: "goal-file"; goalId: string; path: string }
+  | { kind: "ticket-file"; ticketId: string; path: string; htmlSearch?: string; htmlHash?: string }
+  | { kind: "manager-file"; managerId: string; path: string; htmlSearch?: string; htmlHash?: string }
+  | { kind: "goal-file"; goalId: string; path: string; htmlSearch?: string; htmlHash?: string }
   | { kind: "conversation-file"; href: string; fileName: string }
   | { kind: "external-link"; href: string; label?: string };
 
@@ -127,7 +127,7 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   return {
     kind: KIND_BY_EXTENSION.get(extensionFor(target.path)) || "download",
     target,
-    href: managedFileHref(target),
+    href: managedFileHref(target) + (target.htmlSearch || "") + (target.htmlHash || ""),
     label: filenameLabel(target.path),
     previewHref: previewHashHref(target)
   };
@@ -207,12 +207,18 @@ export function markdownExpansionFor(
 
 export function targetFromHref(href: string, label = ""): FilePreviewTarget {
   const ticketTarget = ticketFileTargetFromHref(href);
-  if (ticketTarget) return ticketTarget;
+  if (ticketTarget) return htmlLocation(ticketTarget, href);
   const managerTarget = managerFileTargetFromHref(href);
-  if (managerTarget) return managerTarget;
+  if (managerTarget) return htmlLocation(managerTarget, href);
   const goalTarget = goalFileTargetFromHref(href);
-  if (goalTarget) return goalTarget;
+  if (goalTarget) return htmlLocation(goalTarget, href);
   return { kind: "external-link", href, label: label || href };
+}
+
+function htmlLocation(target: ManagedFileTarget, href: string): ManagedFileTarget {
+  if (!/\.html?$/i.test(target.path)) return target;
+  const url = new URL(href, typeof window === "undefined" ? "http://planner.local" : window.location.origin);
+  return { ...target, ...(url.search ? {htmlSearch: url.search} : {}), ...(url.hash ? {htmlHash: url.hash} : {}) };
 }
 
 export function ticketFileTarget(
@@ -246,28 +252,39 @@ export function goalFileTarget(
  * and read by one pair of functions, so no address can name a file its own way.
  */
 export function previewQuery(target: ManagedFileTarget): string {
+  const suffix = (target.htmlSearch ? `&htmlSearch=${encodeURIComponent(target.htmlSearch)}` : "") +
+    (target.htmlHash ? `&htmlHash=${encodeURIComponent(target.htmlHash)}` : "");
   if (target.kind === "goal-file") {
     return (
       "source=goal" +
       `&goal=${encodeURIComponent(target.goalId)}` +
-      `&path=${encodeURIComponent(target.path)}`
+      `&path=${encodeURIComponent(target.path)}` + suffix
     );
   }
   if (target.kind === "manager-file") {
     return (
       "source=manager" +
       `&manager=${encodeURIComponent(target.managerId)}` +
-      `&path=${encodeURIComponent(target.path)}`
+      `&path=${encodeURIComponent(target.path)}` + suffix
     );
   }
   return (
     "source=ticket" +
     `&ticket=${encodeURIComponent(target.ticketId)}` +
-    `&path=${encodeURIComponent(target.path)}`
+    `&path=${encodeURIComponent(target.path)}` + suffix
   );
 }
 
 export function targetFromPreviewQuery(params: URLSearchParams): ManagedFileTarget | null {
+  const target = baseTargetFromPreviewQuery(params);
+  if (!target || !/\.html?$/i.test(target.path)) return target;
+  const search = params.get("htmlSearch") || "";
+  const hash = params.get("htmlHash") || "";
+  if ((search && !search.startsWith("?")) || (hash && !hash.startsWith("#"))) return null;
+  return { ...target, ...(search ? {htmlSearch: search} : {}), ...(hash ? {htmlHash: hash} : {}) };
+}
+
+function baseTargetFromPreviewQuery(params: URLSearchParams): ManagedFileTarget | null {
   const path = params.get("path") || "";
   if (params.get("source") === "goal") {
     return goalFileTarget(params.get("goal") || "", path);
@@ -329,19 +346,19 @@ export function goalFileHref(
   return `/files/goals/${encodeURIComponent(target.goalId)}/${encodedManagedPath(target.path)}`;
 }
 
-function goalFileTargetFromHref(href: string): FilePreviewTarget | null {
+function goalFileTargetFromHref(href: string): ManagedFileTarget | null {
   const parts = managedHrefParts(href, "/files/goals/");
   if (!parts) return null;
   return goalFileTarget(parts.entityId, parts.path);
 }
 
-function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
+function ticketFileTargetFromHref(href: string): ManagedFileTarget | null {
   const parts = managedHrefParts(href, "/files/tickets/");
   if (!parts) return null;
   return ticketFileTarget(parts.entityId, parts.path);
 }
 
-function managerFileTargetFromHref(href: string): FilePreviewTarget | null {
+function managerFileTargetFromHref(href: string): ManagedFileTarget | null {
   const parts = managedHrefParts(href, "/files/managers/") ?? managedHrefParts(href, "/files/sprint-items/");
   if (!parts) return null;
   return managerFileTarget(parts.entityId, parts.path);

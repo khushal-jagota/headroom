@@ -5,9 +5,8 @@
   /** One managed file, at full size, filling whatever box the host gives it.
    *
    * There are two hosts and one rendering: the `#/preview` address, and an artifact
-   * opened on the Ticket screen it was clicked from. HTML is fetched and handed to a
-   * sandboxed iframe through a short-lived Blob URL, so the file's own scripts run
-   * without same-origin or host-page privileges. Markdown is fetched as source and
+   * opened on the Ticket screen it was clicked from. HTML runs on a separate artifact origin when one is configured. The original
+   * sandboxed preview remains available until that origin is set up. Markdown is fetched as source and
    * rendered through the ordinary markdown renderer, so managed links inside it keep the
    * same nested-preview and self-link bounds as everywhere else. Every other kind is the
    * shared preview at full size, which already knows how to draw an image, a player, or
