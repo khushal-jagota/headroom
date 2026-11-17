@@ -193,3 +193,19 @@ export function answer_user_input(
     };
   });
 }
+
+export async function emit_answer(
+  host: SqliteProcessConversationSystem,
+  turn: TurnToken,
+  emit: () => Promise<unknown>,
+): Promise<void> {
+  const state = host.conversation_state(turn.conversation_id);
+  if (state !== null)
+    await state.lock.run(async () => {
+      if (
+        same_turn(state.running_turn?.token ?? null, turn) &&
+        !state.running_turn!.callbacks_revoked
+      )
+        await emit();
+    });
+}
