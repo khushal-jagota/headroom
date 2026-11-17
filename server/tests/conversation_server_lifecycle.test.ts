@@ -484,13 +484,9 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   await expect(
     start_production_server({
       ...dependencies,
-      backends: {
-        drivers: dependencies.backends!.drivers!.filter(
-          (driver) => driver.driver_kind === 'claude',
-        ),
-      },
+      backends: { ...dependencies.backends, drivers: [] },
     }),
-  ).rejects.toThrow('Missing production backend factories: codex, hermes');
+  ).rejects.toThrow('Production backend drivers are required');
   expect(bindings_seen).toEqual([]);
   let server!: StartedServer;
   await run_application_process(

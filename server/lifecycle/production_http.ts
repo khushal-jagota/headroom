@@ -1,5 +1,5 @@
 /** The real HTTP components and the retained Hermes catalog share one shutdown join. */
-import { ConversationBackendKey } from '../conversation/contracts.ts';
+import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { backend_io_is_test } from '../conversation/snapshot/environment.ts';
@@ -104,7 +104,7 @@ export function create_production_backend_http(
     now,
     child_processes: context.child_processes,
     one_shot_children: context.one_shot_children,
-    read_codex_snapshot: () => runtime.backend_snapshots.snapshot(ConversationBackendKey.codex),
+    read_codex_snapshot: () => runtime.backend_snapshots.snapshot('codex' as BackendInstanceId),
   });
   const owner =
     context.config.test_mode || backend_io_is_test()

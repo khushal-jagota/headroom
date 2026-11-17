@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { canonical_principal } from '../agent_identity/data.ts';
 /** Retained Mac children and restart recovery, with durable assignments and owned waits. */
 import { same_reference } from './child_reference.ts';
@@ -67,6 +68,7 @@ function native_start(
     ? null
     : new ResolvedConversationStart({
         ...value,
+        backend_key: parse_backend_instance_id(value.backend_key),
         role_materials:
           value.role_materials === null
             ? null

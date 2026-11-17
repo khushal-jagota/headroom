@@ -10,12 +10,12 @@ import type {
   CodexLoginRejectionMemory,
   SavedCodexLoginSource,
 } from '../../../conversation/snapshot/provider_contracts.ts';
-import { create_durable_codex_login_rejection } from '../../../conversation/backend_state.ts';
+import { create_durable_codex_login_rejection } from './login_rejection.ts';
 import {
   SubprocessBackendProbeEnvironment,
   backend_io_is_test,
 } from '../../../conversation/snapshot/environment.ts';
-import { CodexUsageAdapter } from '../../../conversation/backend_usage/codex.ts';
+import { CodexUsageAdapter } from './allowance_usage.ts';
 import {
   CodexModelCatalogUnavailable,
   CodexSignInUnavailable,

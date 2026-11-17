@@ -9,7 +9,7 @@ import type { BackendProviders } from './composition.ts';
 import { backend_io_is_test } from './environment.ts';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { ClaudeUsageAdapter } from '../backend_usage/claude.ts';
+import { ClaudeUsageAdapter } from '../../drivers/claude/runtime/allowance_usage.ts';
 import { http_get_usage } from '../backend_usage/http.ts';
 import { create_codex_providers } from '../../drivers/codex/runtime/providers.ts';
 import type { CodexProviderContext } from '../../drivers/codex/runtime/providers.ts';

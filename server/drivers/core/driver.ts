@@ -1,10 +1,15 @@
 /** One agent backend kind, and the live instance it creates. (T3 provider-core driver.ts) */
 import type { BackendChildFactory } from '../../conversation/backends/contracts.ts';
+import type { BackendUsageAdapter } from '../../conversation/backend_usage/contracts.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { BackendCapabilities } from './capabilities.ts';
 import type { DriverClientDefinition } from './client.ts';
 import type { DriverHost } from './host.ts';
 import type { BackendInstanceId, DriverKind } from './identity.ts';
 import type { DriverManifest } from './manifest.ts';
+import type { DriverSignInController } from './sign_in.ts';
+import type { DriverStatus } from './status.ts';
+import type { TranscriptUsageSource } from './usage.ts';
 
 export interface DriverCreateInput<Config> {
   readonly instance_id: BackendInstanceId;
@@ -25,6 +30,18 @@ export interface AgentDriver<Config> {
     host: DriverHost,
     signal: AbortSignal,
   ): Promise<DriverInstance>;
+  /** Pure rules over model ids. On the driver, so they hold while an instance is unavailable. */
+  readonly models?: DriverModelRules;
+  /** Why this driver cannot launch the model, or null. */
+  launch_model_refusal?(model: string): string | null;
+}
+export interface DriverModelRules {
+  /** The model family a card shows as selected_variant, or null. */
+  variant(model_id: string): string | null;
+  /** The numerical version this driver reads from its own model ids. Empty: none. */
+  version(model_id: string): readonly number[];
+  /** Whether a requested model is among the offered ones. Absent: exact match. */
+  is_offered?(requested: string, offered: readonly string[]): boolean;
 }
 /** Each driver decodes its own config, so a list of drivers erases it. */
 export type AnyAgentDriver = AgentDriver<any>;
@@ -34,8 +51,12 @@ export interface DriverInstance {
   readonly driver_kind: DriverKind;
   readonly capabilities: BackendCapabilities;
   readonly child_factory: BackendChildFactory;
-  /** Must not rely on `this`: callers may spread an instance. */
-  dispose(): Promise<void>;
+  readonly status?: DriverStatus;
+  readonly allowance_usage?: BackendUsageAdapter;
+  readonly transcript_usage?: TranscriptUsageSource;
+  readonly sign_in?: DriverSignInController;
+  /** Must not rely on `this`: callers may spread an instance. May be called again. */
+  dispose(options?: StopOptions): Promise<void>;
 }
 /** The config of a driver that takes none. */
 export const NO_DRIVER_CONFIG: AgentDriver<null>['config'] = {

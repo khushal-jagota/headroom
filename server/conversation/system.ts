@@ -38,7 +38,6 @@ import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/
 import type { BackendChild, ChildReference } from './backends/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
 import {
-  ConversationBackendKey,
   AnswerFate,
   HeldPrompt,
   PromptDeliveryInjected,
@@ -215,10 +214,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   readonly lost_task_notices: LostBackgroundTaskNotices;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
-    // Until the closed backend lists open, every built-in key must have a live instance.
-    for (const key of Object.values(ConversationBackendKey))
-      if (options.backend_registry.get(key)?.kind !== 'live')
-        throw new Error(`no backend child factory for ${key}`);
+    for (const entry of options.backend_registry.list())
+      if (entry.kind !== 'live')
+        throw new Error(`no backend child factory for ${entry.instance_id}: ${entry.reason}`);
     if (typeof options.execution_refusal !== 'function')
       throw new Error('Conversation execution admission is required');
     if (typeof options.delivery_model_refusal !== 'function')

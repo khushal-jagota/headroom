@@ -1,4 +1,5 @@
 /** The private smoke fixture gives its Worker a real canonical conversation credential. */
+import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../../core/database/contracts.ts';
@@ -19,7 +20,7 @@ export function smoke_worker_token(
       tx,
       new ResolvedConversationStart({
         conversation_id,
-        backend_key: 'codex',
+        backend_key: parse_backend_instance_id('codex'),
         model: options.model,
         reasoning_effort: null,
         role_materials: null,

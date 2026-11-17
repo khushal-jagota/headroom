@@ -1,4 +1,5 @@
 /** Resolve existing native workspaces and replace only the VPS transport identity. */
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { platform } from 'node:os';
@@ -164,6 +165,7 @@ export async function localize_start(
   }
   return new ResolvedConversationStart({
     ...resolved,
+    backend_key: parse_backend_instance_id(resolved.backend_key),
     workspace_folder: managed ? artifacts : workspace,
     workspace_path_policy: WorkspacePathPolicy.absolute,
     role_materials: new ConversationRoleMaterials({

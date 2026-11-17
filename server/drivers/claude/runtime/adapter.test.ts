@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../../core/identity.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 /** A terminal reader failure must not prevent cleanup of its exact injected client. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
@@ -41,7 +42,7 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
   };
   const start = new ResolvedConversationStart({
     conversation_id: 'failed-reader',
-    backend_key: 'claude',
+    backend_key: parse_backend_instance_id('claude'),
     model: 'haiku',
     reasoning_effort: 'low',
     role_materials: null,
@@ -107,7 +108,7 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
 it('classifies only the native SDK initialization-timeout discriminator before resume failures', async () => {
   const start = new ResolvedConversationStart({
     conversation_id: 'initialize-retry',
-    backend_key: 'claude',
+    backend_key: parse_backend_instance_id('claude'),
     model: 'haiku',
     reasoning_effort: null,
     role_materials: null,
@@ -193,7 +194,7 @@ it('applies an effort change to the live Claude session and restarts to clear ef
   };
   const start = new ResolvedConversationStart({
     conversation_id: 'live-effort',
-    backend_key: 'claude',
+    backend_key: parse_backend_instance_id('claude'),
     model: 'haiku',
     reasoning_effort: 'low',
     role_materials: null,

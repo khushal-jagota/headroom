@@ -1,5 +1,5 @@
 /** Exercise the real probe with recorded machine answers and local catalog sources. */
-import type { ConversationBackendKey } from '../../contracts.ts';
+import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import type { CodexLoginStanding, CommandOutcome } from '../contracts.ts';
 import type { CodexModelCatalog, ClaudeModelCatalog } from '../provider_contracts.ts';
 import {
@@ -13,7 +13,7 @@ import { parse_version, version_is_newer } from '../logic/versions.ts';
 
 interface Case {
   readonly name: string;
-  readonly backend: ConversationBackendKey;
+  readonly backend: BackendInstanceId;
   readonly executable: string;
   readonly real_path: string;
   readonly version: CommandOutcome;

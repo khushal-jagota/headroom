@@ -1,15 +1,16 @@
 /** One machine probe uses explicit command and catalog adapters for all backends. */
-import type { ConversationBackendKey } from '../contracts.ts';
 import type { BackendProbe, BackendIdentity, CatalogReader } from './contracts.ts';
 import { RECIPES } from './recipes.ts';
 import { parse_version } from './logic/versions.ts';
 import { numerical_version, recognize_variant } from '../model_resolution/logic/variants.ts';
 import { update_advisory } from './advisory.ts';
-import { read_claude_identity, read_codex_identity } from './identity.ts';
+import { read_claude_identity } from '../../drivers/claude/runtime/status_readers.ts';
+import { read_codex_identity } from '../../drivers/codex/runtime/status_readers.ts';
 import { VERSION_PROBE_TIMEOUT_SECONDS, IDENTITY_PROBE_TIMEOUT_SECONDS } from './configuration.ts';
 import { cli_version_recorder } from '../backends/cli_compatibility.ts';
+import type { Backend } from '../backends/cli_compatibility.ts';
 export function create_backend_probe(
-  readers: Readonly<Record<ConversationBackendKey, CatalogReader>>,
+  readers: Readonly<Record<string, CatalogReader>>,
 ): BackendProbe {
   return async (backend_key, environment, options) => {
     const recipe = RECIPES[backend_key];
@@ -35,7 +36,9 @@ export function create_backend_probe(
     const diagnoses: string[] = [];
     // The same read keeps the feature-floor verdict that later launches use without a spawn.
     const record_cli_version =
-      backend_key === 'hermes' ? null : await cli_version_recorder(backend_key, executable_path);
+      backend_key === 'hermes'
+        ? null
+        : await cli_version_recorder(backend_key as Backend, executable_path);
     const outcome = await environment.run([executable_path, '--version'], {
       timeout_seconds: VERSION_PROBE_TIMEOUT_SECONDS,
     });

@@ -1,4 +1,5 @@
-import type { BackendProbeEnvironment, BackendUpdateAdvisory, ProbeRecipe } from './contracts.ts';
+import type { ProbeRecipe } from '../../drivers/core/status.ts';
+import type { BackendProbeEnvironment, BackendUpdateAdvisory } from './contracts.ts';
 import { classify_install_method, npm_prefix_from_path } from './logic/install.ts';
 import { version_is_newer } from './logic/versions.ts';
 import { REGISTRY_LOOKUP_TIMEOUT_SECONDS } from './configuration.ts';

@@ -1,4 +1,5 @@
 /** The process boundary must preserve receipt order, typed failures, and process loss. */
+import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
 import { performance } from 'node:perf_hooks';
 import { expect, test } from 'vitest';
 import { ScriptedChild } from './scripted_child.ts';
@@ -23,7 +24,7 @@ import { UserInputAnswer } from '../events.ts';
 
 const start = new ResolvedConversationStart({
   conversation_id: 'scripted-test',
-  backend_key: 'codex',
+  backend_key: parse_backend_instance_id('codex'),
   model: 'scripted-model',
   reasoning_effort: null,
   role_materials: new ConversationRoleMaterials({

@@ -1,4 +1,6 @@
 /** Backend-only route proof reuses the ordinary app through injection, without a listener. */
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
+import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import { createApp } from '../../../app.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { TestClock } from '../../../core/clock.ts';
@@ -12,7 +14,6 @@ import {
 import type { Database } from '../../../core/database/contracts.ts';
 import { BackendUsageService } from '../../backend_usage/service.ts';
 import type { BackendUsageResult } from '../../backend_usage/contracts.ts';
-import type { ConversationBackendKey } from '../../contracts.ts';
 import { BackendSnapshotService } from '../service.ts';
 import type { BackendSnapshot, BackendHttpRuntime } from '../contracts.ts';
 import type { CodexSignIn, CodexSignInService } from '../provider_contracts.ts';
@@ -52,7 +53,7 @@ function model_admission_evidence(database: Database, cards: readonly BackendSna
     const initial = Object.fromEntries(
       ['hermes', 'codex', 'claude'].map((key) => [
         key,
-        offered_model_ids(tx, 'vps', key as ConversationBackendKey),
+        offered_model_ids(tx, 'vps', key as BackendInstanceId),
       ]),
     );
     for (const model of ['retired-model', 'mac-only'])
@@ -77,7 +78,7 @@ function model_admission_evidence(database: Database, cards: readonly BackendSna
     const aliases = Object.fromEntries(
       ['opus', 'opus[1m]', 'claude-opus-5[1m]', 'sonnet'].map((model) => [
         model,
-        model_refusal(tx, 'claude', model, 'vps'),
+        model_refusal(tx, parse_backend_instance_id('claude'), model, 'vps'),
       ]),
     );
     return {
@@ -85,7 +86,7 @@ function model_admission_evidence(database: Database, cards: readonly BackendSna
       before,
       after,
       aliases,
-      mac_refusal: model_refusal(tx, 'codex', 'gpt-6.1-sol', 'macos'),
+      mac_refusal: model_refusal(tx, parse_backend_instance_id('codex'), 'gpt-6.1-sol', 'macos'),
     };
   });
 }
@@ -158,7 +159,7 @@ export async function run(spec: Spec) {
           },
         },
       ]),
-    ) as Partial<Record<ConversationBackendKey, { refresh(): Promise<BackendUsageResult> }>>,
+    ) as Partial<Record<string, { refresh(): Promise<BackendUsageResult> }>>,
   );
   const writes = new ConversationHttpWriteScope();
   const named_catalog: RemoteCatalogSource = {

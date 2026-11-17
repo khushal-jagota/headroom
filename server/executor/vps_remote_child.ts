@@ -12,7 +12,6 @@ import type {
 } from '../conversation/backends/contracts.ts';
 import {
   AnswerFate,
-  ConversationBackendKey,
   PromptDeliveryRefusalReason,
   WorkspacePathPolicy,
 } from '../conversation/contracts.ts';
@@ -27,7 +26,12 @@ import { now_ms } from './clock.ts';
 import { ProtocolRefused, ExecutorValidationError } from './protocol.ts';
 import { inspect } from 'node:util';
 import { validate_skill_snapshot } from './skills.ts';
-import type { WireTypes, ChildCommandArguments, ChildOperation } from './wire.generated.ts';
+import type {
+  WireTypes,
+  ChildCommandArguments,
+  ChildOperation,
+  ConversationBackendKey,
+} from './wire.generated.ts';
 
 export type SkillSnapshotSupplier = (
   start: ResolvedConversationStart,
@@ -114,7 +118,7 @@ export class MacRemoteChild implements BackendChild {
     if (options.started_on != null) this.note_start(options.started_on);
   }
   private note_start(start: ResolvedConversationStart): void {
-    if (start.backend_key === ConversationBackendKey.claude)
+    if (start.backend_key === 'claude')
       this.claude_started_on = [start.model, start.reasoning_effort];
   }
   async detach(options?: StopOptions): Promise<void> {
@@ -187,6 +191,7 @@ export class MacRemoteChild implements BackendChild {
       canonical_skill_snapshot: snapshot,
       resolved_start: {
         ...start,
+        backend_key: start.backend_key as ConversationBackendKey,
         role_materials:
           start.role_materials === null
             ? null

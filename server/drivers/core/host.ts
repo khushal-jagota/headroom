@@ -12,6 +12,8 @@ export interface DriverHost {
   readonly child_processes: OwnedChildProcesses;
   readonly one_shot_children: OwnedOneShotChildren;
   readonly worker_supervision: WorkerSupervisionRuntime;
+  /** Test mode: an instance starts no probe, catalog owner or sign-in. */
+  readonly test_mode: boolean;
   now(): Date;
   /** The first executable of that name on the host PATH, or the bare name when none is found. */
   executable_on_path(name: string): string;

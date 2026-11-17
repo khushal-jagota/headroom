@@ -1,4 +1,5 @@
 /** Snapshot service ordering does not need a provider process or an HTTP host. */
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { expect, test, vi } from 'vitest';
 import { writeFileSync, rmSync } from 'node:fs';
 import { BackendSnapshotService } from '../conversation/snapshot/service.ts';
@@ -196,7 +197,7 @@ test('all eight backend routes require the conversation runtime before validated
     await app.close();
   }
 });
-import { ClaudeUsageAdapter } from '../conversation/backend_usage/claude.ts';
+import { ClaudeUsageAdapter } from '../drivers/claude/runtime/allowance_usage.ts';
 const login = () => ({
   stored: {
     present: true,
@@ -211,7 +212,7 @@ const login = () => ({
   everything_a_card_reads: () => ['generation'],
 });
 const card = (version = '1.0.0'): BackendSnapshot => ({
-  backend_key: 'codex',
+  backend_key: parse_backend_instance_id('codex'),
   installed: true,
   executable_path: '/synthetic/codex',
   version,
@@ -291,12 +292,12 @@ test('ordinary readers keep the complete card while one forced refresh serves co
           };
     },
   });
-  const initial = await service.snapshot('codex');
+  const initial = await service.snapshot(parse_backend_instance_id('codex'));
   gate = new Deferred<void>();
-  const refresh = service.snapshot('codex', { refresh: true });
+  const refresh = service.snapshot(parse_backend_instance_id('codex'), { refresh: true });
   await entered.promise;
-  const shared = service.snapshot('codex', { refresh: true });
-  expect(await service.snapshot('codex')).toBe(initial);
+  const shared = service.snapshot(parse_backend_instance_id('codex'), { refresh: true });
+  expect(await service.snapshot(parse_backend_instance_id('codex'))).toBe(initial);
   gate.resolve();
   const updated = await refresh;
   expect(await shared).toBe(updated);
@@ -325,15 +326,19 @@ test('an update uses only its recording environment and distinguishes changed, u
       };
     },
   });
-  expect((await service.update_backend('codex')).outcome).toBe('unchanged');
+  expect((await service.update_backend(parse_backend_instance_id('codex'))).outcome).toBe(
+    'unchanged',
+  );
   environment.run = async (argv) => {
     environment.calls.push([...argv]);
     version = '2.0.0';
     return environment.result;
   };
-  expect((await service.update_backend('codex')).outcome).toBe('succeeded');
+  expect((await service.update_backend(parse_backend_instance_id('codex'))).outcome).toBe(
+    'succeeded',
+  );
   environment.result = { exit_code: 3, standard_output: '', standard_error: 'Recorded failure' };
-  expect(await service.update_backend('codex')).toEqual({
+  expect(await service.update_backend(parse_backend_instance_id('codex'))).toEqual({
     outcome: 'failed',
     detail: 'The update command exited with code 3.',
     output_tail: 'Recorded failure',
@@ -351,7 +356,7 @@ test('a failed replacement of allowance windows preserves the previous successfu
     resets_at: new Date(200_000),
   };
   const result = {
-    backend_key: 'codex' as const,
+    backend_key: parse_backend_instance_id('codex'),
     outcome: 'succeeded' as const,
     detail: null,
     observed_at: new Date(100_000),
@@ -365,7 +370,10 @@ test('a failed replacement of allowance windows preserves the previous successfu
       windows: [window, window],
     }),
   ).toThrow();
-  expect(store.read_usage('codex')).toEqual({ observed_at: result.observed_at, windows: [window] });
+  expect(store.read_usage(parse_backend_instance_id('codex'))).toEqual({
+    observed_at: result.observed_at,
+    windows: [window],
+  });
 });
 // Distinct gap: successful route comparisons cannot prove cleanup after catalog failure.
 test('catalog failure cancels and joins the outstanding allowance read', async () => {

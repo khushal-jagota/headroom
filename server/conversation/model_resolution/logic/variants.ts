@@ -1,11 +1,11 @@
 /** Explicit families and numerical version ordering require no provider I/O. */
-import type { ConversationBackendKey } from '../../contracts.ts';
+import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import type { ModelVariant } from '../contracts.ts';
 const CODEX_VARIANTS = new Set(['sol', 'astra', 'luna', 'codex', 'mini', 'nano', 'pro', 'terra']);
 const CODEX_VERSION = /^gpt-(\d+(?:\.\d+)*)(?:-([a-z][a-z0-9-]*))?$/;
 const CLAUDE_VERSION = /^claude-([a-z][a-z0-9]*)-(\d+(?:[-.]\d+)*)(\[1m\])?$/;
 export function recognize_variant(
-  backend_key: ConversationBackendKey,
+  backend_key: BackendInstanceId,
   model: string,
 ): ModelVariant | null {
   if (backend_key === 'hermes') return { backend_key, name: model };

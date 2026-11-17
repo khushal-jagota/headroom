@@ -1,4 +1,6 @@
 /** Backend HTTP transport depends on Panels interfaces, never provider modules. */
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../../drivers/built_in_manifests.ts';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
 import { requireOwner } from '../../core/authority/identity.ts';
@@ -8,19 +10,18 @@ import { PlannerError } from '../../core/contracts.ts';
 import { dictionaryBody, scalarQueries } from '../../list_reads/http.ts';
 import { read_ticket } from '../../tickets/data/index.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
-import { ConversationBackendKey } from '../contracts.ts';
 import { Fields, body_fields, object } from '../http/intake.ts';
 import type { ConversationHttpWriteScope } from '../http/writes.ts';
-import { resolve_usage_model_scopes } from '../backend_state.ts';
+import { resolve_usage_model_scopes } from '../backend_usage/logic/scopes.ts';
 import type { BackendHttpRuntime } from './contracts.ts';
 import type { CodexSignInService } from './provider_contracts.ts';
 import { CodexSignInUnavailable, UnknownSignInSession } from './provider_contracts.ts';
 import { snapshot_json, sign_in_json } from './presentation.ts';
-function backend(raw: unknown): ConversationBackendKey {
+function backend(raw: unknown): BackendInstanceId {
   const fields = new Fields(raw, ['path']);
-  const result = fields.choice('backend_key', Object.values(ConversationBackendKey));
+  const result = fields.choice('backend_key', KNOWN_BACKEND_INSTANCE_IDS);
   fields.finish();
-  return result as ConversationBackendKey;
+  return result as BackendInstanceId;
 }
 function boolean(value: unknown, location: string[]): boolean {
   const numeric = value instanceof JsonNumber ? value.value : value;
@@ -47,10 +48,7 @@ function refresh(raw: unknown): boolean {
   const values = scalarQueries(object(raw) ? raw : {});
   return values.refresh === undefined ? false : boolean(values.refresh, ['query', 'refresh']);
 }
-function sign_in_service(
-  runtime: BackendHttpRuntime,
-  key: ConversationBackendKey,
-): CodexSignInService {
+function sign_in_service(runtime: BackendHttpRuntime, key: BackendInstanceId): CodexSignInService {
   if (key !== 'codex' || runtime.codex_sign_in === null)
     throw new HttpError(404, `${key} cannot be signed in from Panels`);
   return runtime.codex_sign_in;
@@ -125,7 +123,7 @@ export function createBackendRoutes(
       if (source === null)
         throw new PlannerError('validation', 'The selected machine is unavailable', {});
       const snapshots = await Promise.all(
-        Object.values(ConversationBackendKey).map((key) =>
+        KNOWN_BACKEND_INSTANCE_IDS.map((key) =>
           source.snapshot(key, { refresh: refresh_requested, signal: signal_of(request) }),
         ),
       );
@@ -137,9 +135,7 @@ export function createBackendRoutes(
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, signal_of(request)]);
       const usage_refresh = Promise.all(
-        Object.values(ConversationBackendKey).map((key) =>
-          runtime.backend_usage.refresh(key, { signal }),
-        ),
+        KNOWN_BACKEND_INSTANCE_IDS.map((key) => runtime.backend_usage.refresh(key, { signal })),
       );
       let snapshots;
       let refreshed;

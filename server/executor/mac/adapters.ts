@@ -1,4 +1,5 @@
 /** Host the same provider factories with this Mac's account and launch settings. */
+import type { ConversationBackendKey } from '../wire.generated.ts';
 import { copy_environment } from '../../core/environment.ts';
 import { provider_launch_settings } from '../../core/config.ts';
 import { claude_executable_override } from '../../conversation/snapshot/environment.ts';
@@ -46,7 +47,7 @@ export interface MacAdapterHost {
     readonly source_root: string;
   };
   factory(start: ResolvedConversationStart): BackendChildFactory;
-  native_skill_home(backend: ResolvedConversationStart['backend_key']): string;
+  native_skill_home(backend: ConversationBackendKey): string;
 }
 export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterHost {
   const settings = provider_launch_settings(options.environment);

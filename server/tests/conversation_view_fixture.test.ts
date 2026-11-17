@@ -1,13 +1,10 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from 'vitest';
 import type { ConversationEventKind } from '../conversation/events.ts';
-import {
-  ConversationAccess,
-  ConversationBackendKey,
-  ResolvedConversationStart,
-} from '../conversation/contracts.ts';
+import { ConversationAccess, ResolvedConversationStart } from '../conversation/contracts.ts';
 import { conversation_event_payload_from_canonical_json } from '../conversation/record/codec.ts';
 import { ConversationStorePrimitives } from '../conversation/record/data/store.ts';
 import { append_projection } from '../conversation/views/data/writer.ts';
@@ -62,7 +59,7 @@ test('the existing conversation fixtures match Python projection rows and both l
     store.create_conversation(
       new ResolvedConversationStart({
         conversation_id: 'fixture',
-        backend_key: ConversationBackendKey.hermes,
+        backend_key: parse_backend_instance_id('hermes'),
         model: 'fixture-model',
         reasoning_effort: null,
         role_materials: null,

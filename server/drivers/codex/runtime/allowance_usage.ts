@@ -1,11 +1,16 @@
 /** Rate-limit policy over an injected, bounded Codex app-server read. */
-import type { BackendUsageAdapter, BackendUsageResult, CodexUsageSource } from './contracts.ts';
+import { parse_backend_instance_id } from '../../core/identity.ts';
+import type {
+  BackendUsageAdapter,
+  BackendUsageResult,
+  CodexUsageSource,
+} from '../../../conversation/backend_usage/contracts.ts';
 import {
   CodexUsageTimeout,
   CodexUsageRequestRejected,
   CodexUsageLoginIsDuplicated,
-} from './contracts.ts';
-import { parse_codex_windows } from './logic/windows.ts';
+} from '../../../conversation/backend_usage/contracts.ts';
+import { parse_codex_windows } from '../../../conversation/backend_usage/logic/windows.ts';
 export const CODEX_USAGE_REFRESH_TIMEOUT_SECONDS = 30;
 export class CodexUsageAdapter implements BackendUsageAdapter {
   private readonly options: {
@@ -26,7 +31,7 @@ export class CodexUsageAdapter implements BackendUsageAdapter {
       outcome: BackendUsageResult['outcome'],
       detail: string,
     ): BackendUsageResult => ({
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       outcome,
       detail,
       observed_at: null,
@@ -65,7 +70,7 @@ export class CodexUsageAdapter implements BackendUsageAdapter {
     if (!windows.length)
       return result('failed', 'Codex returned usage in a format Panels does not understand.');
     return {
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       outcome: 'succeeded',
       detail: null,
       observed_at: this.options.now(),

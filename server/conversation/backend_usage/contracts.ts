@@ -1,4 +1,4 @@
-import type { ConversationBackendKey } from '../contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 export type BackendUsageOutcome = 'succeeded' | 'unavailable' | 'unauthenticated' | 'failed';
 export type BackendUsageWindowKind = 'five_hour' | 'seven_day';
 export interface BackendUsageWindow {
@@ -8,7 +8,7 @@ export interface BackendUsageWindow {
   readonly model_scope: string | null;
 }
 export interface BackendUsageResult {
-  readonly backend_key: ConversationBackendKey;
+  readonly backend_key: BackendInstanceId;
   readonly outcome: BackendUsageOutcome;
   readonly detail: string | null;
   readonly observed_at: Date | null;

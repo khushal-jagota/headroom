@@ -1,4 +1,5 @@
 /** One paired consumer exchange. No database, network, or provider process. */
+import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
 import { readFileSync } from 'node:fs';
 import {
   ResolvedConversationStart,
@@ -15,6 +16,7 @@ const spec = JSON.parse(readFileSync(0, 'utf8'));
 const decoded_start = decode_value(spec.start, 'ResolvedConversationStart');
 const start = new ResolvedConversationStart({
   ...decoded_start,
+  backend_key: parse_backend_instance_id(decoded_start.backend_key),
   role_materials:
     decoded_start.role_materials === null
       ? null

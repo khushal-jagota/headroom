@@ -11,13 +11,13 @@ import type {
   CodexSignInService,
 } from './provider_contracts.ts';
 import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
-import type { ConversationBackendKey } from '../contracts.ts';
 import type { RemoteCatalogSource } from '../model_resolution/contracts.ts';
 import { BackendSnapshotService } from './service.ts';
 import { create_backend_probe } from './probe.ts';
 import { create_catalog_readers } from './catalogs/readers.ts';
 import { BackendUsageService } from '../backend_usage/service.ts';
-import { BackendStateStore, create_durable_codex_login_rejection } from '../backend_state.ts';
+import { BackendStateStore } from '../backend_state.ts';
+import { create_durable_codex_login_rejection } from '../../drivers/codex/runtime/login_rejection.ts';
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
 import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
 import { observe_shutdown } from '../shutdown.ts';
@@ -31,7 +31,7 @@ export interface BackendProviders {
   readonly hermes: HermesModelCatalogSource | null;
   readonly saved_codex_login: SavedCodexLoginSource | null;
   readonly codex_sign_in: CodexSignInService | null;
-  readonly usage: Readonly<Partial<Record<ConversationBackendKey, BackendUsageAdapter>>>;
+  readonly usage: Readonly<Partial<Record<string, BackendUsageAdapter>>>;
   readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
 }
 export function create_backend_runtime(options: {

@@ -1,16 +1,15 @@
-import { ConversationBackendKey } from '../contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../../drivers/built_in_manifests.ts';
 import type { BackendUsageAdapter, BackendUsageResult } from './contracts.ts';
 import { FifoLock } from '../runtime/state.ts';
 export class BackendUsageService {
-  private readonly locks = new Map(
-    Object.values(ConversationBackendKey).map((key) => [key, new FifoLock()]),
-  );
-  private readonly adapters: Readonly<Partial<Record<ConversationBackendKey, BackendUsageAdapter>>>;
-  constructor(adapters: Readonly<Partial<Record<ConversationBackendKey, BackendUsageAdapter>>>) {
+  private readonly locks = new Map(KNOWN_BACKEND_INSTANCE_IDS.map((key) => [key, new FifoLock()]));
+  private readonly adapters: Readonly<Partial<Record<string, BackendUsageAdapter>>>;
+  constructor(adapters: Readonly<Partial<Record<string, BackendUsageAdapter>>>) {
     this.adapters = adapters;
   }
   async refresh(
-    backend_key: ConversationBackendKey,
+    backend_key: BackendInstanceId,
     options: { signal?: AbortSignal } = {},
   ): Promise<BackendUsageResult> {
     return this.locks.get(backend_key)!.run(async () => {

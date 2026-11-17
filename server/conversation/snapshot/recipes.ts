@@ -1,6 +1,5 @@
-import type { ConversationBackendKey } from '../contracts.ts';
-import type { ProbeRecipe } from './contracts.ts';
-export const RECIPES: Readonly<Record<ConversationBackendKey, ProbeRecipe>> = {
+import type { ProbeRecipe } from '../../drivers/core/status.ts';
+export const RECIPES: Readonly<Record<string, ProbeRecipe>> = {
   codex: {
     executable_name: 'codex',
     missing_binary_diagnosis: '`codex` is not installed or not on PATH.',

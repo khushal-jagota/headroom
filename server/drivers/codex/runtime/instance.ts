@@ -1,7 +1,7 @@
 /** One Codex instance: the launch and child factory the server composed before drivers. */
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
-import { create_durable_codex_login_rejection } from '../../../conversation/backend_state.ts';
+import { create_durable_codex_login_rejection } from './login_rejection.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
 import { codex_driver } from '../driver.ts';
 import { codex_manifest } from '../manifest.ts';

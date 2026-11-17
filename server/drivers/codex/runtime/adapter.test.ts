@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../../core/identity.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, test, vi } from 'vitest';
 import { JsonNumber } from '../../../core/http/numeric_json.ts';
@@ -5,7 +6,6 @@ import { ASK_WITHDRAWAL_TIMEOUT_SECONDS } from './adapter_configuration.ts';
 import * as B from '../../../conversation/backends/contracts.ts';
 import {
   ResolvedConversationStart,
-  ConversationBackendKey,
   ConversationAccess,
   PromptDeliveryMode,
 } from '../../../conversation/contracts.ts';
@@ -56,7 +56,7 @@ async function setup() {
   };
   const start = new ResolvedConversationStart({
     conversation_id: 'conversation',
-    backend_key: ConversationBackendKey.codex,
+    backend_key: parse_backend_instance_id('codex'),
     model: 'test-model',
     reasoning_effort: 'low',
     workspace_folder: '/tmp',

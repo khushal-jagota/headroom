@@ -1,5 +1,6 @@
 /** Keep complete cards readable while independent backend probes and updates run. */
-import { ConversationBackendKey } from '../contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../../drivers/built_in_manifests.ts';
 import { FifoLock } from '../runtime/state.ts';
 import type {
   BackendSnapshot,
@@ -19,29 +20,27 @@ import {
 export class BackendSnapshotService implements BackendSnapshotServiceContract {
   private readonly options: BackendSnapshotServiceOptions;
   private readonly now: () => Date;
-  private readonly kept = new Map<ConversationBackendKey, BackendSnapshot>();
-  private readonly probed_at = new Map<ConversationBackendKey, Date>();
+  private readonly kept = new Map<BackendInstanceId, BackendSnapshot>();
+  private readonly probed_at = new Map<BackendInstanceId, Date>();
   private codex_card_was_probed_against: string | null = null;
   private readonly snapshot_locks = new Map(
-    Object.values(ConversationBackendKey).map((key) => [key, new FifoLock()]),
+    KNOWN_BACKEND_INSTANCE_IDS.map((key) => [key, new FifoLock()]),
   );
   private readonly update_locks = new Map(
-    Object.values(ConversationBackendKey).map((key) => [key, new FifoLock()]),
+    KNOWN_BACKEND_INSTANCE_IDS.map((key) => [key, new FifoLock()]),
   );
   constructor(options: BackendSnapshotServiceOptions) {
     this.options = options;
     this.now = options.now ?? (() => new Date());
   }
-  retained(backend_key: ConversationBackendKey): BackendSnapshot | null {
+  retained(backend_key: BackendInstanceId): BackendSnapshot | null {
     return this.kept.get(backend_key) ?? null;
   }
   async snapshots(options: SnapshotOptions = {}): Promise<readonly BackendSnapshot[]> {
-    return Promise.all(
-      Object.values(ConversationBackendKey).map((key) => this.snapshot(key, options)),
-    );
+    return Promise.all(KNOWN_BACKEND_INSTANCE_IDS.map((key) => this.snapshot(key, options)));
   }
   async snapshot(
-    backend_key: ConversationBackendKey,
+    backend_key: BackendInstanceId,
     options: SnapshotOptions = {},
   ): Promise<BackendSnapshot> {
     options.signal?.throwIfAborted();
@@ -140,7 +139,7 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
       return probed;
     });
   }
-  private codex_login_has_moved(backend_key: ConversationBackendKey): boolean {
+  private codex_login_has_moved(backend_key: BackendInstanceId): boolean {
     if (backend_key !== 'codex' || this.codex_card_was_probed_against === null) return false;
     return (
       JSON.stringify(
@@ -150,7 +149,7 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
     );
   }
   async update_backend(
-    backend_key: ConversationBackendKey,
+    backend_key: BackendInstanceId,
     options: { signal?: AbortSignal } = {},
   ): Promise<BackendUpdateResult> {
     return this.update_locks.get(backend_key)!.run(async () => {

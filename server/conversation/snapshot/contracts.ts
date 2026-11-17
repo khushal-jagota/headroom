@@ -1,5 +1,5 @@
 /** Panels-owned backend cards. Provider protocols stay behind adapters. */
-import type { ConversationBackendKey } from '../contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { JsonNumber } from '../../core/http/numeric_json.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
@@ -35,7 +35,7 @@ export interface BackendUpdateAdvisory {
   readonly detail: string;
 }
 export interface BackendSnapshot {
-  readonly backend_key: ConversationBackendKey;
+  readonly backend_key: BackendInstanceId;
   readonly installed: boolean;
   readonly executable_path: string | null;
   readonly version: string | null;
@@ -77,16 +77,13 @@ export interface SnapshotOptions {
   readonly discover_update_advisory?: boolean;
 }
 export interface BackendSnapshotSource {
-  retained(backend_key: ConversationBackendKey): BackendSnapshot | null;
-  snapshot(
-    backend_key: ConversationBackendKey,
-    options?: SnapshotOptions,
-  ): Promise<BackendSnapshot>;
+  retained(backend_key: BackendInstanceId): BackendSnapshot | null;
+  snapshot(backend_key: BackendInstanceId, options?: SnapshotOptions): Promise<BackendSnapshot>;
 }
 export interface BackendSnapshotServiceContract extends BackendSnapshotSource {
   snapshots(options?: SnapshotOptions): Promise<readonly BackendSnapshot[]>;
   update_backend(
-    backend_key: ConversationBackendKey,
+    backend_key: BackendInstanceId,
     options?: { signal?: AbortSignal },
   ): Promise<BackendUpdateResult>;
 }
@@ -99,7 +96,7 @@ export interface BackendHttpRuntime {
   readonly backend_state: BackendStateStore | null;
   readonly backend_usage: {
     refresh(
-      backend_key: ConversationBackendKey,
+      backend_key: BackendInstanceId,
       options?: { signal?: AbortSignal },
     ): Promise<BackendUsageResult>;
   };
@@ -121,7 +118,7 @@ export interface SnapshotProbeOptions {
   readonly now: Date;
 }
 export type BackendProbe = (
-  backend_key: ConversationBackendKey,
+  backend_key: BackendInstanceId,
   environment: BackendProbeEnvironment,
   options: SnapshotProbeOptions,
 ) => Promise<BackendSnapshot>;
@@ -147,13 +144,3 @@ export type CatalogReader = (options: {
   readonly version: string | null;
   readonly refresh: boolean;
 }) => Promise<CatalogAnswer>;
-export interface ProbeRecipe {
-  readonly executable_name: string;
-  readonly missing_binary_diagnosis: string;
-  readonly identity_arguments: readonly string[] | null;
-  readonly login_command: string | null;
-  readonly registry_package_name: string | null;
-  readonly native_path_marker: string | null;
-  readonly native_update_command: readonly string[] | null;
-  readonly manual_only_detail: string;
-}

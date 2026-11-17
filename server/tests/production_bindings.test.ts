@@ -11,7 +11,7 @@ import { fixture, fixture_path } from './ticket_fixture.ts';
 import { startServer } from '../core/start.ts';
 import type { ConversationCompositionContext, StartedServer } from '../core/start.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
-import { create_durable_codex_login_rejection } from '../conversation/backend_state.ts';
+import { create_durable_codex_login_rejection } from '../drivers/codex/runtime/login_rejection.ts';
 import * as claude from '../drivers/claude/runtime/adapter.ts';
 import * as codex from '../drivers/codex/runtime/adapter.ts';
 import * as hermes from '../drivers/hermes/runtime/adapter.ts';

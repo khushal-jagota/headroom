@@ -1,4 +1,5 @@
 /** Private real TypeScript home for the hosted Darwin package rehearsal. */
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -180,7 +181,7 @@ export async function start_native_server() {
       await core.start_conversation(
         new ConversationStartRequest({
           conversation_id,
-          backend_key: backend,
+          backend_key: parse_backend_instance_id(backend),
           model,
           reasoning_effort: null,
           role_materials: new ConversationRoleMaterials({

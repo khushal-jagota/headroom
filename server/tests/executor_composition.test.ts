@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import {
   drivers_of_factories,
@@ -66,7 +67,7 @@ function retained_fixture() {
     });
   const start = new ResolvedConversationStart({
     conversation_id: 'kept',
-    backend_key: 'codex',
+    backend_key: parse_backend_instance_id('codex'),
     model: 'model',
     reasoning_effort: null,
     role_materials: materials(ticket.id),

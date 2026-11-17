@@ -1,7 +1,12 @@
 /** Credential reads and an explicitly injected HTTP adapter are the only external doors. */
+import { parse_backend_instance_id } from '../../core/identity.ts';
 import { readFileSync } from 'node:fs';
-import type { BackendUsageAdapter, BackendUsageResult, UsageHttpGet } from './contracts.ts';
-import { parse_claude_windows } from './logic/windows.ts';
+import type {
+  BackendUsageAdapter,
+  BackendUsageResult,
+  UsageHttpGet,
+} from '../../../conversation/backend_usage/contracts.ts';
+import { parse_claude_windows } from '../../../conversation/backend_usage/logic/windows.ts';
 const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CLAUDE_USAGE_TIMEOUT_SECONDS = 20;
 const CLAUDE_USAGE_BETA = 'oauth-2025-04-20';
@@ -48,7 +53,7 @@ export class ClaudeUsageAdapter implements BackendUsageAdapter {
       outcome: BackendUsageResult['outcome'],
       detail: string,
     ): BackendUsageResult => ({
-      backend_key: 'claude',
+      backend_key: parse_backend_instance_id('claude'),
       outcome,
       detail,
       observed_at: null,
@@ -90,7 +95,7 @@ export class ClaudeUsageAdapter implements BackendUsageAdapter {
     if (windows === null)
       return result('failed', 'Claude returned usage in a format Panels does not understand.');
     return {
-      backend_key: 'claude',
+      backend_key: parse_backend_instance_id('claude'),
       outcome: 'succeeded',
       detail: null,
       observed_at: this.now(),

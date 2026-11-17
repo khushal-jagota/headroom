@@ -1,11 +1,11 @@
 /** Thin HTTP transport for local recorded usage and persisted provider allowances. */
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../../drivers/built_in_manifests.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
 import { HttpError } from '../../core/http/errors.ts';
 import { scalarQueries } from '../../list_reads/http.ts';
 import { calendar_date } from '../../measures/logic/dates.ts';
 import { timezone } from './timeZone.ts';
-import { ConversationBackendKey } from '../contracts.ts';
 import { UsageReadError, UsageServiceStopped } from './contracts.ts';
 import type { UsageHttpRuntime, UsageSummaryInput } from './contracts.ts';
 import { presentProviderLimits } from './providerLimits.ts';
@@ -112,7 +112,7 @@ export function createUsageRoutes(runtime: UsageHttpRuntime): FastifyPluginAsync
         throw new HttpError(503, 'the conversation system is unavailable');
       if (runtime.backend_state === null) return {};
       const result: Record<string, ReturnType<typeof presentProviderLimits>> = {};
-      for (const backend of Object.values(ConversationBackendKey)) {
+      for (const backend of KNOWN_BACKEND_INSTANCE_IDS) {
         const observation = runtime.backend_state.read_usage(backend);
         if (observation !== null) result[backend] = presentProviderLimits(observation);
       }
