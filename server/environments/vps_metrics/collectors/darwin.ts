@@ -211,7 +211,8 @@ export class DarwinCollector implements Collector {
       boot = reader.boot_id();
     } catch (error) {
       // Logged once when the boot identity becomes unavailable, not on every sample.
-      if (this.#boot !== 'unavailable') console.warn('VPS metrics boot identity is unavailable', error);
+      if (this.#boot !== 'unavailable')
+        console.warn('VPS metrics boot identity is unavailable', error);
       boot = 'unavailable';
     }
     const same_boot = boot !== 'unavailable' && boot === this.#boot,

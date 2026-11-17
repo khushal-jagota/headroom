@@ -313,7 +313,8 @@ export class MacUpdateController {
       .then(
         () => {},
         (error: unknown) => {
-          if (!this.signal.aborted) console.warn('Mac update prefetch failed:', failure_detail(error));
+          if (!this.signal.aborted)
+            console.warn('Mac update prefetch failed:', failure_detail(error));
         },
       )
       .finally(() => {
