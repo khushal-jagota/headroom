@@ -39,6 +39,7 @@ export async function leases(input: {
   const options: MacLeaseOptions = {
     presence,
     workspace_root: input.workspace_root,
+    driver_kinds: ['hermes', 'codex', 'claude'],
     client: {
       async lease(request) {
         calls.push(Buffer.from(encode_bounded(request, 'LeaseRequest')).toString());

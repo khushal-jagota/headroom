@@ -41,6 +41,11 @@ export interface DriverManifest {
     readonly cli_option: string;
     /** One path component inside the home. Default 'skills'. */
     readonly skills_directory?: string;
+    /**
+     * A macOS executor leaves the variable unset when the owner left it unset: any set value,
+     * even the default, makes the provider read a different Keychain login.
+     */
+    readonly leave_unset_on_macos?: boolean;
   };
   /** Further variables the installed launcher passes to the server for this driver. */
   readonly launcher_environment_names: readonly string[];

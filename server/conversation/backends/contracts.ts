@@ -38,9 +38,6 @@ export interface ChildReference {
 export class BackendAdapterError extends Error {}
 export class BackendSpawnFailed extends BackendAdapterError {}
 export class BackendInitializationTimeout extends BackendSpawnFailed {}
-// The alias exists only for executor/mac/runner/start_stop.ts until the Executor stage.
-export const ClaudeInitializationTimeout = BackendInitializationTimeout;
-export type ClaudeInitializationTimeout = BackendInitializationTimeout;
 export class SessionLoadFailed extends BackendAdapterError {}
 export class PromptWriteRefused extends BackendAdapterError {}
 export class PromptWriteFailed extends BackendAdapterError {}

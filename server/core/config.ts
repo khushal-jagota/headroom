@@ -154,17 +154,6 @@ export function update_repository_configuration(
 }
 
 /** Account launch inputs are environment-only, shared by native hosts and discovery. */
-export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = process.env) {
-  return {
-    environment: { ...env },
-    hermes_python: env.PLAN_HERMES_PYTHON || '~/.hermes/hermes-agent/venv/bin/python',
-    hermes_home: env.PLAN_HERMES_HOME || '~/.hermes',
-    claude_executable: env.PLAN_CLAUDE_EXECUTABLE,
-    claude_home: env.CLAUDE_CONFIG_DIR || '~/.claude',
-    codex_home: env.CODEX_HOME || '~/.codex',
-    app_root: env.PLAN_APP_ROOT,
-  };
-}
 /** Each driver's home, under every variable that carries it. */
 const driver_home_environment_names = BUILT_IN_MANIFESTS.flatMap(({ manifest }) =>
   manifest.home

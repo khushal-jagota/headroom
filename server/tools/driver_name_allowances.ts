@@ -21,18 +21,6 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
     until: 'Apps',
   },
   {
-    path: 'server/conversation/backends/contracts.ts',
-    driver_kind: 'claude',
-    reason: 'The ClaudeInitializationTimeout alias the Mac runner still catches.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/conversation/snapshot/environment.ts',
-    driver_kind: 'claude',
-    reason: 'claude_executable_override, kept with its signature for executor/mac/adapters.ts.',
-    until: 'Executor',
-  },
-  {
     path: 'server/conversation/tool_detail.ts',
     driver_kind: 'claude',
     reason: 'Claude-only tool call detail; it becomes a driver hook.',
@@ -51,42 +39,6 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
     until: 'Core',
   },
   {
-    path: 'server/core/config.ts',
-    driver_kind: 'claude',
-    reason: 'provider_launch_settings, read only by executor/mac/adapters.ts.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/core/config.ts',
-    driver_kind: 'codex',
-    reason: 'provider_launch_settings, read only by executor/mac/adapters.ts.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/core/config.ts',
-    driver_kind: 'hermes',
-    reason: 'provider_launch_settings, read only by executor/mac/adapters.ts.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/environments/linux_executor/join.ts',
-    driver_kind: 'claude',
-    reason: 'The Linux executor writes the three provider homes.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/environments/linux_executor/join.ts',
-    driver_kind: 'codex',
-    reason: 'The Linux executor writes the three provider homes.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/environments/linux_executor/join.ts',
-    driver_kind: 'hermes',
-    reason: 'The Linux executor writes the three provider homes.',
-    until: 'Executor',
-  },
-  {
     path: 'server/environments/registry/store.ts',
     driver_kind: 'hermes',
     reason:
@@ -94,39 +46,21 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
     until: 'Permanent',
   },
   {
-    path: 'server/executor/mac/',
-    driver_kind: 'claude',
-    reason: 'The Mac executor launches, catalogs, localizes and packages each backend itself.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/mac/',
-    driver_kind: 'codex',
-    reason: 'The Mac executor launches, catalogs, localizes and packages each backend itself.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/mac/',
-    driver_kind: 'hermes',
-    reason: 'The Mac executor launches, catalogs, localizes and packages each backend itself.',
-    until: 'Executor',
-  },
-  {
     path: 'server/executor/machine_drivers.ts',
     driver_kind: 'claude',
-    reason: 'The backend keys a protocol-26 Mac accepts, until a machine advertises its drivers.',
+    reason: 'The fallback driver set for a machine that advertises no drivers (the Python Mac).',
     until: 'Executor',
   },
   {
     path: 'server/executor/machine_drivers.ts',
     driver_kind: 'codex',
-    reason: 'The backend keys a protocol-26 Mac accepts, until a machine advertises its drivers.',
+    reason: 'The fallback driver set for a machine that advertises no drivers (the Python Mac).',
     until: 'Executor',
   },
   {
     path: 'server/executor/machine_drivers.ts',
     driver_kind: 'hermes',
-    reason: 'The backend keys a protocol-26 Mac accepts, until a machine advertises its drivers.',
+    reason: 'The fallback driver set for a machine that advertises no drivers (the Python Mac).',
     until: 'Executor',
   },
   {
@@ -160,41 +94,4 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
     until: 'Apps',
   },
 ];
-export const DRIVER_IMPORT_ALLOWANCES: readonly DriverImportAllowance[] = [
-  {
-    path: 'server/executor/mac/adapters.ts',
-    driver_kind: 'claude',
-    reason: 'The Mac executor builds each backend launch itself.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/mac/adapters.ts',
-    driver_kind: 'codex',
-    reason: 'The Mac executor builds each backend launch itself.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/mac/adapters.ts',
-    driver_kind: 'hermes',
-    reason: 'The Mac executor builds each backend launch itself.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/mac/catalog/production.ts',
-    driver_kind: 'claude',
-    reason: 'The Mac executor reads each backend catalog itself.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/mac/catalog/production.ts',
-    driver_kind: 'codex',
-    reason: 'The Mac executor reads each backend catalog itself.',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/mac/catalog/production.ts',
-    driver_kind: 'hermes',
-    reason: 'The Mac executor reads each backend catalog itself.',
-    until: 'Executor',
-  },
-];
+export const DRIVER_IMPORT_ALLOWANCES: readonly DriverImportAllowance[] = [];

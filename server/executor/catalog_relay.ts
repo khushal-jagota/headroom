@@ -1,8 +1,7 @@
 /** Machine catalogs travel through the mailbox; SQLite owns their last complete copy. */
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
-import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
-import { machine_driver_ids } from './machine_drivers.ts';
+import { machine_backend_ids, machine_driver_kinds } from './machine_drivers.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { inspect } from 'node:util';
@@ -293,7 +292,8 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
   }
   connected(): void {
     if (this.closed) return;
-    for (const backend of machine_driver_ids(KNOWN_BACKEND_INSTANCE_IDS)) {
+    const driver_kinds = this.database.read((sql) => machine_driver_kinds(sql, this.machine_id));
+    for (const backend of machine_backend_ids(driver_kinds)) {
       this.tasks.get(backend)?.controller.abort(cancelled());
       this.start_read(backend, true);
     }

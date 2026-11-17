@@ -14,7 +14,7 @@ import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
 import { RecordingBackendProbeEnvironment } from '../../../conversation/snapshot/recording_environment.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
-import { create_mac_adapter_host } from '../adapters.ts';
+import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
 import { MacCommandQueues } from '../mailbox/queues.ts';
 import { MacCatalog } from '../catalog/index.ts';
 import { gate } from './runner_fixture.ts';
@@ -57,6 +57,7 @@ it('retains catalog reads before reentrant stop and refuses sources after immedi
     const failure = vi.fn();
     const catalog = new MacCatalog({
       snapshots: { snapshot, retained: () => null },
+      backend_ids: ['codex'],
       stop_sources: async () => {},
       on_failure: failure,
     });
@@ -277,6 +278,7 @@ it('distinguishes an unavailable handshake from failed query cleanup and retains
     environment,
     on_failure: notify,
     host: create_mac_adapter_host({
+      drivers: await load_executor_drivers(),
       panels_server_url: 'http://127.0.0.1:9',
       child_processes,
       one_shot_children,

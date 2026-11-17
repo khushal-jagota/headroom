@@ -3,7 +3,7 @@ import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { create_mac_adapter_host } from '../adapters.ts';
+import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
 import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
 import { MacNativeChildren } from '../runner/start_stop.ts';
 import { MacChildAdmissionRefused } from '../runner/contracts.ts';
@@ -71,6 +71,7 @@ for (const [override, installed] of [
   [undefined, false],
 ] as const) {
   const host = create_mac_adapter_host({
+    drivers: await load_executor_drivers(),
     panels_server_url: 'http://127.0.0.1:9',
     child_processes: children,
     one_shot_children: one_shots,
@@ -79,9 +80,14 @@ for (const [override, installed] of [
     executable_path: (name) => (installed ? join(root, 'bin', name) : null),
   });
   launches.push({
-    launches: host.launches,
+    executables: Object.fromEntries(
+      host.drivers.map((driver) => [driver.instance_id, driver.host.executable]),
+    ),
     homes: Object.fromEntries(
-      (['hermes', 'codex', 'claude'] as const).map((key) => [key, host.native_skill_home(key)]),
+      host.drivers.map((driver) => [
+        driver.instance_id,
+        host.native_skill_home(driver.instance_id),
+      ]),
     ),
   });
 }
@@ -104,7 +110,10 @@ const options = {
   register_workspace: async () => unexpected(),
   files,
   message_files,
-  native_skill_home: (backend: string) => join(root, 'native', backend),
+  native_skill_home: (backend: string) => ({
+    path: join(root, 'native', backend),
+    skills_directory: 'skills',
+  }),
   event_sink: (_reference: ChildReference) => ({ report: async () => {} }),
   skills: {
     async install_native_skill_snapshot(
@@ -480,6 +489,7 @@ const catalog = new MacCatalog({
       return decode_json(JSON.stringify(snapshot), 'BackendSnapshot') as unknown as BackendSnapshot;
     },
   },
+  backend_ids: ['hermes', 'codex', 'claude'],
   stop_sources: async () => {},
   on_failure: (error) => faults.push(error),
 });

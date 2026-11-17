@@ -1,26 +1,12 @@
-/** Standalone machine catalogs reuse provider probes without a VPS database or login service. */
+/** Standalone machine catalogs reuse each driver's probes without a VPS database or login service. */
 import { BackendSnapshotService } from '../../../conversation/snapshot/service.ts';
-import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
-import { create_claude_status } from '../../../drivers/claude/runtime/status.ts';
-import { create_codex_status } from '../../../drivers/codex/runtime/status.ts';
-import { create_hermes_status } from '../../../drivers/hermes/runtime/status.ts';
 import { SubprocessBackendProbeEnvironment } from '../../../conversation/snapshot/environment.ts';
 import type { BackendProbeEnvironment } from '../../../conversation/snapshot/contracts.ts';
-import { ClaudeModelCatalogUnavailable } from '../../../drivers/claude/runtime/contracts.ts';
-import {
-  probe_claude_model_catalog,
-  ClaudeModelCatalogUnavailable as NativeClaudeUnavailable,
-} from '../../../drivers/claude/runtime/model_catalog.ts';
 import {
   ModelCatalogCleanupFailed,
   retry_model_catalog_cleanup,
 } from '../../../conversation/backends/catalog_cleanup.ts';
-import { probe_codex_model_catalog } from '../../../drivers/codex/runtime/model_catalog.ts';
-import { read_codex_login_standing } from '../../../drivers/codex/runtime/providers.ts';
-import {
-  HermesModelCatalogOwner,
-  hermes_model_catalog_launch,
-} from '../../../drivers/hermes/runtime/catalog.ts';
+import type { ExecutorCatalogCustody } from '../../../drivers/core/executor.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { MacAdapterHost } from '../adapters.ts';
@@ -40,7 +26,6 @@ export function create_mac_catalog(options: {
       options.host.environment,
       options.host.executable_path,
     );
-  const paths = options.host.hermes_paths;
   const failed_cleanup = new Set<ModelCatalogCleanupFailed>();
   const cleanup_history = new Set<unknown>();
   let environment_stop: Promise<PromiseSettledResult<void | undefined>[]> | undefined;
@@ -49,130 +34,62 @@ export function create_mac_catalog(options: {
     failed_cleanup.add(error);
     return catalog.resource_failure(error);
   };
-  const hermes_launch = hermes_model_catalog_launch({
-    hermes_python: paths.python,
-    hermes_home: paths.home,
-    hermes_python_source_root: paths.source_root,
-  });
-  const hermes = new HermesModelCatalogOwner(
-    {
-      ...hermes_launch,
-      environment_overrides: [
-        ...Object.entries(options.host.environment).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined,
-        ),
-        ...hermes_launch.environment_overrides,
-      ],
-    },
-    {
-      child_processes: options.child_processes,
-      log: (error) => {
-        if (error instanceof ModelCatalogCleanupFailed) retain(error);
-        else catalog.resource_failure(error);
-      },
-    },
-  );
   const controllers = new Set<AbortController>(),
     probes = new Set<Promise<unknown>>();
   let closed = false;
-  const own = async <T>(operation: Promise<T>): Promise<T> => {
-    probes.add(operation);
-    try {
-      return await operation;
-    } catch (error) {
+  const custody: ExecutorCatalogCustody = {
+    async probe(read) {
+      if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
+      const controller = new AbortController();
+      controllers.add(controller);
+      const operation = read(controller.signal);
+      probes.add(operation);
+      try {
+        return await operation;
+      } catch (error) {
+        if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
+        throw error;
+      } finally {
+        probes.delete(operation);
+        controllers.delete(controller);
+      }
+    },
+    retain,
+    log(error) {
       if (error instanceof ModelCatalogCleanupFailed) retain(error);
-      throw error;
-    } finally {
-      probes.delete(operation);
-    }
+      else catalog.resource_failure(error);
+    },
+    stop_options: () => source_stop_options,
   };
-  const catalogs = {
-    hermes: async (request: { refresh: boolean }) => {
-      try {
-        return await hermes.source(request);
-      } catch (error) {
-        if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
-        throw error;
-      }
-    },
-    codex: async (executable: string) => {
-      if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
-      const controller = new AbortController();
-      controllers.add(controller);
-      try {
-        return await own(
-          probe_codex_model_catalog(executable, {
-            child_processes: options.child_processes,
-            signal: controller.signal,
-            environment: options.host.environment,
-          }),
-        );
-      } catch (error) {
-        if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
-        throw error;
-      } finally {
-        controllers.delete(controller);
-      }
-    },
-    claude: async (executable: string) => {
-      if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
-      const controller = new AbortController();
-      controllers.add(controller);
-      try {
-        return await own(
-          probe_claude_model_catalog(executable, options.one_shot_children, {
-            signal: controller.signal,
-            stop_options: () => source_stop_options,
-            environment: options.host.environment,
-          }),
-        );
-      } catch (error) {
-        if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
-        if (error instanceof NativeClaudeUnavailable)
-          throw new ClaudeModelCatalogUnavailable(error.message, { cause: error });
-        throw error;
-      } finally {
-        controllers.delete(controller);
-      }
-    },
-  };
+  const sources = options.host.drivers.map((driver) => ({
+    instance_id: driver.instance_id,
+    executable_name: driver.manifest.executable.name,
+    source: driver.executor.catalog(driver.host, custody),
+  }));
   const snapshots = new BackendSnapshotService({
     environment,
     now: options.now,
     machine_catalog: true,
-    sources: [
-      {
-        instance_id: parse_backend_instance_id('hermes'),
-        executable_name: 'hermes',
-        status: create_hermes_status({ catalog: catalogs.hermes }),
-      },
-      {
-        instance_id: parse_backend_instance_id('codex'),
-        executable_name: 'codex',
-        status: create_codex_status({
-          catalog: catalogs.codex,
-          // Machine snapshots read login standing independently of each child factory.
-          read_login_standing: () =>
-            read_codex_login_standing(null, options.host.native_skill_home('codex')),
-        }),
-      },
-      {
-        instance_id: parse_backend_instance_id('claude'),
-        executable_name: 'claude',
-        status: create_claude_status({ catalog: catalogs.claude }),
-      },
-    ],
+    sources: sources.map(({ instance_id, executable_name, source }) => ({
+      instance_id,
+      executable_name,
+      status: source.status,
+    })),
   });
+  const owned = sources.map(({ source }) => source);
   const catalog = new MacCatalog({
     snapshots,
+    backend_ids: sources.map(({ instance_id }) => instance_id),
     on_failure: options.on_failure,
     async cancel_sources(reason) {
       for (const controller of controllers) controller.abort(reason);
-      const cleanup = await Promise.allSettled([hermes.cancel(reason), ...probes]);
+      const cancels = owned.map((source) => Promise.resolve().then(() => source.cancel?.(reason)));
+      const cleanup = await Promise.allSettled([...cancels, ...probes]);
       for (const result of cleanup)
         if (result.status === 'rejected' && result.reason instanceof ModelCatalogCleanupFailed)
           throw retain(result.reason);
-      if (cleanup[0]!.status === 'rejected') throw cleanup[0]!.reason;
+      for (const result of cleanup.slice(0, cancels.length))
+        if (result.status === 'rejected') throw result.reason;
     },
     async stop_sources(stop_options) {
       source_stop_options ??= stop_options;
@@ -184,10 +101,8 @@ export function create_mac_catalog(options: {
       environment_stop ??= Promise.allSettled([
         Promise.resolve().then(() => environment.shutdown?.()),
       ]);
-      const cleanup = await Promise.allSettled([
-        Promise.resolve().then(() => hermes.shutdown()),
-        ...probes,
-      ]);
+      const shutdowns = owned.map((source) => Promise.resolve().then(() => source.shutdown?.()));
+      const cleanup = await Promise.allSettled([...shutdowns, ...probes]);
       for (const result of cleanup)
         if (result.status === 'rejected' && result.reason instanceof ModelCatalogCleanupFailed)
           retain(result.reason);
@@ -195,7 +110,7 @@ export function create_mac_catalog(options: {
       await retry_model_catalog_cleanup(
         failed_cleanup,
         cleanup_history,
-        environment_stop.then((results) => [...results, ...cleanup.slice(0, 1)]),
+        environment_stop.then((results) => [...results, ...cleanup.slice(0, shutdowns.length)]),
       );
     },
   });
