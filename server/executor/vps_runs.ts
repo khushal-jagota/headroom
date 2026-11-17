@@ -184,6 +184,9 @@ export class MacRuns {
     const child = this.make_child(reference, {
       event_sink: options.event_sink ?? null,
       started_on: native_start(this.mailbox.start_of(reference)),
+      pending_prompt:
+        this.store.retained_runs().find((run) => same_reference(run.reference, reference))
+          ?.pending_prompt ?? null,
     });
     this.children.set(reference.child_id, child);
     return child;
@@ -294,6 +297,26 @@ export class MacRuns {
         'command_sequence' in
         (await this.mailbox.put_child_command(command, { signal: this.cancellation.signal })),
     );
+  }
+  wait_prompt_result(
+    command: WireValue<'ChildCommand'>,
+    options: { signal: AbortSignal },
+  ): Promise<WireValue<'CommandOutcome'>> {
+    return this.own(async () => {
+      const result = await this.mailbox.wait_result(command.command_id, null, {
+        signal: AbortSignal.any([options.signal, this.cancellation.signal]),
+      });
+      this.continue_work();
+      const outcome = result?.child_outcome;
+      if (
+        result?.command_id !== command.command_id ||
+        outcome == null ||
+        outcome.command_id !== command.command_id ||
+        !same_reference(outcome.child, command.child)
+      )
+        throw new ExecutorValidationError('Prompt outcome does not match its command');
+      return outcome;
+    });
   }
   deliver_steer(
     command: WireValue<'ChildCommand'>,
@@ -423,7 +446,36 @@ export class MacRuns {
   ): void | Promise<void> => {
     const child = command.child_command,
       outcome = result.child_outcome;
-    if (this.sealed || child == null || outcome == null) return;
+    if (
+      this.sealed ||
+      child == null ||
+      outcome == null ||
+      command.command_id !== child.command_id ||
+      result.command_id !== command.command_id ||
+      outcome.command_id !== child.command_id ||
+      !same_reference(outcome.child, child.child)
+    )
+      return;
+    if (
+      child.turn !== null &&
+      ((child.operation === 'write_prompt' &&
+        outcome.disposition !== 'succeeded' &&
+        !(
+          typeof outcome.result.reason === 'string' &&
+          MAILBOX_SETTLEMENTS.has(outcome.result.reason)
+        )) ||
+        (child.operation === 'steer' &&
+          outcome.disposition === 'succeeded' &&
+          outcome.result.kind === 'steer_refused' &&
+          outcome.result.refusal_reason === 'no_running_turn_to_steer_into'))
+    ) {
+      // Completion can require a prompt or steer receipt that this publisher releases.
+      // Retain the work through shutdown, but never join it inside publication.
+      void this.own(
+        () => this.require_conversations().reconcile_remote_command(child, outcome),
+        true,
+      );
+    }
     if (
       child.operation === 'write_prompt' &&
       child.turn !== null &&

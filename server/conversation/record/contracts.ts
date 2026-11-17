@@ -121,6 +121,8 @@ export interface ConversationAttentionFacts {
 export interface OpenRunTurn {
   readonly turn_number: number;
   readonly executor_process_current: boolean;
+  /** An unresolved native prompt must remain intent after a home restart. */
+  readonly prompt_admission_pending?: boolean;
 }
 export interface UndeliveredTurnPrompt {
   readonly turn_number: number;

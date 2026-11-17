@@ -6,6 +6,7 @@ import type { OutboxSenderOptions } from '../transport/outbox.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
 import { ExecutorValidationError } from '../../protocol.ts';
 import type { ItemRow } from '../storage/contracts.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import type { ItemBatch, ItemBatchReply, FileManifest } from '../../wire.generated.ts';
 
 const child = {
@@ -487,4 +488,51 @@ test('a receipted prefix cannot expire its newer successor during file negotiati
     ),
   ).toBe(true);
   await f.stop();
+});
+
+// Other cases prove refusal and deadline release, not one recap delivery after a resumed upload.
+test('a retained recap arrives once after its artifact upload resumes', async () => {
+  const evidence = file('artifacts/evidence.txt', 'd');
+  const uploading = new Deferred<void>(),
+    resume = new Deferred<void>();
+  const accepted_ids: string[] = [];
+  let uploaded = false;
+  const f = fixture(
+    async (_, batch) => {
+      if (!uploaded)
+        return {
+          receipts: [],
+          stop: {
+            sequence: batch.items[0]!.envelope.sequence,
+            reason: 'missing_files',
+            message: 'upload required',
+            missing_files: [evidence],
+          },
+        };
+      accepted_ids.push(...batch.items.map(({ envelope }) => envelope.submission_id));
+      return accepted(batch);
+    },
+    async () => {
+      uploading.resolve();
+      await resume.promise;
+      uploaded = true;
+    },
+  );
+  f.rows.push(row('artifact', 1, [evidence]), row('retained-recap', 2));
+  try {
+    f.sender.start();
+    await uploading.promise;
+    expect(accepted_ids).toEqual([]);
+    expect(f.pending().map((r) => r.submission_id)).toEqual(['artifact', 'retained-recap']);
+    resume.resolve();
+    await vi.waitFor(() => expect(f.pending()).toEqual([]));
+    f.events.emit('pending');
+    await flush();
+    expect(accepted_ids).toEqual(['artifact', 'retained-recap']);
+    expect(f.receipts.filter((r) => r.id === 'retained-recap')).toHaveLength(1);
+  } finally {
+    resume.resolve();
+    await f.stop();
+    await f.sender.settled();
+  }
 });

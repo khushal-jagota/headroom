@@ -334,7 +334,12 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
-    const thread_id = this.bound_thread();
+    let thread_id: string;
+    try {
+      thread_id = this.bound_thread();
+    } catch (error) {
+      throw new B.PromptWriteRefused(text(error));
+    }
     const model = options.model_change ?? this.model;
     const effort =
       options.reasoning_effort_change === null && !options.reasoning_effort_is_set
@@ -343,61 +348,52 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     const turn = new TurnInFlight(token, this.stderr_next_turn, this.login_generation());
     this.turn = turn;
     let invocation: CatalogInvocation | null;
+    let native: boolean;
+    let parameters: Record<string, unknown> = {};
     try {
       invocation =
         (options.sender_message_count ?? 1) === 1
           ? this.catalog_invocation(options.sender_content)
           : null;
-    } catch (error) {
-      this.turn = null;
-      throw error;
-    }
-    const native = invocation?.kind === K.command;
-    if (native && invocation !== null) {
-      const command = invocation.name.split('_')[0]!;
-      if (options.sender_content.length !== 1) {
-        this.turn = null;
-        throw new B.PromptWriteFailed(`/${command} cannot carry attachments`);
-      }
-      if (options.model_change !== null || options.reasoning_effort_change !== null) {
-        this.turn = null;
-        throw new B.PromptWriteFailed(`/${command} cannot change the model or reasoning effort`);
-      }
-      turn.kind =
-        invocation.name === 'compact'
-          ? 'compact'
-          : invocation.name.startsWith('goal_')
-            ? 'goal'
-            : 'review';
-    } else {
-      try {
+      native = invocation?.kind === K.command;
+      if (native && invocation !== null) {
+        const command = invocation.name.split('_')[0]!;
+        if (options.sender_content.length !== 1)
+          throw new B.PromptWriteRefused(`/${command} cannot carry attachments`);
+        if (options.model_change !== null || options.reasoning_effort_change !== null)
+          throw new B.PromptWriteRefused(`/${command} cannot change the model or reasoning effort`);
+        if (invocation.name.startsWith('goal_') && this.thread_is_ephemeral)
+          throw new B.PromptWriteRefused('Codex goals are unavailable on an ephemeral thread');
+        turn.kind =
+          invocation.name === 'compact'
+            ? 'compact'
+            : invocation.name.startsWith('goal_')
+              ? 'goal'
+              : 'review';
+      } else {
         content = sender_labeled_composed_message_content(
           content,
           options.sender_content,
           options.sender_label,
         );
-      } catch (error) {
-        this.turn = null;
-        if (error instanceof ComposedMessageDoesNotContainSenderContent)
-          throw new B.PromptWriteFailed(text(error));
-        throw error;
+        parameters = wire({
+          threadId: thread_id,
+          input: this.turn_input(content, invocation),
+          model,
+          approvalPolicy: 'never',
+          approvalsReviewer: 'user',
+          sandboxPolicy: { type: 'dangerFullAccess' },
+        });
       }
+    } catch (error) {
+      // No native request starts until all prompt preparation succeeds.
+      if (this.turn === turn) this.turn = null;
+      throw error instanceof B.PromptWriteRefused ? error : new B.PromptWriteRefused(text(error));
     }
     try {
       turn.turn_id = native
         ? await this.start_native(thread_id, invocation!, turn)
-        : await this.start_turn(
-            wire({
-              threadId: thread_id,
-              input: this.turn_input(content, invocation),
-              model,
-              approvalPolicy: 'never',
-              approvalsReviewer: 'user',
-              sandboxPolicy: { type: 'dangerFullAccess' },
-            }),
-            turn,
-            effort,
-          );
+        : await this.start_turn(parameters, turn, effort);
     } catch (error) {
       if (error instanceof B.PromptWriteFailed || error instanceof B.BackendPromptRejected) {
         if (this.turn === turn) this.turn = null;
@@ -800,8 +796,6 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     invocation: CatalogInvocation,
     turn: TurnInFlight,
   ): Promise<void> {
-    if (this.thread_is_ephemeral)
-      throw new B.PromptWriteFailed('Codex goals are unavailable on an ephemeral thread');
     let message: string;
     try {
       if (invocation.name === 'goal_get')
