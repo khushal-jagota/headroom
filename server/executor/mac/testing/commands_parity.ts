@@ -16,8 +16,8 @@ import type {
   BackendChild,
   TurnToken as NativeTurn,
 } from '../../../conversation/backends/contracts.ts';
-import { same_turn as claude_same_turn } from '../../../conversation/backends/claude_agent_sdk/turn.ts';
-import { same_turn as codex_same_turn } from '../../../conversation/backends/codex_app_server/turn.ts';
+import { same_turn as claude_same_turn } from '../../../drivers/claude/runtime/turn.ts';
+import { same_turn as codex_same_turn } from '../../../drivers/codex/runtime/turn.ts';
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import { decode_json, as_object, ExecutorValidationError } from '../../protocol.ts';
 import { MacCommandService } from '../runner/service.ts';

@@ -1,7 +1,7 @@
 /** Hosted peer for the real Claude adapter's exact disconnect and rebind boundary. */
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import type { ClaudeSdkClientFactory } from '../../../conversation/backends/claude_agent_sdk/query_contracts.ts';
+import type { ClaudeSdkClientFactory } from '../../../drivers/claude/runtime/query_contracts.ts';
 import { Deferred } from '../../../core/deferred.ts';
 
 export function create_claude_cleanup_fixture() {

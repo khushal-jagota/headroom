@@ -3,7 +3,7 @@ import { ConversationBackendKey } from '../conversation/contracts.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { backend_io_is_test } from '../conversation/snapshot/environment.ts';
-import { HermesModelCatalogOwner } from '../conversation/backends/hermes_acp/catalog.ts';
+import { HermesModelCatalogOwner } from '../drivers/hermes/runtime/catalog.ts';
 import {
   model_catalog_cleanup_pending,
   remember_model_catalog_failure,

@@ -4,13 +4,10 @@ import { expand_path } from '../environments/paths.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
 import { RECORD_ROOT_ENV } from '../worker_supervision/config.ts';
 import { resolve_hermes_python } from '../environments/registry/launch.ts';
-import { codex_app_server_child_launch } from '../conversation/backends/codex_app_server/adapter.ts';
-import {
-  hermes_acp_child_launch,
-  hermes_source_root,
-} from '../conversation/backends/hermes_acp/launch.ts';
-import { hermes_model_catalog_launch } from '../conversation/backends/hermes_acp/catalog.ts';
-import type { ClaudeAgentSdkChildLaunch } from '../conversation/backends/claude_agent_sdk/adapter.ts';
+import { codex_app_server_child_launch } from '../drivers/codex/runtime/adapter.ts';
+import { hermes_acp_child_launch, hermes_source_root } from '../drivers/hermes/runtime/launch.ts';
+import { hermes_model_catalog_launch } from '../drivers/hermes/runtime/catalog.ts';
+import type { ClaudeAgentSdkChildLaunch } from '../drivers/claude/runtime/adapter.ts';
 import { provider_launch_settings } from '../core/config.ts';
 import { claude_executable_override } from '../conversation/snapshot/environment.ts';
 

@@ -8,17 +8,17 @@ import { ClaudeModelCatalogUnavailable } from '../../../conversation/snapshot/pr
 import {
   probe_claude_model_catalog,
   ClaudeModelCatalogUnavailable as NativeClaudeUnavailable,
-} from '../../../conversation/backends/claude_model_catalog.ts';
+} from '../../../drivers/claude/runtime/model_catalog.ts';
 import {
   ModelCatalogCleanupFailed,
   retry_model_catalog_cleanup,
 } from '../../../conversation/backends/catalog_cleanup.ts';
-import { probe_codex_model_catalog } from '../../../conversation/backends/codex_app_server/model_catalog.ts';
-import { read_codex_login_standing } from '../../../conversation/backends/codex_app_server/providers.ts';
+import { probe_codex_model_catalog } from '../../../drivers/codex/runtime/model_catalog.ts';
+import { read_codex_login_standing } from '../../../drivers/codex/runtime/providers.ts';
 import {
   HermesModelCatalogOwner,
   hermes_model_catalog_launch,
-} from '../../../conversation/backends/hermes_acp/catalog.ts';
+} from '../../../drivers/hermes/runtime/catalog.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { MacAdapterHost } from '../adapters.ts';
