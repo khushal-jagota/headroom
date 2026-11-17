@@ -183,38 +183,38 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   readonly options: ConversationCoreOptions;
   readonly workspace_admission = new WorkspaceAdmission();
   readonly start_admission: AutomaticStartAdmission;
-  private readonly retiring_workspace_tickets = new Set<string>();
-  private readonly retiring_workspace_conversations = new Set<string>();
-  private readonly local_child_generations = new WeakMap<BackendChild, string>();
-  private worker_cleanup_recheck:
+  readonly retiring_workspace_tickets = new Set<string>();
+  readonly retiring_workspace_conversations = new Set<string>();
+  readonly local_child_generations = new WeakMap<BackendChild, string>();
+  worker_cleanup_recheck:
     ((source: ChildReference, ticket_id: string) => Promise<CleanupResult>) | null = null;
-  private readonly deferred_start_conversations = new Set<string>();
-  private readonly deferred_start_preparing = new Set<string>();
-  private deferred_start_timer: ReturnType<typeof setTimeout> | null = null;
+  readonly deferred_start_conversations = new Set<string>();
+  readonly deferred_start_preparing = new Set<string>();
+  deferred_start_timer: ReturnType<typeof setTimeout> | null = null;
   readonly conversations = new Map<string, ConversationState>();
   shutting_down = false;
-  private shutdown_task: Promise<void> | null = null;
-  private readonly shutdown_controller = new AbortController();
+  shutdown_task: Promise<void> | null = null;
+  readonly shutdown_controller = new AbortController();
   get shutdown_signal(): AbortSignal {
     return this.shutdown_controller.signal;
   }
-  private readonly native_waiters = new Set<() => void>();
-  private readonly native_settlements = new Set<Promise<void>>();
-  private readonly child_stop_ownership = new Map<
+  readonly native_waiters = new Set<() => void>();
+  readonly native_settlements = new Set<Promise<void>>();
+  readonly child_stop_ownership = new Map<
     import('./backends/contracts.ts').BackendChild,
     ConversationState
   >();
-  private update_generation: symbol | null = null;
-  private update_admission_owned = false;
-  private update_metadata: ReadonlyMap<string, readonly [string, string]> | null = null;
-  private update_retirement: Promise<void> | null = null;
-  private update_retirement_generation: symbol | null = null;
-  private update_retirement_pending = false;
-  private update_stop_failed = false;
-  private acknowledged_event_failures = new Map<string, number>();
-  private idle_janitor: IdleChildJanitor | null = null;
+  update_generation: symbol | null = null;
+  update_admission_owned = false;
+  update_metadata: ReadonlyMap<string, readonly [string, string]> | null = null;
+  update_retirement: Promise<void> | null = null;
+  update_retirement_generation: symbol | null = null;
+  update_retirement_pending = false;
+  update_stop_failed = false;
+  acknowledged_event_failures = new Map<string, number>();
+  idle_janitor: IdleChildJanitor | null = null;
   readonly lost_task_notices: LostBackgroundTaskNotices;
-  private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
+  background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
     for (const entry of options.backend_registry.list())
       if (entry.kind !== 'live')
@@ -445,7 +445,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     );
   }
   /** Database and save failures refuse first, then the owner's execution admission. */
-  private execution_refusal(conversation_id: string): PlannerError | null {
+  execution_refusal(conversation_id: string): PlannerError | null {
     if (this.options.store.database_unusable_error !== null)
       return new PlannerError(
         'conversation_save_failed',
@@ -1206,7 +1206,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       if (!message.delivery_uncertain)
         this.start_admission.wait_if_unadmitted(message.sender_message_id);
   }
-  private mark_eligible_held(state: ConversationState): void {
+  mark_eligible_held(state: ConversationState): void {
     if (
       !['idle', 'draining'].includes(state.phase) ||
       state.child_is_quarantined ||
