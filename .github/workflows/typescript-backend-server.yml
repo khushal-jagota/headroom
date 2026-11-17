@@ -1,9 +1,9 @@
 name: TypeScript server foundation
 on:
   pull_request:
-    branches: [staging]
+    branches: [staging, driver-model]
   push:
-    branches: [staging]
+    branches: [staging, driver-model]
   schedule:
     - cron: '17 */4 * * *'
   workflow_dispatch:
