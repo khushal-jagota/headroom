@@ -139,3 +139,26 @@ it('redacts native failure secrets and preserves the authentication policy', () 
   );
   expect(Array.from(normalized_failure_summary('😀'.repeat(241))).length).toBe(240);
 });
+
+it('uses all Claude input categories for context size and skips incomplete counts', async () => {
+  const { mapper, turn, events } = fixture();
+  await mapper.usage(turn, {
+    type: 'result',
+    usage: {
+      input_tokens: 100,
+      cache_read_input_tokens: 20000,
+      cache_creation_input_tokens: 10000,
+      output_tokens: 10,
+    },
+  });
+  await mapper.usage(turn, {
+    type: 'result',
+    usage: { input_tokens: 100, cache_read_input_tokens: 20000 },
+  });
+  expect(events[0].event).toMatchObject({
+    input_tokens: 100,
+    cached_input_tokens: 20000,
+    context_input_tokens: 30100,
+  });
+  expect(events[1].event).toMatchObject({ context_input_tokens: null });
+});

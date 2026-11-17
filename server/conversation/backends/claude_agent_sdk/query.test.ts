@@ -659,16 +659,28 @@ it('preserves native token counts and additional SDK usage fields', async () => 
   const { client, child, yield_message, pumping } = setup();
   await client.connect();
   child.stdout.write(
-    '{"type":"result","uuid":"float-counts","usage":{"input_tokens":5.0,"output_tokens":5e0,"cache_read_input_tokens":7}}\n',
+    '{"type":"result","uuid":"float-counts","usage":{"input_tokens":5.0,"output_tokens":5e0,"cache_read_input_tokens":7,"cache_creation_input_tokens":11}}\n',
   );
   yield_message({
     type: 'result',
     uuid: 'float-counts',
-    usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 7, unrelated: 1.5 },
+    usage: {
+      input_tokens: 5,
+      output_tokens: 5,
+      cache_read_input_tokens: 7,
+      cache_creation_input_tokens: 3,
+      unrelated: 1.5,
+    },
   });
   const result = await client.receive_messages()[Symbol.asyncIterator]().next();
   expect(result.value).toMatchObject({
-    usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 7, unrelated: 1.5 },
+    usage: {
+      input_tokens: 5,
+      output_tokens: 5,
+      cache_read_input_tokens: 7,
+      cache_creation_input_tokens: 11,
+      unrelated: 1.5,
+    },
   });
   await client.disconnect();
   await pumping();

@@ -857,6 +857,18 @@ The home Worker abort comparison likewise asserts the stored Ticket launch folde
 and the explicit checkout prompt before it normalizes only those two differences.
 The remaining conversation rows and abort custody compare exactly with Python.
 
+## Messages are not held for automatic compaction
+
+At the owner's request, TypeScript delivers a send-now or queued message at once
+50 to 60 minutes after the last agent activity. The prompt cache is still warm then.
+Python holds that message, sends `/compact` first, and delivers the message after it.
+Only the idle sweep compacts in TypeScript. It still compacts an idle conversation
+with no held messages in that window. A message that arrives while that compaction
+runs still waits for it. The `automatic_compaction` wire flag and the database
+columns stay the same. The unit 15b maintenance comparison sends its owner message
+after that window, so both runtimes deliver it at once. The focused maintenance test
+in `server/tests/conversation_core_maintenance.test.ts` proves the TypeScript behavior.
+
 ## Remembered CLI version verdicts
 
 TypeScript no longer runs `claude --version` or `codex --version` before every Claude or

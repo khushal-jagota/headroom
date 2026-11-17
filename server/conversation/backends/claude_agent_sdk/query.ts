@@ -667,7 +667,12 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
               if (queued?.length === 0) this.raw_result_usage.delete(key);
               if (usage !== undefined) {
                 const counts = Object.fromEntries(
-                  ['input_tokens', 'output_tokens', 'cache_read_input_tokens']
+                  [
+                    'input_tokens',
+                    'output_tokens',
+                    'cache_read_input_tokens',
+                    'cache_creation_input_tokens',
+                  ]
                     .filter((field) => Object.hasOwn(usage, field))
                     .map((field) => [field, usage[field]]),
                 );

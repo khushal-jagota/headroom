@@ -13,6 +13,7 @@ import {
   now,
 } from './ticket_fixture.ts';
 import { OWNER, CHIEF } from '../core/contracts.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import * as tickets from '../tickets/data/index.ts';
 import { add_work_attention } from '../work_attention.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
@@ -588,4 +589,100 @@ test('an aborted first Chief send keeps canonical cleanup while database ownersh
     owned = false;
     database.close();
   }
+});
+
+// A wake must reach a busy Chief instead of waiting for the current turn to end.
+test('a wake steers into a busy Chief conversation', async () => {
+  const database = fixture();
+  const ticket = create(database);
+  configure_conversation_start(database, {
+    db_path: fixture_path(database),
+    workspace_root: '/workspace',
+  });
+  const system = new InMemoryConversationSystem();
+  let admission_time = 100;
+  const admission = new AutomaticStartAdmission({ limit: 2, clock: () => admission_time });
+  Object.assign(system, { start_admission: admission });
+  expect(
+    admission.try_start({
+      identity: 'full-1',
+      destination: HOME_MACHINE_ID,
+      work_class: 'supervisor',
+    }),
+  ).toBe(true);
+  admission_time += 100;
+  expect(
+    admission.try_start({
+      identity: 'full-2',
+      destination: HOME_MACHINE_ID,
+      work_class: 'supervisor',
+    }),
+  ).toBe(true);
+  await system.start_conversation(
+    new ConversationStartRequest({
+      conversation_id: 'busy-chief',
+      backend_key: 'codex',
+      model: 'gpt-6.1-sol',
+      workspace_folder: '/workspace',
+    }),
+  );
+  const store = new ConversationStore(database, { integer_now: () => 100 });
+  store.create_conversation(
+    new ResolvedConversationStart({
+      conversation_id: 'busy-chief',
+      backend_key: 'codex',
+      model: 'gpt-6.1-sol',
+      reasoning_effort: null,
+      role_materials: null,
+      workspace_folder: '/workspace',
+      access: 'full',
+    }),
+  );
+  database.write((sql) => {
+    sql.run('INSERT INTO agents(agent_key,conversation_id) VALUES (?,?)', [
+      'chief_of_staff',
+      'busy-chief',
+    ]);
+    data.create_worker_error_wake(sql, {
+      target: { kind: 'chief', id: 'chief' },
+      ticket_id: ticket.id,
+      ticket_title: ticket.title,
+      claim_revision: 1,
+      error_reason: 'stopped',
+      now: 100,
+    });
+  });
+  await system.send('busy-chief', text_message_content('Existing turn'), { sender_label: 'Owner' });
+  const loop = new ManagerWakeLoop({
+    workspace_context: { db_path: fixture_path(database), workspace_root: '/workspace' },
+    database,
+    clock: new TestClock('2026-07-04T12:00:00'),
+    conversation_system: system,
+    assert_database_owned() {},
+  });
+  await loop.poll_once();
+  expect(system.backend_prompt_writes('busy-chief')).toHaveLength(2);
+  expect(system.backend_prompt_writes('busy-chief')[1]).toMatchObject({ mode: 'steer' });
+  expect(await system.held_prompts('busy-chief')).toHaveLength(0);
+  expect(
+    database.read((sql) => sql.get<{ status: string }>('SELECT status FROM manager_wake_batches'))
+      ?.status,
+  ).toBe('accepted');
+  system.arm_backend_write_failure('busy-chief');
+  database.write((sql) =>
+    data.create_worker_error_wake(sql, {
+      target: { kind: 'chief', id: 'chief' },
+      ticket_id: ticket.id,
+      ticket_title: ticket.title,
+      claim_revision: 2,
+      error_reason: 'stopped again',
+      now: 101,
+    }),
+  );
+  await loop.poll_once();
+  expect(await system.held_prompts('busy-chief')).toHaveLength(1);
+  expect((await system.held_prompts('busy-chief'))[0]).toMatchObject({
+    queue_reason: 'steer_refused',
+  });
+  await loop.stop({ deadline: performance.now() / 1000 + 1 });
 });
