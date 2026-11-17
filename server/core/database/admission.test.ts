@@ -13,7 +13,7 @@ it('a previous app refuses a database one step ahead before opening a writer', (
   const root = mkdtempSync(join(tmpdir(), 'panels-admission-ahead-'));
   try {
     const path = join(root, 'planner.db');
-    createDatabaseFromSeed(path, application_schema_seed, () => {}).close();
+    createDatabaseFromSeed(path, BASELINE_SEED, () => {}).close();
     applySchemaSteps(path, [probe_step], {
       head_revision: probe_step.revision,
       expected_statements: null,

@@ -90,6 +90,9 @@
     "ticket_workspace_lifecycle": [
       "retire_executor_websocket_tables"
     ],
+    "ts_0001_open_backend_keys": [
+      "restore_consequences_review"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],
