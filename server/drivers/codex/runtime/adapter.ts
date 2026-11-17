@@ -842,7 +842,13 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     }
     await this.sink.report(turn.token, new B.CommandReplyReported({ reply_text: message }));
     if (this.turn === turn) this.turn = null;
-    await this.sink.report(turn.token, new B.TurnEnded({ ending: E.completed }));
+    await this.sink.report(
+      turn.token,
+      new B.TurnEnded({
+        ending: E.completed,
+        child_disposition: this.client.is_alive ? 'reusable' : 'broken',
+      }),
+    );
     turn.ended.resolve();
   }
   /** Codex states a startup failure on standard error, so the failure keeps its tail. */
@@ -887,6 +893,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         ending,
         error_summary: summary,
         standard_error_tail: ending === E.failed ? this.client.standard_error_tail() : null,
+        child_disposition: this.client.is_alive ? 'reusable' : 'broken',
       }),
     );
     turn.ended.resolve();
@@ -1184,6 +1191,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
           this.client.end_reason ?? 'the codex process ended while the turn was running',
         ),
         standard_error_tail: this.client.standard_error_tail(),
+        child_disposition: 'broken',
       }),
     );
     turn.ended.resolve();
