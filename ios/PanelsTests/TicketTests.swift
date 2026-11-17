@@ -23,7 +23,7 @@ final class TicketTests: XCTestCase {
             ceilingRange: ["needs_brief", "needs_wireframe", "done"])
         let presentation = TicketPresentation(ticket: try ticket(), manifest: manifest)
         XCTAssertEqual(presentation.completedCount, 1)
-        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe"])
+        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "done"])
         XCTAssertEqual(presentation.ceilingLabel, "Draw it")
         XCTAssertEqual(presentation.heading, "Currently working on Drawing")
         XCTAssertTrue(presentation.working)
@@ -53,10 +53,12 @@ final class TicketTests: XCTestCase {
             ceilingRange: ["needs_wireframe", "land", "done"], advance: ["needs_wireframe": "land", "land": "done"])
         let presentation = TicketPresentation(ticket: try ticket(), manifest: manifest)
         XCTAssertFalse(presentation.finalApproval)
-        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "land"])
+        XCTAssertEqual(presentation.ceilingOptions.map(\.id), ["needs_wireframe", "land", "done"])
         XCTAssertEqual(manifest.stages.map(\.id), ["needs_wireframe", "land", "done"])
         let review = ReviewWorkerManifest(workflow: manifest)
         XCTAssertTrue(review.approvalBoundaries.contains { $0.id == "land" })
+        XCTAssertTrue(review.approvalBoundaries.contains { $0.id == "done" })
+        XCTAssertTrue(review.selectionApprovesPending(ceiling: "done", waitingStage: "needs_wireframe"))
         XCTAssertTrue(review.isFinalApproval(at: "land"))
     }
 

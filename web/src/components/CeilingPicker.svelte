@@ -100,7 +100,7 @@
   let draftHolderName = $derived(holderLabel ? holderLabel(draftHolder ?? holder) : holderLabelFor(manager,draftHolder ?? holder));
   let resolvedTriggerLabel = $derived(triggerLabel ?? (stageLocked
     ? `then ${holderName}`
-    : `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`));
+    : ceiling === "done" ? `Until ${ceilingName}` : `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`));
 
   function preferredCeiling(): string | null {
     return ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
@@ -185,7 +185,7 @@
 >
   {#snippet triggerContent()}
     {#if document}
-      <span>Approved until <b>{ceilingName ?? "Choose ceiling"}</b>, then <b>{holderName}</b> reviews</span>
+      <span>Approved until <b>{ceilingName ?? "Choose ceiling"}</b>{#if ceiling !== "done"}, then <b>{holderName}</b> reviews{/if}</span>
     {:else}<span>{resolvedTriggerLabel}</span>{/if}
   {/snippet}
   {#snippet beforeList()}

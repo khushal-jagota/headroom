@@ -174,7 +174,7 @@ struct TicketView: View {
                 if !presentation.terminal {
                     Button { scopeOpen = true } label: {
                         HStack(alignment: .firstTextBaseline, spacing: PanelsTheme.Space.sm) {
-                            Text("Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")
+                            Text(presentation.ticket.ceiling == "done" ? "Approved until **\(presentation.ceilingLabel)**" : "Approved until **\(presentation.ceilingLabel)**, then **\(presentation.holderLabel(presentation.ticket.ceilingHolder))** reviews")
                                 .multilineTextAlignment(.leading)
                             Image(systemName: "chevron.down").font(PanelsTheme.TypeScale.caption)
                         }.panelsScaledFont(size: PanelsTheme.Web.bodySize)

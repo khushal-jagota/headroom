@@ -32,7 +32,7 @@ struct TicketApprovalLimitSheet: View {
                         ForEach(approval ? Array(presentation.ceilingOptions.dropFirst()) : presentation.ceilingOptions) { stage in Text(stage.label).tag(stage.id) }
                     }.pickerStyle(.inline).labelsHidden().accessibilityIdentifier("ticket-ceiling-picker")
                 }
-                Section("Then reviews") {
+                Section(ceiling == "done" ? "Ceiling holder" : "Then reviews") {
                     Picker("Reviewer", selection: $holder) {
                         ForEach(presentation.holders, id: \.self) { principal in
                             Text(presentation.holderLabel(principal)).tag(principal)
