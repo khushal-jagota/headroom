@@ -9,6 +9,7 @@ import {
   BackendStreamEnded,
   BackendSpawnFailed,
   BackendInitializationTimeout,
+  NeedsRebind,
   PromptWriteFailed,
   SessionLoadFailed,
   TurnEnded,
@@ -260,18 +261,30 @@ async function live_child(
       reasoning_effort_change,
       reasoning_effort_is_set: true,
     });
-  return { child, prompt, deliver, turn_endings, stream_ended: stream_ended.promise };
+  return { child, content, prompt, deliver, turn_endings, stream_ended: stream_ended.promise };
 }
 
-it('applies an effort change to the live Claude session and applies nothing it cannot carry', async () => {
+// Risk: a caller that writes without the core's selection check (the Mac runner, a replayed
+// prompt) runs a turn on a model or effort the session never took.
+it('applies a live effort change and refuses a change only a fresh child can carry', async () => {
   const apply_reasoning_effort = vi.fn(async (_level: string) => {});
-  const { child, prompt } = await live_child('live-effort', { client: { apply_reasoning_effort } });
+  const { child, content, prompt } = await live_child('live-effort', {
+    client: { apply_reasoning_effort },
+  });
   await prompt(1, 'high');
   expect(apply_reasoning_effort).toHaveBeenCalledExactlyOnceWith('high');
   await prompt(2, 'high');
   expect(apply_reasoning_effort).toHaveBeenCalledTimes(1);
-  // The core restarts the child to clear effort, so a clear that reaches the child anyway is not applied.
-  await prompt(3, null);
+  await expect(prompt(3, null)).rejects.toBeInstanceOf(NeedsRebind);
+  await expect(
+    child.write_prompt({ conversation_id: 'live-effort', turn_number: 3 }, content, {
+      sender_label: 'Owner',
+      sender_content: content,
+      mode: 'send_now',
+      model_change: 'opus',
+      reasoning_effort_change: null,
+    }),
+  ).rejects.toBeInstanceOf(NeedsRebind);
   expect(apply_reasoning_effort).toHaveBeenCalledTimes(1);
   apply_reasoning_effort.mockRejectedValueOnce(new Error('control channel closed'));
   await expect(prompt(4, 'max')).rejects.toBeInstanceOf(PromptWriteFailed);
@@ -284,7 +297,7 @@ it('ends the turn broken when Claude answers under a session other than the one 
   const { child, prompt, deliver, turn_endings } = await live_child('session-mismatch', {
     vendor_session_cursor: 'retained-session',
   });
-  await prompt(1, null);
+  await prompt(1, 'low');
   deliver({
     value: {
       type: 'stream_event',
@@ -302,7 +315,7 @@ it('ends the turn broken when Claude answers under a session other than the one 
 it('ends the turn broken after a cancel that Claude never settles, ignoring its late result', async () => {
   const { child, prompt, deliver, turn_endings, stream_ended } =
     await live_child('cancel-unsettled');
-  await prompt(1, null);
+  await prompt(1, 'low');
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     const cancelled = child.cancel_running_turn();

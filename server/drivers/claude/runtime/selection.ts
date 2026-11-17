@@ -1,6 +1,12 @@
 /** How a running Claude child takes a new model or reasoning effort. */
 import type { EffortLevel } from '@anthropic-ai/claude-agent-sdk';
+import type { BackendCapabilities } from '../../core/capabilities.ts';
 import type { SelectionTransitionInput, SelectionTransitionPlan } from '../../core/selection.ts';
+
+export const CLAUDE_CAPABILITIES: BackendCapabilities = {
+  sessions: { supportsModelSwitchInSession: false },
+  turns: { supportsActiveSteering: true },
+};
 
 // A level the SDK no longer names fails to compile. A new SDK level still restarts.
 const LIVE_REASONING_EFFORTS: ReadonlySet<string> = new Set([

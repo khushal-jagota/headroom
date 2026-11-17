@@ -54,7 +54,12 @@ import {
 } from './configuration.ts';
 import { ClaudeEvents, composer_catalog, durable_session_id, validate_message } from './events.ts';
 import { ClaudeAsks } from './asks.ts';
-import { is_live_reasoning_effort } from './selection.ts';
+import {
+  CLAUDE_CAPABILITIES,
+  claude_selection_transition,
+  is_live_reasoning_effort,
+} from './selection.ts';
+import { selection_target } from '../../../conversation/logic/selection_target.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { TurnInFlight, same_turn, settle_parked_asks, stop_waiting_for_steers } from './turn.ts';
 import {
@@ -105,6 +110,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private client: ClaudeSdkClient | null = null;
   private session_id: string | null = null;
   private resume_confirmed = false;
+  private session_model: string | null = null;
   private session_reasoning_effort: string | null = null;
   private turn: TurnInFlight | null = null;
   private last_ended_turn: TurnInFlight | null = null;
@@ -181,6 +187,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     this.wire_failure = null;
     this.session_id = cursor || minted;
     this.resume_confirmed = cursor === null;
+    this.session_model = resolved_start.model;
     this.session_reasoning_effort = resolved_start.reasoning_effort;
     const cancel = new AbortController();
     this.reader_cancel = cancel;
@@ -251,12 +258,30 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     this.wire_broken = true;
     this.wire_failure ??= { why, cause };
   }
-  /** The live effort this prompt applies, or null. The core restarts the child for any other
-   * change (`claude_selection_transition`), so one that arrives anyway applies nothing. */
+  /** The live effort this prompt applies, or null. The core asks `claude_selection_transition`
+   * before it writes to this child; a caller that writes directly (the Mac runner, a replayed
+   * prompt) meets the same rule here, against the session this child actually runs. */
   private effort_to_apply(options: PromptOptions): EffortLevel | null {
-    const change = options.reasoning_effort_change;
-    if (change === null || change === this.session_reasoning_effort) return null;
-    return is_live_reasoning_effort(change) ? change : null;
+    const current = { model: this.session_model, reasoning_effort: this.session_reasoning_effort };
+    const target = selection_target(
+      { ...options, reasoning_effort_is_set: options.reasoning_effort_is_set ?? false },
+      current,
+    );
+    const plan = claude_selection_transition({
+      current,
+      target,
+      session_capabilities: CLAUDE_CAPABILITIES,
+    });
+    if (plan.type !== 'apply_on_next_turn')
+      throw new B.NeedsRebind(
+        `claude needs a fresh child for model ${JSON.stringify(target.model)} and reasoning effort ${JSON.stringify(target.reasoning_effort)}`,
+      );
+    const effort = target.reasoning_effort;
+    return effort !== current.reasoning_effort &&
+      effort !== null &&
+      is_live_reasoning_effort(effort)
+      ? effort
+      : null;
   }
   private async apply_reasoning_effort(
     client: ClaudeSdkClient,
