@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { once } from 'node:events';
+import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { afterEach, expect, test, vi } from 'vitest';
 import { setup } from './conversation_core_fixture.ts';
@@ -374,19 +375,21 @@ test('accepted queued receipt and completion retain order behind a real writer l
   await child.finish();
   await child.wait_for_barrier('next-receipt');
   const writer = spawn(
-    'python3',
+    process.execPath,
     [
-      '-u',
-      '-c',
-      `import sqlite3,sys,time
-connection=sqlite3.connect(sys.argv[1])
-connection.execute('BEGIN IMMEDIATE')
-print('locked',flush=True)
-sys.stdin.readline()
-time.sleep(0.15)
-connection.rollback()
-connection.close()
-`,
+      '-e',
+      `const Database = require(process.argv[1]);
+const connection = new Database(process.argv[2]);
+connection.exec('BEGIN IMMEDIATE');
+console.log('locked');
+process.stdin.once('data', () => {
+  process.stdin.destroy();
+  setTimeout(() => {
+    connection.exec('ROLLBACK');
+    connection.close();
+  }, 150);
+});`,
+      createRequire(import.meta.url).resolve('better-sqlite3'),
       f.database_path,
     ],
     { stdio: ['pipe', 'pipe', 'pipe'] },

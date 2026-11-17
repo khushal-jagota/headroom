@@ -186,8 +186,7 @@ export function node_schema_steps_pending(sql: ReadSql, frontier: NodeSchemaFron
     (revision !== frontier.head && !frontier.step_ancestors.has(revision!))
   )
     throw new AppValidationError(
-      'This release requires the database to be at exactly its schema revision. ' +
-        'Install the Python release that carries the same migrations first.',
+      'This release requires the database to be at its schema revision or one of its schema steps.',
     );
   return revision !== frontier.head;
 }

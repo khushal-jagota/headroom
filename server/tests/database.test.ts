@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import BetterSqlite3 from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,29 +17,26 @@ function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), 'panels-write-door-'));
   cleanup.push(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, 'database.sqlite3');
-  execFileSync('python3', [
-    '-c',
-    `
-import sqlite3, sys
-with sqlite3.connect(sys.argv[1]) as conn:
-    conn.execute('CREATE TABLE source (value INTEGER NOT NULL)')
-    conn.execute('CREATE TABLE derived (value INTEGER NOT NULL)')
-`,
-    path,
-  ]);
+  const setup = new BetterSqlite3(path);
+  setup.exec(
+    'CREATE TABLE source (value INTEGER NOT NULL); CREATE TABLE derived (value INTEGER NOT NULL)',
+  );
+  setup.close();
   return path;
 }
-function rowsFromPython(path: string, table: 'source' | 'derived'): number[] {
+const sqlite = createRequire(import.meta.url).resolve('better-sqlite3');
+/** Read through a connection in another process, which sees only committed rows. */
+function rowsFromProcess(path: string, table: 'source' | 'derived'): number[] {
   return JSON.parse(
     execFileSync(
-      'python3',
+      process.execPath,
       [
-        '-c',
-        `
-import json, sqlite3, sys
-with sqlite3.connect(sys.argv[1]) as conn:
-    print(json.dumps([row[0] for row in conn.execute('SELECT value FROM ${table} ORDER BY value')]))
-`,
+        '-e',
+        `const Database = require(process.argv[1]);
+const conn = new Database(process.argv[2]);
+console.log(JSON.stringify(conn.prepare('SELECT value FROM ${table} ORDER BY value').pluck().all()));
+conn.close();`,
+        sqlite,
         path,
       ],
       { encoding: 'utf8' },
@@ -49,12 +48,12 @@ function own(database: Database): Database {
   return database;
 }
 
-test('commit step sees uncommitted source rows; Python sees source and derived only after commit', () => {
+test('commit step sees uncommitted source rows; another process sees source and derived only after commit', () => {
   const path = fixture();
   const signal = new ChangeSignal();
   const observed: number[][] = [];
   signal.subscribe(() => {
-    observed.push(rowsFromPython(path, 'derived'));
+    observed.push(rowsFromProcess(path, 'derived'));
   });
   const database = own(
     createDatabase(path, {
@@ -62,15 +61,15 @@ test('commit step sees uncommitted source rows; Python sees source and derived o
       commitSteps: [
         (sql) => {
           expect(sql.get<{ value: number }>('SELECT value FROM source')?.value).toBe(7);
-          expect(rowsFromPython(path, 'source')).toEqual([]);
+          expect(rowsFromProcess(path, 'source')).toEqual([]);
           sql.run('INSERT INTO derived SELECT value FROM source');
         },
       ],
     }),
   );
   expect(database.write((sql) => sql.run('INSERT INTO source VALUES (?)', [7]).changes)).toBe(1);
-  expect(rowsFromPython(path, 'source')).toEqual([7]);
-  expect(rowsFromPython(path, 'derived')).toEqual([7]);
+  expect(rowsFromProcess(path, 'source')).toEqual([7]);
+  expect(rowsFromProcess(path, 'derived')).toEqual([7]);
   expect(observed).toEqual([[7]]);
 });
 
@@ -98,8 +97,8 @@ test('failed commit step or asynchronous work rolls the whole transaction back a
       sql.run('INSERT INTO source VALUES (9)');
     }),
   ).toThrow('must be synchronous');
-  expect(rowsFromPython(path, 'source')).toEqual([]);
-  expect(rowsFromPython(path, 'derived')).toEqual([]);
+  expect(rowsFromProcess(path, 'source')).toEqual([]);
+  expect(rowsFromProcess(path, 'derived')).toEqual([]);
   expect(signals).toBe(0);
 });
 
@@ -133,7 +132,7 @@ test('read scopes cannot write or retain SQL access; transaction control stays i
   expect(signals).toBe(0);
   expect(() => retainedRead?.get('SELECT 1')).toThrow(/no longer active/);
   expect(() => retainedWrite?.run('INSERT INTO source VALUES (3)')).toThrow(/no longer active/);
-  expect(rowsFromPython(path, 'source')).toEqual([2]);
+  expect(rowsFromProcess(path, 'source')).toEqual([2]);
 });
 
 // Existing whole-write rollback coverage does not prove that a refusal receipt can

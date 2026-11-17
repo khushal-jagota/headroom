@@ -67,8 +67,7 @@ it('accepts the head and TypeScript ancestors; refuses Python ancestors and unkn
       }
     };
     const refused =
-      'This release requires the database to be at exactly its schema revision. ' +
-      'Install the Python release that carries the same migrations first.';
+      'This release requires the database to be at its schema revision or one of its schema steps.';
     assert.deepEqual(
       await Promise.all(
         [

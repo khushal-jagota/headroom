@@ -153,8 +153,8 @@ it('refuses non-loopback health URLs despite a supplied normal-mode environment'
   }
 });
 
-it('releases the barrier before healthy records on success and rollback as Python does', async () => {
-  // Final-row parity cannot prove the release point. Python releases after the
+it('releases the barrier before healthy records on success and rollback', async () => {
+  // Final-row parity cannot prove the release point. The installer releases after the
   // health result, before its healthy record and terminal state on both paths.
   const root = mkdtempSync(join(tmpdir(), 'panels-installer-terminal-'));
   const original = InstallationRecord.prototype.record;

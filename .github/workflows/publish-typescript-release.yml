@@ -29,9 +29,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - name: Prepare native tools and the admission host Node
         run: |
           set -euo pipefail
@@ -101,9 +98,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - name: Prepare native tools and the admission host Node
         run: |
           set -euo pipefail
@@ -163,9 +157,6 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -290,16 +281,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - name: Expose the selected host runtimes in the fixed command PATH
         run: |
           set -euo pipefail
           selected_node=$(env -i PATH="$PATH" node -p 'require("node:fs").realpathSync(process.execPath)')
-          selected_python=$(env -i PATH="$PATH" python3 -I -S -B -c 'import os,sys; print(os.path.realpath(sys.executable))')
           if [ "$selected_node" != /usr/local/bin/node ]; then sudo ln -sfn "$selected_node" /usr/local/bin/node; fi
-          if [ "$selected_python" != /usr/local/bin/python3 ]; then sudo ln -sfn "$selected_python" /usr/local/bin/python3; fi
           env -i PATH=/usr/local/bin:/usr/bin:/bin node -e 'if(!/^22\.(?:1[89]|[2-9][0-9])\./.test(process.versions.node))throw Error("Node22 >=22.18 is required")'
       - name: Download Darwin home artifacts for the shared receipt
         env:
