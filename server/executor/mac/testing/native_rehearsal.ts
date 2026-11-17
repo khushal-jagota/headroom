@@ -190,7 +190,7 @@ try {
     CLAUDE_CONFIG_DIR: join(home, '.claude'),
   };
   for (const path of [environment.CODEX_HOME!, environment.CLAUDE_CONFIG_DIR!])
-    await mkdir(path, { recursive: true });
+    await mkdir(join(path, 'skills'), { recursive: true });
   await mkdir(paths.state, { recursive: true, mode: 0o700 });
   // Only this isolated server grants this credential. Nothing reads account credentials.
   await write_credential(credential_path(paths.state), server.credential);
