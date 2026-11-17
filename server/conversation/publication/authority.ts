@@ -110,8 +110,9 @@ export class IdlePublicationAuthority {
         const result: unknown = notify();
         // Callbacks are notifications only. Observe an invalid async subscriber's rejection.
         if (result instanceof Promise) void result.catch(() => {});
-      } catch {
+      } catch (error) {
         // Notify the remaining subscribers even if one callback fails.
+        console.error('publication authority subscriber failed', error);
       }
     }
   }

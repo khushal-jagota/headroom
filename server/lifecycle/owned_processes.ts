@@ -46,7 +46,8 @@ export class ChildLifetime {
       this.#reaped = true;
       exit.resolve();
     });
-    child.on('error', () => {
+    child.on('error', (error) => {
+      console.warn('owned process error', child.pid ?? child.spawnfile, error);
       if (!spawned && child.pid === undefined) {
         this.#reaped = true;
         exit.resolve();

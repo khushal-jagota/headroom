@@ -401,8 +401,8 @@ export class ConversationViewLiveOutput {
       text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
         encoded.subarray(0, end),
       );
-    } catch {
-      throw new Error('Live body offset is not a UTF-8 boundary');
+    } catch (error) {
+      throw new Error('Live body offset is not a UTF-8 boundary', { cause: error });
     }
     const next_offset = offset + end;
     return {

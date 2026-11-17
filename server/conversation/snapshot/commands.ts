@@ -29,7 +29,9 @@ export class BackendCommands {
         if (reaped || owned.exitCode !== null || owned.signalCode !== null) return;
         try {
           if (owned.pid !== undefined) process.kill(-owned.pid, 'SIGKILL');
-        } catch {
+        } catch (failure) {
+          if ((failure as NodeJS.ErrnoException).code !== 'ESRCH')
+            console.warn(`backend command group ${owned.pid} could not be killed`, failure);
           if (!reaped && owned.exitCode === null && owned.signalCode === null)
             owned.kill('SIGKILL');
         }

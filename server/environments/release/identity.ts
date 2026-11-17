@@ -124,8 +124,8 @@ async function validate_runtime_tree(root: string, node: boolean): Promise<void>
     if (!(await file(path))) throw new AppValidationError(`runtime file is missing: ${name}`);
     try {
       await access(path, constants.X_OK);
-    } catch {
-      throw new AppValidationError(`runtime file is not executable: ${name}`);
+    } catch (error) {
+      throw new AppValidationError(`runtime file is not executable: ${name}`, { cause: error });
     }
   }
   for (const name of [...SHARED_RUNTIME_FILES, ...(node ? NODE_RUNTIME_FILES : [])])

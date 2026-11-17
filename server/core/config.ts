@@ -314,6 +314,7 @@ export function loadConfig(
         'trusted_ingress_canonical_origin is required for trusted ingress',
       );
     let valid = false;
+    let invalid_cause: unknown;
     try {
       const u = new URL(origin);
       valid =
@@ -325,13 +326,15 @@ export function loadConfig(
         !u.search &&
         !u.hash;
       origin = u.origin;
-    } catch {
-      /* reported below */
+    } catch (error) {
+      invalid_cause = error; // Reported below.
     }
     if (!valid)
       throw new PlannerError(
         'validation',
         'trusted_ingress_canonical_origin must be an HTTPS origin with no path',
+        {},
+        invalid_cause === undefined ? undefined : { cause: invalid_cause },
       );
   } else {
     provider = login = origin = null;

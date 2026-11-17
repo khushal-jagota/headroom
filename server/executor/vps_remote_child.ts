@@ -18,6 +18,7 @@ import {
 import type { ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { UserInputAnswer } from '../conversation/events.ts';
 import type { MessageContent } from '../conversation/message_content.ts';
+import { recorded_failure_detail } from '../conversation/logic/backend_events.ts';
 import { resolve_path_sync } from '../core/path_resolution.ts';
 import { pure_posix_path } from '../core/python_path.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
@@ -344,8 +345,13 @@ export class MacRemoteChild implements BackendChild {
         throw new ExecutorValidationError(
           `${inspect(reason)} is not a valid PromptDeliveryRefusalReason`,
         );
+      // An older executor sends no detail. A malformed detail is dropped, not fatal.
       return new backend.BackendSteerRefused({
         refusal_reason: reason as PromptDeliveryRefusalReason,
+        refusal_detail:
+          typeof result.refusal_detail === 'string'
+            ? recorded_failure_detail(result.refusal_detail)
+            : null,
       });
     }
     if (result.kind === 'steer_uncertain')

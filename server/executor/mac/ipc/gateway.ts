@@ -20,7 +20,7 @@ import { safe_component } from '../files.ts';
 import { CLI_RESULT_TIMEOUT_SECONDS } from '../configuration.ts';
 import { same_reference } from '../../child_reference.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
-import { failure_name } from '../failure_name.ts';
+import { failure_detail } from '../failure_detail.ts';
 import type { GatewayOptions, Publication } from './contracts.ts';
 import { GatewayListener } from './listener.ts';
 const monotonic = () => {
@@ -69,7 +69,7 @@ export class AgentGateway {
     if (!this.reported) {
       this.reported = true;
       this.closed = true;
-      console.warn('Mac IPC task failed:', failure_name(error));
+      console.warn('Mac IPC task failed:', failure_detail(error));
       try {
         this.options.on_failure(error instanceof Error ? error : new Error(String(error)));
       } catch (failure) {
@@ -211,7 +211,7 @@ export class AgentGateway {
         (error) => {
           // The runner also retains the raw source failure. Unknown is not acceptance.
           this.failures.add(error);
-          console.warn('Mac IPC publication failed:', failure_name(error));
+          console.warn('Mac IPC publication failed:', failure_detail(error));
           this.release_publication(submission, publication);
         },
       );

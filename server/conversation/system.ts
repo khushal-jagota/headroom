@@ -67,7 +67,9 @@ function save_failure_detail(error: unknown): string {
     error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code
       : null;
-  return code !== null ? `Save error ${code}` : `Save error: ${String(error)}`;
+  if (code === null) return `Save error: ${String(error)}`;
+  const message = error instanceof Error ? error.message : '';
+  return message ? `Save error ${code}: ${message}` : `Save error ${code}`;
 }
 export class SqliteProcessConversationSystem implements DeliveryServices, ConversationSystem {
   readonly options: ConversationCoreOptions;

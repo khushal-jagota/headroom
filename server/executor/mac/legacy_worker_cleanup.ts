@@ -5,6 +5,7 @@ import { is_record } from '../../core/records.ts';
 import { STOP_SECONDS, TERM_SECONDS } from '../../worker_supervision/config.ts';
 import { failure_message } from '../../worker_supervision/inspection.ts';
 import type { LegacyCleanupDependencies } from './cleanup_contracts.ts';
+import { failure_detail } from './failure_detail.ts';
 import type { AgentProcessIdentity } from './platform.ts';
 import { atomic_record, read_record } from './runtime/records.ts';
 
@@ -35,8 +36,8 @@ export function migrate_once(
     let previous: Record<string, unknown> | null;
     try {
       previous = await read_record(files, receipt);
-    } catch {
-      warn('Legacy cleanup receipt is unreadable');
+    } catch (error) {
+      warn(`Legacy cleanup receipt is unreadable: ${failure_detail(error)}`);
       return;
     }
     if (previous !== null) {

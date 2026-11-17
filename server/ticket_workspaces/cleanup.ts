@@ -84,7 +84,9 @@ export async function clean_for_database(
           ) as WorkspaceMarker;
           return marker.checkout_kind === 'clone' || marker.repository != null;
         }
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+          console.warn('retired workspace record could not be read', retired, error);
         return true;
       }
       return true;

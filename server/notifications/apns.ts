@@ -93,8 +93,12 @@ export class TokenAPNsAdapter implements APNsAdapter {
       const token = await this.provider_token(options.now);
       let session = this.sessions.get(host);
       if (!session || session.destroyed || session.closed) {
-        session = connect(`https://${host}`);
-        session.on('error', () => {});
+        const opened = connect(`https://${host}`);
+        session = opened;
+        opened.on('error', (error) => {
+          console.warn('APNs session failed', host, error);
+          if (this.sessions.get(host) === opened) this.sessions.delete(host);
+        });
         this.sessions.set(host, session);
       }
       const current = session;
@@ -123,7 +127,8 @@ export class TokenAPNsAdapter implements APNsAdapter {
         request.on('end', () => resolve({ status, body: Buffer.concat(chunks).toString('utf8') }));
         request.end(payload);
       });
-    } catch {
+    } catch (error) {
+      console.warn('APNs delivery failed', host, error);
       return {
         delivered: false,
         retryable: true,

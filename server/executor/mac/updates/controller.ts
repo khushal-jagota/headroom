@@ -26,6 +26,7 @@ import { HttpSessions, read_bounded } from '../transport/sessions.ts';
 import { CONNECTORS, executor_request_failure } from '../transport/http.ts';
 import { http_error } from '../transport/errors.ts';
 import type { MacHttpOptions } from '../transport/contracts.ts';
+import { failure_detail } from '../failure_detail.ts';
 
 export interface MacUpdateRuntimeSettings {
   child: boolean;
@@ -302,7 +303,8 @@ export class MacUpdateController {
       return;
     try {
       if (await this.cached(value)) return;
-    } catch {
+    } catch (error) {
+      console.warn('Mac update cache check failed:', failure_detail(error));
       return;
     }
     this.signal.throwIfAborted();
@@ -310,7 +312,9 @@ export class MacUpdateController {
     prefetch.task = this.with_session((session) => this.fetch(session, value, 'prefetch.tar.gz'))
       .then(
         () => {},
-        () => {},
+        (error: unknown) => {
+          if (!this.signal.aborted) console.warn('Mac update prefetch failed:', failure_detail(error));
+        },
       )
       .finally(() => {
         prefetch.done = true;

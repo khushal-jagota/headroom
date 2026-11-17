@@ -9,7 +9,7 @@ import {
   MAX_COMMAND_OUTCOMES_PER_REPORT,
 } from '../configuration.ts';
 import { JOURNAL_OPERATIONS, JOURNAL_INPUT_BYTES, JOURNAL_RESULT_BYTES } from './journal_limits.ts';
-import { failure_name } from '../failure_name.ts';
+import { failure_detail } from '../failure_detail.ts';
 import { journal_error, journal_error_properties } from './journal_worker_contracts.ts';
 import type { MailboxCommand } from '../../wire.generated.ts';
 import type {
@@ -309,7 +309,7 @@ export class CommandJournal implements AsyncCommandJournal {
       try {
         this.dependencies.on_failure(error);
       } catch (error) {
-        console.warn('Mac journal failure callback failed:', failure_name(error));
+        console.warn('Mac journal failure callback failed:', failure_detail(error));
       }
     }
   }
@@ -327,7 +327,11 @@ export class CommandJournal implements AsyncCommandJournal {
     this.fail(error instanceof Error ? error : new Error(String(error)), true);
     // A broken callback transport cannot drain its waiter. This is a fatal transport
     // failure, not normal close: native addon cleanup runs before actual worker exit.
-    void worker.terminate().catch(() => {});
+    void worker
+      .terminate()
+      .catch((error: unknown) =>
+        console.warn('Mac journal worker terminate failed:', failure_detail(error)),
+      );
   }
   private restore(body: JournalErrorBody): Error {
     const error = Object.assign(new Error(body.message), journal_error_properties(body), {
@@ -347,7 +351,7 @@ export class CommandJournal implements AsyncCommandJournal {
       () => this.operations.delete(task),
       (error) => {
         this.operations.delete(task);
-        if (log) console.warn('Mac journal operation failed:', failure_name(error));
+        if (log) console.warn('Mac journal operation failed:', failure_detail(error));
       },
     );
     return task;
@@ -660,7 +664,7 @@ export class CommandJournal implements AsyncCommandJournal {
           try {
             await body.close();
           } catch (error) {
-            console.warn('Mac journal stream cleanup failed:', failure_name(error));
+            console.warn('Mac journal stream cleanup failed:', failure_detail(error));
             this.delivery_failure('Journal input stream cleanup failed.', error);
             if (!committed && primary === undefined) throw error;
           }
@@ -672,7 +676,7 @@ export class CommandJournal implements AsyncCommandJournal {
         try {
           await body.close();
         } catch (cleanup) {
-          console.warn('Mac journal unadmitted stream cleanup failed:', failure_name(cleanup));
+          console.warn('Mac journal unadmitted stream cleanup failed:', failure_detail(cleanup));
           this.delivery_failure('Journal input stream cleanup failed.', cleanup);
         }
       }

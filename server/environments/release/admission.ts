@@ -130,8 +130,8 @@ async function verify_host(
   for (const library of contract.external_libraries) {
     try {
       koffi.load(library);
-    } catch {
-      throw new AppValidationError(`runtime host library is missing: ${library}`);
+    } catch (error) {
+      throw new AppValidationError(`runtime host library is missing: ${library}`, { cause: error });
     }
     current(deadline);
   }

@@ -206,6 +206,8 @@ export class PromptDeliveryUncertainEventPayload {
   readonly content: MessageContent;
   readonly sender_label: string;
   readonly mode: PromptDeliveryMode;
+  /** Why delivery is uncertain: redacted and capped failure text, or null. */
+  readonly failure_detail: string | null;
   readonly sender_message_id: string | null;
   readonly sent_at_unix_milliseconds: number | null;
   readonly sender: Principal | null;
@@ -215,6 +217,7 @@ export class PromptDeliveryUncertainEventPayload {
     content: MessageContent;
     sender_label: string;
     mode: PromptDeliveryMode;
+    failure_detail?: string | null;
     sender_message_id?: string | null;
     sent_at_unix_milliseconds?: number | null;
     sender?: Principal | null;
@@ -224,6 +227,7 @@ export class PromptDeliveryUncertainEventPayload {
     this.content = values.content;
     this.sender_label = values.sender_label;
     this.mode = values.mode;
+    this.failure_detail = values.failure_detail ?? null;
     this.sender_message_id =
       values.sender_message_id === undefined ? null : values.sender_message_id;
     this.sent_at_unix_milliseconds =

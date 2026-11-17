@@ -158,7 +158,8 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
           }),
         ])) ?? null
       );
-    } catch {
+    } catch (error) {
+      console.warn('usage rates are unavailable', error);
       return null;
     } finally {
       clearTimeout(timer);
@@ -173,7 +174,9 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
       let document: unknown;
       try {
         document = decodeCacheDocument(await readFile(this.ratesCachePath));
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+          console.warn(`usage rates cache ${this.ratesCachePath} is unreadable`, error);
         document = null;
       }
       if (object(document) && finiteNumber(document.fetchedAtMs) && 'document' in document) {
@@ -198,8 +201,9 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
     this.ratesStatus = 'fresh';
     try {
       await writeFile(this.ratesCachePath, JSON.stringify({ fetchedAtMs: now, document: fetched }));
-    } catch {
+    } catch (error) {
       // An unwritable cache does not invalidate a successful observation.
+      console.warn(`usage rates cache ${this.ratesCachePath} could not be written`, error);
     }
   }
 
@@ -222,7 +226,9 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
       let document: unknown;
       try {
         document = decodeCacheDocument(await readFile(this.scanCachePath));
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+          console.warn(`usage scan cache ${this.scanCachePath} is unreadable`, error);
         document = null;
       }
       if (document !== null)
@@ -239,8 +245,9 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
         // cannot lose its dirty marker while this asynchronous write completes.
         await writeFile(this.scanCachePath, JSON.stringify(encodeScanCache(this.fileCache)));
         this.cacheDirty = false;
-      } catch {
+      } catch (error) {
         // Keep the dirty marker so the next scan retries this write.
+        console.warn(`usage scan cache ${this.scanCachePath} could not be written`, error);
       }
     });
   }
@@ -327,8 +334,10 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
       if (cached?.provider === provider && cached.fingerprint === fingerprint)
         return cachedRecords(cached);
       read = await parser.read_file(filePath);
-    } catch {
+    } catch (error) {
       // As with a line read, a failure is not memoised: the next scan tries again.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+        console.warn(`usage transcript ${filePath} could not be read`, error);
       return [];
     }
     const records = dedupeWithinFile(forProvider(read, provider));
@@ -364,7 +373,9 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
       let exists = true;
       try {
         await access(dir);
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+          console.warn(`usage transcript directory ${dir} is not accessible`, error);
         exists = false;
       }
       if (!exists) {
@@ -532,8 +543,11 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
       settings =
         suppliedSettings ??
         (this.options.settingsProvider ?? (() => ({ usagePriceOverrides: {} })))();
-    } catch {
-      return Promise.reject(new UsageReadError('scanFailed', 'Server settings could not be read.'));
+    } catch (error) {
+      console.error('usage settings could not be read', error);
+      return Promise.reject(
+        new UsageReadError('scanFailed', 'Server settings could not be read.', { cause: error }),
+      );
     }
     const key = JSON.stringify([
       input.timeZone,

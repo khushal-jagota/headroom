@@ -242,7 +242,8 @@ export class Runtime {
                   if (reference.scheme !== 'local' || typeof reference.name !== 'string')
                     throw new Error('credential');
                   reply(id, credentials.resolve({ scheme: 'local', name: reference.name }).secret);
-                } catch {
+                } catch (error) {
+                  console.warn('measure source credential unavailable', admission.run.id, error);
                   reply(id, null, failure('credential_unavailable'));
                 }
               } else if (raw.op === 'latest') {
@@ -260,7 +261,8 @@ export class Runtime {
                     throw new Error('output');
                   observations.push(scalar(raw));
                   reply(id, null);
-                } catch {
+                } catch (error) {
+                  console.warn('measure source output refused', admission.run.id, error);
                   reply(id, null, failure('invalid_output'));
                 }
               } else if (raw.op === 'record_dataset') {
@@ -288,11 +290,13 @@ export class Runtime {
                     })),
                   });
                   reply(id, null);
-                } catch {
+                } catch (error) {
+                  console.warn('measure source output refused', admission.run.id, error);
                   reply(id, null, failure('invalid_output'));
                 }
               } else throw new Error('operation');
-            } catch {
+            } catch (error) {
+              console.warn('measure source protocol refused', admission.run.id, error);
               finish(failure('malformed_protocol'));
             }
           }
@@ -310,7 +314,10 @@ export class Runtime {
             fatalHeap = true;
           stderrSuffix = diagnostic.slice(-128);
         });
-        process!.on('error', () => finish(failure('runtime_failure')));
+        process!.on('error', (error) => {
+          console.error('measure source process failed', admission.run.id, error);
+          finish(failure('runtime_failure'));
+        });
         process!.on('exit', () => {
           // Allow already-readable diagnostics one poll turn, without waiting
           // for EOF from a detached descendant that inherited the pipes.
@@ -322,7 +329,10 @@ export class Runtime {
             ),
           );
         });
-        channel.on('error', () => finish(failure('runtime_failure')));
+        channel.on('error', (error) => {
+          console.error('measure source channel failed', admission.run.id, error);
+          finish(failure('runtime_failure'));
+        });
         timer = setTimeout(
           () => finish(failure('budget_exhausted', { budget: 'wall_seconds' })),
           Math.max(0, (started + remaining - performance.now() / 1000) * 1000),
@@ -343,7 +353,8 @@ export class Runtime {
       );
       if (stopped) finish(failure('interrupted'));
       resultFailure = await complete;
-    } catch {
+    } catch (error) {
+      console.error('measure source run failed', admission.run.id, error);
       resultFailure = failure('runtime_failure');
     } finally {
       if (timer) clearTimeout(timer);

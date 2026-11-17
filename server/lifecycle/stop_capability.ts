@@ -119,8 +119,15 @@ export async function publish_stop_capability(
     await file.close();
     await rename(temporary, path);
   } catch (error) {
-    await file.close().catch(() => {});
-    await unlink(temporary).catch(() => {});
+    await file
+      .close()
+      .catch((cleanup: unknown) =>
+        console.warn('stop capability temporary close failed', temporary, cleanup),
+      );
+    await unlink(temporary).catch((cleanup: unknown) => {
+      if ((cleanup as NodeJS.ErrnoException).code !== 'ENOENT')
+        console.warn('stop capability temporary cleanup failed', temporary, cleanup);
+    });
     throw error;
   }
   const owned = await lstat(path);
