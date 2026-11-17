@@ -12,6 +12,8 @@ import type { DriverHost } from '../drivers/core/host.ts';
 import { drivers_of_factories } from '../drivers/testing/registry.ts';
 import { run_application_process } from '../lifecycle/application.ts';
 import * as codex_providers from '../drivers/codex/runtime/providers.ts';
+import * as claude_catalog_source from '../drivers/claude/runtime/catalog_source.ts';
+import * as hermes_catalog from '../drivers/hermes/runtime/catalog.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
@@ -92,9 +94,14 @@ function setup() {
 test('normal staged server serves the reconciled record through real publication without a fabricated provider', async () => {
   const f = setup();
   vi.stubEnv('PLAN_TEST_MODE', '0');
-  const production = vi.spyOn(codex_providers, 'create_codex_providers').mockImplementation(() => {
+  const refuse = (): never => {
     throw new Error('Bare startup must not construct a production provider');
-  });
+  };
+  const production = [
+    vi.spyOn(codex_providers, 'create_codex_providers').mockImplementation(refuse),
+    vi.spyOn(claude_catalog_source, 'create_claude_catalog_source').mockImplementation(refuse),
+    vi.spyOn(hermes_catalog, 'HermesModelCatalogOwner').mockImplementation(refuse),
+  ];
   const schema = JSON.parse(
     readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
   ) as ApplicationSchemaSeed;
@@ -180,7 +187,7 @@ test('normal staged server serves the reconciled record through real publication
       }),
     ]);
     expect(context?.conversationSystem).toBeUndefined();
-    expect(production).not.toHaveBeenCalled();
+    for (const provider of production) expect(provider).not.toHaveBeenCalled();
     expect(epochBeforePublication).not.toBe('old-runtime');
     expect(
       f.database.read((sql) =>

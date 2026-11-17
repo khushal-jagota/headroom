@@ -225,7 +225,8 @@ describe('registry build', () => {
           const instance = await failing.create(input, driver_host, signal);
           return {
             ...instance,
-            dispose: async () => {
+            // A synchronous throw must not keep the later instance from disposing.
+            dispose: () => {
               events.push('dispose codex');
               throw new Error('codex would not stop');
             },

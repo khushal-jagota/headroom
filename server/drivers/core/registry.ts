@@ -93,16 +93,22 @@ export function driver_registry_from_entries(
     },
     list: () => listed,
     async dispose(options) {
-      const results = await Promise.allSettled(
-        listed.flatMap((entry) =>
-          entry.kind === 'live'
-            ? [Promise.resolve().then(() => entry.instance.dispose(options))]
-            : [],
-        ),
-      );
+      // Start every dispose now, each in its own try: a throw or a reentrant call from one
+      // instance cannot keep another from starting.
+      const disposing: Promise<void>[] = [];
+      for (const entry of listed) {
+        if (entry.kind !== 'live') continue;
+        try {
+          disposing.push(entry.instance.dispose(options));
+        } catch (error) {
+          disposing.push(Promise.reject(error));
+        }
+      }
+      const results = await Promise.allSettled(disposing);
       const failures = results.flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : [],
       );
+      // `errors` holds each failed instance's own error, unwrapped, in registry order.
       if (failures.length) throw new AggregateError(failures, 'Backend instances did not dispose');
     },
   };

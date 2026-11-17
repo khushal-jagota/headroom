@@ -40,7 +40,7 @@ export function create_claude_catalog_source(children: OwnedOneShotChildren): Cl
       } catch (error) {
         if (error instanceof ModelCatalogCleanupFailed) failed_cleanup.add(error);
         if (error instanceof ProviderUnavailable)
-          throw new ClaudeModelCatalogUnavailable(error.message);
+          throw new ClaudeModelCatalogUnavailable(error.message, { cause: error });
         throw error;
       } finally {
         probes.delete(operation);

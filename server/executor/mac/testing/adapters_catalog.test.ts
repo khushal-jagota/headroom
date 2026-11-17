@@ -196,10 +196,27 @@ it('joins failing siblings once and retains all history across a failed native c
     vi.mocked(codex_catalog.probe_codex_model_catalog).mock.calls.length,
     vi.mocked(claude_catalog.probe_claude_model_catalog).mock.calls.length,
   ];
-  for (const key of [codex, claude])
-    expect((await runtime.backend_snapshots.snapshot(key, { refresh: true })).models_complete).toBe(
-      false,
-    );
+  const after_shutdown = await Promise.all(
+    [codex, claude].map((key) => runtime.backend_snapshots.snapshot(key, { refresh: true })),
+  );
+  // A stopped catalog source refuses, and the card reports that its catalog did not answer.
+  expect(
+    after_shutdown.map((card) => ({
+      complete: card.models_complete,
+      catalog: card.diagnoses.at(-1),
+    })),
+  ).toEqual([
+    {
+      complete: false,
+      catalog:
+        'Codex is installed but did not answer when asked what it can run, so no models are listed. Check that `codex app-server` starts from a terminal.',
+    },
+    {
+      complete: false,
+      catalog:
+        'Claude is installed but did not answer when asked what it can run, so no models are listed. Check that `claude` starts from a terminal.',
+    },
+  ]);
   expect([
     vi.mocked(codex_catalog.probe_codex_model_catalog).mock.calls.length,
     vi.mocked(claude_catalog.probe_claude_model_catalog).mock.calls.length,

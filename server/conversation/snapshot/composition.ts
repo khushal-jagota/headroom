@@ -23,11 +23,14 @@ import { BackendStateStore } from '../backend_state.ts';
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
 import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
 import { observe_shutdown } from '../shutdown.ts';
+import { ShutdownDeadlineExceeded } from '../../lifecycle/contracts.ts';
 import {
   model_catalog_cleanup_pending,
   remember_model_catalog_failure,
 } from '../backends/catalog_cleanup.ts';
 
+/** What a missed shutdown deadline reports as still owned. */
+const SHUTDOWN_PENDING = ['production backend resources'];
 type UsageEntry = { readonly label: string; readonly adapter?: BackendUsageAdapter };
 interface RuntimeBackends {
   readonly sources: readonly BackendCardSource[];
@@ -59,9 +62,9 @@ function registry_backends(registry: DriverRegistry): RuntimeBackends {
   };
 }
 /**
- * A built-in card that loads no driver runtime: no identity or catalog reader. Compositions
- * without a registry probe a recording environment that has no executable, so each card is the
- * driver's missing-binary card, as with null catalog and login sources.
+ * A built-in card that loads no driver runtime: no identity or catalog reader. It is only ever
+ * probed in a recording environment that has no executable (see create_backend_runtime), so
+ * each card is the driver's missing-binary card, as with null catalog and login sources.
  */
 function manifest_only_status(driver: BuiltInDriverFacts): DriverStatus {
   return {
@@ -106,9 +109,11 @@ export function create_backend_runtime(options: {
   readonly one_shot_children?: OwnedOneShotChildren;
 }): BackendHttpRuntime {
   const { database, now, registry } = options;
+  // Without a registry there is no live instance to read a card for: every card is the
+  // driver's missing-binary card, read from a recording environment, as in test mode.
   const environment: BackendProbeEnvironment =
     options.environment ??
-    (options.config.test_mode || backend_io_is_test()
+    (registry === undefined || options.config.test_mode || backend_io_is_test()
       ? new RecordingBackendProbeEnvironment()
       : new SubprocessBackendProbeEnvironment(require_children(options.one_shot_children)));
   const backends = registry === undefined ? built_in_backends() : registry_backends(registry);
@@ -159,6 +164,8 @@ export function create_backend_runtime(options: {
           const failures = results.filter((result) => result.status === 'rejected');
           for (const failure of failures)
             remember_model_catalog_failure(cleanup_history, failure.reason);
+          // Both AggregateErrors below hold the failures as they came: the registry's own
+          // AggregateError (one error per failed instance) and the environment's, unflattened.
           if (failures.some((failure) => model_catalog_cleanup_pending(failure.reason))) {
             throw new AggregateError(
               [...cleanup_history, ...failures.map((failure) => failure.reason)],
@@ -175,7 +182,8 @@ export function create_backend_runtime(options: {
       return observe_shutdown(
         shutdown_result ?? resource_join,
         options,
-        'Backend resources remain unfinished at the shutdown deadline.',
+        new ShutdownDeadlineExceeded(SHUTDOWN_PENDING).message,
+        SHUTDOWN_PENDING,
       );
     },
     settled() {
