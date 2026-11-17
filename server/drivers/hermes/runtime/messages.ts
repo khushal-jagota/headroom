@@ -6,6 +6,7 @@ import type { MessageContent, MessagePiece } from '../../../conversation/message
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
 import { MessageFileMissing } from '../../../conversation/record/message_files.ts';
 import { PromptWriteFailed } from '../../../conversation/backends/contracts.ts';
+import { error_text } from '../../../conversation/backends/failure_summary.ts';
 
 function file_error(error: unknown): boolean {
   return error instanceof MessageFileMissing || (error instanceof Error && 'code' in error);
@@ -31,7 +32,10 @@ export class HermesMessages {
           });
         } catch (error) {
           if (!file_error(error)) throw error;
-          throw new PromptWriteFailed(`${piece.stored_file_id} could not be read`);
+          throw new PromptWriteFailed(
+            `${piece.stored_file_id} could not be read: ${error_text(error)}`,
+            { cause: error },
+          );
         }
       } else if (piece instanceof MessageFile) {
         try {
@@ -45,7 +49,10 @@ export class HermesMessages {
           });
         } catch (error) {
           if (!(error instanceof MessageFileMissing)) throw error;
-          throw new PromptWriteFailed(`${piece.stored_file_id} could not be read`);
+          throw new PromptWriteFailed(
+            `${piece.stored_file_id} could not be read: ${error_text(error)}`,
+            { cause: error },
+          );
         }
       }
     }

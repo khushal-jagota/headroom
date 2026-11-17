@@ -232,7 +232,7 @@ export class CodexAppServerClient {
         await supervisor.cancel_unspawned();
       await this.cleanup(owned, supervisor, scratch, this.stop_options);
       if (this.process === owned) this.process = null;
-      throw new CodexChildWouldNotStart(error_text(error));
+      throw new CodexChildWouldNotStart(error_text(error), { cause: error });
     }
   }
   async local_child_identity(): Promise<LocalChildIdentity | null> {
@@ -525,7 +525,8 @@ export class CodexAppServerClient {
         /^[^/]*\/(\S+)/.exec(result.userAgent)?.[1],
       );
     } catch (error) {
-      if (error instanceof BackendCliIncompatible) throw new CodexChildWouldNotStart(error.message);
+      if (error instanceof BackendCliIncompatible)
+        throw new CodexChildWouldNotStart(error.message, { cause: error });
       throw error;
     }
   }

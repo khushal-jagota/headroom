@@ -560,7 +560,8 @@ export class HermesAcpLauncher {
         // Cleanup reports its own failure. Startup preserves its original failure.
       }
       const detail = error instanceof Error ? error.message : String(error);
-      throw new BackendSpawnFailed(detail);
+      const tail = this.standard_error_tail()?.trim();
+      throw new BackendSpawnFailed(tail ? `${detail}: ${tail}` : detail, { cause: error });
     }
   }
   private keep_error_line(line: string): void {
