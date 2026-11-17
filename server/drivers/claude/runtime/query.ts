@@ -12,6 +12,7 @@ import type {
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import { PromptWriteFailed } from '../../../conversation/backends/contracts.ts';
+import { error_text } from '../../../conversation/backends/failure_summary.ts';
 import {
   confirm_reported_cli_version,
   ensure_cli_compatible,
@@ -622,8 +623,11 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         native.interrupt({ cancelQueued: true }),
         CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS * 1000,
       );
-    } catch {
-      throw unconfirmed();
+    } catch (error) {
+      throw new PromptWriteFailed(
+        `claude did not confirm queued command cancellation: ${error_text(error)}`,
+        { cause: error },
+      );
     }
     // Only a receipt naming both lists proves what left the queue.
     if (

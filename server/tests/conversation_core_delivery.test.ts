@@ -36,6 +36,19 @@ import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';
 import type { ConversationCoreOptions } from '../conversation/runtime/contracts.ts';
+import { ConversationRecord } from '../conversation/record/contracts.ts';
+import { ChildProcesses } from '../lifecycle/owned_processes.ts';
+import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
+import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
+import { create_claude_backend_child_factory } from '../drivers/claude/runtime/adapter.ts';
+import type { ClaudeSdkClient } from '../drivers/claude/runtime/query_contracts.ts';
+import { create_codex_backend_child_factory } from '../drivers/codex/runtime/adapter.ts';
+import type { CodexClient } from '../drivers/codex/runtime/adapter.ts';
+import { CodexRequestRejected } from '../drivers/codex/runtime/client.ts';
+import { RememberedCodexLoginRejection } from '../drivers/codex/runtime/login.ts';
+import { create_hermes_backend_child_factory } from '../drivers/hermes/runtime/adapter.ts';
+import { HermesAcpLauncher } from '../drivers/hermes/runtime/client.ts';
+import type { HermesAcpClient } from '../drivers/hermes/runtime/client.ts';
 
 // Inventory #8: the provider reports news while its prompt receipt is still withheld.
 // The real scripted process and real record together prove the provider/core/store boundary.
@@ -554,4 +567,161 @@ test('the CLI floor check refuses a turn before child custody is written', async
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
+});
+
+// A live Manager's resume failed and nobody could see why. Each real adapter, with only its
+// native client faked, must hand the backend's own words to the record and to one log line.
+async function refused_resume(factory: BackendChildFactory) {
+  const f = setup({
+    core: {
+      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+    },
+  });
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await f.start();
+    const state = f.core.conversations.get('core')!;
+    state.record = new ConversationRecord({
+      ...state.record,
+      vendor_session_cursor: 'lost-session',
+    });
+    const fate = await f.send();
+    return {
+      fate,
+      refusals: f.store
+        .read_events_after('core', 0)
+        .filter((row) => row.kind === 'prompt_delivery_refused')
+        .map((row) => row.payload),
+      logged: logged.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith('conversation backend failed')),
+    };
+  } finally {
+    logged.mockRestore();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+}
+function expect_session_load_refusal(
+  observed: Awaited<ReturnType<typeof refused_resume>>,
+  ...texts: string[]
+): void {
+  expect(observed.fate).toEqual(
+    new PromptDeliveryRefused({ refusal_reason: PromptDeliveryRefusalReason.session_did_not_load }),
+  );
+  expect(observed.refusals).toHaveLength(1);
+  expect(observed.refusals[0]).toMatchObject({ refusal_reason: 'session_did_not_load' });
+  expect(observed.logged).toHaveLength(1);
+  expect(observed.logged[0]).toContain('conversation_id=core');
+  expect(observed.logged[0]).toContain('error_class=SessionLoadFailed');
+  for (const text of texts) {
+    expect((observed.refusals[0] as { refusal_detail: string }).refusal_detail).toContain(text);
+    expect(observed.logged[0]).toContain(text);
+  }
+}
+const unreachable = async (): Promise<never> => {
+  throw new Error('nothing runs after a failed resume');
+};
+
+test("a failed Claude resume records Claude's own error text", async () => {
+  const child_processes = new ChildProcesses();
+  const claude = create_claude_backend_child_factory(
+    { claude_executable: '/synthetic/claude' },
+    {
+      child_processes,
+      one_shot_children: new OneShotChildren(child_processes),
+      worker_supervision: {} as WorkerSupervisionRuntime,
+      client_factory: (options): ClaudeSdkClient => ({
+        async connect() {
+          options.stderr?.('session file is missing\n');
+          throw new Error('No conversation found with session ID: lost-session');
+        },
+        get_server_info: unreachable,
+        query: unreachable,
+        receive_messages: () => {
+          throw new Error('no stream after a failed resume');
+        },
+        watch_user_message() {},
+        forget_user_message() {},
+        wait_for_user_message_admission: unreachable,
+        user_message_uuids_for_result: () => new Set(),
+        user_message_is_settled: () => true,
+        wait_for_user_message_settlement: unreachable,
+        interrupt_and_cancel_queued: unreachable,
+        apply_reasoning_effort: unreachable,
+        async disconnect() {},
+      }),
+    },
+  );
+  // The CLI floor check would run the synthetic executable.
+  const factory: BackendChildFactory = (values) =>
+    Object.assign(claude(values), { confirm_cli_compatible: undefined });
+  expect_session_load_refusal(
+    await refused_resume(factory),
+    'No conversation found with session ID: lost-session',
+    'session file is missing',
+  );
+});
+
+test("a failed Codex resume records Codex's own error text", async () => {
+  const client: CodexClient = {
+    is_alive: true,
+    end_reason: null,
+    async start() {},
+    async stop() {},
+    async request(method) {
+      if (method === 'thread/resume')
+        throw new CodexRequestRejected(method, -32600, 'no rollout found for thread lost-session');
+      return {};
+    },
+    begin_request: unreachable,
+    finish_request: unreachable,
+    async notify() {},
+    async respond() {},
+    async respond_with_error() {},
+    standard_error_tail: () => 'ERROR codex_core: rollout file is missing\n',
+    standard_error_bytes_so_far: () => 0,
+    standard_error_since: () => null,
+    async settle_standard_error() {},
+  };
+  const factory = create_codex_backend_child_factory(
+    { argv: ['/synthetic/codex', 'app-server'] },
+    {
+      child_processes: new ChildProcesses(),
+      remembered_login_rejection: new RememberedCodexLoginRejection(),
+      worker_supervision: {} as WorkerSupervisionRuntime,
+      client_factory: () => client,
+    },
+  );
+  expect_session_load_refusal(
+    await refused_resume(factory),
+    'no rollout found for thread lost-session',
+    'rollout file is missing',
+  );
+});
+
+test("a failed Hermes resume records Hermes's own error text", async () => {
+  const client = {
+    signal: new AbortController().signal,
+    async request(method: string) {
+      if (method === 'session/load') throw new Error('Session lost-session not found');
+      return {};
+    },
+    close() {},
+  };
+  vi.spyOn(HermesAcpLauncher.prototype, 'start').mockResolvedValue(
+    client as unknown as HermesAcpClient,
+  );
+  vi.spyOn(HermesAcpLauncher.prototype, 'stop').mockResolvedValue();
+  vi.spyOn(HermesAcpLauncher.prototype, 'standard_error_tail').mockReturnValue(
+    'KeyError: lost-session\n',
+  );
+  const factory = create_hermes_backend_child_factory(
+    { argv: ['/synthetic/hermes'], environment_overrides: [] },
+    { child_processes: new ChildProcesses(), worker_supervision: {} as WorkerSupervisionRuntime },
+  );
+  expect_session_load_refusal(
+    await refused_resume(factory),
+    'Session lost-session not found',
+    'KeyError: lost-session',
+  );
 });

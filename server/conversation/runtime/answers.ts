@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { PermissionAnswerWriteFailed, UserInputAnswerWriteFailed } from '../backends/contracts.ts';
 import type { BackendChild, TurnToken } from '../backends/contracts.ts';
+import { log_backend_failure } from '../backends/failure_summary.ts';
 import { AnswerFate } from '../contracts.ts';
 import { PermissionAnsweredEventPayload, UserInputAnsweredEventPayload } from '../events.ts';
 import type { UserInputAnswer } from '../events.ts';
@@ -70,6 +71,8 @@ async function answer_request(
     fate = await host.native_operation(() => pending.write(attempt.identity, token));
   } catch (error) {
     if (!pending.write_failed(error)) throw error;
+    // The request returns to pending, and its answer row has no text, so the log keeps it.
+    log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
     fate = AnswerFate.refused;
   }
   return state.lock.run(async () => {

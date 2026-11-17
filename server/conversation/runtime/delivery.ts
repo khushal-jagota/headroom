@@ -15,7 +15,7 @@ import { PromptDeliveryRefusalReason as R, ResolvedConversationStart } from '../
 import { PromptDiscardedEventPayload } from '../events.ts';
 import { one_prompt_from } from '../logic/held_line.ts';
 import { prefix_message_content_text, text_message_content } from '../message_content.ts';
-import { normalized_failure_summary } from '../logic/backend_events.ts';
+import { log_backend_failure } from '../backends/failure_summary.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
@@ -54,7 +54,10 @@ async function ensure_child(
   message: Message,
 ): Promise<BackendChild> {
   await host.ensure_local_custody(state);
-  if (state.child_is_quarantined) throw new BackendSpawnFailed(state.record.conversation_id);
+  if (state.child_is_quarantined)
+    throw new BackendSpawnFailed(
+      'The agent stopped after an earlier failure and was not replaced yet.',
+    );
   if (state.child !== null) return state.child;
   const previous = state.record.resolved_start();
   const resolved = new ResolvedConversationStart({
@@ -235,20 +238,8 @@ export async function deliver_prompt(
   try {
     child = await ensure_child(host, state, reservation, first);
   } catch (error) {
-    if (error instanceof BackendSpawnFailed) {
-      console.error('Conversation backend did not start', {
-        conversation_id: state.record.conversation_id,
-        backend_key: state.record.backend_key,
-        reason: normalized_failure_summary(error.message),
-      });
-      return result({
-        refusal_reason: R.backend_did_not_start,
-        refusal_detail: error.message,
-        record_refusal: true,
-      });
-    }
-    if (error instanceof SessionLoadFailed)
-      return result({ refusal_reason: R.session_did_not_load });
+    if (error instanceof BackendSpawnFailed || error instanceof SessionLoadFailed)
+      return refusal_or_throw(state, error);
     throw error;
   }
   const decisions = await decide();
@@ -364,9 +355,12 @@ export async function deliver_prompt(
     }
     return await write(child);
   } catch (error) {
-    if (!(error instanceof NeedsRebind)) return refusal_or_throw(error);
+    if (!(error instanceof NeedsRebind)) return refusal_or_throw(state, error);
     if (reservation.automatic_compaction)
       return result({ suppression_reason: 'automatic_compaction_child_requires_rebind' });
+    // A failed child is a backend failure even when a fresh child takes the prompt.
+    if (error.failed_child_recovery)
+      log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
     reservation.prompt_write_attempted = false;
     host.start_admission.bind_source(reservation.token, null);
     rebound = true;
@@ -376,12 +370,13 @@ export async function deliver_prompt(
       state.child_is_quarantined = true;
     });
     if (!(await host.retire_child_for_rebind(state, child)))
-      return result({ refusal_reason: R.write_to_backend_failed });
+      return result({ refusal_reason: R.write_to_backend_failed, refusal_detail: error.message });
     const ready = await state.lock.run(() => {
       owned(host, state, reservation);
       return state.child === null && !state.child_is_quarantined;
     });
-    if (!ready) return result({ refusal_reason: R.write_to_backend_failed });
+    if (!ready)
+      return result({ refusal_reason: R.write_to_backend_failed, refusal_detail: error.message });
     try {
       child = await ensure_child(host, state, reservation, first);
       owned(host, state, reservation);
@@ -408,11 +403,14 @@ export async function deliver_prompt(
       if (next instanceof PromptWriteFailed) throw next;
       await host.discard_child(state, child);
       if (next instanceof NeedsRebind)
-        return result({
-          refusal_reason: R.write_to_backend_failed,
-          record_refusal: error.failed_child_recovery,
-        });
-      const attempt = refusal_or_throw(next);
+        return backend_refusal(
+          state,
+          R.write_to_backend_failed,
+          next,
+          error.failed_child_recovery,
+          `${error.message}; the fresh agent also needed a restart: ${next.message}`,
+        );
+      const attempt = refusal_or_throw(state, next);
       return { ...attempt, record_refusal: attempt.record_refusal || error.failed_child_recovery };
     } finally {
       if (rebound && !same_turn(state.reserved_turn?.token ?? null, reservation.token)) {
@@ -422,22 +420,32 @@ export async function deliver_prompt(
     }
   }
 }
-function refusal_or_throw(error: unknown): DeliveryAttempt {
+/** A backend refusal keeps the backend's own text as its detail, and is logged once here. */
+function backend_refusal(
+  state: ConversationState,
+  refusal_reason: NonNullable<DeliveryAttempt['refusal_reason']>,
+  error: Error,
+  record_refusal: boolean,
+  refusal_detail: string = error.message,
+): DeliveryAttempt {
+  log_backend_failure(
+    state.record.conversation_id,
+    state.record.backend_key,
+    error,
+    refusal_detail,
+  );
+  return result({ refusal_reason, refusal_detail, record_refusal });
+}
+function refusal_or_throw(state: ConversationState, error: unknown): DeliveryAttempt {
+  // A direct send's caller decides whether to record this refusal. The log keeps its text.
   if (error instanceof PromptWriteRefused)
-    return result({ refusal_reason: R.write_to_backend_failed, refusal_detail: error.message });
+    return backend_refusal(state, R.write_to_backend_failed, error, false);
   if (error instanceof BackendPromptRejected)
-    return result({
-      refusal_reason: R.backend_rejected_prompt,
-      refusal_detail: error.message,
-      record_refusal: true,
-    });
+    return backend_refusal(state, R.backend_rejected_prompt, error, true);
   if (error instanceof BackendSpawnFailed)
-    return result({
-      refusal_reason: R.backend_did_not_start,
-      refusal_detail: error.message,
-      record_refusal: true,
-    });
-  if (error instanceof SessionLoadFailed) return result({ refusal_reason: R.session_did_not_load });
+    return backend_refusal(state, R.backend_did_not_start, error, true);
+  if (error instanceof SessionLoadFailed)
+    return backend_refusal(state, R.session_did_not_load, error, true);
   throw error;
 }
 

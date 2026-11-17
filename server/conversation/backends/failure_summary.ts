@@ -28,3 +28,16 @@ export function normalized_failure_summary(
   const points = Array.from(text);
   return points.length > 240 ? points.slice(0, 239).join('').trimEnd() + '…' : text;
 }
+/** One log line for one backend failure, with the backend's own text. The record keeps the same text. */
+export function log_backend_failure(
+  conversation_id: string,
+  backend_key: string,
+  error: unknown,
+  text: string = error_text(error),
+): void {
+  const error_class = error instanceof Error ? error.constructor.name : typeof error;
+  console.error(
+    `conversation backend failed conversation_id=${conversation_id} backend=${backend_key} ` +
+      `error_class=${error_class} error=${JSON.stringify(text)}`,
+  );
+}

@@ -55,6 +55,7 @@ import {
   INITIALIZE_CAPABILITIES,
   CANCEL_SETTLING_TIMEOUT_SECONDS,
   ASK_WITHDRAWAL_TIMEOUT_SECONDS,
+  STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
 } from './adapter_configuration.ts';
 import { TurnInFlight, same_turn } from './turn.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
@@ -241,7 +242,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         Object.fromEntries(this.launch.environment_overrides ?? []),
       );
     } catch (error) {
-      if (error instanceof BackendCliIncompatible) throw new B.BackendSpawnFailed(text(error));
+      if (error instanceof BackendCliIncompatible)
+        throw new B.BackendSpawnFailed(text(error), { cause: error });
       throw error;
     }
   }
@@ -269,7 +271,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         custody_reporter: this.sink.record_local_child_custody?.bind(this.sink),
       });
     } catch (error) {
-      if (error instanceof CodexChildWouldNotStart) throw new B.BackendSpawnFailed(text(error));
+      if (error instanceof CodexChildWouldNotStart)
+        throw new B.BackendSpawnFailed(text(error), { cause: error });
       throw error;
     }
     try {
@@ -280,7 +283,10 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         });
         await this.client.notify('initialized');
       } catch (error) {
-        if (error instanceof CodexAppServerError) throw new B.BackendSpawnFailed(text(error));
+        if (error instanceof CodexAppServerError)
+          throw new B.BackendSpawnFailed(await this.with_standard_error(text(error)), {
+            cause: error,
+          });
         throw error;
       }
       const parameters = wire({
@@ -304,10 +310,14 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         } catch (error) {
           throw new B.SessionLoadFailed(
             `codex answered ${method} with something this cannot read: ${text(error)}`,
+            { cause: error },
           );
         }
       } catch (error) {
-        if (error instanceof CodexAppServerError) throw new B.SessionLoadFailed(text(error));
+        if (error instanceof CodexAppServerError)
+          throw new B.SessionLoadFailed(await this.with_standard_error(text(error)), {
+            cause: error,
+          });
         throw error;
       }
       if (cursor !== null && response.thread.id !== cursor)
@@ -379,7 +389,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       } catch (error) {
         this.turn = null;
         if (error instanceof ComposedMessageDoesNotContainSenderContent)
-          throw new B.PromptWriteFailed(text(error));
+          throw new B.PromptWriteFailed(text(error), { cause: error });
         throw error;
       }
     }
@@ -419,7 +429,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     options: { sender_content?: MessageContent | null; sender_label: string },
   ): Promise<B.BackendSteerOutcome> {
     const turn = this.turn;
-    const refused = (refusal_reason: R) => new B.BackendSteerRefused({ refusal_reason });
+    const refused = (refusal_reason: R, refusal_detail: string | null = null) =>
+      new B.BackendSteerRefused({ refusal_reason, refusal_detail });
     if (turn === null) return refused(R.no_running_turn_to_steer_into);
     if (!same_turn(turn.token, token)) return refused(R.running_turn_changed_before_steer);
     if (turn.kind !== 'ordinary') return refused(R.running_turn_cannot_accept_steer);
@@ -438,7 +449,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     try {
       thread = this.bound_thread();
     } catch (error) {
-      if (error instanceof B.PromptWriteFailed) return refused(R.write_to_backend_failed);
+      if (error instanceof B.PromptWriteFailed)
+        return refused(R.write_to_backend_failed, text(error));
       throw error;
     }
     let parameters: Record<string, unknown>;
@@ -465,11 +477,12 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         poison_wire_on_timeout: false,
       });
     } catch (error) {
-      if (error instanceof CodexRequestRejected) return refused(steer_rejection_reason(error));
+      if (error instanceof CodexRequestRejected)
+        return refused(steer_rejection_reason(error), text(error));
       if (error instanceof CodexWireFailed)
         return error.request_may_have_been_written
           ? new B.BackendSteerUncertain()
-          : refused(R.write_to_backend_failed);
+          : refused(R.write_to_backend_failed, text(error));
       throw error;
     }
     try {
@@ -497,7 +510,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     try {
       await this.client.request('turn/interrupt', { threadId: this.bound_thread(), turnId: id });
     } catch (error) {
-      if (error instanceof CodexAppServerError) throw new B.PromptWriteFailed(text(error));
+      if (error instanceof CodexAppServerError)
+        throw new B.PromptWriteFailed(text(error), { cause: error });
       throw error;
     }
     if (
@@ -532,7 +546,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     } catch (error) {
       turn.parked_asks.set(ask_id, parked);
       if (error instanceof CodexAppServerError)
-        throw new B.PermissionAnswerWriteFailed(text(error));
+        throw new B.PermissionAnswerWriteFailed(text(error), { cause: error });
       throw error;
     }
     return AnswerFate.applied;
@@ -561,7 +575,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       await this.client.respond(parked.request_id, answer);
     } catch (error) {
       turn.parked_user_inputs.set(request_id, parked);
-      if (error instanceof CodexAppServerError) throw new B.UserInputAnswerWriteFailed(text(error));
+      if (error instanceof CodexAppServerError)
+        throw new B.UserInputAnswerWriteFailed(text(error), { cause: error });
       throw error;
     }
     return AnswerFate.applied;
@@ -677,7 +692,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     try {
       return this.message_files.path_of(this.resolved_start.conversation_id, id);
     } catch (error) {
-      if (error instanceof MessageFileMissing) throw new B.PromptWriteFailed(`${id} is not there`);
+      if (error instanceof MessageFileMissing)
+        throw new B.PromptWriteFailed(`${id} is not there: ${text(error)}`, { cause: error });
       throw error;
     }
   }
@@ -694,10 +710,14 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     } catch (error) {
       if (error instanceof CodexRequestRejected) {
         if (turn.pending_notifications.length || turn.pending_requests.length)
-          throw new B.PromptWriteFailed('codex rejected start after provisional activity');
-        throw new B.BackendPromptRejected(text(error));
+          throw new B.PromptWriteFailed(
+            `codex rejected start after provisional activity: ${text(error)}`,
+            { cause: error },
+          );
+        throw new B.BackendPromptRejected(text(error), { cause: error });
       }
-      if (error instanceof CodexAppServerError) throw new B.PromptWriteFailed(text(error));
+      if (error instanceof CodexAppServerError)
+        throw new B.PromptWriteFailed(text(error), { cause: error });
       throw error;
     }
     let id: string;
@@ -705,7 +725,10 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       id = P.TurnStartResponse.read(result).turn.id;
     } catch (error) {
       if (error instanceof P.CodexProtocolError)
-        throw new B.PromptWriteFailed('codex returned an invalid turn/start response');
+        throw new B.PromptWriteFailed(
+          `codex returned an invalid turn/start response: ${text(error)}`,
+          { cause: error },
+        );
       throw error;
     }
     turn.turn_id = id;
@@ -745,7 +768,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     try {
       answer = await this.client.begin_request(method, parameters);
     } catch (error) {
-      if (error instanceof CodexAppServerError) throw new B.PromptWriteFailed(text(error));
+      if (error instanceof CodexAppServerError)
+        throw new B.PromptWriteFailed(text(error), { cause: error });
       throw error;
     }
     const accepted = this.client.finish_request(method, answer);
@@ -783,7 +807,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       return id;
     } catch (error) {
       if (error instanceof CodexAppServerError || error instanceof P.CodexProtocolError)
-        throw new B.PromptWriteFailed(text(error));
+        throw new B.PromptWriteFailed(text(error), { cause: error });
       throw error;
     }
   }
@@ -820,13 +844,20 @@ export class CodexAppServerBackendChild implements B.BackendChild {
           : 'No goal was set.';
     } catch (error) {
       if (error instanceof CodexAppServerError || error instanceof P.CodexProtocolError)
-        throw new B.PromptWriteFailed(text(error));
+        throw new B.PromptWriteFailed(text(error), { cause: error });
       throw error;
     }
     await this.sink.report(turn.token, new B.CommandReplyReported({ reply_text: message }));
     if (this.turn === turn) this.turn = null;
     await this.sink.report(turn.token, new B.TurnEnded({ ending: E.completed }));
     turn.ended.resolve();
+  }
+  /** Codex states a startup failure on standard error, so the failure keeps its tail. */
+  private async with_standard_error(why: string): Promise<string> {
+    await this.client.settle_standard_error();
+    const tail = this.client.standard_error_tail()?.trim();
+    if (!tail) return why;
+    return `${why}: ${Array.from(tail).slice(-STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS).join('')}`;
   }
   private bound_thread(): string {
     if (this.thread_id === null || !this.client.is_alive)

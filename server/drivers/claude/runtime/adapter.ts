@@ -124,6 +124,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private readonly client_settlements = new Set<Promise<void>>();
   private reader_cancel: AbortController | null = null;
   private wire_broken = false;
+  private wire_failure: { why: string; cause: unknown } | null = null;
   private readonly standard_error: string[] = [];
   private available_command_names = new Set<string>();
   private readonly events: ClaudeEvents;
@@ -148,7 +149,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       });
     } catch (error) {
       if (error instanceof BackendCliIncompatible)
-        throw new B.BackendSpawnFailed(error_text(error));
+        throw new B.BackendSpawnFailed(error_text(error), { cause: error });
       throw error;
     }
   }
@@ -170,22 +171,24 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     try {
       await client.connect();
     } catch (error) {
+      const why = this.with_standard_error(error_text(error));
+      this.break_wire(why, error);
       if (
         error instanceof Error &&
         'errorClass' in error &&
         error.errorClass === 'initialize_timeout'
       )
-        throw new B.ClaudeInitializationTimeout(error_text(error), { cause: error });
+        throw new B.ClaudeInitializationTimeout(why, { cause: error });
       if (
         error instanceof BackendCliIncompatible ||
         (error instanceof Error && error.name === 'CLINotFoundError')
       )
-        throw new B.BackendSpawnFailed(error_text(error));
-      const why = this.with_standard_error(error_text(error));
-      if (cursor !== null) throw new B.SessionLoadFailed(why);
-      throw new B.BackendSpawnFailed(why);
+        throw new B.BackendSpawnFailed(error_text(error), { cause: error });
+      if (cursor !== null) throw new B.SessionLoadFailed(why, { cause: error });
+      throw new B.BackendSpawnFailed(why, { cause: error });
     }
     this.wire_broken = false;
+    this.wire_failure = null;
     this.session_id = cursor || minted;
     this.resume_confirmed = cursor === null;
     this.session_model = resolved_start.model;
@@ -244,10 +247,20 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     return this.client;
   }
   private require_live_wire(): void {
-    if (this.wire_broken)
-      throw new B.NeedsRebind("this child's wire has already failed", {
-        failed_child_recovery: true,
-      });
+    if (this.wire_broken) {
+      const failure = this.wire_failure;
+      throw new B.NeedsRebind(
+        failure === null
+          ? "this child's wire has already failed"
+          : `this child's wire has already failed: ${failure.why}`,
+        { failed_child_recovery: true, cause: failure?.cause },
+      );
+    }
+  }
+  /** Keep the first reason the wire failed, so a later refusal can say why. */
+  private break_wire(why: string, cause: unknown = null): void {
+    this.wire_broken = true;
+    this.wire_failure ??= { why, cause };
   }
   /** Return the effort to apply to the live session, or null when it already carries it. */
   private require_carried_values(options: PromptOptions): EffortLevel | null {
@@ -276,8 +289,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     try {
       await client.apply_reasoning_effort(reasoning_effort);
     } catch (error) {
-      this.wire_broken = true;
-      throw new B.PromptWriteFailed(error_text(error));
+      this.break_wire(error_text(error), error);
+      throw new B.PromptWriteFailed(error_text(error), { cause: error });
     }
     this.session_reasoning_effort = reasoning_effort;
   }
@@ -306,8 +319,11 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
               piece.stored_file_id,
             ),
           ).toString('base64');
-        } catch {
-          throw new B.PromptWriteFailed(`${piece.stored_file_id} could not be read`);
+        } catch (error) {
+          throw new B.PromptWriteFailed(
+            `${piece.stored_file_id} could not be read: ${error_text(error)}`,
+            { cause: error },
+          );
         }
         blocks.push({
           type: 'image',
@@ -325,8 +341,11 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
             this.resolved_start.conversation_id,
             piece.stored_file_id,
           );
-        } catch {
-          throw new B.PromptWriteFailed(`${piece.stored_file_id} could not be read`);
+        } catch (error) {
+          throw new B.PromptWriteFailed(
+            `${piece.stored_file_id} could not be read: ${error_text(error)}`,
+            { cause: error },
+          );
         }
         blocks.push({
           type: 'text',
@@ -367,7 +386,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
             );
     } catch (error) {
       if (error instanceof ComposedMessageDoesNotContainSenderContent)
-        throw new B.PromptWriteFailed(error.message);
+        throw new B.PromptWriteFailed(error.message, { cause: error });
       throw error;
     }
     if (automatic || native_command) {
@@ -377,8 +396,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       try {
         await client.query(asked);
       } catch (error) {
-        this.wire_broken = true;
-        throw new B.PromptWriteFailed(error_text(error));
+        this.break_wire(error_text(error), error);
+        throw new B.PromptWriteFailed(error_text(error), { cause: error });
       }
       return new B.BackendPromptAccepted({ composed_content_delivered: false });
     }
@@ -393,16 +412,18 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       await client.query(asked);
     } catch (error) {
       failure = error;
-      this.wire_broken = true;
+      this.break_wire(error_text(error), error);
     }
     const admission = await client.wait_for_user_message_admission(uuid);
+    const reason = failure === null ? '' : `: ${error_text(failure)}`;
+    const cause = failure === null ? undefined : { cause: failure };
     if (admission === false) {
       if (this.turn === turn) this.turn = null;
-      throw new B.BackendPromptRejected('claude refused the user message');
+      throw new B.BackendPromptRejected(`claude refused the user message${reason}`, cause);
     }
     if (admission !== true) {
-      this.wire_broken = true;
-      throw new B.PromptWriteFailed('claude did not acknowledge the user message');
+      this.break_wire('claude did not acknowledge the user message');
+      throw new B.PromptWriteFailed(`claude did not acknowledge the user message${reason}`, cause);
     }
     if (failure !== null) await this.fail_running_turn(error_text(failure));
     return new B.BackendPromptAccepted({ composed_content_delivered: true });
@@ -414,7 +435,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   ): Promise<B.BackendSteerOutcome> {
     const sender_content = options.sender_content ?? content;
     const turn = this.turn;
-    const refused = (reason: R) => new B.BackendSteerRefused({ refusal_reason: reason });
+    const refused = (reason: R, detail: string | null = null) =>
+      new B.BackendSteerRefused({ refusal_reason: reason, refusal_detail: detail });
     if (!turn || !same_turn(turn.token, turn_token))
       return refused(R.no_running_turn_to_steer_into);
     const uuid = randomUUID();
@@ -435,7 +457,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
         error instanceof B.NeedsRebind ||
         error instanceof B.PromptWriteFailed
       )
-        return refused(R.write_to_backend_failed);
+        return refused(R.write_to_backend_failed, error.message);
       throw error;
     }
     if (this.turn !== turn || turn.cancel_requested)
@@ -443,7 +465,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     try {
       this.require_live_wire();
     } catch (error) {
-      if (error instanceof B.NeedsRebind) return refused(R.write_to_backend_failed);
+      if (error instanceof B.NeedsRebind) return refused(R.write_to_backend_failed, error.message);
       throw error;
     }
     client.watch_user_message(uuid);
@@ -480,11 +502,11 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     try {
       [, still_queued] = await client.interrupt_and_cancel_queued();
     } catch (error) {
-      this.wire_broken = true;
-      throw new B.PromptWriteFailed(error_text(error));
+      this.break_wire(error_text(error), error);
+      throw new B.PromptWriteFailed(error_text(error), { cause: error });
     }
     if (still_queued.size) {
-      this.wire_broken = true;
+      this.break_wire('claude did not confirm cancellation of every queued command');
       throw new B.PromptWriteFailed('claude did not confirm cancellation of every queued command');
     }
     turn.owned_steer_uuids.clear();
@@ -495,11 +517,10 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
         CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS * 1000,
       );
       if (!ended.completed) throw new Error('timeout');
-    } catch {
-      this.wire_broken = true;
-      throw new B.PromptWriteFailed(
-        'claude cancelled its queue but did not settle the active command',
-      );
+    } catch (error) {
+      const why = 'claude cancelled its queue but did not settle the active command';
+      this.break_wire(why, error);
+      throw new B.PromptWriteFailed(why, { cause: error });
     }
   }
   async answer_permission_ask(ask_id: string, option_id: string): Promise<AnswerFate> {
@@ -538,7 +559,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       : observe_shutdown(this.stopping, options, 'Claude child cleanup remains unconfirmed');
   }
   private async stop_owned(options?: StopOptions): Promise<void> {
-    this.wire_broken = true;
+    this.break_wire('this child is being shut down');
     this.events.forget_background_tasks();
     const turn = this.turn;
     this.turn = null;
@@ -629,15 +650,17 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       }
     } catch (error) {
       if (cancel.aborted) return;
-      this.wire_broken = true;
-      await this.fail_running_turn(this.with_standard_error(error_text(error)));
+      const why = this.with_standard_error(error_text(error));
+      this.break_wire(why, error);
+      await this.fail_running_turn(why);
       this.events.forget_background_tasks();
       await this.sink.report(null, new B.BackendStreamEnded());
       return;
     }
     if (cancel.aborted) return;
-    this.wire_broken = true;
-    await this.fail_running_turn(this.with_standard_error("the backend's message stream ended"));
+    const why = this.with_standard_error("the backend's message stream ended");
+    this.break_wire(why);
+    await this.fail_running_turn(why);
     this.events.forget_background_tasks();
     await this.sink.report(null, new B.BackendStreamEnded());
   }
@@ -666,10 +689,9 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       return;
     }
     if (!this.resume_confirmed) {
-      this.wire_broken = true;
-      await this.fail_running_turn(
-        `claude answered under session ${JSON.stringify(session_id)} instead of the session ${JSON.stringify(this.session_id)} this conversation asked to resume, so its memory of this conversation is not there`,
-      );
+      const why = `claude answered under session ${JSON.stringify(session_id)} instead of the session ${JSON.stringify(this.session_id)} this conversation asked to resume, so its memory of this conversation is not there`;
+      this.break_wire(why);
+      await this.fail_running_turn(why);
       return;
     }
     this.session_id = session_id;
