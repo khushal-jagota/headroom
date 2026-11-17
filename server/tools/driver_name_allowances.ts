@@ -33,24 +33,6 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
     until: 'Executor',
   },
   {
-    path: 'server/conversation/tool_detail.ts',
-    driver_kind: 'claude',
-    reason: 'Claude-only tool call detail; it becomes a driver hook.',
-    until: 'Core',
-  },
-  {
-    path: 'server/conversation/views/data/storage.ts',
-    driver_kind: 'hermes',
-    reason: 'The hermes default for a view without a key; it becomes null.',
-    until: 'Core',
-  },
-  {
-    path: 'server/conversation/views/logic/bodies.ts',
-    driver_kind: 'hermes',
-    reason: 'The hermes default for a view without a key; it becomes null.',
-    until: 'Core',
-  },
-  {
     path: 'server/core/config.ts',
     driver_kind: 'claude',
     reason: 'provider_launch_settings, read only by executor/mac/adapters.ts.',
@@ -132,8 +114,9 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
   {
     path: 'server/executor/vps_remote_child.ts',
     driver_kind: 'claude',
-    reason: "Claude's start-fixed selection rule; the core's selection plan replaces it.",
-    until: 'Core',
+    reason:
+      'The protocol-26 Python Mac starts Claude with a fixed model and effort (claude_agent_sdk.py:1578-1588); the VPS refuses before mailbox placement.',
+    until: 'Executor',
   },
   {
     path: 'server/tools/smoke/codex_peer.ts',
