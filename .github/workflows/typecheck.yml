@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  mypy:
-    name: mypy (merged tree)
+  typecheck:
+    name: typecheck (merged tree)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -19,9 +19,9 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          python-version: '3.12'
+          node-version: '22'
       - name: Record merged source
         env:
           PANELS_MERGED_SHA: ${{ github.sha }}
@@ -34,23 +34,13 @@ jobs:
           printf 'Merged tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
           printf 'Event base revision: %s\n' "$PANELS_BASE_SHA"
           printf 'Event head revision: %s\n' "$PANELS_HEAD_SHA"
-      - name: Check native iOS compatibility review
-        run: python3 scripts/check_ios_compatibility.py
-      - name: Install pinned Python environment
+      - name: Install dependencies
         run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install -r requirements.txt
-          .venv/bin/python -m pip install --editable .
-      - name: Check executor protocol versions
-        env:
-          PANELS_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: .venv/bin/python scripts/check_executor_protocol.py --base "$PANELS_BASE_SHA"
-      - name: Check complete merged tree
-        run: .venv/bin/mypy
-      - name: Check generated contracts
-        run: |
-          .venv/bin/python scripts/generate_conversation_view_contracts.py --check
-          .venv/bin/python scripts/generate_goal_browser_contracts.py --check
-          .venv/bin/python scripts/generate_navigation_browser_contracts.py --check
-          .venv/bin/python scripts/generate_resource_browser_contracts.py --check
-          .venv/bin/python scripts/generate_ticket_workspace_contracts.py --check
+          npm ci --prefix server
+          npm ci --prefix web
+      - name: Check server types
+        run: npm --prefix server run check
+      - name: Check browser app types
+        run: npm --prefix web run check
+      - name: Check script types
+        run: node server/node_modules/typescript/bin/tsc --noEmit -p scripts/tsconfig.json

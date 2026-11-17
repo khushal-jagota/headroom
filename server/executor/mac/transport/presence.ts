@@ -28,7 +28,7 @@ import {
 } from '../configuration.ts';
 import { TICKET_ID_PATTERN } from '../../../ticket_workspaces/contracts.ts';
 import type { MacHttpClient } from './http.ts';
-import { failure_name } from './errors.ts';
+import { failure_detail } from '../failure_detail.ts';
 import { ConnectionDiagnostics } from './diagnostics.ts';
 
 const WORKSPACE_CLEANUP_INTERVAL_SECONDS = 600;
@@ -187,7 +187,7 @@ export class MacLeaseLoop {
     try {
       cursor = await journal.poll_cursor();
     } catch (error) {
-      warn(`Command cursor unavailable: ${failure_name(error)}`);
+      warn(`Command cursor unavailable: ${failure_detail(error)}`);
     }
     this.cancellation.signal.throwIfAborted();
     let reply;
@@ -195,7 +195,7 @@ export class MacLeaseLoop {
       reply = await client.lease(this.request(), this.cancellation.signal);
     } catch (error) {
       this.cancellation.signal.throwIfAborted();
-      presence.failed(failure_name(error));
+      presence.failed(failure_detail(error));
       this.diagnostics.report(error, 'lease');
       return true;
     }
@@ -217,7 +217,7 @@ export class MacLeaseLoop {
     try {
       if (cursor !== null) await journal.lower_poll_cursor(reply.mailbox_high_sequence, cursor);
     } catch (error) {
-      warn(`Lease cursor update failed: ${failure_name(error)}`);
+      warn(`Lease cursor update failed: ${failure_detail(error)}`);
     }
     return true;
   }
@@ -272,7 +272,7 @@ export class MacLeaseLoop {
       this.next_workspace_cleanup = performance.now() / 1000 + WORKSPACE_CLEANUP_INTERVAL_SECONDS;
     } catch (error) {
       if (!(signal.aborted && is_shutdown_business_cancellation(error)))
-        warn(`Ticket workspace cleanup failed: ${failure_name(error)}`);
+        warn(`Ticket workspace cleanup failed: ${failure_detail(error)}`);
     }
   }
   start(): void {

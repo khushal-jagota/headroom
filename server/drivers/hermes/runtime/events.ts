@@ -242,7 +242,11 @@ export class HermesEvents {
     this.turn = turn;
     return turn;
   }
-  async report_ending(turn: HermesTurn, standard_error_tail: () => string | null): Promise<void> {
+  async report_ending(
+    turn: HermesTurn,
+    standard_error_tail: () => string | null,
+    wire_ended: () => boolean,
+  ): Promise<void> {
     let ending: ConversationTurnEnding = ConversationTurnEnding.completed;
     let error_summary: string | null = null;
     let response: PromptResponse | null = null;
@@ -283,6 +287,7 @@ export class HermesEvents {
         error_summary,
         standard_error_tail:
           ending === ConversationTurnEnding.failed ? standard_error_tail() : null,
+        child_disposition: wire_ended() ? 'broken' : 'reusable',
       }),
     );
   }

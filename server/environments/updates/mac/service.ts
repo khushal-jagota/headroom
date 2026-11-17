@@ -263,7 +263,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       }
       throw error.cause;
     }
-    const { manifest, python, node, entrypoint, native_linux } = inspected;
+    const { manifest, node, entrypoint, native_linux } = inspected;
     const linux = this.platform === 'linux';
     const native = linux
       ? native_linux?.version === 2 &&
@@ -278,7 +278,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       manifest.platform !== (linux ? 'linux' : 'darwin') ||
       manifest.architecture !== (linux ? 'x86_64' : 'arm64') ||
       (linux && manifest.role !== 'executor') ||
-      !(python || native)
+      !native
     )
       throw new UpdateConflict('The Mac runtime does not match its source and platform.');
   }
@@ -293,7 +293,8 @@ export class MacUpdateService implements MacUpdateServiceContract {
     try {
       const attempt = parse_attempt(decode_json(source));
       return this.artifact(attempt.release) === null ? null : attempt;
-    } catch {
+    } catch (error) {
+      console.warn('The applied update attempt record is invalid', this.applied_path, error);
       return null;
     } // Source tolerates legacy request/invalid attempt JSON here only.
   }

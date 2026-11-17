@@ -14,21 +14,23 @@ import { with_zip_member } from './zip.ts';
 import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
 
-export const TRUSTED_RELEASE_WORKFLOWS: ReadonlyMap<string, 1 | 2> = new Map([
-  ['.github/workflows/deploy.yml', 1],
-  ['.github/workflows/publish-typescript-release.yml', 2],
-]);
+export const TRUSTED_RELEASE_WORKFLOW = '.github/workflows/publish-typescript-release.yml';
 function repository_stream(response: Response, message: string): Readable {
   if (response.body === null) throw new Error(message);
   return Readable.from(
     (async function* () {
       try {
         for await (const chunk of Readable.fromWeb(response.body! as ReadableStream)) yield chunk;
-      } catch {
-        throw new Error(message);
+      } catch (error) {
+        throw new Error(message, { cause: error });
       }
     })(),
   );
+}
+/** Logs a failed body cancel. An abort is expected here because the request controller aborts first. */
+function cancel_failed(error: unknown): void {
+  if (error instanceof Error && error.name === 'AbortError') return;
+  console.warn('repository update response cancel failed', error);
 }
 function record(value: unknown): Record<string, unknown> {
   if (!is_object(value)) throw new Error('The repository update service refused the operation.');
@@ -114,19 +116,21 @@ export class GitHubUpdateProvider implements UpdateProvider {
           signal: request_signal,
         }),
       );
-    } catch {
+    } catch (error) {
       controller.abort();
       signal?.throwIfAborted();
-      throw new Error('The repository update service is unavailable or its result is uncertain.');
+      throw new Error('The repository update service is unavailable or its result is uncertain.', {
+        cause: error,
+      });
     }
     if (missing_ok && response.status === 404) {
       controller.abort();
-      await response.body?.cancel().catch(() => {});
+      await response.body?.cancel().catch(cancel_failed);
       return null;
     }
     if (!response.ok) {
       controller.abort();
-      await response.body?.cancel().catch(() => {});
+      await response.body?.cancel().catch(cancel_failed);
       throw new Error('The repository update service refused the operation.');
     }
     if (response.body === null) {
@@ -141,12 +145,14 @@ export class GitHubUpdateProvider implements UpdateProvider {
         if (done) break;
         chunks.push(value);
       }
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted();
-      throw new Error('The repository update service is unavailable or its result is uncertain.');
+      throw new Error('The repository update service is unavailable or its result is uncertain.', {
+        cause: error,
+      });
     } finally {
       controller.abort();
-      await reader.cancel().catch(() => {});
+      await reader.cancel().catch(cancel_failed);
       reader.releaseLock();
     }
     return new Response(Buffer.concat(chunks), {
@@ -164,24 +170,18 @@ export class GitHubUpdateProvider implements UpdateProvider {
   private async response_json(response: Response): Promise<Record<string, unknown>> {
     try {
       return record(JSON.parse(await response.text()));
-    } catch {
-      throw new Error('The repository update service refused the operation.');
+    } catch (error) {
+      throw new Error('The repository update service refused the operation.', { cause: error });
     }
   }
   async available(): Promise<PublishedUpdate | null> {
-    const runs: Record<string, unknown>[] = [];
-    for (const [workflow, version] of TRUSTED_RELEASE_WORKFLOWS) {
-      const path = `actions/workflows/${workflow.split('/').at(-1)}/runs`;
-      const parameters = { branch: 'main', event: 'push', status: 'success', per_page: '20' };
-      const response =
-        version === 2
-          ? await this.request(path, parameters, true)
-          : await this.request(path, parameters);
-      if (response !== null) {
-        const result = await this.response_json(response);
-        runs.push(...list(result.workflow_runs));
-      }
-    }
+    const response = await this.request(
+      `actions/workflows/${TRUSTED_RELEASE_WORKFLOW.split('/').at(-1)}/runs`,
+      { branch: 'main', event: 'push', status: 'success', per_page: '20' },
+      true,
+    );
+    if (response === null) return null;
+    const runs = list((await this.response_json(response)).workflow_runs);
     const ordered = runs
       .map((run) => ({
         run,
@@ -203,17 +203,15 @@ export class GitHubUpdateProvider implements UpdateProvider {
   }
   async publication(run_id: number): Promise<PublishedUpdate | null> {
     const run = await this.json(`actions/runs/${run_id}`);
-    const contract_version = TRUSTED_RELEASE_WORKFLOWS.get(run.path as string);
     if (
       run.head_branch !== 'main' ||
       run.event !== 'push' ||
       run.conclusion !== 'success' ||
       !is_object(run.head_repository) ||
       run.head_repository.full_name !== this.repository ||
-      contract_version === undefined
+      run.path !== TRUSTED_RELEASE_WORKFLOW
     )
       return null;
-    if (this.target.system === 'darwin' && contract_version !== 2) return null;
     const artifacts = await this.json(`actions/runs/${run_id}/artifacts`, {
       per_page: '100',
     });
@@ -281,8 +279,6 @@ export class GitHubUpdateProvider implements UpdateProvider {
         release.manifest.runtime_contract.role !== 'home')
     )
       throw new Error('Publication runtime target differs from this home');
-    if (release.manifest.runtime_contract.version !== contract_version)
-      throw new Error('This workflow does not publish this runtime contract version.');
     this.publication_cache = release;
     return release;
   }
@@ -308,10 +304,10 @@ export class GitHubUpdateProvider implements UpdateProvider {
         const result = await read();
         signal?.throwIfAborted();
         return result;
-      } catch {
+      } catch (error) {
         controller.abort();
         signal?.throwIfAborted();
-        throw new Error('The repository update download did not complete.');
+        throw new Error('The repository update download did not complete.', { cause: error });
       } finally {
         clearTimeout(timer);
       }
@@ -324,7 +320,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
     );
     if (!response.ok) {
       controller.abort();
-      await response.body?.cancel().catch(() => {});
+      await response.body?.cancel().catch(cancel_failed);
       throw new Error('The repository update service refused the download.');
     }
     if (response.body === null) {
@@ -347,7 +343,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       }
     } finally {
       controller.abort();
-      await reader.cancel().catch(() => {});
+      await reader.cancel().catch(cancel_failed);
       reader.releaseLock();
       await output?.close();
     }

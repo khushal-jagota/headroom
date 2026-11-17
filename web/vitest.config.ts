@@ -7,7 +7,6 @@ export default defineConfig({
   plugins: [svelte()],
   test: {
     environment: "node",
-    reporters: ["default", "./tests/browser/support/scope-reporter.mjs"],
     include: ["tests/**/*.test.ts", "src/lib/usage/*.test.ts"],
     clearMocks: true,
     restoreMocks: true,

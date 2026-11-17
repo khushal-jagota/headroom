@@ -18,7 +18,6 @@ import { HttpError } from '../core/http/errors.ts';
 import { dictionaryBody, scalarQueries } from '../list_reads/http.ts';
 import { conversation_link_lock } from '../runtime/conversation_start.ts';
 import {
-  backend_supports_steer,
   ConversationAlreadyStarted,
   ConversationRoleMaterials,
   ConversationStartRequest,
@@ -172,7 +171,7 @@ async function state_json(
   return {
     conversation_id: record.conversation_id,
     backend_key: record.backend_key,
-    supports_steer: backend_supports_steer(record.backend_key),
+    supports_steer: runtime.core.supports_active_steering(record.backend_key),
     model: record.model,
     reasoning_effort: record.reasoning_effort,
     workspace_folder:

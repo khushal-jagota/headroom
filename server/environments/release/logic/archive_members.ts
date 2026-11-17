@@ -50,7 +50,6 @@ function normalized(path: string, inspection: boolean): string {
 export class ArchiveMembers {
   readonly members: ArchiveMember[] = [];
   manifest_bytes: Buffer | null = null;
-  python = false;
   node = false;
   entrypoint = false;
   native_linux: MacArchiveInspection['native_linux'];
@@ -105,8 +104,6 @@ export class ArchiveMembers {
       if (this.#platform === 'linux') this.#linux_entry(entry, member);
       if (member.path === 'mac-runtime.json')
         throw new MacArchiveInspectionError('refusal', 'The Mac runtime manifest is invalid.');
-      if (member.path === (this.#platform === 'linux' ? '.venv/bin/python' : 'python/bin/python3'))
-        this.python = false;
       if (member.path === 'node/bin/node') this.node = false;
       if (member.path === 'server/executor/mac/entrypoint.ts') this.entrypoint = false;
     });
@@ -176,8 +173,6 @@ export class ArchiveMembers {
           decode_mac_manifest(this.manifest_bytes);
         });
       }
-      if (member.path === (this.#platform === 'linux' ? '.venv/bin/python' : 'python/bin/python3'))
-        this.python = files.has(member.type) || member.type === 'SymbolicLink';
       if (member.path === 'node/bin/node')
         this.node = files.has(member.type) && member.size > 0 && (member.mode & 0o111) !== 0;
       if (member.path === 'server/executor/mac/entrypoint.ts')
@@ -218,21 +213,6 @@ export class ArchiveMembers {
       this.#panels = member.size > 0 && (member.mode & 0o111) !== 0;
   }
   #finish_linux(): void {
-    if (this.python) {
-      const document = this.#linux_json.get('manifest.json');
-      let declared: unknown;
-      try {
-        declared = document ? decode_mac_manifest(document) : null;
-      } catch {
-        // Source legacy Python archives ignore optional, undecodable application metadata.
-      }
-      if (
-        !is_record(declared) ||
-        !is_record(declared.runtime_contract) ||
-        declared.runtime_contract.version !== 2
-      )
-        return;
-    }
     if (this.#linux_invalid) throw new MacArchiveInspectionError('refusal', this.#linux_invalid);
     const marker = this.manifest_bytes === null ? null : decode_mac_manifest(this.manifest_bytes);
     if (

@@ -47,3 +47,13 @@ export function artifactForPressOnThePage(event: MouseEvent): ManagedFileTarget 
     event
   );
 }
+
+/** What held the pressed link: the nearest `data-artifact-origin` around it, or null.
+ *
+ * The artifact opens over the page either way. The holder only decides which controls
+ * stand under it: a proposal's decisions, a message's reply, or the page's own bar.
+ */
+export function artifactOriginOfPress(event: MouseEvent): string | null {
+  const target = event.target as Element | null;
+  return target?.closest?.("[data-artifact-origin]")?.getAttribute("data-artifact-origin") ?? null;
+}

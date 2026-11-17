@@ -33,7 +33,7 @@ Settings → Machines shows availability, current Worker activity, and Tickets t
 
 ## Credentials and the original Mac
 
-The owner registers an extra destination from Settings → Machines (Add a machine) and obtains one join command and its private credential, both shown once. The page takes the home's trusted HTTPS origin from the home's own configuration and refuses to issue a command when none is set. The `panels machine join-command` command does the same for a terminal that has owner authority. The command installs a new executor and checks an accepted lease. The command always names the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
+The owner registers an extra destination from Settings → Machines (Add a machine) and obtains one join command and its private credential, both shown once. The page takes the home's trusted HTTPS origin from the home's own configuration and refuses to issue a command when none is set. The `panels machine join-command` command does the same for a terminal that has owner authority. The command runs on a Linux x86_64 machine only. It installs a new executor there and checks an accepted lease. A Mac executor has no join command. Its installation is the owner's [manual procedure](../ops/mac-executor/typescript-installation.md). The command always names the trusted HTTPS origin of the same home that issues the credential. A credential permits executor requests for one destination. Replacing it invalidates the old credential. The home normally stores only a verifier. During the original Mac handover, it also keeps the pending credential until the handover closes.
 
 The original Mac has a one-time transition from its existing authority. The first upgraded runtime requests its credential automatically and saves it privately before its work loops start. That runtime is an update trial, and the Mac supervisor keeps it only if it confirms in time. So the old authority stays open until the supervisor's decision to keep it is final: the supervisor's saved selection names this trial, and no attempt is pending. The runtime then sends a credentialed close request, and retries with backoff until the home accepts. That request closes the handover: the old authority closes permanently, and the pending secret is removed. That closure survives home restarts and migration replay.
 
@@ -45,7 +45,7 @@ Until the handover closes, the old trust proves the owner login and the claimed 
 
 After the handover closes, every executor request needs the credential, including update requests. A previous runtime that lacks credential support cannot regain the old authority after rollback.
 
-A home from before this rule closed the handover at the trial's credentialed "current" report, before the supervisor kept the trial. If that trial died or missed its window, the supervisor restored a runtime that the home refuses. A current home with a runtime from before the close request keeps the handover open until the Mac keeps a runtime that sends it. The Mac installation runbook gives the [manual recovery](../ops/mac-executor/installation.md#recover-a-mac-locked-out-after-its-credential-handover).
+A home from before this rule closed the handover at the trial's credentialed "current" report, before the supervisor kept the trial. If that trial died or missed its window, the supervisor restored a runtime that the home refuses. A current home with a runtime from before the close request keeps the handover open until the Mac keeps a runtime that sends it.
 
 ## Starts and presence
 
@@ -71,9 +71,9 @@ During a home update trial, the home defers new result receipts. Extra machines 
 
 Live text and tool progress remain lossy. Finished messages and durable events enter the outbox before delivery. The Mac retries transient failures within a finite delivery window. At expiry, it retains the failed content and shows the failure in its local status and log. A lost reply leaves the result uncertain, even when the Mac stops its attempt. Later items can proceed, and conversations share delivery capacity fairly. Native command failures also reach the conversation core directly, so artifact delays cannot leave a failed turn active. A matching native refusal to steer into an absent turn ends the stale active turn without changing its historical prompt delivery.
 
-Files reach the home before an item that refers to them. An unavailable or corrupt local file receives a recorded refusal, while its event and remaining files can proceed. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
+Ticket files travel apart from items. An item never carries a file and never waits for one, so a message that links a new file can arrive a few seconds before the file does. After each item and at each start, the executor compares the Ticket's `artifacts/` folder with the versions the home confirmed. It sends each new or changed file once and removes each file the folder no longer has. A failed file retries without delay to any item or to the other files. The home accepts a file only for a Ticket that belongs to the sending machine, checks its bytes on a separate thread, and then puts it in the Ticket's served folder. A matching digest does not grant another machine access.
 
-Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and Ticket artifacts. It does not transfer the private worktree or its dependencies. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
+Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and the Ticket's `artifacts/` folder. It does not transfer the private worktree, its dependencies, or any other file in the Ticket folder. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
 
 Agents can send a proposal back with `panels ticket proposal ID revise` and guidance
 from `--message TEXT` or `--body-file PATH`. Use `--body-file -` for stdin. The executor
@@ -102,11 +102,11 @@ A machine update closes its admission, confirms exact child retirement, and save
 The signed Mac launcher and the Linux systemd user service start a fixed supervisor that selects a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Each executor reports its platform with authenticated requests. Update offers select an archive for that platform and the executor role. Content-addressed archives can share storage without sharing update authority. Linux archive downloads start only for registered Linux machines. Their failures do not block home or Mac updates. The home remembers rejected archive bytes for its process lifetime. The home retains two Linux archives.
 
 
-Releases ship the TypeScript Mac executor with its own Node runtime. The first installation on the live Mac remains a separate owner action. The [TypeScript installation runbook](../ops/mac-executor/typescript-installation.md) describes that handoff.
+Releases ship the TypeScript Mac executor with its own Node runtime. Its first installation on a Mac is a separate owner action, by the [installation runbook](../ops/mac-executor/typescript-installation.md).
 
 Each executor reads the same driver list as the home. Each driver supplies its launch, model list, home folder and skills folder for that machine. A start or model list request for a backend the machine has no driver for is refused with that reason. It never falls back to another backend.
 
-The home and executor use protocol 26. The backend key on the wire can be any driver slug. Each lease lists the driver kinds its machine runs. A machine that lists none, such as the Python Mac, is taken to run hermes, codex, and claude. The home refuses a remote start for a backend its machine does not run before anything reaches the mailbox, and asks a returning machine for model lists only for the backends it runs. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
+The home and executor use protocol 26. A turn ending may say whether its child can take another prompt; a Mac that leaves this out means the child is reusable. The backend key on the wire can be any driver slug. Each lease lists the driver kinds its machine runs. A machine that lists none is taken to run hermes, codex, and claude. The home refuses a remote start for a backend its machine does not run before anything reaches the mailbox, and asks a returning machine for model lists only for the backends it runs. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/typescript-installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
 
 The stall checker watches outstanding waits. Each machine's presence clock controls waits that depend on that machine. A sleeping machine does not accrue another machine's awake time. Home-only waits use elapsed home time. The separate watchdog can alarm when the server's own checker stops.
 
@@ -122,15 +122,13 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 
 ## Code
 
-- `src/planner/executor/`: shared protocol, registry, transport, journals, mailboxes, files, and replay.
-- `src/planner/machines/`: destinations and credentials.
-- `src/planner/conversation/start_admission/`: automatic-start capacity and pacing.
-- `src/planner/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
-- `src/planner/stalls/`: wait checks and watchdog.
-- `src/planner/environments/mac_executor.py` and `environments/mac_app/`: Mac installation and signed launcher.
-- `src/planner/environments/linux_executor.py`: Linux installation and systemd user service.
-- `scripts/build_linux_executor.py`: Python executor archive and native startup proof.
-- `server/environments/linux_executor/`: native TypeScript executor archive, installation, and private enrollment entry.
+- `server/executor/`: shared protocol, registry, transport, journals, mailboxes, files, and replay.
+- `server/executor/mac/`: the TypeScript Mac executor and its packaging.
+- `server/machines/`: destinations and credentials.
+- `server/conversation/start_admission/`: automatic-start capacity and pacing.
+- `server/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
+- `server/stalls/`: wait checks and watchdog.
+- `server/environments/linux_executor/`: Linux executor archive, installation, systemd user service, and private enrollment entry.
 - `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
 
 _Last verified: 2026-11-14._

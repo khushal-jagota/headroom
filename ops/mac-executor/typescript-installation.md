@@ -3,11 +3,9 @@
 Each TypeScript release publishes the Node Mac executor and its native execution receipt. The package producer also creates unsigned assets for the separate installation.
 No command in this document ran on the owner's Mac during this Ticket.
 The shared codec embeds its schema as `WIRE_SCHEMA` in `server/executor/wire.generated.ts`. It does not read `wire.schema.json` at runtime.
-Use a separate app, supervisor, job, and state root. Keep the Python installation idle for rollback after cutover.
 
 The TypeScript default state root is `~/Library/Application Support/Panels/executor-typescript`.
-The Python default is its sibling `executor`. TypeScript refuses that Python root, its descendants, and resolved aliases.
-An explicit state root still needs an operator review against the actual Python installation.
+TypeScript refuses the earlier executor root, its sibling `executor`, with its descendants and resolved aliases.
 Provider homes and credentials remain account resources. Separate roots do not solve shared skill publication.
 The owner must choose the shared-publication policy before concurrent native use.
 
@@ -70,14 +68,13 @@ The output contains these artifacts:
 | `build.json` | Source revision, Node version, Node digest, archive digest, and target paths. |
 | `INSTALLATION.md` | This handoff document. |
 
-The wire schema remains embedded in `wire.generated.ts`. The runtime excludes the Python server and Python interpreter.
+The wire schema remains embedded in `wire.generated.ts`.
 The two plain Hermes scripts remain provider assets. The installed Hermes environment supplies their interpreter.
 The package also includes static skills, Worker seed data, CLI metadata, and the shell startup asset.
 
 ## Install from the owner's native session
 
 These commands are a future owner procedure. They do not authorize this Ticket to install or launch anything.
-Keep the Python installation idle. Review any nondefault Python root before the first TypeScript start.
 Resolve the shared provider skill policy before the first real provider session.
 
 Use a new private package directory on the Mac. Set `PACKAGE` to its absolute path.
@@ -184,21 +181,19 @@ TS_PANELS="$HOME/Deployments/PanelsExecutorTypeScript/bin/panels"
 TS_NODE="$HOME/Deployments/PanelsExecutorTypeScript/supervisor/node/bin/node"
 TS_PACKAGE="$HOME/Deployments/PanelsExecutorTypeScript/supervisor/server"
 TS_JOB='com.panels.executor.typescript'
-PYTHON_ROOT="$HOME/Library/Application Support/Panels/executor"
 EVIDENCE="$HOME/Deployments/PanelsExecutorTypeScript/recovery-evidence-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-The evidence directory must be new and outside both state roots. Its parent must already exist.
-Never substitute the live Python console or its job label.
-Check both resolved roots and the console before a service action:
+The evidence directory must be new and outside the state root. Its parent must already exist.
+Check the resolved root, the console, and the evidence path before a service action:
 
 ```sh
-"$TS_NODE" --input-type=module - "$TS_ROOT" "$PYTHON_ROOT" "$TS_PANELS" "$EVIDENCE" <<'JS'
+"$TS_NODE" --input-type=module - "$TS_ROOT" "$TS_PANELS" "$EVIDENCE" <<'JS'
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
-const [root, python, consolePath, evidencePath] = process.argv.slice(2);
-if (![root, python, consolePath, evidencePath].every(isAbsolute)) throw Error('Absolute reviewed paths required.');
-const live = realpathSync(python), state = realpathSync(root), consoleReal = realpathSync(consolePath);
+const [root, consolePath, evidencePath] = process.argv.slice(2);
+if (![root, consolePath, evidencePath].every(isAbsolute)) throw Error('Absolute reviewed paths required.');
+const state = realpathSync(root), consoleReal = realpathSync(consolePath);
 const inside = (base, value) => {
   const expected = statSync(base, { bigint: true });
   for (let path = value; ; path = dirname(path)) {
@@ -207,13 +202,11 @@ const inside = (base, value) => {
     if (path === dirname(path)) return false;
   }
 };
-if (inside(live, state) || inside(live, consoleReal)) throw Error('Refusing Python installation alias.');
 const evidenceParent = realpathSync(dirname(evidencePath));
-if (inside(state, evidenceParent) || inside(live, evidenceParent) || existsSync(resolve(evidenceParent, basename(evidencePath))))
-  throw Error('Evidence must be a new destination outside both state roots.');
-console.log({ state, python: live, console: consoleReal });
+if (inside(state, evidenceParent) || existsSync(resolve(evidenceParent, basename(evidencePath))))
+  throw Error('Evidence must be a new destination outside the state root.');
+console.log({ state, console: consoleReal });
 JS
-case "$TS_JOB" in com.panels.executor|'') printf '%s\n' 'Refusing live or empty job.'; exit 1;; esac
 ```
 
 First, quiesce only the reviewed TypeScript installation:
@@ -289,7 +282,7 @@ done
 ```
 
 Use the reviewed TypeScript start procedure above only after this recovery review.
-Do not restart or change the Python installation. Preserve the evidence and moved files until the owner closes recovery.
+Preserve the evidence and moved files until the owner closes recovery.
 
 ## Native checks that Linux cannot prove
 
@@ -312,7 +305,7 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 | Packaged Koffi addon                                               | arm64 Mach-O architecture, pinned addon load from the relocated package, and no extra native library                                                                     |
 | Packaged better-sqlite3 addon and journal worker                   | arm64 addon load inside the journal worker, full-flush commits, interrupted transaction recovery, and native connection cleanup before joined worker exit                |
 | Native app and LaunchAgent                                         | Signed requester attribution, startup/restart, exact Unix socket path/mode, consent, and permission retention                                                            |
-| Root aliases                                                       | Refusal of the Python root and descendants through symlinks and native case-insensitive aliases                                                                          |
+| Root aliases                                                       | Refusal of the earlier `executor` root and descendants through symlinks and native case-insensitive aliases                                                                |
 | Process ownership                                                  | Darwin PID/start-time observations, priority, descendants, direct-child exit, and no leftover owned child                                                                |
 | Provider homes and shared skills                                   | Fresh Claude/Codex/Hermes sessions, selected model/effort, canonical bytes, and owner-approved link restoration                                                          |
 | Sleep, files, and updates                                          | Sleep/wake order and receipts, both file directions, failed-readiness rollback, and zero-work quiescence                                                                 |
@@ -325,9 +318,9 @@ Synthetic Linux checks prove neither Darwin ABI nor native disk behavior.
 Run these steps with synthetic snapshots, a private TypeScript state root, and a private provider home before any real provider starts.
 The packaged entrypoint creates `MacSkillsPublisher` from `server/executor/mac/skills/index.ts` through the trusted host.
 
-1. Publish a snapshot with non-ASCII text and CRLF bytes. Compare its generation digest, `SKILL.md` bytes, and account links with Python.
+1. Publish a snapshot with non-ASCII text and CRLF bytes. Check its generation digest, `SKILL.md` bytes, and account links.
 2. Publish the same snapshot again, then replace one source. Check generation reuse, owned retired links, stale generation links, and preserved unrelated entries.
-3. Corrupt one existing generation. Check that the Mac preserves it under `.invalid-*` and rebuilds the authoritative bytes. Python refuses this case. Check other snapshot validation diagnostics against Python.
+3. Corrupt one existing generation. Check that the Mac preserves it under `.invalid-*` and rebuilds the authoritative bytes. Check the other snapshot validation diagnostics.
 4. Hold the private `.install.lock` from another owner. Stop the publisher with one absolute deadline. Check its actual worker exit and lock cleanup separately.
 5. Exercise empty-directory cleanup through `unlinkat` with Darwin `AT_REMOVEDIR=0x80`. Check refusal for a nonempty directory and for a substituted symlink.
 
@@ -353,7 +346,7 @@ The Mac host reuses the Claude, Codex, and Hermes factories with the invocation'
 Canonical skills publish before factory creation. The trusted host supplies the real account paths under the restrictions above.
 
 Each Codex native-start factory receives an explicit fresh `RememberedCodexLoginRejection`.
-This matches Python Mac `MacRunner._factory`: rejection memory belongs to that factory and disappears with it.
+Rejection memory belongs to that factory and disappears with it.
 The VPS uses durable database memory across factories. The independent machine catalog reads saved login standing without that local rejection memory.
 
 The existing snapshot API materializes the SDK snapshot on the main thread.
@@ -370,19 +363,7 @@ Real Darwin and provider checks remain part of the later separate native Ticket:
 2. Stop a provider during startup. Check direct-child exit, pipe cleanup, and the shared owners' actual joins.
 3. Exercise a failed catalog close and its retry. Check that neither an optional catalog answer nor a shutdown deadline certifies resource closure.
 
-## Measure the main-thread database budget
-
-The export-only `spool_burst(parent)` helper in `server/executor/mac/storage/testing/parity.ts` writes 256 near-1 MiB items.
-It acknowledges each item and yields between every append and acknowledgement. A 10 ms timer measures actual event-loop delay.
-The caller supplies a fresh private real-disk parent and synthetic homes. The helper starts no network host or provider.
-Record maximum and p99 timer delay, maximum operation time, rows, bytes, elapsed time, and peak RSS.
-Do not run this measurement in the live state root or on a memory-backed temporary filesystem.
-The owner repeats it on the actual Mac filesystem before native admission.
-If maximum timer delay exceeds 50 ms on the real Mac, move database work to an owned worker before admission.
-Record a Linux result above 50 ms as a finding. Do not hide it behind the later Mac check or call it a pass.
-
-
-### Directory operations for the native skills check
+## Directory operations for the native skills check
 
 The platform module opens `.` relative to the retained directory with close-on-exec, then copies each `readdir` name before the next call.
 It clears `errno` before `readdir`, distinguishes EOF from failure, and retains failed-close capabilities for retry.

@@ -406,7 +406,6 @@ export async function unpack_archive_child(
       await write_archive_message(output, {
         type: 'mac-inspection-result',
         manifest_bytes: reader.manifest_bytes?.toString('base64') ?? null,
-        python: reader.python,
         node: reader.node,
         entrypoint: reader.entrypoint,
         ...(reader.native_linux ? { native_linux: reader.native_linux } : {}),

@@ -178,8 +178,11 @@ export class UsageService implements RecordedUsageService {
           ? this.transcriptDirs(settings)
           : this.transcriptDirs;
       return this.request({ kind: 'summary', id: ++this.sequence, input, settings, directories });
-    } catch {
-      return Promise.reject(new UsageReadError('scanFailed', 'Server settings could not be read.'));
+    } catch (error) {
+      console.error('usage settings could not be read', error);
+      return Promise.reject(
+        new UsageReadError('scanFailed', 'Server settings could not be read.', { cause: error }),
+      );
     }
   }
   refreshRates(): Promise<UsagePricing> {

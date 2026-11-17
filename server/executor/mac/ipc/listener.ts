@@ -6,6 +6,7 @@ import { encode_frame, read_typed_frame } from '../../protocol.ts';
 import type { IpcRequest, IpcResponse } from '../../wire.generated.ts';
 import { CLI_RESULT_TIMEOUT_SECONDS, CLI_TRANSPORT_RESERVE_SECONDS } from '../configuration.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
+import { failure_detail } from '../failure_detail.ts';
 
 function read_exact(socket: Socket, length: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -99,7 +100,8 @@ export class GatewayListener {
           { readexactly: (length) => read_exact(socket, length) },
           'IpcRequest',
         );
-      } catch {
+      } catch (error) {
+        console.warn('Mac IPC request was not read:', failure_detail(error));
         return;
       } // Framing and connection failures never admit a publication.
       if (this.closed) return;

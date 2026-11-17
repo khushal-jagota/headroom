@@ -8,6 +8,7 @@ import type { Principal } from '../core/contracts.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
+import type { DriverRegistry } from '../drivers/core/registry.ts';
 import type { MessageContent } from './message_content.ts';
 import type { WorkspaceAdmission } from './workspace_admission.ts';
 export const ConversationAccess = { full: 'full' } as const;
@@ -248,10 +249,16 @@ export class HeldPrompt {
 
 export const FLOOR_DEFAULT_WORKSPACE_FOLDER = join(homedir(), 'projects');
 export const FLOOR_DEFAULT_ACCESS = ConversationAccess.full;
-export const BACKEND_KEYS_SUPPORTING_STEER: ReadonlySet<BackendInstanceId> =
-  new Set<BackendInstanceId>(KNOWN_BACKEND_INSTANCE_IDS);
-export function backend_supports_steer(key: BackendInstanceId): boolean {
-  return BACKEND_KEYS_SUPPORTING_STEER.has(key);
+/** A live instance decides. Without one on this home (a retained remote child's backend),
+ * every known backend steers, as each does on the side that runs it. */
+export function backend_supports_active_steering(
+  registry: DriverRegistry,
+  key: BackendInstanceId,
+): boolean {
+  const entry = registry.get(key);
+  return entry?.kind === 'live'
+    ? entry.instance.capabilities.turns.supportsActiveSteering
+    : KNOWN_BACKEND_INSTANCE_IDS.includes(key);
 }
 export function require_conversation_backend_key(value: unknown): BackendInstanceId {
   const known = KNOWN_BACKEND_INSTANCE_IDS.find((id) => id === value);

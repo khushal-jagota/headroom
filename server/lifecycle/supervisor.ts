@@ -77,11 +77,11 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
       { deadline },
       'Shutdown deadline expired; ownership retained: supervisor application',
       ['supervisor application'],
-    ).catch(() => {
+    ).catch((error: unknown) => {
       try {
         writeSync(
           2,
-          `Panels application exceeded the ${SUPERVISOR_APP_STOP_SECONDS}-second supervisor stop bound; forcing its owned group.\n`,
+          `Panels application exceeded the ${SUPERVISOR_APP_STOP_SECONDS}-second supervisor stop bound; forcing its owned group: ${String(error)}\n`,
         );
       } catch {
         /* Log failure cannot prevent the terminal fallback. */
@@ -183,7 +183,14 @@ export async function run_server_supervisor(options: SupervisorOptions): Promise
         }
         if (!stopping && !finished) start_child();
       })
-      .catch(() => finish(1));
+      .catch((error: unknown) => {
+        try {
+          writeSync(2, `Panels supervisor restart failed: ${String(error)}\n`);
+        } catch {
+          /* Log failure cannot prevent the terminal exit. */
+        }
+        finish(1);
+      });
   };
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', terminate);

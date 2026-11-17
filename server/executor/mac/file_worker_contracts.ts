@@ -7,12 +7,6 @@ export interface DirectoryHandle {
 export interface TransferHandle {
   readonly id: number;
 }
-/** Local immutable-blob result, without wire scope, owner, or manifest fields. */
-export interface CapturedBlob {
-  sha256: string;
-  byte_count: number;
-  modified_ns: bigint;
-}
 export interface FileOperationArguments {
   read_runtime_revision: [path: string, expected: string, expected_target?: RuntimeTarget];
   unlink_at: [directory: number, name: string];
@@ -32,7 +26,6 @@ export interface FileOperationArguments {
   write_transfer: [handle: number, bytes: Uint8Array];
   finish_transfer: [handle: number, sha256: string, byte_count: number];
   close_transfer: [handle: number, discard?: boolean];
-  capture_file: [source: string, blobs: number, checked_ns: bigint];
   sweep_directory: [directory: number, path: string, keep: readonly string[]];
   file_digest: [path: string];
   verified_version: [path: string, sha256: string, byte_count: number];
@@ -68,7 +61,6 @@ export interface FileOperationResults {
   write_transfer: void;
   finish_transfer: void;
   close_transfer: void;
-  capture_file: CapturedBlob | null;
   sweep_directory: void;
   file_digest: readonly [string, number];
   verified_version: FileVersion | null;

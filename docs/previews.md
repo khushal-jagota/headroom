@@ -49,7 +49,6 @@ Preview traffic runs inside Headroom's process. Headroom caps concurrent request
 
 ## Code
 
-- `src/planner/previews/`: registry, proxy, process checks, and the CLI. Limits are in `config.py` and `limits.py`.
-- `server/previews/`: TypeScript registry, proxy, and native Linux or Mac process evidence.
+- `server/previews/`: registry, proxy, process checks on Linux and the Mac, and the CLI. Limits are in `config.ts` and `limits.ts`.
 
 _Last verified: 2026-11-14._

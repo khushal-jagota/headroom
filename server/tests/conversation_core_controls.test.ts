@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { once } from 'node:events';
+import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { afterEach, expect, test, vi } from 'vitest';
 import { setup } from './conversation_core_fixture.ts';
@@ -20,6 +21,7 @@ import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 import { native_wire_fixtures } from '../executor/testing/native_protocol_fixtures.ts';
 import { create } from './ticket_fixture.ts';
+import { scripted_instance_controls } from '../drivers/testing/registry.ts';
 
 const writers: ReturnType<typeof spawn>[] = [];
 afterEach(async () => {
@@ -373,19 +375,21 @@ test('accepted queued receipt and completion retain order behind a real writer l
   await child.finish();
   await child.wait_for_barrier('next-receipt');
   const writer = spawn(
-    'python3',
+    process.execPath,
     [
-      '-u',
-      '-c',
-      `import sqlite3,sys,time
-connection=sqlite3.connect(sys.argv[1])
-connection.execute('BEGIN IMMEDIATE')
-print('locked',flush=True)
-sys.stdin.readline()
-time.sleep(0.15)
-connection.rollback()
-connection.close()
-`,
+      '-e',
+      `const Database = require(process.argv[1]);
+const connection = new Database(process.argv[2]);
+connection.exec('BEGIN IMMEDIATE');
+console.log('locked');
+process.stdin.once('data', () => {
+  process.stdin.destroy();
+  setTimeout(() => {
+    connection.exec('ROLLBACK');
+    connection.close();
+  }, 150);
+});`,
+      createRequire(import.meta.url).resolve('better-sqlite3'),
       f.database_path,
     ],
     { stdio: ['pipe', 'pipe', 'pipe'] },
@@ -709,6 +713,42 @@ test('an aborted update observation cannot close writes after its retirement set
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
 
+// Risk: the steer readers ignore the driver's capability. No other test turns it off.
+test('a backend that cannot steer holds a steer and refuses its promotion until it can', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    await f.send();
+    const child = await f.child;
+    const steering = scripted_instance_controls(
+      f.core.options.backend_registry,
+      f.core.conversations.get('core')!.record.backend_key,
+    ).capabilities.turns;
+    steering.supportsActiveSteering = false;
+    expect(
+      await f.core.send('core', text_message_content('steer'), {
+        sender_label: 'Owner',
+        sender_message_id: 'steer',
+        mode: 'steer',
+      }),
+    ).toEqual(new PromptDeliveryQueued({ queue_position: 1 }));
+    const held = (await f.core.held_prompts('core'))[0];
+    expect(held.queue_reason).toBe('steer_refused');
+    // A running turn and a live child leave the capability as the only reason to refuse.
+    expect(f.core.runtime_turn('core')).not.toBeNull();
+    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toEqual(
+      new PromptDeliveryQueued({ queue_position: 1 }),
+    );
+    expect((await child.inspect()).calls.some((call) => call.command === 'steer')).toBe(false);
+    steering.supportsActiveSteering = true;
+    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toBeInstanceOf(
+      PromptDeliveryInjected,
+    );
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
 // A deferred replacement must preserve its incumbent before either destructive control.
 // The same existing scripted child proves eventual queue drain after admission opens.
 test('unadmitted send_now and promotion preserve the running turn then drain once', async () => {
@@ -883,7 +923,7 @@ test('a permanent save error gives up, fails the turn, stops the child, and refu
   await expect(child.inspect()).rejects.toThrow('scripted child is closed');
   expect(f.core.conversations.get('core')!.child).toBeNull();
   expect(track).toHaveBeenCalledWith('vps_save_failed', 'core', {
-    detail: 'Save error SQLITE_CONSTRAINT_UNIQUE',
+    detail: expect.stringMatching(/^Save error SQLITE_CONSTRAINT_UNIQUE: /),
     conversation_id: 'core',
   });
   await expect(f.send('two', 'second')).rejects.toMatchObject({
@@ -974,7 +1014,7 @@ test('an unusable database fails the conversation at once and refuses new work',
   await child.release('write');
   expect(await sending).toBeInstanceOf(PromptDeliveryUncertain);
   expect(track).toHaveBeenCalledWith('vps_save_failed', 'database', {
-    detail: 'Save error SQLITE_CORRUPT',
+    detail: 'Save error SQLITE_CORRUPT: synthetic corruption',
     conversation_id: null,
   });
   await expect(

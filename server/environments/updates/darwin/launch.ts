@@ -20,7 +20,6 @@ import type { DarwinHomeIO } from './contracts.ts';
 
 export async function current_darwin_home(
   application_root: string,
-  node: string,
   execution: ReleaseExecution,
   environment: Readonly<NodeJS.ProcessEnv>,
   io?: DarwinHomeIO,
@@ -38,12 +37,7 @@ export async function current_darwin_home(
   );
   if (!is_record(value) || typeof value.label !== 'string')
     throw new Error('Mac home identity has no service label');
-  const service = new DarwinHomeService(
-    root,
-    `gui/${selected_io.uid}/${value.label}`,
-    node,
-    selected_io,
-  );
+  const service = new DarwinHomeService(root, `gui/${selected_io.uid}/${value.label}`, selected_io);
   await service.validate_running_home(process.ppid);
   return service;
 }

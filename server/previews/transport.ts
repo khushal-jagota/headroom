@@ -249,7 +249,7 @@ export class PreviewTransport {
       void this.lifetime.track(
         () => new Promise<void>((resolve) => owned_upstream.once('close', () => resolve())),
       );
-      upstream.on('error', () => {});
+      upstream.on('error', (error) => console.warn('preview upstream socket error', error));
       upstream.setTimeout(config.HTTP_IDLE_SECONDS * 1000, () =>
         upstream?.destroy(new Error('preview timeout')),
       );
@@ -405,7 +405,7 @@ export class PreviewTransport {
         followRedirects: false,
         handshakeTimeout: config.PREHEADER_SECONDS * 1000,
       });
-      peer.on('error', () => {});
+      peer.on('error', (error) => console.warn('preview peer socket error', error));
       const owned_peer = peer;
       void this.lifetime.track(
         () => new Promise<void>((resolve) => owned_peer.once('close', () => resolve())),
@@ -444,7 +444,7 @@ export class PreviewTransport {
           reject(error);
         }
       });
-      browser.on('error', () => {});
+      browser.on('error', (error) => console.warn('preview browser socket error', error));
       const owned_browser = browser;
       void this.lifetime.track(
         () => new Promise<void>((resolve) => owned_browser.once('close', () => resolve())),
@@ -486,7 +486,8 @@ export class PreviewTransport {
                 if (!queued) source.resume();
               }),
             )
-            .catch(() => {
+            .catch((error: unknown) => {
+              console.warn('preview websocket relay failed', error);
               source.terminate();
               target.terminate();
             });
@@ -519,7 +520,8 @@ export class PreviewTransport {
       }, config.WEBSOCKET_PING_SECONDS * 1000);
       peer.resume();
       await Promise.race([once(peer, 'close'), once(browser, 'close')]);
-    } catch {
+    } catch (error) {
+      console.warn('preview websocket proxy failed', ticket_id, generation, error);
       if (browser?.readyState === WebSocket.OPEN) browser.close(1013);
       else if (!socket.destroyed)
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');

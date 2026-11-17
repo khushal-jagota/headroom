@@ -30,8 +30,8 @@ descendant to close inherited pipes. Server shutdown stops commands before recor
 closure. HTTP transports use `redirect: 'manual'`, so a redirect cannot resend a
 usage credential.
 
-Sign-in session timestamps accept `Date` or a string in Python's
-`datetime.isoformat()` form. A source with microseconds must supply the string, and
+Sign-in session timestamps accept `Date` or an ISO 8601 string with optional
+microseconds. A source with microseconds must supply the string, and
 the response preserves it exactly. A `Date` retains its millisecond precision.
 
 `machine_catalog` supplies the `RemoteCatalogSource` for Tickets on another machine;
@@ -39,8 +39,5 @@ with an executor the production bindings return its live or last offline catalog
 
 Test mode composes no production provider: instances read no catalog, login or
 account, and production process and HTTP doors refuse test contexts before any
-external action. The comparison host in `server/test_host.ts` uses a fixed
-`TicketModelSnapshots` source (`testing/ticket_models.ts`). Direct checks compare full
-cards, the HTTP routes, source rows, recording calls and provider limit decisions
-against Python. They do not prove a real provider account, child lifetime or network
-access.
+external action. The test host in `server/test_host.ts` uses a fixed
+`TicketModelSnapshots` source (`testing/ticket_models.ts`).

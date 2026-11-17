@@ -27,7 +27,10 @@ process.once('message', async (boot: ReaderBoot) => {
     workerData: { incarnation: boot.incarnation, pid: process.pid },
   });
   // An unprotected reader must never survive a watchdog failure.
-  watchdog.on('error', () => process.kill(process.pid, 'SIGKILL'));
+  watchdog.on('error', (error) => {
+    process.stderr.write(`VPS metrics reader watchdog failed: ${error.stack ?? error}\n`);
+    process.kill(process.pid, 'SIGKILL');
+  });
   watchdog.on('exit', () => process.kill(process.pid, 'SIGKILL'));
   const waiting = new Map<string, () => void>();
   watchdog.on('message', (message: WatchdogReply) => {

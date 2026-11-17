@@ -121,7 +121,11 @@ test('a fresh executor removes loaded crash residue before a new launch and reta
   expect((await reconcile(root, { runtime: recovered })).complete).toBe(true);
   const retained = await records.read(supervisor.path);
   expect(retained.state).toBe('complete');
-  expect(notice).toHaveBeenCalledWith(expect.stringContaining('transport cleanup did not finish'));
+  expect(notice).toHaveBeenCalledWith(
+    expect.stringContaining('transport cleanup did not finish'),
+    '/outside-the-private-transport-root',
+    expect.any(Error),
+  );
   delete retained.launchd_socket_directory;
   await records.write(supervisor.path, retained);
   expect((await reconcile(root, { runtime: recovered })).complete).toBe(true);

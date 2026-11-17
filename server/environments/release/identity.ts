@@ -115,20 +115,17 @@ export async function validate_app_tree(root: string): Promise<void> {
     if ((await lstat(path)).isSymbolicLink()) await assert_link(root, path);
   }
 }
-async function validate_runtime_tree(root: string, node: boolean): Promise<void> {
-  const executables = node
-    ? NODE_RUNTIME_EXECUTABLES
-    : ['.venv/bin/python', 'bin/panels', 'bin/panels-launcher'];
-  for (const name of executables) {
+async function validate_runtime_tree(root: string): Promise<void> {
+  for (const name of NODE_RUNTIME_EXECUTABLES) {
     const path = join(root, name);
     if (!(await file(path))) throw new AppValidationError(`runtime file is missing: ${name}`);
     try {
       await access(path, constants.X_OK);
-    } catch {
-      throw new AppValidationError(`runtime file is not executable: ${name}`);
+    } catch (error) {
+      throw new AppValidationError(`runtime file is not executable: ${name}`, { cause: error });
     }
   }
-  for (const name of [...SHARED_RUNTIME_FILES, ...(node ? NODE_RUNTIME_FILES : [])])
+  for (const name of [...SHARED_RUNTIME_FILES, ...NODE_RUNTIME_FILES])
     if (!(await file(join(root, name))))
       throw new AppValidationError(`runtime file is missing: ${name}`);
 }
@@ -220,6 +217,10 @@ export async function validate_app_manifest(
       throw new AppValidationError(`invalid runtime contract: ${error.message}`);
     throw error;
   }
-  if (options.require_runtime) await validate_runtime_tree(root, contract?.version === 2);
+  if (options.require_runtime) {
+    if (contract === null)
+      throw new AppValidationError('app lacks a runtime contract; republish the app');
+    await validate_runtime_tree(root);
+  }
   return { ...identity, runtime_contract: contract };
 }

@@ -418,7 +418,7 @@ export async function install_home(
     await deps.admit(app, manifest, deps.execution);
     assert_release_execution(deps.execution);
     if (!request.isolated_providers) {
-      const source = join(app, 'src/planner/skills');
+      const source = join(app, 'server/skills/seeds');
       const names = (await readdir(source, { withFileTypes: true }))
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name);

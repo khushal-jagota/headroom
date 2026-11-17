@@ -68,7 +68,10 @@ export class MetricsRuntime {
         for (const entry of this.activities.values())
           entry.reject(new MetricsOperationalError('VPS metrics storage is unavailable'));
         this.activities.clear();
-        if (!this.stopped) void this.close_readers().catch(() => {});
+        if (!this.stopped)
+          void this.close_readers().catch((error: unknown) => {
+            console.warn('VPS metrics readers did not close after the sampler exited', error);
+          });
         resolve();
       }),
     );

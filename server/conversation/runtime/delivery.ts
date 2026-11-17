@@ -9,20 +9,45 @@ import {
   PromptWriteRefused,
   PromptWriteFailed,
   SessionLoadFailed,
+  BackendAdapterError,
 } from '../backends/contracts.ts';
-import type { BackendChild } from '../backends/contracts.ts';
-import { PromptDeliveryRefusalReason as R, ResolvedConversationStart } from '../contracts.ts';
-import { PromptDiscardedEventPayload } from '../events.ts';
+import type { BackendChild, TurnToken } from '../backends/contracts.ts';
+import {
+  PromptDeliveryRefusalReason as R,
+  ResolvedConversationStart,
+  PromptDeliveryMode,
+  PromptDeliveryUncertain,
+  PromptDeliverySuppressed,
+  PromptDeliveryRefused,
+  PromptDeliveryStarted,
+} from '../contracts.ts';
+import { PromptDiscardedEventPayload, ModelChangedEventPayload } from '../events.ts';
 import { one_prompt_from } from '../logic/held_line.ts';
+import { selection_target } from '../logic/selection_target.ts';
+import type { BackendSelection } from '../../drivers/core/selection.ts';
 import { prefix_message_content_text, text_message_content } from '../message_content.ts';
-import { log_backend_failure } from '../backends/failure_summary.ts';
+import { error_text, log_backend_failure } from '../backends/failure_summary.ts';
 import { recorded_failure_detail } from '../logic/backend_events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
 import { ROLE_TEXT_PROMPT_SEPARATOR } from './configuration.ts';
 import { Deferred } from '../../core/deferred.ts';
-import { same_turn } from './state.ts';
+import { same_turn, set_phase } from './state.ts';
+import type { LifecycleFact } from '../record/lifecycle.ts';
+import {
+  LifecycleKind as K,
+  LifecycleOperation as O,
+  LifecycleStatus as S,
+} from '../record/lifecycle.ts';
+import type { RunningTurn, StoredConversationEvent } from '../record/contracts.ts';
+import type { PromptDeliveryFate } from '../contracts.ts';
+import { is_shutdown_business_cancellation } from '../shutdown.ts';
+import { uncertain_row, refused_row, prompt_row } from './messages.ts';
+import { field_mutation } from './save_attempt.ts';
+import { ConversationRecord } from '../record/contracts.ts';
+import { wait_for_item } from '../../executor/item_budget.ts';
+import type { SqliteProcessConversationSystem } from '../system.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
   return {
@@ -61,13 +86,12 @@ async function ensure_child(
     );
   if (state.child !== null) return state.child;
   const previous = state.record.resolved_start();
+  const target = selection_target(message, previous);
   const resolved = new ResolvedConversationStart({
     ...previous,
-    model: message.model_change ?? previous.model,
-    reasoning_effort:
-      message.reasoning_effort_change === null && !message.reasoning_effort_is_set
-        ? previous.reasoning_effort
-        : message.reasoning_effort_change,
+    // `resolved_start` refuses a record without a model, so the target names one.
+    model: target.model!,
+    reasoning_effort: target.reasoning_effort,
   });
   const sink = host.make_sink(state);
   state.child_event_sink = sink;
@@ -113,6 +137,10 @@ async function ensure_child(
     throw new DeliveryCancelled();
   }
   state.child = child;
+  state.child_selection = {
+    child,
+    selection: { model: resolved.model, reasoning_effort: resolved.reasoning_effort },
+  };
   state.last_session_load_refusal_detail = null;
   return child;
 }
@@ -259,7 +287,14 @@ export async function deliver_prompt(
   let memory_notice_only = decisions
     .filter((decision) => decision.suppression_reason === null)
     .every((decision) => decision.is_memory_notice);
+  // The child's own selection, or the record's for a child started elsewhere (an adopted one).
+  // The target is the message's change against it, as the child itself reads the change.
+  const selection_of = (target: BackendChild): BackendSelection =>
+    state.child_selection?.child === target
+      ? state.child_selection.selection
+      : { model: state.record.model, reasoning_effort: state.record.reasoning_effort };
   const write = async (target: BackendChild) => {
+    const selection = selection_target(first, selection_of(target));
     const reference = state.retained_child_reference;
     if (target.stop_outside_lock && reference !== null)
       await host.persist(state, () =>
@@ -335,6 +370,7 @@ export async function deliver_prompt(
         automatic_compaction: reservation.automatic_compaction,
       }),
     );
+    state.child_selection = { child: target, selection };
     reservation.prompt_accepted = true;
     if (accepted.agent_acceptance_proven && state.child === target)
       await host.accept_automatic_start(state, reservation.token);
@@ -354,6 +390,28 @@ export async function deliver_prompt(
       state.record.reasoning_effort !== null
     ) {
       throw new NeedsRebind('exact desired default or alias target requires a fresh child');
+    }
+    // A local child implies a live instance. A remote child's backend may have none on this
+    // home; the remote child refuses a selection it cannot carry before placing the prompt.
+    const entry = host.options.backend_registry.get(state.record.backend_key);
+    if (had_child && entry?.kind === 'live') {
+      const instance = entry.instance;
+      const current = selection_of(child);
+      const plan = instance.plan_selection_transition({
+        current,
+        target: selection_target(first, current),
+        session_capabilities: instance.capabilities,
+      });
+      if (plan.type === 'restart_session')
+        throw new NeedsRebind(
+          `${instance.driver_kind} needs a fresh child for this model or reasoning effort`,
+        );
+      if (plan.type === 'reject')
+        return result({
+          refusal_reason: R.backend_rejected_prompt,
+          refusal_detail: plan.reason,
+          record_refusal: true,
+        });
     }
     return await write(child);
   } catch (error) {
@@ -558,5 +616,507 @@ export async function write_replayed_prompt(
   } finally {
     if (state.reserved_turn === reservation) state.reserved_turn = null;
     reservation.resolved.resolve();
+  }
+}
+
+function turn_fact(token: TurnToken, status: LifecycleFact['status']): LifecycleFact {
+  return {
+    kind: K.turn,
+    identity: String(token.turn_number),
+    turn_number: token.turn_number,
+    operation: O.turn,
+    status,
+    provider_identity: null,
+  };
+}
+
+function prompt_fact(token: TurnToken, status: LifecycleFact['status']): LifecycleFact {
+  return {
+    kind: K.attempt,
+    identity: `prompt:${token.turn_number}`,
+    turn_number: token.turn_number,
+    operation: O.prompt,
+    status,
+    provider_identity: null,
+  };
+}
+
+function new_running_turn(reservation: ReservedTurn): RunningTurn {
+  return {
+    token: reservation.token,
+    automatic_compaction: reservation.automatic_compaction,
+    automatic_notice: reservation.automatic_notice,
+    memory_notice_only: reservation.memory_notice_only,
+    compaction_confirmed: false,
+    pending_permission_ask_ids: new Set(),
+    permission_provider_ids: new Map(),
+    user_input_provider_ids: new Map(),
+    pending_user_input_questions: new Map(),
+    ended: false,
+    callbacks_revoked: false,
+    ending_is_the_cores: false,
+  };
+}
+
+export async function reserve_turn(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  automatic_compaction = false,
+  sender_message_ids: readonly (string | null)[] = [],
+): Promise<ReservedTurn> {
+  const requests = host.start_admission.requests_for(sender_message_ids);
+  let number: number;
+  try {
+    number = await host.persist(state, () =>
+      host.options.store.reserve_turn(state.record.conversation_id, requests),
+    );
+  } catch (error) {
+    // A cancel just before this left the phase ending. A save that gave up must not keep it there.
+    if (state.phase === 'ending')
+      set_phase(state, state.running_turn === null ? 'idle' : 'running');
+    throw error;
+  }
+  host.start_admission.bind(sender_message_ids, {
+    conversation_id: state.record.conversation_id,
+    turn_number: number,
+  });
+  const reserved: ReservedTurn = {
+    token: { conversation_id: state.record.conversation_id, turn_number: number },
+    resolved: new Deferred<void>(),
+    automatic_compaction,
+    automatic_notice: false,
+    memory_notice_only: false,
+    prompt_accepted: false,
+    prompt_write_attempted: false,
+    messages: [],
+    mode: PromptDeliveryMode.queue,
+    shutdown_owned: false,
+    shutdown_fate: null,
+  };
+  state.model_thinking_shown_at_monotonic = 0;
+  state.reserved_turn = reserved;
+  set_phase(state, 'starting');
+  host.mark_eligible_held(state);
+  return reserved;
+}
+
+/** True when a save of this conversation gave up, or the database is unusable. */
+export function save_gave_up(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): boolean {
+  return state.save_failure !== null || host.options.store.database_unusable_error !== null;
+}
+
+export async function deliver_and_finalize(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  reservation: ReservedTurn,
+  batch: readonly Message[],
+  queued: boolean,
+  drain_after_delivery_exception = true,
+): Promise<PromptDeliveryFate> {
+  try {
+    return await deliver_and_record(
+      host,
+      state,
+      reservation,
+      batch,
+      queued,
+      drain_after_delivery_exception,
+    );
+  } catch (error) {
+    if (
+      (error instanceof Error && error.name === 'AbortError') ||
+      host.shutting_down ||
+      !host.save_gave_up(state)
+    )
+      throw error;
+    // A save gave up partway through this delivery. Release the reservation, so the
+    // conversation settles and a stop does not wait for it.
+    await state.lock.run(() => {
+      // Release only this delivery's own reservation, never a newer one.
+      if (
+        state.reserved_turn === reservation ||
+        (state.reserved_turn === null && !reservation.resolved.settled)
+      )
+        host.abandon_reservation(state, reservation, 'idle');
+      host.finish_held_deliveries(state, batch);
+    });
+    // The agent can have this prompt, so the sender must not hear that it was not sent.
+    if (reservation.prompt_write_attempted) return new PromptDeliveryUncertain();
+    throw error;
+  }
+}
+
+async function deliver_and_record(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  reservation: ReservedTurn,
+  batch: readonly Message[],
+  queued: boolean,
+  drain_after_delivery_exception: boolean,
+): Promise<PromptDeliveryFate> {
+  reservation.messages = batch;
+  host.start_admission.bind(
+    batch.map((message) => message.sender_message_id),
+    reservation.token,
+  );
+  const promoted = queued && reservation.mode === PromptDeliveryMode.send_now;
+  let delivery: DeliveryAttempt;
+  try {
+    await host.persist(state, () =>
+      host.start_admission.persist_bindings(
+        host.options.store.start_admission_database,
+        reservation.token,
+      ),
+    );
+    reservation.automatic_notice = await host.persist(state, () =>
+      host.options.store.all_sender_messages_are_manager_notices(
+        state.record.conversation_id,
+        batch.map((message) => message.sender_message_id),
+      ),
+    );
+    delivery = await deliver_prompt(host, state, reservation, batch);
+  } catch (error) {
+    if (reservation.shutdown_owned)
+      return reservation.shutdown_fate ?? new PromptDeliveryUncertain();
+    if (host.shutting_down) throw error;
+    await host.persist(state, () =>
+      host.start_admission.failed_attempt(
+        host.options.store.start_admission_database,
+        reservation.token,
+      ),
+    );
+    const attempted = reservation.prompt_write_attempted ? reservation.messages : batch;
+    // Python records ordinary post-write errors as possible emission, while
+    // business cancellation keeps its existing path.
+    if (
+      error instanceof PromptWriteFailed ||
+      (reservation.prompt_write_attempted && !is_shutdown_business_cancellation(error))
+    ) {
+      // The uncertain row keeps a capped copy of the backend's text, and the log keeps it whole.
+      if (error instanceof BackendAdapterError)
+        log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
+      if (queued && !reservation.prompt_write_attempted)
+        await host.settle_automatic_ids(
+          state,
+          batch.map((message) => message.sender_message_id),
+        );
+      await record_delivery_uncertainty(
+        host,
+        state,
+        reservation,
+        attempted,
+        batch,
+        error instanceof BackendAdapterError ? recorded_failure_detail(error.message) : null,
+      );
+      return new PromptDeliveryUncertain();
+    }
+    const recovery_messages = batch.filter((message) => message.recovery_references.length > 0);
+    if (recovery_messages.length === 0) {
+      await host.persist(state, () =>
+        host.options.store.fail_recovery_claims(
+          state.record.conversation_id,
+          reservation.token.turn_number,
+        ),
+      );
+    } else {
+      await state.lock.run(async () => {
+        for (const [index, message] of recovery_messages.entries()) {
+          const rows = await host.persist(state, () =>
+            host.options.store.append_events(
+              state.record.conversation_id,
+              [uncertain_row(message, reservation.mode)],
+              {
+                lifecycle:
+                  index === 0
+                    ? [
+                        turn_fact(reservation.token, S.unavailable),
+                        prompt_fact(reservation.token, S.unknown),
+                      ]
+                    : [],
+                recording_receipt: message.recording_receipt,
+              },
+            ),
+          );
+          host.note_written(state, rows);
+        }
+      });
+    }
+    await state.lock.run(() => {
+      if (queued) {
+        state.child_is_quarantined = true;
+        for (const message of [...attempted].reverse())
+          if (!message.dispatch_memory_note)
+            state.held_prompts.unshift({ ...message, delivery_uncertain: true });
+        host.finish_held_deliveries(state, batch);
+      }
+      host.abandon_reservation(state, reservation, 'idle');
+    });
+    if (!queued || promoted) {
+      if (drain_after_delivery_exception) host.schedule_drain(state);
+      throw error;
+    }
+    return new PromptDeliveryUncertain();
+  }
+  if (delivery.suppression_reason !== null) {
+    await host.settle_automatic_ids(
+      state,
+      batch.map((message) => message.sender_message_id),
+    );
+    await state.lock.run(() => {
+      host.abandon_reservation(state, reservation, queued && !promoted ? 'draining' : 'idle');
+      host.finish_held_deliveries(state, batch);
+    });
+    if (!queued || promoted) host.schedule_drain(state);
+    return new PromptDeliverySuppressed({ reason: delivery.suppression_reason });
+  }
+  reservation.automatic_notice = delivery.automatic_notice;
+  reservation.memory_notice_only = delivery.memory_notice_only;
+  const survivors = delivery.messages.length > 0 ? delivery.messages : batch;
+  // A drain credits only the successful admission envelopes returned by delivery.
+  // A definite refusal returns none. The remaining refused rows never carry read credit.
+  const drain_bounds = delivery.messages
+    .filter(
+      (message) => message.sender?.kind === 'owner' && message.owner_read_through_sequence !== null,
+    )
+    .map((message) => message.owner_read_through_sequence!);
+  const drain_read_through = drain_bounds.length > 0 ? Math.max(...drain_bounds) : null;
+  let receipt_save_gave_up = false;
+  let receipt_save_detail: string | null = null;
+  const fate = await state.lock.run(async () => {
+    if (reservation.shutdown_owned)
+      return reservation.shutdown_fate ?? new PromptDeliveryUncertain();
+    try {
+      if (delivery.refusal_reason !== null) {
+        const lifecycle = [
+          turn_fact(reservation.token, S.unavailable),
+          prompt_fact(reservation.token, S.refused),
+        ];
+        if (delivery.record_refusal || queued) {
+          for (let index = 0; index < survivors.length; index += 1) {
+            const message = survivors[index];
+            const rows = await host.persist(state, () =>
+              host.options.store.append_events(
+                state.record.conversation_id,
+                [
+                  refused_row(
+                    message,
+                    reservation.mode,
+                    delivery.refusal_reason!,
+                    delivery.refusal_detail,
+                  ),
+                ],
+                {
+                  lifecycle: index === 0 ? lifecycle : [],
+                  recording_receipt: message.recording_receipt,
+                  owner_read_through_sequence:
+                    index !== 0
+                      ? null
+                      : queued && !promoted
+                        ? drain_read_through
+                        : message.acknowledge_owner_on_failure
+                          ? message.owner_read_through_sequence
+                          : null,
+                },
+              ),
+            );
+            host.note_written(state, rows);
+          }
+        } else {
+          await host.persist(state, () =>
+            host.options.store.transition_lifecycle(state.record.conversation_id, lifecycle),
+          );
+        }
+        await host.settle_automatic_ids(
+          state,
+          survivors.map((message) => message.sender_message_id),
+        );
+        set_phase(state, queued && !promoted ? 'draining' : 'idle');
+        return new PromptDeliveryRefused({ refusal_reason: delivery.refusal_reason });
+      }
+      const first = survivors[0];
+      const effort_is_set = survivors.some((message) => message.reasoning_effort_is_set);
+      const target = selection_target(
+        { ...first, reasoning_effort_is_set: effort_is_set },
+        state.record,
+      );
+      const change =
+        first.model_change !== null || first.reasoning_effort_change !== null || effort_is_set
+          ? new ModelChangedEventPayload({
+              model: target.model!,
+              reasoning_effort: target.reasoning_effort,
+            })
+          : null;
+      const owner_bounds = survivors
+        .filter(
+          (message) =>
+            message.sender?.kind === 'owner' && message.owner_read_through_sequence !== null,
+        )
+        .map((message) => message.owner_read_through_sequence!);
+      const boundary = queued
+        ? owner_bounds.length
+          ? Math.max(...owner_bounds)
+          : null
+        : first.owner_read_through_sequence;
+      const running = new_running_turn(reservation);
+      let written: readonly StoredConversationEvent[];
+      try {
+        written = await host.persist(
+          state,
+          () =>
+            host.options.store.append_delivered_prompt(state.record.conversation_id, {
+              prompt: prompt_row(first, reservation.mode),
+              extra_prompts: survivors
+                .slice(1)
+                .map((message) => prompt_row(message, reservation.mode)),
+              model_change: change,
+              lifecycle: [
+                turn_fact(reservation.token, S.running),
+                prompt_fact(reservation.token, S.started),
+              ],
+              composed_content_delivered: delivery.composed_content_delivered,
+              recording_receipt: first.recording_receipt,
+              extra_recording_receipts: survivors
+                .slice(1)
+                .flatMap((message) =>
+                  message.recording_receipt ? [message.recording_receipt] : [],
+                ),
+              owner_read_through_sequence: boundary,
+            }),
+          [field_mutation(state, 'running_turn', running)],
+        );
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error;
+        receipt_save_gave_up = true;
+        receipt_save_detail = recorded_failure_detail(`Receipt save failed: ${error_text(error)}`);
+        console.error(
+          `conversation ${state.record.conversation_id} delivered a prompt but could not save its receipt`,
+          error,
+        );
+        return new PromptDeliveryUncertain();
+      }
+      host.note_written(state, written);
+      const owner_rows = written.filter(
+        (row) => row.payload.kind === 'prompt' && row.payload.sender?.kind === 'owner',
+      );
+      if (owner_rows.length > 0)
+        state.record = new ConversationRecord({
+          ...state.record,
+          owner_read_through_sequence: Math.max(
+            state.record.owner_read_through_sequence,
+            boundary ?? Math.max(...owner_rows.map((row) => row.sequence)),
+          ),
+        });
+      state.has_delivered_prompt = true;
+      state.delivery_uncertain = false;
+      set_phase(state, 'running');
+      host.finish_held_deliveries(state, reservation.messages);
+      if (!host.shutting_down) {
+        host.options.emit_change?.();
+        if (change && queued) {
+          await host.options.on_held_model_change?.(
+            state.record.conversation_id,
+            change.model,
+            change.reasoning_effort,
+          );
+        }
+      }
+      return new PromptDeliveryStarted();
+    } finally {
+      if (state.phase !== 'starting') {
+        state.reserved_turn = null;
+        reservation.resolved.resolve();
+      }
+    }
+  });
+  if (receipt_save_gave_up) {
+    // The agent has this prompt, but its receipt save gave up. Record it as possibly
+    // delivered, so no sender resends it.
+    await record_delivery_uncertainty(
+      host,
+      state,
+      reservation,
+      survivors,
+      batch,
+      receipt_save_detail,
+    ).catch((failure: unknown) =>
+      console.error(
+        `conversation ${state.record.conversation_id} could not record an uncertain delivery`,
+        failure,
+      ),
+    );
+    await state.lock.run(() => host.abandon_reservation(state, reservation, 'idle'));
+  }
+  await state.lock.run(() => host.finish_held_deliveries(state, batch));
+  if (fate instanceof PromptDeliveryRefused && (!queued || promoted)) host.schedule_drain(state);
+  return fate;
+}
+
+export function abandon_reservation(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  reservation: ReservedTurn,
+  phase: 'idle' | 'draining',
+): void {
+  if (state.reserved_turn === reservation) state.reserved_turn = null;
+  set_phase(state, phase);
+  reservation.resolved.resolve();
+}
+
+async function record_delivery_uncertainty(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  reservation: ReservedTurn,
+  batch: readonly Message[],
+  settle_messages: readonly Message[] = batch,
+  failure_detail: string | null = null,
+): Promise<void> {
+  await state.lock.run(async () => {
+    for (const message of batch)
+      if (message.sender_message_id !== null)
+        host.start_admission.uncertain(message.sender_message_id);
+    state.child_is_quarantined = true;
+    state.delivery_uncertain = true;
+    for (const message of batch) {
+      const rows = await host.persist(state, () =>
+        host.options.store.append_events(
+          state.record.conversation_id,
+          [uncertain_row(message, reservation.mode, failure_detail)],
+          {
+            lifecycle: [prompt_fact(reservation.token, S.unknown)],
+            recording_receipt: message.recording_receipt,
+          },
+        ),
+      );
+      host.note_written(state, rows);
+    }
+    host.finish_held_deliveries(state, settle_messages);
+    const present = new Set(state.held_prompts.map((message) => message.held_prompt_id));
+    for (const message of [...batch].reverse()) {
+      if (message.dispatch_memory_note) continue;
+      if (message.held_prompt_id && !present.has(message.held_prompt_id))
+        state.held_prompts.unshift({ ...message, delivery_uncertain: true });
+    }
+    set_phase(state, 'idle');
+    host.mark_eligible_held(state);
+    host.publish_held_prompts_changed(state);
+  });
+}
+
+export async function wait_for_reservation(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  token: TurnToken | null,
+  retry_later_at?: number,
+): Promise<void> {
+  while (
+    state.reserved_turn &&
+    !state.reserved_turn.resolved.settled &&
+    same_turn(state.reserved_turn.token, token)
+  ) {
+    if (host.shutting_down) return;
+    await wait_for_item(state.reserved_turn.resolved.promise, retry_later_at);
   }
 }

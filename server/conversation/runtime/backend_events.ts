@@ -8,25 +8,37 @@ import {
   TurnEnded,
   UserInputRequested,
   VendorSessionCursorRebound,
+  AgentMessageDelta,
+  ModelThinkingHappened,
+  ToolCallProgress,
 } from '../backends/contracts.ts';
-import type { BackendEventSink, BackendEventValue, TurnToken } from '../backends/contracts.ts';
+import type {
+  BackendChild,
+  BackendEventSink,
+  BackendEventValue,
+  TurnToken,
+} from '../backends/contracts.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { LifecycleKind as K } from '../record/lifecycle.ts';
 import { interpret_backend_event } from '../logic/backend_events.ts';
 import type { InterpretedBackendEvent } from '../logic/backend_events.ts';
 import type { AcceptedRecordEvent, RecordCommitParticipant } from '../record/contracts.ts';
 import type { JsonObject } from '../../executor/wire.generated.ts';
-import type { RuntimeMutation } from './contracts.ts';
+import type { RuntimeMutation, CoreBackendEventSink } from './contracts.ts';
 import { field_mutation, RemoteEventPrediction } from './save_attempt.ts';
 import { acquire_after_steers } from './synchronization.ts';
-import { turn_is_maintenance, same_turn, set_phase } from './state.ts';
+import { turn_is_maintenance, same_turn, set_phase, own_settlement } from './state.ts';
 import type { ConversationState } from './state.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import {
   BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN,
   STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
+  MODEL_THINKING_PULSE_INTERVAL_SECONDS,
 } from './configuration.ts';
 import { tell_agent_about_lost_background_tasks } from './maintenance.ts';
+import { randomUUID } from 'node:crypto';
+import type { ConversationLiveTailFrame } from '../events.ts';
+import { AgentMessageDeltaFrame, ToolCallProgressFrame, ModelThinkingFrame } from '../events.ts';
 
 export function standard_error_tail(value: string | null): string | null {
   return value === null
@@ -66,6 +78,7 @@ export async function take_backend_event_with_receipt(
   };
   let drain = false;
   let applied = false;
+  let broken_child: BackendChild | null = null;
   let lost_background_tasks: readonly string[] = [];
   const background_task_news =
     event instanceof BackgroundTaskStarted ||
@@ -135,7 +148,14 @@ export async function take_backend_event_with_receipt(
         };
       }
     }
-    if (!live && options.in_commit === undefined) return accepted;
+    if (!live && options.in_commit === undefined) {
+      // The core may have ended the turn itself; a child that broke meanwhile is still broken.
+      // While another turn runs on the child, that turn's own ending reports it.
+      const current = state.running_turn;
+      if (current === null || current.ended || current.ending_is_the_cores)
+        broken_child = quarantine_broken_local_child(host, state, event, options);
+      return accepted;
+    }
     const predicted = interpreted.predicted;
     const mutations: RuntimeMutation[] = [];
     if (predicted) {
@@ -296,6 +316,8 @@ export async function take_backend_event_with_receipt(
       host.options.emit_change?.();
       drain = true;
     }
+    broken_child = quarantine_broken_local_child(host, state, event, options);
+    if (broken_child !== null) drain = false;
     if (live && event instanceof TurnEnded && event.ending === 'failed') {
       const sequence = result.written.at(-1)?.sequence ?? null;
       console.error(
@@ -307,8 +329,154 @@ export async function take_backend_event_with_receipt(
     }
   } finally {
     lease.release();
+    // Stop outside the lease, so a long stop does not block the conversation's other work.
+    if (broken_child !== null) retire_broken_local_child(host, state, broken_child);
   }
   if (applied) tell_agent_about_lost_background_tasks(host, state, lost_background_tasks);
   if (drain) host.schedule_drain(state);
   return accepted;
+}
+
+/** Rule 4: a broken local child takes no further prompt. Hold new work until it is stopped.
+ * A stop already under way owns the child, so this never starts a second one. */
+function quarantine_broken_local_child(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  event: BackendEventValue,
+  options: { expected_sink?: BackendEventSink; in_commit?: unknown },
+): BackendChild | null {
+  if (
+    options.in_commit !== undefined ||
+    !(event instanceof TurnEnded) ||
+    event.child_disposition !== 'broken' ||
+    options.expected_sink === undefined ||
+    state.child_event_sink !== options.expected_sink ||
+    state.child === null ||
+    state.child.stop_outside_lock ||
+    state.being_killed ||
+    host.child_stop_ownership.has(state.child)
+  )
+    return null;
+  state.child_is_quarantined = true;
+  return state.child;
+}
+
+function retire_broken_local_child(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  child: BackendChild,
+): void {
+  void own_settlement(state, host.discard_child(state, child))
+    .then(() => host.schedule_drain(state))
+    .catch((error: unknown) =>
+      console.error(
+        `conversation ${state.record.conversation_id} could not retire its broken child`,
+        error,
+      ),
+    );
+}
+
+export function make_sink(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): CoreBackendEventSink {
+  const generation = randomUUID().replaceAll('-', '');
+  const sink: CoreBackendEventSink = {
+    generation,
+    record_local_child_supervision: (path) =>
+      host.options.store.record_child_supervision(state.record.conversation_id, generation, path),
+    record_local_child_custody: (identity) =>
+      host.options.store.record_child_custody(state.record.conversation_id, generation, identity),
+    report: (token, event) =>
+      own_settlement(
+        state,
+        (async () => {
+          if (host.shutting_down || state.child_event_sink !== sink) return;
+          if (
+            token !== null &&
+            same_turn(state.running_turn?.token ?? null, token) &&
+            !state.running_turn?.ended
+          )
+            await host.accept_automatic_start(state, token);
+          if (
+            event instanceof AgentMessageDelta ||
+            event instanceof ModelThinkingHappened ||
+            event instanceof ToolCallProgress
+          ) {
+            if (token === null) return;
+            const show = async () => {
+              await host.wait_for_reservation(state, token);
+              if (
+                state.child_event_sink === sink &&
+                same_turn(state.running_turn?.token ?? null, token) &&
+                !state.running_turn?.ended
+              ) {
+                await host.accept_automatic_start(state, token);
+                publish_live(host, state, token, event);
+              }
+            };
+            if (state.reserved_turn) enqueue_backend_event(host, state, show);
+            else publish_live(host, state, token, event);
+            return;
+          }
+          enqueue_backend_event(host, state, async () => {
+            await host.take_local_backend_event(state, token, event, sink);
+          });
+        })().catch((error: unknown) => {
+          state.backend_event_failures += 1;
+          throw error;
+        }),
+      ),
+  };
+  return sink;
+}
+
+function publish_live(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  token: TurnToken,
+  event: AgentMessageDelta | ModelThinkingHappened | ToolCallProgress,
+): void {
+  if (host.shutting_down || !same_turn(state.running_turn?.token ?? null, token)) return;
+  host.options.require_runtime_ownership?.();
+  let frame: ConversationLiveTailFrame;
+  if (event instanceof AgentMessageDelta) frame = new AgentMessageDeltaFrame(event);
+  else if (event instanceof ToolCallProgress) frame = new ToolCallProgressFrame(event);
+  else {
+    const now = host.monotonic_now();
+    if (now - state.model_thinking_shown_at_monotonic < MODEL_THINKING_PULSE_INTERVAL_SECONDS)
+      return;
+    state.model_thinking_shown_at_monotonic = now;
+    frame = new ModelThinkingFrame();
+  }
+  host.options.publish_frame?.(state.record.conversation_id, frame);
+}
+
+function enqueue_backend_event(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  event: () => Promise<void>,
+): void {
+  state.backend_events.push(event);
+  if (state.backend_event_pump !== null || host.shutting_down) return;
+  const pump = async () => {
+    try {
+      while (state.backend_events.length > 0 && !host.shutting_down) {
+        const take = state.backend_events.shift()!;
+        try {
+          await take();
+        } catch (error) {
+          state.backend_event_failures += 1;
+          console.error(
+            `conversation ${state.record.conversation_id} could not take in a backend event`,
+            error,
+          );
+        }
+      }
+    } finally {
+      state.backend_event_pump = null;
+    }
+  };
+  // Start after assignment, so a synchronous event cannot clear then overwrite the pump.
+  state.backend_event_pump = Promise.resolve().then(pump);
 }

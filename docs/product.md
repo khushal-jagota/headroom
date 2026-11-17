@@ -50,8 +50,8 @@ The cross-cutting rules are listed in [Decisions that must stay put](invariants.
 
 ## Code
 
-- `src/planner/`: the server, grouped by system (`tickets/`, `managers/`, `runtime/`, `conversation/`, and others). The server starts with `panels serve`.
+- `server/`: the TypeScript server, grouped by system (`tickets/`, `managers/`, `runtime/`, `conversation/`, and others). `server/main.ts` starts it.
 - `web/`: the browser app.
-- `src/planner/cli/`: the `panels` command.
+- `server/cli/`: the `panels` command.
 
 _Last verified: 2026-11-15._

@@ -122,6 +122,23 @@ export function durable_session_id(message: ClaudeSdkMessage): string | null {
     return null;
   return typeof message.session_id === 'string' ? message.session_id : null;
 }
+const CLAUDE_TOOL_KINDS: ReadonlyMap<string, B.ToolKind> = new Map(
+  (
+    [
+      ['execute', ['Bash', 'BashOutput', 'KillShell']],
+      ['read', ['Read', 'NotebookRead']],
+      ['edit', ['Edit', 'MultiEdit', 'Write', 'NotebookEdit']],
+      ['search', ['Grep', 'Glob', 'LS', 'WebSearch']],
+      ['fetch', ['WebFetch']],
+      ['think', ['Task', 'Agent', 'TodoWrite']],
+      ['switch_mode', ['ExitPlanMode']],
+    ] as const
+  ).flatMap(([kind, names]) => names.map((name) => [name, kind] as const)),
+);
+/** The kind of a Claude tool, by its name. Any other tool, `mcp__*` included, is `other`. */
+export function claude_tool_kind(name: string): B.ToolKind {
+  return CLAUDE_TOOL_KINDS.get(name) ?? 'other';
+}
 function plan_entries(block: Record<string, unknown>): readonly PlanEntry[] | null {
   const input = record(block.input);
   if (block.name !== 'TodoWrite' || !input || !Array.isArray(input.todos) || !input.todos.length)
@@ -296,7 +313,7 @@ export class ClaudeEvents {
           new B.ToolCallStarted({
             tool_call_id: block.id as string,
             title: block.name as string,
-            tool_kind: block.name as string,
+            tool_kind: claude_tool_kind(block.name as string),
             detail: canonical_json(block.input),
           }),
         );

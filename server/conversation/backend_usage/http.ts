@@ -10,8 +10,13 @@ export const http_get_usage: UsageHttpGet = async (url, headers, timeout_seconds
   let body: unknown = null;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
     signal.throwIfAborted();
+    // The adapter reports a missing body by status. The parse error is kept here.
+    console.warn(`backend usage response from ${new URL(url).host} is not JSON`, {
+      status: response.status,
+      error,
+    });
   }
   return { status_code: response.status, body };
 };

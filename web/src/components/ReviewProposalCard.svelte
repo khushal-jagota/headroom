@@ -96,18 +96,24 @@
 
   const detail = createQuery(() => queries.reviewProposal(identity));
   let healthyDetail = $derived(detail.data && !isBrokenTicket(detail.data) ? detail.data : undefined);
+  // The last read that matched this proposal. A decision refreshes the Ticket, which then no
+  // longer has the proposal: the card is done, not loading, so it keeps what it showed until
+  // the queue moves on. Only a card that never matched waits behind the placeholder.
+  let shownDetail = $state.raw<TicketDetail | undefined>(undefined);
+  $effect(() => { if (healthyDetail && !isStale(healthyDetail)) shownDetail = healthyDetail; });
+  let cardDetail = $derived(healthyDetail && !isStale(healthyDetail) ? healthyDetail : shownDetail);
 
   let currentKey = $derived(reviewProposalIdentity(identity));
   let ticketHref = $derived(workspaceAddress({ kind: "ticket", id: ticketId }));
 
-  let lc = $derived(healthyDetail?.workflow ? buildLifecycle(healthyDetail.workflow) : null);
+  let lc = $derived(cardDetail?.workflow ? buildLifecycle(cardDetail.workflow) : null);
   // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
   // the Ticket page offers, including handing the Ticket back to its own Manager.
   let reviewManager = $derived(
-    healthyDetail?.manager_id
+    cardDetail?.manager_id
       ? {
-          id: healthyDetail.manager_id,
-          title: healthyDetail.manager_title || "Manager"
+          id: cardDetail.manager_id,
+          title: cardDetail.manager_title || "Manager"
         }
       : null
   );
@@ -218,7 +224,7 @@
   {/if}
 {/snippet}
 
-<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
+<SkeletonRegion shape="block" loading={!detail.error && !cardDetail && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
@@ -237,8 +243,8 @@
     <div class="review-card-actions">{@render queueActions()}</div>
     {/if}
   </div>
-{:else if healthyDetail}
-  {@const ticketDetail = healthyDetail}
+{:else if cardDetail}
+  {@const ticketDetail = cardDetail}
   {#if !isStale(ticketDetail)}
     <div
       data-proposal-identity={currentKey}
@@ -321,7 +327,7 @@
 </SkeletonRegion>
 <!-- While the approval loads or is being refreshed, the queue's own actions (Skip, Open ticket)
      stay at hand at the right: they never wait on the proposal. -->
-{#if !detail.error && (!healthyDetail || (!manifestMissingWorkerType && isStale(healthyDetail)))}
+{#if !detail.error && !cardDetail && (!healthyDetail || (!manifestMissingWorkerType && isStale(healthyDetail)))}
   <div class="review-card-actions">
     {#if embedded}{:else if decisionActions}{@render decisionActions()}{:else}{@render queueActions()}{/if}
   </div>

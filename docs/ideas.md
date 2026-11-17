@@ -14,6 +14,6 @@ The Ideas page, under Work in the shell and inside the Workspace. Capture and li
 
 ## Code
 
-`src/planner/ideas/` and `web/src/routes/IdeasRoute.svelte`.
+`server/ideas/` and `web/src/routes/IdeasRoute.svelte`.
 
 _Last verified: 2026-11-04._

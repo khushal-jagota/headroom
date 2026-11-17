@@ -8,7 +8,7 @@ Each endpoint accepts one `machine_id`, with the original Mac as the default. It
 
 Inbox admission checks the sender, child incarnation, and conversation before receipt replay or any batch effects. Receipt rows record their machine. Uploads for named machines use `executor-uploads/<machine_id>` while the original Mac keeps `executor-uploads`. Publication still targets the canonical Ticket files only after authority checks.
 
-Ticket execution admission, readiness, restart, memory notices, and decision delivery use `ticket.machine_id`. The policy helpers are `can_execute_machine(machine_id, connection)` and `machine_unavailable_reason(machine_id, connection)`. Home remains local. A known compatible remote incarnation permits queued work while absent, but readiness and restart also require that destination's presence. Refusals retain Python's existing payload fields.
+Ticket execution admission, readiness, restart, memory notices, and decision delivery use `ticket.machine_id`. The policy helpers are `can_execute_machine(machine_id, connection)` and `machine_unavailable_reason(machine_id, connection)`. Home remains local. A known compatible remote incarnation permits queued work while absent, but readiness and restart also require that destination's presence. Refusals keep their existing payload fields.
 
 ## Startup and retained state
 
@@ -38,7 +38,9 @@ Only the original configured executor can request bootstrap credentials, with no
 | GET | `/api/executor/commands` | Current executor's bounded mailbox poll |
 | POST | `/api/executor/commands/outcomes` | Current executor's typed command outcomes; stop success still needs exact proof |
 | POST | `/api/executor/conversations/:conversation_id/items` | Ordered durable intake and item receipts |
-| PUT | `/api/executor/uploads/:sha256` | Authorized child's digest-named raw upload into private staging |
+| PUT | `/api/executor/uploads/:sha256` | Authorized child's digest-named raw upload into private staging, for an executor from before the file sync |
+| PUT | `/api/executor/ticket-files/:sha256` | File sync: one file version for the `artifacts/` folder of a Ticket that belongs to this machine |
+| DELETE | `/api/executor/ticket-files/:sha256` | File sync: remove one file from that folder |
 | GET | `/api/executor/commands/:command_id/files/:stored_file_id` | Authorized input of a waiting or delivered command |
 | POST | `/api/executor/reads` | Allowlisted application read as the assigned principal |
 | POST | `/api/executor/conversations/:conversation_id/live` | Transient events for the exact current child |
@@ -55,7 +57,7 @@ Only the original configured executor can request bootstrap credentials, with no
 
 ## Stop and recovery ownership
 
-An ordinary owner kill waits without a deadline for exact Mac stop proof, as Python does; only that conversation waits. A successful stop result alone does not prove termination. The matching accepted `child_stopped` item or proven process replacement closes exact custody. Rebind waits for that retirement outside the conversation lock before a fresh child takes the same reserved prompt. A safe initial-delivery withdrawal can finish the kill before remote retirement completes.
+An ordinary owner kill waits without a deadline for exact Mac stop proof; only that conversation waits. A successful stop result alone does not prove termination. The matching accepted `child_stopped` item or proven process replacement closes exact custody. Rebind waits for that retirement outside the conversation lock before a fresh child takes the same reserved prompt. A safe initial-delivery withdrawal can finish the kill before remote retirement completes.
 
 Registry `recheck_cleanup(source, ticket_id)` resolves the historical exact assignment and Ticket principal. The mailbox sends inspection to the current incarnation, with the retained source in its arguments. Closed source assignments remain inspectable and grant no start or stop authority. A successful inspection also waits for a recent lease of the current incarnation with no truncated list, queued items for that conversation, or cleanup uncertainty. One deadline covers inspection and drain. Registration of the core cleanup callback awaits P3's custody interface merge.
 
@@ -71,7 +73,7 @@ The launch path preserves ready-marker promotion, failed-trial rollback, and han
 
 ## Shared wire
 
-Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema now describes Python wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
+Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema describes wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
 
 Both runtime identities advertise protocol 26 through `execution_configuration.ts`. Machine credentials, supervision evidence, and workspace messages use that same contract. The presence owner retains an accepted lease when an optional update offer exceeds its response budget.
 
@@ -114,25 +116,32 @@ Hashing and copying use asynchronous file operations with 256 KiB blocks and saf
 
 FileStaging is constructed before the inbox. An upload's held source parent and checked leaf pass through the inbox's second authorization into staging installation. The parent remains owned through cleanup, even if its former pathname changes. A later authorized inbox item publishes staged bytes through bounded synchronous rename groups inside the writer, after authority and version rechecks. Every source and destination parent opens before that writer. Exclusive hold links are created in retained destination parents before publication, then removed asynchronously with directory flushes after success or partial failure. Destination parents remain held through the receipt's unchanged-version check.
 
-Executor uploads refuse private Ticket names at the first path segment. Mac capture skips those names only at the Ticket root. Both boundaries use the file system's shared `PRIVATE_TICKET_NAMES` set. Nested artifact names remain valid.
+Executor uploads refuse private Ticket names at the first path segment. The file sync sends only the `artifacts` folder. Both boundaries use the file system's shared `PRIVATE_TICKET_NAMES` set. Nested artifact names remain valid.
 
 Hard-link holds defer overwritten-inode cleanup until after the publication writer.
 A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
 Hard crashes can leave `.hold-*`, `.incoming-*`, and `.tmp-*` files. No startup sweeper removes them.
 
-InputFile retains its checked descriptor through a single-consumer stream. It starts at offset zero, emits exactly the hashed count, refuses premature EOF, and never emits an appended suffix. Yielded chunks remain stable across later reads. Python instead hashes a descriptor, returns a path, and later reopens that path in its response. The retained-descriptor contract deliberately closes that substitution race. The input response consumes held chunks and closes the capability on completion or disconnect.
+InputFile retains its checked descriptor through a single-consumer stream. It starts at offset zero, emits exactly the hashed count, refuses premature EOF, and never emits an appended suffix. Yielded chunks remain stable across later reads. Retaining the descriptor closes a path substitution race between hashing and the response. The input response consumes held chunks and closes the capability on completion or disconnect.
 
-Input bytes stay below the standard message store beside the logical database-path parent. The existing message-file lookup admits the ID and resolves contained symlinks. Its result must stay inside the independently anchored conversation root before a NOFOLLOW descriptor walk opens it. A lookup-root swap therefore cannot redefine byte authority. Contained same-conversation leaf links keep Python behavior. Escapes, loops and later symlink substitutions return the existing not-found answer.
+Input bytes stay below the standard message store beside the logical database-path parent. The existing message-file lookup admits the ID and resolves contained symlinks. Its result must stay inside the independently anchored conversation root before a NOFOLLOW descriptor walk opens it. A lookup-root swap therefore cannot redefine byte authority. Contained same-conversation leaf links still resolve. Escapes, loops and later symlink substitutions return the existing not-found answer.
 
 The transfer owner seals new intake at stop and joins admitted transfers through the shared grace period. The supplied request/media signal controls physical stream cancellation at the existing cutoff. Stop adds no grace timer and does not close an unconsumed input immediately.
 
 Uploads require an `UploadSource` with a real `destroy` capability. The HTTP route supplies its owned request Readable. On stall or cancellation, the owner destroys that source before it calls iterator return. It closes and unlinks the incoming file before it joins the real source cleanup. Actual settlement retains every admitted syscall, stream and unexpected cleanup failure.
 
+### File sync
+
+An executor sends each Ticket's `artifacts/` folder through the two `ticket-files` routes, apart from every inbox item. No child, conversation, receipt, or publication guard takes part.
+`VpsExecutor` admits the current incarnation and checks that the Ticket belongs to the sending machine, before intake and again before the rename.
+`VpsFiles.save_ticket_file` streams the body into private staging without hashing on the main thread. `FileHasher` then hashes the held file on its own worker thread, once.
+Matching bytes move into the served Ticket folder with one rename through retained parents. A mismatch, a path outside `artifacts/`, or a private name is a validation refusal.
+`remove_ticket_file` unlinks one regular file and removes the folders that this leaves empty, up to `artifacts`.
+The earlier staging upload and item-bound publication remain only for an executor that still runs the earlier version.
+
 ## VPS command mailbox
 
-`vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at Python's corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
-
-Accepted poll and large-replacement latency measurements remain in DEVIATIONS. Gate 3 must compare them with the real table and backlog sizes on a copy of live data before further performance machinery is considered.
+`vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at the corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
 
 The mailbox uses the core's shared automatic-start admission owner. It restores the exact turn binding before dispatch admission and holds a refused start or prompt. Stop and Cancel can withdraw that waiting turn across poll pages. Unrelated controls can move a waiting conversation suffix behind them, while a delivered row prevents that move. Withdrawn turns release their in-memory reservations after commit. Held polls cap their admission wait at one second, so a released slot needs no new mailbox write.
 
@@ -146,7 +155,7 @@ Callers establish authority before they enter this internal API. The transport a
 
 The command route aborts its poll when the response connection closes. Each held poll owns a removable wake registration. Timeout, abort, listener failure and shutdown release it. Abort reasons use a shared typed cancellation or an AbortError with the original reason as its cause. Waits require finite durations within Node's timer range. Finite negative durations return immediately, and a null result-wait timeout remains unbounded.
 
-### Known Python hazards
+### Known hazards
 
 These behaviors remain for the named follow-up owners.
 

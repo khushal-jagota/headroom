@@ -66,8 +66,8 @@ export function optional_edge_context_json(
 ): string | null {
   try {
     return edge_context_json(sql, kind, id, type);
-  } catch {
-    console.warn(`Notification context unavailable; queued generic alert (${type})`);
+  } catch (error) {
+    console.warn(`Notification context unavailable; queued generic alert (${type})`, error);
     return null;
   }
 }

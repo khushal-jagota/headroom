@@ -16,8 +16,10 @@ export function managed_process_support(): { pin(pid: number): PinnedSupervisor 
     open = libc.func('int pidfd_open(int pid, unsigned int flags)');
     send = libc.func('int pidfd_send_signal(int fd, int signum, void *info, unsigned int flags)');
     poll = libc.func('int poll(void *fds, unsigned long nfds, int timeout)');
-  } catch {
-    throw new ManagedStopError('Required Linux process-handle functions are unavailable');
+  } catch (cause) {
+    throw new ManagedStopError('Required Linux process-handle functions are unavailable', {
+      cause,
+    });
   }
   const failure = (operation: string, errno = koffi.errno()) =>
     new ManagedStopError(`${operation} failed (errno ${errno})`);

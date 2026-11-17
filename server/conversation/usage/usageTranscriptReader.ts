@@ -14,6 +14,11 @@ import { TRANSCRIPT_CHUNK_BYTES } from './configuration.ts';
 
 import type { UsageRecord } from './usageTranscripts.ts';
 
+/** A file that vanished is an expected scan race. Other filesystem errors are logged. */
+function missing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+}
+
 export interface TranscriptFile {
   readonly path: string;
   readonly size: number;
@@ -98,7 +103,9 @@ export async function listTranscriptFiles(
       const opened = await NodeFSP.opendir(dir);
       // opendir retains native scandir order. readdir sorts names in libuv.
       for await (const entry of opened) entries.push(entry);
-    } catch {
+    } catch (error) {
+      if (!missing(error))
+        console.warn(`usage transcript directory ${dir} could not be read`, error);
       return;
     }
     for (const entry of entries) {
@@ -121,8 +128,9 @@ export async function listTranscriptFiles(
         if (mtimeMs >= sinceMs) {
           found.push({ path: child, size: Number(stats.size), mtimeMs });
         }
-      } catch {
+      } catch (error) {
         // Vanished between readdir and stat.
+        if (!missing(error)) console.warn(`usage transcript ${child} could not be stat'd`, error);
       }
     }
   };
@@ -142,7 +150,9 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
   try {
     const stats = await NodeFSP.stat(path, { bigint: true });
     return `${stats.dev}:${stats.ino}`;
-  } catch {
+  } catch (error) {
+    if (!missing(error))
+      console.warn(`usage transcript directory ${path} could not be stat'd`, error);
     return '';
   }
 }
@@ -161,7 +171,9 @@ async function guardMatches(
       position.resumeOffset - position.guardLength,
     );
     return bytesRead === position.guardLength && fnv1a(window) === position.guardHash;
-  } catch {
+  } catch (error) {
+    // The transcript is read again from the start.
+    console.warn('usage transcript resume guard could not be read', error);
     return false;
   }
 }
@@ -193,7 +205,8 @@ export async function readTranscriptRecords(
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, 'r');
-  } catch {
+  } catch (error) {
+    if (!missing(error)) console.warn(`usage transcript ${filePath} could not be opened`, error);
     return null;
   }
 
@@ -283,9 +296,14 @@ export async function readTranscriptRecords(
       },
       resumed,
     };
-  } catch {
+  } catch (error) {
+    console.warn(`usage transcript ${filePath} could not be read`, error);
     return null;
   } finally {
-    await handle.close().catch(() => undefined);
+    await handle
+      .close()
+      .catch((error: unknown) =>
+        console.warn(`usage transcript ${filePath} could not be closed`, error),
+      );
   }
 }

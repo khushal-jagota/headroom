@@ -212,8 +212,8 @@ async function run_owned(
     const text = await json_text(output);
     try {
       return JSON.parse(text) as unknown;
-    } catch {
-      throw new AppValidationError('runtime probe returned no valid JSON');
+    } catch (error) {
+      throw new AppValidationError('runtime probe returned no valid JSON', { cause: error });
     }
   } finally {
     if (timeout && abort) timeout.removeEventListener('abort', abort);

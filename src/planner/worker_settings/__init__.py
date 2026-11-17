@@ -1,1 +1,0 @@
-"""Editable Worker management settings."""

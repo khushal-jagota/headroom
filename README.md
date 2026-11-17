@@ -57,11 +57,11 @@ Formerly **Panels**. The app and command-line tool still use the `panels` name.
 ## Run locally
 
 For a sealed release, use the [one-command home installer](ops/mac-home/installation.md) on Apple Silicon Mac or Linux x86_64.
-Use the [join command](ops/mac-executor/installation.md) to add an extra machine to that home.
+Use the [join command](ops/linux-executor/installation.md) to add an extra Linux machine to that home.
 
 For a source checkout, follow the commands below.
 
-Requires **Python 3.12+**, **Node.js 22.18+ or 24+**, and npm. Run these commands from a source checkout:
+Requires **Node.js 22.18+ or 24+** and npm. Run these commands from a source checkout:
 
 ```sh
 git clone https://github.com/khushal-jagota/headroom.git
@@ -70,14 +70,14 @@ cd headroom
 npm ci --prefix server
 npm ci --prefix web
 npm install --prefix agent_backends --no-save --no-package-lock
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
-source .venv/bin/activate
-scripts/dev npm --prefix web run build
+npm --prefix web run build
 
-panels serve
+mkdir -p data/logs
+node server/installation/database_main.ts "$PWD/data/planning.db"
+node server/cli/main.ts serve
 ```
 
-Open [localhost:8767](http://127.0.0.1:8767). The server binds to loopback. Configuration lives in [`config.yaml`](config.yaml), with `PLAN_*` environment overrides; for example, `PLAN_PORT=8768 panels serve` selects another port. SQLite data and runtime files live under the gitignored `data/` directory by default.
+The second-to-last command creates a fresh database once. Open [localhost:8767](http://127.0.0.1:8767). The server binds to loopback. Configuration lives in [`config.yaml`](config.yaml), with `PLAN_*` environment overrides; for example, `PLAN_PORT=8768 node server/cli/main.ts serve` selects another port. SQLite data and runtime files live under the gitignored `data/` directory by default.
 
 Before starting agent work, configure and authenticate the backend you intend to use:
 
@@ -103,15 +103,4 @@ The map, with one line for each page, is [docs/README.md](docs/README.md).
 
 ## Development
 
-The backend is Python/FastAPI with SQLite; the browser app is Svelte/Vite. Start with [`AGENTS.md`](AGENTS.md) for code ownership and the working rules. Run `./verify` for the repository's full integration check.
-
-The full candidate build and startup test is opt-in. Ordinary integration runs do not build an installed copy.
-Run it explicitly when the installed-runtime boundary needs a check:
-
-```sh
-scripts/dev pytest tests/opt_in/test_candidate_bootstrap.py -s
-```
-
-Pytest keeps private credential homes. Package installers use the launch environment's `PIP_CACHE_DIR` and `npm_config_cache` instead.
-Without overrides, pip uses `$XDG_CACHE_HOME/pip` (or `$HOME/.cache/pip`) and npm uses `$HOME/.npm` from before home isolation.
-Keep these shared caches on disk, outside temporary test homes. The first install fills them; later installs reuse downloads and built wheels.
+The backend is TypeScript on Node with Fastify and SQLite, in [`server/`](server/README.md); the browser app is Svelte/Vite in `web/`. Start with [`AGENTS.md`](AGENTS.md) for code ownership, the checks, and the working rules.

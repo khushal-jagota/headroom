@@ -7,7 +7,7 @@ It writes a new output directory and leaves any failed partial output for inspec
 `runtime/` is the release payload. Its four-field `mac-runtime.json` identifies the revision and target.
 `bin/panels` uses that payload's Node and entrypoint after relocation. The wire schema stays embedded.
 The payload keeps plain Hermes provider scripts, static skill/Worker seed data, version metadata,
-server JSON/bash assets and complete production packages. It contains no Python server or Python interpreter.
+server JSON/bash assets and complete production packages. It contains no Python interpreter.
 
 `assets/` holds the unsigned candidate app metadata, C requester source, manual console and LaunchAgent plist.
 The fixed supervisor installs separately at the paths in `assets/installation.json`.

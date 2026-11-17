@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
+import { CLAUDE_CAPABILITIES, claude_selection_transition } from './selection.ts';
 import { home_path } from '../../core/paths.ts';
 import { expand_path } from '../../../environments/paths.ts';
 import {
@@ -40,10 +41,8 @@ export async function create_claude_instance(
   const base = {
     instance_id: input.instance_id,
     driver_kind: claude_driver.driver_kind,
-    capabilities: {
-      sessions: { supportsModelSwitchInSession: false },
-      turns: { supportsActiveSteering: true },
-    },
+    capabilities: CLAUDE_CAPABILITIES,
+    plan_selection_transition: claude_selection_transition,
     child_factory: create_claude_backend_child_factory(claude_launch(host), {
       child_processes: host.child_processes,
       one_shot_children: host.one_shot_children,

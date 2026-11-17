@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import BetterSqlite3 from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -69,16 +69,12 @@ it('keeps source and wire permits distinct and rejects stale installations', () 
   const path = join(root, 'database.sqlite3');
   let database: ReturnType<typeof createDatabase> | undefined;
   try {
-    // Reuse the write-door tests' narrow Python SQLite setup, with only the source meta schema.
-    execFileSync('python3', [
-      '-c',
-      `
-import sqlite3, sys
-with sqlite3.connect(sys.argv[1]) as conn:
-    conn.execute('CREATE TABLE signal_publication_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), scope TEXT NOT NULL, runtime_epoch TEXT NOT NULL, sequence INTEGER NOT NULL)')
-`,
-      path,
-    ]);
+    // Create only the source meta schema the authority reads.
+    const setup = new BetterSqlite3(path);
+    setup.exec(
+      'CREATE TABLE signal_publication_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), scope TEXT NOT NULL, runtime_epoch TEXT NOT NULL, sequence INTEGER NOT NULL)',
+    );
+    setup.close();
     database = createDatabase(path);
     const source = createIdlePublicationAuthority(database);
     const authority = source.capture();

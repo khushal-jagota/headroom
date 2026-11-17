@@ -39,8 +39,8 @@ export class LinuxProcessInspector {
     let result: string;
     try {
       result = await readFile(path, 'utf8');
-    } catch {
-      throw new PreviewError('Process evidence is missing or unreadable.', 410);
+    } catch (cause) {
+      throw new PreviewError('Process evidence is missing or unreadable.', 410, { cause });
     }
     deadlineCheck(deadline);
     return result;
@@ -69,8 +69,10 @@ export class LinuxProcessInspector {
       if (!path_is_within(worktree, cwd)) {
         throw new Error('Outside worktree');
       }
-    } catch {
-      throw new PreviewError('Listener cwd is outside the Ticket preview worktree.', 410);
+    } catch (cause) {
+      throw new PreviewError('Listener cwd is outside the Ticket preview worktree.', 410, {
+        cause,
+      });
     }
     return {
       boot_id: (await this.read(join(this.proc, 'sys/kernel/random/boot_id'), deadline)).trim(),
@@ -109,9 +111,7 @@ export class LinuxProcessInspector {
     } catch (error) {
       if (code(error) === 'ENOENT') return new Set();
       if (code(error) === 'EACCES' || code(error) === 'EPERM') {
-        const refusal = new PreviewError('Cannot inspect process socket ownership.', 410);
-        Object.defineProperty(refusal, 'cause', { value: error });
-        throw refusal;
+        throw new PreviewError('Cannot inspect process socket ownership.', 410, { cause: error });
       }
       throw error;
     }
@@ -151,8 +151,8 @@ export class LinuxProcessInspector {
     let pids: number[];
     try {
       pids = (await readdir(this.proc)).filter((name) => /^\d+$/.test(name)).map(Number);
-    } catch {
-      throw new PreviewError('Linux process evidence is unavailable.');
+    } catch (cause) {
+      throw new PreviewError('Linux process evidence is unavailable.', 409, { cause });
     }
     if (pids.length > config.DISCOVERY_PIDS) {
       throw new PreviewError('Process discovery bound exceeded.', 503);

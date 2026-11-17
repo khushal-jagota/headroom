@@ -280,6 +280,20 @@ function addsNothingTo(said: string, within: string): boolean {
   return false;
 }
 
+/** A backend that sends a call's arguments as its detail titles the row with the tool's own name. */
+const TOOL_NAME_TITLE = /^[A-Za-z][\w-]*$/;
+
+/** The word that names the tool: its own name when the call's arguments came as detail,
+ *  otherwise the kind. Claude sends a normalized kind with the raw name as the title. */
+function namedTool(row: ToolCallRow): string {
+  const title = row.title.trim();
+  if (title.toLowerCase() === row.toolKind.trim().toLowerCase()) return row.toolKind;
+  const started = row.startedDetail?.trim() ?? "";
+  return TOOL_NAME_TITLE.test(title) && callArguments(started) !== null
+    ? title
+    : row.toolKind;
+}
+
 function toolCallLine(row: ToolCallRow): ToolCallLine {
   // The start of a long output is not the output. A fragment can lose the shape the
   // rules below read — an object that no longer parses, a first line that was never the
@@ -287,13 +301,13 @@ function toolCallLine(row: ToolCallRow): ToolCallLine {
   const wholeDetail = typeof row.cappedDetailSequence === "number" ? null : row.detail;
   // Both halves matter: the title says what happened and the summary says which call it
   // was. When a backend kind has no trustworthy phrase, its own title remains the fact.
+  const tool = namedTool(row);
   const written = withoutTheKindItStated(
     commandWithoutShellInvocation(row.title.trim()),
-    row.toolKind
+    tool
   );
-  const titleNamesTheTool =
-    row.title.trim().toLowerCase() === row.toolKind.trim().toLowerCase();
-  const phrase = TOOL_CALL_PHRASES[toolGlyphKind(row.toolKind)];
+  const titleNamesTheTool = row.title.trim().toLowerCase() === tool.trim().toLowerCase();
+  const phrase = TOOL_CALL_PHRASES[toolGlyphKind(tool)];
   const spoken =
     identifyingFact(row.startedDetail, wholeDetail) ??
     (titleNamesTheTool ? spokenDetail(row.startedDetail, wholeDetail) : written);
@@ -322,7 +336,7 @@ export function presentToolCall(row: ToolCallRow): ToolCallPresentation {
   // first line repeats its title refuse to open onto the rest of the output.
   const capped = row.progress === null && typeof row.cappedDetailSequence === "number";
   return {
-    iconPaths: STEP_ICON_PATHS[toolGlyphKind(row.toolKind)],
+    iconPaths: STEP_ICON_PATHS[toolGlyphKind(namedTool(row))],
     title: line.title,
     summary: line.summary,
     detail,

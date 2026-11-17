@@ -70,16 +70,23 @@ async function restore_managed_files(
         await fs.rename(staged, target);
       } catch (error) {
         if (old !== undefined && !(await present(target))) await fs.rename(old, target);
-        await fs.rm(staged, { recursive: true, force: true }).catch(() => {});
+        await fs.rm(staged, { recursive: true, force: true }).catch((cleanup: unknown) => {
+          console.warn('backup restore could not remove its staged copy', staged, cleanup);
+        });
         throw error;
       }
       replaced.push({ target, old });
     }
     for (const { old } of replaced)
-      if (old !== undefined) await fs.rm(old, { recursive: true, force: true }).catch(() => {});
+      if (old !== undefined)
+        await fs.rm(old, { recursive: true, force: true }).catch((cleanup: unknown) => {
+          console.warn('backup restore could not remove the replaced copy', old, cleanup);
+        });
   } catch (error) {
     for (const { target, old } of replaced.reverse()) {
-      await fs.rm(target, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(target, { recursive: true, force: true }).catch((cleanup: unknown) => {
+        console.warn('backup restore rollback could not remove a restored copy', target, cleanup);
+      });
       if (old !== undefined) await fs.rename(old, target);
     }
     throw error;

@@ -164,8 +164,8 @@ async function remove_retired(path: string, options: WorkspaceOptions): Promise<
         identity.workspace_id === record.workspace_id
       )
         clear_checkout(record.source);
-    } catch {
-      return 'cannot recover retained Ticket folder ownership';
+    } catch (error) {
+      return `cannot recover retained Ticket folder ownership: ${String(error)}`;
     }
   }
   const names = record.scratch_names ?? [];
@@ -224,7 +224,9 @@ async function allocated_bytes(root: string): Promise<number> {
   for (const name of await readdir(root))
     try {
       total += await allocated_bytes(join(root, name));
-    } catch {}
+    } catch (error) {
+      console.warn('retired workspace size could not be measured', join(root, name), error);
+    }
   return total;
 }
 export async function cleanup_local_workspaces(

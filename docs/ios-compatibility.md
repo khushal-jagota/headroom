@@ -8,6 +8,6 @@ The minimum build is part of the server source. A check before publication requi
 
 Legacy apps that send no build identity cannot use this protection. The first build with the gate must reach the phone before later server releases can reliably refuse it.
 
-The code lives in `src/planner/ios_compatibility/` and `ios/Panels/Core/Networking/`. The [release procedure](../ops/ios/compatibility.md) explains the checks and the review record.
+The code lives in `server/ios_compatibility/` and `ios/Panels/Core/Networking/`. The review record is `server/ios_compatibility/review.json`. The [release procedure](../ops/ios/compatibility.md) explains the checks and the review record.
 
 _Last verified: 2026-11-04._

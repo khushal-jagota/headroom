@@ -29,9 +29,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - name: Prepare native tools and the admission host Node
         run: |
           set -euo pipefail
@@ -61,7 +58,7 @@ jobs:
             PLAN_SERVER_LIFECYCLE_LEASE_PATH="$private/runtime/lifecycle.lock" PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=0 PLAN_DISPATCH_ENABLED=false \
             bash --noprofile --norc -euo pipefail <<'PUBLISH'
           printf '{}\n' > "$PLAN_CONFIG_PATH"
-          python3 -I -S -B scripts/dev_launcher.py npm --prefix server ci
+          scripts/dev npm --prefix server ci
           node --input-type=module -e 'import{writeFileSync}from"node:fs";const r=process.env.PUBLICATION_ROOT;writeFileSync(r+"/build-request.json",JSON.stringify({source_root:process.env.GITHUB_WORKSPACE,requested_sha:process.env.GITHUB_SHA,output_directory:r+"/linux",public_cli_entrypoint:"server/cli/main.ts"}));'
           node server/environments/release/publication_main.ts "$PUBLICATION_ROOT/build-request.json"
           node --input-type=module -e 'import{readFileSync,writeFileSync}from"node:fs";const r=process.env.PUBLICATION_ROOT,b=JSON.parse(readFileSync(r+"/linux/linux-publication-build.json","utf8"));writeFileSync(r+"/boot-request.json",JSON.stringify({archive_path:r+"/linux/panels-app.tar.gz",archive_sha256:b.archive.sha256,requested_sha:process.env.GITHUB_SHA,work_root:r+"/boot"}));'
@@ -101,9 +98,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - name: Prepare native tools and the admission host Node
         run: |
           set -euo pipefail
@@ -133,7 +127,7 @@ jobs:
             PLAN_SERVER_LIFECYCLE_LEASE_PATH="$private/runtime/lifecycle.lock" PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=0 PLAN_DISPATCH_ENABLED=false \
             bash --noprofile --norc -euo pipefail <<'PUBLISH'
           printf '{}\n' > "$PLAN_CONFIG_PATH"
-          python3 -I -S -B scripts/dev_launcher.py npm --prefix server ci
+          scripts/dev npm --prefix server ci
           node --input-type=module -e 'import{writeFileSync}from"node:fs";const r=process.env.PUBLICATION_ROOT;writeFileSync(r+"/build-request.json",JSON.stringify({source_root:process.env.GITHUB_WORKSPACE,requested_sha:process.env.GITHUB_SHA,output_directory:r+"/linux-executor"}));'
           node server/environments/linux_executor/build_main.ts "$PUBLICATION_ROOT/build-request.json"
           PUBLISH
@@ -163,9 +157,6 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -189,7 +180,7 @@ jobs:
             bash --noprofile --norc -euo pipefail <<'MAC'
           printf '{}\n' > "$PLAN_CONFIG_PATH"
           git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$PUBLICATION_ROOT/source"
-          NODE_ENV=production python3 -I -S -B "$PUBLICATION_ROOT/source/scripts/dev_launcher.py" npm --prefix server ci
+          NODE_ENV=production "$PUBLICATION_ROOT/source/scripts/dev" npm --prefix server ci
           node_distribution=$(node --input-type=module -e 'import{realpathSync}from"node:fs";import{dirname}from"node:path";console.log(dirname(dirname(realpathSync(process.execPath))));')
           node "$PUBLICATION_ROOT/source/server/executor/mac/packaging/publication_main.ts" \
             --source "$PUBLICATION_ROOT/source" --node-distribution "$node_distribution" \
@@ -247,11 +238,11 @@ jobs:
             bash --noprofile --norc -euo pipefail <<'MAC_HOME'
           printf '{}\n' > "$PLAN_CONFIG_PATH"
           git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$PUBLICATION_ROOT/inputs"
-          NODE_ENV=production python3 -I -S -B "$PUBLICATION_ROOT/inputs/scripts/dev_launcher.py" npm --prefix server ci
-          NODE_ENV=production python3 -I -S -B "$PUBLICATION_ROOT/inputs/scripts/dev_launcher.py" npm --prefix agent_backends install
-          python3 -I -S -B "$PUBLICATION_ROOT/inputs/scripts/dev_launcher.py" npm --prefix web ci
-          python3 -I -S -B "$PUBLICATION_ROOT/inputs/scripts/dev_launcher.py" npm --prefix web run build
-          python3 -I -S -B scripts/dev_launcher.py npm --prefix server ci
+          NODE_ENV=production "$PUBLICATION_ROOT/inputs/scripts/dev" npm --prefix server ci
+          NODE_ENV=production "$PUBLICATION_ROOT/inputs/scripts/dev" npm --prefix agent_backends install
+          "$PUBLICATION_ROOT/inputs/scripts/dev" npm --prefix web ci
+          "$PUBLICATION_ROOT/inputs/scripts/dev" npm --prefix web run build
+          scripts/dev npm --prefix server ci
           node server/environments/release/mac_home_main.ts \
             --source "$GITHUB_WORKSPACE" --revision "$GITHUB_SHA" --output "$PUBLICATION_ROOT/home-release" \
             --node-modules "$PUBLICATION_ROOT/inputs/server/node_modules" \
@@ -290,16 +281,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - name: Expose the selected host runtimes in the fixed command PATH
         run: |
           set -euo pipefail
           selected_node=$(env -i PATH="$PATH" node -p 'require("node:fs").realpathSync(process.execPath)')
-          selected_python=$(env -i PATH="$PATH" python3 -I -S -B -c 'import os,sys; print(os.path.realpath(sys.executable))')
           if [ "$selected_node" != /usr/local/bin/node ]; then sudo ln -sfn "$selected_node" /usr/local/bin/node; fi
-          if [ "$selected_python" != /usr/local/bin/python3 ]; then sudo ln -sfn "$selected_python" /usr/local/bin/python3; fi
           env -i PATH=/usr/local/bin:/usr/bin:/bin node -e 'if(!/^22\.(?:1[89]|[2-9][0-9])\./.test(process.versions.node))throw Error("Node22 >=22.18 is required")'
       - name: Download Darwin home artifacts for the shared receipt
         env:
@@ -359,7 +345,7 @@ jobs:
             PLAN_SERVER_LIFECYCLE_LEASE_PATH="$private/runtime/lifecycle.lock" PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_PORT=0 PLAN_TEST_MODE=0 PLAN_DISPATCH_ENABLED=false \
             bash --noprofile --norc -euo pipefail <<'RECEIPT'
           printf '{}\n' > "$PLAN_CONFIG_PATH"
-          env -u GITHUB_TOKEN python3 -I -S -B scripts/dev_launcher.py npm --prefix server ci
+          env -u GITHUB_TOKEN scripts/dev npm --prefix server ci
           node --input-type=module <<'JS'
           import { createWriteStream, writeFileSync } from 'node:fs';
           import { Readable } from 'node:stream';

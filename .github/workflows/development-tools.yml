@@ -18,9 +18,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -28,15 +25,9 @@ jobs:
         run: |
           npm ci --prefix server
           npm ci --prefix web
-          python3 -m venv .venv
-          .venv/bin/pip install -r requirements.txt -e .
       - name: Check frontend tools
         run: |
           scripts/dev npm --prefix web run check
           scripts/dev npm --prefix web run test:vitest
-      - name: Check Python tools and runtime isolation
-        run: |
-          scripts/dev pytest tests/unit/test_instrument.py tests/unit/test_backend_cli_build.py tests/unit/test_test_runtime.py
-          scripts/dev mypy scripts/tree_environment.py scripts/dev_launcher.py
       - name: Check script types
         run: node server/node_modules/typescript/bin/tsc --noEmit -p scripts/tsconfig.json

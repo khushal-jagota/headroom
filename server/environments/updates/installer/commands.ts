@@ -143,7 +143,11 @@ export async function run_installer_command(
     value.signal.removeEventListener('abort', abort);
   }
 }
-async function runtime(request: InstallerRequest, value: InstallerPhase): Promise<string> {
+/** The installed application must classify as a Node version-2 runtime. */
+async function require_node_runtime(
+  request: InstallerRequest,
+  value: InstallerPhase,
+): Promise<void> {
   assert_installer_path(request.current_root, value.environment);
   assert_installer_path(join(request.current_root, 'app'), value.environment);
   const argv = [
@@ -152,7 +156,6 @@ async function runtime(request: InstallerRequest, value: InstallerPhase): Promis
     '-e',
     INSTALLED_RUNTIME_CLASSIFIER_SOURCE,
     join(request.current_root, 'app'),
-    request.admitted_legacy_null_sha ?? '',
   ];
   assert_phase(value, argv);
   let result;
@@ -167,12 +170,8 @@ async function runtime(request: InstallerRequest, value: InstallerPhase): Promis
     throw error;
   }
   assert_phase(value, argv);
-  const selected = result.stdout.trim();
-  if (process.platform === 'darwin' && selected !== 'node-v2')
-    throw new AppValidationError('Darwin home updates require a Node version-2 runtime');
-  if (!['node-v2', 'python-v1', 'python-legacy-null'].includes(selected))
+  if (result.stdout.trim() !== 'node-v2')
     throw new AppValidationError('Unsupported installed runtime classification');
-  return selected;
 }
 export function create_installer_effects(
   request: InstallerRequest,
@@ -189,7 +188,6 @@ export function create_installer_effects(
       const service = new DarwinHomeService(
         request.current_root,
         request.service_unit,
-        request.node_executable,
         create_darwin_home_io(
           { child_processes: execution.child_processes, signal: execution.signal, deadline: null },
           execution.environment,
@@ -245,38 +243,20 @@ export function create_installer_effects(
     },
     async capture() {
       try {
-        const selected = await runtime(request, phase(execution, RUNTIME_PROBE_TIMEOUT_SECONDS));
+        await require_node_runtime(request, phase(execution, RUNTIME_PROBE_TIMEOUT_SECONDS));
         const app = join(request.current_root, 'app'),
-          capture_id = randomUUID().replaceAll('-', '');
+          capture_id = randomUUID().replaceAll('-', ''),
+          main = join(app, 'server/environments/updates/interruption_capture_main.ts');
         assert_installer_path(request.database, execution.environment);
         assert_installer_path(app, execution.environment);
-        assert_installer_path(
-          join(
-            app,
-            selected === 'node-v2'
-              ? 'server/environments/updates/interruption_capture_main.ts'
-              : '.venv/bin/python',
-          ),
-          execution.environment,
-        );
-        const argv =
-          selected === 'node-v2'
-            ? [
-                request.node_executable,
-                join(app, 'server/environments/updates/interruption_capture_main.ts'),
-                request.database,
-                request.attempt_id,
-                capture_id,
-              ]
-            : [
-                join(app, '.venv/bin/python'),
-                '-I',
-                '-m',
-                'planner.environments.interruption_capture',
-                request.database,
-                request.attempt_id,
-                capture_id,
-              ];
+        assert_installer_path(main, execution.environment);
+        const argv = [
+          request.node_executable,
+          main,
+          request.database,
+          request.attempt_id,
+          capture_id,
+        ];
         return {
           kind: 'returned',
           returncode: await run_installer_command(
@@ -300,35 +280,13 @@ export function create_installer_effects(
     async restore(snapshot, lifetime_lock_fd) {
       assert_installer_path(snapshot, execution.environment);
       const value = phase(execution, DATABASE_RESTORE_TIMEOUT_SECONDS);
-      const selected = await runtime(request, value),
-        app = join(request.current_root, 'app');
+      await require_node_runtime(request, value);
+      const app = join(request.current_root, 'app'),
+        main = join(app, 'server/environments/updates/restore_main.ts');
       assert_installer_path(request.database, execution.environment);
       assert_installer_path(app, execution.environment);
-      assert_installer_path(
-        join(
-          app,
-          selected === 'node-v2' ? 'server/environments/updates/restore_main.ts' : 'bin/panels',
-        ),
-        execution.environment,
-      );
-      const argv =
-        selected === 'node-v2'
-          ? [
-              request.node_executable,
-              join(app, 'server/environments/updates/restore_main.ts'),
-              snapshot,
-              request.database,
-            ]
-          : [
-              join(app, 'bin/panels'),
-              'environment',
-              'restore',
-              '--snapshot',
-              snapshot,
-              '--destination-db',
-              request.database,
-              '--live-stopped',
-            ];
+      assert_installer_path(main, execution.environment);
+      const argv = [request.node_executable, main, snapshot, request.database];
       await run_installer_command(argv, value, {
         check: true,
         output: 'inherit',
@@ -337,8 +295,7 @@ export function create_installer_effects(
     },
     async schema_steps(lifetime_lock_fd, backup_taken) {
       const value = phase(execution, SCHEMA_STEP_TIMEOUT_SECONDS);
-      // Python version-1 apps upgrade their own database through Alembic.
-      if ((await runtime(request, value)) !== 'node-v2') return;
+      await require_node_runtime(request, value);
       const app = join(request.current_root, 'app'),
         main = join(app, 'server/environments/updates/schema_step_main.ts');
       assert_installer_path(request.database, execution.environment);

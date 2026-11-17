@@ -23,11 +23,9 @@ The fixed foreground/managed/stop entries share one config/control/lease resolve
 
 The unit renderers return the new `panels-typescript` templates and environment-file contents through async bundles. Callers must write those files. Managed units require explicit socket and lease paths outside `/tmp` and `/var/tmp`, including resolved aliases. Environment files force the config, refusal and address inputs through the shared encoder. Both actions remove Node loader variables and every exported `LD_*` input before Node starts.
 
-Start rejects a symlinked application root, holds its physical working directory and classifies that checked tree before execution. V2 uses the Node launcher. V1 and the explicitly admitted null-contract SHA use the private Python launcher. Stop uses the running supervisor's capability record and `/proc/$MAINPID/cwd`, so a rollback cannot redirect it to replacement application files. The existing authenticated pidfd client retains signal authority. Classification remains structural routing, not runtime admission.
+Start rejects a symlinked application root, holds its physical working directory and classifies that checked tree before execution. It uses the Node launcher. Stop uses the running supervisor's capability record and `/proc/$MAINPID/cwd`, so a rollback cannot redirect it to replacement application files. The existing authenticated pidfd client retains signal authority. Classification remains structural routing, not runtime admission.
 
-No unit is installed or proved here. Systemd's 90-second value applies separately to each stop command and the later service-stop phase. The real 60-second fallback, new-unit ExecStop/restart, failed control endpoint, pre-activation failure, capability exclusion and installer cutover require hosted acceptance. A genuine user manager is required. Mocked-clock or isolated control proofs do not close those service gates.
-
-Default production environment operations, actual installer/capture, and full public CLI binding remain open. An outside-payload scripted APP bootstrap must disclose its exact ExecStart override and hashes. It proves only that composition. Production cutover must settle the installed name and align Python caller admission if rollback retains that name. Authorized hosted rehearsals use no agents/providers or Python patch and disclose the Python caller-refusal gap under the new name. They prove installer/health/stop behavior, not caller-refusal parity. No Python caller guard or existing unit changes here.
+Systemd's 90-second value applies separately to each stop command and the later service-stop phase.
 
 ## Isolated trial settings
 

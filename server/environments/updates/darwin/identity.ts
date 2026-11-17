@@ -39,12 +39,7 @@ export function read_owned_home_file(path: string, uid: number): Buffer {
     }
   }
 }
-export function read_home_identity(
-  root: string,
-  service: string,
-  node: string,
-  uid: number,
-): DarwinHomeIdentity {
+export function read_home_identity(root: string, service: string, uid: number): DarwinHomeIdentity {
   if (lstatSync(root).isSymbolicLink())
     throw new Error('Mac home root must not be a symbolic link');
   root = realpathSync(root);
@@ -52,15 +47,8 @@ export function read_home_identity(
     read_owned_home_file(join(root, 'data/mac-home-installation.json'), uid).toString('utf8'),
   );
   if (!is_record(value)) throw new Error('Mac installation identity is invalid');
-  const version = value.version === 2 ? 2 : 1;
-  const keys = [
-    'uid',
-    'root',
-    'label',
-    'home_plist',
-    'backup_plist',
-    ...(version === 2 ? ['version', 'installer_node'] : ['installer_python']),
-  ];
+  if (value.version !== 2) throw new Error('Mac installation identity has an unsupported version');
+  const keys = ['version', 'uid', 'root', 'label', 'home_plist', 'backup_plist', 'installer_node'];
   if (Object.keys(value).length !== keys.length || !keys.every((key) => Object.hasOwn(value, key)))
     throw new Error('Mac installation identity has missing or unknown fields');
   if (
@@ -78,12 +66,9 @@ export function read_home_identity(
     backup_plist = join(root, 'agents', label + '.backup.plist');
   if (value.home_plist !== home_plist || value.backup_plist !== backup_plist)
     throw new Error('Mac installation plist differs from this home');
-  if (version === 1 && (typeof value.installer_python !== 'string' || !value.installer_python))
-    throw new Error('Legacy Mac identity requires its interpreter metadata');
-  const selected = version === 2 ? value.installer_node : node;
+  const selected = value.installer_node;
   if (typeof selected !== 'string') throw new Error('Mac installation Node is invalid');
   const installer_node = external_home_node(root, selected);
-  if (version === 2 && installer_node !== selected)
-    throw new Error('Mac installation Node must be canonical');
-  return { version, uid, root, label, domain, home_plist, backup_plist, installer_node };
+  if (installer_node !== selected) throw new Error('Mac installation Node must be canonical');
+  return { version: 2, uid, root, label, domain, home_plist, backup_plist, installer_node };
 }

@@ -43,8 +43,9 @@ export class BackendUsageService {
         };
       try {
         return await adapter.refresh(options);
-      } catch {
+      } catch (error) {
         options.signal?.throwIfAborted();
+        console.error(`backend usage refresh failed backend=${backend_key}`, error);
         return {
           backend_key,
           outcome: 'failed',

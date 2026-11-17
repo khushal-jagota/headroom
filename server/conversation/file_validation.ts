@@ -51,16 +51,16 @@ export function validated_file_media_type(payload: Buffer, file_name: string): s
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(payload);
-  } catch {
-    throw new Error('a conversation text or data file must be UTF-8');
+  } catch (error) {
+    throw new Error('a conversation text or data file must be UTF-8', { cause: error });
   }
   if (text.includes('\0'))
     throw new Error('a conversation text or data file must not contain NUL bytes');
   if (suffix === '.json') {
     try {
       JSON.parse(text);
-    } catch {
-      throw new Error('a conversation JSON file must contain valid JSON');
+    } catch (error) {
+      throw new Error('a conversation JSON file must contain valid JSON', { cause: error });
     }
   }
   if (suffix === '.jsonl') {
@@ -70,8 +70,10 @@ export function validated_file_media_type(payload: Buffer, file_name: string): s
       count++;
       try {
         JSON.parse(line);
-      } catch {
-        throw new Error(`a conversation JSONL file has invalid JSON on line ${index + 1}`);
+      } catch (error) {
+        throw new Error(`a conversation JSONL file has invalid JSON on line ${index + 1}`, {
+          cause: error,
+        });
       }
     }
     if (!count) throw new Error('a conversation JSONL file must contain a JSON value');

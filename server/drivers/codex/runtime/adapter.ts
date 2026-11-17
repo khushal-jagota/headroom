@@ -341,6 +341,14 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
+    // A child that ended while idle cannot take this prompt, so the core replaces it now.
+    if (!this.client.is_alive) {
+      // The client keeps only its failure text, so there is no error to pass as the cause.
+      const reason = this.client.end_reason ?? 'the codex process ended';
+      throw new B.NeedsRebind(`this child's wire has already failed: ${reason}`, {
+        failed_child_recovery: true,
+      });
+    }
     let thread_id: string;
     try {
       thread_id = this.bound_thread();
@@ -842,7 +850,13 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     }
     await this.sink.report(turn.token, new B.CommandReplyReported({ reply_text: message }));
     if (this.turn === turn) this.turn = null;
-    await this.sink.report(turn.token, new B.TurnEnded({ ending: E.completed }));
+    await this.sink.report(
+      turn.token,
+      new B.TurnEnded({
+        ending: E.completed,
+        child_disposition: this.client.is_alive ? 'reusable' : 'broken',
+      }),
+    );
     turn.ended.resolve();
   }
   /** Codex states a startup failure on standard error, so the failure keeps its tail. */
@@ -887,6 +901,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         ending,
         error_summary: summary,
         standard_error_tail: ending === E.failed ? this.client.standard_error_tail() : null,
+        child_disposition: this.client.is_alive ? 'reusable' : 'broken',
       }),
     );
     turn.ended.resolve();
@@ -1184,6 +1199,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
           this.client.end_reason ?? 'the codex process ended while the turn was running',
         ),
         standard_error_tail: this.client.standard_error_tail(),
+        child_disposition: 'broken',
       }),
     );
     turn.ended.resolve();

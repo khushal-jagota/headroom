@@ -410,7 +410,7 @@ function owner_blocker(sql: ReadSql, row: InterruptionRow): string | null {
       key = row.owner_kind === 'chief' ? 'chief_of_staff' : manager_agent_key(row.owner_id!);
     } catch (error) {
       if (!(error instanceof PlannerError)) throw error;
-      return 'the Manager conversation identity conflicts';
+      return `the Manager conversation identity conflicts: ${error.message}`;
     }
     const agent = sql.get<{ conversation_id: string | null }>(
       'SELECT conversation_id FROM agents WHERE agent_key=?',

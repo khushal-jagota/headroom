@@ -1,8 +1,7 @@
 import { DRIVER_SOURCE_FILES } from '../../../environments/release/configuration.ts';
 export const MAC_STATIC_FILES = [
   ...DRIVER_SOURCE_FILES,
-  'src/planner/worker_types/shipped_worker_types.json',
-  'pyproject.toml',
+  'server/worker_types/shipped_worker_types.json',
 ] as const;
 export const MAC_REQUIRED_FILES = [
   'server/executor/mac/entrypoint.ts',

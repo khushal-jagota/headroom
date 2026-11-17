@@ -54,6 +54,12 @@ import {
 } from './configuration.ts';
 import { ClaudeEvents, composer_catalog, durable_session_id, validate_message } from './events.ts';
 import { ClaudeAsks } from './asks.ts';
+import {
+  CLAUDE_CAPABILITIES,
+  claude_selection_transition,
+  is_live_reasoning_effort,
+} from './selection.ts';
+import { selection_target } from '../../../conversation/logic/selection_target.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { TurnInFlight, same_turn, settle_parked_asks, stop_waiting_for_steers } from './turn.ts';
 import {
@@ -85,17 +91,6 @@ interface PromptOptions {
   reasoning_effort_change: string | null;
   automatic_compaction?: boolean;
   reasoning_effort_is_set?: boolean;
-}
-// A level the SDK no longer names fails to compile. A new SDK level still restarts.
-const LIVE_REASONING_EFFORTS: ReadonlySet<string> = new Set([
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-] satisfies readonly EffortLevel[]);
-function is_live_reasoning_effort(value: string): value is EffortLevel {
-  return LIVE_REASONING_EFFORTS.has(value);
 }
 type UserContentBlock = Exclude<SDKUserMessage['message']['content'], string>[number];
 type Base64ImageSource = Extract<
@@ -263,24 +258,30 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     this.wire_broken = true;
     this.wire_failure ??= { why, cause };
   }
-  /** Return the effort to apply to the live session, or null when it already carries it. */
-  private require_carried_values(options: PromptOptions): EffortLevel | null {
-    if (options.model_change !== null && options.model_change !== this.session_model)
+  /** The live effort this prompt applies, or null. The core asks `claude_selection_transition`
+   * before it writes to this child; a caller that writes directly (the Mac runner, a replayed
+   * prompt) meets the same rule here, against the session this child actually runs. */
+  private effort_to_apply(options: PromptOptions): EffortLevel | null {
+    const current = { model: this.session_model, reasoning_effort: this.session_reasoning_effort };
+    const target = selection_target(
+      { ...options, reasoning_effort_is_set: options.reasoning_effort_is_set ?? false },
+      current,
+    );
+    const plan = claude_selection_transition({
+      current,
+      target,
+      session_capabilities: CLAUDE_CAPABILITIES,
+    });
+    if (plan.type !== 'apply_on_next_turn')
       throw new B.NeedsRebind(
-        `claude takes its model when the child starts, so ${JSON.stringify(options.model_change)} needs a child started on it`,
+        `claude needs a fresh child for model ${JSON.stringify(target.model)} and reasoning effort ${JSON.stringify(target.reasoning_effort)}`,
       );
-    const change = options.reasoning_effort_change;
-    if (
-      (change === null && !options.reasoning_effort_is_set) ||
-      change === this.session_reasoning_effort
-    )
-      return null;
-    // A live reset returns to the model default, not the user's settings, so clearing restarts.
-    if (change === null || !is_live_reasoning_effort(change))
-      throw new B.NeedsRebind(
-        `claude takes this reasoning effort when the child starts, so ${JSON.stringify(change)} needs a child started on it`,
-      );
-    return change;
+    const effort = target.reasoning_effort;
+    return effort !== current.reasoning_effort &&
+      effort !== null &&
+      is_live_reasoning_effort(effort)
+      ? effort
+      : null;
   }
   private async apply_reasoning_effort(
     client: ClaudeSdkClient,
@@ -369,7 +370,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
-    const reasoning_effort = this.require_carried_values(options);
+    const reasoning_effort = this.effort_to_apply(options);
     const client = this.connected_client();
     this.require_live_wire();
     const native_command =
@@ -611,6 +612,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
           error_summary,
           standard_error_tail:
             ending === ConversationTurnEnding.failed ? this.standard_error_tail() : null,
+          child_disposition: this.wire_broken ? 'broken' : 'reusable',
         }),
       );
     } finally {

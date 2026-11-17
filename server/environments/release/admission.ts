@@ -32,7 +32,6 @@ import {
   run_runtime_probe,
 } from './admission_process.ts';
 import { NATIVE_NODE_PROBE } from './admission_probe.ts';
-import { NATIVE_PYTHON_PROBE } from './python_admission_probe.ts';
 import { resolved_path } from '../paths.ts';
 
 const HOST_PATH = '/usr/local/bin:/usr/bin:/bin';
@@ -130,8 +129,8 @@ async function verify_host(
   for (const library of contract.external_libraries) {
     try {
       koffi.load(library);
-    } catch {
-      throw new AppValidationError(`runtime host library is missing: ${library}`);
+    } catch (error) {
+      throw new AppValidationError(`runtime host library is missing: ${library}`, { cause: error });
     }
     current(deadline);
   }
@@ -150,9 +149,7 @@ export function native_tool_commands(
   contract: RuntimeContract,
   node = 'node',
 ): string[][] {
-  const commands = BUILT_IN_MANIFESTS.flatMap(
-    ({ manifest }) => manifest.install?.admission_commands ?? [],
-  )
+  return BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.install?.admission_commands ?? [])
     .filter(
       (command) =>
         command.systems.includes(contract.system) &&
@@ -165,12 +162,6 @@ export function native_tool_commands(
         ? [node, join(root, command.path), ...command.arguments]
         : [join(root, command.path), ...command.arguments],
     );
-  if (contract.system === 'linux' && contract.version === 1)
-    commands.push([
-      join(root, '.venv/lib/python3.12/site-packages/playwright/driver/node'),
-      '--version',
-    ]);
-  return commands;
 }
 export async function validate_node_probe_report(
   root: string,
@@ -260,39 +251,21 @@ export async function admit_runtime(
     if (contract.system === 'darwin' && path_is_within(root, node))
       throw new AppValidationError('Mac home requires a host Node outside its application');
     current(deadline);
-    if (contract.version === 2) {
-      const report = await run_runtime_json_probe(
-        [
-          node,
-          '--experimental-import-meta-resolve',
-          '--input-type=module',
-          '-e',
-          NATIVE_NODE_PROBE,
-          root,
-          contract.system,
-        ],
-        state,
-        deadline,
-        child_processes,
-      );
-      await validate_node_probe_report(root, contract, report);
-    } else {
-      await run_runtime_probe(
-        [
-          await candidate_tool_path(root, join(root, '.venv/bin/python'), true),
-          '-I',
-          '-B',
-          '-c',
-          NATIVE_PYTHON_PROBE,
-          root,
-          contract.python_version,
-          JSON.stringify(contract.external_libraries),
-        ],
-        state,
-        deadline,
-        child_processes,
-      );
-    }
+    const report = await run_runtime_json_probe(
+      [
+        node,
+        '--experimental-import-meta-resolve',
+        '--input-type=module',
+        '-e',
+        NATIVE_NODE_PROBE,
+        root,
+        contract.system,
+      ],
+      state,
+      deadline,
+      child_processes,
+    );
+    await validate_node_probe_report(root, contract, report);
     current(deadline);
     for (const command of native_tool_commands(root, contract, node)) {
       for (const [index, value] of command.entries()) {

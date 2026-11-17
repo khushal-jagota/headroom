@@ -94,8 +94,8 @@ async function sample_loop(): Promise<void> {
       send({ type: 'failure', payload: encode(failure) });
       try {
         store.record_failure(float(now), text, float(cadence));
-      } catch {
-        console.warn('VPS metrics failure could not be persisted: ' + text);
+      } catch (persistence) {
+        console.warn('VPS metrics failure could not be persisted: ' + text, persistence);
       }
       next_sample = performance.now() / 1000 + cadence;
     }

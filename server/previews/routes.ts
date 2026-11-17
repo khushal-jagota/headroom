@@ -2,7 +2,7 @@ import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices, PreparedAreaRoutes } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { HttpError } from '../core/http/errors.ts';
+import { HttpError, log_server_error } from '../core/http/errors.ts';
 import { stringify_numeric_json } from '../core/http/numeric_json.ts';
 import { PreviewError, base_path, type PreviewRecord } from './contracts.ts';
 import { LIFECYCLE_SECONDS } from './config.ts';
@@ -122,8 +122,9 @@ export function createPreviewRoutes(): PreparedPreviewRoutes {
     app.addHook('preClose', async () => {
       seal();
     });
-    app.setErrorHandler((error, _request, reply) => {
+    app.setErrorHandler((error, request, reply) => {
       if (error instanceof PreviewError) {
+        if (error.status_code >= 500) log_server_error(request, error.status_code, error);
         reply
           .code(error.status_code)
           .send({ error: { code: 'preview_unavailable', message: error.message, detail: {} } });
@@ -203,8 +204,12 @@ export function createPreviewRoutes(): PreparedPreviewRoutes {
             decodeURIComponent(match[1]!),
             decodeURIComponent(match[2]!),
           )
-          .catch(() => socket.destroy());
-      } catch {
+          .catch((error: unknown) => {
+            console.error('preview websocket upgrade failed', request.url, error);
+            socket.destroy();
+          });
+      } catch (error) {
+        console.warn('preview websocket ingress refused', request.url, error);
         socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       }
     };

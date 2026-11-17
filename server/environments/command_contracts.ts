@@ -94,8 +94,8 @@ export interface HostEnvironmentCommandDependencies extends OperatorPathInputs {
 /** Part 4's validator reports only these source-equivalent operational failures. */
 export class AppManifestValidationFailure extends Error {
   readonly category: 'os' | 'value' | 'runtime';
-  constructor(category: 'os' | 'value' | 'runtime', message: string) {
-    super(message);
+  constructor(category: 'os' | 'value' | 'runtime', message: string, options?: ErrorOptions) {
+    super(message, options);
     this.category = category;
     this.name = 'AppManifestValidationFailure';
   }

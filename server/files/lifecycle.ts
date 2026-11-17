@@ -38,7 +38,9 @@ export function purge_quarantined_files(files: QuarantinedFiles | null): void {
       recursive: info.isDirectory() && !info.isSymbolicLink(),
       force: true,
     });
-  } catch {
+  } catch (error) {
     /* Canonical deletion already committed. The quarantined path is unreachable. */
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      console.warn('quarantined file purge failed', files.quarantine, error);
   }
 }

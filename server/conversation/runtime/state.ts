@@ -5,6 +5,7 @@ import type {
   TurnToken,
   ChildReference,
 } from '../backends/contracts.ts';
+import type { BackendSelection } from '../../drivers/core/selection.ts';
 import { wait_for_item } from '../../executor/item_budget.ts';
 import type { ConversationRecord, RunningTurn } from '../record/contracts.ts';
 import type { ConversationPhase, Message, ReservedTurn, SenderAdmission } from './contracts.ts';
@@ -78,6 +79,9 @@ export class ConversationState {
   last_ended_turn_token: TurnToken | null = null;
   last_ended_turn_was_automatic_compaction = false;
   child: BackendChild | null = null;
+  /** The selection the current child was started or last set with. Only read while `child` is that child. */
+  child_selection: { readonly child: BackendChild; readonly selection: BackendSelection } | null =
+    null;
   retained_child_reference: ChildReference | null = null;
   retirement_task: Promise<boolean> | null = null;
   retiring_child: BackendChild | null = null;

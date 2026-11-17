@@ -212,6 +212,9 @@ export class MacInbox {
     if (principal.kind !== 'ticket' || principal.id !== upload.manifest.owner_id)
       throw new PlannerError('agent_forbidden', 'artifact belongs to another Ticket');
   }
+  ticket_file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
+    return this.store.staging.file_target(manifest);
+  }
   async store_upload(
     upload: WireValue<'FileUploadRequest'>,
     source: HeldFileLocation,

@@ -61,12 +61,12 @@ export const create_production_environment_operations: ProductionEnvironmentFact
       const { current_darwin_home } = await import('./updates/darwin/launch.ts');
       darwin_home = await current_darwin_home(
         application_root,
-        dependencies.node_executable,
         { child_processes: context.child_processes, signal, deadline: null },
         environment,
       );
-    } catch {
+    } catch (error) {
       /* A source checkout or an unproven login job cannot offer home updates. */
+      console.warn('Home updates are unavailable: the login job is not proven', error);
     }
   }
   const service_unit =
@@ -99,7 +99,6 @@ export const create_production_environment_operations: ProductionEnvironmentFact
     installer: create_installer_operations({
       application_root,
       node_executable: dependencies.node_executable,
-      admitted_legacy_null_sha: dependencies.admitted_legacy_null_sha,
       child_processes: context.child_processes,
       signal,
       environment,

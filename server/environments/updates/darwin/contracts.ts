@@ -2,7 +2,7 @@ import type { ReleaseExecution } from '../../release/contracts.ts';
 import type { ReleaseCommandResult } from '../../release/process.ts';
 
 export interface DarwinHomeIdentity {
-  readonly version: 1 | 2;
+  readonly version: 2;
   readonly uid: number;
   readonly root: string;
   readonly label: string;
