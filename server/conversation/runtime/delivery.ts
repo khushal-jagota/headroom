@@ -114,9 +114,6 @@ async function compose(
   content: MessageContent,
 ): Promise<MessageContent> {
   const role = state.record.role_text;
-  if (new Map(state.record.identity_environment_variables).get('PLAN_ACTOR') === 'manager') {
-    return prefix_message_content_text(content, role ?? '', ROLE_TEXT_PROMPT_SEPARATOR);
-  }
   if (role === null || state.has_delivered_prompt) return content;
   if (
     await host.persist(state, () =>

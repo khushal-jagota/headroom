@@ -34,6 +34,27 @@ import type { ConversationCoreOptions } from '../conversation/runtime/contracts.
 
 // Inventory #8: the provider reports news while its prompt receipt is still withheld.
 // The real scripted process and real record together prove the provider/core/store boundary.
+test('Manager role text appears only on the first prompt in the conversation history', async () => {
+  const f = setup({
+    role_actor: 'manager',
+    behavior: { events: [{ event: { kind: 'TurnEnded', values: { ending: 'completed' } } }] },
+  });
+  await f.start();
+  expect(await f.send('first', 'first')).toBeInstanceOf(PromptDeliveryStarted);
+  await f.core.wait_until_quiescent();
+  expect([PromptDeliveryStarted, PromptDeliveryQueued]).toContain(
+    (await f.send('second', 'second')).constructor,
+  );
+  await f.core.wait_until_quiescent();
+  const child = await f.child;
+  const prompts = (await child.inspect()).calls.filter((call) => call.command === 'write_prompt');
+  expect(prompts).toHaveLength(2);
+  expect(JSON.stringify(prompts[0])).toContain('Role');
+  expect(JSON.stringify(prompts[1])).not.toContain('Role');
+  expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toContain('prompt');
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
 test('backend news waits for the accepted prompt receipt and prose stays transient', async () => {
   let revoked = false;
   const signalFailure = new Error('Signal is not current');
