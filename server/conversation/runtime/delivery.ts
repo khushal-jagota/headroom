@@ -67,7 +67,7 @@ async function ensure_child(
   });
   const sink = host.make_sink(state);
   state.child_event_sink = sink;
-  const child = host.options.backend_child_factories[resolved.backend_key]({
+  const child = host.options.backend_registry.require_live(resolved.backend_key).child_factory({
     resolved_start: resolved,
     event_sink: sink,
     message_files: host.options.message_files,

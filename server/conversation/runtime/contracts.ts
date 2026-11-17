@@ -9,12 +9,8 @@ import type {
   PromptDeliveryRefusalReason,
   PromptQueueReason,
 } from '../contracts.ts';
-import type {
-  BackendChildFactory,
-  BackendEventSink,
-  BackendChild,
-  TurnToken,
-} from '../backends/contracts.ts';
+import type { BackendEventSink, BackendChild, TurnToken } from '../backends/contracts.ts';
+import type { DriverRegistry } from '../../drivers/core/registry.ts';
 import type { ConversationLiveTailFrame } from '../events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
@@ -96,7 +92,7 @@ export interface SaveWaitRegistry {
 export interface ConversationCoreOptions {
   readonly store: ConversationRecordStore;
   readonly wait_registry?: SaveWaitRegistry;
-  readonly backend_child_factories: Readonly<Record<ConversationBackendKey, BackendChildFactory>>;
+  readonly backend_registry: DriverRegistry;
   readonly message_files: ConversationMessageFiles;
   readonly publish_event?: (event: StoredConversationEvent) => void;
   readonly publish_frame?: (conversation_id: string, frame: ConversationLiveTailFrame) => void;

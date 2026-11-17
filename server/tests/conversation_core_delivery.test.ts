@@ -1,3 +1,4 @@
+import { registry_of_factories } from '../drivers/testing/registry.ts';
 import { setup } from './conversation_core_fixture.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 /** Internal ordering risks that HTTP request lists cannot pause at their exact boundary. */
@@ -534,7 +535,9 @@ test('the CLI floor check refuses a turn before child custody is written', async
       start,
     }) as unknown as BackendChild;
   const f = setup({
-    core: { backend_child_factories: { codex: factory, claude: factory, hermes: factory } },
+    core: {
+      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+    },
   });
   try {
     await f.start();

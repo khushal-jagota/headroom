@@ -1,4 +1,5 @@
 /** Retained joins through the existing server lifecycle over copied source state. */
+import { registry_of_factories, unread_driver_host } from '../../drivers/testing/registry.ts';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Database } from '../../core/database/contracts.ts';
@@ -62,20 +63,26 @@ async function cycle() {
       return current.executor!.open_runs();
     },
     createConversationCore(current) {
-      bound = compose_production_backends(current, {
-        claude: () => local,
-        codex: () => local,
-        hermes: () => local,
-        http: () =>
-          create_backend_runtime({
-            database,
-            config: current.config,
-            now: () => current.clock.now(),
-            providers: unavailable_backend_providers(),
-            one_shot_children: current.one_shot_children,
-          }),
-        stall_sources: () => [],
-      });
+      bound = compose_production_backends(
+        current,
+        {
+          registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+          host: unread_driver_host,
+        },
+        {
+          drivers: [],
+          driver_host: () => unread_driver_host,
+          http: () =>
+            create_backend_runtime({
+              database,
+              config: current.config,
+              now: () => current.clock.now(),
+              providers: unavailable_backend_providers(),
+              one_shot_children: current.one_shot_children,
+            }),
+          stall_sources: () => [],
+        },
+      );
       core = create_production_conversation_core(current, bound);
       return core;
     },

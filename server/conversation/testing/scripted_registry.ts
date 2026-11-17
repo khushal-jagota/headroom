@@ -1,6 +1,7 @@
 /** One shared scripted process per child, including its actual retired wire observations. */
+import { registry_of_factories } from '../../drivers/testing/registry.ts';
 import type { BackendChildFactory } from '../backends/contracts.ts';
-import type { ConversationCoreOptions } from '../runtime/contracts.ts';
+import type { DriverRegistry } from '../../drivers/core/registry.ts';
 import type { ScriptedBehavior, ScriptedSnapshot } from './scripted_protocol.ts';
 import { ScriptedChild } from './scripted_child.ts';
 import { ScriptedCustody } from './scripted_custody.ts';
@@ -17,7 +18,7 @@ export class ScriptedBackendRegistry {
       throw new Error('Scripted custody must bind before its first child');
     this.runtime = runtime;
   }
-  readonly factories: ConversationCoreOptions['backend_child_factories'];
+  readonly registry: DriverRegistry;
   private readonly current = new Map<string, ScriptedChild>();
   private readonly children = new Map<ScriptedChild, string>();
   private readonly retired = new Set<ScriptedChild>();
@@ -53,7 +54,7 @@ export class ScriptedBackendRegistry {
       }
       return child;
     };
-    this.factories = { codex: factory, claude: factory, hermes: factory };
+    this.registry = registry_of_factories({ codex: factory, claude: factory, hermes: factory });
   }
 
   child(conversation_id: string): ScriptedChild {

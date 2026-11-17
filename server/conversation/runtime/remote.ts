@@ -40,6 +40,14 @@ import { background_tasks_ended_with_child } from './maintenance.ts';
 import { acquire_after_steers, contention_only_write } from './synchronization.ts';
 import { write_replayed_prompt } from './delivery.ts';
 
+/** A key with no live instance gives undefined at run time, exactly as indexing the old factory table did. */
+export function child_factory_for(
+  host: SqliteProcessConversationSystem,
+  key: string,
+): BackendChildFactory {
+  const entry = host.options.backend_registry.get(key);
+  return (entry?.kind === 'live' ? entry.instance.child_factory : undefined) as BackendChildFactory;
+}
 export function retained_factory(factory: BackendChildFactory): RetainedBackendChildFactory | null {
   const candidate = factory as Partial<RetainedBackendChildFactory>;
   return typeof candidate.retained_runs === 'function' && typeof candidate.recover === 'function'
@@ -81,7 +89,7 @@ export function retained_run(
   state: ConversationState,
 ): AdoptedRun | null {
   return (
-    admitted_runs(host.options.backend_child_factories[state.record.backend_key]).find(
+    admitted_runs(child_factory_for(host, state.record.backend_key)).find(
       (run) => run.reference.conversation_id === state.record.conversation_id,
     ) ?? null
   );
@@ -120,7 +128,7 @@ export function restore_retained_run(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
 ): void {
-  const retained = retained_factory(host.options.backend_child_factories[state.record.backend_key])
+  const retained = retained_factory(child_factory_for(host, state.record.backend_key))
     ?.retained_runs()
     .find((run) => run.reference.conversation_id === state.record.conversation_id);
   if (retained === undefined) return;
@@ -133,9 +141,13 @@ export function restore_retained_run(
 export function initialize_retained_runs(
   host: SqliteProcessConversationSystem,
 ): ReadonlySet<string> {
-  const retained = [...new Set(Object.values(host.options.backend_child_factories))].flatMap(
-    admitted_runs,
-  );
+  const retained = [
+    ...new Set(
+      host.options.backend_registry
+        .list()
+        .flatMap((entry) => (entry.kind === 'live' ? [entry.instance.child_factory] : [])),
+    ),
+  ].flatMap(admitted_runs);
   const open = new Map(
     retained
       .filter((run) => !run.stop_requested && !run.retirement_confirmed)
@@ -185,9 +197,10 @@ export function initialize_retained_runs(
         );
       if (run.incarnation_current && (running !== null || !run.delivery_uncertain)) {
         const sink = host.make_sink(state);
-        const child = retained_factory(
-          host.options.backend_child_factories[record.backend_key],
-        )!.recover(run.reference, { event_sink: sink });
+        const child = retained_factory(child_factory_for(host, record.backend_key))!.recover(
+          run.reference,
+          { event_sink: sink },
+        );
         if (child !== null) {
           state.child_event_sink = sink;
           state.child = child;
@@ -658,9 +671,7 @@ export async function kill_initial_delivery(
   return state.lock.run(async () => {
     const reservation = state.reserved_turn;
     if (reservation === null && state.running_turn !== null) return false;
-    const factory = retained_factory(
-      host.options.backend_child_factories[state.record.backend_key],
-    );
+    const factory = retained_factory(child_factory_for(host, state.record.backend_key));
     let child = state.child;
     if (reservation === null) {
       if (!state.child_is_quarantined || state.retained_child_reference === null) return false;

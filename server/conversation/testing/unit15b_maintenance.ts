@@ -60,7 +60,7 @@ export async function run(spec: Spec): Promise<unknown> {
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_child_factories: registry.factories,
+    backend_registry: registry.registry,
     message_files: new ConversationMessageFiles(spec.database),
     unix_time_now: () => now,
     monotonic_now: () => now,

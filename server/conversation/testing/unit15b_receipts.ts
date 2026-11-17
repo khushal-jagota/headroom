@@ -33,7 +33,7 @@ export async function run_receipts(spec: { database: string }): Promise<unknown>
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_child_factories: registry.factories,
+    backend_registry: registry.registry,
     message_files: files,
     unix_time_now: () => 100,
     monotonic_now: () => 100,

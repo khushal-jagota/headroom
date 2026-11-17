@@ -506,6 +506,13 @@ export class ServerServices {
     const { context, integrity_issues } = await this.create_record();
     record_ready();
     const conversation_ready = begin_startup_phase('conversation');
+    if (this.options.prepareConversationComposition) {
+      await this.options.prepareConversationComposition(
+        context,
+        this.lifetime.media_lifetime.signal,
+      );
+      this.assert_startup_open();
+    }
     const conversation = this.create_conversation(context);
     conversation_ready();
     const environments_ready = begin_startup_phase('environment composition');

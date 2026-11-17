@@ -243,7 +243,7 @@ async function owned_server(
             value.database.read((sql) =>
               conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
             ),
-          backend_child_factories: registry.factories,
+          backend_registry: registry.registry,
           message_files: new ConversationMessageFiles(value.config.db_path),
           unix_time_now: () => value.clock.nowUnix(),
           require_runtime_ownership: value.require_runtime_ownership,

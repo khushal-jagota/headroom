@@ -31,7 +31,7 @@ async function cycle() {
   database.write((tx) => store.reconcile_in_transaction(tx, new Map()), { changeSignal: 'silent' });
   core = new SqliteProcessConversationSystem({
     store,
-    backend_child_factories: registry.factories,
+    backend_registry: registry.registry,
     message_files: new ConversationMessageFiles(spec.path),
     delivery_model_refusal: () => null,
     execution_refusal: () => null,

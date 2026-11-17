@@ -22,7 +22,7 @@ export async function run(path: string, outcome: 'accepted' | 'uncertain'): Prom
   database.write((tx) => store.reconcile_in_transaction(tx, new Map()));
   const core = new SqliteProcessConversationSystem({
     store,
-    backend_child_factories: registry.factories,
+    backend_registry: registry.registry,
     message_files: new ConversationMessageFiles(path),
     execution_refusal: () => null,
     delivery_model_refusal: () => null,
