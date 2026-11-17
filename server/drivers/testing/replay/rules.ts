@@ -4,8 +4,12 @@
  */
 import { basename } from 'node:path';
 import { expect, test } from 'vitest';
-import { TurnEnded } from '../../../conversation/backends/contracts.ts';
-import type { TurnToken } from '../../../conversation/backends/contracts.ts';
+import {
+  TOOL_KINDS,
+  ToolCallStarted,
+  TurnEnded,
+} from '../../../conversation/backends/contracts.ts';
+import type { ChildDisposition, TurnToken } from '../../../conversation/backends/contracts.ts';
 import type { ReplayRun } from './harness.ts';
 import { event_class_names, run_replay } from './harness.ts';
 import { SCENARIOS } from './scenarios.ts';
@@ -62,17 +66,42 @@ export function check_rule_2(run: ReplayRun): void {
     if (endings.some(({ turn }) => turn !== null && same(turn, refused)))
       throw new Error(`rule 2: refused turn ${refused.turn_number} ended; ${described(run)}`);
 }
+/** Each accepted turn's TurnEnded, in accepted order. */
+function turn_endings(run: ReplayRun): (TurnEnded | undefined)[] {
+  return run.accepted_turns.map(
+    (accepted) =>
+      run.events.find(
+        ({ turn, event }) => event instanceof TurnEnded && turn !== null && same(turn, accepted),
+      )?.event as TurnEnded | undefined,
+  );
+}
+/** Rule 4: each accepted turn's TurnEnded says whether its child can take another prompt. */
+export function check_rule_4(run: ReplayRun, expectation: ScenarioExpectation): void {
+  expect(
+    turn_endings(run).map((ended) => ended?.child_disposition),
+    `rule 4: ${described(run)}`,
+  ).toEqual(
+    expectation.child_dispositions ?? run.accepted_turns.map((): ChildDisposition => 'reusable'),
+  );
+}
+/** Rule 6: every tool call names one of TOOL_KINDS, in the expected order. */
+export function check_rule_6(run: ReplayRun, expectation: ScenarioExpectation): void {
+  const kinds = run.events
+    .filter(({ event }) => event instanceof ToolCallStarted)
+    .map(({ event }) => (event as ToolCallStarted).tool_kind);
+  const known: readonly string[] = TOOL_KINDS;
+  expect(
+    kinds.filter((kind) => !known.includes(kind)),
+    `rule 6: ${described(run)}`,
+  ).toEqual([]);
+  expect(kinds, `rule 6: ${described(run)}`).toEqual(expectation.tool_kinds ?? []);
+}
 /** The endings, in accepted order, and the classes the driver reported. */
 export function check_expectation(run: ReplayRun, expectation: ScenarioExpectation): void {
-  const endings = run.accepted_turns.map(
-    (accepted) =>
-      (
-        run.events.find(
-          ({ turn, event }) => event instanceof TurnEnded && turn !== null && same(turn, accepted),
-        )?.event as TurnEnded | undefined
-      )?.ending,
-  );
-  expect(endings, described(run)).toEqual(expectation.turn_endings);
+  expect(
+    turn_endings(run).map((ended) => ended?.ending),
+    described(run),
+  ).toEqual(expectation.turn_endings);
   expect([...new Set(event_class_names(run.events))].sort(), described(run)).toEqual(
     [...expectation.event_classes].sort(),
   );
@@ -81,7 +110,7 @@ export function check_expectation(run: ReplayRun, expectation: ScenarioExpectati
 /** Longer than the harness's own waits, so a stuck replay fails with the harness's message. */
 export const REPLAY_TEST_TIMEOUT_MS = 60_000;
 
-/** One test per transcript file of this driver, in every scenario, checking rules 1 and 2. */
+/** One test per transcript file of this driver, in every scenario, checking rules 1, 2, 4 and 6. */
 export function replay_driver_tests(driver_kind: string, expectations: DriverExpectations): void {
   for (const scenario of SCENARIOS) {
     const paths = transcript_paths(scenario.name, driver_kind);
@@ -90,11 +119,13 @@ export function replay_driver_tests(driver_kind: string, expectations: DriverExp
     });
     for (const path of paths)
       test(
-        `${scenario.name} ${basename(path)} obeys rules 1 and 2`,
+        `${scenario.name} ${basename(path)} obeys rules 1, 2, 4 and 6`,
         async () => {
           const run = await run_replay(path, scenario);
           check_rule_1(run);
           check_rule_2(run);
+          check_rule_4(run, expectations[scenario.name]);
+          check_rule_6(run, expectations[scenario.name]);
           check_expectation(run, expectations[scenario.name]);
         },
         REPLAY_TEST_TIMEOUT_MS,

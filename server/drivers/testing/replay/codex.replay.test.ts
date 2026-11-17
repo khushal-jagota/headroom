@@ -9,10 +9,13 @@ const ANSWERED = [...STARTED, 'AgentMessageDelta', 'AgentMessageCompleted', 'Tok
 const CODEX: DriverExpectations = {
   two_turns: {
     turn_endings: ['completed', 'completed'],
+    child_dispositions: ['reusable', 'reusable'],
     event_classes: [...ANSWERED, 'TurnEnded'],
   },
   tool_call: {
     turn_endings: ['completed'],
+    child_dispositions: ['reusable'],
+    tool_kinds: ['execute'],
     event_classes: [
       ...ANSWERED,
       'ModelThinkingHappened',
@@ -23,15 +26,25 @@ const CODEX: DriverExpectations = {
     ],
   },
   // The interrupt lands before the model says anything.
-  interrupt: { turn_endings: ['interrupted'], event_classes: [...STARTED, 'TurnEnded'] },
-  steer: { turn_endings: ['completed'], event_classes: [...ANSWERED, 'TurnEnded'] },
+  interrupt: {
+    turn_endings: ['interrupted'],
+    child_dispositions: ['reusable'],
+    event_classes: [...STARTED, 'TurnEnded'],
+  },
+  steer: {
+    turn_endings: ['completed'],
+    child_dispositions: ['reusable'],
+    event_classes: [...ANSWERED, 'TurnEnded'],
+  },
   failed_turn_child_alive: {
     turn_endings: ['failed', 'completed'],
+    child_dispositions: ['reusable', 'reusable'],
     event_classes: [...ANSWERED, 'TurnEnded'],
   },
   // Codex reports no BackendStreamEnded when its process dies: the turn's failed ending says it.
   child_crash_mid_turn: {
     turn_endings: ['failed'],
+    child_dispositions: ['broken'],
     event_classes: [...STARTED, 'AgentMessageDelta', 'AgentMessageCompleted', 'TurnEnded'],
   },
 };

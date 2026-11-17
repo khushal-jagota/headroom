@@ -24,6 +24,7 @@ import {
 } from '../../../conversation/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
+import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
 import { DarwinWorkerProcesses } from '../../../platform_runtime/darwin/worker_processes.ts';
@@ -241,7 +242,7 @@ export async function drive_driver(options: {
     `events ${JSON.stringify(event_class_names(log.events))}; ${options.describe?.() ?? ''}`;
   let turn_number = 0;
   let stopped = false;
-  const deadline = () => ({ deadline: monotonic_seconds() + STOP_SECONDS });
+  const stop_options = (): StopOptions => ({ deadline: monotonic_seconds() + STOP_SECONDS });
   const current_turn = () => {
     const turn = accepted_turns.at(-1);
     if (turn === undefined) throw new Error('this step needs an accepted turn');
@@ -293,12 +294,12 @@ export async function drive_driver(options: {
         await log.next(step.event_class, describe);
       } else {
         stopped = true;
-        await child.stop(deadline());
+        await child.stop(stop_options());
       }
     }
   } finally {
-    if (!stopped) await child.stop(deadline()).catch(() => {});
-    await owned.worker_supervision.close(deadline()).catch(() => {});
+    if (!stopped) await child.stop(stop_options()).catch(() => {});
+    await owned.worker_supervision.close(stop_options()).catch(() => {});
     await settle(owned.child_processes);
   }
   return { events: log.events, accepted_turns, refused_turns };

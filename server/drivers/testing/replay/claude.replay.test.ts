@@ -7,6 +7,7 @@ const OPENING = ['VendorSessionCursorRebound', 'ComposerCatalogReported'];
 const CLAUDE: DriverExpectations = {
   two_turns: {
     turn_endings: ['completed', 'completed'],
+    child_dispositions: ['reusable', 'reusable'],
     event_classes: [
       ...OPENING,
       'ModelThinkingHappened',
@@ -18,6 +19,8 @@ const CLAUDE: DriverExpectations = {
   },
   tool_call: {
     turn_endings: ['completed'],
+    child_dispositions: ['reusable'],
+    tool_kinds: ['edit', 'read', 'execute', 'edit', 'search', 'fetch', 'think'],
     event_classes: [
       ...OPENING,
       'ToolCallStarted',
@@ -31,14 +34,17 @@ const CLAUDE: DriverExpectations = {
   },
   interrupt: {
     turn_endings: ['interrupted'],
+    child_dispositions: ['reusable'],
     event_classes: [...OPENING, 'TokenUsageReported', 'TurnEnded'],
   },
   steer: {
     turn_endings: ['completed'],
+    child_dispositions: ['reusable'],
     event_classes: [...OPENING, 'AgentMessageCompleted', 'TokenUsageReported', 'TurnEnded'],
   },
   failed_turn_child_alive: {
     turn_endings: ['failed', 'completed'],
+    child_dispositions: ['reusable', 'reusable'],
     event_classes: [
       ...OPENING,
       'AgentMessageDelta',
@@ -50,6 +56,7 @@ const CLAUDE: DriverExpectations = {
   // The stream ends after the failed turn: only Claude reports BackendStreamEnded here.
   child_crash_mid_turn: {
     turn_endings: ['failed'],
+    child_dispositions: ['broken'],
     event_classes: [...OPENING, 'TurnEnded', 'BackendStreamEnded'],
   },
 };

@@ -4,6 +4,7 @@
  * Steps are shared by every driver. Prompt texts carry the scripted Claude CLI's `[CASE:…]`
  * tags, so the scripted peer that Claude transcripts were captured from takes the same steps.
  */
+import type { ChildDisposition, ToolKind } from '../../../conversation/backends/contracts.ts';
 import type { PromptDeliveryMode } from '../../../conversation/contracts.ts';
 import type { ConversationTurnEnding } from '../../../conversation/events.ts';
 
@@ -33,6 +34,10 @@ export interface ScenarioExpectation {
   readonly turn_endings: readonly ConversationTurnEnding[];
   /** Every event class the driver reports, by class name, in any order. */
   readonly event_classes: readonly string[];
+  /** Rule 4: one per accepted `write_prompt`, in order. */
+  readonly child_dispositions?: readonly ChildDisposition[];
+  /** Rule 6: one per `ToolCallStarted`, in the order reported. */
+  readonly tool_kinds?: readonly ToolKind[];
 }
 /** One driver's expectations, kept with its test. Any transcript of a scenario meets them. */
 export type DriverExpectations = Readonly<Record<ScenarioName, ScenarioExpectation>>;
