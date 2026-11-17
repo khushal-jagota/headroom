@@ -1289,6 +1289,18 @@ export class ConversationStore
             recover(tx, conversation_id, message.recovery_references, this.integer_now()),
           );
         }
+        // A queued automatic Ticket prompt can outlive the stage that created it.
+        if (reason === null && message.sender_message_id !== null) {
+          const terminal = tx.get(
+            `SELECT 1 FROM tickets t, json_each(t.workflow_json, '$.stages') stage
+             WHERE t.conversation_id=? AND json_extract(stage.value, '$.id')=t.stage
+               AND json_extract(stage.value, '$.is_terminal')
+               AND (EXISTS (SELECT 1 FROM worker_step_dispatch_intents d WHERE d.ticket_id=t.id AND d.sender_message_id=?)
+                    OR EXISTS (SELECT 1 FROM ticket_decision_messages m WHERE m.ticket_id=t.id AND m.sender_message_id=?))`,
+            [conversation_id, message.sender_message_id, message.sender_message_id],
+          );
+          if (terminal !== undefined) reason = 'ticket_stage_is_terminal';
+        }
         const memory_notice =
           this.#participants.is_memory_notice?.(message.sender_message_id) ?? false;
         if (reason === null && (options.automatic_compaction || memory_notice)) {

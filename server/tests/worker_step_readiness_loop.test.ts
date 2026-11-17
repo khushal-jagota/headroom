@@ -11,6 +11,7 @@ import {
   now,
   claim,
   propose,
+  advance,
 } from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
@@ -358,13 +359,21 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
       now,
     }),
   );
+  // Another turn can start after the idle check; retain the combined prompt in the queue.
+  vi.spyOn(system, 'is_running').mockResolvedValueOnce(false);
+  const send = system.send.bind(system);
+  vi.spyOn(system, 'send').mockImplementationOnce((id, content, options) =>
+    send(id, content, { ...options, mode: 'queue' }),
+  );
   await start_ready_worker_step(ticket.id, options);
   await start_ready_worker_step(ticket.id, options);
   expect(await system.held_prompts(id)).toHaveLength(1);
   expect((await system.held_prompts(id))[0]!.content).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        text: 'User sent back the What Changes proposal with this note:\nKeep the note.',
+        text: expect.stringContaining(
+          'User sent back the What Changes proposal with this note:\nKeep the note.',
+        ),
       }),
     ]),
   );
@@ -403,6 +412,37 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
   expect(system.backend_prompt_writes(fresh)[0]!.text).toContain(
     'User sent back the What Changes proposal with this note:\nKeep the note.',
   );
+});
+// Multiple decisions can accumulate before a step is eligible. All must share its
+// actual prompt without violating the unique decision receipt identities.
+test('one step carries every pending decision and a done Ticket gets no wake', async () => {
+  const { db, system, options } = setup();
+  const ticket = create_ticket(db);
+  db.write((tx) =>
+    tx.run(
+      `INSERT INTO ticket_decision_messages (decision_id,ticket_id,action,field,proposal_revision,sender_kind,sender_id,request_json,message,model_text,created_at,sender_message_id)
+     SELECT 'second-note',ticket_id,action,field,proposal_revision,sender_kind,sender_id,request_json,message,'Another decision note',created_at,'second-note-message' FROM ticket_decision_messages WHERE ticket_id=? LIMIT 1`,
+      [ticket.id],
+    ),
+  );
+  const pending = db.read((sql) =>
+    sql.all<{ model_text: string }>(
+      "SELECT model_text FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status='pending' ORDER BY created_at,rowid",
+      [ticket.id],
+    ),
+  );
+  expect(pending.length).toBeGreaterThan(1);
+  await start_ready_worker_step(ticket.id, options);
+  const id = read(db, ticket.id).conversation_id!;
+  const writes = system.backend_prompt_writes(id);
+  expect(writes).toHaveLength(1);
+  for (const row of pending) expect(writes[0]!.text).toContain(row.model_text);
+  expect(db.read((sql) => decisions.has_undelivered(sql, ticket.id))).toBe(false);
+  system.complete_running_turn(id);
+  advance(db, read(db, ticket.id));
+  await start_ready_worker_step(ticket.id, options);
+  expect(system.backend_prompt_writes(id)).toHaveLength(1);
+  expect(db.read(decisions.pending_ticket_ids)).not.toContain(ticket.id);
 });
 test('successful user-stage opener releases its claim and cannot run twice', async () => {
   const { db, system, options } = setup();
@@ -720,7 +760,12 @@ test('dequeued feedback rereads its receipt and late delivery unblocks the first
       expected_proposal_revision: proposed.pending_proposal_revision,
     }),
   );
-  await deliver_ticket_decision_messages(ticket.id, options);
+  db.write((tx) =>
+    tx.run(
+      "UPDATE ticket_decision_messages SET delivery_status='queued',conversation_id=? WHERE decision_id='receipt-race'",
+      [current.conversation_id],
+    ),
+  );
   const receipt = db.read((sql) =>
     sql.get<{ sender_message_id: string; conversation_id: string }>(
       "SELECT sender_message_id,conversation_id FROM ticket_decision_messages WHERE decision_id='receipt-race'",
