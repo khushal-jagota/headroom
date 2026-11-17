@@ -1731,11 +1731,14 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     if (state) await own_settlement(state, controls.interrupt(this, state));
   }
   async kill(conversation_id: string): Promise<void> {
+    return this.kill_child(conversation_id, true);
+  }
+  private async kill_child(conversation_id: string, explicit_stop: boolean): Promise<void> {
     const state = this.conversation_state(conversation_id);
     if (state) {
       await this.ensure_local_custody(state);
       this.deferred_start_conversations.delete(conversation_id);
-      await own_settlement(state, controls.kill(this, state));
+      await own_settlement(state, controls.kill(this, state, undefined, explicit_stop));
     }
   }
   async kill_for_restart(
@@ -2429,7 +2432,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         if (event_failed) throw new Error('A backend result did not settle before the update.');
       }
       // A canceled attempt cannot discard messages admitted after Cancel.
-      if (this.update_generation === generation) await this.kill(state.record.conversation_id);
+      if (this.update_generation === generation)
+        await this.kill_child(state.record.conversation_id, false);
       if (this.update_generation === generation && this.update_event_failed(state))
         throw new Error('A backend result did not settle before the update.');
     } catch (error) {
@@ -2466,7 +2470,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           if (!admitted) return { reason: 'Owner update in progress' };
           ids = await this.options.store.workspace_conversation_ids(ticket_id, identity);
           for (const id of ids) this.retiring_workspace_conversations.add(id);
-          for (const id of ids) await this.kill(id);
+          for (const id of ids) await this.kill_child(id, false);
           return await operation();
         }),
       );

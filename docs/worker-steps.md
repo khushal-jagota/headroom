@@ -1,6 +1,6 @@
 # Worker steps
 
-A Worker step is one prompt that asks a Ticket's Worker to fill the current stage, or to revise a proposal that was sent back. The step loop's job is narrow: notice that a Ticket is ready, claim it, and send that prompt into the Ticket's conversation. It does not watch the turn, decide the proposal, or advance the stage.
+A Worker step asks a Ticket's Worker to fill the current stage, or to revise a proposal that was sent back. The step loop's job is narrow: notice that a Ticket is ready, claim it, and send that prompt into the Ticket's conversation. A normal completed turn without a proposal receives another prompt for the same unfinished step. The loop never decides a proposal or advances the stage.
 
 That narrowness is the design. A Worker can run for a long time, a person can talk to it in the same conversation, and the stage moves only when a proposal is filed or a parked proposal is decided. See [Ticket lifecycle](tickets.md#how-a-stage-advances).
 
@@ -9,7 +9,7 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
 - **The readiness decision.** A read-only check of one Ticket that answers "may a step start now?" or names the reason it may not.
 - **The worker-step claim.** The only control fact a Ticket stores about automatic work: at rest, out, or errored. See [Ticket lifecycle](tickets.md#how-status-is-read).
 - **The opener fact.** On a stage the person shares with the Worker, a record that this entry onto the stage has had its opening turn.
-- **The loop.** A background pass over the Tickets that can start. It offers waiting starts in admission order, then new candidates in database order. It runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and Tickets whose step is out, failed, or waiting on a proposal before it reads them.
+- **The loop.** A background pass over the Tickets that can start. It offers waiting starts in admission order, then new candidates in database order. It runs readiness, takes the claim, and sends. It skips backlogged Tickets, Tickets at a final Stage, and failed steps or parked proposals. It also checks outstanding steps for normal completion without a proposal.
 
 ```
  change signal or timer
@@ -62,24 +62,29 @@ One guarded write repeats every readiness check and takes the claim, so two pass
 | any other refusal, or suppressed | The claim returns to rest, and a tentative opener is forgotten, so a later pass can try again. |
 | uncertain | The claim becomes errored. Headroom does not resend a prompt that may have arrived. |
 
-On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A turn that merely ends does not give it back. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot. Panels' own `/compact` after about 50 minutes without activity sends no note: the Worker was idle, so there is no step to continue. That note, like a backlogged Ticket's, waits for the next wake to carry it. Panels records the actual compaction event as the boundary, so later activity and the end of that turn cannot make the same compaction look new. It sends one note per compaction, and counts a note that is still queued or on its way to the agent. Before a queued mid-step note is delivered, Panels checks that the Ticket still has the same conversation and an active step, and that the compaction still needs a note. A step opener keeps its original message; at delivery Panels adds any needed memory note as a separate input, so replay keeps the opener’s identity.
+On a Worker-owned stage the claim stays out until the Worker files a proposal or someone decides the parked one. A normal completed work turn without a proposal keeps that claim and receives a continuation prompt. Failed, interrupted, and maintenance turns do not trigger continuation. Stop prevents continuation even if the completed turn is already idle. A Worker that was compacted while its step was still out also gets a short memory-loss note, because nothing in its shortened conversation says that it forgot. Panels' own `/compact` after about 50 minutes without activity sends no note: the Worker was idle, so there is no step to continue. That note, like a backlogged Ticket's, waits for the next wake to carry it. Panels records the actual compaction event as the boundary, so later activity and the end of that turn cannot make the same compaction look new. It sends one note per compaction, and counts a note that is still queued or on its way to the agent. Before a queued mid-step note is delivered, Panels checks that the Ticket still has the same conversation and an active step, and that the compaction still needs a note. A step opener keeps its original message; at delivery Panels adds any needed memory note as a separate input, so replay keeps the opener’s identity.
 
 Every Ticket receives its complete workflow guide at kickoff, from its own copy, so a later edit to its Worker type does not change what it reads. Context recovery restores access to that guide. Ordinary later stage prompts identify the current step. A Consequences prompt also carries the completion rule and any report returned for verification. The Worker checks existing results before repeating a side effect. Backlog, blockers, errors, and human engagement requirements still apply.
 
 ## Where it shows up
 
-A running turn or a running background task shows a working mark, and that mark comes from the conversation, not the claim. An idle Ticket with its claim out can look quiet while it waits for a proposal. An errored claim shows as an error. It also sends one notice to the Ticket's assigned supervisor: the Chief for a Chief ticket, its Manager otherwise. The notice names the reason, for example "could not start (backend_did_not_start)" or "delivery uncertain". A sender whose message is refused sees the reason too, as in `message refused: backend_did_not_start`. Restarting the Worker is the explicit repair. The loop never does it by itself.
+A running turn or a running background task shows a working mark, and that mark comes from the conversation, not the claim. A completed work turn with its claim out receives a continuation unless a blocker, pending decision, backlog, or Stop prevents it. An errored claim shows as an error. It also sends one notice to the Ticket's assigned supervisor: the Chief for a Chief ticket, its Manager otherwise. The notice names the reason, for example "could not start (backend_did_not_start)" or "delivery uncertain". A sender whose message is refused sees the reason too, as in `message refused: backend_did_not_start`. Restarting the Worker is the explicit repair. The loop never does it by itself.
 
 ## Decisions that shape it
 
 Database work runs on worker threads, so a database wait does not stop the server. Related start facts share a transaction when no file or process operation separates them. Custody, dispatch, and acceptance retain their separate recovery boundaries. Restart preserves ownership if the old Worker cannot stop. After a proven stop, a configuration failure clears the old link and leaves an errored claim until explicit restart. Automatic work cannot resume with the old settings.
 
-- Start work, then stop watching. Nothing listens for a turn to end.
+- The TypeScript loop reconciles recorded completion with the current outstanding claim. Each delivery attempt has a stable identity. Queued delivery repeats the same-state checks before it reaches the agent. Temporary suppression permits a fresh attempt after its gate clears, but Stop still prevents it. Refused or uncertain continuation becomes an error for explicit recovery.
 - Readiness is computed from the record, never stored as its own state.
 - A send that may have reached the Worker is never repeated automatically.
 - The loop wakes on the [change signal](live-updates.md) and on a timer. The database is the answer, so a missed signal only delays a check.
 
 ## Code
+
+- `server/runtime/worker_step_readiness.ts` and `worker_step_readiness_loop.ts`: TypeScript readiness, starts, and continuation polling.
+- `server/runtime/worker_continuation/`: durable completion sources, delivery admission, and continuation prompts.
+
+The retained Python implementation lives in:
 
 - `src/planner/runtime/worker_step_readiness.py`: the readiness decision.
 - `src/planner/runtime/worker_step_readiness_loop.py`: the loop and one step's start.
@@ -87,4 +92,4 @@ Database work runs on worker threads, so a database wait does not stop the serve
 - `src/planner/tickets/data.py`: the claim writers.
 - `src/planner/runtime/conversation_start.py`: starting the conversation and sending.
 
-_Last verified: 2026-11-15._
+_Last verified: 2026-11-17._

@@ -1,3 +1,6 @@
+import { CONTINUATION_PREFIX } from './worker_continuation/logic/identity.ts';
+import { unsent_worker_continuation } from './worker_continuation/index.ts';
+import { continue_unfinished_worker_step } from './worker_continuation/dispatch.ts';
 import { ensure_workspace_activity } from '../ticket_workspaces/data.ts';
 import { manual_start_exempt } from '../conversation/start_admission/index.ts';
 /** Explicit per-Ticket start path. Polling and scheduling remain in Unit 9. */
@@ -86,6 +89,8 @@ export async function start_ready_worker_step(
       return new WorkerStepStartResult({ started: false });
     const decision_fate = await deliver_ticket_decision_messages(ticket_id, options);
     if (decision_fate !== null) return WorkerStepStartResult.from_delivery_fate(decision_fate);
+    const continuation = await continue_unfinished_worker_step(ticket_id, options);
+    if (continuation !== null) return continuation;
     return _admitted_start_ready_worker_step(ticket_id, options);
   });
 }
@@ -371,7 +376,7 @@ export class WorkerStepReadinessLoop {
     return database.read((sql) => {
       const rows = sql.all<{ id: string }>(`SELECT t.id FROM tickets t
         WHERE t.integrity_error_reason IS NULL AND t.is_backlogged=0
-          AND t.worker_step_claim='none' AND t.pending_proposal IS NULL
+          AND t.worker_step_claim IN ('none','out') AND t.pending_proposal IS NULL
           AND NOT EXISTS (SELECT 1 FROM json_each(t.workflow_json, '$.stages') stage
             WHERE json_extract(stage.value, '$.id')=t.stage
               AND json_extract(stage.value, '$.is_terminal'))
@@ -388,7 +393,8 @@ export class WorkerStepReadinessLoop {
             if (
               !worker_step_readiness.is_ready_for_worker_step(sql, ticket, {
                 worker_type_definition: ticket.workflow,
-              })
+              }) &&
+              unsent_worker_continuation(sql, ticket) === null
             )
               return false;
             this.ticket_destinations.set(id, ticket.machine_id);
@@ -401,14 +407,24 @@ export class WorkerStepReadinessLoop {
         .map(({ id }) => id);
       const starts = this.options.conversation_system.start_admission;
       if (starts) {
+        const continuation_ids = new Map(
+          ready.map((id) => [
+            id,
+            unsent_worker_continuation(sql, tickets_data.read_ticket(sql, id))?.sender_message_id,
+          ]),
+        );
+        starts.retain_deferred(
+          CONTINUATION_PREFIX,
+          new Set([...continuation_ids.values()].filter((id): id is string => id !== undefined)),
+        );
         starts.retain_deferred(
           'worker-preparation:',
           new Set(ready.map((id) => `worker-preparation:${id}`)),
         );
         ready.sort(
           (left, right) =>
-            starts.priority([`worker-preparation:${left}`])[1] -
-            starts.priority([`worker-preparation:${right}`])[1],
+            starts.priority([continuation_ids.get(left) ?? `worker-preparation:${left}`])[1] -
+            starts.priority([continuation_ids.get(right) ?? `worker-preparation:${right}`])[1],
         );
       }
       const groups = new Map<string, string[]>();

@@ -23,7 +23,11 @@ import type { HeldPromptPromotionMode, PromptDeliveryFate } from '../contracts.t
 import { MessageText } from '../message_content.ts';
 import type { LifecycleFact } from '../record/lifecycle.ts';
 import { ConversationRecord } from '../record/contracts.ts';
-import { LifecycleOperation as O, LifecycleStatus as S } from '../record/lifecycle.ts';
+import {
+  LifecycleKind as K,
+  LifecycleOperation as O,
+  LifecycleStatus as S,
+} from '../record/lifecycle.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import type { Message, ReservedTurn } from './contracts.ts';
@@ -86,6 +90,32 @@ export async function cancel_and_end_running_turn(
   });
   await host.end_turn(state, running, 'interrupted', null, cancel_fact);
 }
+async function record_idle_stop(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): Promise<void> {
+  // Stop also fences an automatic continuation which has not reached the
+  // backend yet. Preserve the completed turn's status.
+  const latest = host.options.store
+    .lifecycle_facts(state.record.conversation_id)
+    .filter((fact) => fact.kind === K.turn)
+    .sort((left, right) => right.turn_number - left.turn_number)[0];
+  if (latest !== undefined) {
+    await host.persist(state, () =>
+      host.options.store.transition_lifecycle(state.record.conversation_id, [
+        {
+          kind: K.attempt,
+          identity: `idle-stop:${latest.turn_number}`,
+          turn_number: latest.turn_number,
+          operation: O.cancel,
+          status: S.accepted,
+          provider_identity: null,
+        },
+      ]),
+    );
+  }
+}
+
 export async function interrupt(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
@@ -93,7 +123,10 @@ export async function interrupt(
   state.last_touched_monotonic = host.monotonic_now();
   const lease = await host.acquire_settled(state);
   try {
-    if (!state.running_turn) return;
+    if (!state.running_turn) {
+      await record_idle_stop(host, state);
+      return;
+    }
     try {
       await cancel_and_end_running_turn(host, state, state.running_turn, lease);
     } finally {
@@ -150,12 +183,13 @@ export async function kill(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   restart?: Parameters<SqliteProcessConversationSystem['confirm_killed_source']>[1],
+  explicit_stop = false,
 ): Promise<void> {
   state.being_killed = true;
   let succeeded = false;
   let background_settled = false;
   try {
-    await kill_owned(host, state);
+    await kill_owned(host, state, explicit_stop);
     if (restart && !host.shutting_down) {
       await host.persist(state, () =>
         host.options.store.take_background_tasks(state.record.conversation_id),
@@ -189,9 +223,11 @@ export async function kill(
 async function kill_owned(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
+  explicit_stop: boolean,
 ): Promise<void> {
   state.last_touched_monotonic = host.monotonic_now();
   if (await kill_initial_delivery(host, state, () => discard_all(host, state))) {
+    if (explicit_stop) await state.lock.run(() => record_idle_stop(host, state));
     return;
   }
   const lease = await host.acquire_settled(state);
@@ -205,6 +241,7 @@ async function kill_owned(
           ) ?? null;
       if (state.running_turn)
         await cancel_and_end_running_turn(host, state, state.running_turn, lease);
+      else if (explicit_stop) await record_idle_stop(host, state);
       if (state.child) await host.discard_child(state, state.child);
     } finally {
       if (!host.shutting_down) settle_phase(state);

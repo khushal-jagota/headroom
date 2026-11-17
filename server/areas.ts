@@ -1,3 +1,7 @@
+import {
+  admit_worker_continuation,
+  settle_worker_continuations,
+} from './runtime/worker_continuation/index.ts';
 import { Runtime as SourceRuntime } from './measure_sources/runtime/supervisor.ts';
 import { observe_shutdown } from './conversation/shutdown.ts';
 import { ShutdownDeadlineExceeded } from './lifecycle/contracts.ts';
@@ -86,7 +90,10 @@ export function createAreasRuntime(
     return {
       ...deployment_participants(config.db_path),
       ...(local_child_custody === undefined ? {} : { local_child_custody }),
-      event_participant: observe_credential_requests,
+      event_participant(tx, conversation_id, payloads) {
+        settle_worker_continuations(tx, conversation_id, payloads, clock.nowUnix());
+        return observe_credential_requests(tx, conversation_id, payloads);
+      },
       startup_participant: reconcile_credential_requests,
       integer_now: () => clock.nowUnix(),
       all_are_notices: all_sender_messages_are_manager_notices,
@@ -103,7 +110,9 @@ export function createAreasRuntime(
         return new PromptDispatchDecision({
           sender_message_id,
           is_manager_notice,
-          suppression_reason,
+          suppression_reason:
+            suppression_reason ??
+            admit_worker_continuation(tx, conversation_id, sender_message_id, now),
         });
       },
       prepare_attention(tx, conversation_id) {
