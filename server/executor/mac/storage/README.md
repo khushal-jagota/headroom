@@ -1,6 +1,6 @@
 # Mac outbox storage seam
 
-`OutboxStore` preserves Python's SQLite outbox format and immutable blobs.
+`OutboxStore` keeps the existing SQLite outbox format and immutable blobs.
 It does not validate complete wire shapes, construct delivery batches, or send HTTP.
 The shared generated types own the wire contract. The later host still needs runtime codecs.
 
@@ -24,14 +24,14 @@ Native `JSON.stringify` measures the projected message size.
 The required host validator owns complete schema and admission checks.
 Serialization occurs outside the writer. The allocated sequence width completes the 1 MiB check inside the transaction, even with a no-op validator.
 The required synchronous validator still performs the host's complete wire validation before commit.
-A repeated submission ID returns the held row. The host checks this before capture for Python's duplicate-add fast path.
+A repeated submission ID returns the held row. The host checks this before capture, so a duplicate add returns early.
 
 `with_capture(ticket, callback)` serializes that Ticket's captures and protects blobs through the callback's commit.
 The callback receives local file-index rows and must synchronously encode and append.
 Only its admitted append remains available if shutdown begins during capture. Asynchronous callbacks are refused.
 The worker copies and hashes changed sources once, checks before/after metadata, and flushes bytes before publication.
 Unreadable or changing sources are skipped. Destination errors refuse publication.
-Recent modification times retain Python's `-1` cache marker.
+Recent modification times keep the `-1` cache marker.
 Neither file hashing nor copying runs on the main thread or inside the database writer.
 
 `acknowledge` requires validated receipt facts and encoded bytes from the host.
@@ -52,7 +52,6 @@ After that check, storage rechecks capture activity before it queues deletion th
 Startup sweeps unreferenced spool blobs and interrupted capture temporaries. Pending items and retained local failures protect their referenced blobs.
 This does not cover other artifact or update directories.
 A capture-finally cleanup failure logs once and leaves blobs for a later sweep. It does not reject an append that already committed.
-That last behavior deliberately fixes Python's post-commit cleanup failure. It is recorded in `server/DEVIATIONS.md`.
 
 Worker loss seals admission, and every write checks worker health synchronously before its transaction.
 Stop drains admitted captures and confirmations, closes SQLite, then releases the worker and main-owned lock.

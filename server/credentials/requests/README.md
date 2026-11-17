@@ -73,8 +73,3 @@ The existing Unit 13 resource provider already supplies the key for the bounded
 `/api/credentials` list. This package reuses that provider. The ordinary credential-request
 detail route has no resource key. Request-card updates use the existing
 conversation event and view pipeline.
-
-## Verification boundary
-
-The browser check `tests/e2e/test_ticket_conversation_shared_behaviors.py` covers
-reload and private-wire behavior of a saved credential.

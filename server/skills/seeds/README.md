@@ -43,7 +43,7 @@ def sha256(content):
 
 database, checkout = map(Path, sys.argv[1:])
 assert database.is_absolute() and checkout.is_absolute(), "Use absolute paths"
-root = checkout / "src/planner/skills"
+root = checkout / "server/skills/seeds"
 assert database.is_file() and root.is_dir(), "Check database and checkout paths"
 revision = subprocess.check_output(
     ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
@@ -102,7 +102,7 @@ snapshot, checkout = map(Path, sys.argv[1:3])
 assert snapshot.is_absolute() and checkout.is_absolute(), "Use absolute paths"
 content = snapshot.read_bytes()
 assert hashlib.sha256(content).hexdigest() == sys.argv[3], "Snapshot hash changed"
-root = checkout / "src/planner/skills"
+root = checkout / "server/skills/seeds"
 assert root.is_dir(), "Check checkout path"
 rows = json.loads(content)["skills"]
 assert len({row["name"] for row in rows}) == len(rows), "Duplicate skill name"

@@ -4,9 +4,9 @@ This package is the Panels backend. The live VPS server and the Mac executor run
 
 `server/main.ts` selects the production entry in normal mode. Normal startup requires real backend and environment bindings, and it fails clearly when one is missing. The test-mode switch selects the bare fixture entry in the same file. A test-mode entry does not establish production composition.
 
-Accepted differences from the earlier Python server live in [DEVIATIONS.md](DEVIATIONS.md).
+Accepted design decisions and their reasons live in [DEVIATIONS.md](DEVIATIONS.md).
 
-`ios_compatibility/check.ts` hashes the accepted production TypeScript inventory, eight fixed JSON inputs and two retained Hermes Python sources. It includes raw comments and uses Python Path component order. The checker and HTTP middleware share `ios_compatibility/policy.ts` for the native build floor. The agent doing a release writes and commits `ios_compatibility/review.json` after it checks iOS compatibility. Its `contract_sha256` must match the current contract, so any change to these inputs needs a new review. With `server/node_modules` installed, print the current value with `node -e "import('./server/ios_compatibility/check.ts').then(async (m) => console.log(await m.contract_digest('.')))"` from the repository root. Missing fixed inputs, including the generated migration graph, fail the check. The main-only publication workflow reads that review from HEAD in a clean tree and records its commit author. Signed-device evidence remains a separate requirement.
+`ios_compatibility/check.ts` hashes the accepted production TypeScript inventory, eight fixed JSON inputs and two retained Hermes Python sources. It includes raw comments and sorts paths component by component. The checker and HTTP middleware share `ios_compatibility/policy.ts` for the native build floor. The agent doing a release writes and commits `ios_compatibility/review.json` after it checks iOS compatibility. Its `contract_sha256` must match the current contract, so any change to these inputs needs a new review. With `server/node_modules` installed, print the current value with `node -e "import('./server/ios_compatibility/check.ts').then(async (m) => console.log(await m.contract_digest('.')))"` from the repository root. Missing fixed inputs, including the generated migration graph, fail the check. The main-only publication workflow reads that review from HEAD in a clean tree and records its commit author. Signed-device evidence remains a separate requirement.
 The source CLI at `server/cli/main.ts` connects all seventeen operator commands.
 `environment app-build` uses the release builder. `environment run` replaces its process
 with the prepared repository's CLI and retains its reserved listener. `serve` uses the
@@ -80,8 +80,6 @@ A step receives the same transaction capability as a state transition. It must n
 `createReadAccess(path)` supplies read-only connections for worker threads. It cannot create another writer. A future write-heavy rebuild needs exclusive writer transfer and all commit steps before it can run in a worker.
 
 ## Test selection and current boundaries
-
-The twenty browser checks in `tests/e2e` run against this server. `typescript-backend.yml` runs them on schedule or by hand. Set `PANELS_TEST_SERVER_BACKEND=typescript` to select TypeScript in the existing server fixture. The fixture still creates the database through Python, supplies synthetic homes, and passes its bound listener. The two explicit modules `tests.e2e.rail_server` and `tests.e2e.conversation_signals_server` select `server/test_host.ts`; other explicit test-host modules stay on Python. With no explicit module, the selector uses `server/main.ts`.
 
 Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. The installer runs schema steps; startup never does. Embedded `startServer` has unavailable catalog/sign-in providers by default, while an explicit normal-mode embedding still permits generic machine probes. It is not a claim that all machine I/O is disabled.
 
@@ -245,7 +243,7 @@ and drops. Session, turn, outcome, permission, and numeric-kind checks remain st
 Usage reads consume parsed JSON values without retaining numeric token spelling.
 
 The adapter bounds ask withdrawal to two seconds before child shutdown, then always
-invokes client cleanup. The difference is recorded in `DEVIATIONS.md`.
+invokes client cleanup. `DEVIATIONS.md` records the reason.
 
 ### Codex process lifetime and wire limits
 
@@ -292,8 +290,8 @@ part. Nonzero microseconds retain six digits.
 the backend child, launch values, and ordered ACP transport. Process ownership comes from `lifecycle/owned_processes.ts`.
 `create_hermes_backend_child_factory` is exported from `drivers/hermes/runtime/adapter.ts`.
 `HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `drivers/hermes/runtime/catalog.ts` run
-the retained Python inventory script, `src/planner/conversation/backends/hermes_model_catalog.py`.
-The launch runs the retained Python ACP extension, `hermes_acp_extension.py`, from the same folder.
+the Python inventory script, `src/planner/conversation/backends/hermes_model_catalog.py`.
+The launch runs the Python ACP extension, `hermes_acp_extension.py`, from the same folder.
 The lifecycle owner retains the catalog owner and calls `shutdown()` when the server stops.
 It observes that shutdown with the shared deadline and includes it in the backend
 `settled()` barrier. The Hermes child environment has no automatic `BASH_ENV` override.

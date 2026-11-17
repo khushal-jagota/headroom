@@ -23,7 +23,7 @@ The fixed foreground/managed/stop entries share one config/control/lease resolve
 
 The unit renderers return the new `panels-typescript` templates and environment-file contents through async bundles. Callers must write those files. Managed units require explicit socket and lease paths outside `/tmp` and `/var/tmp`, including resolved aliases. Environment files force the config, refusal and address inputs through the shared encoder. Both actions remove Node loader variables and every exported `LD_*` input before Node starts.
 
-Start rejects a symlinked application root, holds its physical working directory and classifies that checked tree before execution. V2 uses the Node launcher. V1 and the explicitly admitted null-contract SHA use the private Python launcher. Stop uses the running supervisor's capability record and `/proc/$MAINPID/cwd`, so a rollback cannot redirect it to replacement application files. The existing authenticated pidfd client retains signal authority. Classification remains structural routing, not runtime admission.
+Start rejects a symlinked application root, holds its physical working directory and classifies that checked tree before execution. It uses the Node launcher. Stop uses the running supervisor's capability record and `/proc/$MAINPID/cwd`, so a rollback cannot redirect it to replacement application files. The existing authenticated pidfd client retains signal authority. Classification remains structural routing, not runtime admission.
 
 Systemd's 90-second value applies separately to each stop command and the later service-stop phase.
 

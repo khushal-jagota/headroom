@@ -26,8 +26,8 @@ domain exports. The CLI holds no second JavaScript example or helper signature.
 The HTTP client keeps Node's default TLS roots and honors `SSL_CERT_FILE`,
 `SSL_CERT_DIR`, and Node's startup `NODE_EXTRA_CA_CERTS` behavior. Hash-directory
 lookup requires `openssl`. Connection, header progress, and body-read gaps each use
-30 seconds in production. Tests inject short phase limits. Accepted
-trust-store and diagnostic differences from the earlier Python CLI are in `../DEVIATIONS.md`.
+30 seconds in production. Tests inject short phase limits. The accepted
+trust-store decision is in [`../DEVIATIONS.md`](../DEVIATIONS.md#cli-tls-trust).
 
 `operator_commands.ts` binds the lifecycle table after parsing. The executable
 assembles no services. The entry awaits output writes before normal process

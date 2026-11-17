@@ -26,7 +26,7 @@ A type is one database row. A save or a delete takes effect at once.
 
 You can read all of this. You cannot write any of it. These doors are owner-only, and no Ticket principal can reach them. That is deliberate. So you prepare the exact bytes and hand them up. Complete the owner-only actions during the final Drafting review.
 
-`src/planner/worker_types/shipped_worker_types.json` and `src/planner/skills/` seed only a database that has no types or skills. A live row and a shipped one can differ, and the live row wins.
+`server/worker_types/shipped_worker_types.json` and `server/skills/seeds/` seed only a database that has no types or skills. A live row and a shipped one can differ, and the live row wins.
 
 ## Boundaries
 
@@ -84,8 +84,8 @@ The writes are not yours to make. Hand them to the owner or Chief during this re
 
 Bring the repository in line through the ordinary branch and staging route. This has no effect on this Panels.
 
-- Update the entry for the type in `src/planner/worker_types/shipped_worker_types.json`, or remove it.
-- Update `src/planner/skills/panels-worker-<name>/SKILL.md`, or remove it. A fresh install converts it into the guidance and the Stage instructions, so keep one heading per Stage.
+- Update the entry for the type in `server/worker_types/shipped_worker_types.json`, or remove it.
+- Update `server/skills/seeds/panels-worker-<name>/SKILL.md`, or remove it. A fresh install converts it into the guidance and the Stage instructions, so keep one heading per Stage.
 - Update `docs/worker-types.md` when the set of types or their shape changed.
 
 A seeding pass on a fresh deploy does not apply your amendment: seeding declines a table that already holds rows. Only the explicit write does it.

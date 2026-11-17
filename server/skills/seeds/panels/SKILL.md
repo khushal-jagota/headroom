@@ -139,7 +139,7 @@ The command groups describe both the object being changed and the operation's au
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
 
 Skill text is a row in this Panels, and the row is what you read. The repository tree
-`src/planner/skills` seeds a fresh install only, so an edit there reaches nobody. Skill
+`server/skills/seeds` seeds a fresh install only, so an edit there reaches nobody. Skill
 writes are owner-only: write the exact text and hand it to Khushal or the Chief.
 
 ## Continuation and schedules

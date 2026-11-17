@@ -8,7 +8,7 @@ Each endpoint accepts one `machine_id`, with the original Mac as the default. It
 
 Inbox admission checks the sender, child incarnation, and conversation before receipt replay or any batch effects. Receipt rows record their machine. Uploads for named machines use `executor-uploads/<machine_id>` while the original Mac keeps `executor-uploads`. Publication still targets the canonical Ticket files only after authority checks.
 
-Ticket execution admission, readiness, restart, memory notices, and decision delivery use `ticket.machine_id`. The policy helpers are `can_execute_machine(machine_id, connection)` and `machine_unavailable_reason(machine_id, connection)`. Home remains local. A known compatible remote incarnation permits queued work while absent, but readiness and restart also require that destination's presence. Refusals retain Python's existing payload fields.
+Ticket execution admission, readiness, restart, memory notices, and decision delivery use `ticket.machine_id`. The policy helpers are `can_execute_machine(machine_id, connection)` and `machine_unavailable_reason(machine_id, connection)`. Home remains local. A known compatible remote incarnation permits queued work while absent, but readiness and restart also require that destination's presence. Refusals keep their existing payload fields.
 
 ## Startup and retained state
 
@@ -131,8 +131,6 @@ Uploads require an `UploadSource` with a real `destroy` capability. The HTTP rou
 ## VPS command mailbox
 
 `vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at the corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
-
-Accepted poll and large-replacement latency measurements are in [DEVIATIONS.md](../DEVIATIONS.md). Compare them with the real table and backlog sizes on a copy of live data before adding performance machinery.
 
 The mailbox uses the core's shared automatic-start admission owner. It restores the exact turn binding before dispatch admission and holds a refused start or prompt. Stop and Cancel can withdraw that waiting turn across poll pages. Unrelated controls can move a waiting conversation suffix behind them, while a delivered row prevents that move. Withdrawn turns release their in-memory reservations after commit. Held polls cap their admission wait at one second, so a released slot needs no new mailbox write.
 
