@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 
 // The one setup that every Worker and Manager home shares. Ticket workspace
 // preparation adds the checkout and artifacts/ after this.
@@ -34,11 +35,11 @@ Put build output under TMPDIR, for example xcodebuild -derivedDataPath "$TMPDIR/
 `;
 }
 
-// Panels owns CLAUDE.md and AGENTS.md and writes them each time, so a change
-// to the text reaches every home at its next start.
+// Panels owns each driver's instructions file and writes it each time, so a
+// change to the text reaches every home at its next start.
 export async function prepare_agent_home(folder: string, role: AgentHomeRole): Promise<void> {
   await mkdir(join(folder, LOGS_DIRECTORY), { recursive: true });
   const text = agent_home_text(role);
-  await writeFile(join(folder, 'CLAUDE.md'), text);
-  await writeFile(join(folder, 'AGENTS.md'), text);
+  for (const name of new Set(BUILT_IN_DRIVERS.map((driver) => driver.home_instructions_file)))
+    await writeFile(join(folder, name), text);
 }

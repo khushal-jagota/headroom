@@ -24,6 +24,7 @@ function scripted_entry(
   const driver_kind = parse_driver_kind(key);
   const driver: AnyAgentDriver = {
     driver_kind,
+    home_instructions_file: 'AGENTS.md',
     client: {
       label: `Scripted ${key}`,
       icon: { file: 'icon.svg', monochrome: true },
