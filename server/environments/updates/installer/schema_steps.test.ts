@@ -37,7 +37,7 @@ import { create_database_backup } from '../../backup/capture.ts';
 import { restore_database_snapshot } from '../../backup/restore.ts';
 import { create_installer_effects } from './commands.ts';
 import { install } from './install.ts';
-import { structural_app } from './testing/compare.ts';
+import { structural_app } from './testing/structural_app.ts';
 import type { InstallerEffects, InstallerRequest } from './contracts.ts';
 
 const FROM = 'a'.repeat(40),
