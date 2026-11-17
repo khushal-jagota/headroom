@@ -190,9 +190,6 @@ export class FilesService {
     if (this.failure !== undefined) listener(this.failure);
     return () => this.failures.delete(listener);
   }
-  async capture_file(source: string, blobs: DirectoryHandle, checked_ns: bigint) {
-    return this.request('capture_file', [source, this.directory(blobs), checked_ns]);
-  }
   async sweep_directory(handle: DirectoryHandle, path: string, keep: readonly string[]) {
     return this.request('sweep_directory', [this.directory(handle), path, keep]);
   }

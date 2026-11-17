@@ -1,4 +1,3 @@
-import { ExecutorValidationError } from '../protocol_errors.ts';
 import { counter } from '../logic/counters.ts';
 /** Immutable snapshots and bounded byte transfers, relative to retained directory inodes. */
 import { constants, fstatSync, readSync, writeSync } from 'node:fs';
@@ -14,8 +13,6 @@ import {
 } from './file_metadata.ts';
 import type { FileVersion } from './file_metadata.ts';
 import { FILE_CHUNK_BYTES } from './configuration.ts';
-import { FILE_MODIFIED_WINDOW_NS } from './configuration.ts';
-import type { CapturedBlob } from './file_worker_contracts.ts';
 import {
   close_native_descriptor,
   open_directory_descriptor,
@@ -72,23 +69,13 @@ export function fsync_directory(path: string): void {
 export function copy_hashed(
   incoming: number,
   outgoing: number,
-  options: { byte_limit?: number; skip_unreadable_source?: boolean } = {},
+  options: { byte_limit?: number } = {},
 ): readonly [string, number] {
   const digest = createHash('sha256');
   const buffer = Buffer.allocUnsafe(FILE_CHUNK_BYTES);
   let count = 0;
   for (;;) {
-    let read: number;
-    try {
-      read = readSync(incoming, buffer, 0, buffer.length, null);
-    } catch (error) {
-      if (
-        options.skip_unreadable_source &&
-        ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error_code(error) ?? '')
-      )
-        return ['', -1];
-      throw error;
-    }
+    const read = readSync(incoming, buffer, 0, buffer.length, null);
     if (read === 0) return [digest.digest('hex'), count];
     count = counter(count + read);
     if (options.byte_limit !== undefined && count > options.byte_limit)
@@ -218,82 +205,5 @@ export function file_digest(path: string): readonly [string, number] {
     return hash_descriptor(incoming);
   } finally {
     close_native_descriptor(incoming);
-  }
-}
-
-/** Capture once into the spool. Source failures skip; destination failures remain fatal. */
-export function capture_file(
-  source: string,
-  blobs: number,
-  checked_ns: bigint,
-): CapturedBlob | null {
-  let incoming: number;
-  try {
-    incoming = regular_descriptor(source);
-  } catch (error) {
-    if (
-      ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error_code(error) ?? '') ||
-      error instanceof ExecutorValidationError
-    )
-      return null;
-    throw error;
-  }
-  const temporary = '.tmp-' + randomUUID().replaceAll('-', '');
-  let created = false;
-  try {
-    const outgoing = open_relative(
-      blobs,
-      temporary,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-      0o600,
-    );
-    created = true;
-    let captured: CapturedBlob;
-    try {
-      const before = fstatSync(incoming, { bigint: true });
-      const [sha256, count] = copy_hashed(incoming, outgoing, { skip_unreadable_source: true });
-      const after = fstatSync(incoming, { bigint: true });
-      if (
-        before.size !== after.size ||
-        before.mtimeNs !== after.mtimeNs ||
-        before.ctimeNs !== after.ctimeNs ||
-        BigInt(count) !== after.size
-      )
-        return null;
-      fsync_file(outgoing);
-      captured = {
-        sha256,
-        byte_count: count,
-        modified_ns:
-          checked_ns - after.mtimeNs <= BigInt(FILE_MODIFIED_WINDOW_NS) ? -1n : after.mtimeNs,
-      };
-    } finally {
-      close_native_descriptor(outgoing);
-    }
-    let exists = false;
-    try {
-      const existing = open_relative(
-        blobs,
-        captured.sha256,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
-      try {
-        if (!fstatSync(existing).isFile()) throw invalid('artifact is not regular file');
-        exists = true;
-      } finally {
-        close_native_descriptor(existing);
-      }
-    } catch (error) {
-      if (error_code(error) !== 'ENOENT') throw error;
-    }
-    if (!exists) rename_relative(blobs, temporary, blobs, captured.sha256);
-    sync_directory_descriptor(blobs);
-    return captured;
-  } finally {
-    try {
-      if (created) unlink_relative(blobs, temporary, true);
-    } finally {
-      close_native_descriptor(incoming);
-    }
   }
 }

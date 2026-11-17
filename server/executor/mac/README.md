@@ -39,7 +39,7 @@ The existing safe-removal platform limits still apply.
 ## Unix CLI client
 
 `ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.
-`ipc/outbox.ts` captures files through the real spool and retains receipt waiters.
+`ipc/outbox.ts` appends through the real spool, notes the Ticket's activity for the file sync, and retains receipt waiters.
 The sender calls `notify_confirmed` after its durable acknowledgement callback.
 `storage/envelopes.ts` supplies the shared row-to-envelope and receipt projections.
 The host supplies runner admission, catalog settlement, presence, reads, and exit.
@@ -137,8 +137,7 @@ Directory creation retains Python's stricter parent-flush sequence.
 
 Normal failure cleanup removes each private `.tmp-` entry through its retained directory.
 This file helper does not perform a startup sweep after process death.
-`OutboxStore` sweeps its spool blobs at startup and after durable acknowledgements.
-That sweep does not cover temporary files under other artifact or update directories.
+`OutboxStore` deletes the old spool blobs at startup. Nothing writes them now.
 No blanket crash-cleanup claim applies to those directories.
 
 ## Native checks still required

@@ -1,4 +1,4 @@
-/** Admitted CLI publication captures immutable files through the existing spool owner. */
+/** Admitted CLI publication appends through the existing spool owner. */
 import { as_object } from '../../protocol.ts';
 import type { AcceptanceReceipt, CliWrite, QueuedEnvelope } from '../../wire.generated.ts';
 import type { OutboxStore } from '../storage/outbox.ts';
@@ -13,34 +13,24 @@ export class GatewayOutbox {
   async add(write: CliWrite, submission_id: string, ticket_id: string): Promise<QueuedEnvelope> {
     const existing = this.store.lookup(submission_id);
     if (existing !== null) return row_envelope(this.store.sender_id, existing);
-    return this.store.with_capture(ticket_id, (capture) => {
-      const payload = as_object(write, 'CliWrite');
-      const files = capture.files.map((file) => ({
-        scope: 'ticket',
-        owner_id: ticket_id,
-        relative_path: file.relative_path,
-        sha256: file.sha256,
-        byte_count: file.byte_count,
-      }));
-      const encoded = Buffer.from(JSON.stringify({ payload, files }));
-      return row_envelope(
-        this.store.sender_id,
-        this.store.append(
-          {
-            submission_id,
-            conversation_id: write.child.conversation_id,
-            child_id: write.child.child_id,
-            kind: 'cli_write',
-          },
-          encoded,
-          capture.files,
-          capture.updates,
-          (row) => {
-            row_envelope(this.store.sender_id, row);
-          },
-        ),
-      );
-    });
+    const encoded = Buffer.from(
+      JSON.stringify({ payload: as_object(write, 'CliWrite'), files: [] }),
+    );
+    const row = this.store.append(
+      {
+        submission_id,
+        conversation_id: write.child.conversation_id,
+        child_id: write.child.child_id,
+        kind: 'cli_write',
+      },
+      encoded,
+      (row) => {
+        row_envelope(this.store.sender_id, row);
+      },
+    );
+    // The write is queued. The Ticket's files follow separately and never delay it.
+    this.store.note_ticket_activity(ticket_id);
+    return row_envelope(this.store.sender_id, row);
   }
   lookup(submission_id: string) {
     const row = this.store.lookup(submission_id);
