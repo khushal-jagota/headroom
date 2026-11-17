@@ -1,3 +1,4 @@
+import { install_slow_task_logging } from './core/slow_tasks.ts';
 import Fastify from 'fastify';
 import type { UpdateBarrier } from './environments/update_barrier.ts';
 import type { FastifyInstance } from 'fastify';
@@ -45,6 +46,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     forceCloseConnections: false,
   });
   services.own_app?.(app);
+  install_slow_task_logging(app);
   app.decorate('executor_registry', services.executor ?? null);
   const clock = services.clock ?? buildClock(config);
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
