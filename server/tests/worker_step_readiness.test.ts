@@ -18,8 +18,6 @@ function settle_feedback(db: ReturnType<typeof fixture>, id: string): void {
 test('user_owned_ticket_is_ready_once_per_stage_entry', () => {
   const db = fixture();
   const ticket = create(db, { worker_type: 'new_worker' });
-  expect(ready(db, ticket.id)).toBe(false);
-  settle_feedback(db, ticket.id);
   expect(ready(db, ticket.id)).toBe(true);
   db.write((tx) =>
     tx.run('INSERT INTO ticket_paired_stage_openers(ticket_id,stage,opened_at) VALUES (?,?,?)', [

@@ -1,9 +1,13 @@
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { expect, test } from 'vitest';
-import { fixture, fixture_path, create } from './ticket_fixture.ts';
+import { fixture, fixture_path, create, advance } from './ticket_fixture.ts';
 import { ConversationStore } from '../conversation/record/data/store.ts';
 import { ResolvedConversationStart, PromptDeliveryMode } from '../conversation/contracts.ts';
-import { PromptEventPayload, ContextCompactedEventPayload } from '../conversation/events.ts';
+import {
+  PromptEventPayload,
+  ContextCompactedEventPayload,
+  PromptDiscardedEventPayload,
+} from '../conversation/events.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -287,4 +291,60 @@ test('dispatch memory reads keep a current wake after its claim is released', ()
   const note = store.worker_step_memory_note(conversation_id, ['unregistered', wake]);
   expect(note?.after_sender_message_id).toBe(wake);
   expect(note?.sender_message_id).toMatch(/^worker_step_memory_notice_[0-9a-f]{32}$/);
+});
+
+// An automatic prompt can remain queued while the Ticket reaches Done. The
+// final admission must discard it, while an ordinary message stays eligible.
+test('terminal Ticket discards queued step and decision prompts at admission', () => {
+  const database = fixture();
+  const ticket = create(database);
+  const store = new ConversationStore(database, { integer_now: () => 100 });
+  const conversation_id = 'terminal-admission';
+  store.create_conversation(
+    new ResolvedConversationStart({
+      conversation_id,
+      backend_key: 'codex',
+      model: 'model',
+      reasoning_effort: null,
+      role_materials: null,
+      workspace_folder: '/workspace',
+      access: 'full',
+    }),
+  );
+  const decision_id = database.write((tx) => {
+    tx.run('UPDATE tickets SET conversation_id=? WHERE id=?', [conversation_id, ticket.id]);
+    tx.run("INSERT INTO worker_step_dispatch_intents VALUES (?,?,?,'dispatch_started')", [
+      ticket.id,
+      100,
+      'queued-step',
+    ]);
+    return tx.get<{ sender_message_id: string }>(
+      'SELECT sender_message_id FROM ticket_decision_messages WHERE ticket_id=? LIMIT 1',
+      [ticket.id],
+    )!.sender_message_id;
+  });
+  const message = (sender_message_id: string) =>
+    new PromptDiscardedEventPayload({
+      content: text_message_content('queued'),
+      sender_label: 'system',
+      sender_message_id,
+    });
+  expect(
+    store.admit_sender_messages(conversation_id, [message('queued-step')])[0]!.suppression_reason,
+  ).toBeNull();
+  advance(database, ticket);
+  expect(
+    store
+      .admit_sender_messages(conversation_id, [
+        message('queued-step'),
+        message(decision_id),
+        message('ordinary-message'),
+      ])
+      .map((decision) => decision.suppression_reason),
+  ).toEqual(['ticket_stage_is_terminal', 'ticket_stage_is_terminal', null]);
+  expect(
+    store
+      .read_events_after(conversation_id, 0)
+      .filter((event) => event.kind === 'prompt_discarded'),
+  ).toHaveLength(2);
 });
