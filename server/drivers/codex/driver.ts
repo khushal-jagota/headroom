@@ -17,4 +17,7 @@ export const codex_driver: AgentDriver<null> = {
     const { create_codex_instance } = await import('./runtime/instance.ts');
     return create_codex_instance(input, host);
   },
+  async executor() {
+    return (await import('./executor.ts')).codex_executor;
+  },
 };

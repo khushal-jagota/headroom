@@ -42,7 +42,7 @@ import {
   DRAIN_RETRY_INITIAL_SECONDS,
   DRAIN_RETRY_MAX_SECONDS,
 } from './configuration.ts';
-import { ticket_id_of } from './routing.ts';
+import { worker_ticket_id } from '../worker_supervision/logic/worker_launch.ts';
 import type { MacRunConversations } from './run_contracts.ts';
 import { read_canonical_skill_snapshot } from './data/skills.ts';
 import { SqliteCommandMailbox } from './vps_mailbox.ts';
@@ -224,7 +224,7 @@ export class MacRuns {
   }
   private require_current_ticket(start: ResolvedConversationStart): string {
     const principal = this.database.read((sql) => canonical_principal(sql, start.conversation_id));
-    if (principal?.kind !== 'ticket' || ticket_id_of(start) !== principal.id)
+    if (principal?.kind !== 'ticket' || worker_ticket_id(start) !== principal.id)
       throw new BackendSpawnFailed("Mac runs require the Ticket's current conversation identity");
     return principal.id;
   }

@@ -9,18 +9,11 @@ import type {
   RetainedBackendChildFactory,
   RetainedBackendRun,
 } from '../conversation/backends/contracts.ts';
-import type { ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { canonical_principal } from '../agent_identity/data.ts';
 import { authenticated_local_child } from '../agent_identity/launch.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 
-export function ticket_id_of(start: ResolvedConversationStart): string | null {
-  const environment = Object.fromEntries(
-    start.role_materials?.identity_environment_variables ?? [],
-  );
-  return environment.PLAN_ACTOR === 'worker' ? (environment.PLAN_TICKET_ID ?? null) : null;
-}
 export class LocaleBackendChildFactory {
   private readonly database: Database;
   private readonly local_factory: BackendChildFactory;

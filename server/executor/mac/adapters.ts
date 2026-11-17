@@ -4,7 +4,6 @@ import type { BackendChildFactory } from '../../conversation/backends/contracts.
 import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
 import { executable_override } from '../../conversation/snapshot/environment.ts';
 import { BUILT_IN_DRIVERS } from '../../drivers/built_in.ts';
-import { BUILT_IN_EXECUTORS } from '../../drivers/built_in_executors.ts';
 import type { AnyAgentDriver } from '../../drivers/core/driver.ts';
 import type { ExecutorDriver, ExecutorDriverHost } from '../../drivers/core/executor.ts';
 import { default_instance_id_for_driver } from '../../drivers/core/identity.ts';
@@ -22,19 +21,18 @@ export interface LoadedExecutorDriver {
   readonly manifest: DriverManifest;
   readonly executor: ExecutorDriver;
 }
-/** Every built-in driver that has an executor half, in BUILT_IN_DRIVERS order. */
+/** Every driver that has an executor half, in BUILT_IN_DRIVERS order. */
 export async function load_executor_drivers(
   drivers: readonly AnyAgentDriver[] = BUILT_IN_DRIVERS,
 ): Promise<readonly LoadedExecutorDriver[]> {
   const loaded = await Promise.all(
     drivers.map(async (driver) => {
-      const load = BUILT_IN_EXECUTORS[driver.driver_kind];
-      return load
+      return driver.executor
         ? [
             {
               driver_kind: driver.driver_kind,
               manifest: driver.manifest,
-              executor: await load(),
+              executor: await driver.executor(),
             },
           ]
         : [];

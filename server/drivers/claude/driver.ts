@@ -18,4 +18,7 @@ export const claude_driver: AgentDriver<null> = {
     const { create_claude_instance } = await import('./runtime/instance.ts');
     return create_claude_instance(input, host);
   },
+  async executor() {
+    return (await import('./executor.ts')).claude_executor;
+  },
 };

@@ -22,7 +22,7 @@ import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import type { CleanupResult } from '../worker_supervision/contracts.ts';
 import { cleanup_result } from '../worker_supervision/inspection.ts';
-import { ticket_id_of } from './routing.ts';
+import { worker_ticket_id } from '../worker_supervision/logic/worker_launch.ts';
 import type { MacRemoteChild } from './vps_remote_child.ts';
 import { VpsExecutor } from './vps_transport.ts';
 import type { VpsExecutorOptions } from './vps_transport.ts';
@@ -264,7 +264,7 @@ export class VpsExecutorRegistry {
 
   create(options: Parameters<BackendChildFactory>[0]): MacRemoteChild {
     this.admit();
-    const ticket_id = ticket_id_of(options.resolved_start);
+    const ticket_id = worker_ticket_id(options.resolved_start);
     const row = this.database.read((sql) =>
       sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [ticket_id]),
     );
