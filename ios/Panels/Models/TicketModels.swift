@@ -111,7 +111,8 @@ struct DriverPresentation: Decodable, Sendable, Equatable {
     }
     let driverKind: String
     let label: String
-    let icon: Icon
+    /// Optional, so one driver without an icon does not cost the whole list.
+    var icon: Icon? = nil
 }
 enum DriverResources {
     static let catalog = ResourceRegistration<DriverCatalog>(key: "/api/drivers", versioned: false)
