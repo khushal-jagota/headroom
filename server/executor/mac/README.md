@@ -67,7 +67,7 @@ The private credential file uses exclusive mode-0600 creation, atomic rename, an
 The client saves a changed grant before it sends authenticated requests. Expected bootstrap failures retain a valid saved credential.
 Session shutdown joins credential file work, and a replaced session refuses further bootstrap requests.
 Update reports and archive downloads obtain current authentication headers for each request.
-The host startup does not call this API yet. Server credential routing and runtime protocol activation remain separate port slices.
+Host startup obtains the credential before it starts authenticated work loops.
 
 The public methods return promises:
 

@@ -1,6 +1,6 @@
 # Separate TypeScript Mac executor
 
-The package producer assembles a separate Node executor and unsigned installation assets from supplied Darwin arm64 inputs.
+Each TypeScript release publishes the Node Mac executor and its native execution receipt. The package producer also creates unsigned assets for the separate installation.
 No command in this document ran on the owner's Mac during this Ticket.
 The shared codec embeds its schema as `WIRE_SCHEMA` in `server/executor/wire.generated.ts`. It does not read `wire.schema.json` at runtime.
 Use a separate app, supervisor, job, and state root. Keep the Python installation idle for rollback after cutover.
@@ -26,6 +26,15 @@ The artifact name includes `test-build`, and `TEST-BUILD.txt` marks the extracte
 Real installation values come only from the later Mac session with the owner.
 It uses standard `macos-15` arm64 and official Node 22, then uploads the archive, assets, build metadata, and this document.
 The workflow does not install, sign, launch, or contact the configured peer.
+
+The pull-request workflow `typescript-mac-executor.yml` runs a separate hosted rehearsal.
+It uses a private home, temporary state, a local TypeScript server over HTTPS, and scripted Claude and Codex commands.
+It checks protocol 26 presence, both turns, upload, download, and Stop through the packaged executor.
+Its launcher uses ad-hoc signing because the hosted runner has no owner signing identity.
+Ad-hoc signing does not prove the live Mac's requester attribution or file consent.
+Use the owner's Apple Development identity for the live app, as described below.
+The workflow retains its logs, results, cleanup evidence, and elapsed time.
+Physical sleep/wake and permission retention remain checks for the later owner session.
 
 Run the producer with production dependencies under its own `server/node_modules` directory. Node strips TypeScript without a compiler.
 
@@ -281,7 +290,8 @@ Do not restart or change the Python installation. Preserve the evidence and move
 
 ## Native checks that Linux cannot prove
 
-Run these checks in the later separate native Ticket, with a fresh isolated peer and synthetic data first.
+The hosted rehearsal checks the packaged runtime with a private peer and synthetic data.
+Use the later owner session for the remaining checks below, especially consent, sleep/wake, and permission retention.
 The operator must record the reviewed revision, Node version, arm64 architecture, package digest, exact paths, job, and app identity.
 The Koffi bridge can load only the operating system's `libSystem.B.dylib` on macOS.
 Missing symbols or failed calls must refuse the operation. A path-based fallback is forbidden.
