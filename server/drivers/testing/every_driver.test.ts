@@ -73,6 +73,7 @@ it('the manifest door holds the same drivers, facts and order as BUILT_IN_DRIVER
     driver.client,
     driver.models,
     driver.launch_model_refusal,
+    driver.readable_tool_call_detail,
   ];
   expect(BUILT_IN_MANIFESTS.map(facts)).toEqual(BUILT_IN_DRIVERS.map(facts));
   BUILT_IN_MANIFESTS.forEach((door, index) => {

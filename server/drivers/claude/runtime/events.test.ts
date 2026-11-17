@@ -55,6 +55,25 @@ it('keeps parent text order around tools while dropping thought text and nested 
   });
   expect(events[4].event).toMatchObject({ content: [{ text: 'after' }] });
 });
+// An unlisted tool, an MCP tool among them, is `other`; the row keeps the name Claude gave it.
+it('maps an MCP tool to other and keeps the raw tool name as the title', async () => {
+  const { mapper, turn, events } = fixture();
+  await mapper.assistant_message(turn, {
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: {
+      model: 'model',
+      content: [
+        { type: 'tool_use', id: 'mcp', name: 'mcp__server__tool', input: {} },
+        { type: 'tool_use', id: 'shell', name: 'Bash', input: { command: 'ls' } },
+      ],
+    },
+  });
+  expect(events.map(({ event }) => event)).toMatchObject([
+    { tool_call_id: 'mcp', title: 'mcp__server__tool', tool_kind: 'other' },
+    { tool_call_id: 'shell', title: 'Bash', tool_kind: 'execute' },
+  ]);
+});
 it('attributes streamed tool text and preserves a late parent message through unknown block additions', async () => {
   const { mapper, turn, events } = fixture();
   await mapper.stream_event(turn, {

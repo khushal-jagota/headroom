@@ -654,6 +654,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   is_running(conversation_id: string): Promise<boolean> {
     return queries.is_running(this, conversation_id);
   }
+  supports_active_steering(
+    backend_key: import('../drivers/core/identity.ts').BackendInstanceId,
+  ): boolean {
+    return queries.supports_active_steering(this, backend_key);
+  }
   has_pending_permission_ask(conversation_id: string): Promise<boolean> {
     return queries.has_pending_permission_ask(this, conversation_id);
   }

@@ -1,6 +1,7 @@
 /** Questions about live conversation state, and workspace activity. */
 import type { RunningTurn } from '../record/contracts.ts';
-import { HeldPrompt } from '../contracts.ts';
+import { backend_supports_active_steering, HeldPrompt } from '../contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 
 export function runtime_turn(
@@ -97,6 +98,13 @@ export async function is_running(
   const state = host.conversations.get(conversation_id);
   host.options.require_signal_current?.();
   return state?.running_turn != null;
+}
+
+export function supports_active_steering(
+  host: SqliteProcessConversationSystem,
+  backend_key: BackendInstanceId,
+): boolean {
+  return backend_supports_active_steering(host.options.backend_registry, backend_key);
 }
 
 export async function has_pending_permission_ask(

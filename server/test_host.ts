@@ -29,11 +29,11 @@ import {
 if (!(await import('./core/config.ts')).testModeFromEnvironment())
   throw new Error('The comparison host requires test mode');
 
+const registry = new ScriptedBackendRegistry();
 const conversationSystem =
   process.env.PLAN_COMPARE_CONVERSATION_SYSTEM === 'in_memory'
-    ? new InMemoryConversationSystem()
+    ? new InMemoryConversationSystem(registry.registry)
     : undefined;
-const registry = new ScriptedBackendRegistry();
 const ticket_choice_fault = new ScriptedTicketChoiceFault();
 
 await startServer({

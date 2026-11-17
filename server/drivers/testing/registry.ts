@@ -1,19 +1,60 @@
 /** Test registries and drivers over scripted factories. Each factory object is kept unchanged. */
 import type { BackendChildFactory } from '../../conversation/backends/contracts.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../built_in_manifests.ts';
-import type { AnyAgentDriver } from '../core/driver.ts';
+import type { AnyAgentDriver, DriverInstance } from '../core/driver.ts';
 import { NO_DRIVER_CONFIG } from '../core/driver.ts';
 import type { DriverHost } from '../core/host.ts';
 import { parse_backend_instance_id, parse_driver_kind } from '../core/identity.ts';
+import type { BackendInstanceId, DriverKind } from '../core/identity.ts';
+import { turn_scoped_selection_transition } from '../core/selection.ts';
 import type { DriverManifest } from '../core/manifest.ts';
 import { driver_registry_from_entries } from '../core/registry.ts';
 import type { DriverRegistry, RegistryEntry } from '../core/registry.ts';
 import type { DriverStatus } from '../core/status.ts';
 
-const CAPABILITIES = {
-  sessions: { supportsModelSwitchInSession: true },
-  turns: { supportsActiveSteering: true },
-} as const;
+/** What a test may change on a scripted instance while its conversations run. */
+export interface ScriptedInstanceControls {
+  readonly capabilities: {
+    readonly sessions: { supportsModelSwitchInSession: boolean };
+    readonly turns: { supportsActiveSteering: boolean };
+  };
+  plan_selection_transition: DriverInstance['plan_selection_transition'];
+}
+const controls_by_instance = new WeakMap<DriverInstance, ScriptedInstanceControls>();
+/** An instance with its own capabilities, which steers and applies every selection change. */
+function scripted_instance(
+  instance_id: BackendInstanceId,
+  driver_kind: DriverKind,
+  child_factory: BackendChildFactory,
+): DriverInstance {
+  const controls: ScriptedInstanceControls = {
+    capabilities: {
+      sessions: { supportsModelSwitchInSession: true },
+      turns: { supportsActiveSteering: true },
+    },
+    plan_selection_transition: turn_scoped_selection_transition,
+  };
+  const instance: DriverInstance = {
+    instance_id,
+    driver_kind,
+    capabilities: controls.capabilities,
+    plan_selection_transition: (input) => controls.plan_selection_transition(input),
+    child_factory,
+    status: scripted_status(driver_kind),
+    dispose: async () => {},
+  };
+  controls_by_instance.set(instance, controls);
+  return instance;
+}
+/** The controls of the scripted instance that `id` names in a registry built here. */
+export function scripted_instance_controls(
+  registry: DriverRegistry,
+  id: string,
+): ScriptedInstanceControls {
+  const controls = controls_by_instance.get(registry.require_live(id));
+  if (controls === undefined) throw new Error(`${id} is not a scripted driver instance`);
+  return controls;
+}
 /** A manifest with only what a scripted driver needs. */
 export function scripted_manifest(name: string): DriverManifest {
   return {
@@ -64,14 +105,8 @@ function scripted_driver(
     },
     manifest: scripted_manifest(key),
     config: NO_DRIVER_CONFIG,
-    create: async ({ instance_id }, host) => ({
-      instance_id,
-      driver_kind,
-      capabilities: CAPABILITIES,
-      child_factory: child_factory(host),
-      status: scripted_status(key),
-      dispose: async () => {},
-    }),
+    create: async ({ instance_id }, host) =>
+      scripted_instance(instance_id, driver_kind, child_factory(host)),
   };
 }
 /** Built-in ids first, in BUILT_IN_DRIVERS order, so cards and choice lists keep their order. */
@@ -109,14 +144,7 @@ export function registry_of_factories(
       return {
         kind: 'live',
         driver,
-        instance: {
-          instance_id: parse_backend_instance_id(key),
-          driver_kind,
-          capabilities: CAPABILITIES,
-          child_factory,
-          status: scripted_status(key),
-          dispose: async () => {},
-        },
+        instance: scripted_instance(parse_backend_instance_id(key), driver_kind, child_factory),
       };
     },
   );

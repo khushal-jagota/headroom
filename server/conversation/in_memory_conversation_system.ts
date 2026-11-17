@@ -10,7 +10,7 @@ import {
   PromptDeliveryStarted,
   PromptDeliverySuppressed,
   PromptDeliveryUncertain,
-  backend_supports_steer,
+  backend_supports_active_steering,
 } from './contracts.ts';
 import type {
   AnswerFate,
@@ -25,6 +25,7 @@ import type {
   PromptQueueReason,
   ResolvedConversationStart,
 } from './contracts.ts';
+import type { DriverRegistry } from '../drivers/core/registry.ts';
 import type { UserInputAnswer, UserInputQuestion } from './events.ts';
 import {
   MessageText,
@@ -185,6 +186,11 @@ export class InMemoryConversationSystem implements ConversationSystem {
   private readonly _conversations = new Map<string, ConversationState>();
   readonly workspace_admission = new WorkspaceAdmission();
   private update_generation: symbol | null = null;
+  /** Without a registry, every backend steers, as every built-in does. */
+  private readonly backend_registry: DriverRegistry | undefined;
+  constructor(backend_registry?: DriverRegistry) {
+    this.backend_registry = backend_registry;
+  }
 
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     if (this.workspace_admission.closed) return 'unknown';
@@ -817,7 +823,10 @@ export class InMemoryConversationSystem implements ConversationSystem {
     sender_label: string,
     options: DeliveryOptions = {},
   ): PromptDeliveryInjected | PromptDeliveryRefused {
-    if (!backend_supports_steer(state.resolved_start.backend_key))
+    if (
+      this.backend_registry !== undefined &&
+      !backend_supports_active_steering(this.backend_registry, state.resolved_start.backend_key)
+    )
       return new PromptDeliveryRefused({ refusal_reason: 'backend_cannot_steer' });
     if (state.running_turn === null)
       return new PromptDeliveryRefused({ refusal_reason: 'no_running_turn_to_steer_into' });

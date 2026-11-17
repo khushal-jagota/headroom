@@ -12,7 +12,12 @@ import {
   ModelThinkingHappened,
   ToolCallProgress,
 } from '../backends/contracts.ts';
-import type { BackendEventSink, BackendEventValue, TurnToken } from '../backends/contracts.ts';
+import type {
+  BackendChild,
+  BackendEventSink,
+  BackendEventValue,
+  TurnToken,
+} from '../backends/contracts.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { LifecycleKind as K } from '../record/lifecycle.ts';
 import { interpret_backend_event } from '../logic/backend_events.ts';
@@ -73,6 +78,7 @@ export async function take_backend_event_with_receipt(
   };
   let drain = false;
   let applied = false;
+  let broken_child: BackendChild | null = null;
   let lost_background_tasks: readonly string[] = [];
   const background_task_news =
     event instanceof BackgroundTaskStarted ||
@@ -142,7 +148,14 @@ export async function take_backend_event_with_receipt(
         };
       }
     }
-    if (!live && options.in_commit === undefined) return accepted;
+    if (!live && options.in_commit === undefined) {
+      // The core may have ended the turn itself; a child that broke meanwhile is still broken.
+      // While another turn runs on the child, that turn's own ending reports it.
+      const current = state.running_turn;
+      if (current === null || current.ended || current.ending_is_the_cores)
+        broken_child = quarantine_broken_local_child(host, state, event, options);
+      return accepted;
+    }
     const predicted = interpreted.predicted;
     const mutations: RuntimeMutation[] = [];
     if (predicted) {
@@ -303,6 +316,8 @@ export async function take_backend_event_with_receipt(
       host.options.emit_change?.();
       drain = true;
     }
+    broken_child = quarantine_broken_local_child(host, state, event, options);
+    if (broken_child !== null) drain = false;
     if (live && event instanceof TurnEnded && event.ending === 'failed') {
       const sequence = result.written.at(-1)?.sequence ?? null;
       console.error(
@@ -314,10 +329,51 @@ export async function take_backend_event_with_receipt(
     }
   } finally {
     lease.release();
+    // Stop outside the lease, so a long stop does not block the conversation's other work.
+    if (broken_child !== null) retire_broken_local_child(host, state, broken_child);
   }
   if (applied) tell_agent_about_lost_background_tasks(host, state, lost_background_tasks);
   if (drain) host.schedule_drain(state);
   return accepted;
+}
+
+/** Rule 4: a broken local child takes no further prompt. Hold new work until it is stopped.
+ * A stop already under way owns the child, so this never starts a second one. */
+function quarantine_broken_local_child(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  event: BackendEventValue,
+  options: { expected_sink?: BackendEventSink; in_commit?: unknown },
+): BackendChild | null {
+  if (
+    options.in_commit !== undefined ||
+    !(event instanceof TurnEnded) ||
+    event.child_disposition !== 'broken' ||
+    options.expected_sink === undefined ||
+    state.child_event_sink !== options.expected_sink ||
+    state.child === null ||
+    state.child.stop_outside_lock ||
+    state.being_killed ||
+    host.child_stop_ownership.has(state.child)
+  )
+    return null;
+  state.child_is_quarantined = true;
+  return state.child;
+}
+
+function retire_broken_local_child(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  child: BackendChild,
+): void {
+  void own_settlement(state, host.discard_child(state, child))
+    .then(() => host.schedule_drain(state))
+    .catch((error: unknown) =>
+      console.error(
+        `conversation ${state.record.conversation_id} could not retire its broken child`,
+        error,
+      ),
+    );
 }
 
 export function make_sink(

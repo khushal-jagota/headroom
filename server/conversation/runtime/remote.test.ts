@@ -20,6 +20,7 @@ import type { WireValue } from '../../executor/contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { Deferred } from '../../core/deferred.ts';
 import { retained_open_runs } from './remote.ts';
+import { PromptDeliveryInjected, PromptDeliveryStarted } from '../contracts.ts';
 
 // An acknowledgement must wait for receipt and steer settlement, then recheck its exact source.
 test('remote prompt acceptance releases only the matching live source after its barriers', async () => {
@@ -465,6 +466,48 @@ test('kill during replay ends its turn and asks before a late successful reply',
   } finally {
     release.resolve();
     await replay;
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+  }
+});
+
+// Risk: a retained remote child whose backend has no live instance on this home loses its
+// prompts to "unknown agent backend" and its steer to a refusal.
+// Gap: every other test runs a remote child on a backend that is live here.
+test('a retained remote child takes prompts and steers without a live instance here', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    await f.send('first', 'first');
+    const child = await f.child,
+      state = f.core.conversation_state('core')!;
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    state.retained_child_reference = {
+      conversation_id: 'core',
+      executor_incarnation: 'remote',
+      child_id: 'retained',
+    };
+    Object.defineProperty(child, 'stop_outside_lock', { value: true });
+    const registry = f.core.options.backend_registry;
+    vi.spyOn(registry, 'get').mockImplementation((id) => ({
+      kind: 'unavailable',
+      instance_id: id as never,
+      driver: null,
+      reason: 'No live instance on this home.',
+    }));
+    expect(await f.send('second', 'second')).toBeInstanceOf(PromptDeliveryStarted);
+    expect(
+      await f.core.send('core', text_message_content('steer'), {
+        sender_label: 'Owner',
+        sender_message_id: 'steer',
+        mode: 'steer',
+      }),
+    ).toBeInstanceOf(PromptDeliveryInjected);
+    const calls = (await child.inspect()).calls.map((call) => call.command);
+    expect(calls.filter((command) => command === 'write_prompt')).toHaveLength(2);
+    expect(calls.at(-1)).toBe('steer');
+  } finally {
+    vi.restoreAllMocks();
     await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
   }
 });

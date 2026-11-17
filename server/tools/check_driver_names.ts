@@ -75,7 +75,13 @@ const EXEMPT_FILES = new Set([
   'server/drivers/built_in_executors.ts',
   'server/tools/driver_name_allowances.ts',
 ]);
-const PACKAGE_ENTRY_FILES = new Set(['driver.ts', 'manifest.ts', 'client.ts', 'models.ts']);
+const PACKAGE_ENTRY_FILES = new Set([
+  'driver.ts',
+  'manifest.ts',
+  'client.ts',
+  'models.ts',
+  'tool_detail.ts',
+]);
 
 function in_scope(path: string): boolean {
   if (!SCANNED_ROOTS.some((root) => path.startsWith(root)) || path.includes('/node_modules/'))
@@ -350,7 +356,7 @@ function import_findings(
   const driver_file = entry_file && posix.basename(file.path) === 'driver.ts';
   const package_root = `server/drivers/${own_package}/`;
   const entry_rule =
-    'driver.ts, manifest.ts, client.ts and models.ts import values only from drivers/core, manifest.ts, client.ts and models.ts.';
+    'driver.ts, manifest.ts, client.ts, models.ts and tool_detail.ts import values only from drivers/core, core/records.ts, manifest.ts, client.ts, models.ts and tool_detail.ts.';
   for (const reference of imports) {
     if (reference.specifier === null) {
       // A computed path cannot be resolved. Refuse one in manifest.ts or client.ts, and one
@@ -381,9 +387,12 @@ function import_findings(
         add(reference.line, target, 'Only driver.ts may load the runtime, with import().');
     } else if (
       !target.startsWith('server/drivers/core/') &&
+      // The shared record guard, already in the installer bundle.
+      target !== 'server/core/records.ts' &&
       target !== `${package_root}manifest.ts` &&
       target !== `${package_root}client.ts` &&
-      target !== `${package_root}models.ts`
+      target !== `${package_root}models.ts` &&
+      target !== `${package_root}tool_detail.ts`
     )
       add(reference.line, target, entry_rule);
   }

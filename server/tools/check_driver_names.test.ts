@@ -249,7 +249,7 @@ describe('imports', () => {
     expect(imports([{ path: 'server/tickets/a.ts', text: local }])).toEqual([]);
   });
 
-  it('keeps driver.ts, manifest.ts, client.ts and models.ts free of runtime value imports', () => {
+  it('keeps driver.ts, manifest.ts, client.ts, models.ts and tool_detail.ts free of runtime value imports', () => {
     const driver_text = [
       "import { NO_DRIVER_CONFIG } from '../core/driver.ts';",
       "import { codex_manifest } from './manifest.ts';",
@@ -261,6 +261,7 @@ describe('imports', () => {
       "import type { Options } from '@anthropic-ai/claude-agent-sdk';",
       'const computed = await import(`./runtime/${name}.ts`);',
       "import { codex_models } from './models.ts';",
+      "import { codex_readable_tool_call_detail } from './tool_detail.ts';",
     ].join('\n');
     const manifest_text = [
       "import { x } from '../../core/config.ts';",
@@ -276,6 +277,13 @@ describe('imports', () => {
           path: 'server/drivers/codex/models.ts',
           text: "import { parse } from './runtime/catalog.ts';",
         },
+        {
+          path: 'server/drivers/codex/tool_detail.ts',
+          text: [
+            "import { is_record } from '../../core/records.ts';",
+            "import { parse } from './runtime/events.ts';",
+          ].join('\n'),
+        },
       ]),
     ).toEqual([
       '4:server/drivers/codex/runtime/adapter.ts',
@@ -287,6 +295,7 @@ describe('imports', () => {
       '3:node:fs',
       '4:(computed)',
       '1:server/drivers/codex/runtime/catalog.ts',
+      '2:server/drivers/codex/runtime/events.ts',
     ]);
   });
 

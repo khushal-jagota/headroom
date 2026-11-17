@@ -23,6 +23,8 @@ import {
 } from '../contracts.ts';
 import { PromptDiscardedEventPayload, ModelChangedEventPayload } from '../events.ts';
 import { one_prompt_from } from '../logic/held_line.ts';
+import { selection_target } from '../logic/selection_target.ts';
+import type { BackendSelection } from '../../drivers/core/selection.ts';
 import { prefix_message_content_text, text_message_content } from '../message_content.ts';
 import { log_backend_failure } from '../backends/failure_summary.ts';
 import { recorded_failure_detail } from '../logic/backend_events.ts';
@@ -84,13 +86,12 @@ async function ensure_child(
     );
   if (state.child !== null) return state.child;
   const previous = state.record.resolved_start();
+  const target = selection_target(message, previous);
   const resolved = new ResolvedConversationStart({
     ...previous,
-    model: message.model_change ?? previous.model,
-    reasoning_effort:
-      message.reasoning_effort_change === null && !message.reasoning_effort_is_set
-        ? previous.reasoning_effort
-        : message.reasoning_effort_change,
+    // `resolved_start` refuses a record without a model, so the target names one.
+    model: target.model!,
+    reasoning_effort: target.reasoning_effort,
   });
   const sink = host.make_sink(state);
   state.child_event_sink = sink;
@@ -136,6 +137,10 @@ async function ensure_child(
     throw new DeliveryCancelled();
   }
   state.child = child;
+  state.child_selection = {
+    child,
+    selection: { model: resolved.model, reasoning_effort: resolved.reasoning_effort },
+  };
   state.last_session_load_refusal_detail = null;
   return child;
 }
@@ -282,7 +287,14 @@ export async function deliver_prompt(
   let memory_notice_only = decisions
     .filter((decision) => decision.suppression_reason === null)
     .every((decision) => decision.is_memory_notice);
+  // The child's own selection, or the record's for a child started elsewhere (an adopted one).
+  // The target is the message's change against it, as the child itself reads the change.
+  const selection_of = (target: BackendChild): BackendSelection =>
+    state.child_selection?.child === target
+      ? state.child_selection.selection
+      : { model: state.record.model, reasoning_effort: state.record.reasoning_effort };
   const write = async (target: BackendChild) => {
+    const selection = selection_target(first, selection_of(target));
     const reference = state.retained_child_reference;
     if (target.stop_outside_lock && reference !== null)
       await host.persist(state, () =>
@@ -358,6 +370,7 @@ export async function deliver_prompt(
         automatic_compaction: reservation.automatic_compaction,
       }),
     );
+    state.child_selection = { child: target, selection };
     reservation.prompt_accepted = true;
     if (accepted.agent_acceptance_proven && state.child === target)
       await host.accept_automatic_start(state, reservation.token);
@@ -377,6 +390,28 @@ export async function deliver_prompt(
       state.record.reasoning_effort !== null
     ) {
       throw new NeedsRebind('exact desired default or alias target requires a fresh child');
+    }
+    // A local child implies a live instance. A remote child's backend may have none on this
+    // home; the remote child refuses a selection it cannot carry before placing the prompt.
+    const entry = host.options.backend_registry.get(state.record.backend_key);
+    if (had_child && entry?.kind === 'live') {
+      const instance = entry.instance;
+      const current = selection_of(child);
+      const plan = instance.plan_selection_transition({
+        current,
+        target: selection_target(first, current),
+        session_capabilities: instance.capabilities,
+      });
+      if (plan.type === 'restart_session')
+        throw new NeedsRebind(
+          `${instance.driver_kind} needs a fresh child for this model or reasoning effort`,
+        );
+      if (plan.type === 'reject')
+        return result({
+          refusal_reason: R.backend_rejected_prompt,
+          refusal_detail: plan.reason,
+          record_refusal: true,
+        });
     }
     return await write(child);
   } catch (error) {
@@ -895,14 +930,15 @@ async function deliver_and_record(
       }
       const first = survivors[0];
       const effort_is_set = survivors.some((message) => message.reasoning_effort_is_set);
+      const target = selection_target(
+        { ...first, reasoning_effort_is_set: effort_is_set },
+        state.record,
+      );
       const change =
         first.model_change !== null || first.reasoning_effort_change !== null || effort_is_set
           ? new ModelChangedEventPayload({
-              model: first.model_change ?? state.record.model!,
-              reasoning_effort:
-                first.reasoning_effort_change === null && !effort_is_set
-                  ? state.record.reasoning_effort
-                  : first.reasoning_effort_change,
+              model: target.model!,
+              reasoning_effort: target.reasoning_effort,
             })
           : null;
       const owner_bounds = survivors

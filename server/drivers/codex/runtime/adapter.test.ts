@@ -205,6 +205,48 @@ test('child death before admission leaves ending and login diagnosis to the fail
   }
 });
 
+// Risk: the child exits while turn/start is pending, the wire rejects the request, and the
+// failed start is reported as a turn ending or leaves a turn behind for the next prompt.
+// Gap: the case above proves the rejection only through an invalid reply after the death.
+test('child death while turn/start is pending fails the write through the broken wire', async () => {
+  const state = await setup();
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    await state.handler.on_child_ended();
+    state.pending
+      .get(1)!
+      .reject(
+        new CodexWireFailed('the codex process ended', { request_may_have_been_written: true }),
+      );
+    await expect(writing).rejects.toBeInstanceOf(B.PromptWriteFailed);
+    expect(state.report.mock.calls.some(([, event]) => event instanceof B.TurnEnded)).toBe(false);
+    expect((state.child as unknown as { turn: unknown }).turn).toBeNull();
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Risk: a child that died while idle blocks the conversation until the idle janitor runs.
+// Gap: no test sends a prompt to a dead idle child. Layer: adapter unit, reusing the fake client.
+test('a prompt to a child that ended while idle asks for a new child', async () => {
+  const state = await setup();
+  try {
+    Object.assign(state.client, { is_alive: false, end_reason: 'synthetic exit' });
+    await state.handler.on_child_ended();
+    const begin = vi.spyOn(state.client, 'begin_request');
+    const refusal = await state.prompt().catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(B.NeedsRebind);
+    expect(refusal).toMatchObject({
+      failed_child_recovery: true,
+      message: expect.stringContaining('synthetic exit'),
+    });
+    expect(begin).not.toHaveBeenCalled();
+  } finally {
+    await state.child.stop();
+  }
+});
+
 test('close fences a blocked catalog publication before it adopts a new snapshot', async () => {
   vi.useFakeTimers();
   const state = await setup();

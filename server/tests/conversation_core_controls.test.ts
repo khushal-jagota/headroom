@@ -20,6 +20,7 @@ import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 import { native_wire_fixtures } from '../executor/testing/native_protocol_fixtures.ts';
 import { create } from './ticket_fixture.ts';
+import { scripted_instance_controls } from '../drivers/testing/registry.ts';
 
 const writers: ReturnType<typeof spawn>[] = [];
 afterEach(async () => {
@@ -707,6 +708,42 @@ test('an aborted update observation cannot close writes after its retirement set
   expect(f.core.workspace_admission.closed).toBe(true);
   f.core.cancel_update();
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
+// Risk: the steer readers ignore the driver's capability. No other test turns it off.
+test('a backend that cannot steer holds a steer and refuses its promotion until it can', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    await f.send();
+    const child = await f.child;
+    const steering = scripted_instance_controls(
+      f.core.options.backend_registry,
+      f.core.conversations.get('core')!.record.backend_key,
+    ).capabilities.turns;
+    steering.supportsActiveSteering = false;
+    expect(
+      await f.core.send('core', text_message_content('steer'), {
+        sender_label: 'Owner',
+        sender_message_id: 'steer',
+        mode: 'steer',
+      }),
+    ).toEqual(new PromptDeliveryQueued({ queue_position: 1 }));
+    const held = (await f.core.held_prompts('core'))[0];
+    expect(held.queue_reason).toBe('steer_refused');
+    // A running turn and a live child leave the capability as the only reason to refuse.
+    expect(f.core.runtime_turn('core')).not.toBeNull();
+    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toEqual(
+      new PromptDeliveryQueued({ queue_position: 1 }),
+    );
+    expect((await child.inspect()).calls.some((call) => call.command === 'steer')).toBe(false);
+    steering.supportsActiveSteering = true;
+    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toBeInstanceOf(
+      PromptDeliveryInjected,
+    );
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
 });
 
 // A deferred replacement must preserve its incumbent before either destructive control.

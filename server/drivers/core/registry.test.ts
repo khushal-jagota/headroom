@@ -17,6 +17,7 @@ import {
   default_instance_configs,
   type DriverRegistry,
 } from './registry.ts';
+import { turn_scoped_selection_transition } from './selection.ts';
 
 const host = { environment: {} } as unknown as DriverHost;
 const factory = (() => {
@@ -49,6 +50,7 @@ function scripted_driver(
           sessions: { supportsModelSwitchInSession: true },
           turns: { supportsActiveSteering: true },
         },
+        plan_selection_transition: turn_scoped_selection_transition,
         child_factory: factory,
         status: scripted_status(kind),
         dispose: async () => {
