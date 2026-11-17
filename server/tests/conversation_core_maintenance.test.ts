@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { setup } from './conversation_core_fixture.ts';
 import {
   ConversationStartRequest,
+  PromptDeliveryMode,
   PromptDeliveryQueued,
   PromptDeliveryStarted,
 } from '../conversation/contracts.ts';
@@ -24,6 +25,10 @@ function maintenance_setup() {
   });
   return {
     ...fixture,
+    sweep: async () => {
+      await fixture.core.sweep_idle_children();
+      await fixture.core.wait_until_quiescent();
+    },
     start: () =>
       fixture.core.start_conversation(
         new ConversationStartRequest({
@@ -32,10 +37,15 @@ function maintenance_setup() {
           workspace_folder: '/workspace',
         }),
       ),
-    send: (text: string, identity?: string) =>
+    send: (
+      text: string,
+      identity?: string,
+      mode: PromptDeliveryMode = PromptDeliveryMode.send_now,
+    ) =>
       fixture.core.send('core', text_message_content(text), {
         sender_label: 'Owner',
         sender_message_id: identity,
+        mode,
       }),
     advance: (seconds: number) => {
       now += seconds;
@@ -43,8 +53,8 @@ function maintenance_setup() {
   };
 }
 
-// Inventory #13: duplicate admission at the compaction boundary must remain one delivery.
-test('boundary duplicate waits for compaction and runs once', async () => {
+// Inventory #13: duplicate admission during idle compaction must remain one delivery.
+test('duplicate waits for idle compaction and runs once', async () => {
   const began = performance.now();
   const f = maintenance_setup();
   await f.start();
@@ -53,6 +63,7 @@ test('boundary duplicate waits for compaction and runs once', async () => {
   await child.finish();
   await f.core.wait_until_quiescent();
   f.advance(50 * 60);
+  await f.sweep();
   expect(await f.send('at the boundary', 'same-id')).toBeInstanceOf(PromptDeliveryQueued);
   expect(await f.send('at the boundary', 'same-id')).toBeInstanceOf(PromptDeliveryQueued);
   expect((await child.inspect()).delivered_text).toEqual(['first', '/compact']);
@@ -86,6 +97,22 @@ test('boundary duplicate waits for compaction and runs once', async () => {
       (row) => row.payload.kind === 'prompt' && row.payload.sender_message_id === 'same-id',
     ),
   ).toHaveLength(1);
+  // Send-now and queue inside the compaction window go straight in; only the idle sweep compacts.
+  f.advance(50 * 60);
+  expect(await f.send('straight in')).toBeInstanceOf(PromptDeliveryStarted);
+  await child.finish();
+  await f.core.wait_until_quiescent();
+  f.advance(50 * 60);
+  expect(await f.send('queued straight in', undefined, PromptDeliveryMode.queue)).toBeInstanceOf(
+    PromptDeliveryStarted,
+  );
+  expect((await child.inspect()).delivered_text).toEqual([
+    'first',
+    '/compact',
+    'at the boundary',
+    'straight in',
+    'queued straight in',
+  ]);
   console.info(`compaction duplicate connected proof: ${Math.round(performance.now() - began)} ms`);
 }, 10_000);
 
@@ -114,18 +141,16 @@ test('accepted compaction retains its child and retries storage only', async () 
     if (compaction) recorded += 1;
     return rows;
   });
-  let settled = false;
-  const sending = f.send('must stay held').then((fate) => {
-    settled = true;
-    return fate;
-  });
+  const sweeping = f.sweep();
   await failed.promise;
   expect((await child.inspect()).delivered_text).toEqual(['first', '/compact']);
   expect(f.children).toHaveLength(1);
-  expect(settled).toBe(false);
   expect(recorded).toBe(0);
   expect(f.core.conversations.get('core')!.reserved_turn).not.toBeNull();
+  // A send during the retry is held; it must not cancel the compaction turn.
+  const sending = f.send('must stay held');
   unavailable = false;
+  await sweeping;
   expect(await sending).toBeInstanceOf(PromptDeliveryQueued);
   await child.finish();
   await f.core.wait_until_quiescent();
