@@ -725,6 +725,8 @@ export class UpdateService {
         staged,
       );
       if (!this.active(incarnation)) return;
+      // Pending steps need a backup. A Mac home takes its snapshot on every trial.
+      const backup_runs = steps_pending || this.options.installer.requires_snapshot === true;
       // The deadline covers the backup before it starts, so neither settle() nor the
       // Updating card gives up while it runs.
       this.options.runtime.assert_database_owned();
@@ -732,12 +734,12 @@ export class UpdateService {
         ...current,
         deadline_at: this.deadline(
           install_deadline_seconds({
-            backup: steps_pending,
+            backup: backup_runs,
             steps: steps_pending,
             database_bytes,
           }),
         ),
-        ...(steps_pending ? { detail: backup_detail(database_bytes) } : {}),
+        ...(backup_runs ? { detail: backup_detail(database_bytes) } : {}),
       }));
       if (steps_pending) {
         backup = await this.options.installer.create_backup(

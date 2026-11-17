@@ -1,11 +1,8 @@
 /** A test-only chain on top of the Python baseline. Releases never ship this folder. */
-import { readFileSync } from 'node:fs';
-import type { ApplicationSchemaSeed } from '../../contracts.ts';
+import { PYTHON_BASELINE_SEED } from '../baseline.ts';
 import type { SchemaStep } from '../contracts.ts';
 
-export const BASELINE_SEED = JSON.parse(
-  readFileSync(new URL('../../python_baseline/application_schema.json', import.meta.url), 'utf8'),
-) as ApplicationSchemaSeed;
+export const BASELINE_SEED = PYTHON_BASELINE_SEED;
 
 /** A probe table with a CHECK, a child that references it, and rows in both. */
 export const probe_step: SchemaStep = {

@@ -398,6 +398,14 @@ export const SEED_STATEMENT_QUERY =
   "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY " +
   "CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END,name";
 
+/** Element for element, with no whitespace normalization. */
+function sameStatements(actual: readonly string[], expected: readonly string[]): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((statement, position) => statement === expected[position])
+  );
+}
+
 function schemaRevision(connection: BetterSqlite3.Database): string {
   const rows = connection.prepare('SELECT version_num FROM alembic_version').pluck().all();
   if (rows.length !== 1)
@@ -418,6 +426,12 @@ export function applySchemaSteps(
     expected_statements: readonly string[] | null;
     /** Refuse before any write when steps are pending. Used when no backup was taken. */
     refuse_pending: boolean;
+    /**
+     * The Python baseline seed. A database at its revision must hold exactly its
+     * statements before the first step runs. Null only where the database was just
+     * made from that seed.
+     */
+    baseline: ApplicationSchemaSeed | null;
   },
 ): SchemaStepOutcome {
   path = assert_test_database_path(path);
@@ -432,6 +446,17 @@ export function applySchemaSteps(
     const from_revision = schemaRevision(connection);
     const pending = select_schema_steps(steps, from_revision, options.head_revision);
     if (pending.length === 0) return { from_revision, to_revision: from_revision, applied: [] };
+    // Steps are written against the baseline's exact text. A live database that Alembic
+    // built step by step must match it, or the final seed check could never pass.
+    if (
+      options.baseline !== null &&
+      from_revision === options.baseline.alembicRevision &&
+      !sameStatements(
+        connection.prepare(SEED_STATEMENT_QUERY).pluck().all() as string[],
+        options.baseline.statements,
+      )
+    )
+      throw new Error('The database schema text differs from the baseline, so no step ran');
     if (options.refuse_pending)
       throw new Error(
         `The database needs ${pending.length} schema step(s), but no backup was taken, so none ran`,
@@ -468,17 +493,17 @@ export function applySchemaSteps(
           .run(step.revision, step.previous_revision).changes;
         if (changed !== 1)
           throw new Error(`Schema step ${step.revision} changed ${changed} revision rows`);
-        if (index === pending.length - 1 && options.expected_statements !== null) {
-          const actual = connection.prepare(SEED_STATEMENT_QUERY).pluck().all() as string[];
-          const expected = options.expected_statements;
-          if (
-            actual.length !== expected.length ||
-            actual.some((statement, position) => statement !== expected[position])
+        if (
+          index === pending.length - 1 &&
+          options.expected_statements !== null &&
+          !sameStatements(
+            connection.prepare(SEED_STATEMENT_QUERY).pluck().all() as string[],
+            options.expected_statements,
           )
-            throw new Error(
-              `The schema after ${step.revision} differs from this release's seed, so the step was undone`,
-            );
-        }
+        )
+          throw new Error(
+            `The schema after ${step.revision} differs from this release's seed, so the step was undone`,
+          );
         connection.exec('COMMIT');
       } catch (error) {
         if (connection.inTransaction) connection.exec('ROLLBACK');

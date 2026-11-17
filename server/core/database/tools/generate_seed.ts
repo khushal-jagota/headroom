@@ -116,6 +116,7 @@ export async function build_schema_artifacts(
       head_revision: head,
       expected_statements: null,
       refuse_pending: false,
+      baseline: null,
     });
     const seed: ApplicationSchemaSeed = {
       statements: read_statements(stepped),

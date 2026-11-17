@@ -129,6 +129,51 @@ it('steps run after the swap and before start', async () => {
   }
 });
 
+it('a failing step restores the backup before the previous app starts', async () => {
+  // A step failure must reach roll_back with no start of either app before the restore.
+  const { root, request } = installation('panels-schema-step-failure-', '/scripted/snapshot');
+  const events: unknown[] = [];
+  try {
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async capture() {
+          return { kind: 'returned', returncode: 0 };
+        },
+        async schema_steps() {
+          events.push('schema_steps');
+          throw new Error('scripted schema step failure');
+        },
+        async restore(snapshot) {
+          events.push(['restore', snapshot, installed_sha(root)]);
+        },
+        async healthy(sha) {
+          events.push(['healthy', sha]);
+          return true;
+        },
+      },
+      { stderr() {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(events, [
+      'stop',
+      'schema_steps',
+      'stop',
+      ['restore', '/scripted/snapshot', FROM],
+      'start',
+      ['healthy', FROM],
+    ]);
+    assert.match(record(root).detail, /scripted schema step failure/);
+    assert.match(record(root).detail, /went back to the previous version and its data/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it('step applied, health fails, old app runs on the restored database', async () => {
   // Rollback must restore the data before the old app starts, or the old app meets a
   // database it refuses. Real backup, real steps, real restore.
@@ -150,6 +195,7 @@ it('step applied, health fails, old app runs on the restored database', async ()
           head_revision: rebuild_step.revision,
           expected_statements: null,
           refuse_pending: !backup_taken,
+          baseline: BASELINE_SEED,
         });
       },
       async restore(snapshot, descriptor) {
@@ -233,7 +279,8 @@ it('only node-v2 launches the child, with the lock fd; no-backup plus pending st
     const main = join(root, 'app/server/environments/updates/schema_step_main.ts'),
       real_main = fileURLToPath(new URL('../schema_step_main.ts', import.meta.url));
     symlinkSync(real_main, main);
-    // The installer's test path guard follows the link. Admit only the entry's own folder.
+    // The installer's test path guard follows the link. Admit only the entry's own folder,
+    // a source folder: nothing opens or writes a database there, and finally unregisters it.
     unregister = register_test_root(dirname(real_main));
     createDatabaseFromSeed(request.database, application_schema_seed, () => {}).close();
     const effects = create_installer_effects(request, {
@@ -272,6 +319,7 @@ it('only node-v2 launches the child, with the lock fd; no-backup plus pending st
           head_revision: rebuild_step.revision,
           expected_statements: null,
           refuse_pending: true,
+          baseline: BASELINE_SEED,
         }),
       /no backup was taken, so none ran/,
     );

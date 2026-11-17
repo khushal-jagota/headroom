@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { it } from 'vitest';
 import { application_schema_seed, require_application_schema } from './admission.ts';
 import { applySchemaSteps, createDatabaseFromSeed } from './index.ts';
-import { probe_step } from './schema_steps/testing/steps.ts';
+import { BASELINE_SEED, probe_step } from './schema_steps/testing/steps.ts';
 
 it('a previous app refuses a database one step ahead before opening a writer', () => {
   // A manual rollback must not start the old app on stepped data. Real SQLite.
@@ -18,6 +18,7 @@ it('a previous app refuses a database one step ahead before opening a writer', (
       head_revision: probe_step.revision,
       expected_statements: null,
       refuse_pending: false,
+      baseline: BASELINE_SEED,
     });
     // A reader may create an empty WAL. Neither file may gain a byte.
     const files = () =>

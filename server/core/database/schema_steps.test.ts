@@ -45,7 +45,7 @@ function state(path: string) {
   }
 }
 
-it('a failing step rolls back only itself', () => {
+it('a failing step rolls back only itself; a drifted baseline runs no step', () => {
   // Partial DDL must never commit. Real SQLite on the baseline seed.
   for (const broken of [failing_step, dangling_fk_step]) {
     const path = baseline_database();
@@ -55,6 +55,7 @@ it('a failing step rolls back only itself', () => {
           head_revision: broken.revision,
           expected_statements: null,
           refuse_pending: false,
+          baseline: BASELINE_SEED,
         }),
       broken === failing_step ? /scripted schema step failure/ : /foreign key violation/,
     );
@@ -66,6 +67,28 @@ it('a failing step rolls back only itself', () => {
       'the broken step left its DDL',
     );
   }
+  // A baseline-revision database whose schema text differs from the baseline: no step runs.
+  const root = mkdtempSync(join(tmpdir(), 'panels-schema-steps-'));
+  roots.push(root);
+  const drifted = join(root, 'drifted.db');
+  const [first, ...rest] = BASELINE_SEED.statements;
+  createDatabaseFromSeed(
+    drifted,
+    { ...BASELINE_SEED, statements: [first!.replace('(', '(  '), ...rest] },
+    () => {},
+  ).close();
+  const before = state(drifted);
+  assert.throws(
+    () =>
+      applySchemaSteps(drifted, TEST_SCHEMA_STEPS, {
+        head_revision: rebuild_step.revision,
+        expected_statements: null,
+        refuse_pending: false,
+        baseline: BASELINE_SEED,
+      }),
+    /schema text differs from the baseline, so no step ran/,
+  );
+  assert.deepEqual(state(drifted), before);
 });
 
 it('migrated database equals the generated seed; a one-character difference refuses and rolls back the last step', async () => {
@@ -82,6 +105,7 @@ it('migrated database equals the generated seed; a one-character difference refu
       head_revision: rebuild_step.revision,
       expected_statements: seed.statements,
       refuse_pending: false,
+      baseline: BASELINE_SEED,
     }),
     {
       from_revision: BASELINE_SEED.alembicRevision,
@@ -114,6 +138,7 @@ it('migrated database equals the generated seed; a one-character difference refu
         head_revision: rebuild_step.revision,
         expected_statements: statements,
         refuse_pending: false,
+        baseline: BASELINE_SEED,
       }),
     /differs from this release's seed/,
   );
