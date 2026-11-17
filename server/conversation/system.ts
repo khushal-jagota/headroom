@@ -23,7 +23,6 @@ import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import {
-  AgentMessageCompleted,
   AgentMessageDelta,
   ComposerCatalogReported,
   ContextCompacted,
@@ -1256,7 +1255,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
               !state.running_turn?.ended
             )
               await this.accept_automatic_start(state, token);
-            if (event instanceof AgentMessageCompleted) return;
             if (
               event instanceof AgentMessageDelta ||
               event instanceof ModelThinkingHappened ||

@@ -868,3 +868,14 @@ runs still waits for it. The `automatic_compaction` wire flag and the database
 columns stay the same. The unit 15b maintenance comparison sends its owner message
 after that window, so both runtimes deliver it at once. The focused maintenance test
 in `server/tests/conversation_core_maintenance.test.ts` proves the TypeScript behavior.
+
+## Finished agent replies are recorded
+
+At the owner's request, TypeScript records each finished agent reply as an
+`agent_message` event in its turn. Python drops the reply and keeps only the live
+tail. This covers home children and Mac children. The Mac already sends
+`agent_message_completed` as a durable envelope, so the protocol is unchanged.
+A reply shows in the full conversation only. It raises no unread mark, notification
+or Manager wake. Replies from before this change are not recovered. The focused test
+in `server/tests/conversation_core_delivery.test.ts` proves the record, the order and
+the unread mark.
