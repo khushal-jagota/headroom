@@ -1,6 +1,6 @@
 {
-  "contract_sha256": "7ceff03bf119a94195a1d58d7161f06804d406b0adee987c5f05fee343552d31",
+  "contract_sha256": "4c59427d6efb819956b7ae765f94a96be08aacfa621b13238769a2afa1b41230",
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "evidence": "Reviewed by the release agent from source. Since the previous review (release 305dfaa4) one change landed: PR 1122 removes main-thread waste. It changes internal queries and caching in navigation totals, durable facts, attention and Worker supervision. No route, status code, response field or event the iOS app uses changed. The index the new navigation query names exists in the seed and on live. No iOS build or signed-device test ran for this review."
+  "evidence": "Reviewed by the release agent from source. Since the previous review (release 89e6bbde) one change landed: PR 1120 gives each agent home a logs folder that outlives Ticket workspace cleanup. It changes agent home preparation, workspace retirement, conversation start and one optional driver field. No route, status code, response field or event the iOS app uses changed. No iOS build or signed-device test ran for this review."
 }
