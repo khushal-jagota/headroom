@@ -404,7 +404,13 @@ export type TokenUsage = ReturnType<typeof TokenUsage.read>;
 export const ThreadTokenUsage = {
   read(value: unknown) {
     const item = object(value);
-    return { total: TokenUsage.read(item.total), last: optional(item.last, TokenUsage.read) };
+    let last: ReturnType<typeof TokenUsage.read> | null = null;
+    try {
+      last = optional(item.last, TokenUsage.read);
+    } catch (error) {
+      if (!(error instanceof CodexProtocolError)) throw error;
+    }
+    return { total: TokenUsage.read(item.total), last };
   },
 };
 export type ThreadTokenUsage = ReturnType<typeof ThreadTokenUsage.read>;
