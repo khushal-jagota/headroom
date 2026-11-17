@@ -221,8 +221,6 @@ export async function send_now(
 ): Promise<PromptDeliveryFate> {
   const lease = await host.acquire_settled(state);
   let reservation: ReservedTurn;
-  let held: PromptDeliveryQueued | null = null;
-  let automatic = false;
   try {
     try {
       if (state.restart_retired)
@@ -251,24 +249,14 @@ export async function send_now(
         settle_phase(state);
         return host.hold_prompt(state, message);
       }
-      automatic = await host.automatic_compaction_may_start(state);
-      if (automatic) held = host.hold_prompt(state, message);
-      reservation = await host.reserve_turn(
-        state,
-        automatic,
-        automatic ? [] : [message.sender_message_id],
-      );
-      reservation.mode = automatic ? PromptDeliveryMode.queue : PromptDeliveryMode.send_now;
+      reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
+      reservation.mode = PromptDeliveryMode.send_now;
     } finally {
       lease.release();
     }
   } catch (error) {
     await host.drain_held_prompts(state);
     throw error;
-  }
-  if (automatic) {
-    await host.deliver_automatic_compaction(state, reservation);
-    return held!;
   }
   return host.deliver_and_finalize(state, reservation, [message], false);
 }
