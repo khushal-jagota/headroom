@@ -76,6 +76,10 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
   ```
 
+  An older checkout can have `node_modules` folders that link into
+  `~/.cache/headroom/dependencies`. Run `npm ci` there first, which replaces the links,
+  before any `npm install`. Otherwise npm can write into the shared cache.
+
   Create `.venv` in the worktree with those commands. Never copy, move, or symlink
   one from another worktree: a virtualenv stores absolute paths to the tree it was
   built in, so a copy points `pytest` at that tree's source and checks this source
