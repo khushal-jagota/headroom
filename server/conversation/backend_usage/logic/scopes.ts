@@ -7,12 +7,15 @@ export function resolve_usage_model_scopes(
 ): BackendUsageResult {
   const windows: BackendUsageWindow[] = [];
   for (const window of result.windows) {
-    if (window.model_scope === null) {
+    if (window.model_scope === null && window.scope_label === null) {
       windows.push(window);
       continue;
     }
-    const model_id = catalogue_model_id(snapshot, window.model_scope);
+    const model_id =
+      window.model_scope === null ? null : catalogue_model_id(snapshot, window.model_scope);
     if (model_id !== null) windows.push({ ...window, model_scope: model_id });
+    else if (window.scope_label !== null)
+      windows.push({ ...window, model_scope: window.scope_label });
   }
   return { ...result, windows };
 }

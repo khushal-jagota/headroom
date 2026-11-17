@@ -6,6 +6,8 @@ export interface BackendUsageWindow {
   readonly used_percent: number;
   readonly resets_at: Date;
   readonly model_scope: string | null;
+  /** A model-family label the backend reports that may match no catalog model. */
+  readonly scope_label: string | null;
 }
 export interface BackendUsageResult {
   readonly backend_key: BackendInstanceId;
@@ -33,17 +35,3 @@ export interface UsageHttpGet {
     options?: { signal?: AbortSignal },
   ): Promise<UsageHttpResponse>;
 }
-export interface CodexUsageSource {
-  /** Return the raw RPC result JSON. Do not parse and reserialize its numeric tokens. */
-  (executable: string, options: { timeout_seconds: number; signal?: AbortSignal }): Promise<string>;
-}
-/** The Codex unit owns the short-lived app-server child and its cleanup. */
-export class CodexUsageTimeout extends Error {}
-export class CodexUsageRequestRejected extends Error {
-  readonly code: number;
-  constructor(code: number, message: string) {
-    super(message);
-    this.code = code;
-  }
-}
-export class CodexUsageLoginIsDuplicated extends Error {}

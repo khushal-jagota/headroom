@@ -1,21 +1,38 @@
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
-import { KNOWN_BACKEND_INSTANCE_IDS } from '../../drivers/built_in_manifests.ts';
 import type { BackendUsageAdapter, BackendUsageResult } from './contracts.ts';
 import { FifoLock } from '../runtime/state.ts';
 export class BackendUsageService {
-  private readonly locks = new Map(KNOWN_BACKEND_INSTANCE_IDS.map((key) => [key, new FifoLock()]));
-  private readonly adapters: Readonly<Partial<Record<string, BackendUsageAdapter>>>;
-  constructor(adapters: Readonly<Partial<Record<string, BackendUsageAdapter>>>) {
+  private readonly locks: ReadonlyMap<BackendInstanceId, FifoLock>;
+  private readonly adapters: ReadonlyMap<
+    BackendInstanceId,
+    { readonly label: string; readonly adapter?: BackendUsageAdapter }
+  >;
+  constructor(
+    adapters: ReadonlyMap<
+      BackendInstanceId,
+      { readonly label: string; readonly adapter?: BackendUsageAdapter }
+    >,
+  ) {
     this.adapters = adapters;
+    this.locks = new Map([...adapters.keys()].map((id) => [id, new FifoLock()]));
   }
   async refresh(
     backend_key: BackendInstanceId,
     options: { signal?: AbortSignal } = {},
   ): Promise<BackendUsageResult> {
+    const entry = this.adapters.get(backend_key);
+    const title = entry?.label ?? backend_key;
+    if (entry === undefined)
+      return {
+        backend_key,
+        outcome: 'unavailable',
+        detail: `${title} does not expose usage to Panels.`,
+        observed_at: null,
+        windows: [],
+      };
     return this.locks.get(backend_key)!.run(async () => {
       options.signal?.throwIfAborted();
-      const title = backend_key[0].toUpperCase() + backend_key.slice(1);
-      const adapter = this.adapters[backend_key];
+      const adapter = entry.adapter;
       if (!adapter)
         return {
           backend_key,

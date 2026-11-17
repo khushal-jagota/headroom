@@ -1,9 +1,14 @@
 /** Export-only proof companion. All credentials and HTTP answers come from the driver. */
-import { ClaudeUsageAdapter } from '../../../drivers/claude/runtime/allowance_usage.ts';
-import { CodexUsageAdapter } from '../../../drivers/codex/runtime/allowance_usage.ts';
-import { CodexUsageRequestRejected } from '../contracts.ts';
+import {
+  ClaudeUsageAdapter,
+  parse_claude_windows,
+} from '../../../drivers/claude/runtime/allowance_usage.ts';
+import {
+  CodexUsageAdapter,
+  CodexUsageRequestRejected,
+  parse_codex_windows,
+} from '../../../drivers/codex/runtime/allowance_usage.ts';
 import type { BackendUsageResult, BackendUsageWindow } from '../contracts.ts';
-import { parse_claude_windows, parse_codex_windows } from '../logic/windows.ts';
 
 interface UsageCase {
   readonly name: string;
@@ -25,6 +30,7 @@ function windows_json(windows: readonly BackendUsageWindow[] | null): unknown {
       used_percent: window.used_percent,
       resets_at: window.resets_at.toISOString(),
       model_scope: window.model_scope,
+      scope_label: window.scope_label,
     })) ?? null
   );
 }

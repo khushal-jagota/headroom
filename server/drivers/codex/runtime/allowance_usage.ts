@@ -3,14 +3,30 @@ import { parse_backend_instance_id } from '../../core/identity.ts';
 import type {
   BackendUsageAdapter,
   BackendUsageResult,
-  CodexUsageSource,
+  BackendUsageWindow,
 } from '../../../conversation/backend_usage/contracts.ts';
+import { is_record as object } from '../../../core/records.ts';
 import {
-  CodexUsageTimeout,
-  CodexUsageRequestRejected,
-  CodexUsageLoginIsDuplicated,
-} from '../../../conversation/backend_usage/contracts.ts';
-import { parse_codex_windows } from '../../../conversation/backend_usage/logic/windows.ts';
+  parse_datetime,
+  percentage,
+  window_kind,
+} from '../../../conversation/backend_usage/logic/windows.ts';
+
+export interface CodexUsageSource {
+  /** Return the raw RPC result JSON. Do not parse and reserialize its numeric tokens. */
+  (executable: string, options: { timeout_seconds: number; signal?: AbortSignal }): Promise<string>;
+}
+/** The Codex unit owns the short-lived app-server child and its cleanup. */
+export class CodexUsageTimeout extends Error {}
+export class CodexUsageRequestRejected extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+export class CodexUsageLoginIsDuplicated extends Error {}
+
 export const CODEX_USAGE_REFRESH_TIMEOUT_SECONDS = 30;
 export class CodexUsageAdapter implements BackendUsageAdapter {
   private readonly options: {
@@ -77,4 +93,66 @@ export class CodexUsageAdapter implements BackendUsageAdapter {
       windows,
     };
   }
+}
+
+/** Validate the complete app-server answer before selecting understood windows. */
+export function parse_codex_windows(text: string): readonly BackendUsageWindow[] | null {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!object(body) || !valid_bucket(body.rateLimits)) return null;
+  const by_id = body.rateLimitsByLimitId;
+  if (by_id !== undefined && by_id !== null && !object(by_id)) return null;
+  const buckets = by_id === undefined || by_id === null ? {} : by_id;
+  for (const value of Object.values(buckets)) if (!valid_bucket(value)) return null;
+  const account = body.rateLimits;
+  const windows = codex_bucket_windows(account, null);
+  for (const [id, value] of Object.entries(buckets)) {
+    const bucket = value as Record<string, unknown>;
+    if (account.limitId != null && (id === account.limitId || bucket.limitId === account.limitId))
+      continue;
+    windows.push(...codex_bucket_windows(bucket, (bucket.limitName || id) as string));
+  }
+  return windows;
+}
+function valid_bucket(value: unknown): value is Record<string, unknown> {
+  if (!object(value)) return false;
+  for (const key of ['limitId', 'limitName'])
+    if (value[key] != null && typeof value[key] !== 'string') return false;
+  for (const key of ['primary', 'secondary']) {
+    const window = value[key];
+    if (window === undefined || window === null) continue;
+    if (
+      !object(window) ||
+      typeof window.usedPercent !== 'number' ||
+      !Number.isInteger(window.usedPercent)
+    )
+      return false;
+    for (const field of ['windowDurationMins', 'resetsAt'])
+      if (
+        window[field] != null &&
+        (typeof window[field] !== 'number' || !Number.isInteger(window[field]))
+      )
+        return false;
+  }
+  return true;
+}
+function codex_bucket_windows(
+  bucket: Record<string, unknown>,
+  model_scope: string | null,
+): BackendUsageWindow[] {
+  const windows: BackendUsageWindow[] = [];
+  for (const key of ['primary', 'secondary']) {
+    const value = bucket[key];
+    if (!object(value)) continue;
+    const kind = window_kind(value.windowDurationMins);
+    const used_percent = percentage(value.usedPercent);
+    const resets_at = parse_datetime(value.resetsAt);
+    if (kind !== null && used_percent !== null && resets_at !== null)
+      windows.push({ kind, used_percent, resets_at, model_scope, scope_label: null });
+  }
+  return windows;
 }
