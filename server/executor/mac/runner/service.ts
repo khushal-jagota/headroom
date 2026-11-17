@@ -20,6 +20,7 @@ import type {
   MacCommandServiceContract,
   OwedOutput,
 } from './command_contracts.ts';
+import { input_file_ids } from '../inputs.ts';
 import { dispatch_command } from './commands.ts';
 import { error_message, error_outcome, owed_outputs, same_wire } from './logic/outcomes.ts';
 
@@ -173,12 +174,7 @@ export class MacCommandService implements MacCommandServiceContract {
     const command = record.command;
     if (this.withdrawn.has(command.command_id))
       throw new MacChildAdmissionRefused(withdrawal_message);
-    const args = command.arguments;
-    const content =
-      args.kind === 'write_prompt' || args.kind === 'steer'
-        ? [...args.content, ...(args.sender_content ?? [])]
-        : [];
-    if (command.operation !== 'stop' && content.some((piece) => 'byte_count' in piece)) {
+    if (command.operation !== 'stop' && input_file_ids(command).length) {
       const preparation = new AbortController();
       record.preparation = preparation;
       try {

@@ -369,3 +369,51 @@ test('a message-root swap during the actual lookup cannot redefine input byte au
     }
   }
 });
+
+test('an image piece in a prompt or steer is served as a command input', async () => {
+  const { service, mailbox, path } = world(),
+    messages = new ConversationMessageFiles(path);
+  const png = Buffer.from('\x89PNG fixture bytes');
+  const kept = await messages.keep('c', png, {
+    media_type: 'image/png',
+    sender_message_id: 'image-input',
+  });
+  const image = {
+    stored_file_id: kept.stored_file_id,
+    media_type: 'image/png',
+    file_name: 'a.png',
+  };
+  await mailbox.put_child_command({
+    command_id: 'image-prompt',
+    child,
+    turn: { conversation_id: 'c', turn_number: 1 },
+    operation: 'write_prompt',
+    arguments: {
+      kind: 'write_prompt',
+      content: [image],
+      sender_content: [],
+      sender_label: 'owner',
+      mode: 'queue',
+    },
+  });
+  await mailbox.put_child_command({
+    command_id: 'image-steer',
+    child,
+    turn: { conversation_id: 'c', turn_number: 1 },
+    operation: 'steer',
+    arguments: {
+      kind: 'steer',
+      content: [{ text: 'see' }],
+      sender_content: [image],
+      sender_label: 'owner',
+    },
+  });
+  for (const command_id of ['image-prompt', 'image-steer']) {
+    const input = await service.input_file(identity, command_id, kept.stored_file_id);
+    expect([input.sha256, input.byte_count]).toEqual([
+      createHash('sha256').update(png).digest('hex'),
+      png.byteLength,
+    ]);
+    await input.close();
+  }
+});
