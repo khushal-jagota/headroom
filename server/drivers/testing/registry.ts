@@ -5,6 +5,7 @@ import type { AnyAgentDriver } from '../core/driver.ts';
 import { NO_DRIVER_CONFIG } from '../core/driver.ts';
 import type { DriverHost } from '../core/host.ts';
 import { parse_backend_instance_id, parse_driver_kind } from '../core/identity.ts';
+import { turn_scoped_selection_transition } from '../core/selection.ts';
 import type { DriverManifest } from '../core/manifest.ts';
 import { driver_registry_from_entries } from '../core/registry.ts';
 import type { DriverRegistry, RegistryEntry } from '../core/registry.ts';
@@ -68,6 +69,7 @@ function scripted_driver(
       instance_id,
       driver_kind,
       capabilities: CAPABILITIES,
+      plan_selection_transition: turn_scoped_selection_transition,
       child_factory: child_factory(host),
       status: scripted_status(key),
       dispose: async () => {},
@@ -113,6 +115,7 @@ export function registry_of_factories(
           instance_id: parse_backend_instance_id(key),
           driver_kind,
           capabilities: CAPABILITIES,
+          plan_selection_transition: turn_scoped_selection_transition,
           child_factory,
           status: scripted_status(key),
           dispose: async () => {},

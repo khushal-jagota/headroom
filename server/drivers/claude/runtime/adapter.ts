@@ -54,6 +54,7 @@ import {
 } from './configuration.ts';
 import { ClaudeEvents, composer_catalog, durable_session_id, validate_message } from './events.ts';
 import { ClaudeAsks } from './asks.ts';
+import { is_live_reasoning_effort } from './selection.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { TurnInFlight, same_turn, settle_parked_asks, stop_waiting_for_steers } from './turn.ts';
 import {
@@ -85,17 +86,6 @@ interface PromptOptions {
   reasoning_effort_change: string | null;
   automatic_compaction?: boolean;
   reasoning_effort_is_set?: boolean;
-}
-// A level the SDK no longer names fails to compile. A new SDK level still restarts.
-const LIVE_REASONING_EFFORTS: ReadonlySet<string> = new Set([
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-] satisfies readonly EffortLevel[]);
-function is_live_reasoning_effort(value: string): value is EffortLevel {
-  return LIVE_REASONING_EFFORTS.has(value);
 }
 type UserContentBlock = Exclude<SDKUserMessage['message']['content'], string>[number];
 type Base64ImageSource = Extract<

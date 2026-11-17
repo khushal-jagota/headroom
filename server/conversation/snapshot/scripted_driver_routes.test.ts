@@ -15,6 +15,7 @@ import type { DriverSignInController, SignInSession } from '../../drivers/core/s
 import { UnknownSignInSession } from '../../drivers/core/sign_in.ts';
 import { scripted_manifest, scripted_status } from '../../drivers/testing/registry.ts';
 import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
+import { turn_scoped_selection_transition } from '../../drivers/core/selection.ts';
 
 function scripted_entry(
   key: string,
@@ -44,6 +45,7 @@ function scripted_entry(
         sessions: { supportsModelSwitchInSession: true },
         turns: { supportsActiveSteering: true },
       },
+      plan_selection_transition: turn_scoped_selection_transition,
       child_factory: () => {
         throw new Error('No conversation starts in this proof');
       },

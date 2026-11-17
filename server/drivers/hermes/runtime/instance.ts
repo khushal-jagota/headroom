@@ -1,6 +1,7 @@
 /** One Hermes instance: its launch and child factory, and the card its catalog owner answers. */
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
+import { acp_selection_transition } from '../../core/selection.ts';
 import { configured_file_path } from '../../core/paths.ts';
 import { expand_path } from '../../../environments/paths.ts';
 import { backend_io_is_test } from '../../../conversation/snapshot/environment.ts';
@@ -46,6 +47,7 @@ export async function create_hermes_instance(
       sessions: { supportsModelSwitchInSession: true },
       turns: { supportsActiveSteering: true },
     },
+    plan_selection_transition: acp_selection_transition,
     child_factory: create_hermes_backend_child_factory(hermes_launch(host), {
       child_processes: host.child_processes,
       worker_supervision: host.worker_supervision,

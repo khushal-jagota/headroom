@@ -7,6 +7,7 @@ import type { DriverClientDefinition } from './client.ts';
 import type { DriverHost } from './host.ts';
 import type { BackendInstanceId, DriverKind } from './identity.ts';
 import type { DriverManifest } from './manifest.ts';
+import type { SelectionTransitionInput, SelectionTransitionPlan } from './selection.ts';
 import type { DriverSignInController } from './sign_in.ts';
 import type { DriverStatus } from './status.ts';
 import type { TranscriptUsageSource } from './usage.ts';
@@ -34,6 +35,8 @@ export interface AgentDriver<Config> {
   readonly models?: DriverModelRules;
   /** Why this driver cannot launch the model, or null. */
   launch_model_refusal?(model: string): string | null;
+  /** Readable form of a stored tool-call detail, or null when it holds nothing readable. Absent: as stored. */
+  readable_tool_call_detail?(detail: string): string | null;
 }
 export interface DriverModelRules {
   /** The model family a card shows as selected_variant, or null. */
@@ -55,6 +58,8 @@ export interface DriverInstance {
   readonly allowance_usage?: BackendUsageAdapter;
   readonly transcript_usage?: TranscriptUsageSource;
   readonly sign_in?: DriverSignInController;
+  /** How a running child takes a new model or effort. Must not use `this`: callers spread instances. */
+  plan_selection_transition(input: SelectionTransitionInput): SelectionTransitionPlan;
   /** Must not rely on `this`: callers may spread an instance. May be called again. */
   dispose(options?: StopOptions): Promise<void>;
 }

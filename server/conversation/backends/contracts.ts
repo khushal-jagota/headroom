@@ -4,6 +4,21 @@
  * Every backend error carries the backend's own error text in `message` and the original
  * error as the standard `cause`. A failed turn carries that text in `error_summary`. The
  * core records the text with the refusal or the failed turn, and logs it once.
+ *
+ * Event rules every child keeps:
+ * 1. Every in-turn event carries its `TurnToken`. Only `VendorSessionCursorRebound`,
+ *    `ComposerCatalogReported`, `BackgroundTaskStarted`, `BackgroundTaskEnded` and
+ *    `BackendStreamEnded` carry null.
+ * 2. Every accepted `write_prompt` produces exactly one `TurnEnded` for its token.
+ * 3. Live deltas (`AgentMessageDelta`, `ModelThinkingHappened`, `ToolCallProgress`) are never
+ *    stored. Facts are stored.
+ * 4. `TurnEnded.child_disposition` says whether the child can take another prompt. A driver says
+ *    `broken` when its wire or process has ended. The core retires a broken local child at turn
+ *    end. A `child_disposition` other than `'broken'` reads as `'reusable'`. The wire schema does
+ *    not check this field.
+ * 5. An ask is answerable only through the child that raised it.
+ * 6. `ToolCallStarted.tool_kind` is one of `TOOL_KINDS`. The raw tool name stays in `title`.
+ *    Readers accept any string, because stored rows and Python Mac rows keep old values.
  */
 import type {
   AnswerFate,
@@ -171,6 +186,20 @@ export class CommandReplyReported {
     this.reply_text = values.reply_text;
   }
 }
+/** ACP ToolKind (`@agentclientprotocol/sdk` types.gen.d.ts), including switch_mode. */
+export const TOOL_KINDS = [
+  'read',
+  'edit',
+  'delete',
+  'move',
+  'search',
+  'execute',
+  'think',
+  'fetch',
+  'switch_mode',
+  'other',
+] as const;
+export type ToolKind = (typeof TOOL_KINDS)[number];
 export class ToolCallStarted {
   readonly tool_call_id: string;
   readonly title: string;
@@ -262,19 +291,24 @@ export class UserInputFailed {
     this.detail = values.detail;
   }
 }
+export type ChildDisposition = 'reusable' | 'broken';
 export class TurnEnded {
   readonly ending: ConversationTurnEnding;
   readonly error_summary: string | null;
   readonly standard_error_tail: string | null;
+  /** Whether this child can take another prompt. Absent (an older Mac) means 'reusable'. */
+  readonly child_disposition: ChildDisposition;
   constructor(values: {
     ending: ConversationTurnEnding;
     error_summary?: string | null;
     standard_error_tail?: string | null;
+    child_disposition?: ChildDisposition;
   }) {
     this.ending = values.ending;
     this.error_summary = values.error_summary === undefined ? null : values.error_summary;
     this.standard_error_tail =
       values.standard_error_tail === undefined ? null : values.standard_error_tail;
+    this.child_disposition = values.child_disposition === 'broken' ? 'broken' : 'reusable';
   }
 }
 export class VendorSessionCursorRebound {
