@@ -9,7 +9,7 @@
   import { decisionIdentity, decisionRefusals, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions }: {
+  let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions, composerOnly = false }: {
     ticketId: string;
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
@@ -29,6 +29,9 @@
     onEditedBodyChange?: (text: string) => void;
     returnUnavailableReason?: string;
     contextRow?: Snippet;
+    /** Only the note and the decisions: no stage line, approver line or proposal text. Used where the
+     *  proposal's own text is already on another screen and this stands in for a conversation composer. */
+    composerOnly?: boolean;
     /** Actions about the queue rather than the proposal (Skip, Open ticket): they come before
      *  the decision group in the row's right-hand run. */
     utilityActions?: Snippet;
@@ -130,7 +133,8 @@
 
 </script>
 
-<section inert={disabled || busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
+<section inert={disabled || busy || resolved} class="worker-proposal" class:composer-only={composerOnly} data-approval-block data-mode="pending" data-field={proposal.field}>
+  {#if !composerOnly}
   <!-- The stage and who decides are small print over the card. The proposal's own first line
        is the card's title: the thing being decided, not the stage's generic name. -->
   <div class="proposal-line">
@@ -146,6 +150,7 @@
   <div class="proposal-prose">
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
   </div>
+  {/if}
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="revision" bind:this={revisionSlot}>
     {#if revisionEditor}{@render revisionEditor(flashDecisions)}{:else}
@@ -180,6 +185,8 @@
      the ghost actions about the queue, 16px, then the decision group (secondary, then primary),
      the most important furthest right; 8px between buttons. */
   .worker-proposal { --decision-button-height:var(--button-main-height); padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
+  /* Standing in for the conversation composer: the note and decisions sit bare, like it does. */
+  .worker-proposal.composer-only { padding:0; background:none; border:0; border-radius:0; }
   .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
   /* The header: the stage, a dot, then its approver, one pair at the left. */
