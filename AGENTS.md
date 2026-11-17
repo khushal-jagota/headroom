@@ -67,10 +67,13 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Set up the worktree's dependencies, environment inputs, generated prerequisites,
   and local runtime state, then verify that its source, dependencies, configuration,
   and state resolve to that worktree.
-- For a new worktree, run:
+- Install only what the task needs, when it needs it, with the normal commands:
 
   ```sh
-  scripts/dev setup
+  npm ci --prefix server
+  npm ci --prefix web
+  npm install --prefix agent_backends --no-save --no-package-lock
+  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
   ```
 
   Create `.venv` in the worktree with those commands. Never copy, move, or symlink
@@ -78,7 +81,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
   virtualenv the same way. After a move, delete `.venv` and build it again.
-- Use the launcher for dependency setup, npm, pytest, and mypy:
+- Use the launcher for npm, pytest, and mypy:
 
   ```sh
   scripts/dev npm --prefix web ci
@@ -91,7 +94,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   ```
 
   `scripts/dev` launches tools without a filesystem safety scan.
-  Setup requires absent `.venv` and Node dependency directories and never deletes them.
   Keep dependencies separate from the installed deployment.
 - `mypy` with this tree's config and `pytest` under `tests/` use one source path
   check. The imported `planner` package must resolve inside this checkout's `src`.
@@ -110,13 +112,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   paths or live server URLs. Keep the explicit non-live `PLAN_SERVER_URL` default:
   unsetting it restores the CLI's live-server fallback. Server fixtures replace it
   with their allocated server URL. Original launch evidence stays with containment checks.
-- `scripts/dev setup` reuses third-party dependencies from a shared development cache.
-  The default cache uses the account home, even when `HOME` is private. Set
-  `PANELS_DEPENDENCY_CACHE` for a separate test cache. Keep a stable cache across Worker setups.
-  Python environments and editable source installations remain local to each checkout.
-  Node dependency roots remain local, with links to cached packages and local tool caches.
-  Use `scripts/dev npm` for dependency changes so it can detach cached links before npm writes.
-  Never use the installed release as a dependency cache.
 - When testing, browsing, computer use, exploration, or other active work needs
   running services, survey current port use, select available ports, start the
   services, and stop them when that active work is finished. If a port is taken during
