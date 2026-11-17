@@ -69,9 +69,9 @@ The outbox saves each durable event before delivery. Each conversation sends its
 
 During a home update trial, the home defers new result receipts. Extra machines retain output until the healthy home or restored previous home accepts it. A rollback never removes an accepted result from that boundary.
 
-Live text and tool progress remain lossy. Finished messages and durable events wait in the outbox through an outage. A slow or failed conversation does not block the others.
+Live text and tool progress remain lossy. Finished messages and durable events enter the outbox before delivery. The Mac retries transient failures within a finite delivery window. At expiry, it retains the failed content and shows the failure in its local status and log. A lost reply leaves the result uncertain, even when the Mac stops its attempt. Later items can proceed, and conversations share delivery capacity fairly.
 
-Files reach the home before an item that refers to them. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
+Files reach the home before an item that refers to them. An unavailable or corrupt local file receives a recorded refusal, while its event and remaining files can proceed. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
 
 Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and Ticket artifacts. It does not transfer the private worktree or its dependencies. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
 

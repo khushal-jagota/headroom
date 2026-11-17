@@ -30,7 +30,14 @@ Both owners use the host's shared stop deadline and expose their actual loop set
 
 `MacOutboxSender` uses the existing store for ordered batches and durable receipts.
 It listens for committed appends before its first scan and remains idle without a scan timer.
-Each conversation owns its file negotiation and retry delay. Confirmed notifications run after acknowledgment commits.
+Four active senders rotate conversations after each batch. Each conversation owns its file negotiation and capped retry delay.
+An item gets five minutes from its first attempt, including file transfer time. The first-attempt timestamp survives restart.
+Missing or corrupt local dependencies receive a path and reason, then the reduced item can proceed.
+Definite HTTP refusals settle the item locally. At expiry, the sender retains the failed content and advances to later items.
+A local failure receipt uses `result.local_delivery_failure`, `result.delivery_outcome`, and a zero VPS timestamp.
+An unconfirmed outcome means that the VPS can already hold the effect. It does not prove remote refusal or safe repetition.
+Actual transfer cleanup stays owned after the delivery waiter expires.
+Confirmed notifications run after the local receipt commits. Logs include the real reason, HTTP status/code, sequence, attempt, and retry delay.
 The sender scans every pending conversation; only lease reports retain their bounded conversation list.
 The host stops the sender before it closes the store and file transport.
 

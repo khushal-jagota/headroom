@@ -9,6 +9,7 @@ import {
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type {
+  JsonObject,
   ExecutorIdentity,
   ExecutorRefusal,
   LeaseRequest,
@@ -61,15 +62,22 @@ export class MacPresence {
   readonly identity: ExecutorIdentity;
   readonly process_id: number;
   readonly now: () => number;
+  private readonly outbox_delivery: (() => JsonObject) | undefined;
   lease_accepted_at_mac_ms: number | null = null;
   last_lease_failure: string | null = null;
   refusal: ExecutorRefusal | null = null;
   going_to_sleep = false;
   private accepted_lease = false;
-  constructor(identity: ExecutorIdentity, now = Date.now, process_id = process.pid) {
+  constructor(
+    identity: ExecutorIdentity,
+    now = Date.now,
+    process_id = process.pid,
+    outbox_delivery?: () => JsonObject,
+  ) {
     this.identity = identity;
     this.now = now;
     this.process_id = process_id;
+    this.outbox_delivery = outbox_delivery;
   }
   leased(): boolean {
     return this.accepted_lease;
@@ -94,6 +102,7 @@ export class MacPresence {
       refusal: this.refusal,
       admission_stopped,
       going_to_sleep: this.going_to_sleep,
+      ...(this.outbox_delivery ? { outbox_delivery: this.outbox_delivery() } : {}),
     };
   }
 }
