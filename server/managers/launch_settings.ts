@@ -38,10 +38,9 @@ export function manager_reuse_overrides(
     backend_key: string;
     model: string | null;
     reasoning_effort: string | null;
-  }>(
-    'SELECT backend_key,model,reasoning_effort FROM conversations WHERE conversation_id=?',
-    [conversation_id],
-  );
+  }>('SELECT backend_key,model,reasoning_effort FROM conversations WHERE conversation_id=?', [
+    conversation_id,
+  ]);
   if (current === undefined) return overrides;
   return {
     ...overrides,
