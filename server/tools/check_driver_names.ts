@@ -72,6 +72,7 @@ const SCANNED_ROOTS = ['server/', 'web/src/', 'ios/Panels/'];
 const EXEMPT_FILES = new Set([
   'server/drivers/built_in.ts',
   'server/drivers/built_in_manifests.ts',
+  'server/drivers/built_in_executors.ts',
   'server/tools/driver_name_allowances.ts',
 ]);
 const PACKAGE_ENTRY_FILES = new Set(['driver.ts', 'manifest.ts', 'client.ts', 'models.ts']);

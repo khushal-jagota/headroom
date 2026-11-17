@@ -16,7 +16,4 @@ export const hermes_driver: AgentDriver<null> = {
     const { create_hermes_instance } = await import('./runtime/instance.ts');
     return create_hermes_instance(input, host);
   },
-  async executor() {
-    return (await import('./executor.ts')).hermes_executor;
-  },
 };

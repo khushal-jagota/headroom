@@ -4,7 +4,6 @@ import type { BackendUsageAdapter } from '../../conversation/backend_usage/contr
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { BackendCapabilities } from './capabilities.ts';
 import type { DriverClientDefinition } from './client.ts';
-import type { ExecutorDriver } from './executor.ts';
 import type { DriverHost } from './host.ts';
 import type { BackendInstanceId, DriverKind } from './identity.ts';
 import type { DriverManifest } from './manifest.ts';
@@ -31,8 +30,6 @@ export interface AgentDriver<Config> {
     host: DriverHost,
     signal: AbortSignal,
   ): Promise<DriverInstance>;
-  /** Loads the half an executor machine runs. Absent: no executor machine can run this driver. */
-  executor?(): Promise<ExecutorDriver>;
   /** Pure rules over model ids. On the driver, so they hold while an instance is unavailable. */
   readonly models?: DriverModelRules;
   /** Why this driver cannot launch the model, or null. */
