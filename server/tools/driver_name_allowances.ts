@@ -3,13 +3,6 @@ import type { DriverImportAllowance, DriverNameAllowance } from './check_driver_
 
 export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
   {
-    path: 'server/environments/registry/store.ts',
-    driver_kind: 'hermes',
-    reason:
-      'Stored environments that still carry the retired hermes_home key are refused by that name.',
-    until: 'Permanent',
-  },
-  {
     path: 'server/tools/smoke/codex_peer.ts',
     driver_kind: 'codex',
     reason: 'The smoke drives a scripted Codex app-server peer.',

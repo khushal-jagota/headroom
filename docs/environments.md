@@ -2,7 +2,7 @@
 
 An environment is one running Headroom server with its own state: a database, files, logs, locks, and a loopback port. Headroom has three kinds on the VPS: live, staging, and Ticket servers. A local checkout on any machine is the same shape. This page says which servers exist, what separates them, and who runs what on the host.
 
-All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Hermes, Codex, and Claude homes. Headroom does not copy them into role accounts.
+All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Codex and Claude homes. Headroom does not copy them into role accounts.
 
 ```text
 ~/Deployments/Panels/current/{app,data,logs}   live: the installed release, no Git
@@ -96,7 +96,7 @@ New Panels Ticket checkouts are independent partial clones of GitHub's current s
 
 On macOS, managed Ticket Workers receive an Xcode configuration that enables a shared compilation cache beneath the executor root. The cache survives Ticket removal. Each checkout keeps its own DerivedData and build products, so concurrent builds share cached compilation results without sharing writable build directories. The configuration preserves the native account's existing Xcode configuration. Hosted Xcode 26.6 checks prove reuse of SDK compilation results across checkouts. Project-source cache keys still contain private build paths, so this does not prove project-source reuse or Wren's Xcode 27.1 build times.
 
-Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
+Codex and Claude use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
 
 Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current. Scratch preparation and removal run on awaited worker threads. A cancelled start waits for preparation and removes its exact new directory before it releases ownership.
 

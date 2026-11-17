@@ -6,7 +6,7 @@ const DRIVER_RELEASE_FILES = BUILT_IN_MANIFESTS.flatMap(
 );
 const driver_files_under = (prefix: string) =>
   DRIVER_RELEASE_FILES.filter((path) => path.startsWith(prefix));
-/** Driver files outside agent_backends/ and server/, such as Hermes' Python scripts. */
+/** Driver files outside agent_backends/ and server/, such as a driver's own scripts. */
 export const DRIVER_SOURCE_FILES = DRIVER_RELEASE_FILES.filter(
   (path) => !path.startsWith('agent_backends/') && !path.startsWith('server/'),
 );

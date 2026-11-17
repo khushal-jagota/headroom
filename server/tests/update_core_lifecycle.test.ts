@@ -197,8 +197,6 @@ async function owned_server(
     HOME: 'homes/user',
     CODEX_HOME: 'homes/codex',
     CLAUDE_CONFIG_DIR: 'homes/claude',
-    HERMES_HOME: 'homes/hermes',
-    PLAN_HERMES_HOME: 'homes/plan-hermes',
     PLAN_APP_ROOT: 'app',
     PLAN_WORKSPACE_ROOT: 'workspace',
     PLAN_LOGS_DIR: 'logs',

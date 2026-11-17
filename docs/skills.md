@@ -28,7 +28,7 @@ Every Worker follows its own Ticket's workflow guide, which it receives at kicko
 ## Decisions that shape it
 
 - Shared role rows and structured preset guidance are their respective sources. Specialist skills are generated output. Editing the packaged tree changes the next fresh install.
-- One copy for all three backends, so the same kind of agent gets the same words on Hermes, Codex, and Claude.
+- One copy for every backend, so the same kind of agent gets the same words on Codex and Claude.
 - Agents that need a skill changed hand the text up. Only the owner and the Chief write skills.
 
 ## Code

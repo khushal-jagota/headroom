@@ -76,7 +76,6 @@ const SAFE_REASONS = new Set([
   'PlannerError: ceiling holder does not exist (ceiling_holder)',
   'PlannerError: a Ticket cannot hold its own ceiling (ceiling_holder)',
   'PlannerError: corrupt ticket field state (fields or proposal)',
-  'PlannerError: unknown agent backend (employee_backend)',
   'PlannerError: invalid stored Ticket structure',
   'JSONDecodeError: malformed stored JSON',
   'KeyError: missing stored Ticket member',

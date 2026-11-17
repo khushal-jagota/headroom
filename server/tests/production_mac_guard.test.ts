@@ -90,7 +90,6 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       backend_registry: registry_of_factories({
         claude: delegate,
         codex: delegate,
-        hermes: delegate,
       }),
     },
   });
@@ -224,7 +223,6 @@ test('local composition refuses a retained Mac Ticket before constructing its se
         registry: registry_of_factories({
           claude: local_constructor,
           codex: local_constructor,
-          hermes: local_constructor,
         }),
         host: unread_driver_host,
       },

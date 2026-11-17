@@ -552,7 +552,7 @@ test('the CLI floor check refuses a turn before child custody is written', async
     }) as unknown as BackendChild;
   const f = setup({
     core: {
-      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+      backend_registry: registry_of_factories({ codex: factory, claude: factory }),
     },
   });
   try {
@@ -577,7 +577,7 @@ test('the CLI floor check refuses a turn before child custody is written', async
 async function refused_resume(factory: BackendChildFactory, sends = 1) {
   const f = setup({
     core: {
-      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+      backend_registry: registry_of_factories({ codex: factory, claude: factory }),
     },
   });
   const logged = vi.spyOn(console, 'error').mockImplementation(() => {});

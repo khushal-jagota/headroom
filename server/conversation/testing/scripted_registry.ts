@@ -57,7 +57,7 @@ export class ScriptedBackendRegistry {
       }
       return child;
     };
-    this.registry = registry_of_factories({ codex: factory, claude: factory, hermes: factory });
+    this.registry = registry_of_factories({ codex: factory, claude: factory });
   }
 
   /** Only these backends steer from now on, including in conversations already running. */

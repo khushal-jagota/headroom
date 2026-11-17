@@ -825,7 +825,6 @@ test('startServer reconciles before core construction and a route collision star
             backend_registry: registry_of_factories({
               codex: noProvider,
               claude: noProvider,
-              hermes: noProvider,
             }),
           });
         },
@@ -899,7 +898,6 @@ test('startServer closes both services after a background start failure while re
             backend_registry: registry_of_factories({
               codex: no_provider,
               claude: no_provider,
-              hermes: no_provider,
             }),
           });
         },
