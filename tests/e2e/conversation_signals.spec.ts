@@ -264,12 +264,25 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
     next_ceiling: 'needs_what_changes',
     next_holder: { kind: 'owner', id: 'owner' },
   });
-  await proposeAsWorker(server, identity, 'The proposal remains beside the conversation.');
+  const note = join(dirname(server.dbPath), 'files', 'tickets', identity, 'note.html');
+  mkdirSync(dirname(note), { recursive: true });
+  writeFileSync(note, '<h1>Reviewed file</h1>', 'utf-8');
+  const noteLink = `[the note](/files/tickets/${identity}/note.html)`;
+  await proposeAsWorker(
+    server,
+    identity,
+    `The proposal remains beside the conversation. See ${noteLink}.`,
+  );
   const conversation = 'review-reply-proof';
   await post(server, `/api/test/signals/${conversation}/start`);
   await bindConversation(server, 'ticket', identity, conversation);
   const sender = ticketPrincipal(identity);
-  await connectedMessage(server, conversation, sender, 'Please answer this displayed message.');
+  await connectedMessage(
+    server,
+    conversation,
+    sender,
+    `Please answer this displayed message about ${noteLink}.`,
+  );
   const context = await newContext();
   const page = await openPage(context, server, '#/review', '[data-review-card]');
   page.setDefaultTimeout(WAIT_MS);
@@ -291,13 +304,32 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   await page.setViewportSize({ width: 390, height: 844 });
   await captureSuccess(page, 'connected-review-narrow.png');
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await ticketCard.locator('[data-accept]').click();
-  await ticketCard.locator('[data-ceiling-picker-choice="needs_implementation"]').click();
+  // A file opens over its card. The bar under it belongs to what held the link: the
+  // message's reply, or the proposal's decisions as the artifact's own foot, with no
+  // room reserved between them. Only a real browser lays out that geometry.
+  const artifact = page.locator('[data-ticket-artifact]');
+  const bar = artifact.locator('[data-artifact-bar]');
+  await card.locator('a[href*="note.html"]').click();
+  await expect(bar.locator('[data-review-reply]')).toBeVisible();
+  await expect(bar.locator('[data-accept]')).toHaveCount(0);
+  await artifact.locator('[data-ticket-artifact-close]').click();
+  await ticketCard.locator('[data-approval-block] a[href*="note.html"]').click();
+  await expect(bar.locator('[data-accept]')).toBeVisible();
+  await expect(bar.locator('[data-review-reply]')).toHaveCount(0);
+  const gap = await page.evaluate(
+    () =>
+      document.querySelector('[data-artifact-bar]')!.getBoundingClientRect().top -
+      document.querySelector('.ticket-artifact-body')!.getBoundingClientRect().bottom,
+  );
+  expect(gap).toBe(0);
+  // The decision is made from the bar, and it closes the file with it.
+  await bar.locator('[data-accept]').click();
+  await bar.locator('[data-ceiling-picker-choice="needs_implementation"]').click();
   const decisionUrl = `${server.base}/api/tickets/${identity}/decision-operations/`;
   const approvedResponse = page.waitForResponse(
     (response) => response.request().method() === 'POST' && response.url().startsWith(decisionUrl),
   );
-  await ticketCard.locator('[data-ceiling-picker-choice="owner"]').click();
+  await bar.locator('[data-ceiling-picker-choice="owner"]').click();
   const approved = await approvedResponse;
   await expectResponse(approved.ok(), true, approved);
   const approvalBody = approved.request().postDataJSON();
@@ -325,6 +357,7 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   }
   expect(canonical.field_values.what_changes).toBe(proposal.body);
   expect(canonical.pending_proposal).toBeNull();
+  await expect(artifact).toHaveCount(0);
   await expect(ticketCard.locator('[data-approval-block]')).toHaveCount(0);
   await expect(card.locator('[data-review-message-sequence]')).toHaveCount(1);
   await expect(badge).toHaveText('1');
