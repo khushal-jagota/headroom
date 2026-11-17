@@ -29,8 +29,8 @@ Deployment's own recovery, including the next start after an installer was kille
 
 ## Code
 
-- `src/planner/environments/backup.py`: capture, verification, retention, and restore.
-- The `environment backup`, `backup-current`, and `restore` commands in `server/environments/cli.ts` and `src/planner/environments/cli.py`.
+- `server/environments/backup/`: capture, verification, retention, and restore.
+- The `environment backup`, `backup-current`, and `restore` commands in `server/environments/cli.ts`.
 - `ops/panels-environments/panels-db-backup.*`: the Linux nightly unit.
 - [Mac source installation](../ops/mac-home/installation.md): the login-session backup schedule and isolated restore procedure.
 

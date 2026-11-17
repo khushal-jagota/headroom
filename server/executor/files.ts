@@ -1,7 +1,7 @@
 import { counter } from './logic/counters.ts';
 /** Linux procfs capabilities: async byte work, retained parents and bounded publication. */
 import { constants, lstatSync, renameSync } from 'node:fs';
-import { link, lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, rename, rmdir, unlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -76,6 +76,10 @@ function at(parent: DirectoryHandle, leaf: string): string {
   require_linux();
   if (parent.fd < 0) throw new ExecutorValidationError('directory descriptor is closed');
   return `/proc/self/fd/${parent.fd}/${component(leaf)}`;
+}
+/** A path that another thread of this process can open while the parent stays held. */
+export function held_path(location: HeldFileLocation): string {
+  return at(location.parent, location.leaf);
 }
 /** Refuse before intake. This checks the actual capability namespace, without a fallback. */
 export async function assert_file_support(): Promise<void> {
@@ -443,6 +447,19 @@ export async function unlink_at(
     await unlink(at(parent, leaf));
   } catch (error) {
     if (!options.missing_ok || !has_code(error, 'ENOENT')) throw error;
+  }
+}
+/** Removes an empty folder and reports it. A folder with content, or an absent one, stays. */
+export async function remove_empty_directory_at(
+  parent: DirectoryHandle,
+  leaf: string,
+): Promise<boolean> {
+  try {
+    await rmdir(at(parent, leaf));
+    return true;
+  } catch (error) {
+    if (['ENOTEMPTY', 'EEXIST', 'ENOENT'].some((code) => has_code(error, code))) return false;
+    throw error;
   }
 }
 export function fsync_directory(parent: DirectoryHandle): Promise<void> {

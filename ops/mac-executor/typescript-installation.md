@@ -370,19 +370,7 @@ Real Darwin and provider checks remain part of the later separate native Ticket:
 2. Stop a provider during startup. Check direct-child exit, pipe cleanup, and the shared owners' actual joins.
 3. Exercise a failed catalog close and its retry. Check that neither an optional catalog answer nor a shutdown deadline certifies resource closure.
 
-## Measure the main-thread database budget
-
-The export-only `spool_burst(parent)` helper in `server/executor/mac/storage/testing/parity.ts` writes 256 near-1 MiB items.
-It acknowledges each item and yields between every append and acknowledgement. A 10 ms timer measures actual event-loop delay.
-The caller supplies a fresh private real-disk parent and synthetic homes. The helper starts no network host or provider.
-Record maximum and p99 timer delay, maximum operation time, rows, bytes, elapsed time, and peak RSS.
-Do not run this measurement in the live state root or on a memory-backed temporary filesystem.
-The owner repeats it on the actual Mac filesystem before native admission.
-If maximum timer delay exceeds 50 ms on the real Mac, move database work to an owned worker before admission.
-Record a Linux result above 50 ms as a finding. Do not hide it behind the later Mac check or call it a pass.
-
-
-### Directory operations for the native skills check
+## Directory operations for the native skills check
 
 The platform module opens `.` relative to the retained directory with close-on-exec, then copies each `readdir` name before the next call.
 It clears `errno` before `readdir`, distinguishes EOF from failure, and retains failed-close capabilities for retry.

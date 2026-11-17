@@ -375,6 +375,50 @@ export class VpsExecutor {
       true,
     );
   }
+  private ticket_file_authority(
+    identity: ExecutorIdentity,
+    manifest: WireValue<'FileManifest'>,
+  ): () => void {
+    return () =>
+      this.database.read((sql) => {
+        require_current_incarnation_in_transaction(
+          sql,
+          identity.executor_incarnation,
+          this.machine_id,
+        );
+        this.require_ticket_owner(sql, manifest.owner_id);
+      });
+  }
+  save_ticket_file(
+    identity: ExecutorIdentity,
+    sha256: string,
+    manifest: WireValue<'FileManifest'>,
+    content_length: WireValue<'FileManifest'>['byte_count'] | null,
+    chunks: UploadSource,
+  ): Promise<void> {
+    return this.owned_work(
+      () =>
+        this.files.save_ticket_file(
+          sha256,
+          manifest,
+          content_length,
+          chunks,
+          this.ticket_file_authority(identity, manifest),
+        ),
+      undefined,
+      true,
+    );
+  }
+  remove_ticket_file(
+    identity: ExecutorIdentity,
+    manifest: WireValue<'FileManifest'>,
+  ): Promise<void> {
+    return this.owned_work(
+      () => this.files.remove_ticket_file(manifest, this.ticket_file_authority(identity, manifest)),
+      undefined,
+      true,
+    );
+  }
   input_file(
     identity: ExecutorIdentity,
     command_id: string,

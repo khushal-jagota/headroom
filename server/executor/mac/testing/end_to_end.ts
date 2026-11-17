@@ -459,8 +459,6 @@ async function publish_refusals() {
           files: [],
         }),
       ),
-      [],
-      [],
       () => {},
     ),
   );

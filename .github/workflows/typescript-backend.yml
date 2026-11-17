@@ -34,9 +34,6 @@ jobs:
         with:
           ref: ${{ github.event_name == 'schedule' && 'staging' || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -66,7 +63,6 @@ jobs:
             XDG_DATA_HOME="$browser_root/data" XDG_STATE_HOME="$browser_root/state" \
             XDG_RUNTIME_DIR="$browser_root/runtime" \
             PLAYWRIGHT_BROWSERS_PATH="$browser_root/ms-playwright" \
-            PANELS_TEST_SERVER_BACKEND="$BROWSER_BACKEND" \
             PANELS_UI_PROOF_DIR="$browser_evidence/success" \
             PANELS_TICKET_EVIDENCE_DIR="$browser_evidence/html" \
             PANELS_E2E_FAILURE_DIR="$browser_evidence/failure" \
@@ -77,39 +73,11 @@ jobs:
           npm ci --prefix server
           npm ci --prefix web
           npm install --prefix agent_backends --no-save --no-package-lock
-          python3 -m venv .venv
-          .venv/bin/pip install -r requirements.txt -e .
+          npm ci --prefix tests/e2e
           (cd web && node node_modules/vite/bin/vite.js build)
-          .venv/bin/python -m playwright install --with-deps chromium
-
-          browser_cases=(
-            'tests/e2e/test_ticket_conversation_shared_behaviors.py::test_private_credential_save_survives_reload_and_reaches_the_actual_wire[chromium]'
-            'tests/e2e/test_conversation_video_upload.py::test_video_upload_early_send_and_native_range_playback[chromium]'
-            'tests/e2e/test_conversation_signals.py::test_exact_conversation_signals_cross_runtime_stream_and_surfaces[chromium-desktop]'
-            'tests/e2e/test_conversation_signals.py::test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers[chromium]'
-            'tests/e2e/test_conversation_signals.py::test_history_refused_row_keeps_unread_credit_until_latest_delivery[chromium]'
-            'tests/e2e/test_ticket_conversation_shared_behaviors.py::test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers[chromium]'
-            'tests/e2e/test_ticket_conversation_shared_behaviors.py::test_canonical_queue_writes_refresh_the_mounted_pane[chromium]'
-            'tests/e2e/test_ticket_conversation_shared_behaviors.py::test_owner_send_lands_at_the_end_of_the_conversation_not_the_retained_window[chromium]'
-            'tests/e2e/test_compact_approval.py::test_shared_compact_card_real_transaction_and_stale_revision[chromium-ticket]'
-            'tests/e2e/test_ticket_lifecycle_browser.py::test_ticket_backlog_resume_and_settled_discovery[chromium]'
-            'tests/e2e/test_ticket_list_first_draw.py::test_ticket_lists_arrive_settled_when_switching_pages[chromium]'
-            'tests/e2e/test_orchestrator_rail.py::test_settle_reopen_keeps_outstanding_work_and_worker_address[chromium]'
-            'tests/e2e/test_ticket_file_previews.py::test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place[chromium]'
-            'tests/e2e/test_goals_browser.py::test_goal_page_persistence_external_refresh_and_owned_conversation[chromium]'
-            'tests/e2e/test_goal_holders_browser.py::test_goal_promotion_and_stable_url_share_manager_name[chromium]'
-            'tests/e2e/test_goal_holders_browser.py::test_leaving_a_goal_manager_with_text_blocks_opens_each_next_page[chromium]'
-            'tests/e2e/test_live_update.py::test_composing_survives_a_change_to_the_same_ticket'
-            'tests/e2e/test_live_update.py::test_chief_recap_refreshes_without_reload'
-            'tests/e2e/test_ticket_file_previews.py::test_a_video_preview_shows_a_poster_then_plays_and_seeks'
-            'tests/e2e/test_goals_browser.py::test_formula_expectation_projection_and_correction_reach_mounted_chart'
-          )
-          cli_plugin=()
-          if [[ "$PANELS_TEST_SERVER_BACKEND" == typescript ]]; then
-            cli_plugin=(-p tests.compare.direct.unit20_e2e_cli)
-          fi
-          scripts/dev pytest "${cli_plugin[@]}" "${browser_cases[@]}" --browser chromium \
-            --basetemp "$TMPDIR/pytest" --junitxml "$BROWSER_EVIDENCE_DIR/results.xml"
+          cd tests/e2e
+          node_modules/.bin/playwright install --with-deps chromium
+          node_modules/.bin/playwright test
           BROWSER
       - name: Preserve browser evidence
         if: always()

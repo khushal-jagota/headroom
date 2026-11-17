@@ -16,11 +16,11 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 - **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
 - **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
 - **Ticket servers.** A Worker runs its own server from its isolated git worktree with private runtime state. The TypeScript test server uses the private temporary directory described below. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
-- **A local checkout.** One source checkout, one Python environment, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
+- **A local checkout.** One source checkout with its own Node dependencies, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the checkout and their private `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
-Development checkouts reuse third-party dependencies from an account-level cache outside the installed release. Dependency inputs and compatible runtimes select each cache entry. Setup creates a local Python environment with an editable installation of that checkout. Each Node package has a local dependency directory with links to cached packages, while mutable tool output stays local. Backend CLIs still resolve current versions. A dependency change builds a new cache entry once.
+Each development checkout installs its own Node dependencies with `npm ci`, separate from the installed release. Backend CLIs still resolve current versions.
 
 ## The operating-system boundary
 
@@ -58,7 +58,7 @@ Live and staging launches rebuild the process environment from a fixed allowlist
 
 ## Host automation
 
-The user units in `ops/panels-environments/` cover the live service, the deployment runner (kept for one release, only for the [update bridge](deployment.md#the-one-release-bridge)), and two daily timers:
+The user units in `ops/panels-environments/` cover the live service and two daily timers:
 
 - **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
 - **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized Linux logs, truncates live Mac logs in place, removes expired backup temporaries, prunes old verified backups, and runs the [Ticket file clock](#ticket-scratch). It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
@@ -127,11 +127,10 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 
 ## Code
 
-- `src/planner/ticket_workspaces/`: local workspace ownership, activity clocks, and safe removal.
-- `src/planner/environments/`: the registry, launch environments, status, and cleanup. `logic/validation.py` and `logic/launch_env.py` hold the rules.
-- `src/planner/core/config.py`: configuration and `PLAN_*` overrides. `src/planner/skill_sources.py`: the workspace skills link.
-- `src/planner/server_lifecycle/`: who may stop a server.
-- `server/lifecycle/`, `server/skills/account.ts`, and `server/environments/vps_status/`: TypeScript home custody, account publication, and cleanup.
+- `server/ticket_workspaces/` and `server/environments/ticket_scratch/`: local workspace ownership, activity clocks, and safe removal.
+- `server/environments/registry/`: the registry, its rules, and launch environments. `server/environments/vps_status/`: status and cleanup.
+- `server/core/config.ts`: configuration and `PLAN_*` overrides. `server/skills/sources.ts`: the workspace skills link.
+- `server/lifecycle/`: home custody and who may stop a server. `server/skills/account.ts`: account skill publication.
 - `server/installation/` and `server/environments/release/mac_home*.ts`: native first-home installation and sealed Mac home publication.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 

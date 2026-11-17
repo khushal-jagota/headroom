@@ -1,6 +1,6 @@
 import { counter } from '../../logic/counters.ts';
 /** Streaming HTTP never reopens a transfer path after its worker retains the inode. */
-import type { FileUploadRequest } from '../../wire.generated.ts';
+import type { FileManifest } from '../../wire.generated.ts';
 import { encode_bounded, ExecutorValidationError } from '../../protocol.ts';
 import type { FilesService } from '../files.ts';
 import type { TransferHandle } from '../file_worker_contracts.ts';
@@ -41,13 +41,35 @@ export class MacFileTransport {
       }
     }
   }
-  async upload_file(
-    upload: FileUploadRequest,
+  /** File sync: the home removes its copy of a file that this machine no longer has. */
+  async remove_ticket_file(manifest: FileManifest, signal?: AbortSignal): Promise<void> {
+    await this.client.sessions.request(
+      {
+        loop: 'items',
+        method: 'DELETE',
+        path: `/api/executor/ticket-files/${manifest.sha256}`,
+        headers: {
+          'X-Panels-File-Upload': Buffer.from(encode_bounded(manifest, 'FileManifest')).toString(
+            'base64url',
+          ),
+        },
+        timeout: FILE_TRANSFER_STALL_SECONDS,
+        signal,
+      },
+      this.client.headers,
+      async (response) => {
+        const body = await read_bounded(response, MAX_ENVELOPE_BYTES);
+        if (response.statusCode !== 204) throw http_error(response.statusCode!, body);
+      },
+    );
+  }
+  /** File sync: one file version for the Ticket's served folder, outside every conversation. */
+  async upload_ticket_file(
+    manifest: FileManifest,
     source: string,
     signal?: AbortSignal,
   ): Promise<void> {
-    const manifest = upload.manifest,
-      count = manifest.byte_count;
+    const count = manifest.byte_count;
     if (!sha256.test(manifest.sha256) || count < 0)
       throw new ExecutorValidationError('invalid upload manifest');
     const file = await this.files.open_transfer(source, 'read');
@@ -82,15 +104,15 @@ export class MacFileTransport {
         {
           loop: 'items',
           method: 'PUT',
-          path: `/api/executor/uploads/${manifest.sha256}`,
+          path: `/api/executor/ticket-files/${manifest.sha256}`,
           body: chunks(),
           // The header retains the exact integer. The producer checks its own exact count below.
           headers: {
             'Content-Type': 'application/octet-stream',
             'Content-Length': String(count),
-            'X-Panels-File-Upload': Buffer.from(
-              encode_bounded(upload, 'FileUploadRequest'),
-            ).toString('base64url'),
+            'X-Panels-File-Upload': Buffer.from(encode_bounded(manifest, 'FileManifest')).toString(
+              'base64url',
+            ),
           },
           stall_timeout: FILE_TRANSFER_STALL_SECONDS,
           signal,

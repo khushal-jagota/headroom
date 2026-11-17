@@ -12,8 +12,8 @@ export function row_envelope(sender_id: string, row: ItemRow): QueuedEnvelope {
       sequence: row.sequence,
       submission_id: row.submission_id,
       kind: row.kind,
+      // Files travel through the file sync. A wrapper from an older runtime can still list some.
       payload: value.payload,
-      file_dependencies: value.files,
     },
     'QueuedEnvelope',
   );

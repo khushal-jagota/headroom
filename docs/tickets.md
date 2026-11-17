@@ -93,8 +93,8 @@ The Ticket page is the inspector: the stage ladder, the current gate with its pr
 
 ## Code
 
-- `src/planner/tickets/`: the record, derived status, and writers (`data.py`).
-- `src/planner/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.py`, `proposal_routing.py`, `resolution.py`).
+- `server/tickets/`: the record, derived status, and writers (`data/`).
+- `server/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.ts`, `proposal_routing.ts`, `resolution.ts`).
 - `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
 _Last verified: 2026-11-15._

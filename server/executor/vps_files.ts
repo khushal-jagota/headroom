@@ -30,11 +30,17 @@ import {
   create_file_at,
   descriptor_hash,
   directory_descriptor,
+  file_version_at,
+  fsync_directory,
+  held_path,
   install_verified,
   regular_descriptor,
+  remove_empty_directory_at,
+  rename_at,
   safe_component,
   unlink_at,
 } from './files.ts';
+import { FileHasher } from './file_hasher.ts';
 import { ExecutorValidationError } from './protocol.ts';
 import { file_manifest_key } from './file_manifest.ts';
 function aborted(signal: AbortSignal): unknown {
@@ -51,6 +57,9 @@ function failure(errors: readonly unknown[]): unknown {
   return errors.length === 1
     ? errors[0]
     : new AggregateError(errors, 'Executor file operation and cleanup failed.');
+}
+function has_code(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
 }
 function missing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
@@ -135,6 +144,7 @@ export class VpsFiles {
   private readonly operations = new Set<Promise<unknown>>();
   private readonly cleanup_failures = new Set<unknown>();
   private readonly actual = deferred<void>();
+  private readonly hasher = new FileHasher();
   private sealed = false;
 
   constructor(
@@ -252,14 +262,128 @@ export class VpsFiles {
     options: FileOperationOptions = {},
   ): Promise<void> {
     void identity; // The route admits the executor; the participant checks its child's assignment.
+    return this.receive(sha256, upload.manifest, content_length, chunks, options, {
+      hash_stream: true,
+      authorize: async () => {
+        await this.inbox.authorize_upload(upload);
+      },
+      install: (source, signal) => this.inbox.store_upload(upload, source, { signal }),
+    });
+  }
+  private async ticket_file_target(manifest: WireValue<'FileManifest'>): Promise<string> {
+    const parts = manifest.relative_path.split('/');
+    if (parts[0] !== 'artifacts' || parts.length < 2)
+      throw new ExecutorValidationError('Only files in the artifacts folder transfer');
+    return this.inbox.ticket_file_target(manifest);
+  }
+  /**
+   * File sync: one file version goes straight into the Ticket's served folder. It belongs to no
+   * conversation item. `authorize` proves that the Ticket belongs to the sending machine.
+   */
+  async save_ticket_file(
+    sha256: string,
+    manifest: WireValue<'FileManifest'>,
+    content_length: number | null,
+    chunks: UploadSource,
+    authorize: () => void,
+    options: FileOperationOptions = {},
+  ): Promise<void> {
+    return this.receive(sha256, manifest, content_length, chunks, options, {
+      hash_stream: false,
+      authorize: async () => {
+        authorize();
+        await this.ticket_file_target(manifest);
+      },
+      install: async (source, signal) => {
+        const [digest, count] = await this.hasher.digest(held_path(source));
+        if (digest !== manifest.sha256 || count !== manifest.byte_count)
+          throw new PlannerError('validation', 'upload is short or corrupt');
+        check(signal);
+        const target = await this.ticket_file_target(manifest);
+        try {
+          const parent = await directory_descriptor(dirname(target), { create: true });
+          try {
+            authorize();
+            await rename_at(source.parent, source.leaf, parent, basename(target));
+            await fsync_directory(parent);
+          } finally {
+            await parent.close();
+          }
+        } catch (error) {
+          if (['EISDIR', 'ENOTDIR', 'ENOTEMPTY'].some((code) => has_code(error, code)))
+            throw new PlannerError('validation', 'A folder and a file share this artifact path');
+          throw error;
+        }
+      },
+    });
+  }
+  /** File sync: the machine no longer has this artifact, so the served copy goes too. */
+  async remove_ticket_file(
+    manifest: WireValue<'FileManifest'>,
+    authorize: () => void,
+    options: FileOperationOptions = {},
+  ): Promise<void> {
+    this.admit(options);
+    return this.retain(
+      (async () => {
+        authorize();
+        let target: string;
+        try {
+          target = await this.ticket_file_target(manifest);
+        } catch (error) {
+          if (error instanceof ExecutorValidationError)
+            throw new PlannerError('validation', error.message);
+          throw error;
+        }
+        let parent: Awaited<ReturnType<typeof directory_descriptor>>;
+        try {
+          parent = await directory_descriptor(dirname(target));
+        } catch (error) {
+          if (has_code(error, 'ENOENT') || has_code(error, 'ENOTDIR')) return;
+          throw error;
+        }
+        try {
+          authorize();
+          if (file_version_at(parent, basename(target)) === null) return;
+          await unlink_at(parent, basename(target), { missing_ok: true });
+          await fsync_directory(parent);
+        } finally {
+          await parent.close();
+        }
+        // A deleted folder must not stay behind as an empty one. `artifacts` itself stays.
+        const artifacts = target.slice(0, -manifest.relative_path.length) + 'artifacts';
+        for (let folder = dirname(target); folder !== artifacts; folder = dirname(folder)) {
+          const above = await directory_descriptor(dirname(folder));
+          try {
+            if (!(await remove_empty_directory_at(above, basename(folder)))) return;
+            await fsync_directory(above);
+          } finally {
+            await above.close();
+          }
+        }
+      })(),
+    );
+  }
+  private async receive(
+    sha256: string,
+    manifest: WireValue<'FileManifest'>,
+    content_length: number | null,
+    chunks: UploadSource,
+    options: FileOperationOptions,
+    steps: {
+      /** False when `install` checks the stored bytes itself, off the main thread. */
+      hash_stream: boolean;
+      authorize(): Promise<void>;
+      install(source: HeldFileLocation, signal: AbortSignal): Promise<void>;
+    },
+  ): Promise<void> {
     const signal = this.admit(options);
     return this.start<void>(signal, async (reply) => {
-      const manifest = upload.manifest;
       const budget = manifest.byte_count;
       if (manifest.sha256 !== sha256 || content_length === null || content_length !== budget)
         throw new PlannerError('validation', 'upload does not match its manifest');
       try {
-        await this.inbox.authorize_upload(upload);
+        await steps.authorize();
       } catch (error) {
         this.remember_cleanup(error);
         if (error instanceof ExecutorValidationError)
@@ -282,7 +406,7 @@ export class VpsFiles {
         output = await create_file_at(source);
         created = true;
         let count = 0;
-        const digest = createHash('sha256');
+        const digest = steps.hash_stream ? createHash('sha256') : null;
         iterator = chunks[Symbol.asyncIterator]();
         while (true) {
           check(signal);
@@ -306,11 +430,11 @@ export class VpsFiles {
                 throw Object.assign(new Error('short file write'), { code: 'EIO' });
               written += result.bytesWritten;
             }
-            digest.update(piece);
+            digest?.update(piece);
             count += piece.byteLength;
           }
         }
-        if (count !== budget || digest.digest('hex') !== manifest.sha256)
+        if (count !== budget || (digest && digest.digest('hex') !== manifest.sha256))
           throw new PlannerError('validation', 'upload is short or corrupt');
         check(signal);
         await output.sync();
@@ -353,7 +477,7 @@ export class VpsFiles {
       if (!errors.length) {
         try {
           check(signal);
-          await this.inbox.store_upload(upload, source, { signal });
+          await steps.install(source, signal);
         } catch (error) {
           this.remember_cleanup(error);
           errors.push(
@@ -579,7 +703,9 @@ export class VpsFiles {
     if (!this.sealed) {
       this.sealed = true;
       const pending = [...this.operations];
-      void this.join(pending).then(this.actual.resolve, this.actual.reject);
+      void this.join(pending)
+        .finally(() => this.hasher.stop())
+        .then(this.actual.resolve, this.actual.reject);
     }
     return observe_shutdown(
       this.actual.promise,

@@ -233,9 +233,7 @@ The boundary exceeds realistic worker/page counts and memory/database budgets.
 Explicit refusal keeps operational limits exact without spreading BigInt configuration through number-based runtime APIs.
 Existing positive-value and consistency checks still apply.
 
-The existing [configuration proof](../tests/compare/direct/test_unit21_metrics_config.py),
-`test_unit21_metrics_configuration_and_sidecar_paths`, asserts the TS refusal as a gating result.
-It records Python's different answer as informational evidence. The ten keys share the same admission predicate.
+The ten keys share the same admission predicate.
 Unit 21 Part 2, including the metrics source, is merged into the migration branch.
 
 ## JavaScript source execution limits
@@ -389,9 +387,6 @@ At these three call sites, TypeScript limits the wait for headers and each body 
 It does not time connect, write, and pool phases separately as HTTPX does.
 Node fetch sets Host from the URL and ignores a caller-supplied Host, which Python HTTPX can retain.
 
-`tests/compare/direct/test_cross_area_http.py` pins same-origin delivery, cross-origin refusal,
-and Python's contrasting header behavior with synthetic loopback servers.
-
 ## Conversation history locale data
 
 The migration Manager accepted Node's bundled locale data for history labels in
@@ -502,15 +497,13 @@ Python instead refuses that existing generation. No source or provider user data
 The Mac host does not collect unreferenced generations or abandoned stages.
 This slice adds no generation sweeper. Native durability, Darwin directory ABI, and filesystem failure behavior remain later Mac checks.
 
-## Mac outbox cleanup after commit
+## Ticket files travel apart from items
 
-The Manager required this correction during the Mac slice 2 review on November 12, 2026.
-Python can reject a successful capture callback after its append commits, when the final blob sweep fails.
-A caller without a fixed submission ID can then retry and queue the same output twice as new.
-TypeScript logs that cleanup failure and retains the callback result. A later sweep retries blob cleanup.
-
-The Mac outbox now returns committed capture and receipt results before blob cleanup finishes. One coalesced cleanup task remains owned through shutdown. This keeps slow cleanup from holding a delivery slot or the next capture.
-The durable append and receipt behavior otherwise retain Python's contract.
+Khushal approved this redesign on November 17, 2026, in the Ticket "Redesign how Mac Workers send Ticket files to the home".
+Python attaches the Ticket folder's changed files to each item. The item waits for their capture, upload, and publication, and a large folder stalls or loses finished output.
+TypeScript items carry no files. The executor's file sync sends the Ticket's `artifacts/` folder on its own path, and it also removes deleted files from the home.
+A message can therefore arrive before a file it links. Files outside `artifacts/` no longer transfer.
+The home keeps the earlier item-bound upload and publication for an executor that still runs the earlier version. The spool format and the item wire format do not change.
 
 ## CLI workspace artifact field
 
@@ -755,8 +748,6 @@ The four archive refusals return `UpdateConflict` with `The Mac runtime archive 
 Other accepted limits and framing rules have source review here, without a measured boundary claim.
 Both implementations refuse malformed JSON, with different parser error types and text. This adds no accepted malformed input or claim of equal error bytes.
 
-The direct proof is `tests/compare/direct/test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`.
-Its `unit21-mac-updates.json` report retains both outcomes and marks the accepted observations explicitly.
 Acceptance requires that the unchanged real Mac producer passes the hosted gate in `.github/workflows/typescript-lifecycle-native.yml`.
 The [first real producer proof](https://github.com/khushal-jagota/headroom/actions/runs/43466927540/job/132028428389) passed on the PR merge tree for head `37333bd6e`.
 Its 597,087,278-byte archive passed unchanged, with both direct children closed. Build plus inspection took 276.07 seconds.
@@ -771,14 +762,6 @@ Python accepts configured paths at update admission but its copied installer har
 TypeScript passes the admitted database to capture and rollback restore. It uses the
 admitted data directory for the attempt record and its lock. Neither path derives from
 the application root.
-
-`tests/compare/direct/test_unit21_installer.py::test_installer_algorithm_and_configured_paths`
-compares four canonical-path scenarios against fresh Python. Its configured-path lifetime
-proves actual capture/restore command arguments, record and lock placement, no canonical
-data directory, and cancellation only after the owned restore witness closes.
-The configured helpers are disclosed Node witnesses, not a real installer rehearsal.
-`test_unit21_interruption_capture.py` separately exercises the actual stopped capture and
-restore entries. Hosted service, copy, health and rollback proofs remain later gates.
 
 ## Mac Unix CLI trust and transport failures — Manager directed
 
@@ -803,8 +786,6 @@ This decision does not change HTTP, executor wire, or database numeric boundarie
 
 The foundation refresh adopts machine UUID rows and the current schema. It does not claim full staging parity.
 Executor routing and credential consumption remain with P2. Machine routes and credential authority follow in foundation PR B.
-The retained comparisons in [the expected-open list](../tests/compare/README.md#expected-open-staging-ports)
-name the packages that replace retired Worker launch and scratch fixtures. These cases do not count as passing parity.
 
 ## Ticket ownership temporary files
 

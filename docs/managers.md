@@ -72,9 +72,9 @@ Manager lists include recap freshness. Workspace reads also include each child T
 
 ## Code
 
-- `src/planner/managers/`: the record, settlement, and launch settings.
-- `src/planner/manager_wakes/`: wake creation and delivery.
-- `src/planner/worker_settings/`: Chief's own settings.
+- `server/managers/`: the record, settlement, and launch settings.
+- `server/manager_wakes/`: wake creation and delivery.
+- `server/worker_settings/`: Chief's own settings.
 - `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`: the screens.
 
 _Last verified: 2026-11-16._

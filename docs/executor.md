@@ -71,9 +71,9 @@ During a home update trial, the home defers new result receipts. Extra machines 
 
 Live text and tool progress remain lossy. Finished messages and durable events enter the outbox before delivery. The Mac retries transient failures within a finite delivery window. At expiry, it retains the failed content and shows the failure in its local status and log. A lost reply leaves the result uncertain, even when the Mac stops its attempt. Later items can proceed, and conversations share delivery capacity fairly. Native command failures also reach the conversation core directly, so artifact delays cannot leave a failed turn active. A matching native refusal to steer into an absent turn ends the stale active turn without changing its historical prompt delivery.
 
-Files reach the home before an item that refers to them. An unavailable or corrupt local file receives a recorded refusal, while its event and remaining files can proceed. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
+Ticket files travel apart from items. An item never carries a file and never waits for one, so a message that links a new file can arrive a few seconds before the file does. After each item and at each start, the executor compares the Ticket's `artifacts/` folder with the versions the home confirmed. It sends each new or changed file once and removes each file the folder no longer has. A failed file retries without delay to any item or to the other files. The home accepts a file only for a Ticket that belongs to the sending machine, checks its bytes on a separate thread, and then puts it in the Ticket's served folder. A matching digest does not grant another machine access.
 
-Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and Ticket artifacts. It does not transfer the private worktree or its dependencies. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
+Each Worker uses its own local Ticket workspace. The executor transfers prompts, skills, and the Ticket's `artifacts/` folder. It does not transfer the private worktree, its dependencies, or any other file in the Ticket folder. The home grants workspace retirement only for the exact registered folder and its owning destination. See [Ticket workspaces](environments.md#ticket-scratch).
 
 Agents can send a proposal back with `panels ticket proposal ID revise` and guidance
 from `--message TEXT` or `--body-file PATH`. Use `--body-file -` for stdin. The executor
@@ -122,15 +122,14 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 
 ## Code
 
-- `src/planner/executor/`: shared protocol, registry, transport, journals, mailboxes, files, and replay.
-- `src/planner/machines/`: destinations and credentials.
-- `src/planner/conversation/start_admission/`: automatic-start capacity and pacing.
-- `src/planner/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
-- `src/planner/stalls/`: wait checks and watchdog.
-- `src/planner/environments/mac_executor.py` and `environments/mac_app/`: Mac installation and signed launcher.
-- `src/planner/environments/linux_executor.py`: Linux installation and systemd user service.
-- `scripts/build_linux_executor.py`: Python executor archive and native startup proof.
-- `server/environments/linux_executor/`: native TypeScript executor archive, installation, and private enrollment entry.
+- `server/executor/`: shared protocol, registry, transport, journals, mailboxes, files, and replay.
+- `server/executor/mac/`: the TypeScript Mac executor and its packaging.
+- `server/machines/`: destinations and credentials.
+- `server/conversation/start_admission/`: automatic-start capacity and pacing.
+- `server/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
+- `server/stalls/`: wait checks and watchdog.
+- `server/environments/linux_executor/`: Linux executor archive, installation, systemd user service, and private enrollment entry.
 - `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
+- `src/planner/executor/`, `src/planner/environments/mac_executor.py`, and `environments/mac_app/`: the Python Mac executor, its installation, and its signed launcher. They stay as the Mac's rollback until the owner approves their removal.
 
 _Last verified: 2026-11-14._

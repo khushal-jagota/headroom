@@ -11,6 +11,7 @@ import { LinuxWorkerProcesses } from './linux/worker_processes.ts';
 import { DarwinWorkerProcesses } from './darwin/worker_processes.ts';
 import type { DarwinWorkerKernel } from './darwin/worker_processes.ts';
 import { WorkerCgroups } from './linux/worker_cgroups.ts';
+import { monotonic_seconds } from '../lifecycle/configuration.ts';
 import { linux_worker_process_support } from '../lifecycle/linux_process.ts';
 import {
   darwin_worker_process_info,
@@ -110,6 +111,20 @@ process.stdout.write(JSON.stringify({ session, nice: getPriority(0), oom }));`;
     }
   },
 );
+
+test('Linux process check finishes its /proc reads before a busy main thread can expire the deadline', async () => {
+  const path = root();
+  mkdirSync(join(path, '42'));
+  writeFileSync(join(path, '42/stat'), proc_stat());
+  const native = new LinuxWorkerProcesses({ proc_root: path });
+  const deadline = monotonic_seconds() + 2;
+  const snapshot = native.snapshot(deadline);
+  const is_absent = native.is_absent(process_info, deadline);
+  const end = Date.now() + 2500; // the main thread is blocked past the 2-second deadline
+  while (Date.now() < end);
+  expect((await snapshot).get(42)).toEqual(process_info);
+  expect(await is_absent).toBe(false);
+});
 
 test('Linux signals acquire the pidfd before the final birth check and never signal a replacement', () => {
   const path = join(root(), 'descriptor');

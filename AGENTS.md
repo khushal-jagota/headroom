@@ -5,14 +5,19 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 **PRINCIPLES.md** holds the standing engineering and design rules; they bind unless a live owner decision overrides them.
 
 ## Stack and system map
-- For TypeScript server work, read [server/STYLE.md](server/STYLE.md) before changes.
-- Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and the Python Alembic schema baseline in `src/planner/core/db.py`. Later schema changes are TypeScript schema steps in `server/core/database/schema_steps/`, run by the installer before the server starts.
-- Domain code is grouped by system: `tickets/`, `managers/`, `ideas/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
-- `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `ticket`, `manager`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
-- Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: conversation busy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
-- `core/change_signal.py` is the payload-free, best-effort "something was written" signal. Every connection from `core/db.connect` announces its own commits, so no domain action carries wake or invalidation calls. The one way past it is `core/db.commit_without_change_signal`, used where the writer has established that no screen is waiting for its rows: managed skill history, and the conversation rows only an open conversation shows, which the live tail hands over directly. While the polling-lock owner's readiness loop runs it is subscribed to the signal; SQLite and the periodic timer remain canonical. The browser hears the same signal over `GET /api/changes` (`core/sse.py`).
-- Conversation code lives in `conversation/`, and it is the only one: contract, core, record, live tail, backend snapshots, and one adapter per backend under `backends/`. Every screen that shows a conversation and every worker step goes through it. The backends are a closed set of exactly `hermes`, `codex`, and `claude`, stated in the contract, and one door turns untrusted text into a member of it.
-- Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design assets remain in `assets/`: `tokens.css` and `app.css`; the Vite-owned GFM pipeline lives in `web/src/lib/markdownPipeline.ts`.
+- For TypeScript server work, read [server/STYLE.md](server/STYLE.md) before changes. [server/README.md](server/README.md) describes the server's layout.
+- The backend is the TypeScript server in `server/`. It runs on Node 22.18+ or 24 with Fastify and SQLite. The live VPS server and the Mac executor run it. `server/main.ts` starts it, and `server/core/start.ts` composes it. The schema starts from the frozen Python baseline in `server/core/database/python_baseline/`, which TypeScript owns. Later schema changes are TypeScript schema steps in `server/core/database/schema_steps/`, run by the installer before the server starts.
+- Domain code is grouped by system under `server/`: `tickets/`, `managers/`, `ideas/`, `projects/`, and others. Contracts live in each area's `contracts.ts`; framework-free rules live in `logic/`; HTTP routes live in `routes.ts`.
+- `panels` is the CLI. Its source executable is `node server/cli/main.ts`, and `server/cli/commands.ts` declares the command tree. Important command groups are `serve`, `project`, `ticket`, `manager`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
+- Worker orchestration lives in `server/runtime/`. `worker_step_readiness.ts` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.ts` holds both the poll loop and `start_ready_worker_step`, the per-Ticket flow: conversation busy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.ts` owns resolve/start/send/reset against the conversation contract.
+- `server/core/changes/` is the payload-free, best-effort "something was written" signal. The database writer in `server/core/database/` announces its own commits, so no domain action carries wake or invalidation calls. The one way past it is a write with `changeSignal: 'silent'`, used where the writer has established that no screen is waiting for its rows, such as the conversation rows only an open conversation shows, which the live tail hands over directly. The readiness loop is subscribed to the signal; SQLite and the periodic timer remain canonical. The browser hears the same signal over `GET /api/changes` (`server/core/routes.ts`).
+- Conversation code lives in `server/conversation/`, and it is the only one: contract, core, record, live tail, and backend snapshots. Each backend is a driver package under `server/drivers/`. Every screen that shows a conversation and every worker step goes through it. The backends are a closed set of exactly `hermes`, `codex`, and `claude`, listed in `server/drivers/built_in_manifests.ts`, and one door in the conversation contract turns untrusted text into a member of it.
+- Frontend is Svelte/Vite in `web/`; the server serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design assets remain in `assets/`: `tokens.css` and `app.css`; the Vite-owned GFM pipeline lives in `web/src/lib/markdownPipeline.ts`.
+- Some Python remains, on purpose:
+  - The Python Mac runtime in `src/planner/` is the Mac's emergency rollback until Khushal approves its removal. It keeps `pyproject.toml`, `requirements*.txt`, the `tests/unit` executor, Darwin, Mac, and worker supervision tests, `python-mac-runtime.yml`, and the mypy check in `typecheck.yml`. The server still accepts a Python (version-1) release for now.
+  - The TypeScript Hermes driver runs two helper scripts in `src/planner/conversation/backends/`. The skill seeds in `src/planner/skills` and `src/planner/worker_types/shipped_worker_types.json` are still read from there.
+  - `server/tools/smoke.ts` uses `tests/support/production_smoke_seed.py`.
+  - `scripts/panels_install.py` is the download the Linux machine join runs. `scripts/check_published_http2.py` serves route recovery.
 - Skill text is a row in `managed_skills`, and the row is the authority. Panels writes `data/skills/<name>/SKILL.md` from the rows whenever a database opens, and every agent home — Hermes, Codex, Claude — links to those copies. The packaged `src/planner/skills` tree is only what a database holding no skills is seeded from, and nothing consults it again: an edit there changes a fresh install and no running agent. Skills use `PATCH /api/skills/<name>`, atomic `POST /api/skills/apply`, `DELETE /api/skills/<name>`, and `PUT /api/skills/<name>/files` for a supporting file that lives only on disk, all behind the same owner-only door. Worker and Chief routes remain compatibility adapters. `panels skill list`, `show`, `edit`, `apply`, `delete`, and `write-file` expose this system in the CLI. Workers must hand exact live skill edits to the owner or the Chief. `panels skill check` reports a row naming a command, Stage or skill this build lacks.
 - `docs/` is the live plain-language system documentation. `orchestration/tickets/` holds historical ticket plans, dispatches, and reviews.
 - `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, and smoke artifacts.
@@ -34,10 +39,13 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - For iPhone work, follow [permanent screen tests and one-off reviews](ios/README.md#permanent-screen-tests-and-one-off-reviews). Keep the five admitted screen methods separate from the review scheme.
 - Apply the test-admission policy in **PRINCIPLES.md** during existing plan and implementation review. Record each added test's distinct risk, existing coverage gap, chosen layer, reused setup, and any new connected case or browser host cost.
 - **A check follows a piece of work, not a file and not an edit.** Finish what you set out to do, then run the narrowest check that proves it. A broad suite re-run when nothing since could have changed it proves nothing, and at a hundred repetitions it is not a detail of the work, it is most of the wall clock.
-- There is no single command that checks everything. Run `ruff`, `mypy` and `pytest` yourself, pointed at what your work touched, and read the output. A tool that is missing or a suite that skipped says so on screen, which a wrapper reporting one number does not.
-- `tests/unit`, `tests/integration` and `tests/e2e` must each get their own `pytest` process. Playwright's sync API holds an event loop for the whole session, so a unit fixture that calls `asyncio.run()` in teardown raises `asyncio.run() cannot be called from a running event loop` once an E2E test has run in the same process. A single `pytest tests` reports hundreds of failures that are not real. Three commands, three processes.
-- A full pass runs the three suites one after another, each on several processes with `pytest-xdist`: `scripts/dev pytest tests/unit -n 6`, then `scripts/dev pytest tests/integration -n 6`, then `scripts/dev pytest tests/e2e -n 4`. A focused run needs no `-n`. Because the processes run side by side, a test must not write outside its own `tmp_path`: not into the shared `.venv`, the repository tree, or a fixed path or port. Give it its own copy instead.
-- Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior in `web/tests`, and never rely on an eyeball check.
+- There is no single command that checks everything. Run the checks yourself, pointed at what your work touched, and read the output. A tool that is missing or a suite that skipped says so on screen, which a wrapper reporting one number does not.
+  - Server: `scripts/dev npm --prefix server run check` for types, `scripts/dev npm --prefix server run test -- <file>` for vitest, and `scripts/dev npm --prefix server run format:check`.
+  - Browser app: `scripts/dev npm --prefix web run check` and `scripts/dev npm --prefix web run test -- <file>`.
+  - Remaining Python: `ruff`, `mypy`, and `pytest`.
+- `tests/unit` holds the Python Mac runtime tests: `scripts/dev pytest tests/unit -n 6`. Because test processes run side by side, a test must not write outside its own `tmp_path`: not into the shared `.venv`, the repository tree, or a fixed path or port. Give it its own copy instead.
+- The browser checks are TypeScript Playwright tests in `tests/e2e/*.spec.ts`. Each test starts its own TypeScript server on a database built from the schema seed. [tests/e2e/README.md](tests/e2e/README.md) shows how to run them. Run them on hosted CI (`typescript-backend.yml`, by hand or on its schedule), not on the VPS.
+- Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior with vitest in `web/tests`, and never rely on an eyeball check.
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
 ## Operating model: plan and orchestrate
@@ -76,11 +84,14 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
   ```
 
+  The Python environment is needed only for the remaining Python: the Mac runtime
+  tests and mypy.
+
   An older checkout can have `node_modules` folders that link into
   `~/.cache/headroom/dependencies`. Run `npm ci` there first, which replaces the links,
   before any `npm install`. Otherwise npm can write into the shared cache.
 
-  Create `.venv` in the worktree with those commands. Never copy, move, or symlink
+  Create `.venv` in the worktree with that command. Never copy, move, or symlink
   one from another worktree: a virtualenv stores absolute paths to the tree it was
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
@@ -90,17 +101,16 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   ```sh
   scripts/dev npm --prefix web ci
   scripts/dev npm --prefix agent_backends install
+  scripts/dev npm --prefix server run check
   scripts/dev npm --prefix web run check
-  scripts/dev pytest tests/unit/test_instrument.py
+  scripts/dev pytest tests/unit/test_executor_protocol.py
   scripts/dev mypy scripts/tree_environment.py
-  scripts/dev python -m pytest tests/unit/test_instrument.py
-  scripts/dev .venv/bin/mypy scripts/tree_environment.py
   ```
 
   `scripts/dev` launches tools without a filesystem safety scan.
   Keep dependencies separate from the installed deployment.
-- `mypy` with this tree's config and `pytest` under `tests/` use one source path
-  check. The imported `planner` package must resolve inside this checkout's `src`.
+- For the remaining Python, `mypy` with this tree's config and `pytest` under `tests/`
+  use one source path check. The imported `planner` package must resolve inside this checkout's `src`.
   If it resolves elsewhere, reinstall this checkout with `.venv/bin/python -m pip install --editable .`.
   Keep development dependencies and runtime state independent of the deployment.
   General prevention and race-free filesystem containment remain uncommissioned.
@@ -110,10 +120,10 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   Repository review or merge does not install enforcement into the deployed release.
 - Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
   and confirm any printed path resolves to the worktree before using its runtime.
-- Python test entry points replace inherited `PLAN_*` runtime paths with private
-  scratch storage before application imports. Each pytest worker gets its own storage.
-  The shared pytest setup and Python browser runners refuse remaining deployment
-  paths or live server URLs. Keep the explicit non-live `PLAN_SERVER_URL` default:
+- TypeScript test databases must sit in a private temporary directory. Python test
+  entry points replace inherited `PLAN_*` runtime paths with private scratch storage
+  before application imports. Each pytest worker gets its own storage. The shared
+  pytest setup refuses remaining deployment paths or live server URLs. Keep the explicit non-live `PLAN_SERVER_URL` default:
   unsetting it restores the CLI's live-server fallback. Server fixtures replace it
   with their allocated server URL. Original launch evidence stays with containment checks.
 - When testing, browsing, computer use, exploration, or other active work needs
@@ -123,7 +133,8 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Keep the worktree's database and other local state in the Ticket workspace.
   Panels owns their removal after the Ticket ends.
 - At Consequences, push the Ticket branch and open an ordinary pull request into
-  `staging`. Write an ordinary note about the change. Wait for `mypy (merged tree)`
+  `staging`. Write an ordinary note about the change. `mypy (merged tree)` is still
+  the one required check on `staging`, even for TypeScript-only work. Wait for it
   to pass, merge the pull request explicitly, and verify that it merged.
   Stop the services you started. Leave workspace removal to Panels.
   If an old direct push to `origin/staging` is rejected,
@@ -140,7 +151,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Do not ask questions mid-run. Delegated choices are yours; make them and record them on the ticket.
 
 ## Project notes
-- Python ≥ 3.12, venv at `.venv`, deps pinned in `requirements.txt`. Run the server: `panels serve` (or `python -m planner serve`). DB and logs live under `data/` (gitignored).
-- Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and mounts Vite chunks under `/_app/`. Shared tokens, app CSS, and markdown rendering remain in `assets/`.
+- Node 22.18+ or 24 for `server/`. Run the server from a checkout with `node server/cli/main.ts serve`. DB and logs live under `data/` (gitignored). The remaining Python uses Python ≥ 3.12, a venv at `.venv`, and deps pinned in `requirements.txt`.
 - Frontend reactivity is `commit → contentless change signal → coalesced mounted-resource version probe → changed body reads`. Generic domains register authoritative source revisions. A body and its version enter the query cache together from one coherent source read. Unknown resources and failed probes retain explicit mounted-query refresh. Navigation and conversation tails keep their own scoped paths. Confirmed mutations still invalidate immediately. Inactive decoded query bodies are bounded by 64 entries and four MiB, counted once at admission, with LRU eviction and the existing age limit. Drafts and outgoing messages are outside that cache. Artifact inventory remains an explicit selected-only refresh fallback because direct filesystem writes have no DB revision.
 - One canonical writer function per state transition. Agents (claim-carrying requests) write proposals only — the proposal resolver is the single door to canonical values.

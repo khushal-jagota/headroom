@@ -74,6 +74,8 @@ export interface UploadSource extends AsyncIterable<Uint8Array> {
 export interface VpsFileInbox {
   readonly upload_staging_root: string;
   authorize_upload(upload: WireTypes['FileUploadRequest']): void | Promise<void>;
+  /** The served path of one Ticket file, after the shared path and private-name checks. */
+  ticket_file_target(manifest: WireTypes['FileManifest']): Promise<string>;
   store_upload(
     upload: WireTypes['FileUploadRequest'],
     source: HeldFileLocation,

@@ -27,7 +27,7 @@ Fresh TS replay and Python produce the same exact digest across the five project
 The [historical source and raw reports](/files/tickets/t_3ud37ykx/artifacts/part2-evidence/historical-profile-and-browser.zip) now live with this Ticket's artifacts.
 The [checksum manifest](/files/tickets/t_3ud37ykx/artifacts/part2-evidence/manifest.json) records their source commit and bytes.
 The measurement helpers and reports no longer ship in the repository or run in branch CI.
-These measurements predate the Chief's current machine rule. Browser/E2E and full comparison runs now belong on hosted runners.
+These measurements predate the Chief's current machine rule.
 Independent review found no material timing or isolation error in the recorded run.
 
 <details>

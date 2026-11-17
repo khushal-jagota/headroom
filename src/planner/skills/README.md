@@ -10,7 +10,7 @@ To change what a running agent reads, write the exact text and hand it to the ow
 Chief. Every skill write is owner-only.
 
 Add a file here when a new Worker type ships, so a fresh install starts with its specialist
-skill. `tests/unit/test_canonical_skill_sources.py` checks that.
+skill.
 
 ## Compare and reseed manually
 
@@ -118,8 +118,8 @@ PY
 
 Review the resulting diff and verify all packaged bytes against the snapshot. In a fresh,
 isolated database, also verify that seeded `managed_skills.source_text` equals the snapshot
-for every skill. Run the focused canonical-source, managed-skill, retired-worker and
-worker-type bootstrap checks. A historical specialist file must not restore retired Worker
+for every skill. Run the focused skill and Worker type tests in `server/skills/` and
+`server/worker_types/`. A historical specialist file must not restore retired Worker
 type registration. Existing installed rows and owner prose must survive reopening unchanged.
 Do not apply the snapshot to the running database or add automatic synchronisation.
 
