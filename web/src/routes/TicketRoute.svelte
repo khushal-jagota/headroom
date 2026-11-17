@@ -431,7 +431,7 @@
                   {#if detail.stage !== "needs_brief"}
                     <div class="worker-ceiling-line" data-leash>
                       <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
-                        triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}
+                        triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}${detail.ceiling === "done" ? "" : `, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}`}
                         holderLabel={pageHolderLabel} manager={ticketManager} below onComplete={(change) => void updateScope(change.ceiling === undefined
                           ? { ceiling_holder:change.holder } : { ceiling:change.ceiling, ceiling_holder:change.holder }).catch(() => undefined)} />
                     </div>
