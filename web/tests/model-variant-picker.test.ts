@@ -85,41 +85,41 @@ describe("drivers, marks and reasoning in the picker", () => {
   it("lists the backends in the drivers' order, with their labels and marks", () => {
     const view = picker([]);
     expect(view.backends.map((backend) => [backend.key, backend.name])).toEqual([
-      ["hermes", "Hermes"], ["codex", "Codex"], ["claude", "Claude"]
+      ["codex", "Codex"], ["claude", "Claude"]
     ]);
-    expect(view.backends.map((backend) => backend.mark.kind)).toEqual(["icon", "icon", "icon"]);
+    expect(view.backends.map((backend) => backend.mark.kind)).toEqual(["icon", "icon"]);
     expect(view.backendName).toBe("Codex");
-    expect(view.backendMark).toEqual(view.backends[1].mark);
+    expect(view.backendMark).toEqual(view.backends[0].mark);
   });
 
-  it("appends an unknown current key with its capitalised name, initials and a reason", () => {
+  it("appends a saved Hermes key with its capitalised name, initials and a reason", () => {
     const view = resolveModelPicker({
-      backendKey: "open-code", model: null, reasoningEffort: null, backends: [], drivers: DRIVERS
+      backendKey: "hermes", model: "anthropic:sonnet", reasoningEffort: null, backends: [], drivers: DRIVERS
     });
     const appended = view.backends.at(-1);
-    expect(view.backends.map((backend) => backend.key)).toEqual(["hermes", "codex", "claude", "open-code"]);
+    expect(view.backends.map((backend) => backend.key)).toEqual(["codex", "claude", "hermes"]);
     expect(appended).toMatchObject({
-      key: "open-code", name: "Open-code", selected: true,
-      mark: { kind: "initials", text: "OC" },
+      key: "hermes", name: "Hermes", selected: true,
+      mark: { kind: "initials", text: "H" },
       unavailableReason: "This backend is not available on this machine."
     });
-    expect(view.emptyReason).toBe("Open-code model list is unavailable.");
+    expect(view.emptyReason).toBe("Hermes model list is unavailable.");
   });
 
-  it("offers no reasoning for a Hermes-shaped card, even with a stored effort", () => {
-    const hermes = card({
-      backend_key: "hermes", reasoning_effort_options: [],
-      available_models: [{ model_id: "hermes-model", display_name: "Hermes model", enabled: true,
+  it("offers no reasoning for a card without efforts, even with a stored effort", () => {
+    const plain = card({
+      backend_key: "codex", reasoning_effort_options: [],
+      available_models: [{ model_id: "plain-model", display_name: "Plain model", enabled: true,
         reasoning_effort_options: null, option_descriptors: [] }],
-      default_model_id: "hermes-model"
+      default_model_id: "plain-model"
     });
     const view = resolveModelPicker({
-      backendKey: "hermes", model: "hermes-model", reasoningEffort: "high", backends: [hermes], drivers: DRIVERS
+      backendKey: "codex", model: "plain-model", reasoningEffort: "high", backends: [plain], drivers: DRIVERS
     });
     expect(view.offersReasoning).toBe(false);
     expect(view.efforts).toEqual([]);
     expect(view.effortFace).toBe("");
-    expect(view.face).toBe("Hermes model");
+    expect(view.face).toBe("Plain model");
   });
 
   it("keeps a stored effort word while no catalogue has been read", () => {

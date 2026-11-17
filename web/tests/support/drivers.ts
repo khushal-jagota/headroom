@@ -3,10 +3,6 @@ import type { DriverPresentation } from "../../src/lib/drivers/contracts";
 /** The server's driver list as GET /api/drivers sends it, in its order. */
 export const DRIVERS: readonly DriverPresentation[] = [
   {
-    driver_kind: "hermes", label: "Hermes", accent_color: "#a78bfa", checks_for_updates: false,
-    icon: { url: "/api/drivers/hermes/icon?v=aaaaaaaaaaaa", media_type: "image/png", monochrome: false }
-  },
-  {
     driver_kind: "codex", label: "Codex", accent_color: "#e6e6e6", checks_for_updates: true,
     icon: { url: "/api/drivers/codex/icon?v=bbbbbbbbbbbb", media_type: "image/svg+xml", monochrome: true }
   },

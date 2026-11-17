@@ -12,7 +12,7 @@ import { backendUsageOutcomeLabel, refreshBackendSnapshots } from "../src/lib/co
 import type { BackendUsageRefreshOutcome } from "../src/lib/conversation/wire";
 import { readUsageSummary, readUsageLimits } from "../src/lib/conversation/recordedUsageWire";
 import { buildChartDays } from "../src/lib/usage/usageChartData";
-import { usageSourceOrder } from "../src/lib/usage/usageProviders";
+import { usageSourceColor, usageSourceLabel, usageSourceOrder } from "../src/lib/usage/usageProviders";
 import { DRIVERS } from "./support/drivers";
 
 const input: UsageSummaryInput = {
@@ -107,12 +107,13 @@ describe("usage names and colours come from the drivers", () => {
     for (const label of ["Codex", "Claude", "Grok Build", "Tokens"]) expect(body).toContain(label);
     expect(body).not.toContain("Claude Code");
   });
-  it("stacks codex, claude, then grok, with an unnamed source on top", () => {
+  it("stacks codex, claude, then grok, with a saved Hermes source on top, named and neutral", () => {
     const byProvider = new Map([["grok", { costUsd: 1, totalTokens: 1 }], ["claude", { costUsd: 1, totalTokens: 1 }],
-      ["codex", { costUsd: 1, totalTokens: 1 }], ["antigravity", { costUsd: 1, totalTokens: 1 }]]);
+      ["codex", { costUsd: 1, totalTokens: 1 }], ["hermes", { costUsd: 1, totalTokens: 1 }]]);
     const [day] = buildChartDays(["2026-10-28"], [{ day: "2026-10-28", costUsd: 4, totalTokens: 4, byProvider }], "tokens", usageSourceOrder(DRIVERS));
     expect(day.values.map(entry => entry.provider).filter(provider => byProvider.has(provider)))
-      .toEqual(["codex", "claude", "grok", "antigravity"]);
+      .toEqual(["codex", "claude", "grok", "hermes"]);
+    expect([usageSourceLabel("hermes", DRIVERS), usageSourceColor("hermes", DRIVERS)]).toEqual(["Hermes", "#a1a1aa"]);
   });
 });
 
