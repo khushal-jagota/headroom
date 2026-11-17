@@ -115,7 +115,9 @@ export class MacService {
     this.identity = identity;
     const on_failure = (error: unknown) => this.failed(error);
     this.skills = new MacSkillsPublisher(on_failure);
-    this.presence = new MacPresence(identity);
+    this.presence = new MacPresence(identity, Date.now, process.pid, () => ({
+      ...outbox.delivery_status(),
+    }));
     this.client =
       bindings.client?.(
         configuration.panels_server_url,

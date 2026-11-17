@@ -234,9 +234,18 @@ export class MacInbox {
     const deadline =
       options.retry_later_at ?? performance.now() / 1000 + MAC_ITEM_RETRY_LATER_SECONDS;
     return this.own(
-      this.answer_item(envelope, deadline, () =>
-        this.accept_envelope(envelope, identity, deadline),
-      ),
+      (async () => {
+        this.store.require_envelope(envelope, identity);
+        // A committed receipt is readable while its original task still owns cleanup.
+        // Stop receipts retain their required post-commit run consequence below.
+        if (envelope.kind !== 'child_stopped') {
+          const previous = this.store.preflight(envelope, { identity });
+          if (previous !== null) return previous;
+        }
+        return this.answer_item(envelope, deadline, () =>
+          this.accept_envelope(envelope, identity, deadline),
+        );
+      })(),
     );
   }
   private async answer_item(

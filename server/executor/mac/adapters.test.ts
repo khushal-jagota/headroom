@@ -2,7 +2,7 @@
 import { expect, test, vi } from 'vitest';
 import { join } from 'node:path';
 import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
-import type { ClaudeAgentSdkChildLaunch } from '../../conversation/backends/claude_agent_sdk/adapter.ts';
+import type { ClaudeAgentSdkChildLaunch } from '../../drivers/claude/runtime/adapter.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
 import { create_mac_adapter_host } from './adapters.ts';
@@ -10,8 +10,8 @@ import { create_mac_adapter_host } from './adapters.ts';
 const { claude_launches } = vi.hoisted(() => ({
   claude_launches: [] as ClaudeAgentSdkChildLaunch[],
 }));
-vi.mock('../../conversation/backends/claude_agent_sdk/adapter.ts', async (original) => ({
-  ...(await original<typeof import('../../conversation/backends/claude_agent_sdk/adapter.ts')>()),
+vi.mock('../../drivers/claude/runtime/adapter.ts', async (original) => ({
+  ...(await original<typeof import('../../drivers/claude/runtime/adapter.ts')>()),
   create_claude_backend_child_factory: (launch: ClaudeAgentSdkChildLaunch) => {
     claude_launches.push(launch);
     return () => {
