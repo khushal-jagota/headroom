@@ -802,9 +802,17 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     sender_message_ids: readonly (string | null)[] = [],
   ): Promise<ReservedTurn> {
     const requests = this.start_admission.requests_for(sender_message_ids);
-    const number = await this.persist(state, () =>
-      this.options.store.reserve_turn(state.record.conversation_id, requests),
-    );
+    let number: number;
+    try {
+      number = await this.persist(state, () =>
+        this.options.store.reserve_turn(state.record.conversation_id, requests),
+      );
+    } catch (error) {
+      // A cancel just before this left the phase ending. A save that gave up must not keep it there.
+      if (state.phase === 'ending')
+        set_phase(state, state.running_turn === null ? 'idle' : 'running');
+      throw error;
+    }
     this.start_admission.bind(sender_message_ids, {
       conversation_id: state.record.conversation_id,
       turn_number: number,
@@ -828,12 +836,50 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     this.mark_eligible_held(state);
     return reserved;
   }
+  /** True when a save of this conversation gave up, or the database is unusable. */
+  save_gave_up(state: ConversationState): boolean {
+    return state.save_failure !== null || this.options.store.database_unusable_error !== null;
+  }
   async deliver_and_finalize(
     state: ConversationState,
     reservation: ReservedTurn,
     batch: readonly Message[],
     queued: boolean,
     drain_after_delivery_exception = true,
+  ): Promise<PromptDeliveryFate> {
+    try {
+      return await this.deliver_and_record(
+        state,
+        reservation,
+        batch,
+        queued,
+        drain_after_delivery_exception,
+      );
+    } catch (error) {
+      if (
+        (error instanceof Error && error.name === 'AbortError') ||
+        this.shutting_down ||
+        !this.save_gave_up(state)
+      )
+        throw error;
+      // A save gave up partway through this delivery. Release the reservation, so the
+      // conversation settles and a stop does not wait for it.
+      await state.lock.run(() => {
+        if (state.reserved_turn === reservation || state.phase === 'starting')
+          this.abandon_reservation(state, reservation, 'idle');
+        this.finish_held_deliveries(state, batch);
+      });
+      // The agent can have this prompt, so the sender must not hear that it was not sent.
+      if (reservation.prompt_write_attempted) return new PromptDeliveryUncertain();
+      throw error;
+    }
+  }
+  private async deliver_and_record(
+    state: ConversationState,
+    reservation: ReservedTurn,
+    batch: readonly Message[],
+    queued: boolean,
+    drain_after_delivery_exception: boolean,
   ): Promise<PromptDeliveryFate> {
     reservation.messages = batch;
     this.start_admission.bind(

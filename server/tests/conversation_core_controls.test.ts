@@ -842,6 +842,15 @@ test('a receipt save that gives up reports uncertain and is not resent after a r
   expect(child.last_observation?.delivered_text).toEqual(['Role\n\none']);
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   const restarted = setup({ restart_of: f.database });
+  // Restart recovery reads this: the prompt stays unknown, so nothing replays it.
+  expect(
+    restarted.store
+      .lifecycle_facts('core')
+      .filter((fact) => fact.kind === 'attempt' && fact.operation === 'prompt')
+      .map((fact) => fact.status),
+  ).toEqual(['unknown']);
+  // The next ordinary send resumes eligible held messages. The uncertain one is not among them.
+  expect(await restarted.core.held_prompts('core')).toEqual([]);
   expect(await restarted.send('two', 'second')).toBeInstanceOf(PromptDeliveryStarted);
   const next = await restarted.child;
   await next.finish();
@@ -871,17 +880,28 @@ test('a steer receipt save that gives up reports uncertain', async () => {
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 }, 15_000);
 
-// A corrupt database stops new work across the process at once, with one alarm.
+// A corrupt database stops new work across the process at once, with one alarm. The database
+// fails while the prompt is being written, so every later save of this delivery refuses: the
+// sender must still hear "uncertain", never "not sent".
 test('an unusable database fails the conversation at once and refuses new work', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const track = vi.fn(() => ({ set_detail() {}, close() {} }));
-  const f = setup({ core: { wait_registry: { track } } });
-  await f.start();
-  vi.spyOn(f.store, 'append_delivered_prompt').mockImplementation(() => {
-    throw Object.assign(new Error('synthetic corruption'), { code: 'SQLITE_CORRUPT' });
+  const f = setup({
+    core: { wait_registry: { track } },
+    behavior: { barrier: 'write', error: { name: 'PromptWriteFailed', message: 'synthetic' } },
   });
-  expect(await f.send('one')).toBeInstanceOf(PromptDeliveryUncertain);
+  await f.start();
+  const sending = f.send('one');
   const child = await f.child;
+  await child.wait_for_barrier('write');
+  const corrupt = Object.assign(new Error('synthetic corruption'), { code: 'SQLITE_CORRUPT' });
+  await f.store
+    .settle_recording('elsewhere', () => {
+      throw corrupt;
+    })
+    .catch(() => {});
+  await child.release('write');
+  expect(await sending).toBeInstanceOf(PromptDeliveryUncertain);
   expect(track).toHaveBeenCalledWith('vps_save_failed', 'database', {
     detail: 'Save error SQLITE_CORRUPT',
     conversation_id: null,
@@ -897,9 +917,33 @@ test('an unusable database fails the conversation at once and refuses new work',
     ),
   ).rejects.toMatchObject({ code: 'conversation_save_failed' });
   await f.core.wait_until_quiescent();
+  expect(f.core.conversations.get('core')!.phase).toBe('idle');
   // The child process stopped, but the unusable database cannot record that, so shutdown fails.
   await expect(child.inspect()).rejects.toThrow('scripted child is closed');
   await expect(
     f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS }),
   ).rejects.toThrow('did not shut down cleanly');
 });
+
+// Send now cancels the running turn, then its turn reservation save gives up. The phase must
+// settle, or a later stop waits for it forever.
+test('a reservation save that gives up after a cancel still lets the conversation stop', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = setup();
+  await f.start();
+  expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
+  vi.spyOn(f.store, 'reserve_turn').mockImplementation(() => {
+    throw Object.assign(new Error('synthetic constraint'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+  });
+  await expect(
+    f.core.send('core', text_message_content('now'), {
+      sender_label: 'Owner',
+      sender_message_id: 'now',
+      mode: 'send_now',
+    }),
+  ).rejects.toMatchObject({ code: 'SQLITE_CONSTRAINT_UNIQUE' });
+  await f.core.kill('core');
+  expect(f.core.conversations.get('core')!.phase).toBe('idle');
+  await f.core.wait_until_quiescent();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+}, 15_000);

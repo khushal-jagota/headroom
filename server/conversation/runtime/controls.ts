@@ -477,8 +477,15 @@ async function record_steer_outcome(
       ...state.record,
       owner_read_through_sequence: Math.max(state.record.owner_read_through_sequence, boundary),
     });
-  if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
-  if (accepted && token !== null) await host.accept_automatic_start(state, token);
+  try {
+    if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
+    if (accepted && token !== null) await host.accept_automatic_start(state, token);
+  } catch (error) {
+    // The outcome is recorded. A later save that gave up must not change what the sender hears.
+    if ((error instanceof Error && error.name === 'AbortError') || !host.save_gave_up(state))
+      throw error;
+    console.error(`conversation ${state.record.conversation_id} could not settle a steer`, error);
+  }
   if (outcome instanceof BackendSteerUncertain && outcome.not_delivered !== null)
     watch_late_steer(host, state, outcome.not_delivered, message, held_before);
   if (accepted || !refused) {
