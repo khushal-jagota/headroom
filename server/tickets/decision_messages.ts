@@ -95,14 +95,18 @@ export function pending_ticket_ids(sql: ReadSql): string[] {
         'WHERE m.rowid=(SELECT first.rowid FROM ticket_decision_messages first ' +
         "WHERE first.ticket_id=m.ticket_id AND first.delivery_status!='delivered' " +
         'ORDER BY first.created_at,first.rowid LIMIT 1) AND ' +
-        "(delivery_status IN ('pending','sending','queued') OR " +
+        "((delivery_status='pending' AND NOT EXISTS (SELECT 1 FROM tickets t, json_each(t.workflow_json, '$.stages') stage WHERE t.id=m.ticket_id AND json_extract(stage.value, '$.id')=t.stage AND json_extract(stage.value, '$.is_terminal'))) OR delivery_status IN ('sending','queued') OR " +
         "(delivery_status IN ('uncertain','refused','discarded') AND " +
         '(SELECT kind FROM conversation_events e WHERE e.conversation_id=m.conversation_id ' +
-        "AND json_extract(e.payload,'$.sender_message_id')=m.sender_message_id " +
+        "AND json_extract(e.payload,'$.sender_message_id')=CASE WHEN instr(m.sender_message_id, '|decision|') > 0 THEN substr(m.sender_message_id,1,instr(m.sender_message_id, '|decision|')-1) ELSE m.sender_message_id END " +
         "AND e.kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded') " +
         "ORDER BY e.sequence DESC LIMIT 1)='prompt'))",
     )
     .map((row) => row.ticket_id);
+}
+// A combined step has one receipt. Each decision retains a unique durable alias.
+export function receipt_sender_message_id(sender_message_id: string): string {
+  return sender_message_id.split('|decision|', 1)[0]!;
 }
 export function recorded_outcome(
   sql: ReadSql,
@@ -111,7 +115,7 @@ export function recorded_outcome(
 ): string | null {
   const row = sql.get<{ kind: string }>(
     "SELECT kind FROM conversation_events WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? AND kind IN ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded') ORDER BY sequence DESC LIMIT 1",
-    [conversation_id, sender_message_id],
+    [conversation_id, receipt_sender_message_id(sender_message_id)],
   );
   return row
     ? ({

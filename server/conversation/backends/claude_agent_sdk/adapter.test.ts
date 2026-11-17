@@ -8,8 +8,11 @@ import {
   BackendStreamEnded,
   BackendSpawnFailed,
   ClaudeInitializationTimeout,
+  NeedsRebind,
+  PromptWriteFailed,
   SessionLoadFailed,
 } from '../contracts.ts';
+import { text_message_content } from '../../message_content.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
 import type { ClaudeSdkClient, ClaudeSdkMessage } from './query_contracts.ts';
 import { Pending } from './wire.ts';
@@ -32,6 +35,7 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
     user_message_is_settled: () => true,
     wait_for_user_message_settlement: async () => {},
     interrupt_and_cancel_queued: async () => [new Set(), new Set()],
+    apply_reasoning_effort: async () => {},
     disconnect,
     settled: () => native_settled.promise,
   };
@@ -135,6 +139,7 @@ it('classifies only the native SDK initialization-timeout discriminator before r
         user_message_is_settled: () => true,
         wait_for_user_message_settlement: unexpected,
         interrupt_and_cancel_queued: unexpected,
+        apply_reasoning_effort: unexpected,
         disconnect,
         settled: async () => {},
       };
@@ -165,4 +170,75 @@ it('classifies only the native SDK initialization-timeout discriminator before r
       expect(disconnect).toHaveBeenCalledOnce();
     }
   }
+});
+
+it('applies an effort change to the live Claude session and restarts to clear effort', async () => {
+  const apply_reasoning_effort = vi.fn(async (_level: string) => {});
+  const client: ClaudeSdkClient = {
+    connect: async () => {},
+    get_server_info: async () => null,
+    query: async () => {},
+    receive_messages: () => ({
+      [Symbol.asyncIterator]: () => ({ next: () => new Promise<never>(() => {}) }),
+    }),
+    watch_user_message: () => {},
+    forget_user_message: () => {},
+    wait_for_user_message_admission: async () => true,
+    user_message_uuids_for_result: () => new Set(),
+    user_message_is_settled: () => true,
+    wait_for_user_message_settlement: async () => {},
+    interrupt_and_cancel_queued: async () => [new Set(), new Set()],
+    apply_reasoning_effort,
+    disconnect: async () => {},
+  };
+  const start = new ResolvedConversationStart({
+    conversation_id: 'live-effort',
+    backend_key: 'claude',
+    model: 'haiku',
+    reasoning_effort: 'low',
+    role_materials: null,
+    workspace_folder: '/synthetic/workspace',
+    workspace_path_policy: 'absolute',
+    access: 'full',
+  });
+  const child_processes = new ChildProcesses();
+  const child = new ClaudeAgentSdkBackendChild({
+    child_processes,
+    one_shot_children: new OneShotChildren(child_processes),
+    worker_supervision: {} as WorkerSupervisionRuntime,
+    launch: { claude_executable: '/synthetic/claude' },
+    resolved_start: start,
+    client_factory: () => client,
+    event_sink: { report: async () => {} },
+    message_files: {
+      keep: async () => {
+        throw new Error('No message file belongs to this check');
+      },
+      read: async () => new Uint8Array(),
+      media_type_of: async () => null,
+      path_of: () => '/synthetic/unused',
+    },
+  });
+  await child.start(start, { vendor_session_cursor: null });
+  const content = text_message_content('hello');
+  const prompt = (turn_number: number, reasoning_effort_change: string | null) =>
+    child.write_prompt({ conversation_id: 'live-effort', turn_number }, content, {
+      sender_label: 'Owner',
+      sender_content: content,
+      mode: 'send_now',
+      model_change: null,
+      reasoning_effort_change,
+      reasoning_effort_is_set: true,
+    });
+  await prompt(1, 'high');
+  expect(apply_reasoning_effort).toHaveBeenCalledExactlyOnceWith('high');
+  await prompt(2, 'high');
+  expect(apply_reasoning_effort).toHaveBeenCalledTimes(1);
+  await expect(prompt(3, null)).rejects.toBeInstanceOf(NeedsRebind);
+  expect(apply_reasoning_effort).toHaveBeenCalledTimes(1);
+  apply_reasoning_effort.mockRejectedValueOnce(new Error('control channel closed'));
+  await expect(prompt(4, 'max')).rejects.toBeInstanceOf(PromptWriteFailed);
+  // The failed apply broke the wire, so even an unchanged prompt needs a new child.
+  await expect(prompt(5, 'high')).rejects.toMatchObject({ failed_child_recovery: true });
+  await child.stop();
 });

@@ -28,6 +28,17 @@ describe('consumed Codex contracts', () => {
     );
   });
 
+  it('keeps usable last-turn input separate and skips malformed last usage', () => {
+    const total = { inputTokens: 90000, outputTokens: 10, cachedInputTokens: 3 };
+    const last = { inputTokens: 12000, outputTokens: 4, cachedInputTokens: 2 };
+    expect(P.ThreadTokenUsage.read({ total, last })).toEqual({ total, last });
+    expect(P.ThreadTokenUsage.read({ total, last: { inputTokens: 'bad' } })).toEqual({
+      total,
+      last: null,
+    });
+    expect(P.ThreadTokenUsage.read({ total })).toEqual({ total, last: null });
+  });
+
   it('requires identities, exact outcomes and permission decisions', () => {
     expect(() => P.TurnStartResponse.read({ turn: { id: ' ', status: 'completed' } })).toThrow(
       P.CodexProtocolError,

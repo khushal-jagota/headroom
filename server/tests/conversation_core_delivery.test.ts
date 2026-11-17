@@ -22,9 +22,11 @@ import {
 import {
   AgentMessageCompleted,
   AgentMessageDelta,
+  BackendSpawnFailed,
   TurnEnded,
   ToolCallStarted,
 } from '../conversation/backends/contracts.ts';
+import type { BackendChild, BackendChildFactory } from '../conversation/backends/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
@@ -34,6 +36,27 @@ import type { ConversationCoreOptions } from '../conversation/runtime/contracts.
 
 // Inventory #8: the provider reports news while its prompt receipt is still withheld.
 // The real scripted process and real record together prove the provider/core/store boundary.
+test('Manager role text appears only on the first prompt in the conversation history', async () => {
+  const f = setup({
+    role_actor: 'manager',
+    behavior: { events: [{ event: { kind: 'TurnEnded', values: { ending: 'completed' } } }] },
+  });
+  await f.start();
+  expect(await f.send('first', 'first')).toBeInstanceOf(PromptDeliveryStarted);
+  await f.core.wait_until_quiescent();
+  expect([PromptDeliveryStarted, PromptDeliveryQueued]).toContain(
+    (await f.send('second', 'second')).constructor,
+  );
+  await f.core.wait_until_quiescent();
+  const child = await f.child;
+  const prompts = (await child.inspect()).calls.filter((call) => call.command === 'write_prompt');
+  expect(prompts).toHaveLength(2);
+  expect(JSON.stringify(prompts[0])).toContain('Role');
+  expect(JSON.stringify(prompts[1])).not.toContain('Role');
+  expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toContain('prompt');
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
 test('backend news waits for the accepted prompt receipt and prose stays transient', async () => {
   let revoked = false;
   const signalFailure = new Error('Signal is not current');
@@ -459,6 +482,41 @@ test('a failed admission save releases preparation before any provider starts', 
       expect(await f.core.held_prompts('core')).toEqual([]);
       expect(state.phase).toBe('running');
     }
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+// A too-old CLI is refused before the launch record, so no custody needs proving afterwards.
+test('the CLI floor check refuses a turn before child custody is written', async () => {
+  const custody = () =>
+    f.database.read((sql) => sql.all('SELECT state FROM conversation_child_custody'));
+  const observed: unknown[] = [];
+  const start = vi.fn();
+  const factory: BackendChildFactory = () =>
+    ({
+      stop_outside_lock: false,
+      async confirm_cli_compatible() {
+        observed.push(custody());
+        throw new BackendSpawnFailed('Update Codex to at least 0.148.0.');
+      },
+      start,
+    }) as unknown as BackendChild;
+  const f = setup({
+    core: { backend_child_factories: { codex: factory, claude: factory, hermes: factory } },
+  });
+  try {
+    await f.start();
+    const before = custody();
+    expect(before).not.toContainEqual({ state: 'launch_pending' });
+    expect(await f.send()).toEqual(
+      new PromptDeliveryRefused({
+        refusal_reason: PromptDeliveryRefusalReason.backend_did_not_start,
+      }),
+    );
+    expect(observed).toEqual([before]);
+    expect(custody()).toEqual(before);
+    expect(start).not.toHaveBeenCalled();
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }

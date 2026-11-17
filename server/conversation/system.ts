@@ -116,8 +116,6 @@ import {
 } from './runtime/synchronization.ts';
 import type { LockLease } from './runtime/synchronization.ts';
 import {
-  automatic_compaction_is_due,
-  deliver_automatic_compaction,
   background_tasks_ended_with_child,
   IdleChildJanitor,
   LostBackgroundTaskNotices,
@@ -761,10 +759,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         state.late_steers.size > 0
       )
         return this.hold_prompt(state, message);
-      if (await this.automatic_compaction_may_start(state)) {
-        const fate = this.hold_prompt(state, message);
-        return { automatic: await this.reserve_turn(state, true), fate };
-      }
       if (!this.start_admission.begin_queued([message.sender_message_id])) {
         const fate = this.hold_prompt(state, message);
         this.defer_start_drain(state);
@@ -773,10 +767,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       return this.reserve_turn(state, false, [message.sender_message_id]);
     });
     if (admission instanceof PromptDeliveryQueued) return admission;
-    if ('automatic' in admission) {
-      await this.deliver_automatic_compaction(state, admission.automatic);
-      return admission.fate;
-    }
     return this.deliver_and_finalize(state, admission, [message], false);
   }
   hold_prompt(
@@ -1837,19 +1827,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     return child.stop_outside_lock
       ? remote.schedule_child_retirement(this, state, child, false)
       : this.discard_child(state, child);
-  }
-  async automatic_compaction_may_start(state: ConversationState): Promise<boolean> {
-    return (
-      this.automatic_compaction_is_due(state) &&
-      this.options.store.automated_maintenance_suppression_reason(state.record.conversation_id) ===
-        null
-    );
-  }
-  automatic_compaction_is_due(state: ConversationState): boolean {
-    return automatic_compaction_is_due(this, state);
-  }
-  deliver_automatic_compaction(state: ConversationState, reservation: ReservedTurn): Promise<void> {
-    return deliver_automatic_compaction(this, state, reservation);
   }
   async start_idle_child_janitor(): Promise<void> {
     this.require_runtime_ownership();

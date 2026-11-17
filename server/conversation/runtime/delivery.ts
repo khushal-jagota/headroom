@@ -71,6 +71,8 @@ async function ensure_child(
     event_sink: sink,
     message_files: host.options.message_files,
   });
+  if (child.confirm_cli_compatible)
+    await host.native_operation(() => child.confirm_cli_compatible!());
   if (child.stop_outside_lock) {
     const retained = host.retained_run(state);
     if (retained === null) throw new BackendSpawnFailed('Backend did not retain its run identity');
@@ -114,9 +116,6 @@ async function compose(
   content: MessageContent,
 ): Promise<MessageContent> {
   const role = state.record.role_text;
-  if (new Map(state.record.identity_environment_variables).get('PLAN_ACTOR') === 'manager') {
-    return prefix_message_content_text(content, role ?? '', ROLE_TEXT_PROMPT_SEPARATOR);
-  }
   if (role === null || state.has_delivered_prompt) return content;
   if (
     await host.persist(state, () =>
@@ -229,6 +228,8 @@ export async function deliver_prompt(
     }
   }
   const had_child = state.child !== null;
+  if (reservation.automatic_compaction && !had_child)
+    return result({ suppression_reason: 'automatic_compaction_child_stopped' });
   let child: BackendChild;
   try {
     child = await ensure_child(host, state, reservation, first);
@@ -363,6 +364,8 @@ export async function deliver_prompt(
     return await write(child);
   } catch (error) {
     if (!(error instanceof NeedsRebind)) return refusal_or_throw(error);
+    if (reservation.automatic_compaction)
+      return result({ suppression_reason: 'automatic_compaction_child_requires_rebind' });
     reservation.prompt_write_attempted = false;
     host.start_admission.bind_source(reservation.token, null);
     rebound = true;

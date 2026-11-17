@@ -242,3 +242,26 @@ test('detach forwards the existing stop deadline to its client', async () => {
     await state.child.stop();
   }
 });
+
+test('records Codex last input separately from cumulative usage', async () => {
+  const state = await setup();
+  try {
+    const writing = state.prompt();
+    await Promise.resolve();
+    state.reply(1, { turn: { id: 'native', status: 'inProgress' } });
+    await writing;
+    await state.handler.on_notification('thread/tokenUsage/updated', {
+      threadId: 'thread',
+      turnId: 'native',
+      tokenUsage: {
+        total: { inputTokens: 90000, outputTokens: 10, cachedInputTokens: 3 },
+        last: { inputTokens: 12000, outputTokens: 4, cachedInputTokens: 2 },
+      },
+    });
+    expect(
+      state.report.mock.calls.find(([, event]) => event instanceof B.TokenUsageReported)?.[1],
+    ).toMatchObject({ input_tokens: 90000, context_input_tokens: 12000 });
+  } finally {
+    await state.child.stop();
+  }
+});

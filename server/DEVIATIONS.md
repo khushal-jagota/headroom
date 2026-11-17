@@ -857,12 +857,54 @@ The home Worker abort comparison likewise asserts the stored Ticket launch folde
 and the explicit checkout prompt before it normalizes only those two differences.
 The remaining conversation rows and abort custody compare exactly with Python.
 
+## Claude SDK single read and live effort
+
+TypeScript gives the Claude child's stdout straight to the SDK. Panels no longer reads each line first.
+A malformed JSON stdout line no longer ends the child. The SDK skips it.
+The Panels 4 MiB stdout line cap is gone. Stderr keeps its existing line bound.
+The SDK reads stdout with Node `readline` and sets no line limit. Memory for a very long line now depends only on that reader.
+Panels drains the SDK messages into its own queue as they arrive. Steer admission and settlement read that queue's receipts, so a slow save never holds them.
+Stop reads the receipt that the SDK returns for the interrupt. The SDK drops non-string members from that receipt.
+Panels therefore no longer refuses Stop on a malformed queued uuid. A receipt without both lists still refuses.
+A permission ask waits until Panels has taken in the assistant message holding its own tool use.
+It no longer counts frames. The wait keeps its five-second bound and still ends on abort, cleanup, stream close, and a turn result.
+An effort change to a named level on a live session applies with `applyFlagSettings`, without a restart.
+Clearing effort still restarts the child, because a live reset returns to the model default rather than the user's settings.
+A model change still restarts the child. Python restarts the child for every effort change.
+The scripted comparison CLI's malformed Stop receipt now omits `cancelled`, which both servers refuse.
+
+## Messages are not held for automatic compaction
+
+At the owner's request, TypeScript delivers a send-now or queued message at once
+50 to 60 minutes after the last agent activity. The prompt cache is still warm then.
+Python holds that message, sends `/compact` first, and delivers the message after it.
+Only the idle sweep compacts in TypeScript. It still compacts an idle conversation
+with no held messages in that window. A message that arrives while that compaction
+runs still waits for it. The `automatic_compaction` wire flag and the database
+columns stay the same. The unit 15b maintenance comparison sends its owner message
+after that window, so both runtimes deliver it at once. The focused maintenance test
+in `server/tests/conversation_core_maintenance.test.ts` proves the TypeScript behavior.
+
+## Remembered CLI version verdicts
+
+TypeScript no longer runs `claude --version` or `codex --version` before every Claude or
+Codex start. Python still does. The native server keeps each definite feature-floor verdict
+for the exact executable file: backend, resolved path, device, inode, size, and modification
+and change times. The backend snapshot's version read fills it, and a miss runs one check and keeps its
+result. A failed or unreadable check is not kept. A conversation turn checks before its child
+launch record is written, so a too-old CLI is refused without launch custody.
+The connection still enforces each floor. Claude's initialize reply and Codex's
+`initialize` userAgent report the running version. A version below the floor fails that
+start with the same update message and replaces the kept verdict. A missing or unreadable
+reported version does not fail the start.
+
 ## Permanent save errors give up
 
 Python retries every failed conversation save until it succeeds, with backoff to 30 s.
 TypeScript retries only transient errors that way: contention, I/O, a full disk,
-filesystem errors, and a statement that expired after a schema change (`SQLITE_SCHEMA`). A permanent error, such as a constraint failure, schema drift
-(`SQLITE_ERROR`), or a JavaScript error inside the write, gives up after three retries.
+filesystem errors, and a statement that expired after a schema change (`SQLITE_SCHEMA`).
+A permanent error, such as a constraint failure, schema drift (`SQLITE_ERROR`), or a
+JavaScript error inside the write, gives up after three retries.
 Its conversation stops its child, ends the running turn as failed, and refuses new work
 until a restart. A prompt or steer receipt that gives up reports and records the delivery
 as uncertain. `SQLITE_CORRUPT` and `SQLITE_NOTADB` give up at once and refuse every later

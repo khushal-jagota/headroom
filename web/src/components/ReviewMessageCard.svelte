@@ -155,8 +155,8 @@
   <!-- Skip and Open conversation stand in the page's top band at the right, as staging. -->
   <div class="review-eyebrow review-eyebrow--decisions">
     <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
-      <Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>
       <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
+      <Button variant="ghost" data-skip disabled={busy || intakeBusy || voiceActive} onclick={onSkip}>Skip</Button>
     </div>
   </div>
   <h1 class="review-ticket-title">{item.title}</h1>

@@ -11,6 +11,7 @@ import {
   now,
   claim,
   propose,
+  advance,
 } from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
@@ -358,13 +359,21 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
       now,
     }),
   );
+  // Another turn can start after the idle check; retain the combined prompt in the queue.
+  vi.spyOn(system, 'is_running').mockResolvedValueOnce(false);
+  const send = system.send.bind(system);
+  vi.spyOn(system, 'send').mockImplementationOnce((id, content, options) =>
+    send(id, content, { ...options, mode: 'queue' }),
+  );
   await start_ready_worker_step(ticket.id, options);
   await start_ready_worker_step(ticket.id, options);
   expect(await system.held_prompts(id)).toHaveLength(1);
   expect((await system.held_prompts(id))[0]!.content).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        text: 'User sent back the What Changes proposal with this note:\nKeep the note.',
+        text: expect.stringContaining(
+          'User sent back the What Changes proposal with this note:\nKeep the note.',
+        ),
       }),
     ]),
   );
@@ -403,6 +412,37 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
   expect(system.backend_prompt_writes(fresh)[0]!.text).toContain(
     'User sent back the What Changes proposal with this note:\nKeep the note.',
   );
+});
+// Multiple decisions can accumulate before a step is eligible. All must share its
+// actual prompt without violating the unique decision receipt identities.
+test('one step carries every pending decision and a done Ticket gets no wake', async () => {
+  const { db, system, options } = setup();
+  const ticket = create_ticket(db);
+  db.write((tx) =>
+    tx.run(
+      `INSERT INTO ticket_decision_messages (decision_id,ticket_id,action,field,proposal_revision,sender_kind,sender_id,request_json,message,model_text,created_at,sender_message_id)
+     SELECT 'second-note',ticket_id,action,field,proposal_revision,sender_kind,sender_id,request_json,message,'Another decision note',created_at,'second-note-message' FROM ticket_decision_messages WHERE ticket_id=? LIMIT 1`,
+      [ticket.id],
+    ),
+  );
+  const pending = db.read((sql) =>
+    sql.all<{ model_text: string }>(
+      "SELECT model_text FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status='pending' ORDER BY created_at,rowid",
+      [ticket.id],
+    ),
+  );
+  expect(pending.length).toBeGreaterThan(1);
+  await start_ready_worker_step(ticket.id, options);
+  const id = read(db, ticket.id).conversation_id!;
+  const writes = system.backend_prompt_writes(id);
+  expect(writes).toHaveLength(1);
+  for (const row of pending) expect(writes[0]!.text).toContain(row.model_text);
+  expect(db.read((sql) => decisions.has_undelivered(sql, ticket.id))).toBe(false);
+  system.complete_running_turn(id);
+  advance(db, read(db, ticket.id));
+  await start_ready_worker_step(ticket.id, options);
+  expect(system.backend_prompt_writes(id)).toHaveLength(1);
+  expect(db.read(decisions.pending_ticket_ids)).not.toContain(ticket.id);
 });
 test('successful user-stage opener releases its claim and cannot run twice', async () => {
   const { db, system, options } = setup();
@@ -583,8 +623,8 @@ test('the readiness test route refuses a missing test conversation system', asyn
 });
 
 // Gap: the in-memory instrument writes no durable compaction events. Seed only the
-// record facts that the scanner reads, then prove its real queue boundary twice.
-test('an unanswered compaction sends one queued notice and an uncertain notice prevents another automatic attempt', async () => {
+// record facts that the scanner reads, then prove delivery into the running turn.
+test('an unanswered compaction steers one notice and an uncertain notice prevents another automatic attempt', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
   await start_ready_worker_step(ticket.id, options);
@@ -611,21 +651,32 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
   );
   expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([ticket.id]);
   await loop.drain();
-  expect(await system.held_prompts(id)).toHaveLength(1);
-  expect((await system.held_prompts(id))[0]!.content).toEqual(
-    expect.arrayContaining([
+  expect(await system.held_prompts(id)).toHaveLength(0);
+  expect(system.backend_prompt_writes(id)).toHaveLength(2);
+  expect(system.backend_prompt_writes(id)[1]).toMatchObject({
+    mode: 'steer',
+    content: expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('Your context was compacted') }),
     ]),
-  );
-  loop.tell_every_worker_that_lost_its_memory();
-  await loop.drain();
-  expect(await system.held_prompts(id)).toHaveLength(1);
-  system.complete_running_turn(id);
-  for (const held of await system.held_prompts(id))
-    await system.discard_held_prompt(id, held.held_prompt_id);
+  });
+  // The instrument does not persist delivered events, so seed its receipt for the scanner.
   db.write((tx) =>
     tx.run(
       'INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES (?,3,?,?,?)',
+      [
+        id,
+        'prompt',
+        JSON.stringify({ sender_message_id: 'worker_step_memory_notice_delivered' }),
+        now,
+      ],
+    ),
+  );
+  expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([]);
+  expect(system.backend_prompt_writes(id)).toHaveLength(2);
+  system.complete_running_turn(id);
+  db.write((tx) =>
+    tx.run(
+      'INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES (?,4,?,?,?)',
       [
         id,
         'prompt_delivery_uncertain',
@@ -709,7 +760,12 @@ test('dequeued feedback rereads its receipt and late delivery unblocks the first
       expected_proposal_revision: proposed.pending_proposal_revision,
     }),
   );
-  await deliver_ticket_decision_messages(ticket.id, options);
+  db.write((tx) =>
+    tx.run(
+      "UPDATE ticket_decision_messages SET delivery_status='queued',conversation_id=? WHERE decision_id='receipt-race'",
+      [current.conversation_id],
+    ),
+  );
   const receipt = db.read((sql) =>
     sql.get<{ sender_message_id: string; conversation_id: string }>(
       "SELECT sender_message_id,conversation_id FROM ticket_decision_messages WHERE decision_id='receipt-race'",

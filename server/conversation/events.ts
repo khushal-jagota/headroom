@@ -453,16 +453,19 @@ export class ModelChangedEventPayload {
 
 export class TokenUsageEventPayload {
   readonly kind = ConversationEventKind.token_usage;
+  readonly context_input_tokens: number | null;
   readonly input_tokens: number | null;
   readonly output_tokens: number | null;
   readonly cached_input_tokens: number | null;
   readonly cost_usd: number | null;
   constructor(values: {
+    context_input_tokens?: number | null;
     input_tokens?: number | null;
     output_tokens?: number | null;
     cached_input_tokens?: number | null;
     cost_usd?: number | null;
   }) {
+    this.context_input_tokens = values.context_input_tokens ?? null;
     this.input_tokens = values.input_tokens === undefined ? null : values.input_tokens;
     this.output_tokens = values.output_tokens === undefined ? null : values.output_tokens;
     this.cached_input_tokens =

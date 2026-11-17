@@ -215,6 +215,8 @@ async def python_case(path: Path, case: str) -> dict[str, Any]:
             now += 51 * 60
             await sweep()
             await capture("memory-does-not-recompact")
+            # Send outside the compaction window: TypeScript never compacts at send time.
+            now += 10 * 60
             fate = await send("more work")
             await finish()
             now += 50 * 60
@@ -401,8 +403,8 @@ def positive(result: dict[str, Any]) -> None:
         }
         assert prompts(points["memory-does-not-recompact"]).count("/compact") == 1
         assert prompts(points["real-work-restores-compaction"]).count("/compact") == 2
-        assert points["real-work-restores-compaction"]["fates"][0]["fate"] == "queued"
-        assert prompts(points["real-work-restores-compaction"])[-1] == "more work"
+        assert points["real-work-restores-compaction"]["fates"][0]["fate"] == "started"
+        assert prompts(points["real-work-restores-compaction"])[-2:] == ["more work", "/compact"]
     elif case in ("held_batch", "steer_accepted", "steer_uncertain"):
         assert points["notice-started"]["open_memory_only"] is True
         assert points["real-work-joined"]["open_memory_only"] is False

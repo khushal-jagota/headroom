@@ -149,7 +149,7 @@ export async function run_part1_parity(spec: StartupSpec): Promise<unknown> {
         },
       });
       Object.assign(client, {
-        check_version: async (
+        confirm_cli_compatible: async (
           executable: string,
           environment: Record<string, string>,
           working_directory: string,
