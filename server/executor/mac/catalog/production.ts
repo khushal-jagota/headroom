@@ -1,7 +1,9 @@
 /** Standalone machine catalogs reuse provider probes without a VPS database or login service. */
 import { BackendSnapshotService } from '../../../conversation/snapshot/service.ts';
-import { create_backend_probe } from '../../../conversation/snapshot/probe.ts';
-import { create_catalog_readers } from '../../../conversation/snapshot/catalogs/readers.ts';
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
+import { create_claude_status } from '../../../drivers/claude/runtime/status.ts';
+import { create_codex_status } from '../../../drivers/codex/runtime/status.ts';
+import { create_hermes_status } from '../../../drivers/hermes/runtime/status.ts';
 import { SubprocessBackendProbeEnvironment } from '../../../conversation/snapshot/environment.ts';
 import type { BackendProbeEnvironment } from '../../../conversation/snapshot/contracts.ts';
 import { ClaudeModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
@@ -84,65 +86,82 @@ export function create_mac_catalog(options: {
       probes.delete(operation);
     }
   };
+  const catalogs = {
+    hermes: async (request: { refresh: boolean }) => {
+      try {
+        return await hermes.source(request);
+      } catch (error) {
+        if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
+        throw error;
+      }
+    },
+    codex: async (executable: string) => {
+      if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
+      const controller = new AbortController();
+      controllers.add(controller);
+      try {
+        return await own(
+          probe_codex_model_catalog(executable, {
+            child_processes: options.child_processes,
+            signal: controller.signal,
+            environment: options.host.environment,
+          }),
+        );
+      } catch (error) {
+        if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
+        throw error;
+      } finally {
+        controllers.delete(controller);
+      }
+    },
+    claude: async (executable: string) => {
+      if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
+      const controller = new AbortController();
+      controllers.add(controller);
+      try {
+        return await own(
+          probe_claude_model_catalog(executable, options.one_shot_children, {
+            signal: controller.signal,
+            stop_options: () => source_stop_options,
+            environment: options.host.environment,
+          }),
+        );
+      } catch (error) {
+        if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
+        if (error instanceof NativeClaudeUnavailable)
+          throw new ClaudeModelCatalogUnavailable(error.message);
+        throw error;
+      } finally {
+        controllers.delete(controller);
+      }
+    },
+  };
   const snapshots = new BackendSnapshotService({
     environment,
     now: options.now,
     machine_catalog: true,
-    // Machine snapshots read login standing independently of each child factory.
-    read_codex_login_standing: () =>
-      read_codex_login_standing(null, options.host.native_skill_home('codex')),
-    probe: create_backend_probe(
-      create_catalog_readers({
-        hermes: async (request) => {
-          try {
-            return await hermes.source(request);
-          } catch (error) {
-            if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
-            throw error;
-          }
-        },
-        codex: async (executable) => {
-          if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
-          const controller = new AbortController();
-          controllers.add(controller);
-          try {
-            return await own(
-              probe_codex_model_catalog(executable, {
-                child_processes: options.child_processes,
-                signal: controller.signal,
-                environment: options.host.environment,
-              }),
-            );
-          } catch (error) {
-            if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
-            throw error;
-          } finally {
-            controllers.delete(controller);
-          }
-        },
-        claude: async (executable) => {
-          if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
-          const controller = new AbortController();
-          controllers.add(controller);
-          try {
-            return await own(
-              probe_claude_model_catalog(executable, options.one_shot_children, {
-                signal: controller.signal,
-                stop_options: () => source_stop_options,
-                environment: options.host.environment,
-              }),
-            );
-          } catch (error) {
-            if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
-            if (error instanceof NativeClaudeUnavailable)
-              throw new ClaudeModelCatalogUnavailable(error.message);
-            throw error;
-          } finally {
-            controllers.delete(controller);
-          }
-        },
-      }),
-    ),
+    sources: [
+      {
+        instance_id: parse_backend_instance_id('hermes'),
+        executable_name: 'hermes',
+        status: create_hermes_status({ catalog: catalogs.hermes }),
+      },
+      {
+        instance_id: parse_backend_instance_id('codex'),
+        executable_name: 'codex',
+        status: create_codex_status({
+          catalog: catalogs.codex,
+          // Machine snapshots read login standing independently of each child factory.
+          read_login_standing: () =>
+            read_codex_login_standing(null, options.host.native_skill_home('codex')),
+        }),
+      },
+      {
+        instance_id: parse_backend_instance_id('claude'),
+        executable_name: 'claude',
+        status: create_claude_status({ catalog: catalogs.claude }),
+      },
+    ],
   });
   const catalog = new MacCatalog({
     snapshots,

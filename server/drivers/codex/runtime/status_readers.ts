@@ -2,10 +2,12 @@
 import type {
   BackendIdentity,
   CatalogReader,
-  CodexLoginStanding,
   CommandOutcome,
 } from '../../../conversation/snapshot/contracts.ts';
-import type { CodexModelCatalogSource } from '../../../conversation/snapshot/provider_contracts.ts';
+import type {
+  CodexLoginStanding,
+  CodexModelCatalogSource,
+} from '../../../conversation/snapshot/provider_contracts.ts';
 import { CodexModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
 import { answer, model } from '../../../conversation/snapshot/catalogs/readers.ts';
 import { identity } from '../../../conversation/snapshot/identity.ts';

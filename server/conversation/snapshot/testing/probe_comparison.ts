@@ -1,13 +1,20 @@
 /** Exercise the real probe with recorded machine answers and local catalog sources. */
 import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
-import type { CodexLoginStanding, CommandOutcome } from '../contracts.ts';
-import type { CodexModelCatalog, ClaudeModelCatalog } from '../provider_contracts.ts';
+import type { CommandOutcome } from '../contracts.ts';
+import type {
+  ClaudeModelCatalog,
+  CodexLoginStanding,
+  CodexModelCatalog,
+} from '../provider_contracts.ts';
 import {
   CodexModelCatalogUnavailable,
   ClaudeModelCatalogUnavailable,
 } from '../provider_contracts.ts';
-import { create_backend_probe } from '../probe.ts';
-import { create_catalog_readers } from '../catalogs/readers.ts';
+import { built_in_model_version } from '../probe.ts';
+import type { DriverStatus } from '../../../drivers/core/status.ts';
+import { create_claude_status } from '../../../drivers/claude/runtime/status.ts';
+import { create_codex_status } from '../../../drivers/codex/runtime/status.ts';
+import { create_hermes_status } from '../../../drivers/hermes/runtime/status.ts';
 import { RecordingBackendProbeEnvironment } from '../recording_environment.ts';
 import { parse_version, version_is_newer } from '../logic/versions.ts';
 
@@ -58,26 +65,6 @@ export async function run(cases: readonly Case[]) {
       if (!environment.outcomes.has(JSON.stringify(argv))) throw new Error('Unrecorded command');
       return recorded_run(argv);
     };
-    const readers = create_catalog_readers({
-      codex: async (executable) => {
-        catalog_calls.push({ provider: 'codex', executable });
-        if (fixture.codex_catalog === undefined) throw new CodexModelCatalogUnavailable();
-        return fixture.codex_catalog;
-      },
-      claude: async (executable) => {
-        catalog_calls.push({ provider: 'claude', executable });
-        if (fixture.claude_catalog === undefined) throw new ClaudeModelCatalogUnavailable();
-        return fixture.claude_catalog;
-      },
-      hermes: async ({ refresh }) => {
-        catalog_calls.push({ provider: 'hermes', refresh });
-        return {
-          exit_code: 0,
-          standard_output: JSON.stringify(fixture.hermes_catalog),
-          standard_error: '',
-        };
-      },
-    });
     let login: CodexLoginStanding | null = null;
     if (fixture.login !== null) {
       const value = fixture.login;
@@ -97,12 +84,41 @@ export async function run(cases: readonly Case[]) {
         ],
       };
     }
-    const card = await create_backend_probe(readers)(fixture.backend, environment, {
+    const statuses: Readonly<Record<string, DriverStatus>> = {
+      codex: create_codex_status({
+        catalog: async (executable) => {
+          catalog_calls.push({ provider: 'codex', executable });
+          if (fixture.codex_catalog === undefined) throw new CodexModelCatalogUnavailable();
+          return fixture.codex_catalog;
+        },
+        read_login_standing: () => login,
+      }),
+      claude: create_claude_status({
+        catalog: async (executable) => {
+          catalog_calls.push({ provider: 'claude', executable });
+          if (fixture.claude_catalog === undefined) throw new ClaudeModelCatalogUnavailable();
+          return fixture.claude_catalog;
+        },
+      }),
+      hermes: create_hermes_status({
+        catalog: async ({ refresh }) => {
+          catalog_calls.push({ provider: 'hermes', refresh });
+          return {
+            exit_code: 0,
+            standard_output: JSON.stringify(fixture.hermes_catalog),
+            standard_error: '',
+          };
+        },
+      }),
+    };
+    const draft = await statuses[fixture.backend].probe({
+      environment,
       refresh: true,
       discover_update_advisory: true,
-      codex_login: login,
       now: new Date('2026-11-12T12:00:00Z'),
+      model_version: built_in_model_version,
     });
+    const card = { backend_key: fixture.backend, ...draft };
     cards.push({
       name: fixture.name,
       card,

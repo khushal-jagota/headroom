@@ -1,6 +1,5 @@
 /** Backend HTTP transport depends on Panels interfaces, never provider modules. */
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
-import { KNOWN_BACKEND_INSTANCE_IDS } from '../../drivers/built_in_manifests.ts';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
 import { requireOwner } from '../../core/authority/identity.ts';
@@ -14,12 +13,12 @@ import { Fields, body_fields, object } from '../http/intake.ts';
 import type { ConversationHttpWriteScope } from '../http/writes.ts';
 import { resolve_usage_model_scopes } from '../backend_usage/logic/scopes.ts';
 import type { BackendHttpRuntime } from './contracts.ts';
-import type { CodexSignInService } from './provider_contracts.ts';
-import { CodexSignInUnavailable, UnknownSignInSession } from './provider_contracts.ts';
+import type { DriverSignInController, SignInSession } from '../../drivers/core/sign_in.ts';
+import { SignInUnavailable, UnknownSignInSession } from '../../drivers/core/sign_in.ts';
 import { snapshot_json, sign_in_json } from './presentation.ts';
-function backend(raw: unknown): BackendInstanceId {
+function backend(runtime: BackendHttpRuntime, raw: unknown): BackendInstanceId {
   const fields = new Fields(raw, ['path']);
-  const result = fields.choice('backend_key', KNOWN_BACKEND_INSTANCE_IDS);
+  const result = fields.choice('backend_key', runtime.backend_ids);
   fields.finish();
   return result as BackendInstanceId;
 }
@@ -48,10 +47,26 @@ function refresh(raw: unknown): boolean {
   const values = scalarQueries(object(raw) ? raw : {});
   return values.refresh === undefined ? false : boolean(values.refresh, ['query', 'refresh']);
 }
-function sign_in_service(runtime: BackendHttpRuntime, key: BackendInstanceId): CodexSignInService {
-  if (key !== 'codex' || runtime.codex_sign_in === null)
+/** The backend's sign-in, with the member the route calls. Otherwise 404. */
+function sign_in_service(
+  runtime: BackendHttpRuntime,
+  raw: unknown,
+  member?: 'submit_return_url' | 'sign_out',
+): DriverSignInController {
+  const key = backend(runtime, raw);
+  const service = runtime.sign_in(key);
+  if (service === null || (member !== undefined && service[member] === undefined))
     throw new HttpError(404, `${key} cannot be signed in from Panels`);
-  return runtime.codex_sign_in;
+  return service;
+}
+async function in_force(operation: () => Promise<SignInSession>): Promise<SignInSession> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof UnknownSignInSession)
+      throw new HttpError(409, 'that sign-in is not the one in force any more');
+    throw error;
+  }
 }
 export interface BackendRouteOptions {
   readonly available: boolean;
@@ -68,7 +83,7 @@ export function createBackendRoutes(
       if (!options.available) throw new HttpError(503, 'the conversation system is unavailable');
     });
     // Even catalog GETs can start external probes and mutate cached observations.
-    // Own all eight handlers through completion under the same shutdown seal.
+    // Own every handler through completion under the same shutdown seal.
     app.addHook('onRoute', (route) => {
       const handler = route.handler;
       route.handler = async function (request, reply) {
@@ -123,7 +138,7 @@ export function createBackendRoutes(
       if (source === null)
         throw new PlannerError('validation', 'The selected machine is unavailable', {});
       const snapshots = await Promise.all(
-        KNOWN_BACKEND_INSTANCE_IDS.map((key) =>
+        runtime.backend_ids.map((key) =>
           source.snapshot(key, { refresh: refresh_requested, signal: signal_of(request) }),
         ),
       );
@@ -135,7 +150,7 @@ export function createBackendRoutes(
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, signal_of(request)]);
       const usage_refresh = Promise.all(
-        KNOWN_BACKEND_INSTANCE_IDS.map((key) => runtime.backend_usage.refresh(key, { signal })),
+        runtime.backend_ids.map((key) => runtime.backend_usage.refresh(key, { signal })),
       );
       let snapshots;
       let refreshed;
@@ -169,7 +184,7 @@ export function createBackendRoutes(
     app.put<{ Params: { backend_key: string; '*': string } }>(
       '/backends/:backend_key/models/*',
       async (request) => {
-        const key = backend(request.params);
+        const key = backend(runtime, request.params);
         const path = request.params['*'];
         if (!path.endsWith('/enablement')) throw new HttpError(404, 'Not Found');
         const model_id = path.slice(0, -'/enablement'.length);
@@ -193,34 +208,44 @@ export function createBackendRoutes(
       },
     );
     app.post('/backends/:backend_key/update', async (request) => {
-      const key = backend(request.params);
+      const key = backend(runtime, request.params);
       requireOwner(services.identity(request));
       return runtime.backend_snapshots.update_backend(key, { signal: signal_of(request) });
     });
     app.post('/backends/:backend_key/sign-in', async (request) => {
-      const service = sign_in_service(runtime, backend(request.params));
+      const service = sign_in_service(runtime, request.params);
       try {
         return sign_in_json(await service.start());
       } catch (error) {
-        if (error instanceof CodexSignInUnavailable) throw new HttpError(503, error.message);
+        if (error instanceof SignInUnavailable) throw new HttpError(503, error.message);
         throw error;
       }
     });
     app.get('/backends/:backend_key/sign-in', async (request) => {
-      const pending = sign_in_service(runtime, backend(request.params)).read();
+      const pending = sign_in_service(runtime, request.params).read();
       return pending === null ? { sign_in: null } : sign_in_json(pending);
+    });
+    app.delete('/backends/:backend_key/sign-in', async (request) => {
+      await sign_in_service(runtime, request.params, 'sign_out').sign_out!();
+      return { sign_in: null };
     });
     app.delete<{ Params: { backend_key: string; session_id: string } }>(
       '/backends/:backend_key/sign-in/:session_id',
       async (request) => {
-        const service = sign_in_service(runtime, backend(request.params));
-        try {
-          return sign_in_json(await service.cancel(request.params.session_id));
-        } catch (error) {
-          if (error instanceof UnknownSignInSession)
-            throw new HttpError(409, 'that sign-in is not the one in force any more');
-          throw error;
-        }
+        const service = sign_in_service(runtime, request.params);
+        return sign_in_json(await in_force(() => service.cancel(request.params.session_id)));
+      },
+    );
+    app.post<{ Params: { backend_key: string; session_id: string } }>(
+      '/backends/:backend_key/sign-in/:session_id/return-url',
+      async (request) => {
+        const service = sign_in_service(runtime, request.params, 'submit_return_url');
+        const fields = body_fields(request.body);
+        const return_url = fields.text('return_url');
+        fields.finish();
+        return sign_in_json(
+          await in_force(() => service.submit_return_url!(request.params.session_id, return_url!)),
+        );
       },
     );
   };

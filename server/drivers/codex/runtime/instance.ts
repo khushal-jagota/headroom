@@ -1,7 +1,13 @@
-/** One Codex instance: the launch and child factory the server composed before drivers. */
+/** One Codex instance: its launch and child factory, card, sign-in, allowance usage and transcripts. */
+import { homedir } from 'node:os';
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
+import { home_path } from '../../core/paths.ts';
+import { backend_io_is_test } from '../../../conversation/snapshot/environment.ts';
 import { create_durable_codex_login_rejection } from './login_rejection.ts';
+import { create_codex_providers } from './providers.ts';
+import { create_codex_status } from './status.ts';
+import { codex_transcript_usage } from './transcript_usage.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
 import { codex_driver } from '../driver.ts';
 import { codex_manifest } from '../manifest.ts';
@@ -25,7 +31,7 @@ export async function create_codex_instance(
   input: DriverCreateInput<null>,
   host: DriverHost,
 ): Promise<DriverInstance> {
-  return {
+  const base = {
     instance_id: input.instance_id,
     driver_kind: codex_driver.driver_kind,
     capabilities: {
@@ -38,6 +44,34 @@ export async function create_codex_instance(
       // Separate instances share this database's durable rejection row.
       remembered_login_rejection: create_durable_codex_login_rejection(host.database, host.now),
     }),
-    dispose: async () => {},
+    transcript_usage: codex_transcript_usage(
+      home_path(codex_manifest.home!, host.environment, homedir(), {
+        unset: '||',
+        expand_configured: false,
+      }),
+    ),
+  };
+  // A test instance reads no catalog, login or account, and cannot sign in.
+  if (host.test_mode || backend_io_is_test())
+    return {
+      ...base,
+      status: create_codex_status({ catalog: null, read_login_standing: null }),
+      dispose: async () => {},
+    };
+  const providers = create_codex_providers({
+    database: host.database,
+    now: host.now,
+    one_shot_children: host.one_shot_children,
+    child_processes: host.child_processes,
+  });
+  return {
+    ...base,
+    status: create_codex_status({
+      catalog: providers.catalog,
+      read_login_standing: providers.read_login_standing,
+    }),
+    sign_in: providers.sign_in,
+    allowance_usage: providers.allowance_usage,
+    dispose: () => providers.dispose(),
   };
 }

@@ -6,8 +6,8 @@ import type { BackendStateStore } from '../backend_state.ts';
 import type { BackendCommandOptions } from './commands.ts';
 import type { BackendUsageResult } from '../backend_usage/contracts.ts';
 import type { RemoteCatalogSource } from '../model_resolution/contracts.ts';
-import type { CodexSignInService } from './provider_contracts.ts';
-import type { StoredCodexLogin, CodexLoginGeneration } from './provider_contracts.ts';
+import type { DriverSignInController } from '../../drivers/core/sign_in.ts';
+import type { DriverStatus } from '../../drivers/core/status.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 export type BackendInstallMethod =
   'npm_global' | 'bun_global' | 'pnpm_global' | 'homebrew' | 'native' | 'manual_only';
@@ -100,33 +100,24 @@ export interface BackendHttpRuntime {
       options?: { signal?: AbortSignal },
     ): Promise<BackendUsageResult>;
   };
-  readonly codex_sign_in: CodexSignInService | null;
+  /** Card order and the unknown-backend choice list. */
+  readonly backend_ids: readonly BackendInstanceId[];
+  /** The backend's sign-in, or null when Panels cannot sign it in. */
+  sign_in(backend_key: string): DriverSignInController | null;
   readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
 }
-/** The login adapter supplies only the card's nonsecret comparison operands. */
-export interface CodexLoginStanding {
-  readonly stored: StoredCodexLogin;
-  readonly generation: CodexLoginGeneration | null;
-  readonly rejected: boolean;
-  everything_a_card_reads(options: { now: Date }): readonly unknown[];
+/** One backend card: the instance it describes and the driver status that probes it. */
+export interface BackendCardSource {
+  readonly instance_id: BackendInstanceId;
+  /** Machine mode runs this executable's `--version` before reusing a kept card. */
+  readonly executable_name: string;
+  readonly status: DriverStatus;
 }
-export interface SnapshotProbeOptions {
-  readonly signal?: AbortSignal;
-  readonly refresh: boolean;
-  readonly discover_update_advisory: boolean;
-  readonly codex_login: CodexLoginStanding | null;
-  readonly now: Date;
-}
-export type BackendProbe = (
-  backend_key: BackendInstanceId,
-  environment: BackendProbeEnvironment,
-  options: SnapshotProbeOptions,
-) => Promise<BackendSnapshot>;
 export interface BackendSnapshotServiceOptions {
+  /** Card order. */
+  readonly sources: readonly BackendCardSource[];
   readonly keep_complete_model_list?: (snapshot: BackendSnapshot) => void | Promise<void>;
   readonly environment: BackendProbeEnvironment;
-  readonly probe: BackendProbe;
-  readonly read_codex_login_standing: () => CodexLoginStanding | null;
   readonly now?: () => Date;
   readonly machine_catalog?: boolean;
 }

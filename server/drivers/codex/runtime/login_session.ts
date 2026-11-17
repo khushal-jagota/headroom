@@ -3,16 +3,18 @@ import { randomBytes } from 'node:crypto';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { homedir } from 'node:os';
-import {
-  CodexSignInUnavailable,
-  UnknownSignInSession,
-  type CodexLoginGeneration,
-  type CodexLoginRejectionMemory,
-  type CodexSignIn,
-  type CodexSignInService as SignInServiceContract,
-  type SignInState,
-  type StoredCodexLogin,
+import type {
+  CodexLoginGeneration,
+  CodexLoginRejectionMemory,
+  StoredCodexLogin,
 } from '../../../conversation/snapshot/provider_contracts.ts';
+import {
+  SignInUnavailable,
+  UnknownSignInSession,
+  type DriverSignInController,
+  type SignInSession,
+  type SignInState,
+} from '../../core/sign_in.ts';
 import {
   CodexAppServerClient,
   type CodexClientStart,
@@ -23,10 +25,6 @@ import { child_environment } from './environment.ts';
 import { codex_home, read_stored_codex_login } from './login.ts';
 import * as protocol from './protocol.ts';
 import { DEFAULT_SIGN_IN_BOUNDS, type SignInBounds } from './sign_in_configuration.ts';
-export {
-  CodexSignInUnavailable,
-  UnknownSignInSession,
-} from '../../../conversation/snapshot/provider_contracts.ts';
 export type { SignInBounds } from './sign_in_configuration.ts';
 
 export const START_METHOD = 'account/login/start';
@@ -117,7 +115,7 @@ function same_generation(
     ? one === other
     : one.account_id === other.account_id && one.last_refresh === other.last_refresh;
 }
-function view(session: Session): CodexSignIn {
+function view(session: Session): SignInSession {
   return {
     session_id: session.session_id,
     state: session.state,
@@ -130,7 +128,7 @@ function view(session: Session): CodexSignIn {
   };
 }
 
-export class CodexSignInService implements SignInServiceContract {
+export class CodexSignInService implements DriverSignInController {
   private readonly options: CodexSignInOptions;
   private readonly bounds: SignInBounds;
   private readonly now: () => Date | string;
@@ -154,19 +152,19 @@ export class CodexSignInService implements SignInServiceContract {
     return task;
   }
 
-  read(): CodexSignIn | null {
+  read(): SignInSession | null {
     return this.session === null ? null : view(this.session);
   }
 
-  start(): Promise<CodexSignIn> {
+  start(): Promise<SignInSession> {
     return this.with_lock(async () => {
-      if (this.closed) throw new CodexSignInUnavailable('Codex sign-in is shut down.');
+      if (this.closed) throw new SignInUnavailable('Codex sign-in is shut down.');
       if (this.session?.state === 'pending') return view(this.session);
       return this.start_session();
     });
   }
 
-  cancel(session_id: string): Promise<CodexSignIn> {
+  cancel(session_id: string): Promise<SignInSession> {
     return this.with_lock(async () => {
       const session = this.session;
       if (session === null || session.session_id !== session_id)
@@ -193,7 +191,7 @@ export class CodexSignInService implements SignInServiceContract {
     return (this.options.read_login ?? read_stored_codex_login)(codex_home());
   }
 
-  private async start_session(): Promise<CodexSignIn> {
+  private async start_session(): Promise<SignInSession> {
     this.sequence += 1;
     const started = timestamp(this.now());
     let session!: Session;
@@ -261,9 +259,7 @@ export class CodexSignInService implements SignInServiceContract {
       await this.stop_child(session);
       session.state = 'ended';
       session.detail = 'Panels could not start a sign-in with codex.';
-      throw new CodexSignInUnavailable(
-        failure instanceof Error ? failure.message : String(failure),
-      );
+      throw new SignInUnavailable(failure instanceof Error ? failure.message : String(failure));
     }
     try {
       const decoded = protocol.DeviceCodeLoginResponse.read(answer);
@@ -274,7 +270,7 @@ export class CodexSignInService implements SignInServiceContract {
       await this.stop_child(session);
       session.state = 'ended';
       session.detail = 'Codex did not offer a device-code sign-in.';
-      throw new CodexSignInUnavailable(
+      throw new SignInUnavailable(
         `codex answered ${START_METHOD} with a shape this does not read: ${failure instanceof Error ? failure.message : String(failure)}`,
       );
     }
@@ -294,7 +290,7 @@ export class CodexSignInService implements SignInServiceContract {
   private async bring_up_child(session: Session): Promise<void> {
     const argv = await this.options.resolve_argv();
     if (session.startup_aborted) return;
-    if (argv === null) throw new CodexSignInUnavailable('codex is not installed on this machine');
+    if (argv === null) throw new SignInUnavailable('codex is not installed on this machine');
     await session.client.start({
       argv,
       environment: child_environment(),
@@ -375,7 +371,7 @@ export class CodexSignInService implements SignInServiceContract {
     }
   }
 
-  private async settle(session: Session, success_was_reported: boolean): Promise<CodexSignIn> {
+  private async settle(session: Session, success_was_reported: boolean): Promise<SignInSession> {
     this.stop_consumers(session);
     await this.stop_child(session);
     this.absorb_delivered(session);

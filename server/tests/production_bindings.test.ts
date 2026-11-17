@@ -1,5 +1,8 @@
 /** Adapter protocols do not prove real selection or the catalog's composed DB barrier. */
 import { afterEach, expect, test, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
+import type { DriverInstance } from '../drivers/core/driver.ts';
+import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { dirname, join, resolve } from 'node:path';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -124,6 +127,18 @@ test('configured real bindings share owners and durable memory while Hermes clea
       vi.stubEnv('PLAN_TEST_MODE', test_mode);
     }
   }
+  async function without_runner_until<T>(mode: string, operation: () => Promise<T>): Promise<T> {
+    const previous = markers.map((key) => process.env[key]);
+    const test_mode = process.env.PLAN_TEST_MODE;
+    try {
+      markers.forEach((key) => vi.stubEnv(key, undefined));
+      vi.stubEnv('PLAN_TEST_MODE', mode);
+      return await operation();
+    } finally {
+      markers.forEach((key, index) => vi.stubEnv(key, previous[index]));
+      vi.stubEnv('PLAN_TEST_MODE', test_mode);
+    }
+  }
   const constructors = [
     vi.spyOn(claude, 'create_claude_backend_child_factory'),
     vi.spyOn(codex, 'create_codex_backend_child_factory'),
@@ -153,6 +168,8 @@ test('configured real bindings share owners and durable memory while Hermes clea
   let context!: ConversationCompositionContext, server: StartedServer | undefined;
   let owned_http!: BackendHttpRuntime;
   let real!: ProductionBackendBindings, prepared!: PreparedProductionBackends;
+  let codex_dispose!: MockInstance<DriverInstance['dispose']>;
+  let original_codex_dispose!: DriverInstance['dispose'];
   const stop: StopOptions = { deadline: performance.now() / 1000 + 30 };
   const firstStop: StopOptions = { deadline: stop.deadline - 1 };
   try {
@@ -160,15 +177,21 @@ test('configured real bindings share owners and durable memory while Hermes clea
       async prepareConversationComposition(value, signal) {
         real = create_production_backend_bindings();
         expect(constructors.every((spy) => spy.mock.calls.length === 0)).toBe(true);
-        const host = real.driver_host(value);
+        // The instances are production ones: they own the catalogs, sign-in and usage.
+        const host = real.driver_host({ ...value, config: { ...value.config, test_mode: false } });
         const configs = default_instance_configs(real.drivers);
-        const registry = await create_driver_registry({
-          drivers: real.drivers,
-          configs,
-          host,
-          signal,
-        });
+        const registry = await without_runner_until('0', () =>
+          create_driver_registry({
+            drivers: real.drivers,
+            configs,
+            host,
+            signal,
+          }),
+        );
         prepared = { registry, host };
+        const codex_instance = registry.require_live('codex');
+        original_codex_dispose = codex_instance.dispose;
+        codex_dispose = vi.spyOn(codex_instance, 'dispose');
       },
       createBackendServices(value) {
         context = value;
@@ -241,23 +264,33 @@ test('configured real bindings share owners and durable memory while Hermes clea
     expect(other.applies_to(generation)).toBe(true);
     other.forget(generation);
     expect(memory.applies_to(generation)).toBe(false);
-    const base = http_runtime.mock.results[0]!.value;
-    const original_base_stop = base.shutdown!;
-    const base_stop = vi.spyOn(base, 'shutdown');
-    const retained = http_runtime.mock.calls[0]![0].providers.hermes!;
-    await expect(without_runner('1', () => retained({ refresh: true }))).rejects.toThrow(
-      'Production backend I/O is unavailable in tests. Inject recording adapters.',
-    );
+    expect(http_runtime.mock.results[0]!.value).toBe(owned_http);
+    const retained = prepared.registry.require_live('hermes').status;
+    const recorded = new RecordingBackendProbeEnvironment();
+    recorded.configured_executables.set('hermes', '/synthetic/hermes');
+    await expect(
+      without_runner_until('1', () =>
+        retained.probe({
+          environment: recorded,
+          refresh: true,
+          discover_update_advisory: false,
+          now: new Date(0),
+          model_version: () => [],
+        }),
+      ),
+    ).rejects.toThrow('Production backend I/O is unavailable in tests. Inject recording adapters.');
     const failure = new Error('Retained Hermes cleanup failed');
     const prior_failure = new Error('Initial catalog cleanup failed');
     const retry_cleanup = vi.fn(async () => {});
     const retry_failure = new ModelCatalogCleanupFailed(undefined, [prior_failure], retry_cleanup);
-    base_stop.mockImplementationOnce(async () => {
+    codex_dispose.mockImplementationOnce(async () => {
       throw retry_failure;
     });
-    await expect(owned_http.shutdown!(firstStop)).rejects.toMatchObject({
-      errors: [retry_failure],
-    });
+    const first_failure = (await owned_http.shutdown!(firstStop).catch(
+      (error: unknown) => error,
+    )) as AggregateError;
+    expect(first_failure.errors[0]).toBe(prior_failure);
+    expect((first_failure.errors[1] as AggregateError).errors).toEqual([retry_failure]);
     let raw_settled = false;
     void owned_http.settled().then(
       () => {
@@ -270,14 +303,14 @@ test('configured real bindings share owners and durable memory while Hermes clea
     await new Promise<void>((yes) => setImmediate(yes));
     expect(raw_settled).toBe(false);
     expect(retry_cleanup).not.toHaveBeenCalled();
-    expect(base_stop).toHaveBeenCalledExactlyOnceWith(firstStop);
+    expect(codex_dispose).toHaveBeenCalledExactlyOnceWith(firstStop);
     expect(catalog_stop).toHaveBeenCalledTimes(1);
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
-    base_stop.mockClear();
+    codex_dispose.mockClear();
     catalog_stop.mockClear();
-    base_stop.mockImplementationOnce(async (options: unknown) => {
+    codex_dispose.mockImplementationOnce(async (options) => {
       await retry_failure.retry_cleanup();
-      await original_base_stop.call(base, options);
+      await original_codex_dispose(options);
     });
     hold = true;
     const closing = server.close(stop);
@@ -302,7 +335,7 @@ test('configured real bindings share owners and durable memory while Hermes clea
     await expect(owned_http.settled()).rejects.toMatchObject({ errors: [prior_failure, failure] });
     await expect(closing).rejects.toThrow('Shutdown failed after settlement');
     expect(catalog_stop).toHaveBeenCalledTimes(1);
-    expect(base_stop).toHaveBeenCalledExactlyOnceWith(stop);
+    expect(codex_dispose).toHaveBeenCalledExactlyOnceWith(stop);
     expect(retry_cleanup).toHaveBeenCalledTimes(1);
     expect(retry_failure.pending).toBe(false);
     const successor = acquireRuntimeOwnership(path);

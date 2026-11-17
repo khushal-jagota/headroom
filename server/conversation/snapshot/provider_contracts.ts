@@ -1,6 +1,5 @@
 /** Provider units implement these local service boundaries. */
-import type { CodexLoginStanding, CommandOutcome } from './contracts.ts';
-import type { StopOptions } from '../../lifecycle/contracts.ts';
+import type { CommandOutcome } from './contracts.ts';
 export interface CodexModel {
   readonly model_id: string;
   readonly display_name: string;
@@ -53,31 +52,12 @@ export interface CodexLoginRejectionMemory {
   forget(generation: CodexLoginGeneration | null): void;
   applies_to(generation: CodexLoginGeneration | null): boolean;
 }
-export interface SavedCodexLoginSource {
-  read_stored_codex_login(home?: string | null): StoredCodexLogin;
-  read_codex_login_standing(
-    remembered_rejection: CodexLoginRejectionMemory | null,
-  ): CodexLoginStanding;
+/** The login adapter supplies only the card's nonsecret comparison operands. */
+export interface CodexLoginStanding {
+  readonly stored: StoredCodexLogin;
+  readonly generation: CodexLoginGeneration | null;
+  readonly rejected: boolean;
+  everything_a_card_reads(options: { now: Date }): readonly unknown[];
 }
-export type SignInState = 'pending' | 'confirmed' | 'unconfirmed' | 'ended';
-export interface CodexSignIn {
-  readonly session_id: string;
-  readonly state: SignInState;
-  readonly verification_url: string | null;
-  readonly user_code: string | null;
-  /** ISO datetime strings preserve source microseconds. */
-  readonly started_at: Date | string;
-  readonly deadline_at: Date | string;
-  readonly detail: string | null;
-  readonly account_label: string | null;
-}
-export interface CodexSignInService {
-  read(): CodexSignIn | null;
-  start(): Promise<CodexSignIn>;
-  cancel(session_id: string): Promise<CodexSignIn>;
-  shutdown(options?: StopOptions): Promise<void>;
-}
-export class CodexSignInUnavailable extends Error {}
-export class UnknownSignInSession extends Error {}
 export class CodexModelCatalogUnavailable extends Error {}
 export class ClaudeModelCatalogUnavailable extends Error {}

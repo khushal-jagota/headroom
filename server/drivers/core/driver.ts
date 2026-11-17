@@ -51,7 +51,7 @@ export interface DriverInstance {
   readonly driver_kind: DriverKind;
   readonly capabilities: BackendCapabilities;
   readonly child_factory: BackendChildFactory;
-  readonly status?: DriverStatus;
+  readonly status: DriverStatus;
   readonly allowance_usage?: BackendUsageAdapter;
   readonly transcript_usage?: TranscriptUsageSource;
   readonly sign_in?: DriverSignInController;

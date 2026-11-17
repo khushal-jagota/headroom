@@ -17,9 +17,6 @@ function production_providers(children: OneShotChildren, database: Database = {}
     child_processes: children.child_processes,
     database,
     now: () => new Date(0),
-    read_codex_snapshot: async () => {
-      throw new Error('Unexpected snapshot lookup');
-    },
   });
 }
 
@@ -86,11 +83,11 @@ test('a retained production sign-in refuses test context before its first login 
   try {
     const providers = production_providers(children);
     vi.stubEnv('PLAN_TEST_MODE', '1');
-    await expect(providers.codex_sign_in!.start()).rejects.toThrow(
+    await expect(providers.sign_in.start()).rejects.toThrow(
       'Production sign-in is unavailable in tests.',
     );
     expect(read).not.toHaveBeenCalled();
-    await providers.codex_sign_in!.shutdown();
+    await providers.dispose();
   } finally {
     children.seal();
     await children.settled();
@@ -102,8 +99,8 @@ test('a retained production sign-in refuses test context before its first login 
 // A synchronous failure in one owner must not skip another owner's active child cleanup.
 test('runtime shutdown joins the production catalog owner before reporting environment failure', async () => {
   const children = new OneShotChildren();
-  const { create_backend_runtime, unavailable_backend_providers } =
-    await import('../../../conversation/snapshot/composition.ts');
+  const { create_backend_runtime } = await import('../../../conversation/snapshot/composition.ts');
+  const { driver_registry_from_entries } = await import('../../core/registry.ts');
   const { RecordingBackendProbeEnvironment } =
     await import('../../../conversation/snapshot/recording_environment.ts');
   const catalog = await import('./model_catalog.ts');
@@ -137,9 +134,9 @@ test('runtime shutdown joins the production catalog owner before reporting envir
           throw failure;
         },
       }),
-      providers: { ...unavailable_backend_providers(), ...providers },
+      registry: { ...driver_registry_from_entries([], []), dispose: () => providers.dispose() },
     });
-    operation = providers.codex!('/synthetic/codex');
+    operation = providers.catalog('/synthetic/codex');
     void operation.catch(() => {});
     await entered.promise;
     let settled = false;

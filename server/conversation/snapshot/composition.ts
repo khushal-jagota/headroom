@@ -1,23 +1,25 @@
-/** Production receives provider implementations as values. Missing ones stay explicit. */
+/** The backend HTTP runtime over the live driver instances. Without a registry, built-in cards only. */
 import type { Database } from '../../core/database/contracts.ts';
 import type { Config } from '../../core/config.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
-import type { BackendProbeEnvironment, BackendHttpRuntime } from './contracts.ts';
 import type {
-  CodexModelCatalogSource,
-  ClaudeModelCatalogSource,
-  HermesModelCatalogSource,
-  SavedCodexLoginSource,
-  CodexSignInService,
-} from './provider_contracts.ts';
+  BackendCardSource,
+  BackendProbeEnvironment,
+  BackendHttpRuntime,
+} from './contracts.ts';
 import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
-import type { RemoteCatalogSource } from '../model_resolution/contracts.ts';
+import type { DriverRegistry } from '../../drivers/core/registry.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
+import { default_instance_id_for_driver } from '../../drivers/core/identity.ts';
+import type { DriverStatus } from '../../drivers/core/status.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
+import type { BuiltInDriverFacts } from '../../drivers/built_in_manifests.ts';
 import { BackendSnapshotService } from './service.ts';
-import { create_backend_probe } from './probe.ts';
-import { create_catalog_readers } from './catalogs/readers.ts';
+import { probe_card } from './probe.ts';
+import { answer } from './catalogs/readers.ts';
+import { identity } from './identity.ts';
 import { BackendUsageService } from '../backend_usage/service.ts';
 import { BackendStateStore } from '../backend_state.ts';
-import { create_durable_codex_login_rejection } from '../../drivers/codex/runtime/login_rejection.ts';
 import { SubprocessBackendProbeEnvironment, backend_io_is_test } from './environment.ts';
 import { RecordingBackendProbeEnvironment } from './recording_environment.ts';
 import { observe_shutdown } from '../shutdown.ts';
@@ -25,30 +27,91 @@ import {
   model_catalog_cleanup_pending,
   remember_model_catalog_failure,
 } from '../backends/catalog_cleanup.ts';
-export interface BackendProviders {
-  readonly codex: CodexModelCatalogSource | null;
-  readonly claude: ClaudeModelCatalogSource | null;
-  readonly hermes: HermesModelCatalogSource | null;
-  readonly saved_codex_login: SavedCodexLoginSource | null;
-  readonly codex_sign_in: CodexSignInService | null;
-  readonly usage: Readonly<Partial<Record<string, BackendUsageAdapter>>>;
-  readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
+
+type UsageEntry = { readonly label: string; readonly adapter?: BackendUsageAdapter };
+interface RuntimeBackends {
+  readonly sources: readonly BackendCardSource[];
+  readonly usage: ReadonlyMap<BackendInstanceId, UsageEntry>;
+  readonly sign_ins: ReadonlyMap<string, NonNullable<ReturnType<BackendHttpRuntime['sign_in']>>>;
+}
+/** The registry's live instances, in registry order. */
+function registry_backends(registry: DriverRegistry): RuntimeBackends {
+  const live = registry.list().flatMap((entry) => (entry.kind === 'live' ? [entry] : []));
+  return {
+    sources: live.map(({ driver, instance }) => ({
+      instance_id: instance.instance_id,
+      executable_name: driver.manifest.executable.name,
+      status: instance.status,
+    })),
+    usage: new Map(
+      live.map(({ driver, instance }): [BackendInstanceId, UsageEntry] => [
+        instance.instance_id,
+        instance.allowance_usage === undefined
+          ? { label: driver.client.label }
+          : { label: driver.client.label, adapter: instance.allowance_usage },
+      ]),
+    ),
+    sign_ins: new Map(
+      live.flatMap(({ instance }) =>
+        instance.sign_in === undefined ? [] : [[instance.instance_id, instance.sign_in] as const],
+      ),
+    ),
+  };
+}
+/**
+ * A built-in card that loads no driver runtime: no identity or catalog reader. Compositions
+ * without a registry probe a recording environment that has no executable, so each card is the
+ * driver's missing-binary card, as with null catalog and login sources.
+ */
+function manifest_only_status(driver: BuiltInDriverFacts): DriverStatus {
+  return {
+    version_detects_upgrade: false,
+    probe: (context) =>
+      probe_card(
+        {
+          driver_kind: driver.driver_kind,
+          manifest: driver.manifest,
+          models: driver.models,
+          read_identity: () => identity('unknown'),
+          read_catalog: async () => answer(),
+        },
+        context,
+      ),
+  };
+}
+/** The built-in default instances in BUILT_IN_DRIVERS order, with no sign-in or usage adapter. */
+function built_in_backends(): RuntimeBackends {
+  return {
+    sources: BUILT_IN_MANIFESTS.map((driver) => ({
+      instance_id: default_instance_id_for_driver(driver.driver_kind),
+      executable_name: driver.manifest.executable.name,
+      status: manifest_only_status(driver),
+    })),
+    usage: new Map(
+      BUILT_IN_MANIFESTS.map((driver): [BackendInstanceId, UsageEntry] => [
+        default_instance_id_for_driver(driver.driver_kind),
+        { label: driver.client.label },
+      ]),
+    ),
+    sign_ins: new Map(),
+  };
 }
 export function create_backend_runtime(options: {
   readonly database: Database;
   readonly config: Config;
   readonly now: () => Date;
-  readonly providers: BackendProviders;
+  /** The live backends. Their dispose joins this runtime's shutdown. */
+  readonly registry?: DriverRegistry;
   readonly environment?: BackendProbeEnvironment;
   readonly one_shot_children?: OwnedOneShotChildren;
 }): BackendHttpRuntime {
-  const { database, providers, now } = options;
+  const { database, now, registry } = options;
   const environment: BackendProbeEnvironment =
     options.environment ??
     (options.config.test_mode || backend_io_is_test()
       ? new RecordingBackendProbeEnvironment()
       : new SubprocessBackendProbeEnvironment(require_children(options.one_shot_children)));
-  const rejection = create_durable_codex_login_rejection(database, now);
+  const backends = registry === undefined ? built_in_backends() : registry_backends(registry);
   const backend_state = new BackendStateStore(database);
   let resolve_resource_join!: () => void, reject_resource_join!: (error: unknown) => void;
   const resource_join = new Promise<void>((resolve, reject) => {
@@ -86,7 +149,7 @@ export function create_backend_runtime(options: {
             invoke_shutdown(() => environment.shutdown?.()),
           ]);
           const results = await Promise.allSettled([
-            invoke_shutdown(() => providers.codex_sign_in?.shutdown(options)),
+            invoke_shutdown(() => registry?.dispose(options)),
             environment_stop.then((results) => {
               const failures = results.filter((result) => result.status === 'rejected');
               if (failures.length)
@@ -120,31 +183,19 @@ export function create_backend_runtime(options: {
     },
     database,
     backend_snapshots: new BackendSnapshotService({
+      sources: backends.sources,
       keep_complete_model_list: (snapshot) => backend_state.keep_vps_model_list(snapshot),
       environment,
       now,
-      read_codex_login_standing: () =>
-        providers.saved_codex_login?.read_codex_login_standing(rejection) ?? null,
-      probe: create_backend_probe(create_catalog_readers(providers)),
     }),
     backend_state,
-    backend_usage: new BackendUsageService(providers.usage),
-    codex_sign_in: providers.codex_sign_in,
-    machine_catalog: providers.machine_catalog,
+    backend_usage: new BackendUsageService(backends.usage),
+    backend_ids: backends.sources.map((source) => source.instance_id),
+    sign_in: (backend_key) => backends.sign_ins.get(backend_key) ?? null,
+    machine_catalog: () => null,
   };
 }
 function require_children(children: OwnedOneShotChildren | undefined): OwnedOneShotChildren {
   if (!children) throw new Error('Production backend probes require a server-owned child lifetime');
   return children;
-}
-export function unavailable_backend_providers(): BackendProviders {
-  return {
-    codex: null,
-    claude: null,
-    hermes: null,
-    saved_codex_login: null,
-    codex_sign_in: null,
-    usage: {},
-    machine_catalog: () => null,
-  };
 }

@@ -247,7 +247,7 @@ this helper's current contract.
 `drivers/codex/runtime/` supplies the small consumed wire contracts,
 JSONL client, saved-login reader, and inherited child environment. Process-group
 ownership comes from `lifecycle/owned_processes.ts`. `drivers/codex/runtime/adapter.ts` exports `create_codex_backend_child_factory` for the real core.
-`drivers/codex/runtime/providers.ts` supplies the fixed model, saved-login, sign-in, and usage bindings.
+`drivers/codex/runtime/providers.ts` supplies the model, saved-login, sign-in, and usage bindings. Static facts such as the executable, home option, and version floor live in each driver's manifest (`drivers/<kind>/`), and `drivers/built_in_manifests.ts` is the runtime-free list installer-side code reads.
 Production snapshot composition receives its database and clock from `core/start.ts`.
 The sign-in service and snapshot reads share the durable login-rejection state.
 The lifecycle composition must supply `remembered_login_rejection` to the Codex child

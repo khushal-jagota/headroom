@@ -9,6 +9,7 @@ import type {
   RetainedBackendChildFactory,
 } from '../conversation/backends/contracts.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
+import type { UsageTranscriptSource } from '../conversation/usage/contracts.ts';
 import {
   conversation_execution_refusal,
   local_ticket_execution_refusal,
@@ -32,6 +33,8 @@ export type ProductionBackendChildFactory = BackendChildFactory &
   Partial<Pick<RetainedBackendChildFactory, 'recover' | 'retained_runs'>>;
 export interface ProductionBindingContext extends ConversationCompositionContext {
   readonly driver_host: DriverHost;
+  /** The live instances: the HTTP runtime's cards, sign-ins and usage. */
+  readonly registry: DriverRegistry;
 }
 export interface ProductionBackendBindings {
   readonly drivers: readonly AnyAgentDriver[];
@@ -62,7 +65,6 @@ export function compose_production_backends(
   prepared: PreparedProductionBackends,
   bindings: ProductionBackendBindings,
 ) {
-  const shared: ProductionBindingContext = { ...context, driver_host: prepared.host };
   // A broken install still fails startup.
   const unavailable = prepared.registry
     .list()
@@ -128,6 +130,7 @@ export function compose_production_backends(
     return { ...entry, instance: { ...entry.instance, child_factory } };
   });
   const registry = driver_registry_from_entries([...prepared.registry.drivers.values()], entries);
+  const shared: ProductionBindingContext = { ...context, driver_host: prepared.host, registry };
   const supplied_http = bindings.http(shared);
   const http: BackendHttpRuntime =
     context.executor == null
@@ -137,7 +140,8 @@ export function compose_production_backends(
           backend_snapshots: supplied_http.backend_snapshots,
           backend_state: supplied_http.backend_state,
           backend_usage: supplied_http.backend_usage,
-          codex_sign_in: supplied_http.codex_sign_in,
+          backend_ids: supplied_http.backend_ids,
+          sign_in: (backend_key) => supplied_http.sign_in(backend_key),
           machine_catalog: (machine_id) => context.executor!.catalog_for(machine_id),
           shutdown: (options) => supplied_http.shutdown?.(options) ?? Promise.resolve(),
           settled: () => supplied_http.settled(),
@@ -147,6 +151,14 @@ export function compose_production_backends(
   return {
     registry,
     http,
+    /** Each live instance's own transcripts, for the recorded usage service. */
+    transcript_sources: registry
+      .list()
+      .flatMap((entry): UsageTranscriptSource[] =>
+        entry.kind === 'live' && entry.instance.transcript_usage !== undefined
+          ? [{ provider: entry.instance.instance_id, source: entry.instance.transcript_usage }]
+          : [],
+      ),
     execution_refusal,
     stall_sources: () => [
       ...bindings.stall_sources(shared),

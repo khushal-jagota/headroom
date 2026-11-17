@@ -24,6 +24,7 @@ import { compose_production_backends, require_backend_bindings } from './product
 import type { ProductionBackendBindings } from './production_bindings.ts';
 import { create_driver_registry, default_instance_configs } from '../drivers/core/registry.ts';
 import type { ShutdownCompletion } from './contracts.ts';
+import { makeUsageService } from '../conversation/usage/composition.ts';
 
 export interface ProductionServerDependencies {
   readonly backends: Partial<ProductionBackendBindings>;
@@ -85,6 +86,11 @@ export async function start_production_server(
     createConversationCore: (context) =>
       create_production_conversation_core(context, composed(context)),
     createBackendServices: (context) => composed(context).http,
+    createUsageService: (context) =>
+      makeUsageService(context.config, {
+        now: () => context.clock.now(),
+        transcriptSources: composed(context).transcript_sources,
+      }),
     async createEnvironments(context) {
       const operations = await dependencies.environments.factory(context, {
         ...dependencies.environments.dependencies,

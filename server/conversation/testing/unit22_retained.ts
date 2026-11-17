@@ -14,7 +14,7 @@ import { values as signal_values } from '../publication/persistence.ts';
 import { run_automatic_recovery } from '../deploy_interruptions/coordinator.ts';
 import { create_production_conversation_core } from '../../lifecycle/production.ts';
 import { compose_production_backends } from '../../lifecycle/production_bindings.ts';
-import { create_backend_runtime, unavailable_backend_providers } from '../snapshot/composition.ts';
+import { create_backend_runtime } from '../snapshot/composition.ts';
 import { create_test_environment_runtime } from '../../environments/testing/composition.ts';
 import { InboxStore } from '../../executor/data/inbox.ts';
 import { FileStaging } from '../../executor/vps_files.ts';
@@ -77,7 +77,6 @@ async function cycle() {
               database,
               config: current.config,
               now: () => current.clock.now(),
-              providers: unavailable_backend_providers(),
               one_shot_children: current.one_shot_children,
             }),
           stall_sources: () => [],

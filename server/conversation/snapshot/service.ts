@@ -1,8 +1,8 @@
 /** Keep complete cards readable while independent backend probes and updates run. */
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
-import { KNOWN_BACKEND_INSTANCE_IDS } from '../../drivers/built_in_manifests.ts';
 import { FifoLock } from '../runtime/state.ts';
 import type {
+  BackendCardSource,
   BackendSnapshot,
   BackendSnapshotServiceContract,
   BackendSnapshotServiceOptions,
@@ -11,6 +11,7 @@ import type {
 } from './contracts.ts';
 import { cancellable_environment } from './cancellation.ts';
 import { parse_version } from './logic/versions.ts';
+import { built_in_model_version } from './probe.ts';
 import {
   MACHINE_CATALOG_BACKSTOP_SECONDS,
   UPDATE_COMMAND_TIMEOUT_SECONDS,
@@ -20,42 +21,55 @@ import {
 export class BackendSnapshotService implements BackendSnapshotServiceContract {
   private readonly options: BackendSnapshotServiceOptions;
   private readonly now: () => Date;
+  private readonly sources: ReadonlyMap<BackendInstanceId, BackendCardSource>;
   private readonly kept = new Map<BackendInstanceId, BackendSnapshot>();
   private readonly probed_at = new Map<BackendInstanceId, Date>();
-  private codex_card_was_probed_against: string | null = null;
-  private readonly snapshot_locks = new Map(
-    KNOWN_BACKEND_INSTANCE_IDS.map((key) => [key, new FifoLock()]),
-  );
-  private readonly update_locks = new Map(
-    KNOWN_BACKEND_INSTANCE_IDS.map((key) => [key, new FifoLock()]),
-  );
+  /** The freshness key each kept card was probed against, recorded only when it had one. */
+  private readonly probed_against = new Map<BackendInstanceId, string>();
+  private readonly snapshot_locks: ReadonlyMap<BackendInstanceId, FifoLock>;
+  private readonly update_locks: ReadonlyMap<BackendInstanceId, FifoLock>;
   constructor(options: BackendSnapshotServiceOptions) {
     this.options = options;
     this.now = options.now ?? (() => new Date());
+    this.sources = new Map(options.sources.map((source) => [source.instance_id, source]));
+    this.snapshot_locks = new Map(
+      options.sources.map((source) => [source.instance_id, new FifoLock()]),
+    );
+    this.update_locks = new Map(
+      options.sources.map((source) => [source.instance_id, new FifoLock()]),
+    );
   }
   retained(backend_key: BackendInstanceId): BackendSnapshot | null {
     return this.kept.get(backend_key) ?? null;
   }
   async snapshots(options: SnapshotOptions = {}): Promise<readonly BackendSnapshot[]> {
-    return Promise.all(KNOWN_BACKEND_INSTANCE_IDS.map((key) => this.snapshot(key, options)));
+    return Promise.all(
+      this.options.sources.map((source) => this.snapshot(source.instance_id, options)),
+    );
+  }
+  private source(backend_key: BackendInstanceId): BackendCardSource {
+    const source = this.sources.get(backend_key);
+    if (source === undefined) throw new Error(`No backend card source for ${backend_key}`);
+    return source;
   }
   async snapshot(
     backend_key: BackendInstanceId,
     options: SnapshotOptions = {},
   ): Promise<BackendSnapshot> {
     options.signal?.throwIfAborted();
+    const source = this.source(backend_key);
     const environment = cancellable_environment(this.options.environment, options.signal);
     const refresh = options.refresh ?? false;
-    const login_moved = this.codex_login_has_moved(backend_key);
-    let stale = this.options.machine_catalog ? false : login_moved;
+    const freshness_moved = this.freshness_has_moved(source);
+    let stale = this.options.machine_catalog ? false : freshness_moved;
     if (this.options.machine_catalog && !refresh) {
       const previous = this.kept.get(backend_key);
       if (previous) {
         stale =
           (this.now().getTime() - this.probed_at.get(backend_key)!.getTime()) / 1000 >=
           MACHINE_CATALOG_BACKSTOP_SECONDS;
-        if (backend_key !== 'hermes') {
-          const executable = environment.executable_path(backend_key);
+        if (source.status.version_detects_upgrade) {
+          const executable = environment.executable_path(source.executable_name);
           let version: string | null = null;
           if (executable !== null) {
             const outcome = await environment.run([executable, '--version'], {
@@ -75,45 +89,45 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
     const waiting = lock.locked;
     return lock.run(async () => {
       options.signal?.throwIfAborted();
-      if (waiting && !this.codex_login_has_moved(backend_key)) {
+      if (waiting && !this.freshness_has_moved(source)) {
         const shared = this.kept.get(backend_key);
         if (shared) return shared;
       }
       const kept = refresh || stale ? undefined : this.kept.get(backend_key);
       if (kept) return kept;
       const reading_at = this.now();
-      const codex_login = backend_key === 'codex' ? this.options.read_codex_login_standing() : null;
-      let probed = await this.options.probe(backend_key, environment, {
-        signal: options.signal,
+      const probed_against = source.status.freshness_key?.(reading_at) ?? null;
+      const draft = await source.status.probe({
+        environment,
         refresh,
         discover_update_advisory: refresh && (options.discover_update_advisory ?? true),
-        codex_login,
+        signal: options.signal,
         now: reading_at,
+        model_version: built_in_model_version,
       });
+      let probed: BackendSnapshot = { backend_key, ...draft };
       options.signal?.throwIfAborted();
-      if (codex_login !== null) {
-        const latest = this.options.read_codex_login_standing();
-        if (
-          JSON.stringify(latest?.everything_a_card_reads({ now: this.now() }) ?? null) !==
-          JSON.stringify(codex_login.everything_a_card_reads({ now: reading_at }))
-        ) {
-          return {
-            ...probed,
-            identity: null,
-            available_models: [],
-            reasoning_effort_options: [],
-            default_model_id: null,
-            default_reasoning_effort: null,
-            models_complete: false,
-          };
-        }
+      if (
+        probed_against !== null &&
+        (source.status.freshness_key?.(this.now()) ?? null) !== probed_against
+      ) {
+        // What the card read moved during the probe. Never keep that card.
+        return {
+          ...probed,
+          identity: null,
+          available_models: [],
+          reasoning_effort_options: [],
+          default_model_id: null,
+          default_reasoning_effort: null,
+          models_complete: false,
+        };
       }
       if (stale && !refresh && probed.update_advisory === null) {
         const advisory = this.kept.get(backend_key)?.update_advisory;
         if (advisory != null) probed = { ...probed, update_advisory: advisory };
       }
       const previous = this.kept.get(backend_key);
-      if (!login_moved && previous?.models_complete && !probed.models_complete) {
+      if (!freshness_moved && previous?.models_complete && !probed.models_complete) {
         probed = {
           ...probed,
           available_models: previous.available_models,
@@ -132,26 +146,21 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
           console.error(`the ${backend_key} model list was not saved`, error);
         }
       }
-      if (backend_key === 'codex' && codex_login !== null)
-        this.codex_card_was_probed_against = JSON.stringify(
-          codex_login.everything_a_card_reads({ now: reading_at }),
-        );
+      if (probed_against !== null) this.probed_against.set(backend_key, probed_against);
       return probed;
     });
   }
-  private codex_login_has_moved(backend_key: BackendInstanceId): boolean {
-    if (backend_key !== 'codex' || this.codex_card_was_probed_against === null) return false;
-    return (
-      JSON.stringify(
-        this.options.read_codex_login_standing()?.everything_a_card_reads({ now: this.now() }) ??
-          null,
-      ) !== this.codex_card_was_probed_against
-    );
+  /** After a kept card had a key, an absent key ('null') still differs from it. */
+  private freshness_has_moved(source: BackendCardSource): boolean {
+    const against = this.probed_against.get(source.instance_id);
+    if (source.status.freshness_key === undefined || against === undefined) return false;
+    return (source.status.freshness_key(this.now()) ?? 'null') !== against;
   }
   async update_backend(
     backend_key: BackendInstanceId,
     options: { signal?: AbortSignal } = {},
   ): Promise<BackendUpdateResult> {
+    this.source(backend_key);
     return this.update_locks.get(backend_key)!.run(async () => {
       options.signal?.throwIfAborted();
       const before = await this.snapshot(backend_key, { refresh: true, ...options });

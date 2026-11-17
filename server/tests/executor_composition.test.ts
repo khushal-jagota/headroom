@@ -23,10 +23,7 @@ import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { MacRemoteChild } from '../executor/vps_remote_child.ts';
 import { ExecutorStore } from '../executor/data/runs.ts';
 import { compose_production_backends } from '../lifecycle/production_bindings.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { write_ticket_conversation_start } from '../tickets/data/index.ts';
 import {
   create_production_conversation_core,
@@ -177,7 +174,6 @@ test('configured restart adopts before reconciliation and Mac locality never sel
           database: current.database,
           config: current.config,
           now: () => current.clock.now(),
-          providers: unavailable_backend_providers(),
         });
         bound = compose_production_backends(
           current,
@@ -471,7 +467,6 @@ test('production constructs its real executor and reconciles that executor inven
             database: current.database,
             config: current.config,
             now: () => current.clock.now(),
-            providers: unavailable_backend_providers(),
           }),
         stall_sources: () => [],
       },
