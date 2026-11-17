@@ -171,16 +171,16 @@ jobs:
           node-version: '22'
       - name: Prepare native Mac build prerequisites
         run: brew install icu4c pkgconf
-      - name: Build the unchanged native Mac runtime and bind the attempt
+      - name: Build and prove the sealed TypeScript Mac runtime
         run: |
           set -euo pipefail
           umask 077
           private="$RUNNER_TEMP/panels-mac-publication"
-          mkdir -p "$private"/{home/.codex,home/.claude,home/.hermes,config,cache,data,logs,backups,workspace,scratch,runtime,tmp}
+          mkdir -p "$private"/{home/.codex,home/.claude,home/.hermes,config,cache,data,logs,backups,workspace,scratch,runtime,tmp,source}
           env -i PATH="$PATH" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             PUBLICATION_ROOT="$private" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" HERMES_HOME="$private/home/.hermes" PLAN_HERMES_HOME="$private/home/.hermes" \
-            XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" \
+            XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" npm_config_cache="$private/cache/npm" \
             PLAN_CONFIG_PATH="$private/config.yaml" PLAN_DB_PATH="$private/data/planner.sqlite" PLAN_APP_ROOT="$private/app" PLAN_DATA_DIR="$private/data" \
             PLAN_LOGS_DIR="$private/logs" PLAN_BACKUP_DIR="$private/backups" PLAN_WORKSPACE_ROOT="$private/workspace" PLAN_TICKET_SCRATCH_ROOT="$private/scratch" \
             PLAN_TICKET_SCRATCH_DATABASE="$private/data/planner.sqlite" PLAN_CREDENTIAL_KEY_PATH="$private/data/key" PLAN_DISPATCHER_LOCK_PATH="$private/runtime/dispatcher.lock" \
@@ -188,25 +188,41 @@ jobs:
             PLAN_SERVER_URL=http://127.0.0.1:0 PLAN_DISPATCH_ENABLED=false PLAN_TEST_MODE=0 \
             bash --noprofile --norc -euo pipefail <<'MAC'
           printf '{}\n' > "$PLAN_CONFIG_PATH"
-          python3 -I -S -B scripts/build_mac_runtime.py --source "$GITHUB_WORKSPACE" --output "$PUBLICATION_ROOT/mac" --revision "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"
-          node --input-type=module - "$PUBLICATION_ROOT/mac/mac-runtime-publication.json" "$GITHUB_RUN_ATTEMPT" <<'JS'
-          import { readFileSync, writeFileSync } from 'node:fs';
-          const path = process.argv[2], attempt = process.argv[3];
-          if (/^[1-9][0-9]*$/.exec(attempt)?.[0] !== attempt) throw Error('Invalid publication attempt');
-          const value = JSON.parse(readFileSync(path, 'utf8'), (_key, value, context) => typeof value === 'number' ? JSON.rawJSON(context.source) : value);
-          value.run_attempt = attempt;
-          writeFileSync(path, JSON.stringify(value) + '\n');
-          JS
+          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$PUBLICATION_ROOT/source"
+          NODE_ENV=production python3 -I -S -B "$PUBLICATION_ROOT/source/scripts/dev_launcher.py" npm --prefix server ci
+          node_distribution=$(node --input-type=module -e 'import{realpathSync}from"node:fs";import{dirname}from"node:path";console.log(dirname(dirname(realpathSync(process.execPath))));')
+          node "$PUBLICATION_ROOT/source/server/executor/mac/packaging/publication_main.ts" \
+            --source "$PUBLICATION_ROOT/source" --node-distribution "$node_distribution" \
+            --node-modules "$PUBLICATION_ROOT/source/server/node_modules" \
+            --output "$PUBLICATION_ROOT/mac" --revision "$GITHUB_SHA" \
+            --home "$PUBLICATION_ROOT/home" --executor-id release-package \
+            --server-url https://panels.invalid --backend-path /usr/bin:/bin \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
           MAC
       - name: Upload the checked native Mac runtime and receipt
         id: mac
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: panels-mac-runtime
-          path: ${{ runner.temp }}/panels-mac-publication/mac/
+          path: |
+            ${{ runner.temp }}/panels-mac-publication/mac/panels-mac-runtime.tar.gz
+            ${{ runner.temp }}/panels-mac-publication/mac/mac-runtime-publication.json
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      - name: Preserve Mac installation assets and native proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-typescript-mac-installation
+          path: |
+            ${{ runner.temp }}/panels-mac-publication/mac/assets/
+            ${{ runner.temp }}/panels-mac-publication/mac/INSTALLATION.md
+            ${{ runner.temp }}/panels-mac-publication/mac/build.json
+            ${{ runner.temp }}/panels-mac-publication/mac/proof-work/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build and prove the sealed Darwin home archive
         run: |
