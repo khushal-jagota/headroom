@@ -76,3 +76,26 @@ test('a failed stop of a broken child keeps the quarantine until the idle sweep 
   expect(state.child_is_quarantined).toBe(false);
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
+
+// Risk: the core ended the turn itself, so a broken ending that follows was ignored and the
+// next prompt went to the dead child.
+// Gap: both cases above report the broken ending on a turn the child still owns.
+test('a child that reports a broken ending after Stop is replaced for the next prompt', async () => {
+  const f = setup();
+  await f.start();
+  expect(await f.send('one', 'first')).toBeInstanceOf(PromptDeliveryStarted);
+  const broken = f.children[0];
+  const stop = vi.spyOn(broken, 'stop');
+  await f.core.interrupt('core');
+  await broken.emit(new TurnEnded({ ending: 'failed', child_disposition: 'broken' }));
+  await broken.flush_events();
+  await f.core.wait_until_quiescent();
+  const state = f.core.conversations.get('core')!;
+  expect(stop).toHaveBeenCalledOnce();
+  expect(state.child).toBeNull();
+  expect(await f.send('two', 'second')).toBeInstanceOf(PromptDeliveryStarted);
+  expect(f.children).toHaveLength(2);
+  expect((await f.children[1].inspect()).delivered_text).toEqual(['two']);
+  expect(state.child_is_quarantined).toBe(false);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
