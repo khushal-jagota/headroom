@@ -136,8 +136,10 @@ export class FileUpdateAttemptStore {
       const previous = read_record_json(this.path);
       if (is_object(previous) && previous.attempt_id === attempt.attempt_id)
         payload.release = merged(previous.release, payload.release);
-    } catch {
+    } catch (error) {
       /* A missing or unreadable previous record does not block replacement. */
+      if (!missing(error))
+        console.warn('The previous update attempt record is unreadable', this.path, error);
     }
     atomic_write_json(this.path, payload);
     return attempt;
@@ -190,7 +192,8 @@ export class FileUpdateAttemptStore {
           return null;
         payload = decoded;
         release = parse_release(decoded.release);
-      } catch {
+      } catch (error) {
+        console.warn('The deployment request record is not a valid update request', error);
         return null;
       }
       if (
@@ -207,8 +210,9 @@ export class FileUpdateAttemptStore {
           'prior_sha' in lifecycle
         )
           from_sha = lifecycle.prior_sha;
-      } catch {
+      } catch (error) {
         /* A missing or malformed lifecycle does not prevent adoption. */
+        if (!missing(error)) console.warn('The deployment lifecycle record is unreadable', error);
       }
       const now = this.now(),
         created = payload.created_at;

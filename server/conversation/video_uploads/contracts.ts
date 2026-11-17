@@ -32,8 +32,8 @@ export interface CheckedVideoUpload {
 export type VideoUploadOutcome = 'accepted' | 'refused' | 'uncertain';
 export class VideoUploadError extends Error {
   readonly status_code: number;
-  constructor(message: string, status_code = 400) {
-    super(message);
+  constructor(message: string, status_code = 400, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'VideoUploadError';
     this.status_code = status_code;
   }

@@ -22,6 +22,7 @@ async function request_observation(
   url: string,
   signal: AbortSignal,
   identity: string | undefined,
+  failed: (error: unknown) => void,
 ): Promise<HealthResponse | null> {
   signal.throwIfAborted();
   const target = new URL(url);
@@ -49,8 +50,14 @@ async function request_observation(
         (response) => {
           const chunks: Buffer[] = [];
           response.on('data', (chunk: Buffer) => chunks.push(chunk));
-          response.on('error', () => resolve(null));
-          response.once('aborted', () => resolve(null));
+          response.on('error', (error) => {
+            failed(error);
+            resolve(null);
+          });
+          response.once('aborted', () => {
+            failed(new Error('health response aborted'));
+            resolve(null);
+          });
           response.once('end', () => {
             try {
               const status = response.statusCode ?? 0;
@@ -62,7 +69,8 @@ async function request_observation(
                   : parse_numeric_json(Buffer.concat(chunks).toString('utf8')),
                 location: typeof location === 'string' ? location : undefined,
               });
-            } catch {
+            } catch (error) {
+              failed(error);
               resolve(null);
             }
           });
@@ -72,7 +80,10 @@ async function request_observation(
         release();
         resolve(null);
       });
-      request.on('error', () => resolve(null));
+      request.on('error', (error) => {
+        failed(error);
+        resolve(null);
+      });
       request.setTimeout(HEALTH_INACTIVITY_SECONDS * 1000, () =>
         request?.destroy(new Error('health read timed out')),
       );
@@ -104,11 +115,12 @@ async function observation(
   signal: AbortSignal,
   environment: NodeJS.ProcessEnv,
   identity: string | undefined,
+  failed: (error: unknown) => void,
 ): Promise<HealthResponse | null> {
   const visited = new Map<string, number>();
   for (;;) {
     assert_installer_health_url(url, environment);
-    const result = await request_observation(url, signal, identity);
+    const result = await request_observation(url, signal, identity, failed);
     if (
       result === null ||
       !REDIRECT_STATUSES.includes(result.status) ||
@@ -117,8 +129,10 @@ async function observation(
       return result;
     const next = new URL(result.location, url).href;
     const repeats = visited.get(next) ?? 0;
-    if (repeats >= HEALTH_MAX_REDIRECT_REPEATS || visited.size >= HEALTH_MAX_REDIRECT_URLS)
+    if (repeats >= HEALTH_MAX_REDIRECT_REPEATS || visited.size >= HEALTH_MAX_REDIRECT_URLS) {
+      failed(new Error(`health redirects exceeded the limit at ${next}`));
       return null;
+    }
     visited.set(next, repeats + 1);
     url = next;
   }
@@ -134,6 +148,11 @@ export async function healthy(
   identity?: string,
 ): Promise<boolean> {
   const deadline = performance.now() / 1000 + timeout_seconds;
+  // Failed polls are expected while the server restarts, so only the last failure is logged at the deadline.
+  let last_failure: unknown;
+  const failed = (error: unknown) => {
+    last_failure = error;
+  };
   for (;;) {
     signal.throwIfAborted();
     let result: Awaited<ReturnType<typeof observation>> = null;
@@ -143,9 +162,11 @@ export async function healthy(
         signal,
         environment,
         identity,
+        failed,
       );
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
+      failed(error);
     }
     if (
       result?.status === 200 &&
@@ -154,7 +175,15 @@ export async function healthy(
       (!require_ready || result.body.ready === true)
     )
       return true;
-    if (performance.now() / 1000 >= deadline) return false;
+    if (performance.now() / 1000 >= deadline) {
+      console.warn('installer health check did not pass before its deadline', {
+        health_url,
+        sha,
+        last_status: result?.status,
+        last_failure,
+      });
+      return false;
+    }
     await delay(HEALTH_POLL_SECONDS * 1000, undefined, { signal });
   }
 }

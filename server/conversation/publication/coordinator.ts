@@ -94,8 +94,9 @@ export class SignalPublicationCoordinator implements SignalPublicationSource {
     if (this.reason !== 'authority_lost') {
       try {
         this.require_authority();
-      } catch {
-        /* Availability reports lost ownership instead of granting a permit. */
+      } catch (error) {
+        // Availability reports lost ownership instead of granting a permit.
+        console.warn('Signal publication authority was lost', error);
       }
     }
     return { generation: this.generation, state: this.state, reason: this.reason };
@@ -317,15 +318,17 @@ export class SignalPublicationCoordinator implements SignalPublicationSource {
     if (unavailable) {
       try {
         sync(() => unavailable({ generation: this.generation, reason }));
-      } catch {
-        /* Generation remains revoked when a consumer fails. */
+      } catch (error) {
+        // Generation remains revoked when a consumer fails.
+        console.error('Signal publication unavailability consumer failed', error);
       }
     }
     for (const watcher of watchers) {
       try {
         sync(watcher);
-      } catch {
-        /* One consumer cannot prevent revocation of the others. */
+      } catch (error) {
+        // One consumer cannot prevent revocation of the others.
+        console.error('Signal publication watcher failed', error);
       }
     }
   }

@@ -20,7 +20,8 @@ export function local_process_identity(
         unit: null,
         supervision_record: null,
       };
-    } catch {
+    } catch (error) {
+      console.error('Worker process identity inspection failed', pid, error);
       return null;
     }
   });

@@ -135,6 +135,14 @@ function error_reply(reply: FastifyReply, error: PlannerError): FastifyReply {
             retry_later: 503,
           } as Record<string, number>
         )[error.code] ?? 400);
+  if (status >= 500)
+    console.error(
+      `HTTP ${status}`,
+      reply.request.method,
+      reply.request.url,
+      error,
+      ...(error.cause === undefined ? [] : ['cause:', error.cause]),
+    );
   return reply.code(status).send(error.toPayload());
 }
 function typed_reply<K extends WireRootName>(
@@ -624,8 +632,11 @@ function install_old_websocket_refusal(app: FastifyInstance, services: ExecutorH
         close_before_accept(socket, { code: 1008 });
       }
     };
-    void (app.request_lifetime ? app.request_lifetime.run(operation) : operation()).catch(() =>
-      socket.destroy(),
+    void (app.request_lifetime ? app.request_lifetime.run(operation) : operation()).catch(
+      (error: unknown) => {
+        console.error('Executor websocket upgrade failed:', error);
+        socket.destroy();
+      },
     );
   };
   app.server.on('upgrade', upgrade);

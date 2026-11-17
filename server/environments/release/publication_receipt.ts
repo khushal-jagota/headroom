@@ -247,8 +247,10 @@ export async function write_publication_receipt(
         },
       );
       if (!response.ok) {
-        await response.body?.cancel().catch(() => {});
-        throw new Error('GitHub artifact metadata is unavailable');
+        await response.body?.cancel().catch((error: unknown) => {
+          console.warn('GitHub artifact metadata response cancel failed', error);
+        });
+        throw new Error(`GitHub artifact metadata is unavailable (HTTP ${response.status})`);
       }
       const metadata = record(JSON.parse(await response.text())),
         run = record(metadata.workflow_run),

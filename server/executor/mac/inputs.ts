@@ -12,7 +12,8 @@ import {
   INPUT_DOWNLOAD_RETRY_MAX_SECONDS,
 } from './configuration.ts';
 import type { MacFileTransport } from './transport/files.ts';
-import { ExecutorHttpError, failure_name } from './transport/errors.ts';
+import { ExecutorHttpError } from './transport/errors.ts';
+import { failure_detail } from './failure_detail.ts';
 export class InputDownloadRefused extends Error {}
 /** Every stored file a prompt or steer names, images and files alike, once each. */
 export function input_file_ids(command: ChildCommand): string[] {
@@ -59,7 +60,7 @@ export class MacInputs {
               `input ${stored_file_id} is no longer served (${error.status})`,
             );
           console.warn(
-            `Input download failed command=${command.command_id}: ${failure_name(error)}`,
+            `Input download failed command=${command.command_id}: ${failure_detail(error)}`,
           );
           try {
             await sleep(delay * 1000, undefined, { signal });

@@ -261,6 +261,7 @@ export function stop_record(path: string, options: InspectionOptions): Promise<C
           }
           if (record.root == null) return revoke(path, record);
           const term_deadline = Math.min(deadline, runtime.clock() + TERM_SECONDS);
+          let last_evidence_error: unknown = null;
           for (const [signal, phase_deadline] of [
             [15, term_deadline],
             [9, deadline],
@@ -278,7 +279,9 @@ export function stop_record(path: string, options: InspectionOptions): Promise<C
               try {
                 const result = await inspect_unlocked(path, settings);
                 if (result.complete) return result;
-              } catch {
+                last_evidence_error = null;
+              } catch (error) {
+                last_evidence_error = error;
                 // A transient evidence failure is not a cleanup receipt. Keep
                 // polling, including escalation after the TERM phase expires.
               }
@@ -292,6 +295,8 @@ export function stop_record(path: string, options: InspectionOptions): Promise<C
               '; ' + (record.cgroup_error ?? 'Legacy Worker record lacks complete cgroup custody');
           if (record.unattributed_session_members?.length)
             reason += '; unattributed isolated-session processes remain';
+          if (last_evidence_error !== null)
+            reason += `; last evidence failure: ${failure_message(last_evidence_error)}`;
           Object.assign(record, { state: 'not_proven', reason });
           await records.write(path, record);
           return cleanup_result(false, reason);

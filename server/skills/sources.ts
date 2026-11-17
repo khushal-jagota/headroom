@@ -62,9 +62,10 @@ export function provision_workspace_skills(
     const source = realpathSync(join(projection, 'skills')),
       agents = join(workspace, '.agents'),
       target = join(agents, 'skills');
-    const conflict = (path: string) =>
+    const conflict = (path: string, options?: ErrorOptions) =>
       new Error(
         `workspace skills conflict at ${path}; expected ${target} to link to ${source} through a real .agents directory`,
+        options,
       );
     const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
     const workspaceFd = openSync(workspace, flags);
@@ -89,8 +90,8 @@ export function provision_workspace_skills(
         let current: string;
         try {
           current = realpathSync(isAbsolute(link) ? link : join(agents, link));
-        } catch {
-          throw conflict(target);
+        } catch (cause) {
+          throw conflict(target, { cause });
         }
         if (current === managed) {
           if (unlinkat(parentFd, 'skills', 0) !== 0) throw operationError('unlinkat');

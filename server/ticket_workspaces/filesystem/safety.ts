@@ -37,8 +37,8 @@ export async function recorded_checkout_problem(
     const top = await git(checkout, ['rev-parse', '--show-toplevel'], options);
     if (top.returncode || resolve(top.stdout.trim()) !== resolve(checkout))
       return 'recorded Git checkout or its metadata is missing or invalid';
-  } catch {
-    return 'cannot inspect recorded Git checkout ownership';
+  } catch (error) {
+    return `cannot inspect recorded Git checkout ownership: ${String(error)}`;
   }
   return null;
 }

@@ -80,7 +80,9 @@ export async function managed_files_valid(directory: string, recorded: unknown):
   let bytes: Buffer;
   try {
     bytes = await readFile(path);
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      console.warn('backup manifest could not be read', path, error);
     return false;
   }
   if (createHash('sha256').update(bytes).digest('hex') !== recorded.manifest_sha256) return false;
@@ -115,7 +117,9 @@ async function read_metadata(path: string): Promise<unknown> {
   let bytes: Buffer;
   try {
     bytes = await readFile(path);
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      console.warn('backup metadata could not be read', path, error);
     return undefined;
   }
   // Invalid UTF-8 propagates; malformed JSON makes the metadata unavailable.

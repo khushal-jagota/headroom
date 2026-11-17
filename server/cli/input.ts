@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { TextDecoder } from 'node:util';
 import { JsonNumber, parse_numeric_json } from '../core/http/numeric_json.ts';
 import type { Invocation } from './contracts.ts';
-import { fail_validation } from './http.ts';
+import { error_reason, fail_validation } from './http.ts';
 
 export async function read_source(
   inv: Invocation,
@@ -13,10 +13,11 @@ export async function read_source(
     const raw = spec === '-' ? await inv.stdin() : await readFile(spec);
     const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(raw);
     return artifact ? text : text.replace(/\r\n?/g, '\n');
-  } catch {
+  } catch (error) {
     fail_validation(
       inv,
-      artifact ? `cannot read UTF-8 body file: ${spec}` : `cannot read body file: ${spec}`,
+      `${artifact ? 'cannot read UTF-8 body file' : 'cannot read body file'}: ${spec} (${error_reason(error)})`,
+      { cause: error },
     );
   }
 }
@@ -66,8 +67,10 @@ export async function stdin_object(inv: Invocation): Promise<Record<string, any>
   let value: unknown;
   try {
     value = parse_numeric_json(new TextDecoder('utf8', { fatal: true }).decode(raw));
-  } catch {
-    fail_validation(inv, 'Provide a JSON object on stdin.');
+  } catch (error) {
+    fail_validation(inv, `Provide a JSON object on stdin (${error_reason(error)}).`, {
+      cause: error,
+    });
   }
   if (
     value === null ||

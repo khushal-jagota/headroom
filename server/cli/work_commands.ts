@@ -1,6 +1,6 @@
 /** The HTTP-client commands used for Panels work. Domain decisions stay on the server. */
 import type { CommandResult, Invocation } from './contracts.ts';
-import { send, send_text, emit, fail_validation, json } from './http.ts';
+import { send, send_text, emit, error_reason, fail_validation, json } from './http.ts';
 import { read_source, read_json_object, worker_stdin_body } from './input.ts';
 import { part, parse_part_names, project_record, render_text } from './record_projection.ts';
 import type { RecordParts } from './record_projection.ts';
@@ -466,8 +466,10 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       let record: any;
       try {
         record = parse_numeric_json(body);
-      } catch {
-        return fail_validation(inv, 'worker type record must be JSON');
+      } catch (error) {
+        return fail_validation(inv, `worker type record must be JSON (${error_reason(error)})`, {
+          cause: error,
+        });
       }
       if (
         !record ||

@@ -920,7 +920,7 @@ test('a permanent save error gives up, fails the turn, stops the child, and refu
   await expect(child.inspect()).rejects.toThrow('scripted child is closed');
   expect(f.core.conversations.get('core')!.child).toBeNull();
   expect(track).toHaveBeenCalledWith('vps_save_failed', 'core', {
-    detail: 'Save error SQLITE_CONSTRAINT_UNIQUE',
+    detail: expect.stringMatching(/^Save error SQLITE_CONSTRAINT_UNIQUE: /),
     conversation_id: 'core',
   });
   await expect(f.send('two', 'second')).rejects.toMatchObject({
@@ -1011,7 +1011,7 @@ test('an unusable database fails the conversation at once and refuses new work',
   await child.release('write');
   expect(await sending).toBeInstanceOf(PromptDeliveryUncertain);
   expect(track).toHaveBeenCalledWith('vps_save_failed', 'database', {
-    detail: 'Save error SQLITE_CORRUPT',
+    detail: 'Save error SQLITE_CORRUPT: synthetic corruption',
     conversation_id: null,
   });
   await expect(

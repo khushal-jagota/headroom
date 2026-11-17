@@ -157,7 +157,8 @@ export class WorkerSupervisor {
         let previous: WorkerProcessRecord;
         try {
           previous = await records.read(prior);
-        } catch {
+        } catch (error) {
+          console.error('Worker process record could not be read', prior, error);
           continue;
         }
         if (previous.state === 'complete') {
@@ -379,7 +380,8 @@ export class WorkerSupervisor {
               unit: null,
               supervision_record: this.path,
             };
-      } catch {
+      } catch (error) {
+        console.error('Worker process identity could not be read', this.path, error);
         return null;
       }
     });
@@ -428,14 +430,21 @@ export class WorkerSupervisor {
           deadline,
           async () => {
             const record = await records.read(this.path);
-            if (record.observation_error !== 'A process observation failed') {
-              record.observation_error = 'A process observation failed';
+            const observation_error = failure_message(error);
+            if (record.observation_error !== observation_error) {
+              console.error('Worker process observation failed', this.path, error);
+              record.observation_error = observation_error;
               await records.write(this.path, record);
             }
           },
           { clock: this.#runtime.clock, wait: false },
         );
-      } catch {
+      } catch (diagnostic) {
+        console.error(
+          'Worker process observation diagnostic was not recorded',
+          this.path,
+          diagnostic,
+        );
         /* Retain prior custody when another writer or an I/O failure prevents a diagnostic. */
       }
     }
@@ -496,7 +505,8 @@ export class WorkerSupervisor {
           },
           { clock: this.#runtime.clock },
         );
-      } catch {
+      } catch (diagnostic) {
+        console.error('Worker process observation failure was not recorded', this.path, diagnostic);
         /* Missing ownership evidence never grants native cleanup authority. */
       }
       return cleanup_result(false, `Process observation failed: ${failure_message(error)}`);

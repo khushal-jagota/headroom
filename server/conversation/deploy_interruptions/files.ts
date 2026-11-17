@@ -147,7 +147,9 @@ export function read_manifests(db_path: string): readonly CaptureManifest[] {
   try {
     if (lstatSync(root).isSymbolicLink()) return [];
     directories = readdirSync(root).sort();
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      console.warn(`deploy interruptions: ${root} could not be read`, error);
     return [];
   }
   const manifests: CaptureManifest[] = [];
@@ -179,7 +181,8 @@ export function read_manifests(db_path: string): readonly CaptureManifest[] {
       paths = readdirSync(directory)
         .filter((path) => path.endsWith('.json'))
         .sort();
-    } catch {
+    } catch (error) {
+      console.warn(`deploy interruptions: ${directory} is unreadable`, error);
       manifests.push(
         unavailable(
           deployment_id,
@@ -224,7 +227,11 @@ export function read_manifests(db_path: string): readonly CaptureManifest[] {
         if (manifest.deployment_id !== deployment_id || manifest.capture_id !== capture_id) {
           throw new Error('capture path and identities differ');
         }
-      } catch {
+      } catch (error) {
+        console.warn(
+          `deploy interruptions: ${join(directory, path)} is unreadable or invalid`,
+          error,
+        );
         manifest = unavailable(
           deployment_id,
           capture_id,

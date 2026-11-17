@@ -24,6 +24,7 @@ import {
   MAC_UPDATE_TERMINATE_SECONDS,
 } from '../configuration.ts';
 import { atomic_record, read_record } from './records.ts';
+import { failure_detail } from '../failure_detail.ts';
 
 export interface MacRuntimeSupervisorOptions {
   paths: ExecutorPaths;
@@ -182,14 +183,20 @@ export async function supervise(
       } catch (error) {
         files.assert_healthy();
         if (options.signal.aborted) throw error;
+        console.warn(
+          `Mac runtime launch failed request=${pending.request_id}:`,
+          failure_detail(error),
+        );
       }
+      let read_failure: unknown = null;
       const deadline = performance.now() + MAC_RUNTIME_READY_TIMEOUT_SECONDS * 1000;
       while (launched && !options.signal.aborted && performance.now() < deadline) {
         let marker: Record<string, unknown> | null = null;
         try {
           marker = await read_record(files, ready);
-        } catch {
+        } catch (error) {
           files.assert_healthy();
+          read_failure = error;
         }
         if (
           marker?.request_id === pending.request_id &&
@@ -216,6 +223,11 @@ export async function supervise(
         await files.remove_runtime_record(join(root, 'pending.json'));
         continue;
       }
+      if (read_failure !== null)
+        console.warn(
+          `Mac runtime ready marker was unreadable request=${pending.request_id}:`,
+          failure_detail(read_failure),
+        );
       await current.stop({
         grace_seconds:
           process.platform === 'linux'

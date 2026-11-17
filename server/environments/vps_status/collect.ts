@@ -56,7 +56,8 @@ export async function backup_section(
   let snapshots: readonly string[];
   try {
     snapshots = await verified_snapshots(root);
-  } catch {
+  } catch (error) {
+    console.warn('VPS status: verified backup evidence could not be inspected', error);
     return {
       state: 'unavailable',
       summary: 'verified backup evidence could not be inspected',
@@ -84,7 +85,8 @@ export async function backup_section(
     created = utc_iso(metadata.created_at);
     age = Number(instant(now) - instant(created)) / 1_000_000;
     if (age < 0) throw new Error('verified backup timestamp is in the future');
-  } catch {
+  } catch (error) {
+    console.warn('VPS status: verified backup age is unavailable', error);
     return {
       state: 'review_needed',
       summary: 'verified backup age is unavailable',
@@ -128,7 +130,8 @@ async function disk_section(
     const stats = await dependencies.statvfs(root);
     total = BigInt(stats.f_frsize) * BigInt(stats.f_blocks);
     free = BigInt(stats.f_frsize) * BigInt(stats.f_bavail);
-  } catch {
+  } catch (error) {
+    console.warn('VPS status: runtime disk probe failed', error);
     return { ...unavailable, summary: 'runtime disk probe failed' };
   }
   if (total <= 0)
@@ -157,7 +160,8 @@ async function workloads_section(dependencies: VpsStatusDependencies): Promise<S
   let lines: readonly string[];
   try {
     lines = (await dependencies.process_lines()).slice(0, PROCESS_LINES);
-  } catch {
+  } catch (error) {
+    console.warn('VPS status: process probe failed', error);
     return { state: 'unavailable', summary: 'process probe failed', items: [] };
   }
   const items: unknown[] = [];
@@ -184,7 +188,8 @@ async function worktrees_section(
   let output: string;
   try {
     output = await dependencies.git_worktree_output(root);
-  } catch {
+  } catch (error) {
+    console.warn('VPS status: git worktree probe failed', error);
     return { state: 'unavailable', summary: 'git worktree probe failed', items: [] };
   }
   const items: { state: string }[] = [];
@@ -213,7 +218,8 @@ async function logs_section(root: string, policy: VpsStatusPolicy): Promise<Stat
       total += (await stat(path)).size;
       count++;
     }
-  } catch {
+  } catch (error) {
+    console.warn('VPS status: log directory could not be fully inspected', error);
     return {
       state: 'review_needed',
       summary: 'log directory could not be fully inspected',

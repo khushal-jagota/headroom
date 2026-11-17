@@ -100,8 +100,8 @@ export interface LifecycleLease {
   close(): void;
 }
 export class ServerLifecycleError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'ServerLifecycleError';
   }
 }
@@ -222,14 +222,14 @@ export class ServerRestartConnectionError extends ServerLifecycleError {
   }
 }
 export class ServerRestartProtocolError extends ServerLifecycleError {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'ServerRestartProtocolError';
   }
 }
 export class ManagedStopError extends ServerLifecycleError {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'ManagedStopError';
   }
 }

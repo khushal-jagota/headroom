@@ -36,6 +36,7 @@ import { SKILL_LOCK_RETRY_MS } from './contracts.ts';
 import { validate_skill_snapshot } from '../../skills.ts';
 export { validate_skill_snapshot } from '../../skills.ts';
 import type { SkillInstallation } from './contracts.ts';
+import { failure_detail } from '../failure_detail.ts';
 
 if (isMainThread) throw new Error('Canonical skill publication requires its owned worker.');
 const retained_descriptors = new Set<number>();
@@ -60,15 +61,19 @@ export function owns_handles(): boolean {
 process.once('uncaughtExceptionMonitor', () => {
   try {
     cleanup_handles();
-  } catch {}
+  } catch (error) {
+    console.error('Mac skill handle cleanup failed:', failure_detail(error));
+  }
 });
 process.once('exit', () => {
   try {
     cleanup_handles();
-  } catch {}
+  } catch (error) {
+    console.error('Mac skill handle cleanup failed:', failure_detail(error));
+  }
 });
-function invalid(message: string): never {
-  throw new Error(message);
+function invalid(message: string, cause?: unknown): never {
+  throw new Error(message, cause === undefined ? undefined : { cause });
 }
 
 function stat(path: string) {
@@ -246,9 +251,10 @@ export async function install_native_skill_snapshot(
     home_fd = retain(open_directory_descriptor(home));
     try {
       target_fd = open_directory_at(home_fd, native_skills_directory);
-    } catch {
+    } catch (error) {
       invalid(
-        `native provider skills entry must be an existing real directory: ${join(home, native_skills_directory)}`,
+        `native provider skills entry must be an existing real directory: ${join(home, native_skills_directory)} (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`,
+        error,
       );
     }
     const held_home = home_fd,

@@ -1,10 +1,18 @@
 import { readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ArtifactEntry } from '../contracts.ts';
+/** Missing entries read as empty; any other filesystem failure is logged and read as empty. */
+function absent<T>(path: string, fallback: T): (error: unknown) => T {
+  return (error) => {
+    if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+      console.warn('artifact listing could not read', path, error);
+    return fallback;
+  };
+}
 async function children(
   root: string,
 ): Promise<{ name: string; file: boolean; modified: number }[]> {
-  const names = await readdir(root).catch(() => []);
+  const names = await readdir(root).catch(absent(root, [] as string[]));
   const result = [];
   for (const name of names.sort()) {
     const info = await lstat(join(root, name));
@@ -24,7 +32,7 @@ export async function foldDirectory(
   prefix = '',
   excluded_name: (name: string) => boolean = () => false,
 ): Promise<ArtifactEntry[]> {
-  const info = await lstat(root).catch(() => null);
+  const info = await lstat(root).catch(absent(root, null));
   if (!info || info.isSymbolicLink() || !info.isDirectory()) return [];
   const entries: ArtifactEntry[] = [];
   for (const child of await children(root)) {
@@ -34,7 +42,9 @@ export async function foldDirectory(
     if (child.file)
       entries.push({ name: child.name, opens: path, modified_at: child.modified, children: [] });
     else {
-      const index = await lstat(join(disk, 'index.html')).catch(() => null);
+      const index = await lstat(join(disk, 'index.html')).catch(
+        absent(join(disk, 'index.html'), null),
+      );
       if (index?.isFile() && !index.isSymbolicLink())
         entries.push({
           name: child.name,

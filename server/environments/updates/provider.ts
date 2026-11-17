@@ -24,11 +24,16 @@ function repository_stream(response: Response, message: string): Readable {
     (async function* () {
       try {
         for await (const chunk of Readable.fromWeb(response.body! as ReadableStream)) yield chunk;
-      } catch {
-        throw new Error(message);
+      } catch (error) {
+        throw new Error(message, { cause: error });
       }
     })(),
   );
+}
+/** Logs a failed body cancel. An abort is expected here because the request controller aborts first. */
+function cancel_failed(error: unknown): void {
+  if (error instanceof Error && error.name === 'AbortError') return;
+  console.warn('repository update response cancel failed', error);
 }
 function record(value: unknown): Record<string, unknown> {
   if (!is_object(value)) throw new Error('The repository update service refused the operation.');
@@ -114,19 +119,21 @@ export class GitHubUpdateProvider implements UpdateProvider {
           signal: request_signal,
         }),
       );
-    } catch {
+    } catch (error) {
       controller.abort();
       signal?.throwIfAborted();
-      throw new Error('The repository update service is unavailable or its result is uncertain.');
+      throw new Error('The repository update service is unavailable or its result is uncertain.', {
+        cause: error,
+      });
     }
     if (missing_ok && response.status === 404) {
       controller.abort();
-      await response.body?.cancel().catch(() => {});
+      await response.body?.cancel().catch(cancel_failed);
       return null;
     }
     if (!response.ok) {
       controller.abort();
-      await response.body?.cancel().catch(() => {});
+      await response.body?.cancel().catch(cancel_failed);
       throw new Error('The repository update service refused the operation.');
     }
     if (response.body === null) {
@@ -141,12 +148,14 @@ export class GitHubUpdateProvider implements UpdateProvider {
         if (done) break;
         chunks.push(value);
       }
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted();
-      throw new Error('The repository update service is unavailable or its result is uncertain.');
+      throw new Error('The repository update service is unavailable or its result is uncertain.', {
+        cause: error,
+      });
     } finally {
       controller.abort();
-      await reader.cancel().catch(() => {});
+      await reader.cancel().catch(cancel_failed);
       reader.releaseLock();
     }
     return new Response(Buffer.concat(chunks), {
@@ -164,8 +173,8 @@ export class GitHubUpdateProvider implements UpdateProvider {
   private async response_json(response: Response): Promise<Record<string, unknown>> {
     try {
       return record(JSON.parse(await response.text()));
-    } catch {
-      throw new Error('The repository update service refused the operation.');
+    } catch (error) {
+      throw new Error('The repository update service refused the operation.', { cause: error });
     }
   }
   async available(): Promise<PublishedUpdate | null> {
@@ -308,10 +317,10 @@ export class GitHubUpdateProvider implements UpdateProvider {
         const result = await read();
         signal?.throwIfAborted();
         return result;
-      } catch {
+      } catch (error) {
         controller.abort();
         signal?.throwIfAborted();
-        throw new Error('The repository update download did not complete.');
+        throw new Error('The repository update download did not complete.', { cause: error });
       } finally {
         clearTimeout(timer);
       }
@@ -324,7 +333,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
     );
     if (!response.ok) {
       controller.abort();
-      await response.body?.cancel().catch(() => {});
+      await response.body?.cancel().catch(cancel_failed);
       throw new Error('The repository update service refused the download.');
     }
     if (response.body === null) {
@@ -347,7 +356,7 @@ export class GitHubUpdateProvider implements UpdateProvider {
       }
     } finally {
       controller.abort();
-      await reader.cancel().catch(() => {});
+      await reader.cancel().catch(cancel_failed);
       reader.releaseLock();
       await output?.close();
     }

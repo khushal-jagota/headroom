@@ -13,6 +13,7 @@ import { SnapshotFences } from './delivery/snapshot_fence.ts';
 import { DELIVERY } from './delivery/configuration.ts';
 import { parseView } from './logic/view.ts';
 import { NavigationUnavailable } from './logic/errors.ts';
+import { log_server_error } from '../core/http/errors.ts';
 import { scalarQueries } from '../list_reads/http.ts';
 import { validateInstallation } from './publication.ts';
 import { install_request_lifetime } from '../core/http/lifetime.ts';
@@ -122,6 +123,7 @@ export function createRoutes(): PreparedAreaRoutes {
         return reply.header('cache-control', 'no-store').send(current);
       } catch (error) {
         if (!(error instanceof NavigationUnavailable)) throw error;
+        log_server_error(request, 503, error);
         return reply.code(503).send({ detail: 'navigation view is unavailable' });
       }
     });
@@ -134,7 +136,8 @@ export function createRoutes(): PreparedAreaRoutes {
       try {
         token = authority.capture();
         authority.validate(token);
-      } catch {
+      } catch (error) {
+        log_server_error(request, 503, error);
         return reply.code(503).send({ detail: 'navigation view is unavailable' });
       }
       // As in Python, only authority is captured before stream headers. The initial
