@@ -103,7 +103,7 @@ For a comparison list with `"conversation_system": "in_memory"`, the runner supp
 
 Without this switch, the host composes `SqliteProcessConversationSystem` with the record runtime's single store and tail. `createConversationCore(context)` receives that runtime and the shared clock after record initialization. Runtime facts attach to that same record runtime. Shutdown begins HTTP closure and core cancellation together. Actual request and core work must settle before the record and database close.
 
-The comparison host uses `conversation/testing/scripted_process.ts` behind both Python and TypeScript backend adapters. Existing signal controls retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations; backend news enters through the real core rather than direct event-row inserts.
+The comparison host uses `conversation/testing/scripted_process.ts` behind the TypeScript backend adapters. Existing signal controls retain their meanings. Configuration and inspection controls expose process behavior and actual backend observations; backend news enters through the real core rather than direct event-row inserts.
 
 The TS host also supplies ten existing browser controls: signal `start`, `finish`, `message`, `queue`, `questions`, `answers`, `reject-next-prompt`, and `delivered`, plus connected `bind` and `message`. Optional Ticket starts preserve the synthetic Worker role and canonical association. Answers come from the latest child; delivered content retains the history across child replacement. The backend snapshot unit supplies the eleventh `ticket-model-catalog` control through its snapshot-service injection seam and owns the synthetic catalog and credential-state fixture.
 
@@ -146,13 +146,13 @@ The scripted test host can open and continue conversations through these routes.
 
 ## Claude backend child
 
-`create_claude_backend_child_factory` in `conversation/backends/claude_agent_sdk/adapter.ts` takes an explicit `claude_executable` and optional `environment_overrides`. Conversation identity overrides the launch environment. The adapter uses SDK `0.3.316`. It checks the selected executable against the `2.1.219` minimum before startup. It does not select the SDK's bundled CLI. Production provider composition remains outside this unit.
+`create_claude_backend_child_factory` in `drivers/claude/runtime/adapter.ts` takes an explicit `claude_executable` and optional `environment_overrides`. Conversation identity overrides the launch environment. The adapter uses SDK `0.3.316`. It checks the selected executable against the `2.1.219` minimum before startup. It does not select the SDK's bundled CLI. Production provider composition remains outside this unit.
 
 The SDK public spawn hook retains the exact child. Worker starts also use the shared supervision runtime and scratch owner. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands retain Python's write-completion contract. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
 
-The Claude spawn hook and Codex adapter use `lifecycle/owned_processes.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
+The Claude spawn hook and the Codex and Hermes adapters use `lifecycle/owned_processes.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
 
-`tests/compare/direct/test_unit18_adapter.py` drives the TS scripted CLI through both real adapters and conversation cores. It compares events, lifecycle facts, view rows, and delivery fates. This scripted proof does not establish real-provider coverage of all 19 backend events.
+The adapter's scripted tests do not establish real-provider coverage of all 19 backend events.
 
 Workers no longer add a `BASH_ENV` override. The shared bootstrap sets the Worker process policy before backend execution.
 
@@ -244,9 +244,9 @@ this helper's current contract.
 
 ## Codex app-server transport
 
-`conversation/backends/codex_app_server/` supplies the small consumed wire contracts,
-JSONL client, saved-login reader, inherited child environment, and bounded process-group
-ownership. `adapter.ts` exports `create_codex_backend_child_factory` for the real core.
+`drivers/codex/runtime/` supplies the small consumed wire contracts,
+JSONL client, saved-login reader, and inherited child environment. Process-group
+ownership comes from `lifecycle/owned_processes.ts`. `adapter.ts` exports `create_codex_backend_child_factory` for the real core.
 `providers.ts` supplies the fixed model, saved-login, sign-in, and usage bindings.
 Production snapshot composition receives its database and clock from `core/start.ts`.
 The sign-in service and snapshot reads share the durable login-rejection state.
@@ -333,8 +333,8 @@ part, as Python does. Nonzero microseconds retain six digits.
 
 ## Hermes ACP transport
 
-`conversation/backends/hermes_acp/` supplies the Hermes backend:
-the backend child, launch values, ordered ACP transport, and process ownership.
+`drivers/hermes/runtime/` supplies the Hermes backend:
+the backend child, launch values, and ordered ACP transport. Process ownership comes from `lifecycle/owned_processes.ts`.
 `create_hermes_backend_child_factory` is exported from `adapter.ts`.
 `HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `catalog.ts` supply
 the retained inventory script binding. The lifecycle owner must retain the catalog
@@ -358,7 +358,7 @@ The package exports no subpath for `Connection` or the generated validators.
 Runtime imports resolve their files from the pinned package entrypoint. Relative
 `node_modules` imports supply those same official types without a duplicate protocol
 interface. Pin checks cover the consumed internal symbols. Any SDK upgrade requires
-a new review of `conversation/backends/hermes_acp/client.ts` before approval.
+a new review of `drivers/hermes/runtime/client.ts` before approval.
 
 `executor/vps_presence.ts` supplies the lease cache and work-route incarnation fence.
 Its constructor receives the invocation database, mailbox, and change signal.
