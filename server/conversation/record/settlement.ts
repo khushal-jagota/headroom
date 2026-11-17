@@ -35,10 +35,13 @@ export function save_error_kind(error: unknown): SaveErrorKind {
   const code = error_code(error);
   if (code === null) return 'permanent';
   if (/^SQLITE_(?:CORRUPT|NOTADB)(?:_|$)/.test(code)) return 'database_unusable';
-  // Contention, I/O, a full disk, and filesystem errors can pass on a later attempt.
+  // Contention, I/O, a full disk, filesystem errors, and a statement that expired after a schema
+  // change (SQLITE_SCHEMA) can pass on a later attempt.
   // SQLITE_ERROR is permanent: schema drift such as "no such column" reports itself that way.
   if (
-    /^SQLITE_(?:BUSY|LOCKED|READONLY|INTERRUPT|IOERR|FULL|CANTOPEN|PROTOCOL)(?:_|$)/.test(code) ||
+    /^SQLITE_(?:BUSY|LOCKED|READONLY|INTERRUPT|IOERR|FULL|CANTOPEN|PROTOCOL|SCHEMA)(?:_|$)/.test(
+      code,
+    ) ||
     /^E[A-Z0-9]+$/.test(code)
   )
     return 'transient';

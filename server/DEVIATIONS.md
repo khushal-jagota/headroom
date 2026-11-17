@@ -860,8 +860,8 @@ The remaining conversation rows and abort custody compare exactly with Python.
 ## Permanent save errors give up
 
 Python retries every failed conversation save until it succeeds, with backoff to 30 s.
-TypeScript retries only transient errors that way: contention, I/O, a full disk, and
-filesystem errors. A permanent error, such as a constraint failure, schema drift
+TypeScript retries only transient errors that way: contention, I/O, a full disk,
+filesystem errors, and a statement that expired after a schema change (`SQLITE_SCHEMA`). A permanent error, such as a constraint failure, schema drift
 (`SQLITE_ERROR`), or a JavaScript error inside the write, gives up after three retries.
 Its conversation stops its child, ends the running turn as failed, and refuses new work
 until a restart. A prompt or steer receipt that gives up reports and records the delivery

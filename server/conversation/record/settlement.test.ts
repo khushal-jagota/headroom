@@ -12,6 +12,7 @@ test('save errors sort into transient, permanent, and database unusable', () => 
     'SQLITE_LOCKED',
     'SQLITE_IOERR_WRITE',
     'SQLITE_FULL',
+    'SQLITE_SCHEMA',
     'ENOSPC',
   ])
     expect(save_error_kind(coded(code))).toBe('transient');
