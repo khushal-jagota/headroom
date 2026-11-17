@@ -341,6 +341,14 @@ export class CodexAppServerBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
+    // A child that ended while idle cannot take this prompt, so the core replaces it now.
+    if (!this.client.is_alive) {
+      // The client keeps only its failure text, so there is no error to pass as the cause.
+      const reason = this.client.end_reason ?? 'the codex process ended';
+      throw new B.NeedsRebind(`this child's wire has already failed: ${reason}`, {
+        failed_child_recovery: true,
+      });
+    }
     let thread_id: string;
     try {
       thread_id = this.bound_thread();
