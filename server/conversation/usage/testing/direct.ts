@@ -1,13 +1,20 @@
 /** Export-only usage proof over caller-owned tiny transcripts and recorded rates. */
 import { appendFile, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { UsageProviderKind, UsageSettings, UsageSummaryInput } from '../contracts.ts';
-import { parseClaudeLine, parseTimestampMs } from '../usageTranscripts.ts';
+import type {
+  TranscriptDirectory,
+  UsageProviderKind,
+  UsageSettings,
+  UsageSummaryInput,
+} from '../contracts.ts';
+import { parseTimestampMs } from '../usageTranscripts.ts';
 import { parseRateTable } from '../usagePricing.ts';
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  type TranscriptParsePosition,
+  type TranscriptParseResult,
 } from '../usageTranscriptReader.ts';
 import {
   decodeScanCache,
@@ -17,7 +24,8 @@ import {
 } from '../usageScanCache.ts';
 import type { CachedFile, ScanCache } from '../usageScanCache.ts';
 import { UsageService } from '../UsageService.ts';
-import { makeUsageService, transcript_home } from '../composition.ts';
+import { makeUsageService } from '../composition.ts';
+import { transcript_home } from '../transcriptHome.ts';
 import { rates_proxy_for } from '../proxy.ts';
 import { createUsageRoutes } from '../routes.ts';
 import { BackendStateStore } from '../../backend_state.ts';
@@ -26,11 +34,46 @@ import { HttpError } from '../../../core/http/errors.ts';
 import { createDatabase } from '../../../core/database/index.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { TestClock } from '../../../core/clock.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../../../drivers/built_in_manifests.ts';
+import type { LineTranscriptParser } from '../../../drivers/core/usage.ts';
+import claudeParser, {
+  parseClaudeLine,
+} from '../../../drivers/claude/runtime/transcript_parser.ts';
+import codexParser from '../../../drivers/codex/runtime/transcript_parser.ts';
+import grokParser from '../grokTranscriptParser.ts';
 
 interface Source {
   provider: UsageProviderKind;
   dir: string;
   fileName?: string;
+}
+/** The recorded sources name the provider only. Each one reads with the parser it has today. */
+const LINE_PARSERS: Readonly<
+  Record<string, { parser: LineTranscriptParser<unknown>; url: string }>
+> = {
+  claude: {
+    parser: claudeParser,
+    url: new URL('../../../drivers/claude/runtime/transcript_parser.ts', import.meta.url).href,
+  },
+  codex: {
+    parser: codexParser,
+    url: new URL('../../../drivers/codex/runtime/transcript_parser.ts', import.meta.url).href,
+  },
+  grok: { parser: grokParser, url: new URL('../grokTranscriptParser.ts', import.meta.url).href },
+};
+function directory(source: Source): TranscriptDirectory {
+  return {
+    ...source,
+    kind: 'lines',
+    parser_module: LINE_PARSERS[source.provider]!.url,
+  };
+}
+/** The Python reader names the parser state after the one parser that had any. */
+function python_position({ state, ...position }: TranscriptParsePosition) {
+  return { ...position, codexState: state };
+}
+function python_result(result: TranscriptParseResult | null) {
+  return result && { ...result, position: python_position(result.position) };
 }
 interface ReaderSpec {
   homes: readonly { path: string; child: string }[];
@@ -57,15 +100,16 @@ export async function compare_reader(spec: ReaderSpec) {
       volume: await readDirectoryVolumeId(source.dir),
     });
   const codex = spec.selected.codex;
-  const cold = (await readTranscriptRecords(codex, 'codex'))!;
+  const codexLines = LINE_PARSERS.codex!.parser;
+  const cold = (await readTranscriptRecords(codex, codexLines))!;
   await appendFile(codex, Buffer.from(spec.append_hex, 'hex'));
-  const resumed = (await readTranscriptRecords(codex, 'codex', cold.position))!;
+  const resumed = (await readTranscriptRecords(codex, codexLines, cold.position))!;
   const rewritten = await readFile(codex);
   rewritten[resumed.position.resumeOffset - 8] = 0x20;
   await writeFile(codex, rewritten);
-  const rejected_guard = (await readTranscriptRecords(codex, 'codex', resumed.position))!;
+  const rejected_guard = (await readTranscriptRecords(codex, codexLines, resumed.position))!;
   const forkPath = spec.selected.fork;
-  const forkCold = (await readTranscriptRecords(forkPath, 'codex'))!;
+  const forkCold = (await readTranscriptRecords(forkPath, codexLines))!;
   const forkEncoded = encodeScanCache(
     new Map([
       [
@@ -84,7 +128,7 @@ export async function compare_reader(spec: ReaderSpec) {
   await appendFile(forkPath, Buffer.from(spec.fork_append_hex, 'hex'));
   const forkResumed = await readTranscriptRecords(
     forkPath,
-    'codex',
+    codexLines,
     decodeScanCache(forkEncoded).get(forkPath)!.position,
   );
   const compositionService = makeUsageService(
@@ -107,7 +151,7 @@ export async function compare_reader(spec: ReaderSpec) {
   const cache: ScanCache = new Map();
   for (const provider of ['claude', 'codex', 'grok'] as const) {
     const path = spec.selected[provider];
-    const parsed = (await readTranscriptRecords(path, provider))!;
+    const parsed = (await readTranscriptRecords(path, LINE_PARSERS[provider]!.parser))!;
     const seen = new Set<string>();
     const entry: CachedFile = {
       size: (await readFile(path)).length,
@@ -133,17 +177,26 @@ export async function compare_reader(spec: ReaderSpec) {
   });
   return {
     inventory,
-    fork: { cold: forkCold, encoded: forkEncoded, resumed: forkResumed },
+    fork: {
+      cold: python_result(forkCold),
+      encoded: forkEncoded,
+      resumed: python_result(forkResumed),
+    },
     composition,
     home_paths: spec.homes.map((value) => transcript_home(value.path, value.child)),
     proxy_choices: spec.proxy_inputs.map((value) =>
       rates_proxy_for(value.target, value.environment),
     ),
-    cold,
-    resumed,
-    rejected_guard,
+    cold: python_result(cold),
+    resumed: python_result(resumed),
+    rejected_guard: python_result(rejected_guard),
     encoded,
-    decoded: Object.fromEntries(decoded),
+    decoded: Object.fromEntries(
+      [...decoded].map(([path, entry]) => [
+        path,
+        { ...entry, position: python_position(entry.position) },
+      ]),
+    ),
     pruning: { removed, paths: [...prune.keys()] },
     bad_version_entries: decodeScanCache({ ...encoded, version: 12 }).size,
     invalid_timestamp: parseTimestampMs('2026-02-30T12:00:00Z'),
@@ -181,7 +234,7 @@ export async function compare_http(spec: HttpSpec) {
   const calls: { now: number; result: number }[] = [];
   const services: UsageService[] = [];
   const make = () => {
-    const service = new UsageService(spec.state_dir, spec.sources, {
+    const service = new UsageService(spec.state_dir, spec.sources.map(directory), {
       ratesFetcher: () => {
         const result = calls.length;
         calls.push({ now, result });
@@ -209,6 +262,7 @@ export async function compare_http(spec: HttpSpec) {
             get conversation_runtime_available() {
               return runtimeAvailable;
             },
+            backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
             recorded_usage: {
               readSummary: (input: UsageSummaryInput) => current.readSummary(input),
               refreshRates: () => current.refreshRates(),

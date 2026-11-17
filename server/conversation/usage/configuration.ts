@@ -7,5 +7,4 @@ export const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 export const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const CACHE_RETENTION_DAYS = 90;
 export const RATES_TIMEOUT_MS = 10 * 1000;
-export const FORK_COPY_MAX_GAP_MS = 1000;
 export const TRANSCRIPT_CHUNK_BYTES = 64 * 1024;

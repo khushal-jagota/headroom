@@ -4,10 +4,11 @@
  * Asynchronous dependencies are injected alongside the retained scan cache policy.
  */
 import { is_record as object } from '../../core/records.ts';
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { access, readFile, stat, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { FifoLock } from '../runtime/state.ts';
+import type { FileTranscriptParser, LineTranscriptParser } from '../../drivers/core/usage.ts';
 import { USAGE_CONTRACT_VERSION, UsageReadError } from './contracts.ts';
 import type {
   RecordedUsageService,
@@ -39,7 +40,7 @@ import {
   encodeScanCache,
   pruneScanCache,
 } from './usageScanCache.ts';
-import type { ScanCache } from './usageScanCache.ts';
+import type { CachedFile, ScanCache } from './usageScanCache.ts';
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -49,11 +50,26 @@ import { finiteNumber, parseTimestampMs } from './usageTranscripts.ts';
 import type { UsageRecord } from './usageTranscripts.ts';
 import { fetchRates } from './http.ts';
 
+type TranscriptParser = LineTranscriptParser<unknown> | FileTranscriptParser;
 interface ScannedDirectory {
   readonly provider: UsageProviderKind;
   readonly dir: string;
   readonly volumeId: string;
   readonly files: readonly { path: string; records: readonly UsageRecord[] }[] | null;
+}
+/** Records carry the provider they were read for, whatever name the parser gave them. */
+function forProvider(
+  records: readonly UsageRecord[],
+  provider: UsageProviderKind,
+): readonly UsageRecord[] {
+  return records.every((record) => record.provider === provider)
+    ? records
+    : records.map((record) => (record.provider === provider ? record : { ...record, provider }));
+}
+function cachedRecords(cached: CachedFile): readonly UsageRecord[] {
+  return cached.tailRecords.length === 0
+    ? cached.records
+    : [...cached.records, ...cached.tailRecords];
 }
 function decodeCacheDocument(raw: Uint8Array): unknown {
   // Path.read_text rejects invalid UTF-8 and leaves a text BOM for json.loads to reject.
@@ -79,6 +95,7 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
   private readonly cacheLock = new FifoLock();
   private scanCacheLoaded = false;
   private readonly inflightScans = new Map<string, Promise<UsageSummary>>();
+  private readonly parsers = new Map<string, Promise<TranscriptParser>>();
   private readonly operations = new Set<Promise<unknown>>();
 
   constructor(
@@ -228,32 +245,48 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
     });
   }
 
+  /** Each parser module is imported once. A module that cannot load fails the scan. */
+  private loadParser(directory: TranscriptDirectory): Promise<TranscriptParser> {
+    let loaded = this.parsers.get(directory.parser_module);
+    if (loaded === undefined) {
+      loaded = import(directory.parser_module).then((module: { default?: TranscriptParser }) => {
+        const parser = module.default;
+        if (parser?.kind !== directory.kind)
+          throw new Error(
+            `${directory.parser_module} does not export a ${directory.kind} transcript parser.`,
+          );
+        return parser;
+      });
+      this.parsers.set(directory.parser_module, loaded);
+    }
+    return loaded;
+  }
+
   async readFileRecords(
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
+    parser: LineTranscriptParser<unknown>,
   ): Promise<readonly UsageRecord[]> {
-    const cached = await this.cacheLock.run(() => this.fileCache.get(filePath));
+    let cached = await this.cacheLock.run(() => this.fileCache.get(filePath));
+    // An entry another source kind wrote, or whose state this parser cannot
+    // revive, is no warm hit and no resume point: the file is read again.
     if (
-      cached &&
-      cached.size === size &&
-      cached.mtimeMs === mtimeMs &&
-      cached.provider === provider
+      cached !== undefined &&
+      (cached.provider !== provider ||
+        cached.fingerprint !== undefined ||
+        parser.revive_state(cached.position.state) === undefined)
     )
-      return cached.tailRecords.length === 0
-        ? cached.records
-        : [...cached.records, ...cached.tailRecords];
-    const resumeFrom =
-      cached !== undefined && cached.provider === provider && size > cached.size
-        ? cached.position
-        : undefined;
-    const parsed = await readTranscriptRecords(filePath, provider, resumeFrom);
+      cached = undefined;
+    if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cachedRecords(cached);
+    const resumeFrom = cached !== undefined && size > cached.size ? cached.position : undefined;
+    const parsed = await readTranscriptRecords(filePath, parser, resumeFrom);
     if (parsed === null) return [];
     const base = parsed.resumed && cached !== undefined ? cached.records : [];
     const seen = new Set<string>();
-    const records = dedupeWithinFile([...base, ...parsed.records], seen);
-    const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+    const records = dedupeWithinFile([...base, ...forProvider(parsed.records, provider)], seen);
+    const tailRecords = dedupeWithinFile(forProvider(parsed.tailRecords, provider), seen);
     await this.cacheLock.run(() => {
       this.fileCache.set(filePath, {
         size,
@@ -268,21 +301,55 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
     return tailRecords.length === 0 ? records : [...records, ...tailRecords];
   }
 
+  /** A whole-file source is read again only when its fingerprint changes. */
+  async readWholeFileRecords(
+    filePath: string,
+    size: number,
+    mtimeMs: number,
+    provider: UsageProviderKind,
+    parser: FileTranscriptParser,
+  ): Promise<readonly UsageRecord[]> {
+    let fingerprint: string;
+    let read: readonly UsageRecord[];
+    try {
+      fingerprint = parser.fingerprint(filePath, await stat(filePath));
+      const cached = await this.cacheLock.run(() => this.fileCache.get(filePath));
+      if (cached?.provider === provider && cached.fingerprint === fingerprint)
+        return cachedRecords(cached);
+      read = await parser.read_file(filePath);
+    } catch {
+      // As with a line read, a failure is not memoised: the next scan tries again.
+      return [];
+    }
+    const records = dedupeWithinFile(forProvider(read, provider));
+    await this.cacheLock.run(() => {
+      this.fileCache.set(filePath, {
+        size,
+        mtimeMs,
+        provider,
+        records,
+        tailRecords: [],
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+        fingerprint,
+      });
+      this.cacheDirty = true;
+    });
+    return records;
+  }
+
   async collectDirs(
     windowStartMs: number,
     settings: UsageSettings,
     suppliedDirectories?: readonly TranscriptDirectory[],
   ): Promise<readonly ScannedDirectory[]> {
-    const raw =
+    const directories =
       suppliedDirectories ??
       (typeof this.transcriptDirs === 'function'
         ? this.transcriptDirs(settings)
         : this.transcriptDirs);
-    const directories = raw.map((entry): TranscriptDirectory =>
-      Array.isArray(entry) ? { provider: entry[0], dir: entry[1] } : (entry as TranscriptDirectory),
-    );
     const scanned: ScannedDirectory[] = [];
-    for (const { provider, dir, fileName } of directories) {
+    for (const directory of directories) {
+      const { provider, dir, fileName } = directory;
       const volumeId = await readDirectoryVolumeId(dir);
       let exists = true;
       try {
@@ -294,16 +361,25 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
         scanned.push({ provider, dir, volumeId, files: null });
         continue;
       }
-      const files = await listTranscriptFiles(
-        dir,
-        windowStartMs,
-        fileName === undefined ? undefined : { fileName },
-      );
+      const parser = await this.loadParser(directory);
+      const files = await listTranscriptFiles(dir, windowStartMs, {
+        ...(fileName === undefined ? {} : { fileName }),
+        everyFile: parser.kind === 'files',
+      });
       const parsedFiles = [];
       for (const file of files)
         parsedFiles.push({
           path: file.path,
-          records: await this.readFileRecords(file.path, file.size, file.mtimeMs, provider),
+          records:
+            parser.kind === 'files'
+              ? await this.readWholeFileRecords(
+                  file.path,
+                  file.size,
+                  file.mtimeMs,
+                  provider,
+                  parser,
+                )
+              : await this.readFileRecords(file.path, file.size, file.mtimeMs, provider, parser),
         });
       scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }

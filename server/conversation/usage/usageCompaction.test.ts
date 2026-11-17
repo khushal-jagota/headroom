@@ -1,5 +1,10 @@
 import { expect, test } from 'vitest';
-import { initialCodexScanState, parseCodexLine, parseClaudeLine } from './usageTranscripts.ts';
+import {
+  initialCodexScanState,
+  parseCodexLine,
+  reviveCodexScanState,
+} from '../../drivers/codex/runtime/transcript_parser.ts';
+import { parseClaudeLine } from '../../drivers/claude/runtime/transcript_parser.ts';
 import { encodeScanCache, decodeScanCache } from './usageScanCache.ts';
 
 const timestamp = '2026-08-01T10:00:00Z';
@@ -53,7 +58,7 @@ test.each(['response-first', 'marker-first'])(
           provider: 'codex' as const,
           records: [],
           tailRecords: [],
-          position: { resumeOffset: 1, guardLength: 0, guardHash: 0, codexState: state },
+          position: { resumeOffset: 1, guardLength: 0, guardHash: 0, state },
         },
       ],
     ]);
@@ -62,9 +67,12 @@ test.each(['response-first', 'marker-first'])(
     if (order === 'response-first')
       corrupt.files.file.cs.compactions.compact.usage.input_tokens = -1;
     else corrupt.files.file.cs.compactionMarkers.compact[0].previous = 'invalid';
-    expect(decodeScanCache(corrupt).size).toBe(0);
+    // The cache keeps the state as written. The parser refuses to resume from a corrupt one.
+    expect(reviveCodexScanState(decodeScanCache(corrupt).get('file')?.position.state)).toBe(
+      undefined,
+    );
     const decoded = decodeScanCache(encoded);
-    const resumed = decoded.get('file')!.position.codexState!;
+    const resumed = reviveCodexScanState(decoded.get('file')!.position.state)!;
     const record = parseCodexLine(order === 'response-first' ? marker() : response(), resumed)!;
     expect(record.compactionCovered).toBe(true);
     expect(record.totals.uncachedInputTokens).toBe(0);
@@ -109,7 +117,7 @@ test('uncovered compaction keeps tokens and one-hour writes survive record cache
         provider: 'claude' as const,
         records: [claude],
         tailRecords: [],
-        position: { resumeOffset: 1, guardLength: 0, guardHash: 0, codexState: null },
+        position: { resumeOffset: 1, guardLength: 0, guardHash: 0, state: null },
       },
     ],
   ]);

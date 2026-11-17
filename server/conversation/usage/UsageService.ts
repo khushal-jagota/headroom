@@ -5,7 +5,6 @@ import { UsageReadError, UsageServiceStopped } from './contracts.ts';
 import type {
   RecordedUsageService,
   TranscriptDirectories,
-  TranscriptDirectory,
   UsagePricing,
   UsageServiceOptions,
   UsageSummary,
@@ -174,15 +173,10 @@ export class UsageService implements RecordedUsageService {
     if (this.closed) return Promise.reject(new UsageServiceStopped());
     try {
       const settings = (this.options.settingsProvider ?? (() => ({ usagePriceOverrides: {} })))();
-      const raw =
+      const directories =
         typeof this.transcriptDirs === 'function'
           ? this.transcriptDirs(settings)
           : this.transcriptDirs;
-      const directories = raw.map((entry): TranscriptDirectory =>
-        Array.isArray(entry)
-          ? { provider: entry[0], dir: entry[1] }
-          : (entry as TranscriptDirectory),
-      );
       return this.request({ kind: 'summary', id: ++this.sequence, input, settings, directories });
     } catch {
       return Promise.reject(new UsageReadError('scanFailed', 'Server settings could not be read.'));
