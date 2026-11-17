@@ -256,33 +256,25 @@ async function admitted_deliver_batch(
           }
           throw error;
         }
-        const running =
-          current !== null
-            ? await observe_conversation_operation(
-                () => conversation_system.is_running(current!),
-                observer.signal,
-              )
-            : false;
-        observer.check();
-        if (running) {
-          starts?.finish_unbound(batch.sender_message_id);
-          database.write((sql) => data.release_pending_batch(sql, batch.id, { process_token }), {
-            changeSignal: 'silent',
-          });
-          return false;
-        }
         if (starts !== undefined) {
           const destination =
             agent_key === null
               ? database.read((sql) => read_ticket(sql, target.id).machine_id)
               : HOME_MACHINE_ID;
-          if (
-            !starts.try_start({
-              identity: batch.sender_message_id,
-              work_class: agent_key === null ? 'worker' : 'supervisor',
-              destination,
-            })
-          ) {
+          const request = {
+            identity: batch.sender_message_id,
+            work_class: agent_key === null ? ('worker' as const) : ('supervisor' as const),
+            destination,
+          };
+          const running =
+            current !== null &&
+            (await observe_conversation_operation(
+              () => conversation_system.is_running(current!),
+              observer.signal,
+            ));
+          observer.check();
+          if (running) starts.register_queued(request);
+          else if (!starts.try_start(request)) {
             database.write((sql) => data.release_pending_batch(sql, batch.id, { process_token }), {
               changeSignal: 'silent',
             });
@@ -314,7 +306,7 @@ async function admitted_deliver_batch(
             conversation_id: current,
             created_conversation_id: created,
             sender_label: WAKE_SENDER_LABEL,
-            mode: 'queue' as const,
+            mode: 'steer' as const,
             signal: observer.signal,
             sender_message_id: batch.sender_message_id,
           };

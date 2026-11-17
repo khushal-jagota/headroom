@@ -25,7 +25,7 @@ import {
   LOST_BACKGROUND_TASK_SENDER_LABEL,
 } from './configuration.ts';
 
-export function automatic_compaction_is_due(
+function automatic_compaction_is_due(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
 ): boolean {
@@ -40,7 +40,7 @@ export function automatic_compaction_is_due(
   );
 }
 
-export async function deliver_automatic_compaction(
+async function deliver_automatic_compaction(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   reservation: ReservedTurn,
@@ -104,6 +104,7 @@ export async function sweep_idle_children(host: SqliteProcessConversationSystem)
         const reservation = await state.lock.run(async () => {
           if (
             state.phase === 'idle' &&
+            state.child !== null &&
             state.held_prompts.length === 0 &&
             automatic_compaction_is_due(host, state)
           ) {

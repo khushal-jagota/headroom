@@ -872,3 +872,15 @@ An effort change to a named level on a live session applies with `applyFlagSetti
 Clearing effort still restarts the child, because a live reset returns to the model default rather than the user's settings.
 A model change still restarts the child. Python restarts the child for every effort change.
 The scripted comparison CLI's malformed Stop receipt now omits `cancelled`, which both servers refuse.
+
+## Messages are not held for automatic compaction
+
+At the owner's request, TypeScript delivers a send-now or queued message at once
+50 to 60 minutes after the last agent activity. The prompt cache is still warm then.
+Python holds that message, sends `/compact` first, and delivers the message after it.
+Only the idle sweep compacts in TypeScript. It still compacts an idle conversation
+with no held messages in that window. A message that arrives while that compaction
+runs still waits for it. The `automatic_compaction` wire flag and the database
+columns stay the same. The unit 15b maintenance comparison sends its owner message
+after that window, so both runtimes deliver it at once. The focused maintenance test
+in `server/tests/conversation_core_maintenance.test.ts` proves the TypeScript behavior.

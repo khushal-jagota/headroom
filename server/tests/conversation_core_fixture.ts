@@ -37,6 +37,7 @@ export function setup(
     record?: ConversationStoreOptions;
     core?: Partial<ConversationCoreOptions>;
     database?: Parameters<typeof fixture>[0];
+    role_actor?: string;
   } = {},
 ) {
   const database = fixture(options.database);
@@ -88,7 +89,11 @@ export function setup(
         conversation_id: 'core',
         model: 'model',
         workspace_folder: '/workspace',
-        role_materials: new ConversationRoleMaterials({ role_text: 'Role' }),
+        role_materials: new ConversationRoleMaterials({
+          role_text: 'Role',
+          identity_environment_variables:
+            options.role_actor === undefined ? [] : [['PLAN_ACTOR', options.role_actor]],
+        }),
       }),
     );
   const send = (text = 'one', identity = 'sender') =>

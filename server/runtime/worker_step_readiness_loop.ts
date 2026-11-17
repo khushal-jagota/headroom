@@ -188,6 +188,8 @@ async function _admitted_start_ready_worker_step(
         return new WorkerStepStartResult({ started: false });
       }
       let fate: PromptDeliveryFate;
+      let feedback_started = false;
+      const feedback_identity_prefix = `${sender_message_id}|decision|`;
       try {
         const prompt = database.read((sql) => {
           const current_ticket = tickets_data.read_ticket(sql, ticket_id);
@@ -203,12 +205,28 @@ async function _admitted_start_ready_worker_step(
           system,
           database,
           ticket_id,
-          text_message_content(prompt.model_text),
+          async (sending_into) => {
+            const feedback = database.write((sql) => {
+              const rows = sql.all<{ decision_id: string; model_text: string }>(
+                "SELECT decision_id,model_text FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status='pending' ORDER BY created_at,rowid",
+                [ticket_id],
+              );
+              for (const row of rows) {
+                sql.run(
+                  "UPDATE ticket_decision_messages SET delivery_status='sending',conversation_id=?,sender_message_id=? WHERE decision_id=? AND delivery_status='pending'",
+                  [sending_into, feedback_identity_prefix + row.decision_id, row.decision_id],
+                );
+              }
+              return rows.map((row) => row.model_text);
+            });
+            feedback_started = feedback.length > 0;
+            return text_message_content([...feedback, prompt.model_text].join('\n\n'));
+          },
           {
             conversation_id: claimed.conversation_id,
             created_conversation_id: conversation_start.new_conversation_id(),
             sender_label: LOOP_SENDER_LABEL,
-            mode: 'queue',
+            mode: 'steer',
             sender_message_id,
             worker_type_registry: options.worker_type_registry,
             retain_definite_start_refusal: !paired_opener,
@@ -220,13 +238,44 @@ async function _admitted_start_ready_worker_step(
         conversation_id = delivered.conversation_id;
         fate = delivered.fate;
         automatic_sent = true;
+        if (feedback_started) {
+          const status =
+            fate instanceof PromptDeliveryStarted || fate instanceof PromptDeliveryInjected
+              ? 'delivered'
+              : fate instanceof PromptDeliveryQueued
+                ? 'queued'
+                : fate instanceof PromptDeliveryRefused
+                  ? 'refused'
+                  : fate instanceof PromptDeliverySuppressed
+                    ? 'discarded'
+                    : 'uncertain';
+          database.write((sql) =>
+            sql.run(
+              "UPDATE ticket_decision_messages SET delivery_status=? WHERE ticket_id=? AND delivery_status='sending' AND substr(sender_message_id,1,?)=?",
+              [status, ticket_id, feedback_identity_prefix.length, feedback_identity_prefix],
+            ),
+          );
+        }
       } catch (error) {
         if (error instanceof ConversationStartAborted) throw error;
         console.error(
           `worker step could not be started (ticket=${ticket_id} conversation=${conversation_id})`,
           error,
         );
-        give_the_claim_back();
+        if (feedback_started) {
+          database.write((sql) => {
+            sql.run(
+              "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=? AND delivery_status='sending' AND substr(sender_message_id,1,?)=?",
+              [ticket_id, feedback_identity_prefix.length, feedback_identity_prefix],
+            );
+            tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
+              expected_claim: taken_claim,
+              expected_claim_revision: taken_claim_revision,
+              now: options.now(),
+              error_reason: 'delivery uncertain',
+            });
+          });
+        } else give_the_claim_back();
         return new WorkerStepStartResult({ started: false });
       }
       if (starts && automatic_identity !== null) {
@@ -323,7 +372,7 @@ export async function tell_a_worker_it_lost_its_memory(
           {
             conversation_id,
             sender_label: LOOP_SENDER_LABEL,
-            mode: 'queue',
+            mode: 'steer',
             sender_message_id: worker_memory.new_memory_notice_message_id(),
             worker_type_registry: options.worker_type_registry,
             now: options.now(),

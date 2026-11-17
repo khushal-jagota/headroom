@@ -1027,9 +1027,14 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         const turn = this.turn_for(value.turnId);
         if (turn === null) return;
         const spent = value.tokenUsage.total;
+        const current = value.tokenUsage.last?.inputTokens;
         await this.sink.report(
           turn.token,
           new B.TokenUsageReported({
+            context_input_tokens:
+              current !== undefined && Number.isSafeInteger(current) && current >= 0
+                ? current
+                : null,
             input_tokens: spent.inputTokens,
             output_tokens: spent.outputTokens,
             cached_input_tokens: spent.cachedInputTokens,
