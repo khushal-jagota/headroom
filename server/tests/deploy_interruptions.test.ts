@@ -1,7 +1,7 @@
 /** These risks are not reached by the core's no-participant recovery tests. */
 import { afterEach, expect, test, vi } from 'vitest';
 import { recover_conversations } from '../conversation/deploy_interruptions/coordinator.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

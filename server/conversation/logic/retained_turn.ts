@@ -74,6 +74,15 @@ export function facts_after_restart(
     if (!LIVE_FACT_STATUSES.has(value.status)) continue;
     if (open_run !== null && value.turn_number === kept) {
       if (value.kind === K.turn) continue;
+      if (
+        open_run.prompt_admission_pending &&
+        open_run.executor_process_current &&
+        value.kind === K.attempt &&
+        value.operation === O.prompt &&
+        value.identity === `prompt:${value.turn_number}` &&
+        value.status === S.intent
+      )
+        continue;
       if (value.kind === K.request && asks_stay_open) continue;
       if (
         value.kind === K.attempt &&

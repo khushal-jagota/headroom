@@ -9,7 +9,7 @@ import {
 } from '../conversation/snapshot/environment.ts';
 import { http_get_usage } from '../conversation/backend_usage/http.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
-import type { CodexProviderContext } from '../conversation/backends/codex_app_server/providers.ts';
+import type { CodexProviderContext } from '../drivers/codex/runtime/providers.ts';
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
 const [mode, argument] = process.argv.slice(2);

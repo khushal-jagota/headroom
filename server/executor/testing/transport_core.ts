@@ -1,4 +1,5 @@
 /** Joined executor consumers on the existing fixture-owned listener. */
+import { registry_of_factories } from '../../drivers/testing/registry.ts';
 import assert from 'node:assert/strict';
 import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -9,7 +10,7 @@ import { deployment_participants } from '../../conversation/deploy_interruptions
 import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
 import { message_content_text, text_message_content } from '../../conversation/message_content.ts';
 import { ConversationLiveTail } from '../../conversation/live_tail.ts';
-import { Deferred } from '../../conversation/runtime/state.ts';
+import { Deferred } from '../../core/deferred.ts';
 import { executor_remote_recovery } from '../../lifecycle/production.ts';
 import { BackendStateStore } from '../../conversation/backend_state.ts';
 import type { VpsExecutor } from '../vps_transport.ts';
@@ -30,7 +31,7 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
   let core!: SqliteProcessConversationSystem;
   core = new SqliteProcessConversationSystem({
     store,
-    backend_child_factories: { codex: remote, claude: remote, hermes: remote },
+    backend_registry: registry_of_factories({ codex: remote, claude: remote, hermes: remote }),
     message_files: endpoint.message_files,
     delivery_model_refusal: (backend, model, ticket_id) =>
       new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),
@@ -86,8 +87,8 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
     }
   }
   const poll = (current = identity) => endpoint.mailbox.poll(current, 0, 0);
-  const report = (commands: readonly WireValue<'MailboxCommand'>[]) =>
-    endpoint.mailbox.record_results(identity, {
+  const report = (commands: readonly WireValue<'MailboxCommand'>[], current = identity) =>
+    endpoint.mailbox.record_results(current, {
       outcomes: commands
         .filter((row) => row.child_command)
         .map((row) => ({
@@ -97,7 +98,14 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
             command_id: row.command_id,
             child: row.child_command!.child,
             disposition: 'succeeded',
-            result: {},
+            result:
+              row.child_command!.operation === 'write_prompt'
+                ? {
+                    kind: 'prompt_accepted',
+                    composed_content_delivered: true,
+                    agent_acceptance_proven: true,
+                  }
+                : ({} as WireValue<'CommandOutcome'>['result']),
           },
         })),
     });
@@ -159,8 +167,11 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
       ),
     );
   async function launched(id: string) {
-    await core.send(id, text_message_content(`work ${id}`), { sender_label: 'Owner' });
+    const prior = commands(id, 'write_prompt').length;
+    const sending = core.send(id, text_message_content(`work ${id}`), { sender_label: 'Owner' });
+    await until(() => commands(id, 'write_prompt').length > prior);
     await report((await poll()).commands);
+    await sending;
     return commands(id, 'write_prompt').at(-1)!;
   }
   const lease = (current: typeof identity, waiting: string[]) =>
@@ -392,6 +403,8 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
     await report((await poll()).commands);
     assert(!rebound && commands('rebind', 'write_prompt').length === 1);
     await submit([stopped(commands('rebind', 'stop')[0]!)]);
+    await until(() => commands('rebind', 'write_prompt').length === 2);
+    await report((await poll()).commands);
     await changing;
     const rebound_prompt = commands('rebind', 'write_prompt')[1]!;
     const rebound_start = commands('rebind', 'start')[1]!.arguments as WireValue<'StartRun'>;
@@ -416,6 +429,7 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
     assert.equal(commands('fenced', 'write_prompt').length, 1);
     await lease(fresh, []);
     await until(() => commands('fenced', 'write_prompt').length === 2);
+    await report((await poll(fresh)).commands, fresh);
     await core.wait_until_quiescent();
     const waiting = commands('fenced', 'write_prompt')[1]!;
     assert.equal(waiting.child.executor_incarnation, fresh.executor_incarnation);

@@ -28,6 +28,8 @@ A conversation is one agent, working in one folder, with a permanent record of w
 ```
 The backend's own session id is internal and can be rebound without anything outside the system noticing.
 
+Each backend is a driver package under `server/drivers/`, holding the adapter, its fixed facts (executable name, home environment names, install files), and the label and icon the apps will show. At startup Panels builds a registry with one instance per driver, and the conversation core asks the registry rather than a fixed list of three. A driver that fails to start, has invalid configuration, or is unknown becomes an unavailable entry with a reason, and nothing falls back to another backend. Until the lists are opened up, startup still refuses to run unless Claude, Codex, and Hermes are all live. A check in CI keeps backend names out of code outside their own package; each place that still names one is listed with the stage that removes it.
+
 Panels gives a local agent a private launch credential for its current conversation. It enters only the child’s environment, after saved launch settings have been written. The database keeps its hash, never the token. A new child receives a fresh credential from its canonical association, including after a restart. Reset revokes the old conversation’s authority while preserving its notebook. Generic conversation starts cannot choose a privileged identity. Remote children retain the executor’s existing per-child capability; a local token never enters an executor command.
 
 Claude and Codex run from owner-maintained CLI installations outside the app. Settings → Backends shows their installed and latest versions on the VPS. Only the owner can update them there. Updates change the selected user-local installation, and new agent processes use that version. A failed lookup of newer releases does not stop ordinary conversations. Before each backend starts, it checks its selected CLI. The native server remembers each version verdict for the exact installed file, from the backend card's version read or an earlier check, so a start reads the version again only after the CLI changes. It also checks the version the running CLI reports when it connects. If that CLI lacks a required feature, the backend names the required update, and a turn is refused before any launch is recorded. The adapter reads only the protocol fields it needs and ignores unrelated additions. The feature minimums and their reasons live in `src/planner/conversation/backends/cli_compatibility.py` and `server/conversation/backends/cli_compatibility.ts`. Mac CLI updates stay local to the Mac.
@@ -40,9 +42,9 @@ A busy agent is not a refusal. The sender picks how a busy agent meets the messa
 - **Queue** holds the message until the agent is free.
 - **Send now** ends the running turn and runs this message ahead of anything held.
 
-Messages that cannot join a running turn, such as attachments or a model change, wait in the queue with a visible reason. **Stop** ends the running turn.
+Messages that cannot join a running turn, such as attachments or a model change, wait in the queue with a visible reason. A refused steer also waits there, and a held message promoted to steer keeps its place when the steer is refused. **Stop** ends the running turn.
 
-Every send returns a fate. The fate is about delivery, not about whether the model agreed or obeyed.
+Every send returns a fate. The fate is about delivery, not about whether the model agreed or obeyed. A proven failure before a native send is a refusal. A failure after a possible native send retains uncertainty and never authorizes a replay.
 
 | Fate | Meaning |
 | --- | --- |

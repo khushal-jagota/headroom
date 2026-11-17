@@ -7,7 +7,9 @@ import * as application from '../app.ts';
 import * as database_module from '../core/database/index.ts';
 import { start_production_server } from '../lifecycle/production.ts';
 import type { ProductionServerDependencies } from '../lifecycle/production.ts';
-import type { ProductionBindingContext } from '../lifecycle/production_bindings.ts';
+import { create_production_backend_bindings } from '../lifecycle/production_bindings.ts';
+import type { DriverHost } from '../drivers/core/host.ts';
+import { drivers_of_factories } from '../drivers/testing/registry.ts';
 import { run_application_process } from '../lifecycle/application.ts';
 import * as backend_composition from '../conversation/snapshot/production.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
@@ -392,7 +394,8 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     });
     return app;
   });
-  const bindings_seen: ProductionBindingContext[] = [];
+  const bindings_seen: DriverHost[] = [];
+  const driver_host = create_production_backend_bindings().driver_host;
   const tracked_waits = vi.fn((sql: ReadSql, _now_ms: number) => {
     context.require_runtime_ownership();
     expect(sql.get('SELECT 1 AS alive')).toEqual({ alive: 1 });
@@ -403,21 +406,24 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   };
   const dependencies: ProductionServerDependencies = {
     backends: {
-      claude: (binding) => {
-        registry.bind_runtime(binding.worker_supervision);
-        bindings_seen.push(binding);
-        return registry.factories.claude;
-      },
-      codex: (binding) => {
-        bindings_seen.push(binding);
-        return registry.factories.codex;
-      },
-      hermes: (binding) => {
-        bindings_seen.push(binding);
-        return registry.factories.hermes;
-      },
+      drivers: drivers_of_factories({
+        claude: (host) => {
+          registry.bind_runtime(host.worker_supervision);
+          bindings_seen.push(host);
+          return registry.registry.require_live('claude').child_factory;
+        },
+        codex: (host) => {
+          bindings_seen.push(host);
+          return registry.registry.require_live('codex').child_factory;
+        },
+        hermes: (host) => {
+          bindings_seen.push(host);
+          return registry.registry.require_live('hermes').child_factory;
+        },
+      }),
+      driver_host,
       http(binding) {
-        bindings_seen.push(binding);
+        bindings_seen.push(binding.driver_host);
         return create_backend_runtime({
           database: binding.database,
           config: binding.config,
@@ -478,7 +484,11 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   await expect(
     start_production_server({
       ...dependencies,
-      backends: { claude: dependencies.backends.claude },
+      backends: {
+        drivers: dependencies.backends!.drivers!.filter(
+          (driver) => driver.driver_kind === 'claude',
+        ),
+      },
     }),
   ).rejects.toThrow('Missing production backend factories: codex, hermes');
   expect(bindings_seen).toEqual([]);

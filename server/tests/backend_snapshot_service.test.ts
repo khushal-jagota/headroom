@@ -7,7 +7,7 @@ import type {
   BackendProbeEnvironment,
   SnapshotProbeOptions,
 } from '../conversation/snapshot/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { BackendStateStore } from '../conversation/backend_state.ts';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import { createApp } from '../app.ts';

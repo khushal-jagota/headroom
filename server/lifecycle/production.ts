@@ -22,6 +22,7 @@ import { write_held_ticket_configuration } from '../runtime/conversation_start.t
 import { WAITS } from '../stalls/registry.ts';
 import { compose_production_backends, require_backend_bindings } from './production_bindings.ts';
 import type { ProductionBackendBindings } from './production_bindings.ts';
+import { create_driver_registry, default_instance_configs } from '../drivers/core/registry.ts';
 import type { ShutdownCompletion } from './contracts.ts';
 
 export interface ProductionServerDependencies {
@@ -44,16 +45,26 @@ export async function start_production_server(
   let backends: ReturnType<typeof compose_production_backends> | undefined;
   let owner: ConversationCompositionContext['database'] | undefined;
   const composed = (context: ConversationCompositionContext) => {
-    if (owner !== undefined && owner !== context.database)
+    if (!backends) throw new Error('Production backend composition is absent');
+    if (owner !== context.database)
       throw new Error('Production composition belongs to another server invocation');
-    if (backends === undefined) {
-      owner = context.database;
-      backends = compose_production_backends(context, bindings);
-    }
     return backends;
   };
   return startServer({
     onShutdownComplete,
+    async prepareConversationComposition(context, signal) {
+      if (owner !== undefined && owner !== context.database)
+        throw new Error('Production composition belongs to another server invocation');
+      owner = context.database;
+      const host = bindings.driver_host(context);
+      const registry = await create_driver_registry({
+        drivers: bindings.drivers,
+        configs: default_instance_configs(bindings.drivers),
+        host,
+        signal,
+      });
+      backends = compose_production_backends(context, { registry, host }, bindings);
+    },
     createExecutor(context) {
       return new VpsExecutorRegistry(context.database, context.clock, {
         db_path: context.config.db_path,
@@ -94,7 +105,7 @@ export function create_production_conversation_core(
     wait_registry: WAITS,
     remote_recovery: executor_remote_recovery(context.database, () => system),
     store: context.record.store,
-    backend_child_factories: current.factories,
+    backend_registry: current.registry,
     execution_refusal: current.execution_refusal,
     delivery_model_refusal: (backend, model, ticket_id) =>
       new BackendStateStore(context.database).delivery_model_refusal(backend, model, ticket_id),

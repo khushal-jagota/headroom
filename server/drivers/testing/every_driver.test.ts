@@ -1,0 +1,68 @@
+/** Lists that cannot come from a driver still hold every driver. (T3 ManagedPolicy.test.ts pattern) */
+import { existsSync, readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import {
+  NODE_RUNTIME_FILES,
+  SHARED_RUNTIME_FILES,
+} from '../../environments/release/configuration.ts';
+import { shipped_worker_types } from '../../worker_types/shipped.ts';
+import { BUILT_IN_DRIVERS } from '../built_in.ts';
+import type { AnyAgentDriver } from '../core/driver.ts';
+import { default_instance_configs } from '../core/registry.ts';
+
+interface EveryDriverList {
+  readonly name: string;
+  /** True, or why the list misses the driver. */
+  covers(driver: AnyAgentDriver): true | string;
+}
+const release_files = new Set<string>([...NODE_RUNTIME_FILES, ...SHARED_RUNTIME_FILES]);
+const agent_backend_packages = Object.keys(
+  (
+    JSON.parse(
+      readFileSync(new URL('../../../agent_backends/package.json', import.meta.url), 'utf8'),
+    ) as { dependencies: Record<string, string> }
+  ).dependencies,
+);
+const missing = (items: readonly string[], present: (item: string) => boolean): true | string => {
+  const absent = items.filter((item) => !present(item));
+  return absent.length ? `missing ${absent.join(', ')}` : true;
+};
+const EVERY_DRIVER_LISTS: readonly EveryDriverList[] = [
+  {
+    name: 'the release runtime files include the driver files',
+    covers: (driver) =>
+      missing(driver.manifest.install?.release_files ?? [], (file) => release_files.has(file)),
+  },
+  {
+    name: 'agent_backends/package.json installs the driver packages',
+    covers: (driver) =>
+      missing(driver.manifest.install?.npm_packages ?? [], (name) =>
+        agent_backend_packages.includes(name),
+      ),
+  },
+  {
+    name: 'the driver package holds its icon',
+    covers: (driver) =>
+      missing([driver.client.icon.file], (file) =>
+        existsSync(new URL(`../${driver.driver_kind}/${file}`, import.meta.url)),
+      ),
+  },
+];
+
+describe.each(BUILT_IN_DRIVERS.map((driver) => [driver.driver_kind, driver] as const))(
+  '%s',
+  (_kind, driver) => {
+    it.each(EVERY_DRIVER_LISTS.map((list) => [list.name, list] as const))('%s', (_name, list) => {
+      expect(list.covers(driver)).toBe(true);
+    });
+  },
+);
+
+it('every shipped worker type defaults to a built-in backend', () => {
+  const built_in = new Set<string>(default_instance_configs(BUILT_IN_DRIVERS).keys());
+  const defaults = shipped_worker_types().map(
+    (raw) => (raw as { profile: { default_backend: string } }).profile.default_backend,
+  );
+  expect(defaults.length).toBeGreaterThan(0);
+  expect(defaults.filter((backend) => !built_in.has(backend))).toEqual([]);
+});

@@ -2,7 +2,7 @@
 import {
   probe_claude_model_catalog,
   ClaudeModelCatalogUnavailable as ProviderUnavailable,
-} from '../backends/claude_model_catalog.ts';
+} from '../../drivers/claude/runtime/model_catalog.ts';
 import { ClaudeModelCatalogUnavailable } from './provider_contracts.ts';
 import { unavailable_backend_providers } from './composition.ts';
 import type { BackendProviders } from './composition.ts';
@@ -11,8 +11,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { ClaudeUsageAdapter } from '../backend_usage/claude.ts';
 import { http_get_usage } from '../backend_usage/http.ts';
-import { create_codex_providers } from '../backends/codex_app_server/providers.ts';
-import type { CodexProviderContext } from '../backends/codex_app_server/providers.ts';
+import { create_codex_providers } from '../../drivers/codex/runtime/providers.ts';
+import type { CodexProviderContext } from '../../drivers/codex/runtime/providers.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import {
   ModelCatalogCleanupFailed,

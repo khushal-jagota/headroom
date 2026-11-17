@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, chmod, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import {
   WorkerSupervisor,
   WorkerSupervisionRuntime,

@@ -1,3 +1,4 @@
+import { registry_of_factories } from '../drivers/testing/registry.ts';
 import { setup } from './conversation_core_fixture.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 /** Internal ordering risks that HTTP request lists cannot pause at their exact boundary. */
@@ -30,7 +31,7 @@ import type { BackendChild, BackendChildFactory } from '../conversation/backends
 import { message_content_text, text_message_content } from '../conversation/message_content.ts';
 import { AgentMessageEventPayload } from '../conversation/events.ts';
 import { conversation_attention } from '../notifications/attention.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';
@@ -534,7 +535,9 @@ test('the CLI floor check refuses a turn before child custody is written', async
       start,
     }) as unknown as BackendChild;
   const f = setup({
-    core: { backend_child_factories: { codex: factory, claude: factory, hermes: factory } },
+    core: {
+      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+    },
   });
   try {
     await f.start();

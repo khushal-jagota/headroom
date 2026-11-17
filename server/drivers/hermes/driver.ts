@@ -1,0 +1,17 @@
+/** The Hermes driver. Its runtime loads only when an instance is created. */
+import { NO_DRIVER_CONFIG } from '../core/driver.ts';
+import type { AgentDriver } from '../core/driver.ts';
+import { parse_driver_kind } from '../core/identity.ts';
+import { hermes_client } from './client.ts';
+import { hermes_manifest } from './manifest.ts';
+
+export const hermes_driver: AgentDriver<null> = {
+  driver_kind: parse_driver_kind('hermes'),
+  client: hermes_client,
+  manifest: hermes_manifest,
+  config: NO_DRIVER_CONFIG,
+  async create(input, host) {
+    const { create_hermes_instance } = await import('./runtime/instance.ts');
+    return create_hermes_instance(input, host);
+  },
+};

@@ -2,7 +2,7 @@
  * Reuse native fixture options and inject only the snapshot, with no stores or children started.
  */
 import { expect, test, vi } from 'vitest';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import type {
   ExecutorCleanupSnapshot,
   CleanupReconciliationDependencies,

@@ -4,23 +4,20 @@ import { provider_launch_settings } from '../../core/config.ts';
 import { claude_executable_override } from '../../conversation/snapshot/environment.ts';
 import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
 import type { BackendChildFactory } from '../../conversation/backends/contracts.ts';
-import { create_claude_backend_child_factory } from '../../conversation/backends/claude_agent_sdk/adapter.ts';
-import type { ClaudeAgentSdkChildLaunch } from '../../conversation/backends/claude_agent_sdk/adapter.ts';
+import { create_claude_backend_child_factory } from '../../drivers/claude/runtime/adapter.ts';
+import type { ClaudeAgentSdkChildLaunch } from '../../drivers/claude/runtime/adapter.ts';
 import {
   codex_app_server_child_launch,
   create_codex_backend_child_factory,
-} from '../../conversation/backends/codex_app_server/adapter.ts';
-import type { CodexChildLaunch } from '../../conversation/backends/codex_app_server/adapter.ts';
-import {
-  codex_home,
-  RememberedCodexLoginRejection,
-} from '../../conversation/backends/codex_app_server/login.ts';
-import { create_hermes_backend_child_factory } from '../../conversation/backends/hermes_acp/adapter.ts';
+} from '../../drivers/codex/runtime/adapter.ts';
+import type { CodexChildLaunch } from '../../drivers/codex/runtime/adapter.ts';
+import { codex_home, RememberedCodexLoginRejection } from '../../drivers/codex/runtime/login.ts';
+import { create_hermes_backend_child_factory } from '../../drivers/hermes/runtime/adapter.ts';
 import {
   hermes_acp_child_launch,
   hermes_source_root,
-} from '../../conversation/backends/hermes_acp/launch.ts';
-import type { AcpChildLaunch } from '../../conversation/backends/hermes_acp/launch.ts';
+} from '../../drivers/hermes/runtime/launch.ts';
+import type { AcpChildLaunch } from '../../drivers/hermes/runtime/launch.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { expand_executor_path } from './platform.ts';
 import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';

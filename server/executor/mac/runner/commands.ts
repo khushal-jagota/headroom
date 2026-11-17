@@ -5,6 +5,7 @@ import {
   BackendSpawnFailed,
   BackendSteerAccepted,
   BackendSteerRefused,
+  PromptWriteRefused,
 } from '../../../conversation/backends/contracts.ts';
 import type { TurnToken as NativeTurn } from '../../../conversation/backends/contracts.ts';
 import { prefix_message_content_text } from '../../../conversation/message_content.ts';
@@ -110,7 +111,8 @@ async function invoke(
           agent_acceptance_proven: result.agent_acceptance_proven,
         };
       } catch (error) {
-        if (error instanceof BackendPromptRejected) child.active_turn = previous;
+        if (error instanceof BackendPromptRejected || error instanceof PromptWriteRefused)
+          child.active_turn = previous;
         throw error;
       }
     }

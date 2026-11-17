@@ -295,7 +295,7 @@ The Manager also accepted these SDK argument facts on November 12, 2026:
 Raw argument arrays remain in the evidence. No generic option parser, sorting, wildcard,
 or unknown argument is accepted by the comparison.
 
-`conversation/backends/claude_sdk_environment.test.ts` pins the two TS values through the real
+`drivers/claude/runtime/sdk_environment.test.ts` pins the two TS values through the real
 pinned SDK and the catalog's public spawn hook. It compares the entire child environment,
 including inherited values and the removal of `CLAUDECODE`. Every process API is blocked before
 SDK import, and the synthetic launch stops at the hook without a process. The same check
@@ -508,6 +508,8 @@ The Manager required this correction during the Mac slice 2 review on November 1
 Python can reject a successful capture callback after its append commits, when the final blob sweep fails.
 A caller without a fixed submission ID can then retry and queue the same output twice as new.
 TypeScript logs that cleanup failure and retains the callback result. A later sweep retries blob cleanup.
+
+The Mac outbox now returns committed capture and receipt results before blob cleanup finishes. One coalesced cleanup task remains owned through shutdown. This keeps slow cleanup from holding a delivery slot or the next capture.
 The durable append and receipt behavior otherwise retain Python's contract.
 
 ## CLI workspace artifact field

@@ -14,11 +14,11 @@ The file worker creates and flushes directories. The database's main thread then
 Only that database owner can release its lease. File-worker loss cannot release it.
 The shared sidecar keeps all writable connections inside the database module.
 Sequences, lengths, and counters use safe number values. Private filesystem timestamps retain bigint stat precision.
-Startup loads only sequence columns. Pending reads return at most 32 rows, optionally for one conversation.
+Startup loads pending sequence columns and retains local delivery diagnostics. Pending reads return at most 32 rows, optionally for one conversation.
 The waiting-conversation read returns at most 65 ordered rows, so the host can expose 64 and detect truncation.
 
 `append(columns, payload, files, updates, validate)` writes the item and index in one transaction.
-Payload and receipt buffers retain their exact bytes.
+The event value and receipt bytes remain unchanged.
 For byte admission, storage reads the valid local `{payload,files}` wrapper and projects an `ItemSubmission` through the shared generated types.
 Native `JSON.stringify` measures the projected message size.
 The required host validator owns complete schema and admission checks.
@@ -36,12 +36,21 @@ Neither file hashing nor copying runs on the main thread or inside the database 
 
 `acknowledge` requires validated receipt facts and encoded bytes from the host.
 The transaction retains CLI receipts, deletes other confirmed items, and clears confirmed rows for a stopped child.
+Rows with local delivery failures or file refusals remain for diagnosis, including after restart and child cleanup.
 The confirmed callback runs after commit and before blob cleanup. Cleanup failure cannot strand its waiter.
 Refused file keys invalidate matching cache rows while other pending items retain their blob references.
 
+The local payload wrapper also stores delivery start time, file refusals, and terminal local failure reasons.
+The first delivery attempt persists its wall-clock time so a restart cannot renew the delivery budget.
+`refuse_file` removes one dependency from both the wrapper and its file index, records the reason, and preserves the event.
+`fail_delivery` preserves failed content, available blobs, and the supplied local receipt, removes the item from pending delivery, and invalidates its Ticket file cache.
+`delivery_status` exposes retained failure counts and a reason independently of lease health.
+These facts preserve the submitted event, item wire format, and SQLite spool schema.
+
 An asynchronous empty-directory check precedes the reference join for sweeping.
 After that check, storage rechecks capture activity before it queues deletion through a retained parent.
-Startup sweeps unreferenced spool blobs and interrupted capture temporaries. This does not cover other artifact or update directories.
+Startup sweeps unreferenced spool blobs and interrupted capture temporaries. Pending items and retained local failures protect their referenced blobs.
+This does not cover other artifact or update directories.
 A capture-finally cleanup failure logs once and leaves blobs for a later sweep. It does not reject an append that already committed.
 That last behavior deliberately fixes Python's post-commit cleanup failure. It is recorded in `server/DEVIATIONS.md`.
 

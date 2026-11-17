@@ -40,7 +40,7 @@ import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
 import { RECORD_ROOT_ENV } from '../../../worker_supervision/config.ts';
 import type { AcceptanceReceipt, QueuedEnvelope } from '../../wire.generated.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
-import { create_claude_backend_child_factory } from '../../../conversation/backends/claude_agent_sdk/adapter.ts';
+import { create_claude_backend_child_factory } from '../../../drivers/claude/runtime/adapter.ts';
 import { create_claude_cleanup_fixture } from './claude_cleanup.ts';
 import { runtime_archive } from '../updates/testing/runtime_archive.ts';
 import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';

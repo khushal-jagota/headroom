@@ -12,11 +12,12 @@ import { startServer } from '../core/start.ts';
 import type { ConversationCompositionContext, StartedServer } from '../core/start.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import { create_durable_codex_login_rejection } from '../conversation/backend_state.ts';
-import * as claude from '../conversation/backends/claude_agent_sdk/adapter.ts';
-import * as codex from '../conversation/backends/codex_app_server/adapter.ts';
-import * as hermes from '../conversation/backends/hermes_acp/adapter.ts';
-import * as production_launches from '../lifecycle/production_launches.ts';
-import { HermesModelCatalogOwner } from '../conversation/backends/hermes_acp/catalog.ts';
+import * as claude from '../drivers/claude/runtime/adapter.ts';
+import * as codex from '../drivers/codex/runtime/adapter.ts';
+import * as hermes from '../drivers/hermes/runtime/adapter.ts';
+import * as hermes_catalog from '../drivers/hermes/runtime/catalog.ts';
+import { HermesModelCatalogOwner } from '../drivers/hermes/runtime/catalog.ts';
+import { create_driver_registry, default_instance_configs } from '../drivers/core/registry.ts';
 import { ModelCatalogCleanupFailed } from '../conversation/backends/catalog_cleanup.ts';
 import * as snapshot from '../conversation/snapshot/composition.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
@@ -24,6 +25,10 @@ import {
   compose_production_backends,
   create_production_backend_bindings,
   default_production_dependencies,
+} from '../lifecycle/production_bindings.ts';
+import type {
+  PreparedProductionBackends,
+  ProductionBackendBindings,
 } from '../lifecycle/production_bindings.ts';
 import { start_production_server } from '../lifecycle/production.ts';
 import * as installation from '../environments/updates/installation.ts';
@@ -125,7 +130,7 @@ test('configured real bindings share owners and durable memory while Hermes clea
     vi.spyOn(hermes, 'create_hermes_backend_child_factory'),
   ] as const;
   const http_runtime = vi.spyOn(snapshot, 'create_backend_runtime');
-  const launches = vi.spyOn(production_launches, 'production_backend_launches');
+  const catalog_launch = vi.spyOn(hermes_catalog, 'hermes_model_catalog_launch');
   let release!: (error?: Error) => void,
     entered!: () => void,
     hold = false;
@@ -147,14 +152,26 @@ test('configured real bindings share owners and durable memory while Hermes clea
     });
   let context!: ConversationCompositionContext, server: StartedServer | undefined;
   let owned_http!: BackendHttpRuntime;
+  let real!: ProductionBackendBindings, prepared!: PreparedProductionBackends;
   const stop: StopOptions = { deadline: performance.now() / 1000 + 30 };
   const firstStop: StopOptions = { deadline: stop.deadline - 1 };
   try {
     server = await startServer({
+      async prepareConversationComposition(value, signal) {
+        real = create_production_backend_bindings();
+        expect(constructors.every((spy) => spy.mock.calls.length === 0)).toBe(true);
+        const host = real.driver_host(value);
+        const configs = default_instance_configs(real.drivers);
+        const registry = await create_driver_registry({
+          drivers: real.drivers,
+          configs,
+          host,
+          signal,
+        });
+        prepared = { registry, host };
+      },
       createBackendServices(value) {
         context = value;
-        const real = create_production_backend_bindings();
-        expect(constructors.every((spy) => spy.mock.calls.length === 0)).toBe(true);
         owned_http = without_runner(
           '0',
           () =>
@@ -163,6 +180,7 @@ test('configured real bindings share owners and durable memory while Hermes clea
                 ...value,
                 config: { ...value.config, test_mode: false, executor_id: 'synthetic-executor' },
               },
+              prepared,
               real,
             ).http,
         );
@@ -177,13 +195,19 @@ test('configured real bindings share owners and durable memory while Hermes clea
     expect(process.env.PLAN_DB_PATH).toBeUndefined();
     expect(process.env.PLAN_WORKER_PROCESS_ROOT).toBeUndefined();
     expect(context.config.db_path).toBe(path);
-    expect(launches).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:0', worker_process_root);
+    // One host per invocation carries the URL and the canonical Worker root.
+    expect(real.driver_host(context)).toBe(prepared.host);
+    expect([prepared.host.panels_server_url, prepared.host.worker_process_root]).toEqual([
+      'http://127.0.0.1:0',
+      worker_process_root,
+    ]);
     for (const call of [claude_call, codex_call, hermes_call])
       expect(Object.fromEntries(call[0].environment_overrides ?? []).PLAN_WORKER_PROCESS_ROOT).toBe(
         worker_process_root,
       );
+    expect(catalog_launch).toHaveBeenCalledTimes(1);
     expect(
-      Object.fromEntries(launches.mock.results[0]!.value.hermes_catalog.environment_overrides),
+      Object.fromEntries(catalog_launch.mock.results[0]!.value.environment_overrides),
     ).not.toHaveProperty('PLAN_WORKER_PROCESS_ROOT');
     expect(claude_call).toEqual([
       {

@@ -1,4 +1,9 @@
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import {
+  drivers_of_factories,
+  registry_of_factories,
+  unread_driver_host,
+} from '../drivers/testing/registry.ts';
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 /** Actual startup preserves retained turns and keeps away/unconfigured Mac work remote. */
 import { dirname, join } from 'node:path';
@@ -31,7 +36,7 @@ import {
 import type { StallSource } from '../stalls/contracts.ts';
 import { MacUpdateService } from '../environments/updates/mac/service.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { write_bindings } from '../conversation/start_admission/index.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { decode_value } from '../executor/protocol.ts';
@@ -171,13 +176,19 @@ test('configured restart adopts before reconciliation and Mac locality never sel
           now: () => current.clock.now(),
           providers: unavailable_backend_providers(),
         });
-        bound = compose_production_backends(current, {
-          claude: () => local,
-          codex: () => local,
-          hermes: () => local,
-          http: () => http,
-          stall_sources: () => [local_source],
-        });
+        bound = compose_production_backends(
+          current,
+          {
+            registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+            host: unread_driver_host,
+          },
+          {
+            drivers: [],
+            driver_host: () => unread_driver_host,
+            http: () => http,
+            stall_sources: () => [local_source],
+          },
+        );
         core = create_production_conversation_core(current, bound);
         return core;
       },
@@ -236,7 +247,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
       }),
     );
     expect(
-      bound.factories.codex({
+      bound.registry.require_live('codex').child_factory({
         resolved_start: away,
         event_sink: { async report() {} },
         message_files: endpoint.message_files,
@@ -245,15 +256,18 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     const unconfigured = compose_production_backends(
       { ...context, config: { ...context.config, executor_id: null }, executor: null },
       {
-        claude: () => local,
-        codex: () => local,
-        hermes: () => local,
+        registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+        host: unread_driver_host,
+      },
+      {
+        drivers: [],
+        driver_host: () => unread_driver_host,
         http: () => bound.http,
         stall_sources: () => [],
       },
     );
     expect(() =>
-      unconfigured.factories.codex({
+      unconfigured.registry.require_live('codex').child_factory({
         resolved_start: start,
         event_sink: { async report() {} },
         message_files: endpoint.message_files,
@@ -443,9 +457,12 @@ test('production constructs its real executor and reconciles that executor inven
   try {
     server = await start_production_server({
       backends: {
-        claude: () => local,
-        codex: () => local,
-        hermes: () => local,
+        drivers: drivers_of_factories({
+          claude: () => local,
+          codex: () => local,
+          hermes: () => local,
+        }),
+        driver_host: () => unread_driver_host,
         http: (current) =>
           create_backend_runtime({
             database: current.database,

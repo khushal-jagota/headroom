@@ -27,5 +27,13 @@ export interface MacRunConversations {
     reference: ChildReference,
     turn: WireValue<'TurnToken'>,
   ): Promise<void>;
+  /** Apply an exact native failure without waiting for the artifact outbox.
+   * The caller admits only a matching command/outcome pair. This operation waits
+   * for prompt/steer receipts, so it must not block their result publication.
+   */
+  reconcile_remote_command(
+    command: WireValue<'ChildCommand'>,
+    outcome: WireValue<'CommandOutcome'>,
+  ): Promise<void>;
   stop_interrupted_remote_child(reference: ChildReference, child: BackendChild): Promise<void>;
 }

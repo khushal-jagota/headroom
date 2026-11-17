@@ -25,12 +25,19 @@ import { OutboxResources } from './resources.ts';
 import type { SidecarOpenScope } from './journal_contracts.ts';
 import { item_size_guard } from './size.ts';
 import { DATABASE_NAME, FORMAT_REFUSAL, OUTBOX_SCHEMA, SPOOL_FORMAT_VERSION } from './schema.ts';
+import {
+  delivery_diagnostics,
+  delivery_state,
+  NO_DELIVERY_DIAGNOSTICS,
+  stored_payload,
+} from './delivery.ts';
 import type {
   CaptureRows,
   ItemColumns,
   ItemFileColumns,
   ItemRow,
   OutboxClock,
+  OutboxDeliveryStatus,
   TicketFileKey,
   TicketFileRow,
 } from './contracts.ts';
@@ -86,6 +93,8 @@ export class OutboxStore {
   private readonly first_held = new Map<number, number>();
   private readonly capture_tails = new Map<string, Promise<void>>();
   private readonly operations = new Set<Promise<unknown>>();
+  private sweep_task: Promise<void> | undefined;
+  private sweep_requested = false;
   private drained: Promise<void> | undefined;
   private cleanup: Promise<void> | undefined;
   private constructor(
@@ -146,7 +155,7 @@ export class OutboxStore {
       const store = new OutboxStore(root, database, files, blobs, clock, resources, on_failure);
       files.assert_healthy();
       database.write((tx) => {
-        tx.run('DELETE FROM items WHERE receipt_json IS NOT NULL');
+        tx.run(`DELETE FROM items WHERE receipt_json IS NOT NULL AND ${NO_DELIVERY_DIAGNOSTICS}`);
         files.assert_healthy();
       });
       const opened = clock.monotonic();
@@ -274,6 +283,119 @@ export class OutboxStore {
     );
     return row === undefined ? null : item_row(row);
   }
+  delivery_started(submission_id: string): number {
+    this.admit();
+    const row = this.held(submission_id);
+    if (row === null) throw file_error('outbox item is absent');
+    const value = stored_payload(row),
+      state = delivery_state(row);
+    if (state.started_at_ms !== null) return state.started_at_ms;
+    const started_at_ms = counter(this.clock.now_ns() / 1_000_000n);
+    value.delivery = { ...state, started_at_ms };
+    this.database.write((tx) => {
+      tx.run('UPDATE items SET payload_json=? WHERE submission_id=?', [
+        Buffer.from(JSON.stringify(value)),
+        submission_id,
+      ]);
+      this.assert_healthy();
+    });
+    return started_at_ms;
+  }
+  refuse_file(submission_id: string, file: TicketFileKey, reason: string): Promise<void> {
+    this.admit();
+    const task = (async () => {
+      await Promise.resolve();
+      const row = this.held(submission_id);
+      if (row === null || row.receipt_json !== null) return;
+      const value = stored_payload(row),
+        state = delivery_state(row);
+      const matches = (entry: (typeof value.files)[number]) =>
+        entry.owner_id === file.ticket_id &&
+        entry.relative_path === file.relative_path &&
+        entry.sha256 === file.sha256;
+      if (!value.files.some(matches)) return;
+      value.files = value.files.filter((entry) => !matches(entry));
+      state.file_refusals.push({ relative_path: file.relative_path, sha256: file.sha256, reason });
+      value.delivery = state;
+      this.database.write((tx) => {
+        tx.run('UPDATE items SET payload_json=? WHERE submission_id=?', [
+          Buffer.from(JSON.stringify(value)),
+          submission_id,
+        ]);
+        tx.run('DELETE FROM item_files WHERE sequence=? AND relative_path=? AND sha256=?', [
+          row.sequence,
+          file.relative_path,
+          file.sha256,
+        ]);
+        tx.run('DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=? AND sha256=?', [
+          file.ticket_id,
+          file.relative_path,
+          file.sha256,
+        ]);
+        this.assert_healthy();
+      });
+      this.defer_sweep();
+    })();
+    return this.track(task);
+  }
+  fail_delivery(
+    submission_id: string,
+    receipt: Buffer,
+    reason: string,
+    confirmed: () => void,
+  ): Promise<void> {
+    this.admit();
+    const task = (async () => {
+      await Promise.resolve();
+      const row = this.held(submission_id);
+      if (row === null || row.receipt_json !== null) return;
+      const value = stored_payload(row);
+      value.delivery = { ...delivery_state(row), failure: reason };
+      this.database.write((tx) => {
+        tx.run('UPDATE items SET payload_json=?,receipt_json=? WHERE submission_id=?', [
+          Buffer.from(JSON.stringify(value)),
+          receipt,
+          submission_id,
+        ]);
+        for (const file of value.files)
+          tx.run('DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=? AND sha256=?', [
+            file.owner_id,
+            file.relative_path,
+            file.sha256,
+          ]);
+        this.assert_healthy();
+      });
+      this.first_held.delete(row.sequence);
+      synchronous(confirmed());
+      this.defer_sweep();
+    })();
+    return this.track(task);
+  }
+  delivery_status(): OutboxDeliveryStatus {
+    this.admit();
+    return this.database.read((sql) => {
+      const counts = sql.get<{
+        failed_count: number | bigint;
+        refused_file_count: number | bigint;
+      }>(
+        `SELECT
+          COALESCE(SUM(CASE WHEN json_extract(CAST(payload_json AS TEXT),'$.delivery.failure') IS NOT NULL THEN 1 ELSE 0 END),0) AS failed_count,
+          COALESCE(SUM(COALESCE(json_array_length(CAST(payload_json AS TEXT),'$.delivery.file_refusals'),0)),0) AS refused_file_count
+        FROM items WHERE NOT(${NO_DELIVERY_DIAGNOSTICS})`,
+      )!;
+      const latest = sql.get<{ reason: string | null }>(
+        `SELECT COALESCE(
+          json_extract(CAST(payload_json AS TEXT),'$.delivery.failure'),
+          json_extract(CAST(payload_json AS TEXT),'$.delivery.file_refusals[#-1].reason')
+        ) AS reason FROM items WHERE NOT(${NO_DELIVERY_DIAGNOSTICS}) ORDER BY sequence DESC LIMIT 1`,
+      );
+      return {
+        failed_count: counter(counts.failed_count),
+        refused_file_count: counter(counts.refused_file_count),
+        last_error: latest?.reason ?? null,
+      };
+    });
+  }
   pending(conversation_id?: string): ItemRow[] {
     this.admit();
     return this.database
@@ -392,15 +514,9 @@ export class OutboxStore {
         }
       } finally {
         this.capturing--;
-        try {
-          await this.sweep();
-        } catch (error) {
-          // Durable append success survives cleanup failure. Retry on a later sweep.
-          console.warn('Mac outbox capture cleanup deferred:', failure_name(error));
-        } finally {
-          release();
-          if (this.capture_tails.get(ticket_id) === tail) this.capture_tails.delete(ticket_id);
-        }
+        release();
+        if (this.capture_tails.get(ticket_id) === tail) this.capture_tails.delete(ticket_id);
+        this.defer_sweep();
       }
     })();
     return this.track(task);
@@ -506,19 +622,50 @@ export class OutboxStore {
               file.relative_path,
               file.sha256,
             ]);
-        if (row.kind === 'cli_write')
+        if (row.kind === 'cli_write' || delivery_diagnostics(row))
           tx.run('UPDATE items SET receipt_json=? WHERE submission_id=?', [receipt, submission_id]);
         else tx.run('DELETE FROM items WHERE submission_id=?', [submission_id]);
         if (row.kind === 'child_stopped')
-          tx.run('DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL', [row.child_id]);
+          tx.run(
+            `DELETE FROM items WHERE child_id=? AND receipt_json IS NOT NULL AND ${NO_DELIVERY_DIAGNOSTICS}`,
+            [row.child_id],
+          );
         this.assert_healthy();
       });
       this.first_held.delete(row.sequence);
       // The host can settle its waiter even when subsequent blob cleanup fails.
       synchronous(confirmed());
-      await this.sweep();
+      this.defer_sweep();
     })();
     return this.track(task);
+  }
+  private defer_sweep(): void {
+    this.sweep_requested = true;
+    if (this.sweep_task !== undefined) return;
+    const task = (async () => {
+      // Register cleanup before it can finish or before a caller can stop the store.
+      await Promise.resolve();
+      do {
+        this.sweep_requested = false;
+        try {
+          await this.sweep();
+        } catch (error) {
+          // Durable results survive cleanup failure. Later activity retries cleanup.
+          console.warn(
+            'Mac outbox cleanup deferred:',
+            error instanceof Error ? `${failure_name(error)}: ${error.message}` : String(error),
+          );
+        }
+      } while (this.sweep_requested);
+    })();
+    this.sweep_task = task;
+    this.track(task);
+    void task.finally(() => {
+      if (this.sweep_task === task) {
+        this.sweep_task = undefined;
+        if (this.sweep_requested) this.defer_sweep();
+      }
+    });
   }
   private async sweep(): Promise<void> {
     if (this.capturing) return;
@@ -533,7 +680,7 @@ export class OutboxStore {
     const keep = this.database.read((sql) =>
       sql
         .all<{ sha256: string }>(
-          'SELECT DISTINCT sha256 FROM item_files JOIN items USING(sequence) WHERE receipt_json IS NULL',
+          "SELECT DISTINCT sha256 FROM item_files JOIN items USING(sequence) WHERE receipt_json IS NULL OR json_extract(CAST(payload_json AS TEXT),'$.delivery.failure') IS NOT NULL",
         )
         .map((row) => row.sha256),
     );

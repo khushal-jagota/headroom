@@ -1,11 +1,11 @@
 /** Hosted peer for the real Claude adapter's exact disconnect and rebind boundary. */
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
-import type { ClaudeSdkClientFactory } from '../../../conversation/backends/claude_agent_sdk/query_contracts.ts';
-import { Pending } from '../../../conversation/backends/claude_agent_sdk/wire.ts';
+import type { ClaudeSdkClientFactory } from '../../../drivers/claude/runtime/query_contracts.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
 export function create_claude_cleanup_fixture() {
-  let cleanup = new Pending<void>();
+  let cleanup = new Deferred<void>();
   cleanup.resolve();
   let cleanup_entered = false;
   const clients: {
@@ -87,7 +87,7 @@ export function create_claude_cleanup_fixture() {
     },
     hold_cleanup() {
       cleanup_entered = false;
-      cleanup = new Pending<void>();
+      cleanup = new Deferred<void>();
     },
     release_cleanup() {
       cleanup.resolve();

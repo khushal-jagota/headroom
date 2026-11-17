@@ -3,14 +3,17 @@ import { ConversationBackendKey } from '../conversation/contracts.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { production_backend_providers } from '../conversation/snapshot/production.ts';
 import { backend_io_is_test } from '../conversation/snapshot/environment.ts';
-import { HermesModelCatalogOwner } from '../conversation/backends/hermes_acp/catalog.ts';
+import {
+  HermesModelCatalogOwner,
+  hermes_model_catalog_launch,
+} from '../drivers/hermes/runtime/catalog.ts';
+import { hermes_launch_options } from '../drivers/hermes/runtime/instance.ts';
 import {
   model_catalog_cleanup_pending,
   remember_model_catalog_failure,
 } from '../conversation/backends/catalog_cleanup.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import type { ProductionBindingContext } from './production_bindings.ts';
-import type { ProductionBackendLaunches } from './production_launches.ts';
 import { ShutdownDeadlineExceeded } from './contracts.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
 
@@ -91,9 +94,8 @@ function own_hermes_catalog(
 export function create_production_backend_http(
   context: Pick<
     ProductionBindingContext,
-    'database' | 'config' | 'clock' | 'child_processes' | 'one_shot_children'
+    'database' | 'config' | 'clock' | 'child_processes' | 'one_shot_children' | 'driver_host'
   >,
-  launches: Pick<ProductionBackendLaunches, 'hermes_catalog'>,
 ): BackendHttpRuntime {
   let runtime!: BackendHttpRuntime;
   const now = () => context.clock.now();
@@ -107,9 +109,12 @@ export function create_production_backend_http(
   const owner =
     context.config.test_mode || backend_io_is_test()
       ? null
-      : new HermesModelCatalogOwner(launches.hermes_catalog, {
-          child_processes: context.child_processes,
-        });
+      : new HermesModelCatalogOwner(
+          hermes_model_catalog_launch(hermes_launch_options(context.driver_host)),
+          {
+            child_processes: context.child_processes,
+          },
+        );
   const base = create_backend_runtime({
     database: context.database,
     config: context.config,

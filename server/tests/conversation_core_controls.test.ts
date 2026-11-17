@@ -9,13 +9,12 @@ import {
   PromptDeliveryInjected,
   PromptDeliveryQueued,
   PromptDeliveryStarted,
-  PromptDeliveryRefused,
   PromptDeliveryUncertain,
 } from '../conversation/contracts.ts';
 import { AgentMessageDelta, TurnEnded } from '../conversation/backends/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { ConversationRoleMaterials, ConversationStartRequest } from '../conversation/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { save_attempt } from '../conversation/runtime/save_attempt.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';
@@ -208,18 +207,56 @@ test('two promotions of one held id have one winner', async () => {
   for (const fate of ['accepted', 'refused', 'uncertain'] as const) {
     const id = `${fate}-promotion`;
     f.core.start_admission.try_start(await f.core.automatic_start_request(id, 'core'));
+    if (fate === 'refused')
+      expect(await f.send('ahead', 'ahead')).toBeInstanceOf(PromptDeliveryQueued);
     expect(await f.send('promote steer', id)).toBeInstanceOf(PromptDeliveryQueued);
-    const held = (await f.core.held_prompts('core'))[0];
+    if (fate === 'refused')
+      expect(await f.send('behind', 'behind')).toBeInstanceOf(PromptDeliveryQueued);
+    const held = (await f.core.held_prompts('core')).find(
+      (entry) => entry.sender_message_id === id,
+    )!;
     await child.configure('steer', {
       result: { fate, ...(fate === 'refused' ? { refusal_reason: 'backend_cannot_steer' } : {}) },
     });
-    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toBeInstanceOf(
+    const promoted = await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer');
+    expect(promoted).toBeInstanceOf(
       fate === 'refused'
-        ? PromptDeliveryRefused
+        ? PromptDeliveryQueued
         : fate === 'uncertain'
           ? PromptDeliveryUncertain
           : PromptDeliveryInjected,
     );
+    if (fate === 'refused') {
+      // A refused promotion was not delivered. It keeps its place, identity and admission.
+      expect(promoted).toEqual(new PromptDeliveryQueued({ queue_position: 2 }));
+      expect(
+        (await f.core.held_prompts('core')).map((entry) => [
+          entry.held_prompt_id === held.held_prompt_id,
+          entry.sender_message_id,
+          entry.queue_reason,
+        ]),
+      ).toEqual([
+        [false, 'ahead', 'requested'],
+        [true, id, 'steer_refused'],
+        [false, 'behind', 'requested'],
+      ]);
+      expect(f.core.start_admission.has_requests([id])).toBe(true);
+      expect(
+        f.store.read_events_after('core', 0).some((row) => row.kind === 'prompt_delivery_refused'),
+      ).toBe(false);
+      await child.finish();
+      await f.core.wait_until_quiescent();
+      expect(await f.core.held_prompts('core')).toEqual([]);
+      expect(
+        f.store
+          .read_events_after('core', 0)
+          .filter((row) => row.payload.kind === 'prompt' && row.payload.sender_message_id === id),
+      ).toHaveLength(1);
+      // The uncertain case needs a running turn that has already shown activity.
+      await child.emit(new AgentMessageDelta({ text_delta: 'redelivered activity' }));
+      await child.flush_events();
+      continue;
+    }
     expect(f.core.start_admission.has_requests([id])).toBe(fate === 'uncertain');
     expect(
       f.database.read((sql) =>
@@ -699,6 +736,17 @@ test('unadmitted send_now and promotion preserve the running turn then drain onc
     await child.finish();
     await f.core.wait_until_quiescent();
     expect(f.core.conversations.get('core')!.phase).toBe('idle');
+    // With no running turn, a steer promotion is refused at once. The message keeps its place.
+    expect(await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer')).toEqual(
+      new PromptDeliveryQueued({ queue_position: 1 }),
+    );
+    expect(
+      (await f.core.held_prompts('core')).map((entry) => [
+        entry.held_prompt_id,
+        entry.queue_reason,
+      ]),
+    ).toEqual([[held.held_prompt_id, 'steer_refused']]);
+    expect(f.core.start_admission.has_requests(['later'])).toBe(true);
     expect(
       await f.core.send('core', text_message_content('manual work'), {
         sender_label: 'owner',
@@ -719,6 +767,17 @@ test('unadmitted send_now and promotion preserve the running turn then drain onc
       (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
     ).toHaveLength(3);
     expect(await f.core.held_prompts('core')).toEqual([]);
+    expect(
+      f.store
+        .read_events_after('core', 0)
+        .filter(
+          (row) =>
+            'sender_message_id' in row.payload &&
+            row.payload.sender_message_id === 'later' &&
+            ['prompt', 'prompt_delivery_refused'].includes(row.kind),
+        )
+        .map((row) => row.kind),
+    ).toEqual(['prompt']);
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }

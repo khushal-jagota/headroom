@@ -1,6 +1,6 @@
 /** Shared observation tests need no filesystem, process, or provider host. */
 import { afterEach, expect, test, vi } from 'vitest';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import { FreshProcessObservations, SharedProcessObserver } from './observation.ts';
 import type { InspectionContext, WorkerProcessPrimitives } from './contracts.ts';

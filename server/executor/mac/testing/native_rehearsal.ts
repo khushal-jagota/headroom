@@ -198,7 +198,7 @@ try {
   for (const [name, script, extra] of [
     [
       'claude',
-      'claude/scripted_cli.ts',
+      'claude/testing/scripted_cli.ts',
       {
         UNIT18_TRACE: join(evidence, 'claude.jsonl'),
         UNIT18_WRAPPED_FILE: join(evidence, 'claude-launch.json'),
@@ -206,11 +206,11 @@ try {
     ],
     [
       'codex',
-      'codex/scripted_app_server.ts',
+      'codex/testing/scripted_app_server.ts',
       { UNIT17_TRACE: join(evidence, 'codex.jsonl'), UNIT17_CORE_PROOF: '1' },
     ],
   ] as const) {
-    const text = `#!${paths.node}\nObject.assign(process.env, ${JSON.stringify(extra)});\nawait import(${JSON.stringify(new URL(`../../../conversation/testing/${script}`, import.meta.url).href)});\n`;
+    const text = `#!${paths.node}\nObject.assign(process.env, ${JSON.stringify(extra)});\nawait import(${JSON.stringify(new URL(`../../../drivers/${script}`, import.meta.url).href)});\n`;
     await writeFile(join(bin, name), text, { mode: 0o755 });
   }
   const environment: NodeJS.ProcessEnv = {

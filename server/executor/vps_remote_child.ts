@@ -41,6 +41,11 @@ export class LateSteer {
 }
 export interface RemoteChildCommands {
   put(command: WireTypes['ChildCommand']): Promise<boolean>;
+  /** Observe the exact durable native result after placement, outside receipt locks. */
+  wait_prompt_result(
+    command: WireTypes['ChildCommand'],
+    options: { signal: AbortSignal },
+  ): Promise<WireTypes['CommandOutcome']>;
   mac_is_present(): boolean;
   deliver_steer(
     command: WireTypes['ChildCommand'],
@@ -93,6 +98,8 @@ export class MacRemoteChild implements BackendChild {
   private readonly skill_snapshot_supplier: SkillSnapshotSupplier;
   private delivery_commands: WireTypes['ChildCommand'][] = [];
   private readonly initial_puts = new Set<Promise<boolean>>();
+  private readonly delivery_cancellation = new AbortController();
+  private readonly pending_prompt: WireTypes['ChildCommand'] | null;
   private claude_started_on: readonly [string, string | null] | null = null;
   private stop_task: Promise<void> | null = null;
   private stop_settlement: Promise<void> = Promise.resolve();
@@ -104,8 +111,11 @@ export class MacRemoteChild implements BackendChild {
       event_sink?: BackendEventSink | null;
       initial_history_complete?: boolean;
       started_on?: ResolvedConversationStart | null;
+      pending_prompt?: WireTypes['ChildCommand'] | null;
     } = {},
   ) {
+    this.pending_prompt = options.pending_prompt ?? null;
+    if (this.pending_prompt !== null) this.delivery_commands.push(this.pending_prompt);
     this.reference = reference;
     this.commands = commands;
     this.skill_snapshot_supplier = skill_snapshot_supplier;
@@ -118,6 +128,9 @@ export class MacRemoteChild implements BackendChild {
       this.claude_started_on = [start.model, start.reasoning_effort];
   }
   async detach(options?: StopOptions): Promise<void> {
+    this.delivery_cancellation.abort(
+      new DOMException('Remote prompt observation detached.', 'AbortError'),
+    );
     this.commands.retire_child(this.reference);
     if (this.stop_task !== null) await this.observe_stop(this.stop_task, options);
   }
@@ -128,6 +141,7 @@ export class MacRemoteChild implements BackendChild {
       this.reference,
       this.delivery_commands.map((command) => command.command_id),
     );
+    this.delivery_cancellation.abort(new backend.DeliveryCancelled());
     return this.initial_history_complete && !may_have_sent;
   }
   private command(
@@ -251,7 +265,31 @@ export class MacRemoteChild implements BackendChild {
       throw error;
     }
     if (!placed) throw new backend.PromptWriteRefused(REPLACED_MESSAGE);
-    return new backend.BackendPromptAccepted({ composed_content_delivered: true });
+    return this.observe_prompt(command);
+  }
+  resume_prompt_admission(turn: TurnToken): Promise<backend.BackendPromptAccepted> {
+    const command = this.pending_prompt;
+    if (
+      command === null ||
+      command.turn?.conversation_id !== turn.conversation_id ||
+      command.turn.turn_number !== turn.turn_number
+    )
+      return Promise.reject(new backend.DeliveryCancelled());
+    return this.observe_prompt(command);
+  }
+  private async observe_prompt(
+    command: WireTypes['ChildCommand'],
+  ): Promise<backend.BackendPromptAccepted> {
+    const outcome = await this.commands.wait_prompt_result(command, {
+      signal: this.delivery_cancellation.signal,
+    });
+    raise_for(outcome);
+    if (outcome.result.kind !== 'prompt_accepted')
+      throw new ExecutorValidationError('Prompt succeeded without native acceptance');
+    return new backend.BackendPromptAccepted({
+      composed_content_delivered: outcome.result.composed_content_delivered === true,
+      agent_acceptance_proven: outcome.result.agent_acceptance_proven === true,
+    });
   }
   async steer(
     turn: TurnToken,

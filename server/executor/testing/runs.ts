@@ -1,4 +1,5 @@
 /** Source-paired run custody and restart recovery without a host or native child. */
+import { registry_of_factories } from '../../drivers/testing/registry.ts';
 import { readFileSync } from 'node:fs';
 import { CLEANUP_SCOPE } from '../../worker_supervision/inspection.ts';
 import { createDatabase } from '../../core/database/index.ts';
@@ -34,6 +35,9 @@ import type { PresenceRecord } from '../contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { RETENTION_SECONDS } from '../../ticket_workspaces/contracts.ts';
 const spec = JSON.parse(readFileSync(0, 'utf8'));
+// The Python reference has no pending prompt admission field.
+const comparable_runs = (runs: readonly { pending_prompt: unknown }[]) =>
+  runs.map(({ pending_prompt: _, ...run }) => run);
 if (spec.mode === 'machines') {
   Date.now = () => spec.now;
   const db = createDatabase(spec.path);
@@ -73,7 +77,7 @@ if (spec.mode === 'machines') {
   const snapshot = () =>
     owners.map((owner) => ({
       machine_id: owner.machine_id,
-      retained: owner.retained_runs(),
+      retained: comparable_runs(owner.retained_runs()),
       unresolved: owner.store.unresolved_runs_of_replaced_incarnations(),
       owns: references.map((child) => owner.owns_conversation(child.conversation_id)),
       stalls: db.read((sql) => owner.stall_source().tracked_waits(sql, spec.now)),
@@ -96,7 +100,7 @@ if (spec.mode === 'machines') {
     const factory = registry.as_factory();
     const core = new SqliteProcessConversationSystem({
       store: new ConversationStore(db),
-      backend_child_factories: { codex: factory, claude: factory, hermes: factory },
+      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
       message_files: endpoint.message_files,
       delivery_model_refusal: () => null,
       execution_refusal: () => null,
@@ -172,7 +176,15 @@ if (spec.mode === 'machines') {
       for (const [command, result] of [
         [prompt, outcome({ agent_acceptance_proven: false })],
         [prompt, outcome({ agent_acceptance_proven: true }, { ...source, child_id: 'wrong' })],
-        [prompt, outcome({ agent_acceptance_proven: true }, source, 'refused')],
+        // A native refusal reconciles its turn. A mailbox settlement only must not confirm.
+        [
+          prompt,
+          outcome(
+            { agent_acceptance_proven: true, reason: 'executor_process_replaced' },
+            source,
+            'refused',
+          ),
+        ],
       ] as const)
         mailbox.settled_listener!(
           {
@@ -655,7 +667,7 @@ const no_child: BackendChildFactory = () => {
 };
 const core = new SqliteProcessConversationSystem({
   store,
-  backend_child_factories: { codex: no_child, claude: no_child, hermes: no_child },
+  backend_registry: registry_of_factories({ codex: no_child, claude: no_child, hermes: no_child }),
   message_files: new ConversationMessageFiles(spec.path),
   delivery_model_refusal: () => null,
   execution_refusal: () => null,
@@ -688,7 +700,7 @@ const lease = (waiting: string[]) => ({
 });
 function snapshot() {
   return {
-    runs: runs.store.retained_runs(),
+    runs: comparable_runs(runs.store.retained_runs()),
     assignments: database.read((sql) =>
       sql.all('SELECT * FROM executor_child_assignments ORDER BY executor_incarnation,child_id'),
     ),
@@ -712,6 +724,7 @@ function attach() {
   runs.conversations = {
     emit_answer: core.emit_answer.bind(core),
     confirm_remote_prompt_accepted: core.confirm_remote_prompt_accepted.bind(core),
+    reconcile_remote_command: core.reconcile_remote_command.bind(core),
     async retire_replaced_remote_child(reference, options) {
       trace.push({ retire: reference, options });
       close_run_and_record_mac_process_interruption(database, reference, options.replaced_by, now, {
@@ -930,6 +943,7 @@ try {
   runs.conversations = {
     emit_answer: core.emit_answer.bind(core),
     confirm_remote_prompt_accepted: core.confirm_remote_prompt_accepted.bind(core),
+    reconcile_remote_command: core.reconcile_remote_command.bind(core),
     async retire_replaced_remote_child() {
       retry_enter();
       throw new Error('fixture retirement failed');

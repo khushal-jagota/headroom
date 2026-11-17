@@ -12,3 +12,6 @@ export const MANAGED_STOP_CLIENT_SECONDS =
   SUPERVISOR_APP_STOP_SECONDS + 2 * CONTROL_EXCHANGE_SECONDS;
 /** systemd applies this per phase. It is not a total-stop bound. */
 export const UNIT_TIMEOUT_STOP_SECONDS = SUPERVISOR_APP_STOP_SECONDS + SHUTDOWN_GRACE_SECONDS;
+/** An owned child's stop: SIGTERM grace, then the wait after SIGKILL. */
+export const OWNED_PROCESS_STOP_GRACE_SECONDS = 2;
+export const OWNED_PROCESS_KILL_WAIT_SECONDS = 2;

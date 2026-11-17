@@ -1,4 +1,5 @@
 /** Shared real-record and scripted-process fixture for the conversation core ports. */
+import { registry_of_factories } from '../drivers/testing/registry.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,12 +10,13 @@ import { ConversationMessageFiles } from '../conversation/record/message_files.t
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { ConversationRoleMaterials, ConversationStartRequest } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import { ScriptedCustody } from '../conversation/testing/scripted_custody.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';
 import type { ConversationCoreOptions } from '../conversation/runtime/contracts.ts';
+import type { BackendChildFactory } from '../conversation/backends/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { BackendStateStore } from '../conversation/backend_state.ts';
 import {
@@ -60,7 +62,7 @@ export function setup(
   });
   const created = new Deferred<ScriptedChild>();
   const local_children: ScriptedChild[] = [];
-  const factory: ConversationCoreOptions['backend_child_factories']['codex'] = ({ event_sink }) => {
+  const factory: BackendChildFactory = ({ event_sink }) => {
     const child = new ScriptedChild(event_sink, custody.runtime);
     children.push(child);
     local_children.push(child);
@@ -83,7 +85,7 @@ export function setup(
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_child_factories: { codex: factory, claude: factory, hermes: factory },
+    backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
     message_files: new ConversationMessageFiles(join(directory, 'conversation.sqlite')),
     ...options.core,
   });

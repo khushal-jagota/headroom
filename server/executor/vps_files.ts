@@ -419,7 +419,7 @@ export class VpsFiles {
       const allowed =
         (args.kind === 'write_prompt' || args.kind === 'steer') &&
         [...args.content, ...(args.sender_content ?? [])].some(
-          (piece) => 'byte_count' in piece && piece.stored_file_id === stored_file_id,
+          (piece) => 'stored_file_id' in piece && piece.stored_file_id === stored_file_id,
         );
       if (!allowed) throw absent;
       await this.inbox.runs.authority(command.child);
