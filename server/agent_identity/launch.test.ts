@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { reset_agent_conversation } from '../runtime/conversation_start.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 /** Risk: native restarts must rotate credentials without storing or inheriting secrets.
@@ -19,7 +20,7 @@ function setup() {
   const database = fixture();
   const start = new ResolvedConversationStart({
     conversation_id: 'private-launch',
-    backend_key: 'codex',
+    backend_key: parse_backend_instance_id('codex'),
     model: 'test',
     reasoning_effort: null,
     workspace_folder: '/synthetic',

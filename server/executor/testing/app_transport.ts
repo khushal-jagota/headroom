@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
 import { requestContext } from '../../core/authority/identity.ts';
 import { legacyActor } from '../../core/contracts.ts';
 /** One owned HTTP host under the existing synthetic TLS proxy; no native backend. */
@@ -279,7 +280,9 @@ for await (const command of createInterface({ input: process.stdin })) {
     break;
   }
   // The isolated catalog proof cannot prove facade ordering against mailbox sealing.
-  const catalog_read = endpoint.catalog.snapshot('codex', { refresh: true });
+  const catalog_read = endpoint.catalog.snapshot(parse_backend_instance_id('codex'), {
+    refresh: true,
+  });
   void catalog_read.catch(() => {});
   const limit = performance.now() + 5000;
   let catalog_command: { command_id: string } | undefined;

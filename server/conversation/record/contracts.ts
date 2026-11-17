@@ -1,3 +1,4 @@
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { AdmissionDatabase, StartRequest } from '../start_admission/contracts.ts';
 import type { LocalChildIdentity } from '../local_child_contracts.ts';
 import type {
@@ -12,7 +13,6 @@ import { ConversationRoleMaterials, ResolvedConversationStart } from '../contrac
 import type {
   ComposerCatalogEntry,
   ConversationAccess,
-  ConversationBackendKey,
   NativeMessageAdmission,
   NativeMessageOperation,
   PromptDeliveryMode,
@@ -41,7 +41,7 @@ export class ConversationRecordNamesNoModel extends BackendSpawnFailed {}
 
 export interface ConversationRecordValues {
   readonly conversation_id: string;
-  readonly backend_key: ConversationBackendKey;
+  readonly backend_key: BackendInstanceId;
   readonly model: string | null;
   readonly reasoning_effort: string | null;
   readonly workspace_folder: string;
@@ -62,7 +62,7 @@ export interface ConversationRecordValues {
 }
 export class ConversationRecord implements ConversationRecordValues {
   declare readonly conversation_id: string;
-  declare readonly backend_key: ConversationBackendKey;
+  declare readonly backend_key: BackendInstanceId;
   declare readonly model: string | null;
   declare readonly reasoning_effort: string | null;
   declare readonly workspace_folder: string;

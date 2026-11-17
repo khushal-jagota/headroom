@@ -1,14 +1,20 @@
 /** Snapshot service ordering does not need a provider process or an HTTP host. */
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { expect, test, vi } from 'vitest';
 import { writeFileSync, rmSync } from 'node:fs';
 import { BackendSnapshotService } from '../conversation/snapshot/service.ts';
 import type {
+  BackendCardSource,
   BackendSnapshot,
   BackendProbeEnvironment,
-  SnapshotProbeOptions,
 } from '../conversation/snapshot/contracts.ts';
+import type { BackendInstanceId } from '../drivers/core/identity.ts';
+import type { StatusProbeContext } from '../drivers/core/status.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import { Deferred } from '../core/deferred.ts';
-import { BackendStateStore } from '../conversation/backend_state.ts';
+import { BackendStateStore, model_refusal } from '../conversation/backend_state.ts';
+import { hermes_catalog_reader } from '../drivers/hermes/runtime/status_readers.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
@@ -16,7 +22,8 @@ import { BackendUsageService } from '../conversation/backend_usage/service.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createVoiceRoutes } from '../conversation/voice_transcription/routes.ts';
-import { production_backend_providers } from '../conversation/snapshot/production.ts';
+import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
+import type { DriverHost } from '../drivers/core/host.ts';
 import { SubprocessBackendProbeEnvironment } from '../conversation/snapshot/environment.ts';
 import { http_get_usage } from '../conversation/backend_usage/http.ts';
 
@@ -33,13 +40,12 @@ test('backend and voice HTTP work share admission and remain owned until both se
   let posts = 0;
   const snapshots = new BackendSnapshotService({
     environment: machine(),
-    read_codex_login_standing: login,
-    probe: async (key) => {
+    sources: sources_of(async (key) => {
       probes++;
       catalog_entered.resolve();
       await release.promise;
       return { ...card(), backend_key: key };
-    },
+    }),
   });
   const config = loadConfig(undefined, {
     PLAN_TEST_MODE: '1',
@@ -56,9 +62,10 @@ test('backend and voice HTTP work share admission and remain owned until both se
             settled: () => writes.drain(),
             database,
             backend_snapshots: snapshots,
-            backend_usage: new BackendUsageService({}),
+            backend_usage: new BackendUsageService(new Map()),
             backend_state: null,
-            codex_sign_in: null,
+            backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
+            sign_in: () => null,
             machine_catalog: () => null,
           },
           { available: true, writes },
@@ -142,8 +149,7 @@ test('all eight backend routes require the conversation runtime before validated
   const probe = vi.fn(async () => card());
   const snapshots = new BackendSnapshotService({
     environment: machine(),
-    read_codex_login_standing: login,
-    probe,
+    sources: sources_of(probe),
   });
   const app = await createApp(
     loadConfig(undefined, {
@@ -160,9 +166,10 @@ test('all eight backend routes require the conversation runtime before validated
               settled: () => writes.drain(),
               database,
               backend_snapshots: snapshots,
-              backend_usage: new BackendUsageService({}),
+              backend_usage: new BackendUsageService(new Map()),
               backend_state: null,
-              codex_sign_in: null,
+              backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
+              sign_in: () => null,
               machine_catalog: () => null,
             },
             { available: false, writes },
@@ -196,22 +203,25 @@ test('all eight backend routes require the conversation runtime before validated
     await app.close();
   }
 });
-import { ClaudeUsageAdapter } from '../conversation/backend_usage/claude.ts';
-const login = () => ({
-  stored: {
-    present: true,
-    readable: true,
-    account_label: 'Synthetic',
-    access_token_expires_at: null,
-    generation: null,
-    access_token_has_expired: () => false,
-  },
-  rejected: false,
-  generation: null,
-  everything_a_card_reads: () => ['generation'],
-});
+import { ClaudeUsageAdapter } from '../drivers/claude/runtime/allowance_usage.ts';
+/** One card source per built-in id, each answering with the scripted probe's card. */
+function sources_of(
+  probe: (key: BackendInstanceId, context: StatusProbeContext) => Promise<BackendSnapshot>,
+): BackendCardSource[] {
+  return KNOWN_BACKEND_INSTANCE_IDS.map((key) => ({
+    instance_id: key,
+    executable_name: key,
+    status: {
+      version_detects_upgrade: true,
+      async probe(context) {
+        const { backend_key: _key, ...draft } = await probe(key, context);
+        return draft;
+      },
+    },
+  }));
+}
 const card = (version = '1.0.0'): BackendSnapshot => ({
-  backend_key: 'codex',
+  backend_key: parse_backend_instance_id('codex'),
   installed: true,
   executable_path: '/synthetic/codex',
   version,
@@ -268,8 +278,7 @@ test('ordinary readers keep the complete card while one forced refresh serves co
   const entered = new Deferred<void>();
   const service = new BackendSnapshotService({
     environment: machine(),
-    read_codex_login_standing: login,
-    probe: async (_backend, _environment, options) => {
+    sources: sources_of(async (_backend, options) => {
       count++;
       if (gate !== null) {
         entered.resolve();
@@ -289,14 +298,14 @@ test('ordinary readers keep the complete card while one forced refresh serves co
               detail: 'Recorded',
             },
           };
-    },
+    }),
   });
-  const initial = await service.snapshot('codex');
+  const initial = await service.snapshot(parse_backend_instance_id('codex'));
   gate = new Deferred<void>();
-  const refresh = service.snapshot('codex', { refresh: true });
+  const refresh = service.snapshot(parse_backend_instance_id('codex'), { refresh: true });
   await entered.promise;
-  const shared = service.snapshot('codex', { refresh: true });
-  expect(await service.snapshot('codex')).toBe(initial);
+  const shared = service.snapshot(parse_backend_instance_id('codex'), { refresh: true });
+  expect(await service.snapshot(parse_backend_instance_id('codex'))).toBe(initial);
   gate.resolve();
   const updated = await refresh;
   expect(await shared).toBe(updated);
@@ -307,11 +316,10 @@ test('ordinary readers keep the complete card while one forced refresh serves co
 test('an update uses only its recording environment and distinguishes changed, unchanged, and failed commands', async () => {
   const environment = machine();
   let version = '1.0.0';
-  const options: SnapshotProbeOptions[] = [];
+  const options: StatusProbeContext[] = [];
   const service = new BackendSnapshotService({
     environment,
-    read_codex_login_standing: login,
-    probe: async (_backend, _environment, option) => {
+    sources: sources_of(async (_backend, option) => {
       options.push(option);
       return {
         ...card(version),
@@ -323,17 +331,21 @@ test('an update uses only its recording environment and distinguishes changed, u
           detail: 'Recorded',
         },
       };
-    },
+    }),
   });
-  expect((await service.update_backend('codex')).outcome).toBe('unchanged');
+  expect((await service.update_backend(parse_backend_instance_id('codex'))).outcome).toBe(
+    'unchanged',
+  );
   environment.run = async (argv) => {
     environment.calls.push([...argv]);
     version = '2.0.0';
     return environment.result;
   };
-  expect((await service.update_backend('codex')).outcome).toBe('succeeded');
+  expect((await service.update_backend(parse_backend_instance_id('codex'))).outcome).toBe(
+    'succeeded',
+  );
   environment.result = { exit_code: 3, standard_output: '', standard_error: 'Recorded failure' };
-  expect(await service.update_backend('codex')).toEqual({
+  expect(await service.update_backend(parse_backend_instance_id('codex'))).toEqual({
     outcome: 'failed',
     detail: 'The update command exited with code 3.',
     output_tail: 'Recorded failure',
@@ -347,11 +359,12 @@ test('a failed replacement of allowance windows preserves the previous successfu
   const window = {
     kind: 'five_hour' as const,
     model_scope: null,
+    scope_label: null,
     used_percent: 30,
     resets_at: new Date(200_000),
   };
   const result = {
-    backend_key: 'codex' as const,
+    backend_key: parse_backend_instance_id('codex'),
     outcome: 'succeeded' as const,
     detail: null,
     observed_at: new Date(100_000),
@@ -365,7 +378,10 @@ test('a failed replacement of allowance windows preserves the previous successfu
       windows: [window, window],
     }),
   ).toThrow();
-  expect(store.read_usage('codex')).toEqual({ observed_at: result.observed_at, windows: [window] });
+  expect(store.read_usage(parse_backend_instance_id('codex'))).toEqual({
+    observed_at: result.observed_at,
+    windows: [window],
+  });
 });
 // Distinct gap: successful route comparisons cannot prove cleanup after catalog failure.
 test('catalog failure cancels and joins the outstanding allowance read', async () => {
@@ -373,31 +389,38 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
   const writes = new ConversationHttpWriteScope();
   const entered = new Deferred<void>();
   let cancelled = false;
-  const usage = new BackendUsageService({
-    codex: {
-      async refresh(options = {}) {
-        entered.resolve();
-        await new Promise<void>((_resolve, reject) => {
-          options.signal!.addEventListener(
-            'abort',
-            () => {
-              cancelled = true;
-              reject(options.signal!.reason);
+  const usage = new BackendUsageService(
+    new Map([
+      [
+        parse_backend_instance_id('codex'),
+        {
+          label: 'Codex',
+          adapter: {
+            async refresh(options = {}) {
+              entered.resolve();
+              await new Promise<void>((_resolve, reject) => {
+                options.signal!.addEventListener(
+                  'abort',
+                  () => {
+                    cancelled = true;
+                    reject(options.signal!.reason);
+                  },
+                  { once: true },
+                );
+              });
+              throw new Error('unreachable');
             },
-            { once: true },
-          );
-        });
-        throw new Error('unreachable');
-      },
-    },
-  });
+          },
+        },
+      ],
+    ]),
+  );
   const snapshots = new BackendSnapshotService({
     environment: machine(),
-    read_codex_login_standing: login,
-    probe: async () => {
+    sources: sources_of(async () => {
       await entered.promise;
       throw new Error('Synthetic catalog failure');
-    },
+    }),
   });
   const app = await createApp(
     loadConfig(undefined, {
@@ -416,7 +439,8 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
               backend_snapshots: snapshots,
               backend_usage: usage,
               backend_state: null,
-              codex_sign_in: null,
+              backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
+              sign_in: () => null,
               machine_catalog: () => null,
             },
             { available: true, writes },
@@ -436,14 +460,41 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
 });
 // Distinct gap: a mistaken production composition must fail before process or network I/O.
 test('test compositions cannot acquire production catalogs, login, updates, or HTTP usage', async () => {
-  const providers = production_backend_providers(true);
-  expect([providers.codex, providers.claude, providers.hermes, providers.codex_sign_in]).toEqual([
-    null,
-    null,
-    null,
-    null,
-  ]);
-  expect(providers.usage).toEqual({});
+  const environment = new RecordingBackendProbeEnvironment();
+  for (const name of ['codex', 'claude']) environment.executables.set(name, `/synthetic/${name}`);
+  environment.configured_executables.set('hermes', '/synthetic/hermes');
+  const host = {
+    test_mode: true,
+    environment: {},
+    database: {},
+    child_processes: {},
+    one_shot_children: {},
+    worker_supervision: {},
+    panels_server_url: 'http://127.0.0.1:1',
+    worker_process_root: '/synthetic',
+    now: () => new Date(0),
+    executable_on_path: (name: string) => name,
+  } as unknown as DriverHost;
+  for (const driver of BUILT_IN_DRIVERS) {
+    const instance = await driver.create(
+      { instance_id: parse_backend_instance_id(driver.driver_kind), config: null },
+      host,
+      new AbortController().signal,
+    );
+    expect([instance.sign_in, instance.allowance_usage]).toEqual([undefined, undefined]);
+    const card = await instance.status.probe({
+      environment,
+      refresh: true,
+      discover_update_advisory: false,
+      now: new Date(0),
+      model_version: () => [],
+    });
+    expect([card.installed, card.available_models, card.models_complete]).toEqual([
+      true,
+      [],
+      false,
+    ]);
+  }
   expect(() => new SubprocessBackendProbeEnvironment(new OneShotChildren())).toThrow(
     'unavailable in tests',
   );
@@ -505,3 +556,338 @@ test('production usage and registry transports refuse redirects without another 
   }
 });
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
+
+// Gap: dropping the Hermes skip in model_refusal is safe only if neither the VPS card (Hermes catalog
+// reader) nor the Mac rows (Python Hermes catalog) ever mark the Hermes model list complete.
+test('no card source gives Hermes a complete model list, so no Hermes model is refused as unoffered', async () => {
+  const inventory = {
+    schemaVersion: 1,
+    status: 'runnable',
+    defaultModelId: 'openai:gpt-x',
+    providers: [
+      {
+        id: 'openai',
+        displayName: 'OpenAI',
+        models: [{ id: 'openai:gpt-x', displayName: 'GPT X', detail: 'listed' }],
+      },
+    ],
+  };
+  const read = hermes_catalog_reader(async () => ({
+    exit_code: 0,
+    standard_output: JSON.stringify(inventory),
+    standard_error: '',
+  }));
+  const vps_answer = await read({
+    environment: {} as BackendProbeEnvironment,
+    executable_path: '/synthetic/hermes',
+    version: null,
+    refresh: false,
+  });
+  expect(vps_answer.models).toHaveLength(1);
+  expect(vps_answer.complete).toBe(false);
+
+  const database = fixture();
+  database.write((tx) =>
+    tx.run('INSERT INTO machine_backend_snapshots VALUES (?,?,?)', [
+      ORIGINAL_MAC_MACHINE_ID,
+      'hermes',
+      JSON.stringify({
+        models_complete: false,
+        available_models: [{ model_id: 'openai:gpt-x' }],
+      }),
+    ]),
+  );
+  expect(
+    database.read((sql) =>
+      model_refusal(sql, parse_backend_instance_id('hermes'), 'anthropic:other', 'macos'),
+    ),
+  ).toBeNull();
+});
+import { readFileSync } from 'node:fs';
+import { run as run_recorded_probes } from '../conversation/snapshot/testing/probe_comparison.ts';
+import { snapshot_json } from '../conversation/snapshot/presentation.ts';
+import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
+import type { CommandOutcome } from '../conversation/snapshot/contracts.ts';
+import type { CodexLoginStanding, CodexModelCatalog } from '../drivers/codex/runtime/contracts.ts';
+import { create_codex_status } from '../drivers/codex/runtime/status.ts';
+import { create_hermes_status } from '../drivers/hermes/runtime/status.ts';
+
+const recorded = (standard_output: string, exit_code = 0): CommandOutcome => ({
+  exit_code,
+  standard_output,
+  standard_error: '',
+});
+const recorded_codex_catalog = (complete: boolean): CodexModelCatalog => ({
+  models: [
+    {
+      model_id: 'gpt-6.1-sol',
+      display_name: 'Sol',
+      reasoning_effort_options: ['medium', 'high'],
+      default_reasoning_effort: 'medium',
+      is_default: true,
+    },
+    ...(complete
+      ? [
+          {
+            model_id: 'gpt-6-luna',
+            display_name: 'Luna',
+            reasoning_effort_options: ['medium'],
+            default_reasoning_effort: 'medium',
+            is_default: false,
+          },
+        ]
+      : []),
+  ],
+  reasoning_effort_options: ['medium', 'high'],
+  default_model_id: 'gpt-6.1-sol',
+  default_reasoning_effort: 'medium',
+  complete,
+});
+const recorded_hermes_inventory = {
+  schemaVersion: 1,
+  status: 'runnable',
+  defaultModelId: 'provider:small',
+  providers: [
+    {
+      id: 'provider',
+      displayName: 'Provider',
+      models: [{ id: 'provider:small', displayName: 'Small', detail: 'Configured model' }],
+    },
+  ],
+};
+/** The probe_comparison machines, as the Python comparison describes them. */
+function recorded_probe_cases() {
+  const codex = {
+    backend: parse_backend_instance_id('codex'),
+    executable: '/synthetic/bin/codex',
+    real_path: '/synthetic/.codex/packages/standalone/codex',
+    version: recorded('codex-cli 0.145.0'),
+    identity: recorded('Logged in using ChatGPT\n'),
+    writable: false,
+    latest: null,
+    login: {
+      present: true,
+      readable: true,
+      account_label: 'synthetic@example.invalid',
+      access_token_expires_at: '2026-11-13T12:00:00Z',
+      generation: { account_id: 'synthetic', last_refresh: 'refresh-one' },
+      rejected: false,
+    },
+  };
+  const claude = {
+    backend: parse_backend_instance_id('claude'),
+    executable: '/synthetic/.local/bin/claude',
+    real_path: '/synthetic/.local/lib/node_modules/@anthropic-ai/claude-code/bin/claude',
+    version: recorded('claude 2.1.0'),
+    identity: recorded(
+      JSON.stringify({
+        loggedIn: true,
+        email: ' synthetic@example.invalid ',
+        subscriptionType: ' Max ',
+        authMethod: ' oauth ',
+      }),
+    ),
+    writable: true,
+    latest: '2.2.0',
+    login: null,
+  };
+  const hermes = {
+    backend: parse_backend_instance_id('hermes'),
+    executable: '/synthetic/hermes/venv/bin/hermes',
+    real_path: '/synthetic/hermes/venv/bin/hermes',
+    version: recorded('hermes 1.2.3'),
+    identity: null,
+    writable: false,
+    latest: null,
+    login: null,
+  };
+  return [
+    { ...codex, name: 'codex-native-saved-login', codex_catalog: recorded_codex_catalog(true) },
+    { ...codex, name: 'codex-rejected-unavailable', login: { ...codex.login, rejected: true } },
+    {
+      ...claude,
+      name: 'claude-npm-aliases',
+      claude_catalog: {
+        models: [
+          {
+            model_id: 'opus',
+            display_name: 'Opus 5 (1M)',
+            resolved_model_id: 'claude-opus-5[1m]',
+            reasoning_effort_options: ['high', 'max'],
+          },
+          {
+            model_id: 'haiku',
+            display_name: 'Haiku 4.5',
+            resolved_model_id: 'claude-haiku-4-5-20251001',
+            reasoning_effort_options: [],
+          },
+        ],
+        reasoning_effort_options: [],
+        default_model_id: 'claude-opus-5[1m]',
+      },
+    },
+    {
+      ...claude,
+      name: 'claude-manual-unavailable',
+      executable: '/opt/homebrew/bin/claude',
+      real_path: '/opt/homebrew/Cellar/claude-code/2/bin/claude',
+      writable: false,
+      version: recorded('unrecognized version'),
+      identity: recorded('invalid JSON'),
+    },
+    { ...hermes, name: 'hermes-inventory', hermes_catalog: recorded_hermes_inventory },
+    {
+      ...hermes,
+      name: 'hermes-invalid-inventory',
+      hermes_catalog: {
+        schemaVersion: 1,
+        status: 'runnable',
+        defaultModelId: 'missing',
+        providers: [],
+      },
+    },
+  ];
+}
+function recorded_login(account_label: string, last_refresh: string): CodexLoginStanding {
+  const generation = { account_id: 'synthetic', last_refresh };
+  return {
+    stored: {
+      present: true,
+      readable: true,
+      account_label,
+      access_token_expires_at: null,
+      generation,
+      access_token_has_expired: () => false,
+    },
+    generation,
+    rejected: false,
+    everything_a_card_reads: () => [generation, false, true, true, false],
+  };
+}
+/** The one construction a pipeline change may rewrite: recorded machine, login and catalogs. */
+function recorded_card_service(options: {
+  readonly environment: RecordingBackendProbeEnvironment;
+  readonly login: () => CodexLoginStanding | null;
+  readonly codex_catalog: () => Promise<CodexModelCatalog>;
+  readonly machine_catalog?: boolean;
+}) {
+  return new BackendSnapshotService({
+    environment: options.environment,
+    now: () => new Date('2026-11-12T12:00:00Z'),
+    machine_catalog: options.machine_catalog,
+    sources: [
+      {
+        instance_id: parse_backend_instance_id('hermes'),
+        executable_name: 'hermes',
+        status: create_hermes_status({
+          catalog: async () => recorded(JSON.stringify(recorded_hermes_inventory)),
+        }),
+      },
+      {
+        instance_id: parse_backend_instance_id('codex'),
+        executable_name: 'codex',
+        status: create_codex_status({
+          catalog: options.codex_catalog,
+          read_login_standing: options.login,
+        }),
+      },
+    ],
+  });
+}
+function recorded_machine(): RecordingBackendProbeEnvironment {
+  const environment = new RecordingBackendProbeEnvironment();
+  environment.executables.set('codex', '/synthetic/bin/codex');
+  environment.configured_executables.set('hermes', '/synthetic/hermes/venv/bin/hermes');
+  environment.outcomes.set(
+    JSON.stringify(['/synthetic/bin/codex', '--version']),
+    recorded('codex-cli 0.150.0'),
+  );
+  environment.outcomes.set(
+    JSON.stringify(['/synthetic/bin/codex', 'login', 'status']),
+    recorded('Logged in using ChatGPT\n'),
+  );
+  environment.outcomes.set(
+    JSON.stringify(['/synthetic/hermes/venv/bin/hermes', '--version']),
+    recorded('hermes 1.2.3'),
+  );
+  return environment;
+}
+async function codex_login_sequence() {
+  const environment = recorded_machine();
+  const codex = parse_backend_instance_id('codex');
+  let login: CodexLoginStanding | null = recorded_login('first@example.invalid', 'one');
+  let complete = true;
+  let during_catalog: (() => void) | null = null;
+  const service = recorded_card_service({
+    environment,
+    login: () => login,
+    codex_catalog: async () => {
+      during_catalog?.();
+      during_catalog = null;
+      return recorded_codex_catalog(complete);
+    },
+  });
+  const steps: unknown[] = [];
+  const step = async (name: string, refresh = false) => {
+    const card = await service.snapshot(codex, { refresh });
+    steps.push({
+      name,
+      card: snapshot_json(card),
+      kept: snapshot_json(service.retained(codex)!),
+      commands: environment.commands.length,
+    });
+    return card;
+  };
+  const first = await step('first probe');
+  expect(await step('unchanged login reuses the card')).toBe(first);
+  login = recorded_login('second@example.invalid', 'two');
+  complete = false;
+  await step('changed login re-probes without the kept complete list');
+  during_catalog = () => {
+    login = recorded_login('third@example.invalid', 'three');
+  };
+  await step('login moved during the probe blanks that card', true);
+  await step('the next read re-probes the moved login');
+  login = null;
+  await step('signed out re-probes');
+  await step('signed out stays stale');
+  return steps;
+}
+async function hermes_machine_sequence() {
+  const environment = recorded_machine();
+  const service = recorded_card_service({
+    environment,
+    login: () => null,
+    codex_catalog: async () => recorded_codex_catalog(true),
+    machine_catalog: true,
+  });
+  const steps: unknown[] = [];
+  for (const name of ['first read', 'kept read']) {
+    const cards = [];
+    for (const key of ['hermes', 'codex'])
+      cards.push(snapshot_json(await service.snapshot(parse_backend_instance_id(key))));
+    steps.push({ name, cards, commands: environment.commands.map((argv) => [...argv]) });
+  }
+  return steps;
+}
+// Gap: no test records the exact card JSON, so a rebuilt card pipeline could change a card,
+// the Codex login staleness rules or the Hermes machine reuse without any test failing.
+test('backend card JSON stays the same for every recorded machine and login sequence', async () => {
+  const probes = await run_recorded_probes(recorded_probe_cases());
+  const actual = JSON.parse(
+    JSON.stringify({
+      probes: probes.cards.map((value) => ({
+        name: value.name,
+        card: snapshot_json(value.card),
+        commands: value.commands,
+        catalog_calls: value.catalog_calls,
+        registry_lookups: value.registry_lookups,
+      })),
+      codex_login: await codex_login_sequence(),
+      hermes_machine: await hermes_machine_sequence(),
+    }),
+  );
+  expect(actual).toEqual(
+    JSON.parse(readFileSync(new URL('./backend_card_json.json', import.meta.url), 'utf8')),
+  );
+});

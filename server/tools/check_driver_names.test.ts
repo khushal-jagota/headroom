@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AnyAgentDriver } from '../drivers/core/driver.ts';
 import { parse_driver_kind } from '../drivers/core/identity.ts';
+import { scripted_manifest } from '../drivers/testing/registry.ts';
 import { check_driver_names, name_parts } from './check_driver_names.ts';
 import type {
   DriverImportAllowance,
@@ -14,10 +15,17 @@ const driver = (
   manifest: Partial<AnyAgentDriver['manifest']> = {},
 ): Pick<AnyAgentDriver, 'driver_kind' | 'manifest'> => ({
   driver_kind: parse_driver_kind(kind),
-  manifest: { executable: { name: kind }, ...manifest },
+  manifest: { ...scripted_manifest(kind), ...manifest },
 });
 const drivers = [
-  driver('codex', { home: { environment_name: 'CODEX_HOME' } }),
+  driver('codex', {
+    home: {
+      environment_name: 'CODEX_HOME',
+      default_path: '~/.codex',
+      isolated_directory_name: 'codex',
+      cli_option: '--codex-home',
+    },
+  }),
   driver('claude', {
     executable: { name: 'claude', override_environment_name: 'PLAN_CLAUDE_EXECUTABLE' },
   }),
@@ -100,6 +108,7 @@ describe('names', () => {
           'server/conversation/testing/a.ts',
           'server/test_host.ts',
           'server/drivers/built_in.ts',
+          'server/drivers/built_in_manifests.ts',
           'src/planner/a.ts',
           'web/tests/a.ts',
         ].map((path) => ({ path, text })),
@@ -183,6 +192,7 @@ describe('imports', () => {
       "import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';",
       "import type { DriverHost } from '../drivers/core/host.ts';",
       "const z = await import('../drivers/claude/runtime/sdk.ts');",
+      "import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';",
     ].join('\n');
     const file = { path: 'server/lifecycle/a.ts', text };
     expect(imports([file])).toEqual([
@@ -239,7 +249,7 @@ describe('imports', () => {
     expect(imports([{ path: 'server/tickets/a.ts', text: local }])).toEqual([]);
   });
 
-  it('keeps driver.ts, manifest.ts and client.ts free of runtime value imports', () => {
+  it('keeps driver.ts, manifest.ts, client.ts and models.ts free of runtime value imports', () => {
     const driver_text = [
       "import { NO_DRIVER_CONFIG } from '../core/driver.ts';",
       "import { codex_manifest } from './manifest.ts';",
@@ -250,6 +260,7 @@ describe('imports', () => {
       "import { query } from '@anthropic-ai/claude-agent-sdk';",
       "import type { Options } from '@anthropic-ai/claude-agent-sdk';",
       'const computed = await import(`./runtime/${name}.ts`);',
+      "import { codex_models } from './models.ts';",
     ].join('\n');
     const manifest_text = [
       "import { x } from '../../core/config.ts';",
@@ -261,6 +272,10 @@ describe('imports', () => {
       imports([
         { path: 'server/drivers/codex/driver.ts', text: driver_text },
         { path: 'server/drivers/codex/manifest.ts', text: manifest_text },
+        {
+          path: 'server/drivers/codex/models.ts',
+          text: "import { parse } from './runtime/catalog.ts';",
+        },
       ]),
     ).toEqual([
       '4:server/drivers/codex/runtime/adapter.ts',
@@ -271,6 +286,7 @@ describe('imports', () => {
       '2:server/drivers/codex/runtime/instance.ts',
       '3:node:fs',
       '4:(computed)',
+      '1:server/drivers/codex/runtime/catalog.ts',
     ]);
   });
 

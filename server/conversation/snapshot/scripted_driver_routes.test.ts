@@ -1,0 +1,241 @@
+/** A driver outside the built-in list reaches the backend routes through the registry alone. */
+import { expect, test } from 'vitest';
+import { createApp } from '../../app.ts';
+import { loadConfig } from '../../core/config.ts';
+import { fixture, fixture_path } from '../../tests/ticket_fixture.ts';
+import { ConversationHttpWriteScope } from '../http/writes.ts';
+import { createBackendRoutes } from './routes.ts';
+import { create_backend_runtime } from './composition.ts';
+import type { AnyAgentDriver, DriverInstance } from '../../drivers/core/driver.ts';
+import { NO_DRIVER_CONFIG } from '../../drivers/core/driver.ts';
+import { parse_backend_instance_id, parse_driver_kind } from '../../drivers/core/identity.ts';
+import { driver_registry_from_entries } from '../../drivers/core/registry.ts';
+import type { RegistryEntry } from '../../drivers/core/registry.ts';
+import type { DriverSignInController, SignInSession } from '../../drivers/core/sign_in.ts';
+import { UnknownSignInSession } from '../../drivers/core/sign_in.ts';
+import { scripted_manifest, scripted_status } from '../../drivers/testing/registry.ts';
+import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
+
+function scripted_entry(
+  key: string,
+  members: Partial<Pick<DriverInstance, 'sign_in' | 'allowance_usage'>>,
+): RegistryEntry {
+  const driver_kind = parse_driver_kind(key);
+  const driver: AnyAgentDriver = {
+    driver_kind,
+    client: {
+      label: `Scripted ${key}`,
+      icon: { file: 'icon.svg', monochrome: true },
+      accent_color: '#000000',
+    },
+    manifest: scripted_manifest(key),
+    config: NO_DRIVER_CONFIG,
+    create: async () => {
+      throw new Error('Created by the test');
+    },
+  };
+  return {
+    kind: 'live',
+    driver,
+    instance: {
+      instance_id: parse_backend_instance_id(key),
+      driver_kind,
+      capabilities: {
+        sessions: { supportsModelSwitchInSession: true },
+        turns: { supportsActiveSteering: true },
+      },
+      child_factory: () => {
+        throw new Error('No conversation starts in this proof');
+      },
+      status: scripted_status(key),
+      dispose: async () => {},
+      ...members,
+    },
+  };
+}
+
+// Gap: every other backend route test reaches only the built-in ids and the Codex sign-in, so a
+// route or card list that still names drivers would pass them. This drives a scripted kind.
+test('a scripted driver gets its card, sign-in routes and labelled allowance window', async () => {
+  const calls: string[] = [];
+  let session: SignInSession | null = null;
+  const sign_in: DriverSignInController = {
+    read: () => session,
+    async start() {
+      calls.push('start');
+      session = {
+        session_id: 'scripted-session',
+        state: 'awaiting_return_url',
+        verification_url: 'https://sign-in.invalid/start',
+        user_code: null,
+        started_at: new Date('2026-11-17T10:00:00Z'),
+        deadline_at: new Date('2026-11-17T10:10:00Z'),
+        detail: null,
+        account_label: null,
+      };
+      return session;
+    },
+    async cancel(session_id) {
+      calls.push(`cancel:${session_id}`);
+      throw new UnknownSignInSession(session_id);
+    },
+    async submit_return_url(session_id, return_url) {
+      calls.push(`return:${session_id}:${return_url}`);
+      if (session?.session_id !== session_id) throw new UnknownSignInSession(session_id);
+      session = { ...session, state: 'confirmed', account_label: 'scripted@example.invalid' };
+      return session;
+    },
+    async sign_out() {
+      calls.push('sign_out');
+      session = null;
+    },
+  };
+  // Stored usage rows need a built-in id until the Database stage, so the window is the
+  // built-in id's; the scripted kind is checked through its card and sign-in routes.
+  const allowance_usage: BackendUsageAdapter = {
+    async refresh() {
+      return {
+        backend_key: parse_backend_instance_id('claude'),
+        outcome: 'succeeded',
+        detail: null,
+        observed_at: new Date('2026-11-17T10:00:00Z'),
+        windows: [
+          {
+            kind: 'seven_day',
+            used_percent: 40,
+            resets_at: new Date('2026-11-20T00:00:00Z'),
+            model_scope: null,
+            scope_label: 'Frontier models',
+          },
+        ],
+      };
+    },
+  };
+  const entries = [
+    scripted_entry('claude', { allowance_usage }),
+    scripted_entry('scripted', { sign_in }),
+  ];
+  const registry = driver_registry_from_entries(
+    entries.map((entry) => entry.driver!),
+    entries,
+  );
+  const database = fixture();
+  const config = loadConfig(undefined, {
+    PLAN_TEST_MODE: '1',
+    PLAN_DB_PATH: fixture_path(database),
+  });
+  const writes = new ConversationHttpWriteScope();
+  const runtime = create_backend_runtime({ database, config, now: () => new Date(), registry });
+  const app = await createApp(config, {
+    database,
+    areas: [
+      {
+        prefix: '/api/conversation',
+        routes: createBackendRoutes(runtime, { available: true, writes }),
+      },
+    ],
+  });
+  const call = async (
+    method: 'GET' | 'POST' | 'DELETE' | 'PUT',
+    path: string,
+    payload?: object,
+  ) => {
+    const response = await app.inject({
+      method,
+      url: `/api/conversation/backends${path}`,
+      payload,
+    });
+    return { status: response.statusCode, body: response.json() as Record<string, unknown> };
+  };
+  try {
+    const cards = await call('GET', '');
+    expect(
+      (cards.body.backends as { backend_key: string }[]).map((card) => card.backend_key),
+    ).toEqual(['claude', 'scripted']);
+    expect((cards.body.backends as { diagnoses: string[] }[])[1].diagnoses).toEqual([
+      '`scripted` is not installed.',
+    ]);
+
+    expect(await call('GET', '/scripted/sign-in')).toEqual({
+      status: 200,
+      body: { sign_in: null },
+    });
+    const started = await call('POST', '/scripted/sign-in');
+    expect(started.body).toMatchObject({
+      sign_in: { session_id: 'scripted-session', state: 'awaiting_return_url' },
+    });
+    expect(await call('DELETE', '/scripted/sign-in/other-session')).toEqual({
+      status: 409,
+      body: { detail: 'that sign-in is not the one in force any more' },
+    });
+    expect(
+      (await call('POST', '/scripted/sign-in/other-session/return-url', { return_url: 'x' }))
+        .status,
+    ).toBe(409);
+    const returned = await call('POST', '/scripted/sign-in/scripted-session/return-url', {
+      return_url: 'https://return.invalid/?code=1',
+    });
+    expect(returned).toMatchObject({
+      status: 200,
+      body: { sign_in: { state: 'confirmed', account_label: 'scripted@example.invalid' } },
+    });
+    expect(await call('DELETE', '/scripted/sign-in')).toEqual({
+      status: 200,
+      body: { sign_in: null },
+    });
+    expect(calls).toEqual([
+      'start',
+      'cancel:other-session',
+      'return:other-session:x',
+      'return:scripted-session:https://return.invalid/?code=1',
+      'sign_out',
+    ]);
+    const refused = { status: 404, body: { detail: 'claude cannot be signed in from Panels' } };
+    expect(await call('GET', '/claude/sign-in')).toEqual(refused);
+    expect(await call('DELETE', '/claude/sign-in')).toEqual(refused);
+    expect(await call('POST', '/claude/sign-in/s/return-url', { return_url: 'x' })).toEqual(
+      refused,
+    );
+
+    const refreshed = await call('POST', '/refresh');
+    expect(refreshed.body.usage_outcomes).toEqual([
+      { backend_key: 'claude', outcome: 'succeeded', detail: null },
+      {
+        backend_key: 'scripted',
+        outcome: 'unavailable',
+        detail: 'Scripted scripted does not expose usage to Panels.',
+      },
+    ]);
+    expect((refreshed.body.backends as { cached_usage: unknown }[])[0].cached_usage).toEqual({
+      observed_at: '2026-11-17T10:00:00Z',
+      windows: [
+        {
+          kind: 'seven_day',
+          used_percent: 40,
+          resets_at: '2026-11-20T00:00:00Z',
+          model_id: 'Frontier models',
+        },
+      ],
+    });
+
+    const unknown = await call('PUT', '/nope/models/m/enablement', { enabled: true });
+    expect(unknown).toEqual({
+      status: 422,
+      body: {
+        detail: [
+          {
+            type: 'enum',
+            loc: ['path', 'backend_key'],
+            msg: "Input should be 'claude' or 'scripted'",
+            input: 'nope',
+            ctx: { expected: "'claude' or 'scripted'" },
+          },
+        ],
+      },
+    });
+  } finally {
+    writes.seal();
+    await writes.drain();
+    await app.close();
+  }
+});

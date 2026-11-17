@@ -9,6 +9,7 @@ import type {
   RetainedBackendChildFactory,
 } from '../conversation/backends/contracts.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
+import type { UsageTranscriptSource } from '../conversation/usage/contracts.ts';
 import {
   conversation_execution_refusal,
   local_ticket_execution_refusal,
@@ -19,7 +20,6 @@ import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import type { ProductionServerDependencies } from './production.ts';
 import { accessSync, constants, statSync } from 'node:fs';
-import { ConversationBackendKey } from '../conversation/contracts.ts';
 import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 import type { AnyAgentDriver } from '../drivers/core/driver.ts';
 import type { DriverHost } from '../drivers/core/host.ts';
@@ -27,6 +27,7 @@ import {
   default_instance_configs,
   driver_registry_from_entries,
 } from '../drivers/core/registry.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import type { DriverRegistry, RegistryEntry } from '../drivers/core/registry.ts';
 import { create_production_backend_http } from './production_http.ts';
 import { applicationRootFromEnvironment, HOST } from '../core/config.ts';
@@ -36,6 +37,8 @@ export type ProductionBackendChildFactory = BackendChildFactory &
   Partial<Pick<RetainedBackendChildFactory, 'recover' | 'retained_runs'>>;
 export interface ProductionBindingContext extends ConversationCompositionContext {
   readonly driver_host: DriverHost;
+  /** The live instances: the HTTP runtime's cards, sign-ins and usage. */
+  readonly registry: DriverRegistry;
 }
 export interface ProductionBackendBindings {
   readonly drivers: readonly AnyAgentDriver[];
@@ -53,13 +56,12 @@ export interface PreparedProductionBackends {
 export function require_backend_bindings(
   value: Partial<ProductionBackendBindings>,
 ): ProductionBackendBindings {
-  const ids = new Set<string>(
-    Array.isArray(value.drivers) ? default_instance_configs(value.drivers).keys() : [],
-  );
-  // Until the closed backend lists open, every built-in key needs a driver.
-  const missing = Object.values(ConversationBackendKey)
-    .filter((key) => !ids.has(key))
-    .sort();
+  if (!Array.isArray(value.drivers) || value.drivers.length === 0)
+    throw new Error('Production backend drivers are required');
+  // Stored conversations may name any built-in backend, and keys stay closed until the
+  // Database stage, so every built-in backend needs a driver.
+  const ids = new Set<string>(default_instance_configs(value.drivers).keys());
+  const missing = KNOWN_BACKEND_INSTANCE_IDS.filter((id) => !ids.has(id)).sort();
   if (missing.length)
     throw new Error(`Missing production backend factories: ${missing.join(', ')}`);
   if (typeof value.driver_host !== 'function')
@@ -73,7 +75,6 @@ export function compose_production_backends(
   prepared: PreparedProductionBackends,
   bindings: ProductionBackendBindings,
 ) {
-  const shared: ProductionBindingContext = { ...context, driver_host: prepared.host };
   // A broken install still fails startup.
   const unavailable = prepared.registry
     .list()
@@ -139,6 +140,7 @@ export function compose_production_backends(
     return { ...entry, instance: { ...entry.instance, child_factory } };
   });
   const registry = driver_registry_from_entries([...prepared.registry.drivers.values()], entries);
+  const shared: ProductionBindingContext = { ...context, driver_host: prepared.host, registry };
   const supplied_http = bindings.http(shared);
   const http: BackendHttpRuntime =
     context.executor == null
@@ -148,7 +150,8 @@ export function compose_production_backends(
           backend_snapshots: supplied_http.backend_snapshots,
           backend_state: supplied_http.backend_state,
           backend_usage: supplied_http.backend_usage,
-          codex_sign_in: supplied_http.codex_sign_in,
+          backend_ids: supplied_http.backend_ids,
+          sign_in: (backend_key) => supplied_http.sign_in(backend_key),
           machine_catalog: (machine_id) => context.executor!.catalog_for(machine_id),
           shutdown: (options) => supplied_http.shutdown?.(options) ?? Promise.resolve(),
           settled: () => supplied_http.settled(),
@@ -158,6 +161,14 @@ export function compose_production_backends(
   return {
     registry,
     http,
+    /** Each live instance's own transcripts, for the recorded usage service. */
+    transcript_sources: registry
+      .list()
+      .flatMap((entry): UsageTranscriptSource[] =>
+        entry.kind === 'live' && entry.instance.transcript_usage !== undefined
+          ? [{ provider: entry.instance.instance_id, source: entry.instance.transcript_usage }]
+          : [],
+      ),
     execution_refusal,
     stall_sources: () => [
       ...bindings.stall_sources(shared),
@@ -212,6 +223,7 @@ function production_driver_host(context: ConversationCompositionContext): Driver
     child_processes: context.child_processes,
     one_shot_children: context.one_shot_children,
     worker_supervision: context.worker_supervision,
+    test_mode: context.config.test_mode,
     now: () => context.clock.now(),
     executable_on_path: (name) => on_path(name, environment.PATH),
   };

@@ -179,7 +179,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
         'errorClass' in error &&
         error.errorClass === 'initialize_timeout'
       )
-        throw new B.ClaudeInitializationTimeout(why, { cause: error });
+        throw new B.BackendInitializationTimeout(why, { cause: error });
       if (
         error instanceof BackendCliIncompatible ||
         (error instanceof Error && error.name === 'CLINotFoundError')

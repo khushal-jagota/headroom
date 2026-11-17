@@ -11,12 +11,11 @@ import { create_production_backend_bindings } from '../lifecycle/production_bind
 import type { DriverHost } from '../drivers/core/host.ts';
 import { drivers_of_factories } from '../drivers/testing/registry.ts';
 import { run_application_process } from '../lifecycle/application.ts';
-import * as backend_composition from '../conversation/snapshot/production.ts';
+import * as codex_providers from '../drivers/codex/runtime/providers.ts';
+import * as claude_catalog_source from '../drivers/claude/runtime/catalog_source.ts';
+import * as hermes_catalog from '../drivers/hermes/runtime/catalog.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import { write_manifest } from '../conversation/deploy_interruptions/files.ts';
 import { RECOVERY_PROMPT } from '../conversation/deploy_interruptions/coordinator.ts';
@@ -95,11 +94,14 @@ function setup() {
 test('normal staged server serves the reconciled record through real publication without a fabricated provider', async () => {
   const f = setup();
   vi.stubEnv('PLAN_TEST_MODE', '0');
-  const production = vi
-    .spyOn(backend_composition, 'production_backend_providers')
-    .mockImplementation(() => {
-      throw new Error('Bare startup must not construct a production provider');
-    });
+  const refuse = (): never => {
+    throw new Error('Bare startup must not construct a production provider');
+  };
+  const production = [
+    vi.spyOn(codex_providers, 'create_codex_providers').mockImplementation(refuse),
+    vi.spyOn(claude_catalog_source, 'create_claude_catalog_source').mockImplementation(refuse),
+    vi.spyOn(hermes_catalog, 'HermesModelCatalogOwner').mockImplementation(refuse),
+  ];
   const schema = JSON.parse(
     readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
   ) as ApplicationSchemaSeed;
@@ -185,7 +187,7 @@ test('normal staged server serves the reconciled record through real publication
       }),
     ]);
     expect(context?.conversationSystem).toBeUndefined();
-    expect(production).not.toHaveBeenCalled();
+    for (const provider of production) expect(provider).not.toHaveBeenCalled();
     expect(epochBeforePublication).not.toBe('old-runtime');
     expect(
       f.database.read((sql) =>
@@ -428,7 +430,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           database: binding.database,
           config: binding.config,
           now: () => binding.clock.now(),
-          providers: unavailable_backend_providers(),
           environment: new RecordingBackendProbeEnvironment(),
           one_shot_children: binding.one_shot_children,
         });
@@ -484,7 +485,14 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   await expect(
     start_production_server({
       ...dependencies,
+      backends: { ...dependencies.backends, drivers: [] },
+    }),
+  ).rejects.toThrow('Production backend drivers are required');
+  await expect(
+    start_production_server({
+      ...dependencies,
       backends: {
+        ...dependencies.backends,
         drivers: dependencies.backends!.drivers!.filter(
           (driver) => driver.driver_kind === 'claude',
         ),

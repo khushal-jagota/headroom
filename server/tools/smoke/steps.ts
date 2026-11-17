@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { public_event } from '../../conversation/http/record.ts';
 import { createDatabase } from '../../core/database/index.ts';
+import { DEFAULT_BACKEND_INSTANCE_ID } from '../../drivers/built_in.ts';
 import { load_worker_runtime_definitions } from '../../worker_types/configuration.ts';
 import { smoke_worker_token } from './identity.ts';
 
@@ -149,7 +150,7 @@ export async function smoke_before_restart(
   const conversation = `/api/conversation/conversations/${conversation_id}`;
   const started = await api('/api/conversation/conversations', {
     conversation_id,
-    backend_key: 'codex',
+    backend_key: DEFAULT_BACKEND_INSTANCE_ID,
     model: options.model,
     workspace_folder: options.workspace,
   });

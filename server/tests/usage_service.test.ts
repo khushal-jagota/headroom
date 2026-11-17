@@ -1,6 +1,6 @@
 /** Direct parity owns parsing. These gates prove shared work and cache ownership. */
 import { afterEach, expect, test, vi } from 'vitest';
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
@@ -8,11 +8,18 @@ import { Worker } from 'node:worker_threads';
 import { Deferred } from '../core/deferred.ts';
 import { UsageEngine as UsageService } from '../conversation/usage/UsageEngine.ts';
 import { UsageService as WorkerUsageService } from '../conversation/usage/UsageService.ts';
-import type { UsageSettings, UsageSummaryInput } from '../conversation/usage/contracts.ts';
+import type {
+  TranscriptDirectory,
+  UsageSettings,
+  UsageSummaryInput,
+} from '../conversation/usage/contracts.ts';
 import { UsageServiceStopped } from '../conversation/usage/contracts.ts';
 import type { TranscriptParseResult } from '../conversation/usage/usageTranscriptReader.ts';
 import { RATES_TIMEOUT_MS } from '../conversation/usage/configuration.ts';
 import { timezone } from '../conversation/usage/timeZone.ts';
+import claudeParser from '../drivers/claude/runtime/transcript_parser.ts';
+import { claude_transcript_usage } from '../drivers/claude/runtime/transcript_usage.ts';
+import { codex_transcript_usage } from '../drivers/codex/runtime/transcript_usage.ts';
 
 const hooks = vi.hoisted(() => ({
   read: undefined as ((path: unknown) => Promise<Buffer> | undefined) | undefined,
@@ -40,6 +47,13 @@ vi.mock('../conversation/usage/usageTranscriptReader.ts', async (importOriginal)
 });
 
 const roots: string[] = [];
+/** A directory read with the named driver's own transcript parser. */
+function directory(provider: 'claude' | 'codex', dir: string): TranscriptDirectory {
+  const { kind, parser_module } = (
+    provider === 'claude' ? claude_transcript_usage : codex_transcript_usage
+  )(dir);
+  return { provider, dir, kind, parser_module };
+}
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'panels-usage-service-'));
   roots.push(root);
@@ -109,10 +123,14 @@ test('a covered parent outside the window suppresses its copied compaction in ei
     // Each source has one file, so the source order fixes both traversal orders.
     const directories = coveredFirst ? [parent, copy] : [copy, parent];
     const options = { now: () => now, ratesFetcher: () => rates };
-    const isolated = new UsageService(join(paths.root, 'copy-state'), [['codex', copy]], options);
+    const isolated = new UsageService(
+      join(paths.root, 'copy-state'),
+      [directory('codex', copy)],
+      options,
+    );
     const combined = new UsageService(
       paths.state,
-      directories.map((dir) => ['codex', dir] as const),
+      directories.map((dir) => directory('codex', dir)),
       options,
     );
     try {
@@ -125,6 +143,68 @@ test('a covered parent outside the window suppresses its copied compaction in ei
   }
 });
 
+// Gap: line sources reuse a file on size and mtime. Nothing proves that a whole-file source
+// follows its fingerprint across a restart, or that a record's pricing name sets its price.
+test('a whole-file source is read again only when its fingerprint changes', async () => {
+  const paths = fixture();
+  const files = join(paths.root, 'files');
+  mkdirSync(files);
+  const file = join(files, 'session.json');
+  const write = (outputTokens: number, mtimeSeconds: number) => {
+    const record = {
+      provider: 'scripted',
+      timestampMs: now - 60 * 60 * 1000,
+      model: 'Scripted Display Name',
+      pricing_model: 'test-model',
+      sessionId: 'session',
+      totals: {
+        uncachedInputTokens: 10,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens,
+        reasoningTokens: 0,
+      },
+      reportedCostUsd: null,
+      dedupeKey: null,
+    };
+    writeFileSync(file, JSON.stringify([record]));
+    utimesSync(file, mtimeSeconds, mtimeSeconds);
+  };
+  const source: TranscriptDirectory = {
+    provider: 'scripted',
+    dir: files,
+    kind: 'files',
+    parser_module: new URL('../conversation/usage/testing/files_parser.ts', import.meta.url).href,
+  };
+  // Each read is a fresh engine, so a skipped file can only come from the persisted cache.
+  const read = async () => {
+    const service = new UsageService(paths.state, [source], {
+      now: () => now,
+      ratesFetcher: () => rates,
+    });
+    try {
+      const [bucket, ...rest] = (await service.readSummary(window)).buckets;
+      expect(rest).toEqual([]);
+      return bucket!;
+    } finally {
+      await service.finish_operations();
+    }
+  };
+  const mtime = Date.now() / 1000;
+  write(5, mtime);
+  const first = await read();
+  expect(first).toMatchObject({ provider: 'scripted', model: 'Scripted Display Name' });
+  expect(first.costSource).toBe('modelPriced');
+  expect(first.costUsd).toBeCloseTo(10 * 0.01 + 5 * 0.02);
+  // The scripted fingerprint is the size: a same-length rewrite with a new mtime is stable.
+  write(6, mtime + 10);
+  const stable = await read();
+  expect(stable.totals.outputTokens).toBe(5);
+  expect(stable.costUsd).toBeCloseTo(first.costUsd);
+  write(50, mtime + 20);
+  expect((await read()).totals.outputTokens).toBe(50);
+});
+
 // Gap: ordinary IANA names cannot prove the accepted installed-but-ICU-unknown fallback.
 test('an installed custom zone uses the accepted UTC fallback without admitting missing keys', async () => {
   const paths = fixture();
@@ -133,7 +213,7 @@ test('an installed custom zone uses the accepted UTC fallback without admitting 
   // One small public fixed-offset file. Its +14 offset would move the fixture to August 2.
   copyFileSync('/usr/share/zoneinfo/Etc/GMT-14', join(zones, 'PanelsCustom'));
   vi.stubEnv('PYTHONTZPATH', zones);
-  const service = new UsageService(paths.state, [['claude', paths.transcripts]], {
+  const service = new UsageService(paths.state, [directory('claude', paths.transcripts)], {
     now: () => now,
     ratesFetcher: () => rates,
   });
@@ -164,7 +244,7 @@ test('identical readers share one scan and shutdown drains it after a caller lea
   const entered = new Deferred<void>();
   const release = new Deferred<void>();
   let fetches = 0;
-  const service = new UsageService(paths.state, [['claude', paths.transcripts]], {
+  const service = new UsageService(paths.state, [directory('claude', paths.transcripts)], {
     now: () => now,
     ratesFetcher: async () => {
       fetches++;
@@ -268,7 +348,7 @@ test('different scan keys share cache loading and serialize mutations with persi
       },
     ],
     tailRecords: [],
-    position: { resumeOffset: 1, guardLength: 1, guardHash: 1, codexState: null },
+    position: { resumeOffset: 1, guardLength: 1, guardHash: 1, state: null },
     resumed: false,
   });
   vi.spyOn(service, 'collectDirs').mockImplementation(async (_start, current) => {
@@ -278,7 +358,7 @@ test('different scan keys share cache loading and serialize mutations with persi
       secondCollected.resolve();
       await releaseSecond.promise;
     }
-    const records = await service.readFileRecords(path, 1, now, 'claude');
+    const records = await service.readFileRecords(path, 1, now, 'claude', claudeParser);
     return [
       { provider: 'claude', dir: dirname(path), volumeId: 'synthetic', files: [{ path, records }] },
     ];
@@ -448,7 +528,7 @@ test('synthetic 30000-file cache serialization leaves the main event loop respon
             totals: { uncachedInputTokens: 100, cachedInputTokens: 50,
               cacheCreationTokens: 5, outputTokens: 20, reasoningTokens: 0 }
           })), tailRecords: [],
-          position: { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
+          position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null }
         });
         const constructed = performance.now();
         const bytes = JSON.stringify(encodeScanCache(cache));
@@ -531,7 +611,7 @@ test('a multi-megabyte native line is parsed by the owned worker', async () => {
     },
   };
   writeFileSync(join(paths.transcripts, 'session.jsonl'), JSON.stringify(line) + '\n');
-  const service = new WorkerUsageService(paths.state, [['claude', paths.transcripts]], {
+  const service = new WorkerUsageService(paths.state, [directory('claude', paths.transcripts)], {
     now: () => now,
     ratesFetcher: () => rates,
   });

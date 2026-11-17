@@ -1,6 +1,9 @@
 /** Failure text uses native whitespace rules and retains credential redaction. */
 import { expect, test } from 'vitest';
-import { normalized_failure_summary } from '../conversation/logic/backend_events.ts';
+import {
+  normalized_failure_summary,
+  recorded_failure_detail,
+} from '../conversation/logic/backend_events.ts';
 
 test('failure summaries normalize whitespace without weakening Unicode credential redaction', () => {
   const cases = [
@@ -21,4 +24,15 @@ test('failure summaries normalize whitespace without weakening Unicode credentia
   for (const [input, expected] of cases) {
     expect(normalized_failure_summary(input)).toBe(expected);
   }
+});
+
+test('a cut recorded failure detail keeps the start and the end', () => {
+  const start = 'Error: claude exited ' + 'a'.repeat(200);
+  const end = 'b'.repeat(200) + ' cause: rate limit reached';
+  const recorded = recorded_failure_detail(`${start} ${end}`)!;
+  expect(Array.from(recorded)).toHaveLength(240);
+  expect(recorded.startsWith('Error: claude exited aaa')).toBe(true);
+  expect(recorded).toContain('a … b');
+  expect(recorded.endsWith('bbb cause: rate limit reached')).toBe(true);
+  expect(recorded_failure_detail('short failure')).toBe('short failure');
 });

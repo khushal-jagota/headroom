@@ -11,6 +11,7 @@ import {
 } from '../notifications/data.ts';
 import { createNavigationRegistry } from '../navigation/data/registry.ts';
 import { prune } from '../navigation/delivery/retention.ts';
+import { DEFAULT_LAUNCH } from '../drivers/built_in.ts';
 
 export function seed_machine_rows(tx: TransactionSql): void {
   tx.run(
@@ -35,7 +36,12 @@ export function bootstrap_application(tx: TransactionSql, initialized_at: number
     [epoch],
   );
   tx.run(
-    "INSERT INTO manager_launch_defaults(singleton,employee_backend,employee_launch_model,employee_launch_reasoning_effort) VALUES(1,'codex','gpt-6.1-sol','medium')",
+    'INSERT INTO manager_launch_defaults(singleton,employee_backend,employee_launch_model,employee_launch_reasoning_effort) VALUES(1,?,?,?)',
+    [
+      DEFAULT_LAUNCH.employee_backend,
+      DEFAULT_LAUNCH.employee_launch_model,
+      DEFAULT_LAUNCH.employee_launch_reasoning_effort,
+    ],
   );
   tx.run('INSERT INTO attention_history_metadata(singleton,started_at) VALUES(1,?)', [
     initialized_at,

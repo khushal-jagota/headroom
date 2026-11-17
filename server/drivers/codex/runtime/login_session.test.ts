@@ -1,12 +1,8 @@
 /** Risks unique to JS promise cancellation, service serialization, and drained evidence. */
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { afterEach, expect, test, vi } from 'vitest';
-import {
-  CodexSignInService,
-  CodexSignInUnavailable,
-  UnknownSignInSession,
-  type SignInClient,
-} from './login_session.ts';
+import { CodexSignInService, type SignInClient } from './login_session.ts';
+import { SignInUnavailable, UnknownSignInSession } from '../../core/sign_in.ts';
 import type { CodexServerMessageHandler } from './client.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { StoredCodexLogin } from './login.ts';
@@ -86,7 +82,7 @@ test('old handlers and stale cancellation cannot alter the replacement session',
   } finally {
     await service.shutdown();
   }
-  await expect(service.start()).rejects.toBeInstanceOf(CodexSignInUnavailable);
+  await expect(service.start()).rejects.toBeInstanceOf(SignInUnavailable);
   expect(clients).toHaveLength(2);
 });
 

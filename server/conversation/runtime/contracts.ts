@@ -1,8 +1,8 @@
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { AutomaticStartAdmission } from '../start_admission/index.ts';
 /** Process-local state and injected effects for the local conversation core. */
 import type { Principal } from '../../core/contracts.ts';
 import type {
-  ConversationBackendKey,
   DeploymentRecoveryReference,
   NativeMessageOperation,
   PromptDeliveryMode,
@@ -107,7 +107,7 @@ export interface ConversationCoreOptions {
   readonly idle_child_stop_after_seconds?: number;
   readonly idle_child_sweep_interval_seconds?: number;
   readonly delivery_model_refusal: (
-    backend: ConversationBackendKey,
+    backend: BackendInstanceId,
     model: string,
     ticket_id: string | null,
   ) => string | null;

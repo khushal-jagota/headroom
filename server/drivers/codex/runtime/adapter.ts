@@ -29,10 +29,7 @@ import {
 import type { MessageContent } from '../../../conversation/message_content.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
 import { MessageFileMissing } from '../../../conversation/record/message_files.ts';
-import type {
-  CodexLoginGeneration,
-  CodexLoginRejectionMemory,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+import type { CodexLoginGeneration, CodexLoginRejectionMemory } from './contracts.ts';
 import * as P from './protocol.ts';
 import {
   CodexAppServerClient,

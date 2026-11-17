@@ -1,4 +1,5 @@
 /** One real-mailbox exchange; no listener or backend provider. */
+import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
 import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../core/database/index.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
@@ -34,12 +35,12 @@ if (spec.scope_only) {
       mailbox,
     );
     try {
-      values.push(relay.retained('codex'));
+      values.push(relay.retained(parse_backend_instance_id('codex')));
       const keeper = relay as unknown as {
         keep(key: 'codex', value: WireTypes['BackendSnapshot']): unknown;
       };
       keeper.keep('codex', spec.snapshots[index]!);
-      values.push(relay.retained('codex'));
+      values.push(relay.retained(parse_backend_instance_id('codex')));
     } finally {
       await relay.stop({ deadline: performance.now() / 1000 + 2 });
       await presence.stop({ deadline: performance.now() / 1000 + 2 });
@@ -91,19 +92,21 @@ if (spec.scope_only) {
   }
   let output: Record<string, unknown>;
   try {
-    const cold = relay.snapshot('codex');
+    const cold = relay.snapshot(parse_backend_instance_id('codex'));
     await reply(spec.snapshots[0]!);
     const first = await cold;
-    const cached = await relay.snapshot('codex');
-    const refreshed = relay.snapshot('codex', { refresh: true });
+    const cached = await relay.snapshot(parse_backend_instance_id('codex'));
+    const refreshed = relay.snapshot(parse_backend_instance_id('codex'), { refresh: true });
     await reply(spec.snapshots[1]!);
     await reply(spec.snapshots[2]!);
     const fallback = await refreshed;
     const controller = new AbortController();
-    const caller = relay.snapshot('codex', { refresh: true, signal: controller.signal }).then(
-      () => false,
-      (error) => error.name === 'AbortError',
-    );
+    const caller = relay
+      .snapshot(parse_backend_instance_id('codex'), { refresh: true, signal: controller.signal })
+      .then(
+        () => false,
+        (error) => error.name === 'AbortError',
+      );
     await reply(spec.snapshots[3]!, controller);
     const cancelled = await caller;
     await relay.stop({ deadline: performance.now() / 1000 + 2 });
@@ -111,7 +114,7 @@ if (spec.scope_only) {
       decode_value({ ...spec.lease, going_to_sleep: true }, 'LeaseRequest'),
     );
     relay = new VpsCatalogRelay(database, runs, presence, mailbox);
-    const offline = await relay.snapshot('codex');
+    const offline = await relay.snapshot(parse_backend_instance_id('codex'));
     const rows = database
       .read((sql) =>
         sql.all<{ snapshot_json: string }>(
@@ -129,7 +132,7 @@ if (spec.scope_only) {
     };
     await relay.stop({ deadline: performance.now() / 1000 + 2 });
     try {
-      await relay.snapshot('codex');
+      await relay.snapshot(parse_backend_instance_id('codex'));
     } catch (error) {
       output.sealed = (error as Error).name;
     }
@@ -141,7 +144,7 @@ if (spec.scope_only) {
       decode_value({ ...spec.lease, going_to_sleep: false }, 'LeaseRequest'),
     );
     relay = new VpsCatalogRelay(database, runs, presence, mailbox);
-    const internal_abort = relay.snapshot('codex', { refresh: true });
+    const internal_abort = relay.snapshot(parse_backend_instance_id('codex'), { refresh: true });
     relay.connected();
     await internal_abort;
     await relay.stop({ deadline: performance.now() / 1000 + 2 });

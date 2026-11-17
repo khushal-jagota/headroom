@@ -17,10 +17,7 @@ import { InMemoryConversationSystem } from './conversation/in_memory_conversatio
 import { inMemoryConversationRoutes } from './conversation/testing/routes.ts';
 import { rebuild_conversation_view } from './conversation/views/data/writer.ts';
 import { create_test_environment_runtime } from './environments/testing/composition.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from './conversation/snapshot/composition.ts';
+import { create_backend_runtime } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 import { makeUsageService } from './conversation/usage/composition.ts';
 import { BackendStateStore } from './conversation/backend_state.ts';
@@ -48,7 +45,6 @@ await startServer({
       database: context.database,
       config: context.config,
       now: () => context.clock.now(),
-      providers: unavailable_backend_providers(),
     });
     const snapshots = new TicketModelSnapshots();
     snapshots.model = 'gpt-6.1-sol';

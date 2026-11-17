@@ -11,6 +11,7 @@ import {
   parse_driver_kind,
   type BackendInstanceId,
 } from './identity.ts';
+import { scripted_manifest, scripted_status } from '../testing/registry.ts';
 import {
   create_driver_registry,
   default_instance_configs,
@@ -35,7 +36,7 @@ function scripted_driver(
       icon: { file: 'icon.svg', monochrome: true },
       accent_color: '#000000',
     },
-    manifest: { executable: { name: kind } },
+    manifest: scripted_manifest(kind),
     config: NO_DRIVER_CONFIG,
     async create({ instance_id }): Promise<DriverInstance> {
       events.push(`create ${instance_id}`);
@@ -49,6 +50,7 @@ function scripted_driver(
           turns: { supportsActiveSteering: true },
         },
         child_factory: factory,
+        status: scripted_status(kind),
         dispose: async () => {
           events.push(`dispose ${instance_id}`);
         },
@@ -223,7 +225,8 @@ describe('registry build', () => {
           const instance = await failing.create(input, driver_host, signal);
           return {
             ...instance,
-            dispose: async () => {
+            // A synchronous throw must not keep the later instance from disposing.
+            dispose: () => {
               events.push('dispose codex');
               throw new Error('codex would not stop');
             },
@@ -237,6 +240,33 @@ describe('registry build', () => {
       errors: [new Error('codex would not stop')],
     });
     expect(events).toEqual(['dispose hermes', 'dispose codex', 'dispose claude']);
+  });
+
+  // Gap: Codex's cleanup waits on Claude's catalog retry, so a serial dispose would hang.
+  it('disposes every instance at once, so one dispose can wait on another', async () => {
+    const claude_disposed = Promise.withResolvers<void>();
+    const with_dispose = (kind: string, dispose: () => Promise<void>): AnyAgentDriver => {
+      const driver = scripted_driver(kind);
+      return {
+        ...driver,
+        async create(input, driver_host, signal) {
+          return { ...(await driver.create(input, driver_host, signal)), dispose };
+        },
+      };
+    };
+    const options = { deadline: 1 } as never;
+    const seen: unknown[] = [];
+    const registry = await build([
+      with_dispose('codex', async () => {
+        await claude_disposed.promise;
+      }),
+      with_dispose('claude', async (...args: unknown[]) => {
+        seen.push(args[0]);
+        claude_disposed.resolve();
+      }),
+    ]);
+    await registry.dispose(options);
+    expect(seen).toEqual([options]);
   });
 
   it('takes a fourth driver from the list alone', async () => {

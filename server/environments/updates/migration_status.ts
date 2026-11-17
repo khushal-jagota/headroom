@@ -8,7 +8,11 @@ import { validate_app_manifest } from '../release/identity.ts';
 import { AppValidationError } from '../release/contracts.ts';
 import type { AppManifest } from '../release/contracts.ts';
 import { node_schema_steps_pending, read_node_schema_frontier } from '../release/migrations.ts';
-import { RuntimeProbeUnsettled, run_runtime_json_probe } from '../release/admission_process.ts';
+import {
+  PROBE_HOME_DIRECTORIES,
+  RuntimeProbeUnsettled,
+  run_runtime_json_probe,
+} from '../release/admission_process.ts';
 import { RUNTIME_PROBE_TIMEOUT_SECONDS } from '../release/process_configuration.ts';
 import { candidate_tool_path } from '../release/admission.ts';
 import type { InstallerOperations } from './contracts.ts';
@@ -30,9 +34,7 @@ async function python_schema_change_pending(
     for (const name of [
       'config',
       'cache',
-      'codex',
-      'claude',
-      'hermes',
+      ...PROBE_HOME_DIRECTORIES,
       'data',
       'logs',
       'backups',

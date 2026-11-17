@@ -228,7 +228,7 @@ export class VpsExecutorRegistry {
 
   open_runs() {
     const factory = this.as_factory();
-    return retained_open_runs({ claude: factory, codex: factory, hermes: factory });
+    return retained_open_runs([factory]);
   }
 
   private owner_of(source: ChildReference, ticket_id: string | null = null): VpsExecutor | null {

@@ -1,4 +1,6 @@
 /** Non-Home Ticket children cross this seam. Recovery never allocates a local child. */
+import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
+import { PYTHON_MAC_BACKEND_KEYS } from './machine_drivers.ts';
 import type {
   BackendChild,
   BackendChildFactory,
@@ -52,6 +54,10 @@ export class LocaleBackendChildFactory {
           : undefined;
       return row !== undefined && row.machine_id !== HOME_MACHINE_ID;
     });
+    if (remote && !PYTHON_MAC_BACKEND_KEYS.has(options.resolved_start.backend_key))
+      throw new BackendSpawnFailed(
+        `The Ticket's machine cannot run the ${options.resolved_start.backend_key} backend`,
+      );
     const child = (remote ? this.remote_factory : this.local_factory)(options);
     return remote ? child : authenticated_local_child(child, this.database);
   }

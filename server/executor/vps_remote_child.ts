@@ -12,7 +12,6 @@ import type {
 } from '../conversation/backends/contracts.ts';
 import {
   AnswerFate,
-  ConversationBackendKey,
   PromptDeliveryRefusalReason,
   WorkspacePathPolicy,
 } from '../conversation/contracts.ts';
@@ -124,7 +123,7 @@ export class MacRemoteChild implements BackendChild {
     if (options.started_on != null) this.note_start(options.started_on);
   }
   private note_start(start: ResolvedConversationStart): void {
-    if (start.backend_key === ConversationBackendKey.claude)
+    if (start.backend_key === 'claude')
       this.claude_started_on = [start.model, start.reasoning_effort];
   }
   async detach(options?: StopOptions): Promise<void> {
@@ -201,6 +200,7 @@ export class MacRemoteChild implements BackendChild {
       canonical_skill_snapshot: snapshot,
       resolved_start: {
         ...start,
+        backend_key: start.backend_key,
         role_materials:
           start.role_materials === null
             ? null

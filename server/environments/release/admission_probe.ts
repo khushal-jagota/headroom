@@ -1,6 +1,14 @@
 /** Trusted probe source. Candidate package and worker code runs with the host user's rights. */
 import { GLIBC_LIBRARIES } from '../updates/logic/runtime_contract.ts';
 import { SYSTEM_LIBRARY_DIRECTORIES } from './native/configuration.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
+
+/** The server packages drivers ship: release files at server/node_modules/<package>/package.json. */
+const DRIVER_SERVER_PACKAGES = BUILT_IN_MANIFESTS.flatMap(({ manifest }) =>
+  (manifest.install?.release_files ?? []).flatMap(
+    (path) => /^server\/node_modules\/((?:@[^/]+\/)?[^/]+)\/package\.json$/.exec(path)?.[1] ?? [],
+  ),
+);
 export const NATIVE_NODE_PROBE = String.raw`
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -68,7 +76,7 @@ for (const name of Object.keys(dependencies).sort()) {
   package_paths[name] = path;
   modules.set(name, await import(pathToFileURL(path).href));
 }
-for (const name of ['better-sqlite3', 'koffi', '@anthropic-ai/claude-agent-sdk'])
+for (const name of ${JSON.stringify(['better-sqlite3', 'koffi', ...DRIVER_SERVER_PACKAGES])})
   assert(Object.hasOwn(package_paths, name), 'server/package.json lacks ' + name);
 const Database = modules.get('better-sqlite3').default;
 const database = new Database(':memory:');

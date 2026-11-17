@@ -1,5 +1,6 @@
 /** The live backend instances, built once from the driver list. (T3 ProviderInstanceRegistry buildEntry) */
 import { PlannerError } from '../../core/contracts.ts';
+import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { AnyAgentDriver, DriverInstance } from './driver.ts';
 import type { DriverHost } from './host.ts';
 import { default_instance_id_for_driver } from './identity.ts';
@@ -28,7 +29,11 @@ export interface DriverRegistry {
   require_live(id: string): DriverInstance;
   /** Build order, which is the driver list order. */
   list(): readonly RegistryEntry[];
-  dispose(): Promise<void>;
+  /**
+   * Disposes every live instance at once: one instance's cleanup can wait on another's.
+   * May be called again, which retries what failed. Each failure stays in the AggregateError.
+   */
+  dispose(options?: StopOptions): Promise<void>;
 }
 
 function message_of(error: unknown): string {
@@ -87,16 +92,23 @@ export function driver_registry_from_entries(
       });
     },
     list: () => listed,
-    async dispose() {
-      const failures: unknown[] = [];
+    async dispose(options) {
+      // Start every dispose now, each in its own try: a throw or a reentrant call from one
+      // instance cannot keep another from starting.
+      const disposing: Promise<void>[] = [];
       for (const entry of listed) {
         if (entry.kind !== 'live') continue;
         try {
-          await entry.instance.dispose();
+          disposing.push(entry.instance.dispose(options));
         } catch (error) {
-          failures.push(error);
+          disposing.push(Promise.reject(error));
         }
       }
+      const results = await Promise.allSettled(disposing);
+      const failures = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : [],
+      );
+      // `errors` holds each failed instance's own error, unwrapped, in registry order.
       if (failures.length) throw new AggregateError(failures, 'Backend instances did not dispose');
     },
   };

@@ -1,13 +1,13 @@
 /** Panels-owned backend cards. Provider protocols stay behind adapters. */
-import type { ConversationBackendKey } from '../contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { JsonNumber } from '../../core/http/numeric_json.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
 import type { BackendCommandOptions } from './commands.ts';
 import type { BackendUsageResult } from '../backend_usage/contracts.ts';
 import type { RemoteCatalogSource } from '../model_resolution/contracts.ts';
-import type { CodexSignInService } from './provider_contracts.ts';
-import type { StoredCodexLogin, CodexLoginGeneration } from './provider_contracts.ts';
+import type { DriverSignInController } from '../../drivers/core/sign_in.ts';
+import type { DriverStatus } from '../../drivers/core/status.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 export type BackendInstallMethod =
   'npm_global' | 'bun_global' | 'pnpm_global' | 'homebrew' | 'native' | 'manual_only';
@@ -35,7 +35,7 @@ export interface BackendUpdateAdvisory {
   readonly detail: string;
 }
 export interface BackendSnapshot {
-  readonly backend_key: ConversationBackendKey;
+  readonly backend_key: BackendInstanceId;
   readonly installed: boolean;
   readonly executable_path: string | null;
   readonly version: string | null;
@@ -77,16 +77,13 @@ export interface SnapshotOptions {
   readonly discover_update_advisory?: boolean;
 }
 export interface BackendSnapshotSource {
-  retained(backend_key: ConversationBackendKey): BackendSnapshot | null;
-  snapshot(
-    backend_key: ConversationBackendKey,
-    options?: SnapshotOptions,
-  ): Promise<BackendSnapshot>;
+  retained(backend_key: BackendInstanceId): BackendSnapshot | null;
+  snapshot(backend_key: BackendInstanceId, options?: SnapshotOptions): Promise<BackendSnapshot>;
 }
 export interface BackendSnapshotServiceContract extends BackendSnapshotSource {
   snapshots(options?: SnapshotOptions): Promise<readonly BackendSnapshot[]>;
   update_backend(
-    backend_key: ConversationBackendKey,
+    backend_key: BackendInstanceId,
     options?: { signal?: AbortSignal },
   ): Promise<BackendUpdateResult>;
 }
@@ -99,37 +96,28 @@ export interface BackendHttpRuntime {
   readonly backend_state: BackendStateStore | null;
   readonly backend_usage: {
     refresh(
-      backend_key: ConversationBackendKey,
+      backend_key: BackendInstanceId,
       options?: { signal?: AbortSignal },
     ): Promise<BackendUsageResult>;
   };
-  readonly codex_sign_in: CodexSignInService | null;
+  /** Card order and the unknown-backend choice list. */
+  readonly backend_ids: readonly BackendInstanceId[];
+  /** The backend's sign-in, or null when Panels cannot sign it in. */
+  sign_in(backend_key: string): DriverSignInController | null;
   readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
 }
-/** The login adapter supplies only the card's nonsecret comparison operands. */
-export interface CodexLoginStanding {
-  readonly stored: StoredCodexLogin;
-  readonly generation: CodexLoginGeneration | null;
-  readonly rejected: boolean;
-  everything_a_card_reads(options: { now: Date }): readonly unknown[];
+/** One backend card: the instance it describes and the driver status that probes it. */
+export interface BackendCardSource {
+  readonly instance_id: BackendInstanceId;
+  /** Machine mode runs this executable's `--version` before reusing a kept card. */
+  readonly executable_name: string;
+  readonly status: DriverStatus;
 }
-export interface SnapshotProbeOptions {
-  readonly signal?: AbortSignal;
-  readonly refresh: boolean;
-  readonly discover_update_advisory: boolean;
-  readonly codex_login: CodexLoginStanding | null;
-  readonly now: Date;
-}
-export type BackendProbe = (
-  backend_key: ConversationBackendKey,
-  environment: BackendProbeEnvironment,
-  options: SnapshotProbeOptions,
-) => Promise<BackendSnapshot>;
 export interface BackendSnapshotServiceOptions {
+  /** Card order. */
+  readonly sources: readonly BackendCardSource[];
   readonly keep_complete_model_list?: (snapshot: BackendSnapshot) => void | Promise<void>;
   readonly environment: BackendProbeEnvironment;
-  readonly probe: BackendProbe;
-  readonly read_codex_login_standing: () => CodexLoginStanding | null;
   readonly now?: () => Date;
   readonly machine_catalog?: boolean;
 }
@@ -147,13 +135,3 @@ export type CatalogReader = (options: {
   readonly version: string | null;
   readonly refresh: boolean;
 }) => Promise<CatalogAnswer>;
-export interface ProbeRecipe {
-  readonly executable_name: string;
-  readonly missing_binary_diagnosis: string;
-  readonly identity_arguments: readonly string[] | null;
-  readonly login_command: string | null;
-  readonly registry_package_name: string | null;
-  readonly native_path_marker: string | null;
-  readonly native_update_command: readonly string[] | null;
-  readonly manual_only_detail: string;
-}

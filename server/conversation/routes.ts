@@ -1,4 +1,6 @@
 /** Product conversation HTTP surface, sharing the record and process runtime. */
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
+import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
@@ -21,7 +23,7 @@ import {
   ConversationRoleMaterials,
   ConversationStartRequest,
 } from './contracts.ts';
-import type { ConversationAccess, ConversationBackendKey } from './contracts.ts';
+import type { ConversationAccess } from './contracts.ts';
 import {
   PermissionAskedEventPayload,
   UserInputRequestedEventPayload,
@@ -47,7 +49,7 @@ function start_request(raw: unknown): ConversationStartRequest {
   const fields = body_fields(raw);
   const conversation_id = fields.text('conversation_id');
   const model = fields.text('model');
-  const backend_key = fields.choice('backend_key', ['hermes', 'codex', 'claude'], true, false);
+  const backend_key = fields.choice('backend_key', KNOWN_BACKEND_INSTANCE_IDS, true, false);
   const reasoning_effort = fields.text('reasoning_effort', true, false);
   const role_text = fields.text('role_text', true, false);
   const identity: [string, string][] = [];
@@ -83,7 +85,7 @@ function start_request(raw: unknown): ConversationStartRequest {
   const request = new ConversationStartRequest({
     conversation_id: conversation_id!,
     model: model!,
-    backend_key: backend_key as ConversationBackendKey | null,
+    backend_key: backend_key as BackendInstanceId | null,
     reasoning_effort,
     role_materials:
       role_text === null

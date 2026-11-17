@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { PlannerError } from './contracts.ts';
 import { copy_environment } from './environment.ts';
+import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 export const HOST = '127.0.0.1';
 export const SSE_HEARTBEAT_MS = 15000;
 export const DB_BUSY_TIMEOUT_MS = 5000;
@@ -58,21 +59,19 @@ export const EXTERNAL_RUNTIME_ENVIRONMENT_KEYS: ReadonlySet<string> = new Set([
   'PLAN_APNS_KEY_ID',
   'PLAN_APNS_TEAM_ID',
   'PLAN_APNS_BUNDLE_IDS',
-  'PLAN_HERMES_HOME',
-  'CODEX_HOME',
-  'CLAUDE_CONFIG_DIR',
   'PLAN_PROVISION_ACCOUNT_SKILLS',
-  'PLAN_HERMES_PYTHON',
-  'PLAN_CLAUDE_EXECUTABLE',
   'PLAN_SERVER_CONTROL_SOCKET',
   'PLAN_UPDATE_REPOSITORY',
   'PLAN_UPDATE_TOKEN_FILE',
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
   'GOOGLE_API_KEY',
   // TS's explicit lifecycle address must survive the first launcher boundary.
   'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
   'PLAN_SERVER_LISTENER_FD',
+  // Each driver's home and the further inputs its launcher passes.
+  ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => [
+    ...(manifest.home ? [manifest.home.environment_name] : []),
+    ...manifest.launcher_environment_names,
+  ]),
 ]);
 export interface Config {
   apns?: APNsConfig | null;
@@ -166,12 +165,15 @@ export function provider_launch_settings(env: Readonly<NodeJS.ProcessEnv> = proc
     app_root: env.PLAN_APP_ROOT,
   };
 }
+/** Each driver's home, under every variable that carries it. */
+const driver_home_environment_names = BUILT_IN_MANIFESTS.flatMap(({ manifest }) =>
+  manifest.home
+    ? [manifest.home.environment_name, ...(manifest.home.extra_environment_names ?? [])]
+    : [],
+);
 const installer_unit_environment_names = new Set([
   'HOME',
-  'CODEX_HOME',
-  'CLAUDE_CONFIG_DIR',
-  'HERMES_HOME',
-  'PLAN_HERMES_HOME',
+  ...driver_home_environment_names,
   'PATH',
   'LANG',
   'LANGUAGE',
@@ -200,10 +202,7 @@ const installer_unit_environment_names = new Set([
 ]);
 const installer_unit_path_names = new Set([
   'HOME',
-  'CODEX_HOME',
-  'CLAUDE_CONFIG_DIR',
-  'HERMES_HOME',
-  'PLAN_HERMES_HOME',
+  ...driver_home_environment_names,
   'TMPDIR',
   'TMP',
   'TEMP',

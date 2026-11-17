@@ -54,7 +54,7 @@ A server can also be given a default workspace folder for new agent conversation
 
 Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs.
 
-Live and staging launches rebuild the process environment from a fixed allowlist instead of inheriting the caller's. Live passes only named settings and provider keys from its service environment. Staging keeps the user's home, locale, terminal, and path, drops stray `PLAN_*` values, adds validated credentials from its own file, and sets the paths it owns. Credentials are never written into a manifest or printed.
+Live and staging launches rebuild the process environment from a fixed allowlist instead of inheriting the caller's. Each backend driver's manifest contributes its own variables, home folder, and skills folder to that list. Live passes only named settings and provider keys from its service environment. Staging keeps the user's home, locale, terminal, and path, drops stray `PLAN_*` values, adds validated credentials from its own file, and sets the paths it owns. Credentials are never written into a manifest or printed.
 
 ## Host automation
 

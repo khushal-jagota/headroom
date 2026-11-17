@@ -14,8 +14,17 @@ The full MIT copyright and permission notice is retained in [T3-LICENSE](T3-LICE
 
 ## Dependency boundaries
 
-- `usageTranscripts.ts` contains line reducers and their record/state types.
-- `usagePricing.ts` prices those records from public rates and explicit overrides.
+- `usageTranscripts.ts` holds the usage record and the helpers parsers share.
+  Each driver's transcript parser lives in its own package, as
+  `drivers/<kind>/runtime/transcript_parser.ts`, and its `transcript_usage.ts`
+  names the homes it reads. `grokTranscriptParser.ts` reads the owner's own Grok
+  CLI transcripts: Grok is a usage source, not a driver.
+- A source is `lines` or `files`. A line parser carries state from line to line
+  and across scans. A whole-file parser is read again only when its fingerprint
+  changes. The usage worker cannot receive functions, so each directory names its
+  parser module, which the worker imports.
+- `usagePricing.ts` prices those records from public rates and explicit overrides,
+  by a record's `pricing_model` when it has one and by its model otherwise.
 - `usageAggregation.ts` groups records by day or exact hourly anchors and applies
   global first-copy deduplication. `timeZone.ts` validates installed, case-sensitive
   ZoneInfo keys and follows canonical symlink targets for ICU formatters.
@@ -80,8 +89,9 @@ provider types, compressed transcripts, and speed pricing do not enter this port
 
 ## Safety and evidence
 
-Production composition alone resolves configured provider homes. Test composition
-uses explicit synthetic directories and recording rate fetchers. The production
+Production composition reads the transcript sources each backend instance gives
+it. Test composition maps each source to a synthetic directory, and uses recording
+rate fetchers. The production
 rates transport refuses test contexts. Real provider transcripts, authentication
 files, provider CLIs, and billing endpoints do not participate in local proof.
 

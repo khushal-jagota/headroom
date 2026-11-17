@@ -7,6 +7,27 @@ import type { ScratchPassOptions } from './ticket_scratch/contracts.ts';
 import type { AppValidationOptions } from './release/contracts.ts';
 import type { AppManifest } from './updates/contracts.ts';
 import type { WatchdogArguments } from '../stalls/cli.ts';
+import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
+import type { DriverHome } from '../drivers/core/paths.ts';
+
+/** One required provision-skills option per driver home, in BUILT_IN_DRIVERS order. */
+export const PROVISION_SKILLS_HOME_OPTIONS: readonly {
+  /** The manifest's home option. A CLI contract. */
+  readonly cli_option: string;
+  /** The parsed argument name: the option without '--', with '-' as '_'. */
+  readonly destination: string;
+  readonly home: DriverHome;
+}[] = BUILT_IN_MANIFESTS.flatMap(({ manifest: { home } }) =>
+  home
+    ? [
+        {
+          cli_option: home.cli_option,
+          destination: home.cli_option.replace(/^--/, '').replaceAll('-', '_'),
+          home,
+        },
+      ]
+    : [],
+);
 
 export interface EnvironmentCommandTranscript {
   readonly exit_code: 0 | 1;
@@ -43,11 +64,10 @@ export interface EnvironmentCommandArguments {
     readonly backup_dir: string;
     readonly current_app: string;
   };
+  /** Each home under its PROVISION_SKILLS_HOME_OPTIONS destination. */
   'provision-skills': {
     readonly database_parent: string;
-    readonly hermes_home: string;
-    readonly codex_home: string;
-    readonly claude_home: string;
+    readonly [home_destination: string]: string;
   };
   restore: {
     readonly snapshot: string;

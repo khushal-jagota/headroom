@@ -1,4 +1,6 @@
 /** Backend-only route proof reuses the ordinary app through injection, without a listener. */
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
+import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import { createApp } from '../../../app.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { TestClock } from '../../../core/clock.ts';
@@ -11,12 +13,13 @@ import {
 } from '../../backend_state.ts';
 import type { Database } from '../../../core/database/contracts.ts';
 import { BackendUsageService } from '../../backend_usage/service.ts';
-import type { BackendUsageResult } from '../../backend_usage/contracts.ts';
-import type { ConversationBackendKey } from '../../contracts.ts';
+import type { BackendUsageAdapter, BackendUsageResult } from '../../backend_usage/contracts.ts';
+import { BUILT_IN_MANIFESTS } from '../../../drivers/built_in_manifests.ts';
+import { default_instance_id_for_driver } from '../../../drivers/core/identity.ts';
 import { BackendSnapshotService } from '../service.ts';
 import type { BackendSnapshot, BackendHttpRuntime } from '../contracts.ts';
-import type { CodexSignIn, CodexSignInService } from '../provider_contracts.ts';
-import { UnknownSignInSession } from '../provider_contracts.ts';
+import type { DriverSignInController, SignInSession } from '../../../drivers/core/sign_in.ts';
+import { UnknownSignInSession } from '../../../drivers/core/sign_in.ts';
 import { createBackendRoutes } from '../routes.ts';
 import { ConversationHttpWriteScope } from '../../http/writes.ts';
 import { RecordingBackendProbeEnvironment } from '../recording_environment.ts';
@@ -36,7 +39,7 @@ interface Spec {
       model_scope: string | null;
     }[];
   })[];
-  readonly sign_in: Omit<CodexSignIn, 'started_at' | 'deadline_at'> & {
+  readonly sign_in: Omit<SignInSession, 'started_at' | 'deadline_at'> & {
     started_at: string;
     deadline_at: string;
   };
@@ -52,7 +55,7 @@ function model_admission_evidence(database: Database, cards: readonly BackendSna
     const initial = Object.fromEntries(
       ['hermes', 'codex', 'claude'].map((key) => [
         key,
-        offered_model_ids(tx, 'vps', key as ConversationBackendKey),
+        offered_model_ids(tx, 'vps', key as BackendInstanceId),
       ]),
     );
     for (const model of ['retired-model', 'mac-only'])
@@ -77,7 +80,7 @@ function model_admission_evidence(database: Database, cards: readonly BackendSna
     const aliases = Object.fromEntries(
       ['opus', 'opus[1m]', 'claude-opus-5[1m]', 'sonnet'].map((model) => [
         model,
-        model_refusal(tx, 'claude', model, 'vps'),
+        model_refusal(tx, parse_backend_instance_id('claude'), model, 'vps'),
       ]),
     );
     return {
@@ -85,7 +88,7 @@ function model_admission_evidence(database: Database, cards: readonly BackendSna
       before,
       after,
       aliases,
-      mac_refusal: model_refusal(tx, 'codex', 'gpt-6.1-sol', 'macos'),
+      mac_refusal: model_refusal(tx, parse_backend_instance_id('codex'), 'gpt-6.1-sol', 'macos'),
     };
   });
 }
@@ -100,14 +103,14 @@ export async function run(spec: Spec) {
     version = '2.0.0';
     return { exit_code: 0, standard_output: 'Recorded update', standard_error: '' };
   };
-  let current: CodexSignIn | null = null;
+  let current: SignInSession | null = null;
   const calls: string[] = [];
-  const pending: CodexSignIn = {
+  const pending: SignInSession = {
     ...spec.sign_in,
     started_at: spec.sign_in.started_at,
     deadline_at: new Date(spec.sign_in.deadline_at),
   };
-  const sign_in: CodexSignInService = {
+  const sign_in: DriverSignInController = {
     read: () => current,
     async start() {
       calls.push('start');
@@ -126,39 +129,61 @@ export async function run(spec: Spec) {
       };
       return current;
     },
-    async shutdown() {
-      calls.push('shutdown');
-    },
   };
+  const ids = BUILT_IN_MANIFESTS.map((driver) =>
+    default_instance_id_for_driver(driver.driver_kind),
+  );
   const snapshots = new BackendSnapshotService({
     environment,
     keep_complete_model_list: (snapshot) =>
       new BackendStateStore(database).keep_vps_model_list(snapshot),
     now: () => new Date(spec.now),
-    read_codex_login_standing: () => null,
-    probe: async (key) => {
-      const card = spec.cards.find((value) => value.backend_key === key)!;
-      return { ...card, version: key === 'codex' ? version : card.version };
-    },
-  });
-  const usage = new BackendUsageService(
-    Object.fromEntries(
-      spec.usage.map((value) => [
-        value.backend_key,
-        {
-          async refresh() {
-            return {
-              ...value,
-              observed_at: value.observed_at === null ? null : new Date(value.observed_at),
-              windows: value.windows.map((window) => ({
-                ...window,
-                resets_at: new Date(window.resets_at),
-              })),
-            };
+    sources: BUILT_IN_MANIFESTS.map((driver) => {
+      const key = default_instance_id_for_driver(driver.driver_kind);
+      return {
+        instance_id: key,
+        executable_name: driver.manifest.executable.name,
+        status: {
+          version_detects_upgrade: true,
+          async probe() {
+            const { backend_key: _key, ...card } = spec.cards.find(
+              (value) => value.backend_key === key,
+            )!;
+            return { ...card, version: key === 'codex' ? version : card.version };
           },
         },
-      ]),
-    ) as Partial<Record<ConversationBackendKey, { refresh(): Promise<BackendUsageResult> }>>,
+      };
+    }),
+  });
+  const usage = new BackendUsageService(
+    new Map(
+      BUILT_IN_MANIFESTS.map((driver) => {
+        const key = default_instance_id_for_driver(driver.driver_kind);
+        const value = spec.usage.find((result) => result.backend_key === key);
+        const adapter: BackendUsageAdapter | undefined =
+          value === undefined
+            ? undefined
+            : {
+                async refresh() {
+                  return {
+                    ...value,
+                    observed_at: value.observed_at === null ? null : new Date(value.observed_at),
+                    windows: value.windows.map((window) => ({
+                      ...window,
+                      scope_label: null,
+                      resets_at: new Date(window.resets_at),
+                    })),
+                  };
+                },
+              };
+        return [
+          key,
+          adapter === undefined
+            ? { label: driver.client.label }
+            : { label: driver.client.label, adapter },
+        ] as const;
+      }),
+    ),
   );
   const writes = new ConversationHttpWriteScope();
   const named_catalog: RemoteCatalogSource = {
@@ -179,7 +204,8 @@ export async function run(spec: Spec) {
     backend_snapshots: snapshots,
     backend_state: new BackendStateStore(database),
     backend_usage: usage,
-    codex_sign_in: sign_in,
+    backend_ids: ids,
+    sign_in: (key) => (key === 'codex' ? sign_in : null),
     machine_catalog: (machine_id) => (machine_id === spec.named_machine ? named_catalog : null),
   };
   const config = loadConfig();

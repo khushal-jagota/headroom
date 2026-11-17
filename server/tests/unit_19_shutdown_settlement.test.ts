@@ -10,10 +10,8 @@ import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { UsageService } from '../conversation/usage/UsageService.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
+import { driver_registry_from_entries } from '../drivers/core/registry.ts';
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import { loadConfig } from '../core/config.ts';
 import { setup } from './conversation_core_fixture.ts';
@@ -89,19 +87,7 @@ test('four service deadlines reject without completing their actual settlement',
         throw backend_failure;
       },
     }),
-    providers: {
-      ...unavailable_backend_providers(),
-      codex_sign_in: {
-        read: () => null,
-        start: async () => {
-          throw new Error('No sign-in is part of this proof');
-        },
-        cancel: async () => {
-          throw new Error('No sign-in is part of this proof');
-        },
-        shutdown: () => release.promise,
-      },
-    },
+    registry: { ...driver_registry_from_entries([], []), dispose: () => release.promise },
   });
   const video_work = video.transfer(reserved.upload_id, chunks());
   const usage_work = usage.refreshRates().catch((error: unknown) => error);

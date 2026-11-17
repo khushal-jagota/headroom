@@ -1,4 +1,6 @@
 /** Export-only companion for the direct Worker comparison in tests/compare/direct/. */
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
+import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { run as custody_parity } from '../conversation/testing/custody_parity.ts';
@@ -280,7 +282,7 @@ export async function run_worker_runtime_parity(
             };
       if (input.existing) {
         const record = database.read((sql) =>
-          sql.get<{ backend_key: 'codex'; model: string; workspace_folder: string }>(
+          sql.get<{ backend_key: BackendInstanceId; model: string; workspace_folder: string }>(
             'SELECT backend_key,model,workspace_folder FROM conversations WHERE conversation_id=?',
             ['parity_conversation'],
           ),
@@ -288,7 +290,7 @@ export async function run_worker_runtime_parity(
         await system.start_conversation(
           new ConversationStartRequest({
             conversation_id: 'parity_conversation',
-            backend_key: record?.backend_key ?? 'codex',
+            backend_key: record?.backend_key ?? parse_backend_instance_id('codex'),
             model: record?.model ?? 'gpt-6.1-sol',
             workspace_folder: record?.workspace_folder ?? input.workspace,
           }),

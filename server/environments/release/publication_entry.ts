@@ -12,7 +12,7 @@ import type {
 } from 'node:child_process';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { observe_promise } from '../../core/promise_observer.ts';
-import { probe_environment } from './admission_process.ts';
+import { PROBE_HOME_DIRECTORIES, probe_environment } from './admission_process.ts';
 import { remove_owned_tree } from './archive.ts';
 import { PUBLICATION_ENTRY_SECONDS } from './publication_configuration.ts';
 import type { ReleaseExecution } from './contracts.ts';
@@ -60,9 +60,7 @@ export async function with_publication_entry(
       for (const name of [
         'config',
         'cache',
-        'codex',
-        'claude',
-        'hermes',
+        ...PROBE_HOME_DIRECTORIES,
         'data',
         'logs',
         'backups',

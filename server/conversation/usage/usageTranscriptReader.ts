@@ -9,18 +9,10 @@
 import * as NodeFSP from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 
-import type { UsageProviderKind } from './contracts.ts';
+import type { LineTranscriptParser } from '../../drivers/core/usage.ts';
 import { TRANSCRIPT_CHUNK_BYTES } from './configuration.ts';
 
-import {
-  initialCodexScanState,
-  mightCarryUsage,
-  parseClaudeLine,
-  parseCodexLine,
-  parseGrokLine,
-  type CodexScanState,
-  type UsageRecord,
-} from './usageTranscripts.ts';
+import type { UsageRecord } from './usageTranscripts.ts';
 
 export interface TranscriptFile {
   readonly path: string;
@@ -46,8 +38,8 @@ export interface TranscriptParsePosition {
   readonly guardLength: number;
   /** FNV-1a hash of that window. */
   readonly guardHash: number;
-  /** Codex reducer state as of `resumeOffset`; `null` for stateless providers. */
-  readonly codexState: CodexScanState | null;
+  /** The parser's state as of `resumeOffset`; `null` for a stateless parser. */
+  readonly state: unknown;
 }
 
 export interface TranscriptParseResult {
@@ -79,7 +71,8 @@ function fnv1a(buffer: Buffer): number {
 }
 
 /**
- * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
+ * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`,
+ * or every file when `everyFile` is set.
  *
  * Errors on individual entries are swallowed: session files rotate and get
  * removed while the walk is in flight, and a partial listing is far better than
@@ -92,10 +85,11 @@ function fnv1a(buffer: Buffer): number {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
+  options?: { readonly fileName?: string; readonly everyFile?: boolean },
 ): Promise<readonly TranscriptFile[]> {
   const found: TranscriptFile[] = [];
   const fileName = options?.fileName;
+  const everyFile = options?.everyFile ?? false;
 
   const walk = async (dir: string): Promise<void> => {
     let entries: Dirent[];
@@ -116,7 +110,7 @@ export async function listTranscriptFiles(
       }
       if (fileName !== undefined) {
         if (entry.name !== fileName) continue;
-      } else if (!entry.name.endsWith('.jsonl')) {
+      } else if (!everyFile && !entry.name.endsWith('.jsonl')) {
         continue;
       }
       try {
@@ -185,13 +179,15 @@ async function guardMatches(
  * still match, so only appended lines are read; otherwise the whole file is
  * re-parsed from the start and `resumed` reports `false`.
  *
- * Codex carries the active model on `turn_context` lines that hold no usage of
- * their own, so those still have to pass through the reducer to keep model
- * attribution correct.
+ * A resume also needs the parser to revive the position's state. A state it
+ * cannot revive is not its own, or is corrupt, and the file is read again.
+ *
+ * Every line the parser's `might_carry_usage` admits passes through it, so a
+ * parser that carries state on lines without usage admits those lines too.
  */
 export async function readTranscriptRecords(
   filePath: string,
-  provider: UsageProviderKind,
+  parser: LineTranscriptParser<unknown>,
   resumeFrom?: TranscriptParsePosition,
 ): Promise<TranscriptParseResult | null> {
   let handle: NodeFSP.FileHandle;
@@ -202,40 +198,22 @@ export async function readTranscriptRecords(
   }
 
   try {
-    let codexState = initialCodexScanState();
+    let state = parser.initial_state();
     let resumed = false;
     let start = 0;
-    if (
-      resumeFrom !== undefined &&
-      resumeFrom.resumeOffset > 0 &&
-      (provider !== 'codex' || resumeFrom.codexState !== null) &&
-      (await guardMatches(handle, resumeFrom))
-    ) {
-      if (resumeFrom.codexState !== null) codexState = structuredClone(resumeFrom.codexState);
-      start = resumeFrom.resumeOffset;
+    const revived =
+      resumeFrom !== undefined && resumeFrom.resumeOffset > 0
+        ? parser.revive_state(resumeFrom.state)
+        : undefined;
+    if (revived !== undefined && (await guardMatches(handle, resumeFrom!))) {
+      state = structuredClone(revived);
+      start = resumeFrom!.resumeOffset;
       resumed = true;
     }
 
-    const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
-      if (provider === 'codex') {
-        if (
-          !mightCarryUsage(line, provider) &&
-          !line.includes('"turn_context"') &&
-          !line.includes('"session_meta"')
-        ) {
-          return;
-        }
-        const record = parseCodexLine(line, state);
-        if (record !== null) out.push(record);
-        return;
-      }
-      if (!mightCarryUsage(line, provider)) return;
-      if (provider === 'grok') {
-        for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
-        return;
-      }
-      const record = parseClaudeLine(line);
-      if (record !== null) out.push(record);
+    const parseLine = (line: string, lineState: unknown, out: UsageRecord[]): void => {
+      if (!parser.might_carry_usage(line)) return;
+      for (const record of parser.parse_line(line, lineState)) out.push(record);
     };
 
     const toLineString = (lineBuffer: Buffer): string => {
@@ -270,7 +248,7 @@ export async function readTranscriptRecords(
       for (;;) {
         const newlineIndex = buffer.indexOf(NEWLINE, lineStart);
         if (newlineIndex === -1) break;
-        parseLine(toLineString(buffer.subarray(lineStart, newlineIndex)), codexState, records);
+        parseLine(toLineString(buffer.subarray(lineStart, newlineIndex)), state, records);
         lineStart = newlineIndex + 1;
       }
       resumeOffset += lineStart;
@@ -283,8 +261,7 @@ export async function readTranscriptRecords(
     const tailRecords: UsageRecord[] = [];
     if (pendingChunks.length > 0) {
       const pending = pendingChunks.length === 1 ? pendingChunks[0]! : Buffer.concat(pendingChunks);
-      if (pending.length > 0)
-        parseLine(toLineString(pending), structuredClone(codexState), tailRecords);
+      if (pending.length > 0) parseLine(toLineString(pending), structuredClone(state), tailRecords);
     }
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
@@ -302,7 +279,7 @@ export async function readTranscriptRecords(
         resumeOffset,
         guardLength,
         guardHash,
-        codexState: provider === 'codex' ? codexState : null,
+        state,
       },
       resumed,
     };

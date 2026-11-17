@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
 import { snapshot_for_wire } from '../../backend_snapshot.ts';
 /** Own optional reads, canonical worker custody, and actual source cleanup. */
 import { Worker } from 'node:worker_threads';
@@ -261,11 +262,14 @@ export class MacCatalog {
         request.backend_key === 'codex' ||
         request.backend_key === 'hermes'
       )
-        snapshot = await this.dependencies.snapshots.snapshot(request.backend_key, {
-          refresh: request.refresh,
-          discover_update_advisory: false,
-          signal,
-        });
+        snapshot = await this.dependencies.snapshots.snapshot(
+          parse_backend_instance_id(request.backend_key),
+          {
+            refresh: request.refresh,
+            discover_update_advisory: false,
+            signal,
+          },
+        );
     } catch (error) {
       if (this.failure) throw this.failure;
       if (!(

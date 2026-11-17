@@ -7,7 +7,12 @@ import type {
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import type { ChildReference, StartRun, TurnToken } from '../../wire.generated.ts';
+import type {
+  ChildReference,
+  ConversationBackendKey,
+  StartRun,
+  TurnToken,
+} from '../../wire.generated.ts';
 import type { ExecutorPaths } from '../configuration.ts';
 import type { FilesService } from '../files.ts';
 import type { MacSkillsPublisher } from '../skills/index.ts';
@@ -45,7 +50,7 @@ export interface MacNativeChildrenOptions {
     workspace: WorkspaceIdentity,
   ) => Promise<void>;
   readonly factory: (start: ResolvedConversationStart) => BackendChildFactory;
-  readonly native_skill_home: (backend: ResolvedConversationStart['backend_key']) => string;
+  readonly native_skill_home: (backend: ConversationBackendKey) => string;
   readonly event_sink: (reference: ChildReference) => BackendEventSink;
   readonly message_files: ConversationMessageFiles;
   readonly files: Pick<FilesService, 'open_directory' | 'close_directory'>;

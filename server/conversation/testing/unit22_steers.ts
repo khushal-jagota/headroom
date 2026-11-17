@@ -1,4 +1,5 @@
 /** Deferred core steer behavior on the existing scripted process fixture. */
+import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
 import { readFileSync } from 'node:fs';
 import { createDatabase } from '../../core/database/index.ts';
 import { SqliteProcessConversationSystem } from '../system.ts';
@@ -43,7 +44,7 @@ async function start(conversation_id: string) {
   await core.start_conversation(
     new ConversationStartRequest({
       conversation_id,
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'model',
       workspace_folder: '/tmp',
     }),

@@ -155,7 +155,7 @@ export class VpsExecutor {
   }
   open_runs() {
     const remote = this.runs.as_factory();
-    return retained_open_runs({ claude: remote, codex: remote, hermes: remote });
+    return retained_open_runs([remote]);
   }
   async start(): Promise<void> {
     this.admit();

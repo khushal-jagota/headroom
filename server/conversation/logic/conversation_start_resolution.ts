@@ -1,10 +1,10 @@
 /** Apply exactly the floor defaults from the conversation contract. */
+import { DEFAULT_BACKEND_INSTANCE_ID } from '../../drivers/built_in.ts';
 import { isAbsolute } from 'node:path';
 import {
   ConversationRoleMaterials,
   ResolvedConversationStart,
   FLOOR_DEFAULT_ACCESS,
-  FLOOR_DEFAULT_BACKEND_KEY,
   FLOOR_DEFAULT_WORKSPACE_FOLDER,
 } from '../contracts.ts';
 import type { ConversationStartRequest } from '../contracts.ts';
@@ -35,7 +35,7 @@ export function resolve_conversation_start_request(
   if (!isAbsolute(workspace_folder)) throw new Error('workspace folder must be an absolute path');
   return new ResolvedConversationStart({
     conversation_id: request.conversation_id,
-    backend_key: request.backend_key ?? FLOOR_DEFAULT_BACKEND_KEY,
+    backend_key: request.backend_key ?? DEFAULT_BACKEND_INSTANCE_ID,
     model: request.model,
     reasoning_effort: request.reasoning_effort ?? null,
     role_materials: bind_conversation_origin(

@@ -1,4 +1,5 @@
 /** Source-paired run custody and restart recovery without a host or native child. */
+import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
 import { registry_of_factories } from '../../drivers/testing/registry.ts';
 import { readFileSync } from 'node:fs';
 import { CLEANUP_SCOPE } from '../../worker_supervision/inspection.ts';
@@ -554,7 +555,7 @@ if (spec.mode === 'machines') {
     );
     const start = new ResolvedConversationStart({
       conversation_id: 'drain',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'fixture',
       reasoning_effort: null,
       role_materials: new ConversationRoleMaterials({
@@ -891,7 +892,7 @@ try {
   for (const ticket of [spec.ticket, spec.local_ticket, null]) {
     const start = new ResolvedConversationStart({
       conversation_id: ticket === spec.ticket ? 'drain' : 'routing',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'fixture',
       reasoning_effort: null,
       workspace_folder: '/tmp',

@@ -1,10 +1,10 @@
+import { parse_backend_instance_id } from '../../core/identity.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import { BackendPromptAccepted } from '../../../conversation/backends/contracts.ts';
 import {
   ConversationAccess,
-  ConversationBackendKey,
   PromptDeliveryMode,
   ResolvedConversationStart,
 } from '../../../conversation/contracts.ts';
@@ -45,7 +45,7 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
   const stop = vi.spyOn(HermesAcpLauncher.prototype, 'stop').mockResolvedValue();
   const resolved = new ResolvedConversationStart({
     conversation_id: 'synthetic',
-    backend_key: ConversationBackendKey.hermes,
+    backend_key: parse_backend_instance_id('hermes'),
     model: 'synthetic',
     workspace_folder: '/synthetic',
     access: ConversationAccess.full,

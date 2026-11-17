@@ -1,7 +1,8 @@
 /** Indexed, bounded selected-view reads and source-versioned body access. */
+import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import type { ReadSql, SqlValue } from '../../../core/database/contracts.ts';
 import { PlannerError } from '../../../core/contracts.ts';
-import { AnswerFate, ConversationBackendKey } from '../../contracts.ts';
+import { AnswerFate } from '../../contracts.ts';
 import * as event from '../../events.ts';
 import {
   canonical_json,
@@ -120,15 +121,12 @@ export function _row_record(sql: ReadSql, conversation_id: string, sequence: num
   return row;
 }
 
-export function conversation_backend(
-  sql: ReadSql,
-  conversation_id: string,
-): ConversationBackendKey {
+export function conversation_backend(sql: ReadSql, conversation_id: string): BackendInstanceId {
   return (
-    sql.get<{ backend_key: ConversationBackendKey }>(
+    sql.get<{ backend_key: BackendInstanceId }>(
       'SELECT backend_key FROM conversations WHERE conversation_id=?',
       [conversation_id],
-    )?.backend_key ?? ConversationBackendKey.hermes
+    )?.backend_key ?? ('hermes' as BackendInstanceId)
   );
 }
 
@@ -139,7 +137,7 @@ export function _body(
   options: {
     stopped?: boolean;
     full_tool_detail?: boolean;
-    backend_key?: ConversationBackendKey;
+    backend_key?: BackendInstanceId;
   } = {},
 ): ViewRowBody {
   let settlement =
@@ -210,7 +208,7 @@ export function read_row(
   sequence: number,
   options: {
     stopped?: boolean;
-    backend_key?: ConversationBackendKey;
+    backend_key?: BackendInstanceId;
   } = {},
 ): [ConversationViewRow, number] {
   const row = _row_record(sql, conversation_id, sequence);

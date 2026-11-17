@@ -54,6 +54,8 @@ export function provision_workspace_skills(
 ): string {
   if (options.test_home) require_synthetic_destination(options.test_home, workspace);
   return with_skill_publication_lock(parent, () => {
+    // The projection is Panels' own home, not a driver's, and `.agents/skills` is the shared
+    // workspace convention, so neither reads a manifest skills folder.
     const projection = join(parent, 'agent-skill-home');
     provision_native_backend_skills(projection, parent);
     const managed = realpathSync(managed_skills_home(parent));

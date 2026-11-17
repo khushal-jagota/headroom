@@ -24,13 +24,15 @@ import { is_record } from '../../core/records.ts';
 import type { UsageProviderKind } from './contracts.ts';
 
 import { GUARD_LENGTH, type TranscriptParsePosition } from './usageTranscriptReader.ts';
-import type { CodexScanState, UsageRecord } from './usageTranscripts.ts';
+import type { UsageRecord } from './usageTranscripts.ts';
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
 // v5: one-hour cache writes and resumable compaction identities.
+// Whole-file sources add `f` and records may add `pricing_model`. Line sources
+// write neither, so their entries keep the v5 bytes.
 const USAGE_SCAN_CACHE_VERSION = 5 as const;
 
 export interface CachedFile {
@@ -46,6 +48,8 @@ export interface CachedFile {
    */
   readonly tailRecords: readonly UsageRecord[];
   readonly position: TranscriptParsePosition;
+  /** A whole-file source's fingerprint when it was read. Absent for line sources. */
+  readonly fingerprint?: string;
 }
 
 export type ScanCache = Map<string, CachedFile>;
@@ -67,7 +71,7 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   cacheCreation1hTokens: number,
-  metadata?: { serviceTier?: string | null; compactionCovered?: boolean },
+  metadata?: { serviceTier?: string | null; compactionCovered?: boolean; pricing_model?: string },
 ];
 
 interface SerializedFile {
@@ -81,8 +85,10 @@ interface SerializedFile {
   readonly o: number;
   readonly gl: number;
   readonly gh: number;
-  /** Codex reducer state at `o`; `null` for stateless providers. */
-  readonly cs: CodexScanState | null;
+  /** The line parser's state at `o`; `null` for a stateless parser. */
+  readonly cs: unknown;
+  /** See `CachedFile.fingerprint`. */
+  readonly f?: string;
 }
 
 interface SerializedCache {
@@ -123,6 +129,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     {
       ...('serviceTier' in record ? { serviceTier: record.serviceTier } : {}),
       ...('compactionCovered' in record ? { compactionCovered: record.compactionCovered } : {}),
+      ...(record.pricing_model === undefined ? {} : { pricing_model: record.pricing_model }),
     },
   ];
 
@@ -137,7 +144,8 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
       o: entry.position.resumeOffset,
       gl: entry.position.guardLength,
       gh: entry.position.guardHash,
-      cs: entry.position.codexState,
+      cs: entry.position.state,
+      ...(entry.fingerprint === undefined ? {} : { f: entry.fingerprint }),
     };
   }
 
@@ -215,11 +223,14 @@ export function decodeScanCache(document: unknown): ScanCache {
 
       if (
         !is_record(metadata) ||
-        Object.keys(metadata).some((key) => !['serviceTier', 'compactionCovered'].includes(key)) ||
+        Object.keys(metadata).some(
+          (key) => !['serviceTier', 'compactionCovered', 'pricing_model'].includes(key),
+        ) ||
         ('serviceTier' in metadata &&
           metadata.serviceTier !== null &&
           typeof metadata.serviceTier !== 'string') ||
-        ('compactionCovered' in metadata && typeof metadata.compactionCovered !== 'boolean')
+        ('compactionCovered' in metadata && typeof metadata.compactionCovered !== 'boolean') ||
+        ('pricing_model' in metadata && typeof metadata.pricing_model !== 'string')
       )
         return null;
       records.push({
@@ -247,7 +258,8 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (!is_record(raw)) continue;
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== 'number' || typeof entry.m !== 'number') continue;
-    if (entry.p !== 'claude' && entry.p !== 'codex' && entry.p !== 'grok') continue;
+    if (typeof entry.p !== 'string' || entry.p === '') continue;
+    if (entry.f !== undefined && typeof entry.f !== 'string') continue;
     if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
     // Position fields feed byte offsets and a Buffer allocation in the reader,
     // so anything outside their real ranges must reject the entry: a bogus
@@ -267,8 +279,9 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    const codexState = decodeCodexState(entry.cs);
-    if (codexState === undefined) continue;
+    // The parser that owns the state validates it when it resumes. Here it is
+    // only kept as the parser wrote it.
+    if (entry.cs !== null && !is_record(entry.cs)) continue;
 
     const provider: UsageProviderKind = entry.p;
     const records = decodeRecords(entry.r, provider);
@@ -285,106 +298,13 @@ export function decodeScanCache(document: unknown): ScanCache {
         resumeOffset: entry.o,
         guardLength: entry.gl,
         guardHash: entry.gh,
-        codexState,
+        state: entry.cs,
       },
+      ...(entry.f === undefined ? {} : { fingerprint: entry.f }),
     });
   }
 
   return cache;
-}
-
-/**
- * Validates a persisted Codex reducer state. Returns `undefined` for a corrupt
- * value, which disqualifies the entry: resuming with a bad state would attach
- * appended usage to the wrong model or replay fork-copied history.
- */
-function decodeCodexState(value: unknown): CodexScanState | null | undefined {
-  if (value === null) return null;
-  if (!is_record(value)) return undefined;
-  const state = value as Partial<CodexScanState>;
-  if (
-    typeof state.model !== 'string' ||
-    typeof state.sessionId !== 'string' ||
-    (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== 'string') ||
-    typeof state.sawSessionMeta !== 'boolean' ||
-    typeof state.suppressingForkCopies !== 'boolean' ||
-    typeof state.forkCopyAnchorMs !== 'number' ||
-    !Number.isFinite(state.forkCopyAnchorMs)
-  ) {
-    return undefined;
-  }
-  const counters = (item: unknown): item is Record<string, number> =>
-    is_record(item) &&
-    Object.values(item).every(
-      (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0,
-    );
-  if (
-    !('serviceTier' in state) ||
-    (state.serviceTier !== null && typeof state.serviceTier !== 'string') ||
-    !('cumulativeUsage' in state) ||
-    (state.cumulativeUsage !== null && !counters(state.cumulativeUsage)) ||
-    !is_record(state.compactions) ||
-    !is_record(state.compactionMarkers) ||
-    !Array.isArray(state.completedCompactions) ||
-    !state.completedCompactions.every((item) => typeof item === 'string')
-  )
-    return undefined;
-  for (const snapshots of Object.values(state.compactionMarkers)) {
-    if (
-      !Array.isArray(snapshots) ||
-      !snapshots.every(
-        (snapshot: unknown) =>
-          is_record(snapshot) &&
-          counters(snapshot.current) &&
-          counters(snapshot.last) &&
-          'previous' in snapshot &&
-          (snapshot.previous === null || counters(snapshot.previous)),
-      )
-    )
-      return undefined;
-  }
-  for (const candidate of Object.values(state.compactions)) {
-    if (
-      !is_record(candidate) ||
-      !counters(candidate.usage) ||
-      !counters(candidate.cumulative) ||
-      typeof candidate.covered !== 'boolean' ||
-      !is_record(candidate.record)
-    )
-      return undefined;
-    const record = candidate.record;
-    if (
-      record.provider !== 'codex' ||
-      typeof record.model !== 'string' ||
-      typeof record.sessionId !== 'string' ||
-      typeof record.timestampMs !== 'number' ||
-      !Number.isFinite(record.timestampMs) ||
-      typeof record.dedupeKey !== 'string' ||
-      !('reportedCostUsd' in record) ||
-      !counters(record.totals) ||
-      ![
-        'uncachedInputTokens',
-        'cachedInputTokens',
-        'cacheCreationTokens',
-        'outputTokens',
-        'reasoningTokens',
-      ].every((key) => Object.hasOwn(record.totals as object, key))
-    )
-      return undefined;
-  }
-  return {
-    model: state.model,
-    sessionId: state.sessionId,
-    lastUsageSignature: state.lastUsageSignature ?? null,
-    sawSessionMeta: state.sawSessionMeta,
-    suppressingForkCopies: state.suppressingForkCopies,
-    forkCopyAnchorMs: state.forkCopyAnchorMs,
-    serviceTier: state.serviceTier,
-    compactions: state.compactions,
-    compactionMarkers: state.compactionMarkers,
-    completedCompactions: state.completedCompactions,
-    cumulativeUsage: state.cumulativeUsage,
-  };
 }
 
 export interface PruneOptions {

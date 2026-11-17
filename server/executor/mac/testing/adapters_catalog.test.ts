@@ -23,9 +23,14 @@ import type { QueueDependencies } from '../mailbox/contracts.ts';
 import * as probe_environment from '../../../conversation/snapshot/environment.ts';
 import * as codex_catalog from '../../../drivers/codex/runtime/model_catalog.ts';
 import * as claude_catalog from '../../../drivers/claude/runtime/model_catalog.ts';
-import { production_backend_providers } from '../../../conversation/snapshot/production.ts';
 import { create_backend_runtime } from '../../../conversation/snapshot/composition.ts';
-import type { CodexProviderContext } from '../../../drivers/codex/runtime/providers.ts';
+import { create_claude_instance } from '../../../drivers/claude/runtime/instance.ts';
+import { create_codex_instance } from '../../../drivers/codex/runtime/instance.ts';
+import { claude_driver } from '../../../drivers/claude/driver.ts';
+import { codex_driver } from '../../../drivers/codex/driver.ts';
+import type { DriverHost } from '../../../drivers/core/host.ts';
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
+import { driver_registry_from_entries } from '../../../drivers/core/registry.ts';
 
 const { query } = vi.hoisted(() => ({
   query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
@@ -127,22 +132,48 @@ it('joins failing siblings once and retains all history across a failed native c
   );
   vi.spyOn(codex_catalog, 'probe_codex_model_catalog').mockRejectedValue(failure);
   vi.spyOn(claude_catalog, 'probe_claude_model_catalog').mockRejectedValue(claude_failure);
-  const context = {
+  const host = {
     database: {},
+    environment: {},
+    panels_server_url: 'http://127.0.0.1:1',
+    worker_process_root: '/synthetic',
     now: () => new Date(),
     child_processes: invocation,
     one_shot_children: { seal() {}, settled: async () => {} },
-    read_codex_snapshot: async () => ({ executable_path: '/synthetic/codex' }),
-  } as unknown as CodexProviderContext;
-  const providers = production_backend_providers(false, context);
+    worker_supervision: {},
+    test_mode: false,
+    executable_on_path: (name: string) => name,
+  } as unknown as DriverHost;
+  const codex = parse_backend_instance_id('codex'),
+    claude = parse_backend_instance_id('claude');
+  const registry = driver_registry_from_entries(
+    [codex_driver, claude_driver],
+    [
+      {
+        kind: 'live',
+        driver: codex_driver,
+        instance: await create_codex_instance({ instance_id: codex, config: null }, host),
+      },
+      {
+        kind: 'live',
+        driver: claude_driver,
+        instance: await create_claude_instance({ instance_id: claude, config: null }, host),
+      },
+    ],
+  );
+  environment.executables.set('codex', '/synthetic/codex');
+  environment.executables.set('claude', '/synthetic/claude');
   const runtime = create_backend_runtime({
-    ...context,
+    database: host.database,
     config: { test_mode: true } as never,
-    providers,
+    now: host.now,
+    registry,
     environment,
   });
-  await expect(providers.codex!('/synthetic/codex')).rejects.toBe(failure);
-  await expect(providers.claude!('/synthetic/claude')).rejects.toBe(claude_failure);
+  await expect(runtime.backend_snapshots.snapshot(codex, { refresh: true })).rejects.toBe(failure);
+  await expect(runtime.backend_snapshots.snapshot(claude, { refresh: true })).rejects.toBe(
+    claude_failure,
+  );
   const options = { deadline: performance.now() / 1000 + 1 };
   const first = runtime.shutdown!(options);
   const finished = vi.fn();
@@ -160,8 +191,36 @@ it('joins failing siblings once and retains all history across a failed native c
   expect(environment.shutdown).toHaveBeenCalledOnce();
   expect(provider_environment.shutdown).toHaveBeenCalledOnce();
   await expect(runtime.shutdown!(options)).rejects.toBe(actual);
-  await expect(providers.codex!('/synthetic/codex')).rejects.toThrow('shut down');
-  await expect(providers.claude!('/synthetic/claude')).rejects.toThrow('shut down');
+  // Shut-down catalogs answer without another native read.
+  const probe_calls = [
+    vi.mocked(codex_catalog.probe_codex_model_catalog).mock.calls.length,
+    vi.mocked(claude_catalog.probe_claude_model_catalog).mock.calls.length,
+  ];
+  const after_shutdown = await Promise.all(
+    [codex, claude].map((key) => runtime.backend_snapshots.snapshot(key, { refresh: true })),
+  );
+  // A stopped catalog source refuses, and the card reports that its catalog did not answer.
+  expect(
+    after_shutdown.map((card) => ({
+      complete: card.models_complete,
+      catalog: card.diagnoses.at(-1),
+    })),
+  ).toEqual([
+    {
+      complete: false,
+      catalog:
+        'Codex is installed but did not answer when asked what it can run, so no models are listed. Check that `codex app-server` starts from a terminal.',
+    },
+    {
+      complete: false,
+      catalog:
+        'Claude is installed but did not answer when asked what it can run, so no models are listed. Check that `claude` starts from a terminal.',
+    },
+  ]);
+  expect([
+    vi.mocked(codex_catalog.probe_codex_model_catalog).mock.calls.length,
+    vi.mocked(claude_catalog.probe_claude_model_catalog).mock.calls.length,
+  ]).toEqual(probe_calls);
 });
 function invocation_children(): OwnedChildProcesses {
   return {

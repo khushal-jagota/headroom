@@ -1,25 +1,23 @@
-/** The real Codex implementations of the fixed snapshot and usage boundaries. */
+/** The real Codex catalog, saved login, sign-in and allowance usage, and their one shutdown. */
 import type { Database } from '../../../core/database/contracts.ts';
 import type { OwnedOneShotChildren, OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
-import type { BackendProviders } from '../../../conversation/snapshot/composition.ts';
-import type {
-  BackendSnapshot,
-  CodexLoginStanding,
-} from '../../../conversation/snapshot/contracts.ts';
 import type {
   CodexLoginRejectionMemory,
-  SavedCodexLoginSource,
-} from '../../../conversation/snapshot/provider_contracts.ts';
-import { create_durable_codex_login_rejection } from '../../../conversation/backend_state.ts';
+  CodexLoginStanding,
+  CodexModelCatalogSource,
+} from './contracts.ts';
+import type { BackendUsageAdapter } from '../../../conversation/backend_usage/contracts.ts';
+import type { DriverSignInController } from '../../core/sign_in.ts';
+import { SignInUnavailable } from '../../core/sign_in.ts';
+import { create_durable_codex_login_rejection } from './login_rejection.ts';
 import {
   SubprocessBackendProbeEnvironment,
   backend_io_is_test,
 } from '../../../conversation/snapshot/environment.ts';
-import { CodexUsageAdapter } from '../../../conversation/backend_usage/codex.ts';
-import {
-  CodexModelCatalogUnavailable,
-  CodexSignInUnavailable,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+import { card_executable_path } from '../../../conversation/snapshot/probe.ts';
+import { CodexUsageAdapter } from './allowance_usage.ts';
+import { CodexModelCatalogUnavailable } from './contracts.ts';
+import { codex_manifest } from '../manifest.ts';
 import { read_stored_codex_login } from './login.ts';
 import { CodexSignInService } from './login_session.ts';
 import { probe_codex_model_catalog } from './model_catalog.ts';
@@ -51,21 +49,22 @@ export function read_codex_login_standing(
     },
   };
 }
-export const saved_codex_login_source: SavedCodexLoginSource = {
-  read_stored_codex_login,
-  read_codex_login_standing,
-};
 export interface CodexProviderContext {
   database: Database;
   now(): Date;
-  read_codex_snapshot(): Promise<Pick<BackendSnapshot, 'executable_path'>>;
   one_shot_children: OwnedOneShotChildren;
   child_processes: OwnedChildProcesses;
 }
-export function create_codex_providers(
-  context: CodexProviderContext,
-): Pick<BackendProviders, 'codex' | 'saved_codex_login' | 'codex_sign_in' | 'usage'> {
-  // Production composition calls this only after its independent test-mode refusal.
+export interface CodexProviders {
+  readonly catalog: CodexModelCatalogSource;
+  readonly read_login_standing: () => CodexLoginStanding;
+  readonly sign_in: DriverSignInController;
+  readonly allowance_usage: BackendUsageAdapter;
+  /** Stops reads, the sign-in and the own environment. May be called again. */
+  dispose(): Promise<void>;
+}
+export function create_codex_providers(context: CodexProviderContext): CodexProviders {
+  // The instance calls this only after its independent test-mode refusal.
   const environment = new SubprocessBackendProbeEnvironment(context.one_shot_children);
   const rejection = create_durable_codex_login_rejection(context.database, context.now);
   const probes = new Map<AbortController, Promise<unknown>>();
@@ -77,20 +76,21 @@ export function create_codex_providers(
     child_processes: context.child_processes,
     resolve_argv: async () => {
       if (backend_io_is_test())
-        throw new CodexSignInUnavailable('Production sign-in is unavailable in tests.');
-      const executable = (await context.read_codex_snapshot()).executable_path;
+        throw new SignInUnavailable('Production sign-in is unavailable in tests.');
+      // The card's own executable rule.
+      const executable = card_executable_path(codex_manifest.executable, environment);
       return executable === null ? null : [executable, 'app-server'];
     },
     remembered_login_rejection: rejection,
     read_login: (home) => {
       if (backend_io_is_test())
-        throw new CodexSignInUnavailable('Production sign-in is unavailable in tests.');
+        throw new SignInUnavailable('Production sign-in is unavailable in tests.');
       return read_stored_codex_login(home);
     },
     now: context.now,
   });
   return {
-    codex: async (executable) => {
+    catalog: async (executable) => {
       if (closed) throw new CodexModelCatalogUnavailable('Codex model discovery is shut down.');
       if (backend_io_is_test())
         throw new CodexModelCatalogUnavailable(
@@ -111,72 +111,62 @@ export function create_codex_providers(
         probes.delete(controller);
       }
     },
-    saved_codex_login: {
-      read_stored_codex_login(home) {
-        if (backend_io_is_test())
-          throw new Error('Production login reads are unavailable in tests.');
-        return saved_codex_login_source.read_stored_codex_login(home);
-      },
-      read_codex_login_standing(memory) {
-        if (backend_io_is_test())
-          throw new Error('Production login reads are unavailable in tests.');
-        return saved_codex_login_source.read_codex_login_standing(memory);
-      },
+    read_login_standing() {
+      if (backend_io_is_test()) throw new Error('Production login reads are unavailable in tests.');
+      return read_codex_login_standing(rejection);
     },
-    codex_sign_in: {
+    sign_in: {
       read: () => sign_in.read(),
       start: () => sign_in.start(),
       cancel: (session_id) => sign_in.cancel(session_id),
-      async shutdown() {
-        closed = true;
-        const stopped = new CodexModelCatalogUnavailable('Codex providers stopped at shutdown.');
-        for (const controller of probes.keys()) controller.abort(stopped);
-        services ??= Promise.allSettled([
-          Promise.resolve().then(() => sign_in.shutdown()),
-          Promise.resolve().then(() => environment.shutdown()),
-        ]);
-        const probe_results = await Promise.allSettled([...probes.values()]);
-        for (const result of probe_results)
-          if (result.status === 'rejected' && result.reason instanceof ModelCatalogCleanupFailed)
-            failed_cleanup.add(result.reason);
-        // The shared one-shot barrier can need the failed client's close retry.
-        await retry_model_catalog_cleanup(
-          failed_cleanup,
-          cleanup_history,
-          services.then((results) => [
-            ...results,
-            ...probe_results.filter(
-              (result) => result.status === 'rejected' && result.reason !== stopped,
-            ),
-          ]),
-        );
-      },
     },
-    usage: {
-      codex: new CodexUsageAdapter({
-        executable_path: (name) => environment.executable_path(name),
-        now: context.now,
-        read_codex_rate_limits: async (executable, options) => {
-          if (closed) throw new Error('Codex usage is shut down.');
-          if (backend_io_is_test())
-            throw new Error('Production usage reads are unavailable in tests.');
-          const controller = new AbortController();
-          const signal = options.signal
-            ? AbortSignal.any([options.signal, controller.signal])
-            : controller.signal;
-          const operation = read_codex_rate_limits(
-            executable,
-            { ...options, signal },
-            { child_processes: context.child_processes },
-          );
-          probes.set(controller, operation);
-          try {
-            return await operation;
-          } finally {
-            probes.delete(controller);
-          }
-        },
-      }),
+    allowance_usage: new CodexUsageAdapter({
+      executable_path: (name) => environment.executable_path(name),
+      now: context.now,
+      read_codex_rate_limits: async (executable, options) => {
+        if (closed) throw new Error('Codex usage is shut down.');
+        if (backend_io_is_test())
+          throw new Error('Production usage reads are unavailable in tests.');
+        const controller = new AbortController();
+        const signal = options.signal
+          ? AbortSignal.any([options.signal, controller.signal])
+          : controller.signal;
+        const operation = read_codex_rate_limits(
+          executable,
+          { ...options, signal },
+          { child_processes: context.child_processes },
+        );
+        probes.set(controller, operation);
+        try {
+          return await operation;
+        } finally {
+          probes.delete(controller);
+        }
+      },
+    }),
+    async dispose() {
+      closed = true;
+      const stopped = new CodexModelCatalogUnavailable('Codex providers stopped at shutdown.');
+      for (const controller of probes.keys()) controller.abort(stopped);
+      services ??= Promise.allSettled([
+        Promise.resolve().then(() => sign_in.shutdown()),
+        Promise.resolve().then(() => environment.shutdown()),
+      ]);
+      const probe_results = await Promise.allSettled([...probes.values()]);
+      for (const result of probe_results)
+        if (result.status === 'rejected' && result.reason instanceof ModelCatalogCleanupFailed)
+          failed_cleanup.add(result.reason);
+      // The shared one-shot barrier can need the failed client's close retry.
+      await retry_model_catalog_cleanup(
+        failed_cleanup,
+        cleanup_history,
+        services.then((results) => [
+          ...results,
+          ...probe_results.filter(
+            (result) => result.status === 'rejected' && result.reason !== stopped,
+          ),
+        ]),
+      );
     },
   };
 }

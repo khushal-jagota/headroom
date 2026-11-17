@@ -5,7 +5,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 ## What it is made of
 
 - **The skill row.** Shared role text lives in the database. Structured preset guidance generates specialist skill rows.
-- **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every Hermes, Codex, and Claude home links to those copies, and a server with an explicit workspace links it there too.
+- **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every agent home, as each backend driver declares it, links to those copies, and a server with an explicit workspace links it there too.
 - **The seed.** The skill tree packaged with the code fills a database that has no skills yet. Nothing reads it after that.
 - **Skill history.** The editor keeps saved versions in the database. Worker steps do not record skill versions.
 - **Supporting files.** A skill folder can hold other files beside `SKILL.md`. They live only on disk: no row holds them, the skills backup copies them, and republication leaves them alone.

@@ -1,4 +1,4 @@
-import type { ConversationBackendKey } from '../contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 export type BackendUsageOutcome = 'succeeded' | 'unavailable' | 'unauthenticated' | 'failed';
 export type BackendUsageWindowKind = 'five_hour' | 'seven_day';
 export interface BackendUsageWindow {
@@ -6,9 +6,11 @@ export interface BackendUsageWindow {
   readonly used_percent: number;
   readonly resets_at: Date;
   readonly model_scope: string | null;
+  /** A model-family label the backend reports that may match no catalog model. */
+  readonly scope_label: string | null;
 }
 export interface BackendUsageResult {
-  readonly backend_key: ConversationBackendKey;
+  readonly backend_key: BackendInstanceId;
   readonly outcome: BackendUsageOutcome;
   readonly detail: string | null;
   readonly observed_at: Date | null;
@@ -33,17 +35,3 @@ export interface UsageHttpGet {
     options?: { signal?: AbortSignal },
   ): Promise<UsageHttpResponse>;
 }
-export interface CodexUsageSource {
-  /** Return the raw RPC result JSON. Do not parse and reserialize its numeric tokens. */
-  (executable: string, options: { timeout_seconds: number; signal?: AbortSignal }): Promise<string>;
-}
-/** The Codex unit owns the short-lived app-server child and its cleanup. */
-export class CodexUsageTimeout extends Error {}
-export class CodexUsageRequestRejected extends Error {
-  readonly code: number;
-  constructor(code: number, message: string) {
-    super(message);
-    this.code = code;
-  }
-}
-export class CodexUsageLoginIsDuplicated extends Error {}

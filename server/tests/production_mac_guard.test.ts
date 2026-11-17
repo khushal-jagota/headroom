@@ -58,10 +58,7 @@ import {
 import { run_automatic_recovery } from '../conversation/deploy_interruptions/coordinator.ts';
 import { create_wake, claim_next_batch } from '../manager_wakes/data.ts';
 import { ManagerWakeLoop, deliver_batch } from '../manager_wakes/runtime.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import {
   compose_production_backends,
   type ProductionBackendChildFactory,
@@ -116,7 +113,6 @@ test('local composition refuses a retained Mac Ticket before constructing its se
     database: f.database,
     config,
     now: () => clock.now(),
-    providers: unavailable_backend_providers(),
   });
   const local_constructor = vi.fn<BackendChildFactory>(() => {
     throw new Error('Synthetic local constructor boundary');

@@ -7,7 +7,10 @@ import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, delimiter } from 'node:path';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
-import { testModeFromEnvironment, provider_launch_settings } from '../../core/config.ts';
+import { testModeFromEnvironment } from '../../core/config.ts';
+import { BUILT_IN_MANIFESTS, built_in_driver_of } from '../../drivers/built_in_manifests.ts';
+import type { DriverManifest } from '../../drivers/core/manifest.ts';
+import { configured_file_path } from '../../drivers/core/paths.ts';
 export function backend_io_is_test(): boolean {
   return (
     testModeFromEnvironment() ||
@@ -24,21 +27,39 @@ const expand = (value: string, environment: Readonly<NodeJS.ProcessEnv> = proces
   const home = environment.HOME ?? homedir();
   return value === '~' ? home : value.startsWith('~/') ? join(home, value.slice(2)) : value;
 };
+/** The executable an override variable names, unless it names the ignored path under PLAN_APP_ROOT. */
+export function executable_override(
+  executable: DriverManifest['executable'],
+  environment: Readonly<NodeJS.ProcessEnv>,
+  expand_path: (path: string) => string,
+): string | undefined {
+  if (executable.override_environment_name === undefined) return undefined;
+  const override = environment[executable.override_environment_name];
+  if (override === undefined) return undefined;
+  const app_root = environment.PLAN_APP_ROOT;
+  const ignored =
+    app_root === undefined || executable.ignored_override_path === undefined
+      ? null
+      : (app_root === '' ? '' : app_root.replace(/\/$/, '') + '/') +
+        executable.ignored_override_path;
+  const expanded = expand_path(override);
+  return expanded === ignored ? undefined : expanded;
+}
 /** Ignore the retired bundled Claude path in both native starts and machine discovery. */
 export function claude_executable_override(
   environment: Readonly<NodeJS.ProcessEnv>,
   expand_path: (path: string) => string,
 ): string | undefined {
-  const settings = provider_launch_settings(environment);
-  const override = settings.claude_executable;
-  if (override === undefined) return undefined;
-  const legacy =
-    settings.app_root === undefined
-      ? null
-      : (settings.app_root === '' ? '' : settings.app_root.replace(/\/$/, '') + '/') +
-        'agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe';
-  const expanded = expand_path(override);
-  return expanded === legacy ? undefined : expanded;
+  return executable_override(
+    built_in_driver_of('claude')!.manifest.executable,
+    environment,
+    expand_path,
+  );
+}
+/** The built-in manifest executable of that name. */
+function built_in_executable(name: string): DriverManifest['executable'] | undefined {
+  return BUILT_IN_MANIFESTS.find((driver) => driver.manifest.executable.name === name)?.manifest
+    .executable;
 }
 function file(path: string): boolean {
   try {
@@ -84,21 +105,22 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
   }
   executable_path(name: string): string | null {
     require_production_io();
+    const executable = built_in_executable(name);
     const override =
-      name === 'claude'
-        ? claude_executable_override(this.environment, (value) => expand(value, this.environment))
-        : undefined;
+      executable === undefined
+        ? undefined
+        : executable_override(executable, this.environment, (value) =>
+            expand(value, this.environment),
+          );
     if (override !== undefined) return file(override) ? override : null;
     return this.on_path(name);
   }
   configured_executable_path(name: string): string | null {
     require_production_io();
-    if (name !== 'hermes') return null;
-    const python = expand(
-      provider_launch_settings(this.environment).hermes_python,
-      this.environment,
-    );
-    const executable = join(dirname(python), 'hermes');
+    const beside = built_in_executable(name)?.configured_beside;
+    if (beside === undefined) return null;
+    const configured = expand(configured_file_path(beside, this.environment), this.environment);
+    const executable = join(dirname(configured), name);
     return file(executable) ? executable : null;
   }
   real_path(path: string): string {

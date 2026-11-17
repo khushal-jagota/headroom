@@ -8,12 +8,9 @@ import type {
   CodexLoginGeneration,
   CodexLoginRejectionMemory,
   StoredCodexLogin as StoredCodexLoginContract,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+} from './contracts.ts';
 
-export type {
-  CodexLoginGeneration,
-  CodexLoginRejectionMemory,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+export type { CodexLoginGeneration, CodexLoginRejectionMemory } from './contracts.ts';
 export const LOGIN_FILE_NAME = 'auth.json';
 
 export function codex_home(

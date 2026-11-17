@@ -15,6 +15,8 @@ export const DRIVER_STAGES = [
   'Apps',
   'ACP',
   'Executor',
+  /** Kept for good, each for its stated reason. */
+  'Permanent',
 ] as const;
 export type DriverStage = (typeof DRIVER_STAGES)[number];
 export interface DriverNameAllowance {
@@ -69,9 +71,10 @@ type DriverFacts = Pick<AnyAgentDriver, 'driver_kind' | 'manifest'>;
 const SCANNED_ROOTS = ['server/', 'web/src/', 'ios/Panels/'];
 const EXEMPT_FILES = new Set([
   'server/drivers/built_in.ts',
+  'server/drivers/built_in_manifests.ts',
   'server/tools/driver_name_allowances.ts',
 ]);
-const PACKAGE_ENTRY_FILES = new Set(['driver.ts', 'manifest.ts', 'client.ts']);
+const PACKAGE_ENTRY_FILES = new Set(['driver.ts', 'manifest.ts', 'client.ts', 'models.ts']);
 
 function in_scope(path: string): boolean {
   if (!SCANNED_ROOTS.some((root) => path.startsWith(root)) || path.includes('/node_modules/'))
@@ -346,7 +349,7 @@ function import_findings(
   const driver_file = entry_file && posix.basename(file.path) === 'driver.ts';
   const package_root = `server/drivers/${own_package}/`;
   const entry_rule =
-    'driver.ts, manifest.ts and client.ts import values only from drivers/core, manifest.ts and client.ts.';
+    'driver.ts, manifest.ts, client.ts and models.ts import values only from drivers/core, manifest.ts, client.ts and models.ts.';
   for (const reference of imports) {
     if (reference.specifier === null) {
       // A computed path cannot be resolved. Refuse one in manifest.ts or client.ts, and one
@@ -368,7 +371,7 @@ function import_findings(
       add(
         reference.line,
         target,
-        'Reach a driver package only through server/drivers/built_in.ts.',
+        'Reach a driver package only through server/drivers/built_in.ts or built_in_manifests.ts.',
         target_package,
       );
     if (!entry_file || reference.type_only) continue;
@@ -378,7 +381,8 @@ function import_findings(
     } else if (
       !target.startsWith('server/drivers/core/') &&
       target !== `${package_root}manifest.ts` &&
-      target !== `${package_root}client.ts`
+      target !== `${package_root}client.ts` &&
+      target !== `${package_root}models.ts`
     )
       add(reference.line, target, entry_rule);
   }

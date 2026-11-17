@@ -1,4 +1,5 @@
 /** Public record encoding and the replay/live HTTP join. */
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import { Readable } from 'node:stream';
 import { PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS } from './configuration.ts';
 import type { FastifyReply } from 'fastify';
@@ -10,12 +11,11 @@ import {
   HeldPromptsChangedFrame,
 } from '../events.ts';
 import type { ConversationLiveTailFrame } from '../events.ts';
-import type { ConversationBackendKey } from '../contracts.ts';
 import type { StoredConversationEvent } from '../record/contracts.ts';
 import { conversation_event_payload_json_object } from '../record/codec.ts';
 import { readable_tool_call_detail } from '../tool_detail.ts';
 import type { ConversationViewRuntime } from '../views/routes.ts';
-export function public_event(event: StoredConversationEvent, backend_key: ConversationBackendKey) {
+export function public_event(event: StoredConversationEvent, backend_key: BackendInstanceId) {
   const payload = conversation_event_payload_json_object(event.payload);
   if (event.payload instanceof ToolCallFinishedEventPayload) {
     const readable = readable_tool_call_detail(event.payload.detail, { backend_key });
@@ -48,7 +48,7 @@ const stream_frame = (name: string, data: unknown) =>
 export function send_event_tail(
   runtime: ConversationViewRuntime,
   id: string,
-  backend: ConversationBackendKey,
+  backend: BackendInstanceId,
   after: number,
   reply: FastifyReply,
 ) {

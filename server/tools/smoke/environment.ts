@@ -1,7 +1,20 @@
-/** Private production configuration with the existing external Codex wire fixture. */
+/** Private production configuration with the scripted peer of the default backend. */
 import assert from 'node:assert/strict';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { DEFAULT_BACKEND_INSTANCE_ID } from '../../drivers/built_in.ts';
+import { BUILT_IN_MANIFESTS, built_in_driver_of } from '../../drivers/built_in_manifests.ts';
+import { write_default_backend_peer } from './codex_peer.ts';
+
+const DRIVER_HOMES = BUILT_IN_MANIFESTS.flatMap(({ manifest }) =>
+  manifest.home ? [manifest.home] : [],
+);
+/** Every variable that carries a driver home, each with the home's directory name. */
+const HOME_VARIABLES = DRIVER_HOMES.flatMap((home) =>
+  [home.environment_name, ...(home.extra_environment_names ?? [])].map(
+    (name) => [name, home.isolated_directory_name] as const,
+  ),
+);
 
 /** Bootstrap the unchanged Python comparison seed without ambient account or runtime inputs. */
 export async function create_seed_environment(
@@ -11,9 +24,7 @@ export async function create_seed_environment(
   const bootstrap = join(root, 'bootstrap');
   for (const directory of [
     'home',
-    'codex',
-    'claude',
-    'hermes',
+    ...DRIVER_HOMES.map((home) => home.isolated_directory_name),
     'logs',
     'backups',
     'workspace',
@@ -25,10 +36,9 @@ export async function create_seed_environment(
     PATH: dirname(process.execPath) + ':/usr/bin:/bin',
     LANG: 'C.UTF-8',
     HOME: join(bootstrap, 'home'),
-    CODEX_HOME: join(bootstrap, 'codex'),
-    CLAUDE_CONFIG_DIR: join(bootstrap, 'claude'),
-    HERMES_HOME: join(bootstrap, 'hermes'),
-    PLAN_HERMES_HOME: join(bootstrap, 'hermes'),
+    ...Object.fromEntries(
+      HOME_VARIABLES.map(([name, directory]) => [name, join(bootstrap, directory)]),
+    ),
     TMPDIR: root,
     TMP: root,
     TEMP: root,
@@ -74,13 +84,7 @@ export async function create_environment(
     string
   >;
   const environment: Record<string, string> = {};
-  for (const name of [
-    'HOME',
-    'CODEX_HOME',
-    'CLAUDE_CONFIG_DIR',
-    'HERMES_HOME',
-    'PLAN_HERMES_HOME',
-  ]) {
+  for (const name of ['HOME', ...HOME_VARIABLES.map(([name]) => name)]) {
     const value = homes[name];
     assert.ok(typeof value === 'string');
     const home = await realpath(value),
@@ -104,36 +108,14 @@ export async function create_environment(
     flag: 'wx',
     mode: 0o600,
   });
-  const script = join(root, 'codex-script.json');
-  const producer = JSON.stringify(
-    join(source, 'tests/support/conversation_codex_scripted_app_server.py'),
-  );
-  const actions = [
-    { do: 'agent_delta', item_id: 'smoke-answer', text: 'Production smoke reply.' },
-    {
-      do: 'item_completed',
-      item: { type: 'agentMessage', id: 'smoke-answer', text: 'Production smoke reply.' },
-    },
-    { do: 'complete', status: 'completed' },
-  ];
-  await writeFile(
-    script,
-    JSON.stringify({
-      transcript_path: join(root, 'codex-transcript.jsonl'),
-      thread_id: 'production-smoke-thread',
-      turns: [{ actions }],
-    }) + '\n',
-    { flag: 'wx', mode: 0o600 },
-  );
-  await writeFile(
-    join(root, 'bin/codex'),
-    `#!${join(source, '.venv/bin/python')}\n` +
-      'import runpy, sys\n' +
-      "if sys.argv[1:] == ['--version']:\n" +
-      "    print('codex-cli 0.148.0')\n" +
-      'else:\n' +
-      `    runpy.run_path(${producer}, run_name='__main__')\n`,
-    { flag: 'wx', mode: 0o700 },
+  const peer = await write_default_backend_peer(root, source);
+  // Every other driver's executable is absent, so only the peer answers.
+  const peer_driver = built_in_driver_of(DEFAULT_BACKEND_INSTANCE_ID);
+  const absent_executables = BUILT_IN_MANIFESTS.filter((driver) => driver !== peer_driver).flatMap(
+    ({ manifest: { executable } }) =>
+      [executable.override_environment_name, executable.configured_beside?.environment_name]
+        .filter((name): name is string => name !== undefined)
+        .map((name) => [name, join(root, `bin/absent-${executable.name}`)] as const),
   );
   return {
     ...environment,
@@ -163,8 +145,7 @@ export async function create_environment(
     PLAN_DISPATCHER_LOCK_PATH: join(root, 'run/dispatcher.lock'),
     PLAN_SERVER_CONTROL_SOCKET: join(root, 'run/control.sock'),
     PLAN_SERVER_LIFECYCLE_LEASE_PATH: join(root, 'run/lifecycle.lock'),
-    PLAN_CLAUDE_EXECUTABLE: join(root, 'bin/absent-claude'),
-    PLAN_HERMES_PYTHON: join(root, 'bin/absent-hermes'),
-    PANELS_CODEX_SCRIPTED_APP_SERVER_SCRIPT: script,
+    ...Object.fromEntries(absent_executables),
+    ...peer,
   };
 }
