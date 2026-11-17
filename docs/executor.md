@@ -61,7 +61,7 @@ Each machine has one current process incarnation. A restart replaces only that m
 
 ## Commands and output
 
-Commands wait in the home's durable mailbox until their destination fetches them. The executor journals a command before it runs it. A duplicate returns its saved result instead of another execution. Journal tombstones prevent repetition after a home database restore. Commands for one conversation retain their order. Different conversations can progress independently.
+Commands wait in the home's durable mailbox until their destination fetches them. A prompt stays pending and its conversation stays busy until the native agent accepts it. Mailbox placement alone does not establish delivery. The executor journals a command before it runs it. A duplicate returns its saved result instead of another execution. Journal tombstones prevent repetition after a home database restore. Commands for one conversation retain their order. Different conversations can progress independently.
 
 When Claude initialization times out on the Mac, the executor keeps the waiting prompt in order and makes a bounded attempt to start a fresh child. It first proves the failed child has stopped. If startup still fails, or cleanup is uncertain, it reports the failure instead of risking a second child. It never retries a prompt that may have reached an agent.
 
@@ -69,7 +69,7 @@ The outbox saves each durable event before delivery. Each conversation sends its
 
 During a home update trial, the home defers new result receipts. Extra machines retain output until the healthy home or restored previous home accepts it. A rollback never removes an accepted result from that boundary.
 
-Live text and tool progress remain lossy. Finished messages and durable events wait in the outbox through an outage. A slow or failed conversation does not block the others.
+Live text and tool progress remain lossy. Finished messages and durable events wait in the outbox through an outage. Native command failures also reach the conversation core directly, so artifact delays cannot leave a failed turn active. A matching native refusal to steer into an absent turn ends the stale active turn without changing its historical prompt delivery. A slow or failed conversation does not block the others.
 
 Files reach the home before an item that refers to them. Uploads wait privately until the home accepts their item. The home checks file ownership before publication and publishes in small groups so other writers can proceed. A matching digest does not grant another machine access.
 
@@ -89,7 +89,7 @@ which preserves their journals and outboxes.
 
 ## Restarts and recovery
 
-A home restart preserves mailboxes, assignments, results, and receipts. The conversation system adopts retained remote runs instead of starting another provider call.
+A home restart preserves mailboxes, assignments, results, and receipts. The conversation system adopts accepted remote runs. Pending prompts remain busy until their existing native result arrives. Neither path sends the prompt again.
 
 An executor restart preserves its journal and outbox. The home separates commands that never ran from uncertain deliveries. It waits for each affected conversation's retained output before recovery. Proven undelivered prompts can start afresh. Other interrupted turns receive the existing recovery prompt. A timeout alone never proves refusal or process termination.
 

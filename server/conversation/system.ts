@@ -1576,6 +1576,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   ): Promise<void> {
     return remote.confirm_remote_prompt_accepted(this, reference, admit_remote_turn(turn));
   }
+  reconcile_remote_command(
+    command: WireValue<'ChildCommand'>,
+    outcome: WireValue<'CommandOutcome'>,
+  ): Promise<void> {
+    return remote.reconcile_remote_command(this, command, outcome);
+  }
   fence_replaced_remote_child(
     reference: ChildReference,
     options: { retry_later_at?: number } = {},

@@ -7,7 +7,7 @@ import type { Database, ReadSql, TransactionSql } from '../../core/database/cont
 import { execution_unavailable_reason } from '../../tickets/locale_configuration.ts';
 import { current_incarnation, require_incarnation_owner } from '../vps_presence_store.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
-import { ExecutorValidationError } from '../protocol.ts';
+import { ExecutorValidationError, decode_json } from '../protocol.ts';
 import type { WireValue } from '../contracts.ts';
 import {
   open_child_assignment,
@@ -40,6 +40,15 @@ export class ExecutorStore {
         .map(
           (row) =>
             new RetainedBackendRun({
+              pending_prompt: (() => {
+                const pending = sql.get<{ command_json: string }>(
+                  "SELECT c.command_json FROM executor_commands c WHERE c.executor_incarnation=? AND c.child_id=? AND c.conversation_id=? AND c.turn_number=? AND c.operation='write_prompt' AND EXISTS (SELECT 1 FROM conversation_lifecycle_facts f WHERE f.conversation_id=c.conversation_id AND f.turn_number=c.turn_number AND f.kind='turn' AND f.status='intent') AND EXISTS (SELECT 1 FROM conversation_lifecycle_facts f WHERE f.conversation_id=c.conversation_id AND f.turn_number=c.turn_number AND f.kind='attempt' AND f.identity='prompt:'||c.turn_number AND f.status='intent') ORDER BY c.command_sequence DESC LIMIT 1",
+                  [row.executor_incarnation, row.child_id, row.conversation_id, row.turn_number],
+                );
+                return pending
+                  ? (decode_json(pending.command_json, 'MailboxCommand').child_command ?? null)
+                  : null;
+              })(),
               reference: {
                 executor_incarnation: row.executor_incarnation,
                 child_id: row.child_id,
