@@ -58,10 +58,12 @@ export async function remove_transport(directory: string): Promise<void> {
 export async function cleanup_transport(directory: string): Promise<void> {
   try {
     await remove_transport(directory);
-  } catch {
+  } catch (error) {
     try {
       console.warn(
         'Mac Worker transport cleanup did not finish. Job absence still permits restart.',
+        directory,
+        error,
       );
     } catch {
       /* A failed notice cannot revoke proven job absence. */

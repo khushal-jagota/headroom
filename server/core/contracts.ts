@@ -19,8 +19,13 @@ export class PlannerError extends Error {
   readonly code: string;
   readonly detail: Record<string, unknown>;
   readonly statusCode: number;
-  constructor(code: string, message: string, detail: Record<string, unknown> = {}) {
-    super(message);
+  constructor(
+    code: string,
+    message: string,
+    detail: Record<string, unknown> = {},
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = 'PlannerError';
     this.code = code;
     this.detail = detail;

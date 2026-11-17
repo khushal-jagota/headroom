@@ -86,8 +86,10 @@ export class FileCredentialCipher implements CredentialCipher {
       return decode_secret(
         Buffer.concat([decipher.update(encrypted.ciphertext.subarray(0, -16)), decipher.final()]),
       );
-    } catch {
-      throw invalid('credential could not be decrypted');
+    } catch (cause) {
+      // Decipher and decode refusals carry no secret text.
+      console.error('credential could not be decrypted', cause);
+      throw invalid('credential could not be decrypted', { cause });
     }
   }
 }

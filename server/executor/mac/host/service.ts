@@ -45,6 +45,7 @@ import { MacInputs } from '../inputs.ts';
 import { AgentGateway } from '../ipc/gateway.ts';
 import { GatewayOutbox } from '../ipc/outbox.ts';
 import type { MacCatalog } from '../catalog/index.ts';
+import { failure_detail } from '../failure_detail.ts';
 import type {
   MacHostOptions,
   MacHostBindings,
@@ -53,6 +54,10 @@ import type {
   MacHostUpdates,
 } from './contracts.ts';
 
+/** Startup failure cleanup stays best-effort; the startup error is still rethrown. */
+function startup_cleanup_failed(error: unknown): void {
+  console.warn('Mac host startup cleanup failed:', failure_detail(error));
+}
 export class MacService {
   readonly configuration: MacHostOptions;
   readonly bindings: MacHostBindings;
@@ -300,14 +305,19 @@ export class MacService {
       return service;
     } catch (error) {
       if (service) {
-        await service.stop(cleanup_options).catch(() => {});
-        await service.settled().catch(() => {});
+        await service.stop(cleanup_options).catch(startup_cleanup_failed);
+        await service.settled().catch(startup_cleanup_failed);
       } else {
-        await Promise.allSettled([files.stop(cleanup_options), update_files.stop(cleanup_options)]);
-        await Promise.allSettled([files.settled(), update_files.settled()]);
+        for (const result of await Promise.allSettled([
+          files.stop(cleanup_options),
+          update_files.stop(cleanup_options),
+        ]))
+          if (result.status === 'rejected') startup_cleanup_failed(result.reason);
+        for (const result of await Promise.allSettled([files.settled(), update_files.settled()]))
+          if (result.status === 'rejected') startup_cleanup_failed(result.reason);
         if (outbox) {
-          await outbox.stop(cleanup_options).catch(() => {});
-          await outbox.settled().catch(() => {});
+          await outbox.stop(cleanup_options).catch(startup_cleanup_failed);
+          await outbox.settled().catch(startup_cleanup_failed);
         }
       }
       throw error;
@@ -379,7 +389,7 @@ export class MacService {
     if (code !== 0 && this.exit_code === 0) this.exit_code = code;
     void this.stop(
       this.options ?? { deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS },
-    ).catch(() => {});
+    ).catch((error: unknown) => console.error('Mac host stop failed:', failure_detail(error)));
   }
   async run(): Promise<number> {
     try {

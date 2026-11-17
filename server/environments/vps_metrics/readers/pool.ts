@@ -29,9 +29,13 @@ interface Reader {
   active?: Pending;
   retiring?: Promise<void>;
   reaped: Promise<void>;
+  error?: unknown;
 }
-const unavailable = (): MetricsOperationalError =>
-  new MetricsOperationalError('VPS metrics storage is unavailable');
+const unavailable = (cause?: unknown): MetricsOperationalError =>
+  new MetricsOperationalError(
+    'VPS metrics storage is unavailable',
+    cause === undefined ? undefined : { cause },
+  );
 const expired = (): MetricsOperationalError =>
   new MetricsOperationalError('VPS metrics read deadline exceeded');
 type ReaderProcessFactory = (entry: URL, options: ForkOptions) => ChildProcess;
@@ -93,15 +97,17 @@ export class MetricsReaders {
     this.readers.add(reader);
     return new Promise<void>((resolve, reject) => {
       let admitted = false;
-      child.on('error', () => {
+      child.on('error', (error) => {
+        reader.error ??= error;
+        console.warn('VPS metrics reader process failed', error);
         void this.retire(reader);
       });
       child.once('close', () => {
         liveness.destroy();
         this.readers.delete(reader);
-        if (!admitted) reject(unavailable());
+        if (!admitted) reject(unavailable(reader.error));
         if (!reader.retiring) {
-          if (reader.active) this.settle(reader.active, undefined, unavailable());
+          if (reader.active) this.settle(reader.active, undefined, unavailable(reader.error));
           if (admitted) queueMicrotask(() => this.fill_deficit());
         }
       });
@@ -163,9 +169,10 @@ export class MetricsReaders {
     try {
       while (!this.closing && this.readers.size < this.config.read_workers) await this.spawn();
       this.retry_after = 0n;
-    } catch {
+    } catch (error) {
       this.retry_after = process.hrtime.bigint() + 50_000_000n;
-      if (!this.closing) this.fail_queue();
+      console.warn('VPS metrics reader could not start', error);
+      if (!this.closing) this.fail_queue(error);
     }
   }
   private settle(job: Pending, value?: unknown, error?: unknown): void {
@@ -247,8 +254,8 @@ export class MetricsReaders {
       this.fill_deficit();
     });
   }
-  private fail_queue(): void {
-    for (const job of this.queue.splice(0)) this.settle(job, undefined, unavailable());
+  private fail_queue(cause?: unknown): void {
+    for (const job of this.queue.splice(0)) this.settle(job, undefined, unavailable(cause));
   }
   async close(): Promise<void> {
     this.closing = true;

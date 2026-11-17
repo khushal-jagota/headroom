@@ -141,7 +141,9 @@ export async function message_chief(text: string, server_url: string): Promise<b
           chunks.push(value);
         }
       } finally {
-        await reader.cancel().catch(() => {});
+        await reader
+          .cancel()
+          .catch((error: unknown) => console.warn('stall alarm response cancel failed', error));
         reader.releaseLock();
       }
       body = JSON.parse(Buffer.concat(chunks).toString('utf8'));

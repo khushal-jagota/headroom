@@ -156,8 +156,8 @@ export class QueryLimitError extends Error {
 }
 export class MetricsOperationalError extends Error {
   readonly code = 'SQLITE_ERROR';
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'MetricsOperationalError';
   }
 }

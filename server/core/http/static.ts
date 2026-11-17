@@ -46,10 +46,11 @@ const MIME: Record<string, string> = {
 };
 export function indexHtml(root: string, sha: string | null): Promise<string> {
   return readFile(join(root, 'web/dist/index.html'), 'utf8')
-    .catch(
-      () =>
-        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Panels</title></head><body><div id="app" data-svelte-app>web/dist is missing; run npm --prefix web run build.</div></body></html>',
-    )
+    .catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+        console.error('web index could not be read', root, error);
+      return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Panels</title></head><body><div id="app" data-svelte-app>web/dist is missing; run npm --prefix web run build.</div></body></html>';
+    })
     .then((document) => {
       const escaped = (sha ?? '')
         .replaceAll('&', '&amp;')
@@ -105,7 +106,9 @@ export async function sendFile(
   let info;
   try {
     info = await stat(file);
-  } catch {
+  } catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+      console.error('static file could not be read', file, error);
     detail(reply, 404, 'Not Found');
     return;
   }
@@ -252,7 +255,9 @@ export async function mountStatic(
             : 'no-cache, must-revalidate'
           : undefined;
         await sendFile(request, reply, file, { cache, conditional: true });
-      } catch {
+      } catch (error) {
+        if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+          console.error('static file could not be served', request.url, error);
         detail(reply, 404, 'Not Found');
       }
     },

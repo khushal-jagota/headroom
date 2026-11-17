@@ -26,7 +26,7 @@ import { one_prompt_from } from '../logic/held_line.ts';
 import { selection_target } from '../logic/selection_target.ts';
 import type { BackendSelection } from '../../drivers/core/selection.ts';
 import { prefix_message_content_text, text_message_content } from '../message_content.ts';
-import { log_backend_failure } from '../backends/failure_summary.ts';
+import { error_text, log_backend_failure } from '../backends/failure_summary.ts';
 import { recorded_failure_detail } from '../logic/backend_events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
@@ -829,7 +829,7 @@ async function deliver_and_record(
       error instanceof PromptWriteFailed ||
       (reservation.prompt_write_attempted && !is_shutdown_business_cancellation(error))
     ) {
-      // An uncertain delivery row has no text, so the log keeps the backend's.
+      // The uncertain row keeps a capped copy of the backend's text, and the log keeps it whole.
       if (error instanceof BackendAdapterError)
         log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
       if (queued && !reservation.prompt_write_attempted)
@@ -837,7 +837,14 @@ async function deliver_and_record(
           state,
           batch.map((message) => message.sender_message_id),
         );
-      await record_delivery_uncertainty(host, state, reservation, attempted, batch);
+      await record_delivery_uncertainty(
+        host,
+        state,
+        reservation,
+        attempted,
+        batch,
+        error instanceof BackendAdapterError ? recorded_failure_detail(error.message) : null,
+      );
       return new PromptDeliveryUncertain();
     }
     const recovery_messages = batch.filter((message) => message.recovery_references.length > 0);
@@ -911,6 +918,7 @@ async function deliver_and_record(
     .map((message) => message.owner_read_through_sequence!);
   const drain_read_through = drain_bounds.length > 0 ? Math.max(...drain_bounds) : null;
   let receipt_save_gave_up = false;
+  let receipt_save_detail: string | null = null;
   const fate = await state.lock.run(async () => {
     if (reservation.shutdown_owned)
       return reservation.shutdown_fate ?? new PromptDeliveryUncertain();
@@ -1016,6 +1024,11 @@ async function deliver_and_record(
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') throw error;
         receipt_save_gave_up = true;
+        receipt_save_detail = recorded_failure_detail(`Receipt save failed: ${error_text(error)}`);
+        console.error(
+          `conversation ${state.record.conversation_id} delivered a prompt but could not save its receipt`,
+          error,
+        );
         return new PromptDeliveryUncertain();
       }
       host.note_written(state, written);
@@ -1055,12 +1068,18 @@ async function deliver_and_record(
   if (receipt_save_gave_up) {
     // The agent has this prompt, but its receipt save gave up. Record it as possibly
     // delivered, so no sender resends it.
-    await record_delivery_uncertainty(host, state, reservation, survivors, batch).catch(
-      (failure: unknown) =>
-        console.error(
-          `conversation ${state.record.conversation_id} could not record an uncertain delivery`,
-          failure,
-        ),
+    await record_delivery_uncertainty(
+      host,
+      state,
+      reservation,
+      survivors,
+      batch,
+      receipt_save_detail,
+    ).catch((failure: unknown) =>
+      console.error(
+        `conversation ${state.record.conversation_id} could not record an uncertain delivery`,
+        failure,
+      ),
     );
     await state.lock.run(() => host.abandon_reservation(state, reservation, 'idle'));
   }
@@ -1086,6 +1105,7 @@ async function record_delivery_uncertainty(
   reservation: ReservedTurn,
   batch: readonly Message[],
   settle_messages: readonly Message[] = batch,
+  failure_detail: string | null = null,
 ): Promise<void> {
   await state.lock.run(async () => {
     for (const message of batch)
@@ -1097,7 +1117,7 @@ async function record_delivery_uncertainty(
       const rows = await host.persist(state, () =>
         host.options.store.append_events(
           state.record.conversation_id,
-          [uncertain_row(message, reservation.mode)],
+          [uncertain_row(message, reservation.mode, failure_detail)],
           {
             lifecycle: [prompt_fact(reservation.token, S.unknown)],
             recording_receipt: message.recording_receipt,

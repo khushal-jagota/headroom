@@ -144,7 +144,10 @@ class ScopedStream {
     }
     response.once('close', () => this.close());
     void this.send(frame(initial))
-      .catch(() => this.close())
+      .catch((error: unknown) => {
+        console.warn('navigation stream initial send failed', error);
+        this.close();
+      })
       .finally(() => {
         this.sending = false;
         void this.flush();
@@ -204,7 +207,8 @@ class ScopedStream {
         this.previous = current;
         this.keys = new Set(current.content.records.map((row) => key(row.kind, row.id)));
       }
-    } catch {
+    } catch (error) {
+      console.warn('navigation stream update failed', error);
       this.close();
     } finally {
       this.sending = false;
@@ -216,7 +220,10 @@ class ScopedStream {
       return;
     this.sending = true;
     void this.send(': heartbeat\n\n')
-      .catch(() => this.close())
+      .catch((error: unknown) => {
+        console.warn('navigation stream heartbeat failed', error);
+        this.close();
+      })
       .finally(() => {
         this.sending = false;
         void this.flush();
@@ -265,7 +272,8 @@ export class ScopedDelivery {
         for (const stream of this.streams) stream.notify(value);
       }
       for (const stream of this.streams) stream.heartbeat();
-    } catch {
+    } catch (error) {
+      console.error('navigation coverage poll failed; closing streams', error);
       for (const stream of [...this.streams]) stream.close();
     }
   }
@@ -292,7 +300,8 @@ export class ScopedDelivery {
         this.lifetime,
       );
       if (!response.writableEnded) this.streams.add(stream);
-    } catch {
+    } catch (error) {
+      console.error('navigation stream snapshot failed', error);
       response.end();
     }
   }

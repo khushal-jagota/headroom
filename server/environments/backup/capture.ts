@@ -121,7 +121,9 @@ export async function create_database_backup(
     await apply_verified_snapshot_retention(root, await verified_snapshot_retention_plan(root));
     return snapshot;
   } catch (error) {
-    await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(temporary, { recursive: true, force: true }).catch((cleanup: unknown) => {
+      console.warn('backup capture could not remove its temporary copy', temporary, cleanup);
+    });
     throw error;
   }
 }

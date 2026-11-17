@@ -12,8 +12,8 @@ export function decode_message(bytes: Buffer): Record<string, unknown> {
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
-  } catch {
-    throw new ServerRestartProtocolError('control message is not valid JSON');
+  } catch (cause) {
+    throw new ServerRestartProtocolError('control message is not valid JSON', { cause });
   }
   if (!object(value)) throw new ServerRestartProtocolError('control message must be a JSON object');
   return value;

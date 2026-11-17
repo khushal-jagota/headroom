@@ -66,7 +66,8 @@ export async function collect_cleanup_inventory(
     let children: string[];
     try {
       children = await bounded_children(backupRoot);
-    } catch {
+    } catch (error) {
+      console.warn('VPS cleanup could not list a directory', backupRoot, error);
       children = [];
     }
     for (const path of children) {
@@ -85,7 +86,8 @@ export async function collect_cleanup_inventory(
     let children: string[];
     try {
       children = await bounded_children(logsRoot);
-    } catch {
+    } catch (error) {
+      console.warn('VPS cleanup could not list a directory', logsRoot, error);
       children = [];
     }
     for (const path of children) {
@@ -203,8 +205,9 @@ export async function apply_cleanup_inventory(
     else {
       try {
         await apply_retention(root, paths, signal, admit_path);
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
+        console.warn('VPS backup retention failed; the snapshots need review', paths, error);
         review_needed.push(...paths);
         return { removed, rotated, review_needed };
       }

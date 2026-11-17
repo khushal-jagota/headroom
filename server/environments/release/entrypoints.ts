@@ -28,8 +28,8 @@ export async function validate_public_cli_entrypoint(root: string, input: string
     throw new AppValidationError('public CLI entrypoint must remain inside the application');
   try {
     await access(public_cli, constants.X_OK);
-  } catch {
-    throw new AppValidationError('public CLI entrypoint is not executable');
+  } catch (error) {
+    throw new AppValidationError('public CLI entrypoint is not executable', { cause: error });
   }
 }
 export async function write_app_entrypoints(

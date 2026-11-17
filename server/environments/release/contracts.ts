@@ -11,8 +11,8 @@ export type {
   RuntimeContract,
 } from '../updates/contracts.ts';
 export class AppValidationError extends AppManifestValidationFailure {
-  constructor(message: string) {
-    super('value', message);
+  constructor(message: string, options?: ErrorOptions) {
+    super('value', message, options);
     this.name = 'AppValidationError';
   }
 }

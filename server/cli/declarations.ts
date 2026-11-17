@@ -1,6 +1,11 @@
 /** Typed native declarations shared by the parser and help. */
 import { accessSync, constants, statSync } from 'node:fs';
 import { Argument, Command, Help, InvalidArgumentError, Option } from 'commander';
+/** Commander's InvalidArgumentError takes no options, so the original error is set as its cause here. */
+function with_cause<T extends Error>(refusal: T, cause: unknown): T {
+  Object.defineProperty(refusal, 'cause', { value: cause, configurable: true, writable: true });
+  return refusal;
+}
 
 export interface ValueParser {
   (text: string): unknown;
@@ -80,10 +85,19 @@ export function readable_path(
       let stat;
       try {
         stat = statSync(value);
-      } catch {
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT')
+          throw with_cause(
+            new InvalidArgumentError(`Cannot inspect the path (${code ?? error}): ${value}`),
+            error,
+          );
         if (mustExist)
-          throw new InvalidArgumentError(
-            `The ${pathKind === 'any' ? 'path' : pathKind} does not exist: ${value}`,
+          throw with_cause(
+            new InvalidArgumentError(
+              `The ${pathKind === 'any' ? 'path' : pathKind} does not exist: ${value}`,
+            ),
+            error,
           );
         return value;
       }
@@ -94,8 +108,13 @@ export function readable_path(
         throw new InvalidArgumentError(`Expected a ${pathKind}: ${value}`);
       try {
         accessSync(value, constants.R_OK);
-      } catch {
-        throw new InvalidArgumentError(`The path is not readable: ${value}`);
+      } catch (error) {
+        throw with_cause(
+          new InvalidArgumentError(
+            `The path is not readable (${(error as NodeJS.ErrnoException).code ?? error}): ${value}`,
+          ),
+          error,
+        );
       }
       return value;
     },

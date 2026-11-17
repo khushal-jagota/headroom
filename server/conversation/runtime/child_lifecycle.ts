@@ -162,8 +162,9 @@ export async function recheck_worker_cleanup(
             presence.last_lease_at_ms !== null &&
             Math.floor(host.unix_time_now() * 1000) - presence.last_lease_at_ms <=
               LEASE_CONTINUITY_SECONDS * 1000;
-        } catch {
-          /* Invalid lease evidence cannot prove cleanup. */
+        } catch (error) {
+          // Invalid lease evidence cannot prove cleanup.
+          console.warn('executor lease evidence is invalid; it cannot prove cleanup', error);
         }
       }
       const uncertain = new Set(
@@ -360,8 +361,9 @@ export async function confirm_killed_source(
             !(lease.cleanup_uncertainties ?? []).some(
               (item) => item.ticket_id === restart.ticket_id,
             );
-        } catch {
-          /* Invalid evidence cannot prove remote cleanup. */
+        } catch (error) {
+          // Invalid evidence cannot prove remote cleanup.
+          console.warn('executor lease evidence is invalid; it cannot prove remote cleanup', error);
         }
         if (!fresh)
           throw new PlannerError('retry_later', 'Fresh executor cleanup evidence is unavailable');

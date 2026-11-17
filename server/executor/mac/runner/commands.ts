@@ -10,6 +10,7 @@ import {
 import type { TurnToken as NativeTurn } from '../../../conversation/backends/contracts.ts';
 import { prefix_message_content_text } from '../../../conversation/message_content.ts';
 import { UserInputAnswer } from '../../../conversation/events.ts';
+import { recorded_failure_detail } from '../../../conversation/logic/backend_events.ts';
 import { as_object, ExecutorValidationError } from '../../protocol.ts';
 import { native_message_content as native_content } from '../../backend_events.ts';
 import type {
@@ -129,7 +130,12 @@ async function invoke(
         },
       );
       if (result instanceof BackendSteerRefused)
-        return { kind: 'steer_refused', refusal_reason: result.refusal_reason };
+        // The backend's own text, redacted and capped, so the VPS logs it like a local refusal.
+        return {
+          kind: 'steer_refused',
+          refusal_reason: result.refusal_reason,
+          refusal_detail: recorded_failure_detail(result.refusal_detail),
+        };
       return {
         kind: result instanceof BackendSteerAccepted ? 'steer_accepted' : 'steer_uncertain',
         composed_content_delivered: result.composed_content_delivered,

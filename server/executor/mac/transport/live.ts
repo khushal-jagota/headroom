@@ -5,6 +5,7 @@ import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { MAX_ENVELOPE_BYTES, MAX_LIVE_EVENTS_PER_BATCH } from '../configuration.ts';
 import type { MacHttpClient } from './http.ts';
+import { failure_detail } from '../failure_detail.ts';
 
 export class MacLiveSender {
   private readonly client: Pick<MacHttpClient, 'post_live'>;
@@ -36,7 +37,11 @@ export class MacLiveSender {
       let bytes: number;
       try {
         bytes = encode_bounded(waiting[0]!, 'BackendEvent').byteLength + 1;
-      } catch {
+      } catch (error) {
+        console.warn(
+          `Mac live event was not encodable method=${waiting[0]!.method}:`,
+          failure_detail(error),
+        );
         waiting.shift();
         continue;
       }
@@ -59,8 +64,10 @@ export class MacLiveSender {
         if (!batch.events.length) continue;
         try {
           await this.client.post_live(id, batch, this.cancellation.signal);
-        } catch {
+        } catch (error) {
           /* Failed live requests are dropped, never replayed as durable output. */
+          if (!this.cancellation.signal.aborted)
+            console.warn(`Mac live post failed conversation=${id}:`, failure_detail(error));
         }
       }
     } finally {

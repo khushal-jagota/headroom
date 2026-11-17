@@ -57,11 +57,15 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
       .operation(async () => {
         try {
           return (await this.#runtime.context(this.#runtime.clock() + INSPECTION_SECONDS)).host;
-        } catch {
+        } catch (error) {
+          console.warn('child custody: the host boot identity is unavailable', error);
           return null;
         }
       })
-      .catch(() => null);
+      .catch((error: unknown) => {
+        console.warn('child custody: the host boot identity operation failed', error);
+        return null;
+      });
   }
   retirement_row_proven(
     row: LocalChildCustodyRow,
@@ -220,8 +224,9 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
           return false;
       } else if (!(await primitives.is_absent(this.#process(identity), deadline))) return false;
       return identity.unit === null || this.#unit_retired(identity.unit, deadline);
-    } catch {
+    } catch (error) {
       // Missing evidence does not prove retirement or cancel later stop escalation.
+      console.warn('child custody: retirement evidence is unavailable', error);
       return false;
     }
   }
@@ -282,7 +287,8 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
         this.#units.delete(unit);
       }
       return retired;
-    } catch {
+    } catch (error) {
+      console.warn(`child custody: unit ${unit} retirement could not be checked`, error);
       return false;
     }
   }
@@ -297,10 +303,14 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
         if (this.#runtime.clock() >= deadline) return false;
         try {
           return await operation(deadline);
-        } catch {
+        } catch (error) {
+          console.warn('child custody: an inspection failed', error);
           return false;
         }
       })
-      .catch(() => false);
+      .catch((error: unknown) => {
+        console.warn('child custody: an inspection operation failed', error);
+        return false;
+      });
   }
 }

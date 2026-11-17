@@ -8,8 +8,11 @@ import type {
   CredentialWrite,
 } from '../contracts.ts';
 
-export function invalid(message = 'invalid credential input'): PlannerError {
-  return new PlannerError('validation', message);
+export function invalid(
+  message = 'invalid credential input',
+  options?: ErrorOptions,
+): PlannerError {
+  return new PlannerError('validation', message, {}, options);
 }
 export function text(value: unknown, maximum?: number, allow_empty = false): string {
   if (

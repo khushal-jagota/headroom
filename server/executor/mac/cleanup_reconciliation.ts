@@ -21,6 +21,7 @@ import { read_canonical_body } from './mailbox/poll.ts';
 import type { AsyncCommandJournal } from './storage/journal_contracts.ts';
 
 import { LEGACY_CLEANUP_RECEIPT, legacy_targets } from './legacy_worker_cleanup.ts';
+import { failure_detail } from './failure_detail.ts';
 export { LEGACY_CLEANUP_RECEIPT } from './legacy_worker_cleanup.ts';
 /** Borrow the journal cursor. Preserve stored field presence before wire defaults. */
 export function read_cleanup_commands(
@@ -155,7 +156,11 @@ export function legacy_notice(
     for (const target of targets) {
       try {
         if (await dependencies.inspect_legacy(target, deadline)) unresolved.push(target.process_id);
-      } catch {
+      } catch (error) {
+        console.warn(
+          `Legacy Worker process inspection failed pid=${target.process_id}:`,
+          failure_detail(error),
+        );
         unresolved.push(target.process_id);
       }
     }

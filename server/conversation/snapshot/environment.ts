@@ -160,13 +160,19 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
           ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout_seconds * 1000)])
           : AbortSignal.timeout(options.timeout_seconds * 1000),
       });
-      if (!response.ok) return null;
+      if (!response.ok) {
+        console.warn(
+          `backend snapshot: ${package_name} latest version answered HTTP ${response.status}`,
+        );
+        return null;
+      }
       const value: unknown = await response.json();
       if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
       const version = (value as Record<string, unknown>).version;
       return typeof version === 'string' && version ? version : null;
-    } catch {
+    } catch (error) {
       options.signal?.throwIfAborted();
+      console.warn(`backend snapshot: ${package_name} latest version could not be fetched`, error);
       return null;
     }
   }

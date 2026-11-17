@@ -202,8 +202,8 @@ export function credentialSnapshot(value: unknown): CredentialRequestRowBody {
         };
       }),
     };
-  } catch {
-    throw new Error('invalid credential request snapshot');
+  } catch (error) {
+    throw new Error('invalid credential request snapshot', { cause: error });
   }
 }
 
@@ -236,6 +236,7 @@ export function conversation_event_payload_from_canonical_json(
       return new E.PromptDeliveryUncertainEventPayload({
         ...promptFields(stored),
         mode: mode(stored),
+        failure_detail: optionalText(stored, 'failure_detail'),
       });
     case 'prompt_discarded':
       return new E.PromptDiscardedEventPayload({
@@ -442,6 +443,9 @@ export function conversation_event_payload_json_object(
           : {}),
         ...(payload.kind === 'prompt_delivery_refused'
           ? { refusal_reason: payload.refusal_reason, refusal_detail: payload.refusal_detail }
+          : {}),
+        ...(payload.kind === 'prompt_delivery_uncertain'
+          ? minted('failure_detail', payload.failure_detail)
           : {}),
       };
     case 'message_to_owner':

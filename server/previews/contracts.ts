@@ -1,8 +1,8 @@
 /** Registry and transport boundary for application previews. */
 export class PreviewError extends Error {
   readonly status_code: number;
-  constructor(message: string, status_code = 409) {
-    super(message);
+  constructor(message: string, status_code = 409, options?: ErrorOptions) {
+    super(message, options);
     this.status_code = status_code;
   }
 }

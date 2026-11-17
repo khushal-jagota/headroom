@@ -65,8 +65,9 @@ export const create_production_environment_operations: ProductionEnvironmentFact
         { child_processes: context.child_processes, signal, deadline: null },
         environment,
       );
-    } catch {
+    } catch (error) {
       /* A source checkout or an unproven login job cannot offer home updates. */
+      console.warn('Home updates are unavailable: the login job is not proven', error);
     }
   }
   const service_unit =

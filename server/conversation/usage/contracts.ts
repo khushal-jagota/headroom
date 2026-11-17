@@ -103,8 +103,8 @@ export const USAGE_CONTRACT_VERSION = 5;
 export class UsageReadError extends Error {
   readonly reason: string;
   readonly detail: string;
-  constructor(reason: string, detail: string) {
-    super(`Usage read failed (${reason}): ${detail}`);
+  constructor(reason: string, detail: string, options?: ErrorOptions) {
+    super(`Usage read failed (${reason}): ${detail}`, options);
     this.reason = reason;
     this.detail = detail;
   }
