@@ -10,10 +10,15 @@ import { worker_supervision_fixture } from '../testing/worker_supervision_fixtur
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import { spawn_codex_process } from './process.ts';
 import type { OwnedCodexProcess } from './process.ts';
+import { ensure_cli_compatible } from '../cli_compatibility.ts';
 
 vi.mock('./process.ts', async (original) => ({
   ...(await original<typeof import('./process.ts')>()),
   spawn_codex_process: vi.fn(),
+}));
+vi.mock('../cli_compatibility.ts', async (original) => ({
+  ...(await original<typeof import('../cli_compatibility.ts')>()),
+  ensure_cli_compatible: vi.fn(async () => {}),
 }));
 afterEach(() => vi.restoreAllMocks());
 
@@ -52,24 +57,12 @@ function fake() {
   };
 }
 function client_fixture(worker_supervision?: WorkerSupervisionRuntime, wire = fake()) {
-  const version = fake();
   const wire_spawned = vi.fn();
-  vi.mocked(spawn_codex_process)
-    .mockImplementationOnce(async (_argv, options) => {
-      expect(options.environment.HOME).toBe(process.env.HOME);
-      expect(options.close_stdin).toBe(true);
-      options.on_created?.(version.owned as unknown as OwnedCodexProcess);
-      setImmediate(() => {
-        version.child.stdout.end('codex-cli 0.166.0\n');
-        version.finish();
-      });
-      return version.owned as unknown as OwnedCodexProcess;
-    })
-    .mockImplementationOnce(async (_argv, options) => {
-      wire_spawned();
-      options.on_created?.(wire.owned as unknown as OwnedCodexProcess);
-      return wire.owned as unknown as OwnedCodexProcess;
-    });
+  vi.mocked(spawn_codex_process).mockImplementationOnce(async (_argv, options) => {
+    wire_spawned();
+    options.on_created?.(wire.owned as unknown as OwnedCodexProcess);
+    return wire.owned as unknown as OwnedCodexProcess;
+  });
   const notifications: unknown[] = [];
   const warnings: string[] = [];
   const ended: string[] = [];
@@ -168,17 +161,8 @@ test('a retired watcher and queued notification cannot reach a restarted wire', 
     '{"method":"item/agentMessage/delta","params":{"threadId":"old","turnId":"old","itemId":"m","delta":"stale"}}\n',
   );
   await client.stop();
-  const version = fake();
   const next = fake();
-  vi.mocked(spawn_codex_process)
-    .mockImplementationOnce(async () => {
-      setImmediate(() => {
-        version.child.stdout.end('codex-cli 0.166.0\n');
-        version.finish();
-      });
-      return version.owned as unknown as OwnedCodexProcess;
-    })
-    .mockResolvedValueOnce(next.owned as unknown as OwnedCodexProcess);
+  vi.mocked(spawn_codex_process).mockResolvedValueOnce(next.owned as unknown as OwnedCodexProcess);
   try {
     await client.start({
       argv: ['/synthetic/codex', 'app-server'],
@@ -201,9 +185,16 @@ test('a retired watcher and queued notification cannot reach a restarted wire', 
 });
 
 test('shutdown joins a pending version probe and prevents a later app-server launch', async () => {
-  const version = fake();
-  vi.mocked(spawn_codex_process).mockResolvedValueOnce(
-    version.owned as unknown as OwnedCodexProcess,
+  let probe_signal: AbortSignal | undefined;
+  vi.mocked(ensure_cli_compatible).mockImplementationOnce(
+    (_backend, _executable, options) =>
+      new Promise((_resolve, reject) => {
+        probe_signal = options!.signal!;
+        // A killed probe reads no version, which the real check reports as unreadable.
+        probe_signal.addEventListener('abort', () =>
+          reject(new Error('Cannot read the Codex version at /synthetic/codex.')),
+        );
+      }),
   );
   const client = new CodexAppServerClient({
     child_processes: new ChildProcesses(),
@@ -220,13 +211,33 @@ test('shutdown joins a pending version probe and prevents a later app-server lau
     environment: {},
     working_directory: '/tmp',
   });
-  const refused = expect(starting).rejects.toBeInstanceOf(Error);
+  const refused = expect(starting).rejects.toThrow('the codex child stopped during startup');
   await new Promise<void>((resolve) => setImmediate(resolve));
   await client.stop();
   await refused;
-  expect(version.owned.stop).toHaveBeenCalled();
-  expect(vi.mocked(spawn_codex_process).mock.calls.length - spawn_count).toBe(1);
+  expect(probe_signal?.aborted).toBe(true);
+  expect(vi.mocked(spawn_codex_process).mock.calls.length - spawn_count).toBe(0);
   expect(client.is_alive).toBe(false);
+});
+
+test('an initialize reply below the floor refuses the running Codex child', async () => {
+  const { client, wire } = await start();
+  try {
+    const old = client.request('initialize', {});
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    wire.child.stdout.write(
+      '{"id":1,"result":{"userAgent":"panels/0.100.0 (Debian 13.0.0; x86_64) unknown"}}\n',
+    );
+    await expect(old).rejects.toThrow(
+      'Codex 0.100.0 at /synthetic/codex is too old. Update Codex to at least 0.148.0. Panels requires thread-aware app/read.',
+    );
+    const current = client.request('initialize', {});
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    wire.child.stdout.write('{"id":2,"result":{"userAgent":"panels/0.167.2 (Linux)"}}\n');
+    expect(await current).toEqual({ userAgent: 'panels/0.167.2 (Linux)' });
+  } finally {
+    await client.stop();
+  }
 });
 
 test('an already aborted request writes nothing and preserves its child', async () => {
@@ -295,17 +306,8 @@ test('a natural exit permits a new start without an explicit stop', async () => 
   wire.child.stderr.end();
   wire.finish();
   await new Promise<void>((resolve) => setImmediate(resolve));
-  const version = fake();
   const next = fake();
-  vi.mocked(spawn_codex_process)
-    .mockImplementationOnce(async () => {
-      setImmediate(() => {
-        version.child.stdout.end('codex-cli 0.166.0\n');
-        version.finish();
-      });
-      return version.owned as unknown as OwnedCodexProcess;
-    })
-    .mockResolvedValueOnce(next.owned as unknown as OwnedCodexProcess);
+  vi.mocked(spawn_codex_process).mockResolvedValueOnce(next.owned as unknown as OwnedCodexProcess);
   try {
     await client.start({
       argv: ['/synthetic/codex', 'app-server'],
@@ -448,6 +450,7 @@ test('failed Worker registration retains its native handle and scratch until cle
 
 test('an explicit Worker without supervision never starts even a version probe', async () => {
   vi.mocked(spawn_codex_process).mockReset();
+  vi.mocked(ensure_cli_compatible).mockClear();
   const client = new CodexAppServerClient({
     child_processes: new ChildProcesses(),
     description: 'missing-runtime',
@@ -465,5 +468,6 @@ test('an explicit Worker without supervision never starts even a version probe',
       worker_ticket_id: 'explicit',
     }),
   ).rejects.toThrow('supervision is unavailable');
+  expect(ensure_cli_compatible).not.toHaveBeenCalled();
   expect(spawn_codex_process).not.toHaveBeenCalled();
 });

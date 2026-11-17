@@ -31,7 +31,8 @@ const { query } = vi.hoisted(() => ({
   query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),
 }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query }));
-vi.mock('../../../conversation/backends/cli_compatibility.ts', () => ({
+vi.mock('../../../conversation/backends/cli_compatibility.ts', async (original) => ({
+  ...(await original<typeof import('../../../conversation/backends/cli_compatibility.ts')>()),
   ensure_cli_compatible: vi.fn(),
 }));
 await load_claude_sdk();

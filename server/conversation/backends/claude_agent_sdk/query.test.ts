@@ -27,7 +27,10 @@ const { query } = vi.hoisted(() => ({
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query }));
-vi.mock('../cli_compatibility.ts', () => ({ ensure_cli_compatible: vi.fn() }));
+vi.mock('../cli_compatibility.ts', async (original) => ({
+  ...(await original<typeof import('../cli_compatibility.ts')>()),
+  ensure_cli_compatible: vi.fn(),
+}));
 vi.mock('../../../worker_supervision/index.ts', () => ({ WorkerSupervisor: { create: vi.fn() } }));
 vi.mock('../../worker_scratch.ts', () => ({ WorkerScratch: { create: vi.fn() } }));
 afterEach(() => {
@@ -617,6 +620,21 @@ it('bounds a permission barrier when a consumed native frame never reaches the i
   expect(callback).toHaveBeenCalledTimes(1);
   await client.disconnect();
   await next;
+  await pumping();
+});
+
+it('refuses a running CLI whose handshake reports a version below the floor', async () => {
+  const { client, close, pumping } = setup();
+  const scripted = query.getMockImplementation()!;
+  query.mockImplementation((parameters) =>
+    Object.assign(scripted(parameters), {
+      initializationResult: async () => ({ claude_code_version: '2.1.100' }),
+    }),
+  );
+  await expect(client.connect()).rejects.toThrow(
+    'Claude 2.1.100 at /synthetic/claude is too old. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.',
+  );
+  expect(close).toHaveBeenCalled();
   await pumping();
 });
 
