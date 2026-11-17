@@ -3,7 +3,7 @@ import {
   CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
   CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS,
 } from './configuration.ts';
-import { Pending, object, raw_user_message_uuids } from './wire.ts';
+import { Pending, raw_user_message_uuids } from './wire.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 
 interface ObservedUserMessage {
@@ -19,7 +19,6 @@ const terminal = new Set(['completed', ...rejected]);
 export class ClaudeReceipts {
   private readonly user_messages = new Map<string, ObservedUserMessage>();
   private readonly results = new Map<string, Set<string>>();
-  private readonly controls = new Map<string, Pending<Record<string, unknown> | null>>();
 
   watch_user_message(uuid: string): void {
     this.user_messages.set(uuid, {
@@ -73,14 +72,6 @@ export class ClaudeReceipts {
       }
     }
     this.retire();
-    if (message.type === 'control_response' && object(message.response)) {
-      const response = message.response;
-      const pending =
-        typeof response.request_id === 'string'
-          ? this.controls.get(response.request_id)
-          : undefined;
-      pending?.resolve(object(response.response) ? response.response : null);
-    }
   }
   async wait_for_user_message_admission(uuid: string): Promise<boolean | null> {
     const observed = this.user_messages.get(uuid);
@@ -131,26 +122,16 @@ export class ClaudeReceipts {
     }
     await observed.settled.promise;
   }
-  watch_control(request_id: string): Promise<Record<string, unknown> | null> {
-    const pending = new Pending<Record<string, unknown> | null>();
-    this.controls.set(request_id, pending);
-    return pending.promise;
-  }
-  forget_control(request_id: string): void {
-    this.controls.delete(request_id);
-  }
   stream_ended(): void {
     for (const observed of this.user_messages.values()) {
       observed.admission.resolve(null);
       observed.settled.resolve();
     }
     this.retire();
-    for (const pending of this.controls.values()) pending.resolve(null);
   }
   clear(): void {
     this.stream_ended();
     this.user_messages.clear();
     this.results.clear();
-    this.controls.clear();
   }
 }

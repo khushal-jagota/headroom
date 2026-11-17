@@ -1,4 +1,4 @@
-import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { EffortLevel, Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type {
   OwnedChildProcesses,
   OwnedOneShotChildren,
@@ -30,6 +30,8 @@ export interface ClaudeSdkClient {
   user_message_is_settled(user_message_uuid: string): boolean;
   wait_for_user_message_settlement(user_message_uuid: string): Promise<void>;
   interrupt_and_cancel_queued(): Promise<readonly [ReadonlySet<string>, ReadonlySet<string>]>;
+  /** Change the live session's effort without a restart. */
+  apply_reasoning_effort(level: EffortLevel): Promise<void>;
   disconnect(options?: StopOptions): Promise<void>;
   local_child_identity?(): Promise<LocalChildIdentity | null>;
   settled?(): Promise<void>;

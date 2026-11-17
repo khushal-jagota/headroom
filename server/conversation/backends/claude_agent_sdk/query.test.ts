@@ -1,4 +1,4 @@
-/** Manager calls are mocked. The stdin failure case owns one plain Node child. */
+/** Manager calls are mocked. Frames reach the client through a fake SDK Query. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
@@ -12,8 +12,7 @@ import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runti
 import type { BackendEventSink } from '../contracts.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
 import { worker_supervision_fixture } from '../testing/worker_supervision_fixture.ts';
-import { CLAUDE_PERMISSION_ORDER, claude_sdk_client } from './query.ts';
-import { CLAUDE_AGENT_SDK_VERSION } from '../claude_sdk.ts';
+import { claude_sdk_client } from './query.ts';
 import * as claude_sdk from '../claude_sdk.ts';
 
 const { query } = vi.hoisted(() => ({
@@ -108,6 +107,10 @@ function setup_client<T extends object>(
     finish_reader();
     close_child();
   });
+  const interrupt = vi.fn<(options?: { cancelQueued?: boolean }) => Promise<unknown>>(async () => ({
+    cancelled: [],
+    still_queued: [],
+  }));
   query.mockImplementation(({ prompt, options }) => {
     spawned = options!.spawnClaudeCodeProcess!({
       command: '/synthetic/claude',
@@ -137,16 +140,7 @@ function setup_client<T extends object>(
           });
         }
       },
-      interrupt: async () => {
-        spawned.stdin.write(
-          JSON.stringify({
-            type: 'control_request',
-            request_id: 'cancel-id',
-            request: { subtype: 'interrupt', cancel_queued: true },
-          }) + '\n',
-        );
-        return { cancelled: [], still_queued: [] };
-      },
+      interrupt,
       close,
       return: async () => {
         close();
@@ -168,6 +162,7 @@ function setup_client<T extends object>(
     client,
     child,
     close,
+    interrupt,
     finish_reader,
     yield_message,
     fail_reader: (error: unknown) => {
@@ -210,57 +205,43 @@ it('waits for actual stdin completion and does not inherit a Worker containment 
   }
 });
 
-it('pins native permission-order classification to the inspected SDK version', () => {
-  expect(CLAUDE_AGENT_SDK_VERSION).toBe('0.3.316');
-  expect(CLAUDE_PERMISSION_ORDER.sdk_version).toBe(CLAUDE_AGENT_SDK_VERSION);
-  expect(CLAUDE_PERMISSION_ORDER.message_types).toEqual([
-    'assistant',
-    'user',
-    'result',
-    'stream_event',
-    'system',
-    'rate_limit_event',
-    'conversation_reset',
-  ]);
-  expect(CLAUDE_PERMISSION_ORDER.sdk_skipped_types).toEqual([
-    'control_request',
-    'control_response',
-    'control_cancel_request',
-    'keep_alive',
-    'transcript_mirror',
-  ]);
-  expect(CLAUDE_PERMISSION_ORDER.system_subtypes).toContain('init');
-  expect(CLAUDE_PERMISSION_ORDER.system_subtypes).not.toContain('future_extension');
-});
-
-it('cancels before a delayed init frame when the correlated native receipt proves an empty queue', async () => {
-  const { client, child, writes, pumping } = setup();
+it('confirms Stop only from an interrupt receipt that names both queue lists', async () => {
+  const { client, interrupt, pumping } = setup();
   await client.connect();
-  const cancel = client.interrupt_and_cancel_queued();
-  writes.shift()!();
-  child.stdout.write(
-    '{"type":"control_response","response":{"request_id":"cancel-id","response":{"cancelled":[],"still_queued":[]}}}\n',
+  interrupt.mockResolvedValueOnce({ cancelled: ['queued'], still_queued: [] });
+  expect(await client.interrupt_and_cancel_queued()).toEqual([new Set(['queued']), new Set()]);
+  expect(interrupt).toHaveBeenLastCalledWith({ cancelQueued: true });
+  interrupt.mockResolvedValueOnce({ still_queued: [] });
+  interrupt.mockResolvedValueOnce(undefined);
+  interrupt.mockRejectedValueOnce(new Error('control channel closed'));
+  for (let attempt = 0; attempt < 3; attempt += 1)
+    await expect(client.interrupt_and_cancel_queued()).rejects.toThrow(
+      'claude did not confirm queued command cancellation',
+    );
+  vi.useFakeTimers();
+  interrupt.mockReturnValueOnce(new Promise(() => {}));
+  const stalled = expect(client.interrupt_and_cancel_queued()).rejects.toThrow(
+    'claude did not confirm queued command cancellation',
   );
-  expect(await cancel).toEqual([new Set(), new Set()]);
+  await vi.advanceTimersByTimeAsync(5000);
+  await stalled;
+  vi.useRealTimers();
   await client.disconnect();
   await pumping();
 });
 
-it('validates the correlated raw cancel payload before the SDK can filter malformed members', async () => {
-  const { client, child, writes, pumping } = setup();
+it('admits a steer from its lifecycle frame while the adapter is still taking in an earlier message', async () => {
+  const { client, yield_message, pumping } = setup();
   await client.connect();
-  child.stdout.write(
-    '{"type":"system","subtype":"init","capabilities":["interrupt_cancel_queued_v1"]}\n',
-  );
-  const cancel = client.interrupt_and_cancel_queued();
-  const rejected = expect(cancel).rejects.toThrow(
-    'claude did not confirm queued command cancellation',
-  );
-  writes.shift()!();
-  child.stdout.write(
-    '{"type":"control_response","response":{"request_id":"cancel-id","response":{"cancelled":[],"still_queued":[9]}}}\n',
-  );
-  await rejected;
+  const reader = client.receive_messages()[Symbol.asyncIterator]();
+  yield_message({ type: 'assistant', message: { content: [] } });
+  expect((await reader.next()).done).toBe(false);
+  // The adapter is inside take_in and does not pull the next message.
+  client.watch_user_message('steer');
+  yield_message({ type: 'command_lifecycle', command_uuid: 'steer', state: 'queued' });
+  expect(await client.wait_for_user_message_admission('steer')).toBe(true);
+  yield_message({ type: 'command_lifecycle', command_uuid: 'steer', state: 'completed' });
+  await vi.waitFor(() => expect(client.user_message_is_settled('steer')).toBe(true));
   await client.disconnect();
   await pumping();
 });
@@ -390,110 +371,72 @@ it('joins supervision stop when EOF and disconnect overlap and retains scratch u
   expect(scratch.close).toHaveBeenCalledTimes(1);
 });
 
-it('preserves both native assistant/permission orders without waiting for SDK-filtered frames', async () => {
-  for (const assistant_first of [true, false]) {
-    const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
-    const { client, child, yield_message, pumping } = setup({}, callback);
-    await client.connect();
-    const reader = client.receive_messages()[Symbol.asyncIterator]();
-    const first = reader.next();
-    const unknown = { unknown_extension_without_type: true };
-    const assistant = {
-      type: 'assistant',
-      uuid: 'assistant-order',
-      message: { model: 'test', content: [] },
-    };
-    const request = {
-      type: 'control_request',
-      request_id: 'permission-order',
-      request: { subtype: 'can_use_tool' },
-    };
-    const frames = [
-      { type: 'keep_alive' },
-      { type: 'transcript_mirror' },
-      { type: 'system', subtype: 'session_state_changed', sdk_host_only: true },
-      unknown,
-      ...(assistant_first ? [assistant, request] : [request, assistant]),
-    ];
-    child.stdout.write(frames.map((frame) => JSON.stringify(frame) + '\n').join(''));
-    const options = query.mock.calls.at(-1)![0].options!;
-    const permission = options.canUseTool!(
-      'Read',
-      {},
-      { signal: new AbortController().signal, toolUseID: 'call', requestId: 'permission-order' },
-    );
-    yield_message(unknown);
-    yield_message(assistant);
-    expect((await first).value).toEqual(assistant);
-    if (assistant_first) {
-      expect(callback).not.toHaveBeenCalled();
-      const next = reader.next();
-      await permission;
-      expect(callback).toHaveBeenCalledTimes(1);
-      await client.disconnect();
-      await next;
-    } else {
-      // The control request precedes this assistant: its callback does not wait for it.
-      await permission;
-      expect(callback).toHaveBeenCalledTimes(1);
-      const next = reader.next();
-      await client.disconnect();
-      await next;
-    }
-    await pumping();
-  }
-});
+function tool_use_assistant(id: string, parent_tool_use_id: string | null = null) {
+  return {
+    type: 'assistant',
+    parent_tool_use_id,
+    message: { content: [{ type: 'tool_use', id, name: 'Read', input: {} }] },
+  };
+}
+function ask(toolUseID: string, signal = new AbortController().signal) {
+  return query.mock.calls.at(-1)![0].options!.canUseTool!(
+    'Read',
+    {},
+    { signal, toolUseID, requestId: `request-${toolUseID}` },
+  );
+}
 
-it('releases a permission barrier on callback abort and disconnect', async () => {
+it('holds an ask until the adapter has taken in the assistant message with its own tool use', async () => {
   const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
-  const { client, child, yield_message, pumping } = setup({}, callback);
+  const { client, yield_message, pumping } = setup({}, callback);
   await client.connect();
   const reader = client.receive_messages()[Symbol.asyncIterator]();
   const first = reader.next();
-  const assistant = { type: 'assistant', uuid: 'before-abort' };
-  child.stdout.write(
-    JSON.stringify(assistant) +
-      '\n' +
-      JSON.stringify({
-        type: 'control_request',
-        request_id: 'abort-order',
-        request: { subtype: 'can_use_tool' },
-      }) +
-      '\n',
-  );
-  const options = query.mock.calls.at(-1)![0].options!;
-  const abort = new AbortController();
-  const permission = options.canUseTool!(
-    'Read',
-    {},
-    { signal: abort.signal, toolUseID: 'call', requestId: 'abort-order' },
-  );
-  yield_message(assistant);
+  const own = ask('own-call');
+  const subagent = ask('subagent-call');
+  yield_message(tool_use_assistant('other-call'));
   await first;
-  abort.abort();
-  expect(await permission).toEqual({
-    behavior: 'deny',
-    message: 'The turn ended before this was answered.',
-  });
+  const second = reader.next();
+  yield_message(tool_use_assistant('own-call'));
+  await second;
+  // A macrotask drains every microtask, so a released ask would have answered by now.
+  const pending = new Promise<'waiting'>((resolve) => setImmediate(() => resolve('waiting')));
+  // Another tool use was taken in. This one is delivered but not yet taken in.
+  expect(await Promise.race([own.then(() => 'answered'), pending])).toBe('waiting');
   expect(callback).not.toHaveBeenCalled();
-  child.stdout.write(
-    JSON.stringify({
-      type: 'control_request',
-      request_id: 'disconnect-order',
-      request: { subtype: 'can_use_tool' },
-    }) + '\n',
-  );
-  const waiting = options.canUseTool!(
-    'Read',
-    {},
-    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'disconnect-order' },
-  );
+  const third = reader.next();
+  await own;
+  expect(callback).toHaveBeenCalledTimes(1);
+  yield_message(tool_use_assistant('subagent-call', 'parent-task'));
+  await third;
+  const fourth = reader.next();
+  await subagent;
+  expect(callback).toHaveBeenCalledTimes(2);
+  yield_message(tool_use_assistant('earlier-call'));
+  await fourth;
+  const fifth = reader.next();
+  // Its tool use was already taken in, so the ask does not wait.
+  await ask('earlier-call');
+  expect(callback).toHaveBeenCalledTimes(3);
+  await client.disconnect();
+  await fifth;
+  await pumping();
+});
+
+it('denies a waiting ask on callback abort and disconnect', async () => {
+  const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
+  const { client, pumping } = setup({}, callback);
+  await client.connect();
+  const next = client.receive_messages()[Symbol.asyncIterator]().next();
+  const abort = new AbortController();
+  const aborted = ask('abort-call', abort.signal);
+  abort.abort();
+  const denied = { behavior: 'deny', message: 'The turn ended before this was answered.' };
+  expect(await aborted).toEqual(denied);
+  const waiting = ask('disconnect-call');
   const disconnect = client.disconnect();
-  expect(await waiting).toEqual({
-    behavior: 'deny',
-    message: 'The turn ended before this was answered.',
-  });
-  const next = reader.next();
+  expect(await waiting).toEqual(denied);
+  expect(callback).not.toHaveBeenCalled();
   await Promise.all([disconnect, next]);
   await pumping();
 });
@@ -550,71 +493,33 @@ it('fails a later prompt immediately after an owned live child loses stdin', asy
   }
 });
 
-it('does not wait for SDK-unknown frames and releases ordering barriers after a turn result', async () => {
+it('releases a waiting ask after the adapter takes in a turn result', async () => {
   const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
-  const { client, child, yield_message, pumping } = setup({}, callback);
+  const { client, yield_message, pumping } = setup({}, callback);
   await client.connect();
   const reader = client.receive_messages()[Symbol.asyncIterator]();
   const first = reader.next();
-  child.stdout.write(
-    JSON.stringify({ type: 'future_extension' }) +
-      '\n' +
-      JSON.stringify({
-        type: 'control_request',
-        request_id: 'after-unknown',
-        request: { subtype: 'can_use_tool' },
-      }) +
-      '\n',
-  );
-  const options = query.mock.calls.at(-1)![0].options!;
-  await options.canUseTool!(
-    'Read',
-    {},
-    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'after-unknown' },
-  );
-  expect(callback).toHaveBeenCalledTimes(1);
+  const after_result = ask('never-delivered');
   const result = { type: 'result', uuid: 'turn-result' };
-  child.stdout.write(
-    JSON.stringify(result) +
-      '\n' +
-      JSON.stringify({
-        type: 'control_request',
-        request_id: 'after-result',
-        request: { subtype: 'can_use_tool' },
-      }) +
-      '\n',
-  );
-  const after_result = options.canUseTool!(
-    'Read',
-    {},
-    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'after-result' },
-  );
   yield_message(result);
   expect((await first).value).toEqual(result);
+  await Promise.resolve();
+  expect(callback).not.toHaveBeenCalled();
   const next = reader.next();
   expect(await after_result).toEqual({ behavior: 'deny', message: 'scripted' });
-  expect(callback).toHaveBeenCalledTimes(2);
+  expect(callback).toHaveBeenCalledTimes(1);
   await client.disconnect();
   await next;
   await pumping();
 });
 
-it('bounds a permission barrier when a consumed native frame never reaches the iterator', async () => {
+it('bounds a waiting ask whose tool use never reaches the reader', async () => {
   vi.useFakeTimers();
   const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
-  const { client, child, pumping } = setup({}, callback);
+  const { client, pumping } = setup({}, callback);
   await client.connect();
-  const reader = client.receive_messages()[Symbol.asyncIterator]();
-  const next = reader.next();
-  child.stdout.write(
-    '{"type":"assistant"}\n{"type":"control_request","request_id":"lost-frame","request":{"subtype":"can_use_tool"}}\n',
-  );
-  const options = query.mock.calls.at(-1)![0].options!;
-  const answer = options.canUseTool!(
-    'Read',
-    {},
-    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'lost-frame' },
-  );
+  const next = client.receive_messages()[Symbol.asyncIterator]().next();
+  const answer = ask('lost-call');
   await vi.advanceTimersByTimeAsync(5000);
   expect(await answer).toEqual({ behavior: 'deny', message: 'scripted' });
   expect(callback).toHaveBeenCalledTimes(1);
@@ -652,70 +557,6 @@ it('translates only SDK-owned numeric exit failures to the full Python process e
     'Command failed with exit code 7 (exit code: 7)\nError output: Check stderr output for details',
   );
   await client.disconnect();
-  await pumping();
-});
-
-it('preserves native token counts and additional SDK usage fields', async () => {
-  const { client, child, yield_message, pumping } = setup();
-  await client.connect();
-  child.stdout.write(
-    '{"type":"result","uuid":"float-counts","usage":{"input_tokens":5.0,"output_tokens":5e0,"cache_read_input_tokens":7,"cache_creation_input_tokens":11}}\n',
-  );
-  yield_message({
-    type: 'result',
-    uuid: 'float-counts',
-    usage: {
-      input_tokens: 5,
-      output_tokens: 5,
-      cache_read_input_tokens: 7,
-      cache_creation_input_tokens: 3,
-      unrelated: 1.5,
-    },
-  });
-  const result = await client.receive_messages()[Symbol.asyncIterator]().next();
-  expect(result.value).toMatchObject({
-    usage: {
-      input_tokens: 5,
-      output_tokens: 5,
-      cache_read_input_tokens: 7,
-      cache_creation_input_tokens: 11,
-      unrelated: 1.5,
-    },
-  });
-  await client.disconnect();
-  await pumping();
-});
-
-it('reaches the ask callback on an unknown system frame and does not retain its stale target', async () => {
-  const callback = vi.fn(async () => ({ behavior: 'deny' as const, message: 'scripted' }));
-  const { client, child, pumping } = setup({}, callback);
-  await client.connect();
-  const reader = client.receive_messages()[Symbol.asyncIterator]();
-  const next = reader.next();
-  child.stdout.write(
-    '{"type":"assistant"}\n{"type":"control_request","request_id":"before-extension","request":{"subtype":"can_use_tool"}}\n',
-  );
-  const options = query.mock.calls.at(-1)![0].options!;
-  const waiting = options.canUseTool!(
-    'Read',
-    {},
-    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'before-extension' },
-  );
-  await Promise.resolve();
-  expect(callback).not.toHaveBeenCalled();
-  child.stdout.write('{"type":"system","subtype":"future_extension"}\n');
-  expect(await waiting).toEqual({ behavior: 'deny', message: 'scripted' });
-  child.stdout.write(
-    '{"type":"control_request","request_id":"after-extension","request":{"subtype":"can_use_tool"}}\n',
-  );
-  await options.canUseTool!(
-    'Read',
-    {},
-    { signal: new AbortController().signal, toolUseID: 'call', requestId: 'after-extension' },
-  );
-  expect(callback).toHaveBeenCalledTimes(2);
-  await client.disconnect();
-  await next;
   await pumping();
 });
 
