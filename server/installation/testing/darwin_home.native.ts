@@ -61,8 +61,8 @@ const server=createServer(async(req,res)=>{
    if(launching)throw Error('One fixture update at a time');launching=true;
    const input=JSON.parse(readFileSync(join(data,'probe-request.json'),'utf8'));
    const scope={child_processes:children,signal:controller.signal,deadline:performance.now()/1000+120};
-   const home=await current_darwin_home(application,process.execPath,scope,process.env);
-   const ops=create_installer_operations({application_root:application,node_executable:process.execPath,admitted_legacy_null_sha:null,child_processes:children,signal:controller.signal,environment:{...process.env},darwin_home:home});
+   const home=await current_darwin_home(application,scope,process.env);
+   const ops=create_installer_operations({application_root:application,node_executable:process.execPath,child_processes:children,signal:controller.signal,environment:{...process.env},darwin_home:home});
    if(ops.requires_snapshot!==true)throw Error('Mac home updater requires its snapshot');
    await ops.node_schema_steps_pending(database,join(root,'.app-next-'+input.manifest.app_sha));
    const backup=await ops.create_backup(database,join(data,'backups'),revision),now=utc_now();

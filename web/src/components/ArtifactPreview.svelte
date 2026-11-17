@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { RegisterManagedArtifactFrame } from "../lib/managedArtifactPress";
   import { resolvePreview, type ManagedFileTarget } from "../lib/filePreview";
   import FileDocument from "./FileDocument.svelte";
@@ -9,7 +10,8 @@
     registerArtifactFrame,
     element = $bindable(),
     onRefresh,
-    onClose
+    onClose,
+    bar
   }: {
     target: ManagedFileTarget;
     reloadSignal?: number;
@@ -17,6 +19,10 @@
     element?: HTMLElement | null;
     onRefresh: () => void;
     onClose: () => void;
+    /** The controls of what held the link, such as a proposal's note and decisions. Given,
+     *  they stand under the artifact as its own footer, sized by their content, and the
+     *  page's conversation steps aside while the artifact is open. */
+    bar?: Snippet;
   } = $props();
   let resolved = $derived(resolvePreview(target));
 </script>
@@ -27,6 +33,7 @@
   aria-label={resolved.label}
   tabindex="-1"
   bind:this={element}
+  data-artifact-with-bar={bar ? "" : undefined}
 >
   <div class="ticket-artifact-bar">
     <span class="ticket-artifact-name">{resolved.label}</span>
@@ -42,4 +49,9 @@
       <FileDocument retainWhileSelected {target} {reloadSignal} {registerArtifactFrame} />
     </div>
   </div>
+  {#if bar}
+    <div class="ticket-artifact-footer" data-artifact-bar>
+      <div class="ticket-artifact-footer-column">{@render bar()}</div>
+    </div>
+  {/if}
 </aside>

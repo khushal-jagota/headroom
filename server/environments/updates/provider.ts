@@ -14,10 +14,7 @@ import { with_zip_member } from './zip.ts';
 import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
 
-export const TRUSTED_RELEASE_WORKFLOWS: ReadonlyMap<string, 1 | 2> = new Map([
-  ['.github/workflows/deploy.yml', 1],
-  ['.github/workflows/publish-typescript-release.yml', 2],
-]);
+export const TRUSTED_RELEASE_WORKFLOW = '.github/workflows/publish-typescript-release.yml';
 function repository_stream(response: Response, message: string): Readable {
   if (response.body === null) throw new Error(message);
   return Readable.from(
@@ -178,19 +175,13 @@ export class GitHubUpdateProvider implements UpdateProvider {
     }
   }
   async available(): Promise<PublishedUpdate | null> {
-    const runs: Record<string, unknown>[] = [];
-    for (const [workflow, version] of TRUSTED_RELEASE_WORKFLOWS) {
-      const path = `actions/workflows/${workflow.split('/').at(-1)}/runs`;
-      const parameters = { branch: 'main', event: 'push', status: 'success', per_page: '20' };
-      const response =
-        version === 2
-          ? await this.request(path, parameters, true)
-          : await this.request(path, parameters);
-      if (response !== null) {
-        const result = await this.response_json(response);
-        runs.push(...list(result.workflow_runs));
-      }
-    }
+    const response = await this.request(
+      `actions/workflows/${TRUSTED_RELEASE_WORKFLOW.split('/').at(-1)}/runs`,
+      { branch: 'main', event: 'push', status: 'success', per_page: '20' },
+      true,
+    );
+    if (response === null) return null;
+    const runs = list((await this.response_json(response)).workflow_runs);
     const ordered = runs
       .map((run) => ({
         run,
@@ -212,17 +203,15 @@ export class GitHubUpdateProvider implements UpdateProvider {
   }
   async publication(run_id: number): Promise<PublishedUpdate | null> {
     const run = await this.json(`actions/runs/${run_id}`);
-    const contract_version = TRUSTED_RELEASE_WORKFLOWS.get(run.path as string);
     if (
       run.head_branch !== 'main' ||
       run.event !== 'push' ||
       run.conclusion !== 'success' ||
       !is_object(run.head_repository) ||
       run.head_repository.full_name !== this.repository ||
-      contract_version === undefined
+      run.path !== TRUSTED_RELEASE_WORKFLOW
     )
       return null;
-    if (this.target.system === 'darwin' && contract_version !== 2) return null;
     const artifacts = await this.json(`actions/runs/${run_id}/artifacts`, {
       per_page: '100',
     });
@@ -290,8 +279,6 @@ export class GitHubUpdateProvider implements UpdateProvider {
         release.manifest.runtime_contract.role !== 'home')
     )
       throw new Error('Publication runtime target differs from this home');
-    if (release.manifest.runtime_contract.version !== contract_version)
-      throw new Error('This workflow does not publish this runtime contract version.');
     this.publication_cache = release;
     return release;
   }

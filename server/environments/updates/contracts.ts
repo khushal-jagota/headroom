@@ -24,12 +24,6 @@ interface RuntimeBoundary {
   external_executables: string[];
   inventory_sha256: string;
 }
-export interface PythonRuntimeContract extends RuntimeBoundary {
-  version: 1;
-  system: 'linux';
-  architecture: 'x86_64';
-  python_version: string;
-}
 export interface LinuxNodeRuntimeContract extends RuntimeBoundary {
   version: 2;
   system: 'linux';
@@ -49,7 +43,7 @@ export interface DarwinNodeRuntimeContract {
   external_libraries: string[];
 }
 export type NodeRuntimeContract = LinuxNodeRuntimeContract | DarwinNodeRuntimeContract;
-export type RuntimeContract = PythonRuntimeContract | NodeRuntimeContract;
+export type RuntimeContract = NodeRuntimeContract;
 export interface AppManifest {
   app_sha: string;
   source_digest: string;
@@ -134,7 +128,6 @@ export interface InstallerOperations {
   readonly requires_snapshot?: boolean;
   /** Refuse a database off the staged chain. True when the installer must run steps. */
   node_schema_steps_pending(database: string, staged_app: string): boolean | Promise<boolean>;
-  schema_change_pending(database: string, staged_app: string): boolean | Promise<boolean>;
   create_backup(
     database: string,
     backup_directory: string,

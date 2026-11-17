@@ -1,4 +1,4 @@
-/** Existing VPS/Mac update wire channel. The Python Mac archive format stays unchanged. */
+/** Existing VPS/Mac update wire channel. */
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { MacUpdateOperations } from '../contracts.ts';
 import type { UpdateMacReads } from '../routes.ts';

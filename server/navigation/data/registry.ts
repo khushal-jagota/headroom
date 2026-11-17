@@ -144,18 +144,26 @@ export function createNavigationRegistry(): NavigationRegistry {
         if (parent[0] === 'chief' || parent[0] === 'manager')
           add(['totals', parent.map(String).join(':')]);
       };
+      // Totals count addresses. Most conversation changes are new events, which leave the
+      // addresses as they were, so the totals are recounted only when the addresses change.
       for (const root of [...roots.values()])
         if (root[0] === 'conversation') {
-          for (const row of tx.all<{ value: string }>(
-            "SELECT value FROM navigation_records WHERE kind='address' AND json_extract(value,'$.conversation_id')=? ORDER BY id",
+          const stored = tx.all<{ id: string; value: string }>(
+            "SELECT id,value FROM navigation_records INDEXED BY navigation_address_conversation WHERE kind='address' AND json_extract(value,'$.conversation_id')=? ORDER BY id",
             [root[1]],
-          ))
-            addAddressTotals(JSON.parse(row.value));
+          );
           const derived = derive(tx, root, context);
           prepared.set(key(root), derived);
-          for (const record of derived.records)
-            if (record.kind === 'address')
-              addAddressTotals(record.value as unknown as Record<string, unknown>);
+          const addresses = derived.records.filter((record) => record.kind === 'address');
+          const current = new Map(addresses.map((record) => [record.id, compact(record.value)]));
+          if (
+            stored.length === current.size &&
+            stored.every((row) => current.get(row.id) === row.value)
+          )
+            continue;
+          for (const row of stored) addAddressTotals(JSON.parse(row.value));
+          for (const record of addresses)
+            addAddressTotals(record.value as unknown as Record<string, unknown>);
           add(['totals', 'workspace']);
         }
       const upserts: NavigationRecord[] = [],

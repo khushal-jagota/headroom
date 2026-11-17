@@ -99,14 +99,8 @@ test('Mac publication binds source, attempt, Node proof, and sealed TypeScript a
     await expect(validate_mac_publication(root, source, 456, 'failure', execution)).rejects.toThrow(
       'successful native build',
     );
-    // A receipt cannot turn a Python archive into an accepted Node runtime.
-    await mkdir(join(runtime, 'python/bin'), { recursive: true });
-    await writeFile(join(runtime, 'python/bin/python3'), 'legacy executable', { mode: 0o755 });
-    await create({ cwd: runtime, file: archive, gzip: true }, [
-      'python',
-      'server',
-      'mac-runtime.json',
-    ]);
+    // A receipt cannot turn an archive without Node into an accepted runtime.
+    await create({ cwd: runtime, file: archive, gzip: true }, ['server', 'mac-runtime.json']);
     await save({
       ...receipt,
       archive_sha256: await hash_archive(archive),

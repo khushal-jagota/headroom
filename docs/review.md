@@ -11,7 +11,7 @@ Items about one Ticket share a card. A card is as old as its oldest item. Messag
 
 ## How it works
 
-Review reads other records. Membership and order come from the navigation index, which tracks attention without a read of every conversation. Actions use the ordinary writers: decisions use the proposal resolver, replies use Send Message, and read marks update the conversation. Each action clears only what that card showed. The next card is whatever is now oldest.
+Review reads other records. Membership and order come from the navigation index, which tracks attention without a read of every conversation. Actions use the ordinary writers: decisions use the proposal resolver, replies use Send Message, and read marks update the conversation. Each action clears only what that card showed. The card on screen stays that card until the person acts or it leaves. The next card is the oldest one still waiting at that moment, and that choice stays when the queue refreshes.
 
 The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either explicit decision. Text entry never chooses a proposal decision. Both decisions use the displayed proposal revision, so a replacement proposal cannot receive the old decision. Skipping a card defers it for this visit only.
 
@@ -31,7 +31,9 @@ On iPhone, Review and its badge share a snapshot of saved outgoing work. Only ch
 
 Review is a primary destination in the browser, with a count, and the initial tab on iPhone. The final page lets Khushal message Chief and revisit skipped items. Its composer shares Chief’s draft and keeps each send tied to its original destination. Check delivery reads the existing attempt without another send. [Notifications](notifications.md) are a separate path. They tell Khushal that something newly needs him, and link to the Ticket.
 
-A file linked from a proposal opens on its own page. At the bottom, that page shows the proposal's decision area (the note, Send back and Approve) in place of the Worker chat. The note Khushal already wrote carries over. After a decision, or on Back, he returns to Review. A reload of the file page loses the link to the proposal, and the page shows the Worker chat. The iPhone app has its own file viewer and does not show this.
+A file linked from a card opens over that card, inside Review. Under it stand the controls of what held the link: the note, Send it back and Approve for a proposal, or the reply for a message. They are the card's own controls and keep the same note. Close or Escape returns to the card. A decision, reply or Skip moves to the next card and closes the file. A decided card leaves at once, before the queue's refresh confirms it. A reload shows the card without the file. The iPhone app has its own file viewer and does not show this.
+
+The Ticket page follows the same rule. A file linked from its proposal opens with the note and decisions in place of the conversation. A file linked from anywhere else keeps the conversation under it.
 
 ## Decisions that shape it
 
@@ -45,4 +47,4 @@ A file linked from a proposal opens on its own page. At the bottom, that page sh
 - `web/src/routes/ReviewRoute.svelte` and `web/src/components/Review*.svelte`: the pass and its cards.
 - `ios/Panels/Features/Review/`: the native pass and its saved-work snapshot.
 
-_Last verified: 2026-11-15._
+_Last verified: 2026-11-17._

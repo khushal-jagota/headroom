@@ -358,7 +358,7 @@ export function derive(
     const owners = context.ticketOwners
       ? [...(context.ticketOwners.get(id)?.values() ?? [])]
       : sql.all<Row>(
-          'SELECT t.id,t.manager_id,t.conversation_id FROM tickets t LEFT JOIN ticket_conversations tc ON tc.ticket_id=t.id WHERE t.conversation_id=? OR tc.conversation_id=? GROUP BY t.id ORDER BY t.id',
+          'SELECT id,manager_id,conversation_id FROM tickets WHERE conversation_id=? OR id IN (SELECT ticket_id FROM ticket_conversations WHERE conversation_id=?) ORDER BY id',
           [id, id],
         );
     for (const t of owners) {

@@ -11,8 +11,6 @@ export function recognised_panels_workload_role(command: string): string | null 
   const tokens = command.trim().split(/\s+/);
   const executable = tokens[0].split('/').at(-1)!;
   if (['planner', 'panels'].includes(executable) && tokens[1] === 'serve') return 'planner';
-  if (executable.startsWith('python') && tokens.slice(1, 4).join(' ') === '-m planner serve')
-    return 'planner';
   return null;
 }
 export function instant(value: string): bigint {

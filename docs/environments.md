@@ -36,7 +36,7 @@ Eligible Ticket folders use directory descriptors for safe removal on Linux and 
 
 Disposable tests can disable provisioning explicitly and read the existing instance's skills. Test mode alone does not suppress account provisioning.
 
-A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Updates read legacy identities without a Python probe. Its jobs run only during the graphical login session.
+A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Its jobs run only during the graphical login session.
 
 A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes and does not prove preservation of active work. Native process evidence supports local previews and metrics. The Mac executor remains separate. Linux checks do not prove Mac behavior.
 
@@ -65,7 +65,7 @@ The user units in `ops/panels-environments/` cover the live service and two dail
 
 ## TypeScript test server
 
-Run the test server from the Ticket checkout. Its state must stay in the Worker's private `TMPDIR`, outside the deployment tree. The TypeScript test database check and the Python smoke seed reject deployment paths. The production smoke also needs its `--state-root` outside that tree.
+Run the test server from the Ticket checkout. Its state must stay in the Worker's private `TMPDIR`, outside the deployment tree. The TypeScript test database check rejects deployment paths. The production smoke also needs its `--state-root` outside that tree.
 
 From the checkout's `server/` directory, create a private state directory and a fresh, bootstrapped database. The database command refuses an existing file. Choose an available loopback port before the last command. If another process takes the port, choose another and retry.
 
@@ -90,7 +90,7 @@ The command runs the normal server in test mode with an empty environment apart 
 
 ## Ticket scratch
 
-Panels owns each Ticket's workspace. A Project can name its repository directly or contain one repository; the conventional `repository` child also selects it explicitly. On the Mac, a Ticket without a Project gets a plain work folder, independent of repositories in the shared workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. TypeScript Workers start in the Ticket folder on the home and Mac. Their checkout stays inside `worktree/`. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
+Panels owns each Ticket's workspace. A Project can name its repository directly or contain one repository; the conventional `repository` child also selects it explicitly. On the Mac, a Ticket without a Project gets a plain work folder, independent of repositories in the shared workspace. Before repository work starts, it creates the branch and the `worktree/` folder inside that machine's Ticket files folder. The sibling `artifacts/` folder holds documents and evidence. The shared home setup also gives the Ticket folder a `logs/` folder, where the Worker notes problems, and a CLAUDE.md and an AGENTS.md that explain it. Managers get the same home setup (`server/agent_homes/`). TypeScript Workers start in the Ticket folder on the home and Mac. Their checkout stays inside `worktree/`. Workers use the same workspace on later turns. They install dependencies, commit, push, open pull requests, and perform approved merges. They do not create worktrees or remove Ticket files.
 
 New Panels Ticket checkouts are independent partial clones of GitHub's current staging branch. Other repositories use their own origin's default branch. Preparation stops if the remote cannot be cloned. Older linked worktrees stay attached to their original repository until their Tickets end and cleanup removes them.
 
@@ -104,7 +104,7 @@ Tools that follow the temporary environment use this scratch. Commands that name
 
 The checkout stays private. File access and artifact transfers exclude it, and backups already exclude the files tree. Development checks admit only the managed checkout while they continue to reject storage shared with the installed app. Projects without a repository use an ordinary Ticket workspace.
 
-Panels clears a Ticket checkout when the Ticket ends or is deleted, once it can prove the work is on origin and the Worker's custody is closed. Panels relies on its Worker custody proof and does not inspect unrelated processes. Artifacts inside the checkout leave with it. The rest of the Ticket folder, including its separate artifacts folder, remains for seven days after the Ticket ends. The database keeps the end time and ownership after Ticket deletion. A reopened Ticket no longer qualifies. New activity on a Done Ticket starts a fresh seven-day wait for the remaining folder. Grants belong to one physical workspace on one machine. Removal of a server mirror cannot displace the Mac checkout.
+Panels clears a Ticket checkout when the Ticket ends or is deleted, once it can prove the work is on origin and the Worker's custody is closed. Panels relies on its Worker custody proof and does not inspect unrelated processes. Artifacts inside the checkout leave with it. The rest of the Ticket folder, including its separate artifacts folder, remains for seven days after the Ticket ends. Then Panels removes everything in it except `logs/`, so the Ticket folder and its logs stay. The database keeps the end time and ownership after Ticket deletion. A reopened Ticket no longer qualifies. New activity on a Done Ticket starts a fresh seven-day wait for the remaining folder. Grants belong to one physical workspace on one machine. Removal of a server mirror cannot displace the Mac checkout.
 
 Attached checkouts keep their local changes on resume. Server and CLI cleanup share exclusive access to each cleanup pass. Cleanup adopts existing artifact folders without recreating absent paths. It detaches the checkout or expired folder before slow deletion. File preparation precedes the short database transaction that authorizes detach. Stop and backlog do not start the clock. Stage text and proposals survive, but links to deleted documents and evidence no longer work. Existing ended Tickets keep their remaining folders for a full week from adoption because their historical end dates are unknown.
 

@@ -281,6 +281,24 @@ test('reused PIDs do not authorize signals and copied journals cannot certify cl
   expect((await inspect_record(f.path, { runtime: f.runtime })).complete).toBe(false);
 });
 
+test('observation retires exited processes but keeps a live one missing from the stable pair', async () => {
+  const f = await setup();
+  await records.write(f.path, { ...f.record, processes: [process_record(20), process_record(30)] });
+  // The root exited and its child is reparented between the two inventories.
+  let snapshots = 0;
+  vi.spyOn(f.native, 'snapshot').mockImplementation(async () => {
+    const table = new Map(f.native.table);
+    if (f.native.table.has(30))
+      table.set(30, process_record(30, 'birth', snapshots++ % 2 ? 1 : 20));
+    return table;
+  });
+  f.native.table.set(30, process_record(30));
+  expect((await inspect_record(f.path, { runtime: f.runtime })).complete).toBe(false);
+  expect((await records.read(f.path)).processes.map((process) => process.pid)).toEqual([30]);
+  f.native.table.delete(30);
+  expect((await inspect_record(f.path, { runtime: f.runtime })).complete).toBe(true);
+});
+
 test('Linux cleanup escalates after transient TERM evidence failure and leaves sibling Workers alone', async () => {
   let offset = 0;
   const cgroups = new Cgroups();

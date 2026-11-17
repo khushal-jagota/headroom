@@ -1,6 +1,6 @@
 # Mac outbox storage seam
 
-`OutboxStore` preserves Python's SQLite outbox format. Items carry no files. The file sync in `transport/ticket_files.ts` sends Ticket files apart from them.
+`OutboxStore` keeps the existing SQLite outbox format. Items carry no files. The file sync in `transport/ticket_files.ts` sends Ticket files apart from them.
 It does not validate complete wire shapes, construct delivery batches, or send HTTP.
 The shared generated types own the wire contract. The later host still needs runtime codecs.
 

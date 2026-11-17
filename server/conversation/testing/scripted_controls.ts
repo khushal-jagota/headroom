@@ -119,6 +119,9 @@ export function scriptedConversationControls(
           ticket_choice_fault.close();
           await pending.close();
           await terminal.close();
+          // HTTP close runs beside the core's shutdown, which detaches each scripted
+          // child. Terminate only the children that remain after that shutdown.
+          await core.settled().catch(() => {});
           await registry.close();
         });
         const settle = () => core.wait_until_quiescent();

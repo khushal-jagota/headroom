@@ -57,7 +57,7 @@ Formerly **Panels**. The app and command-line tool still use the `panels` name.
 ## Run locally
 
 For a sealed release, use the [one-command home installer](ops/mac-home/installation.md) on Apple Silicon Mac or Linux x86_64.
-Use the [join command](ops/mac-executor/installation.md) to add an extra machine to that home.
+Use the [join command](ops/linux-executor/installation.md) to add an extra Linux machine to that home.
 
 For a source checkout, follow the commands below.
 
@@ -102,4 +102,4 @@ The map, with one line for each page, is [docs/README.md](docs/README.md).
 
 ## Development
 
-The backend is TypeScript on Node with Fastify and SQLite, in [`server/`](server/README.md); the browser app is Svelte/Vite in `web/`. The Mac keeps the earlier Python runtime in `src/planner/` as its emergency rollback. Start with [`AGENTS.md`](AGENTS.md) for code ownership, the checks, and the working rules.
+The backend is TypeScript on Node with Fastify and SQLite, in [`server/`](server/README.md); the browser app is Svelte/Vite in `web/`. Start with [`AGENTS.md`](AGENTS.md) for code ownership, the checks, and the working rules.

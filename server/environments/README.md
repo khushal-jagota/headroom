@@ -86,7 +86,7 @@ New snapshots include skills and Worker settings. They leave Ticket files outsid
 Legacy snapshots still restore their recorded files. A later managed-root failure does not undo the database replacement.
 
 The build-time [schema generator](../core/database/tools/generate_seed.ts) writes the schema seed and migration graph: the frozen Python baseline in `core/database/python_baseline/` plus the TypeScript schema steps.
-Runtime bootstrap creates fresh identities and uses the existing domain writers. It requires no Python interpreter.
+Runtime bootstrap creates fresh identities and uses the existing domain writers.
 The staging fixture uses those writers for its fictional projects, Managers, Tickets, notes, and image.
 Its navigation starts at the prepared schema version. Normal server publication performs the runtime upgrade.
 Bootstrap creates only new isolated fixture/test databases and never upgrades an existing application database.
@@ -98,7 +98,7 @@ node server/core/database/tools/generate_seed.ts
 node server/core/database/tools/generate_seed.ts --check
 ```
 
-CI runs `--check`. It refuses a hand edit of the seed or graph, Python migration drift (the baseline graph no longer matches `src/planner/core/migrations/versions`), and a chain that does not start at the baseline head.
+CI runs `--check`. It refuses a hand edit of the seed or graph, and a chain that does not start at the baseline head.
 The chain holds one step, `ts_0001_open_backend_keys`, so the live files differ from the baseline.
 The baseline is frozen, and nothing in the repository rewrites it. Schema changes are TypeScript schema steps only.
 The JSON stores DDL and the exact revision, without seeded data or shared identities.

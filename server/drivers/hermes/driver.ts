@@ -10,6 +10,7 @@ export const hermes_driver: AgentDriver<null> = {
   driver_kind: parse_driver_kind('hermes'),
   client: hermes_client,
   manifest: hermes_manifest,
+  home_instructions_file: 'AGENTS.md',
   config: NO_DRIVER_CONFIG,
   models: hermes_models,
   async create(input, host) {
