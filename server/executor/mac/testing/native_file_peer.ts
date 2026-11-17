@@ -14,7 +14,7 @@ export function native_file_peer(credential: string, incarnation: string) {
   return {
     async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
       const path = request.url?.split('?')[0];
-      if (path !== file_peer_download && path !== `/api/executor/uploads/${file_peer_digest}`)
+      if (path !== file_peer_download && path !== `/api/executor/ticket-files/${file_peer_digest}`)
         return false;
       assert.equal(request.headers['x-panels-executor-id'], 'test-executor');
       assert.equal(request.headers['x-panels-executor-credential'], credential);
@@ -37,23 +37,16 @@ export function native_file_peer(credential: string, incarnation: string) {
         assert.equal(request.headers['content-encoding'], undefined);
         const descriptor = request.headers['x-panels-file-upload'];
         assert.equal(typeof descriptor, 'string');
-        const upload = decode_bounded(
+        const manifest = decode_bounded(
           Buffer.from(descriptor as string, 'base64url'),
-          'FileUploadRequest',
+          'FileManifest',
         );
-        assert.deepEqual(upload, {
-          child: {
-            executor_incarnation: incarnation,
-            child_id: 'rehearsal-child',
-            conversation_id: 'rehearsal-files',
-          },
-          manifest: {
-            scope: 'ticket',
-            owner_id: 'rehearsal-ticket',
-            relative_path: 'artifacts/rehearsal.bin',
-            sha256: file_peer_digest,
-            byte_count: file_peer_bytes.length,
-          },
+        assert.deepEqual(manifest, {
+          scope: 'ticket',
+          owner_id: 'rehearsal-ticket',
+          relative_path: 'artifacts/rehearsal.bin',
+          sha256: file_peer_digest,
+          byte_count: file_peer_bytes.length,
         });
         const chunks: Buffer[] = [];
         let count = 0;

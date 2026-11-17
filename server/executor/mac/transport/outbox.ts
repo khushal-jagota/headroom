@@ -1,5 +1,4 @@
 /** Ordered durable delivery with bounded attempts and fair conversation rotation. */
-import { join } from 'node:path';
 import {
   observe_shutdown,
   is_shutdown_business_cancellation,
@@ -7,9 +6,7 @@ import {
 import { observe_promise } from '../../../core/promise_observer.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { decode_value, encode_bounded, ExecutorValidationError } from '../../protocol.ts';
-import { file_manifest_key as manifest_key } from '../../file_manifest.ts';
-import { is_record as is_json_object } from '../../../core/records.ts';
+import { encode_bounded } from '../../protocol.ts';
 import type {
   AcceptanceReceipt,
   ItemBatch,
@@ -26,11 +23,9 @@ import {
   OUTBOX_RETRY_MAX_SECONDS,
 } from '../configuration.ts';
 import type { MacHttpClient } from './http.ts';
-import type { MacFileTransport } from './files.ts';
 import { ExecutorHttpError } from './errors.ts';
 
 interface ConversationSending {
-  readonly uploaded: Map<string, Set<string>>;
   retry_at: number;
   delay: number;
   attempt: number;
@@ -46,11 +41,9 @@ export interface OutboxSenderOptions {
     | 'acknowledge'
     | 'pending_events'
     | 'delivery_started'
-    | 'refuse_file'
     | 'fail_delivery'
   >;
   readonly client: Pick<MacHttpClient, 'post_items'>;
-  readonly files: Pick<MacFileTransport, 'upload_file'>;
   readonly notify_confirmed: (receipt: AcceptanceReceipt) => void;
   readonly warn: (message: string) => void;
   readonly on_failure: (error: unknown) => void;
@@ -63,24 +56,12 @@ function diagnostic(error: unknown): string {
   if (error instanceof RetryLater) return `retry_later: ${error.message}`;
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
-function unavailable_blob(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = (error as NodeJS.ErrnoException).code;
-  return (
-    ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'ELOOP'].includes(code ?? '') ||
-    (error instanceof ExecutorValidationError &&
-      /^(snapshot (shorter than|exceeds|digest differs from) manifest|artifact is not regular file)$/.test(
-        error.message,
-      ))
-  );
-}
 
 export class MacOutboxSender {
   private readonly options: OutboxSenderOptions;
   private readonly cancellation = new AbortController();
   private readonly senders = new Map<string, Promise<void>>();
   private readonly states = new Map<string, ConversationSending>();
-  private readonly transfers = new Set<Promise<unknown>>();
   private readonly failures = new Set<unknown>();
   private task: Promise<void> | undefined;
   private closed = false;
@@ -121,7 +102,7 @@ export class MacOutboxSender {
       if (batch.items.length && size + bytes > MAX_ITEM_BATCH_BYTES) break;
       batch.items.push(item);
       size += bytes;
-      if (envelope.kind !== 'backend_event' || envelope.file_dependencies?.length) break;
+      if (envelope.kind !== 'backend_event') break;
     }
     return batch.items.length ? batch : null;
   }
@@ -151,18 +132,12 @@ export class MacOutboxSender {
     this.options.warn(
       `Outbox item failed conversation=${envelope.conversation_id} sequence=${envelope.sequence} attempt=${state.attempt} outcome=${outcome}: ${reason}`,
     );
-    state.uploaded.delete(envelope.submission_id);
     state.delay = OUTBOX_RETRY_INITIAL_SECONDS;
     state.retry_at = 0;
     state.attempt = 0;
     state.last_error = null;
   }
-  private async apply_reply(
-    batch: ItemBatch,
-    reply: ItemBatchReply,
-    state: ConversationSending,
-    signal: AbortSignal,
-  ): Promise<void> {
+  private async apply_reply(batch: ItemBatch, reply: ItemBatchReply): Promise<void> {
     const { store, notify_confirmed } = this.options;
     if (reply.receipts.length > batch.items.length) throw new Error('Too many outbox receipts.');
     for (let index = 0; index < reply.receipts.length; index++) {
@@ -174,15 +149,8 @@ export class MacOutboxSender {
         receipt.submission_id,
         receipt.sender_id,
         Buffer.from(encode_bounded(receipt, 'AcceptanceReceipt', { limit: MAX_ITEM_BATCH_BYTES })),
-        receipt.disposition === 'accepted',
-        (envelope.file_dependencies ?? []).map((file) => ({
-          ticket_id: file.owner_id,
-          relative_path: file.relative_path,
-          sha256: file.sha256,
-        })),
         () => notify_confirmed(receipt),
       );
-      state.uploaded.delete(receipt.submission_id);
     }
     const stop = reply.stop;
     if (stop == null) {
@@ -194,66 +162,8 @@ export class MacOutboxSender {
     if (!envelope || envelope.sequence !== stop.sequence)
       throw new Error('Outbox stop is outside this batch.');
     if (stop.reason === 'retry_later') throw new RetryLater(stop.message);
-    const uploaded = state.uploaded.get(envelope.submission_id) ?? new Set<string>();
-    state.uploaded.set(envelope.submission_id, uploaded);
-    const missing = stop.missing_files ?? [];
-    if (!missing.some((file) => !uploaded.has(manifest_key(file)))) {
-      state.uploaded.delete(envelope.submission_id);
-      throw new Error('Outbox file negotiation made no progress.');
-    }
-    const snapshots = new Map(
-      (envelope.file_dependencies ?? []).map((file) => [manifest_key(file), file]),
-    );
-    const direct = envelope.payload.child;
-    const child = decode_value(
-      is_json_object(direct)
-        ? direct
-        : is_json_object(envelope.payload.ask)
-          ? envelope.payload.ask.child
-          : null,
-      'ChildReference',
-    );
-    for (const file of missing) {
-      signal.throwIfAborted();
-      const key = manifest_key(file);
-      if (!snapshots.has(key)) throw new Error('VPS requested a file outside this item.');
-      try {
-        const transfer = this.options.files.upload_file(
-          { manifest: file, child },
-          join(store.root, 'blobs', file.sha256),
-          signal,
-        );
-        const actual = transfer.then(
-          () => {},
-          () => {},
-        );
-        this.transfers.add(actual);
-        void actual.finally(() => this.transfers.delete(actual));
-        const observed = await observe_promise(transfer, signal);
-        if (!observed.completed) signal.throwIfAborted();
-      } catch (error) {
-        if (signal.aborted) throw error;
-        if (error instanceof ExecutorHttpError && [400, 403, 404].includes(error.status)) {
-          await this.settle_failure(envelope, state, diagnostic(error), 'refused');
-          return;
-        }
-        if (unavailable_blob(error)) {
-          const reason = `${file.relative_path}: ${diagnostic(error)}`;
-          await store.refuse_file(
-            envelope.submission_id,
-            { ticket_id: file.owner_id, relative_path: file.relative_path, sha256: file.sha256 },
-            reason,
-          );
-          this.options.warn(
-            `Outbox file refused conversation=${envelope.conversation_id} sequence=${envelope.sequence}: ${reason}`,
-          );
-          uploaded.delete(key);
-          continue;
-        }
-        throw error;
-      }
-      uploaded.add(key);
-    }
+    // Items carry no files, so the home has nothing to request from this sender.
+    throw new Error('Outbox stop requests files that no item carries.');
   }
   private async send_batch(conversation_id: string, state: ConversationSending): Promise<void> {
     const batch = this.batch(conversation_id);
@@ -283,7 +193,7 @@ export class MacOutboxSender {
         signal,
       );
       if (!observed.completed) signal.throwIfAborted();
-      else await this.apply_reply(batch, observed.value, state, signal);
+      else await this.apply_reply(batch, observed.value);
       state.delay = OUTBOX_RETRY_INITIAL_SECONDS;
       state.retry_at = 0;
       state.attempt = 0;
@@ -348,7 +258,6 @@ export class MacOutboxSender {
       for (const [id] of waiting)
         if (!this.states.has(id))
           this.states.set(id, {
-            uploaded: new Map(),
             retry_at: 0,
             delay: OUTBOX_RETRY_INITIAL_SECONDS,
             attempt: 0,
@@ -393,11 +302,7 @@ export class MacOutboxSender {
     return observe_shutdown(this.settled(), options, 'Mac outbox delivery remains unfinished.');
   }
   async settled(): Promise<void> {
-    const results = await Promise.allSettled([
-      this.task,
-      ...this.senders.values(),
-      ...this.transfers,
-    ]);
+    const results = await Promise.allSettled([this.task, ...this.senders.values()]);
     for (const result of results)
       if (
         result.status === 'rejected' &&

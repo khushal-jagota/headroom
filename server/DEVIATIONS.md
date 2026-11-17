@@ -204,6 +204,13 @@ A damaged derived generation is preserved under a private `.invalid-*` name and 
 No source or provider user data is discarded by the rebuild.
 The Mac host does not collect unreferenced generations or abandoned stages.
 
+## Ticket files travel apart from items
+
+Khushal approved this redesign on November 17, 2026, in the Ticket "Redesign how Mac Workers send Ticket files to the home".
+Items carry no files. The executor's file sync sends the Ticket's `artifacts/` folder on its own path, and it also removes deleted files from the home.
+A message can therefore arrive before a file it links. Files outside `artifacts/` no longer transfer.
+The home keeps the earlier item-bound upload and publication for an executor that still runs the earlier version. The spool format and the item wire format do not change.
+
 ## CLI TLS trust
 
 The migration Manager accepted Node's built-in default trust store for the CLI.

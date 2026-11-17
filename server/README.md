@@ -81,6 +81,8 @@ A step receives the same transaction capability as a state transition. It must n
 
 ## Test selection and current boundaries
 
+The ten browser checks in `tests/e2e/*.spec.ts` run against this server. `typescript-backend.yml` runs them on schedule or by hand. Each test builds its database with `server/installation/database_main.ts`, supplies private homes, and passes a bound listener. Tests that need scripted backends or `/api/test` routes start `server/test_host.ts`; the others start `server/main.ts`, which in test mode runs no conversation system.
+
 Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. The installer runs schema steps; startup never does. Embedded `startServer` has unavailable catalog/sign-in providers by default, while an explicit normal-mode embedding still permits generic machine probes. It is not a claim that all machine I/O is disabled.
 
 `worker_supervision` supplies durable custody records, bounded cleanup, and the pre-execution bootstrap. Codex, Claude, and Hermes share the invocation's runtime and process owners. Explicit Worker starts use P4's scratch helper and report supervision before spawn, then exact identity before startup succeeds. Cleanup retains scratch until retirement is proven. Linux uses pidfds and delegated cgroup identities. New macOS Workers use individual launchd jobs with durable domain and label identities. Historical Mac PID records retain exact birth checks. Journals preserve device and inode integers exactly. Durable conversation custody remains a later binding. [Conversations](../docs/conversations.md#worker-processes) describes the complete Worker behavior.

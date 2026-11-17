@@ -38,7 +38,9 @@ Only the original configured executor can request bootstrap credentials, with no
 | GET | `/api/executor/commands` | Current executor's bounded mailbox poll |
 | POST | `/api/executor/commands/outcomes` | Current executor's typed command outcomes; stop success still needs exact proof |
 | POST | `/api/executor/conversations/:conversation_id/items` | Ordered durable intake and item receipts |
-| PUT | `/api/executor/uploads/:sha256` | Authorized child's digest-named raw upload into private staging |
+| PUT | `/api/executor/uploads/:sha256` | Authorized child's digest-named raw upload into private staging, for an executor from before the file sync |
+| PUT | `/api/executor/ticket-files/:sha256` | File sync: one file version for the `artifacts/` folder of a Ticket that belongs to this machine |
+| DELETE | `/api/executor/ticket-files/:sha256` | File sync: remove one file from that folder |
 | GET | `/api/executor/commands/:command_id/files/:stored_file_id` | Authorized input of a waiting or delivered command |
 | POST | `/api/executor/reads` | Allowlisted application read as the assigned principal |
 | POST | `/api/executor/conversations/:conversation_id/live` | Transient events for the exact current child |
@@ -114,7 +116,7 @@ Hashing and copying use asynchronous file operations with 256 KiB blocks and saf
 
 FileStaging is constructed before the inbox. An upload's held source parent and checked leaf pass through the inbox's second authorization into staging installation. The parent remains owned through cleanup, even if its former pathname changes. A later authorized inbox item publishes staged bytes through bounded synchronous rename groups inside the writer, after authority and version rechecks. Every source and destination parent opens before that writer. Exclusive hold links are created in retained destination parents before publication, then removed asynchronously with directory flushes after success or partial failure. Destination parents remain held through the receipt's unchanged-version check.
 
-Executor uploads refuse private Ticket names at the first path segment. Mac capture skips those names only at the Ticket root. Both boundaries use the file system's shared `PRIVATE_TICKET_NAMES` set. Nested artifact names remain valid.
+Executor uploads refuse private Ticket names at the first path segment. The file sync sends only the `artifacts` folder. Both boundaries use the file system's shared `PRIVATE_TICKET_NAMES` set. Nested artifact names remain valid.
 
 Hard-link holds defer overwritten-inode cleanup until after the publication writer.
 A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
@@ -127,6 +129,15 @@ Input bytes stay below the standard message store beside the logical database-pa
 The transfer owner seals new intake at stop and joins admitted transfers through the shared grace period. The supplied request/media signal controls physical stream cancellation at the existing cutoff. Stop adds no grace timer and does not close an unconsumed input immediately.
 
 Uploads require an `UploadSource` with a real `destroy` capability. The HTTP route supplies its owned request Readable. On stall or cancellation, the owner destroys that source before it calls iterator return. It closes and unlinks the incoming file before it joins the real source cleanup. Actual settlement retains every admitted syscall, stream and unexpected cleanup failure.
+
+### File sync
+
+An executor sends each Ticket's `artifacts/` folder through the two `ticket-files` routes, apart from every inbox item. No child, conversation, receipt, or publication guard takes part.
+`VpsExecutor` admits the current incarnation and checks that the Ticket belongs to the sending machine, before intake and again before the rename.
+`VpsFiles.save_ticket_file` streams the body into private staging without hashing on the main thread. `FileHasher` then hashes the held file on its own worker thread, once.
+Matching bytes move into the served Ticket folder with one rename through retained parents. A mismatch, a path outside `artifacts/`, or a private name is a validation refusal.
+`remove_ticket_file` unlinks one regular file and removes the folders that this leaves empty, up to `artifacts`.
+The earlier staging upload and item-bound publication remain only for an executor that still runs the earlier version.
 
 ## VPS command mailbox
 

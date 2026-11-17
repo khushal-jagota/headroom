@@ -1,6 +1,6 @@
 # Mac outbox storage seam
 
-`OutboxStore` keeps the existing SQLite outbox format and immutable blobs.
+`OutboxStore` keeps the existing SQLite outbox format. Items carry no files. The file sync in `transport/ticket_files.ts` sends Ticket files apart from them.
 It does not validate complete wire shapes, construct delivery batches, or send HTTP.
 The shared generated types own the wire contract. The later host still needs runtime codecs.
 
@@ -17,48 +17,37 @@ Sequences, lengths, and counters use safe number values. Private filesystem time
 Startup loads pending sequence columns and retains local delivery diagnostics. Pending reads return at most 32 rows, optionally for one conversation.
 The waiting-conversation read returns at most 65 ordered rows, so the host can expose 64 and detect truncation.
 
-`append(columns, payload, files, updates, validate)` writes the item and index in one transaction.
+`append(columns, payload, validate)` writes the item in one transaction. It reads no Ticket file, so a large folder cannot delay it.
 The event value and receipt bytes remain unchanged.
 For byte admission, storage reads the valid local `{payload,files}` wrapper and projects an `ItemSubmission` through the shared generated types.
 Native `JSON.stringify` measures the projected message size.
 The required host validator owns complete schema and admission checks.
 Serialization occurs outside the writer. The allocated sequence width completes the 1 MiB check inside the transaction, even with a no-op validator.
 The required synchronous validator still performs the host's complete wire validation before commit.
-A repeated submission ID returns the held row. The host checks this before capture, so a duplicate add returns early.
+A repeated submission ID returns the held row.
 
-`with_capture(ticket, callback)` serializes that Ticket's captures and protects blobs through the callback's commit.
-The callback receives local file-index rows and must synchronously encode and append.
-Only its admitted append remains available if shutdown begins during capture. Asynchronous callbacks are refused.
-The worker copies and hashes changed sources once, checks before/after metadata, and flushes bytes before publication.
-Unreadable or changing sources are skipped. Destination errors refuse publication.
-Recent modification times keep the `-1` cache marker.
-Neither file hashing nor copying runs on the main thread or inside the database writer.
+`note_ticket_activity(ticket)` tells the file sync that a Ticket's files can differ.
+`ticket_files` records the file versions that the home confirmed. `home_files`, `record_home_file`, and `forget_home_file` read and change it for the file sync.
+A recent modification time keeps the `-1` marker, so the next pass hashes that file again.
+At startup, a file that still waited on an item from an older runtime leaves that record, so the file sync sends it. The old `blobs` copies are deleted.
 
 `acknowledge` requires validated receipt facts and encoded bytes from the host.
 The transaction retains CLI receipts, deletes other confirmed items, and clears confirmed rows for a stopped child.
-Rows with local delivery failures or file refusals remain for diagnosis, including after restart and child cleanup.
-The confirmed callback runs after commit and before blob cleanup. Cleanup failure cannot strand its waiter.
-Refused file keys invalidate matching cache rows while other pending items retain their blob references.
+Rows with local delivery failures remain for diagnosis, including after restart and child cleanup.
+The confirmed callback runs after commit.
 
-The local payload wrapper also stores delivery start time, file refusals, and terminal local failure reasons.
+The local payload wrapper also stores delivery start time and terminal local failure reasons.
 The first delivery attempt persists its wall-clock time so a restart cannot renew the delivery budget.
-`refuse_file` removes one dependency from both the wrapper and its file index, records the reason, and preserves the event.
-`fail_delivery` preserves failed content, available blobs, and the supplied local receipt, removes the item from pending delivery, and invalidates its Ticket file cache.
+`fail_delivery` preserves failed content and the supplied local receipt, and removes the item from pending delivery.
 `delivery_status` exposes retained failure counts and a reason independently of lease health.
 These facts preserve the submitted event, item wire format, and SQLite spool schema.
 
-An asynchronous empty-directory check precedes the reference join for sweeping.
-After that check, storage rechecks capture activity before it queues deletion through a retained parent.
-Startup sweeps unreferenced spool blobs and interrupted capture temporaries. Pending items and retained local failures protect their referenced blobs.
-This does not cover other artifact or update directories.
-A capture-finally cleanup failure logs once and leaves blobs for a later sweep. It does not reject an append that already committed.
-
 Worker loss seals admission, and every write checks worker health synchronously before its transaction.
-Stop drains admitted captures and confirmations, closes SQLite, then releases the worker and main-owned lock.
+Stop drains admitted confirmations, closes SQLite, then releases the worker and main-owned lock.
 If database close fails, resources stay owned and `settled()` stays pending. A later stop retries close.
 After every resource closes, `settled()` rejects retained fatal faults and physical cleanup failures, including a close failure before a successful retry.
 A rejected child actual join still permits the root to close its remaining database, worker, and lock.
-Ordinary request refusals and the accepted deferred-capture cleanup policy do not become fatal shutdown history.
+Ordinary request refusals do not become fatal shutdown history.
 The shared deadline observes actual cleanup without replacing it.
 Its typed deadline failure does not enter actual failure history. Other child stop failures remain visible even if the child's actual join succeeds.
 The root joins both results before final settlement. Clean late cleanup succeeds without a renewed budget.

@@ -402,8 +402,6 @@ test('an observed resource fault rolls back a blocked journal transaction before
     f.owner.append(
       { submission_id: 'late', conversation_id: 'c', child_id: 'child', kind: 'cli_write' },
       Buffer.from('{"payload":{},"files":[]}'),
-      [],
-      [],
       () => {},
     ),
   ).toThrow();

@@ -56,6 +56,7 @@ export function file_fixture(database: Database, path: string) {
       if (principal.kind !== 'ticket' || principal.id !== upload.manifest.owner_id)
         throw new PlannerError('agent_forbidden', 'artifact belongs to another Ticket');
     },
+    ticket_file_target: (manifest) => staging.file_target(manifest),
     async store_upload(upload, source, options) {
       await inbox.authorize_upload(upload);
       await staging.store_upload(upload.manifest, source, options);

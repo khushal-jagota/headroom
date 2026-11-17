@@ -1,0 +1,14 @@
+{
+  "name": "panels-browser-gates",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "check": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@types/node": "22.19.3",
+    "typescript": "5.9.3"
+  }
+}
