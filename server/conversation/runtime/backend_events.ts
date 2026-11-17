@@ -12,7 +12,12 @@ import {
   ModelThinkingHappened,
   ToolCallProgress,
 } from '../backends/contracts.ts';
-import type { BackendEventSink, BackendEventValue, TurnToken } from '../backends/contracts.ts';
+import type {
+  BackendChild,
+  BackendEventSink,
+  BackendEventValue,
+  TurnToken,
+} from '../backends/contracts.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { LifecycleKind as K } from '../record/lifecycle.ts';
 import { interpret_backend_event } from '../logic/backend_events.ts';
@@ -73,6 +78,7 @@ export async function take_backend_event_with_receipt(
   };
   let drain = false;
   let applied = false;
+  let broken_child: BackendChild | null = null;
   let lost_background_tasks: readonly string[] = [];
   const background_task_news =
     event instanceof BackgroundTaskStarted ||
@@ -303,6 +309,21 @@ export async function take_backend_event_with_receipt(
       host.options.emit_change?.();
       drain = true;
     }
+    // Rule 4: a broken local child takes no further prompt. Hold new work until it is stopped.
+    if (
+      live &&
+      options.in_commit === undefined &&
+      event instanceof TurnEnded &&
+      event.child_disposition === 'broken' &&
+      options.expected_sink !== undefined &&
+      state.child_event_sink === options.expected_sink &&
+      state.child !== null &&
+      !state.child.stop_outside_lock
+    ) {
+      state.child_is_quarantined = true;
+      broken_child = state.child;
+      drain = false;
+    }
     if (live && event instanceof TurnEnded && event.ending === 'failed') {
       const sequence = result.written.at(-1)?.sequence ?? null;
       console.error(
@@ -317,6 +338,16 @@ export async function take_backend_event_with_receipt(
   }
   if (applied) tell_agent_about_lost_background_tasks(host, state, lost_background_tasks);
   if (drain) host.schedule_drain(state);
+  // Stop outside the lease, so a long stop does not block the conversation's other work.
+  if (broken_child !== null)
+    void own_settlement(state, host.discard_child(state, broken_child))
+      .then(() => host.schedule_drain(state))
+      .catch((error: unknown) =>
+        console.error(
+          `conversation ${state.record.conversation_id} could not retire its broken child`,
+          error,
+        ),
+      );
   return accepted;
 }
 
