@@ -74,8 +74,10 @@ export function an_answer_is_already_waiting(
 export function ticket_ids_holding_an_unanswered_memory_loss(sql: ReadSql): string[] {
   return sql
     .all<{ id: string }>(
-      `SELECT id FROM tickets
-    WHERE worker_step_claim='out' AND conversation_id IS NOT NULL`,
+      // A claimed Ticket is never done: filing a proposal gives the claim back, and direct
+      // completion refuses a claimed Ticket. The stage index skips done Tickets' large rows.
+      `SELECT id FROM tickets INDEXED BY idx_tickets_stage
+    WHERE (stage<'done' OR stage>'done') AND worker_step_claim='out' AND conversation_id IS NOT NULL`,
     )
     .filter((row) => ticket_needs_memory_notice(sql, row.id))
     .map((row) => row.id);
