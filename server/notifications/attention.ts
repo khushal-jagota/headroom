@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { capture_gate } from '../attention/history.ts';
 import { optional_edge_context_json } from './context.ts';
@@ -33,7 +34,10 @@ export interface ConversationAttentionSnapshot {
   pending_permission_ask_ids: ReadonlySet<string>;
   pending_user_input_request_ids: ReadonlySet<string>;
   errored: boolean;
+  /** The later of the conversation's creation and its newest event. */
   occurred_at: number;
+  /** The newest event's time, or the creation time when there are no events. */
+  latest_event_at: number;
 }
 export const NOTHING_WAITING: ConversationAttention = {
   unread_message: false,
@@ -47,6 +51,11 @@ interface AttentionEvent {
   ask_id?: string;
   request_id?: string;
   ending?: string;
+}
+export interface AttentionEventRecord {
+  sequence: number;
+  created_at: number;
+  payload: AttentionEvent;
 }
 function advance_pending(permission: Set<string>, input: Set<string>, event: AttentionEvent): void {
   if (event.kind === 'turn_ended') {
@@ -64,127 +73,193 @@ function advance_pending(permission: Set<string>, input: Set<string>, event: Att
   )
     input.delete(event.request_id);
 }
-export function conversation_attention_snapshot(
-  sql: ReadSql,
-  conversation_id: string,
-): ConversationAttentionSnapshot | null {
-  const row = sql.get<{
-    latest_sequence: number;
-    owner_read_through_sequence: number;
-    created_at: number;
-    error_acknowledged_through_sequence: number;
-  }>(
-    `SELECT c.latest_sequence,c.owner_read_through_sequence,c.created_at,
-      COALESCE(a.through_sequence,0) error_acknowledged_through_sequence
-     FROM conversations c LEFT JOIN conversation_error_acknowledgements a
-       ON a.conversation_id=c.conversation_id WHERE c.conversation_id=?`,
-    [conversation_id],
-  );
-  if (!row) return null;
-  const permission = new Set<string>();
-  const input = new Set<string>();
-  let latest_message_sequence = 0;
-  let errored = false;
-  let occurred_at = row.created_at;
-  for (const event of sql.all<{
-    sequence: number;
-    kind: string;
-    payload: string;
-    created_at: number;
-  }>(
-    `SELECT sequence,kind,payload,created_at FROM conversation_events
-     WHERE conversation_id=? ORDER BY sequence`,
-    [conversation_id],
-  )) {
-    const payload = { ...JSON.parse(event.payload), kind: event.kind } as AttentionEvent;
-    occurred_at = Math.max(occurred_at, event.created_at);
-    if (event.kind === 'message_to_owner') latest_message_sequence = event.sequence;
+/** The one fold from events to attention. A replay and an advance both use it. */
+function fold_events(
+  snapshot: ConversationAttentionSnapshot,
+  events: Iterable<AttentionEventRecord>,
+): ConversationAttentionSnapshot {
+  const permission = new Set(snapshot.pending_permission_ask_ids);
+  const input = new Set(snapshot.pending_user_input_request_ids);
+  let { latest_sequence, latest_message_sequence, errored, occurred_at, latest_event_at } =
+    snapshot;
+  let first = latest_sequence === 0;
+  for (const { sequence, created_at, payload } of events) {
+    latest_sequence = sequence;
+    occurred_at = Math.max(occurred_at, created_at);
+    latest_event_at = first ? created_at : Math.max(latest_event_at, created_at);
+    first = false;
+    if (payload.kind === 'message_to_owner') latest_message_sequence = sequence;
     advance_pending(permission, input, payload);
-    if (event.sequence > row.error_acknowledged_through_sequence) {
-      if (event.kind === 'prompt') errored = false;
-      else if (event.kind === 'turn_ended') errored = payload.ending === 'failed';
+    if (sequence > snapshot.error_acknowledged_through_sequence) {
+      if (payload.kind === 'prompt') errored = false;
+      else if (payload.kind === 'turn_ended') errored = payload.ending === 'failed';
     }
   }
   return {
-    conversation_id,
-    latest_sequence: row.latest_sequence,
-    owner_read_through_sequence: row.owner_read_through_sequence,
-    error_acknowledged_through_sequence: row.error_acknowledged_through_sequence,
+    ...snapshot,
+    latest_sequence,
     latest_message_sequence,
     pending_permission_ask_ids: permission,
     pending_user_input_request_ids: input,
     errored,
     occurred_at,
+    latest_event_at,
   };
 }
-export function conversation_attention_snapshot_is_current(
-  sql: ReadSql,
-  snapshot: ConversationAttentionSnapshot,
-): boolean {
-  const row = sql.get<{
-    latest_sequence: number;
-    owner_read_through_sequence: number;
-    through_sequence: number;
-  }>(
-    `SELECT c.latest_sequence,c.owner_read_through_sequence,COALESCE(a.through_sequence,0) through_sequence
+interface AttentionHead {
+  database_file: string;
+  latest_sequence: number;
+  owner_read_through_sequence: number;
+  created_at: number;
+  error_acknowledged_through_sequence: number;
+  last_kind: string | null;
+  /** A digest, so a kept head does not hold a large payload in memory. */
+  last_payload_digest: string | null;
+  last_created_at: number | null;
+}
+/** One indexed row: the conversation, its acknowledgement, and its newest event. */
+function attention_head(sql: ReadSql, conversation_id: string): AttentionHead | undefined {
+  const row = sql.get<Omit<AttentionHead, 'last_payload_digest'> & { last_payload: string | null }>(
+    `SELECT (SELECT file FROM pragma_database_list WHERE name='main') database_file,
+      c.latest_sequence,c.owner_read_through_sequence,c.created_at,
+      COALESCE(a.through_sequence,0) error_acknowledged_through_sequence,
+      e.kind last_kind,e.payload last_payload,e.created_at last_created_at
      FROM conversations c LEFT JOIN conversation_error_acknowledgements a
-       ON a.conversation_id=c.conversation_id WHERE c.conversation_id=?`,
-    [snapshot.conversation_id],
+       ON a.conversation_id=c.conversation_id
+     LEFT JOIN conversation_events e
+       ON e.conversation_id=c.conversation_id AND e.sequence=c.latest_sequence
+     WHERE c.conversation_id=?`,
+    [conversation_id],
   );
+  if (!row) return undefined;
+  const { last_payload, ...head } = row;
+  return {
+    ...head,
+    last_payload_digest:
+      last_payload === null ? null : createHash('sha256').update(last_payload).digest('base64'),
+  };
+}
+interface KeptAttention {
+  snapshot: ConversationAttentionSnapshot;
+  head: AttentionHead;
+}
+/**
+ * The last attention state of each conversation this process saw, keyed by database file
+ * and conversation. Each use compares it with the database head, so a rolled-back write
+ * or another writer causes a replay, not a stale answer.
+ */
+const kept_attention = new Map<string, KeptAttention>();
+function kept_key(head: AttentionHead, conversation_id: string): string {
+  return `${head.database_file}\0${conversation_id}`;
+}
+function same_head(kept: AttentionHead, head: AttentionHead): boolean {
   return (
-    !!row &&
-    row.latest_sequence === snapshot.latest_sequence &&
-    row.owner_read_through_sequence === snapshot.owner_read_through_sequence &&
-    row.through_sequence === snapshot.error_acknowledged_through_sequence
+    kept.latest_sequence === head.latest_sequence &&
+    kept.created_at === head.created_at &&
+    kept.error_acknowledged_through_sequence === head.error_acknowledged_through_sequence &&
+    kept.last_kind === head.last_kind &&
+    kept.last_created_at === head.last_created_at &&
+    kept.last_payload_digest === head.last_payload_digest
   );
 }
+/** The full replay from history, without the kept state. */
+export function replay_conversation_attention(
+  sql: ReadSql,
+  conversation_id: string,
+  head: AttentionHead | undefined = attention_head(sql, conversation_id),
+): ConversationAttentionSnapshot | null {
+  if (!head) return null;
+  const events = sql.all<{ sequence: number; kind: string; payload: string; created_at: number }>(
+    `SELECT sequence,kind,payload,created_at FROM conversation_events
+     WHERE conversation_id=? ORDER BY sequence`,
+    [conversation_id],
+  );
+  return fold_events(
+    {
+      conversation_id,
+      latest_sequence: 0,
+      owner_read_through_sequence: head.owner_read_through_sequence,
+      error_acknowledged_through_sequence: head.error_acknowledged_through_sequence,
+      latest_message_sequence: 0,
+      pending_permission_ask_ids: new Set(),
+      pending_user_input_request_ids: new Set(),
+      errored: false,
+      occurred_at: head.created_at,
+      latest_event_at: head.created_at,
+    },
+    (function* () {
+      // Parse one event at a time, so the parsed history is never all in memory.
+      for (const event of events)
+        yield {
+          sequence: event.sequence,
+          created_at: event.created_at,
+          payload: { ...JSON.parse(event.payload), kind: event.kind } as AttentionEvent,
+        };
+    })(),
+  );
+}
+/** Current attention from the kept state, replaying the history only when it is stale. */
+export function conversation_attention_snapshot(
+  sql: ReadSql,
+  conversation_id: string,
+): ConversationAttentionSnapshot | null {
+  const head = attention_head(sql, conversation_id);
+  if (!head) return null;
+  const key = kept_key(head, conversation_id);
+  const kept = kept_attention.get(key);
+  if (kept && same_head(kept.head, head))
+    return { ...kept.snapshot, owner_read_through_sequence: head.owner_read_through_sequence };
+  const snapshot = replay_conversation_attention(sql, conversation_id, head)!;
+  kept_attention.set(key, { snapshot, head });
+  return snapshot;
+}
+function attention_of(snapshot: ConversationAttentionSnapshot): ConversationAttention {
+  return {
+    unread_message: snapshot.latest_message_sequence > snapshot.owner_read_through_sequence,
+    pending_ask: !!(
+      snapshot.pending_permission_ask_ids.size || snapshot.pending_user_input_request_ids.size
+    ),
+    errored: snapshot.errored,
+    latest_sequence: snapshot.latest_sequence,
+    occurred_at: snapshot.occurred_at,
+  };
+}
+/** Advances a snapshot with the events just written, and keeps the result for the next write. */
 export function advance_conversation_attention(
+  sql: ReadSql,
   snapshot: ConversationAttentionSnapshot,
-  payloads: readonly AttentionEvent[],
+  written: readonly AttentionEventRecord[],
   options: { owner_read_through_sequence: number; occurred_at: number },
 ): ConversationAttention {
-  const permission = new Set(snapshot.pending_permission_ask_ids);
-  const input = new Set(snapshot.pending_user_input_request_ids);
-  let latest_message_sequence = snapshot.latest_message_sequence;
-  let errored = snapshot.errored;
-  payloads.forEach((payload, index) => {
-    if (payload.kind === 'message_to_owner')
-      latest_message_sequence = snapshot.latest_sequence + index + 1;
-    advance_pending(permission, input, payload);
-    if (payload.kind === 'prompt') errored = false;
-    else if (payload.kind === 'turn_ended') errored = payload.ending === 'failed';
-  });
+  const advanced = {
+    ...fold_events(snapshot, written),
+    owner_read_through_sequence: options.owner_read_through_sequence,
+  };
+  const head = attention_head(sql, snapshot.conversation_id);
+  if (head && head.latest_sequence === advanced.latest_sequence)
+    kept_attention.set(kept_key(head, snapshot.conversation_id), { snapshot: advanced, head });
   return {
-    unread_message: latest_message_sequence > options.owner_read_through_sequence,
-    pending_ask: !!(permission.size || input.size),
-    errored,
-    latest_sequence: snapshot.latest_sequence + payloads.length,
-    occurred_at: Math.max(snapshot.occurred_at, options.occurred_at),
+    ...attention_of(advanced),
+    occurred_at: Math.max(advanced.occurred_at, options.occurred_at),
   };
 }
 export function conversation_attention(
   sql: ReadSql,
   conversation_id?: string,
 ): Map<string, ConversationAttention> {
-  const rows = sql.all<{ conversation_id: string; occurred_at: number }>(
-    `SELECT c.conversation_id,COALESCE(MAX(e.created_at),c.created_at) occurred_at
-     FROM conversations c LEFT JOIN conversation_events e ON e.conversation_id=c.conversation_id
-     ${conversation_id === undefined ? '' : 'WHERE c.conversation_id=?'}
-     GROUP BY c.conversation_id ORDER BY c.conversation_id`,
-    conversation_id === undefined ? [] : [conversation_id],
-  );
+  const ids =
+    conversation_id === undefined
+      ? sql
+          .all<{
+            conversation_id: string;
+          }>('SELECT conversation_id FROM conversations ORDER BY conversation_id')
+          .map((row) => row.conversation_id)
+      : [conversation_id];
   const result = new Map<string, ConversationAttention>();
-  for (const row of rows) {
-    const snapshot = conversation_attention_snapshot(sql, row.conversation_id)!;
-    result.set(row.conversation_id, {
-      unread_message: snapshot.latest_message_sequence > snapshot.owner_read_through_sequence,
-      pending_ask: !!(
-        snapshot.pending_permission_ask_ids.size || snapshot.pending_user_input_request_ids.size
-      ),
-      errored: snapshot.errored,
-      latest_sequence: snapshot.latest_sequence,
-      occurred_at: row.occurred_at,
-    });
+  for (const id of ids) {
+    const snapshot = conversation_attention_snapshot(sql, id);
+    if (snapshot)
+      result.set(id, { ...attention_of(snapshot), occurred_at: snapshot.latest_event_at });
   }
   return result;
 }
