@@ -56,6 +56,9 @@ export function create_claude_cleanup_fixture() {
       user_message_is_settled: () => true,
       wait_for_user_message_settlement: async () => {},
       interrupt_and_cancel_queued: async () => [new Set<string>(), new Set<string>()],
+      async apply_reasoning_effort(level) {
+        client.effort = level;
+      },
       async disconnect() {
         cleanup_entered = true;
         await cleanup.promise;

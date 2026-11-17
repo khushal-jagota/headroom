@@ -6,7 +6,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { observe_shutdown } from '../../shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
-import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { EffortLevel, Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import * as B from '../contracts.ts';
 import type { ResolvedConversationStart, PromptDeliveryMode, AnswerFate } from '../../contracts.ts';
 import {
@@ -79,6 +79,17 @@ interface PromptOptions {
   reasoning_effort_change: string | null;
   automatic_compaction?: boolean;
   reasoning_effort_is_set?: boolean;
+}
+// A level the SDK no longer names fails to compile. A new SDK level still restarts.
+const LIVE_REASONING_EFFORTS: ReadonlySet<string> = new Set([
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] satisfies readonly EffortLevel[]);
+function is_live_reasoning_effort(value: string): value is EffortLevel {
+  return LIVE_REASONING_EFFORTS.has(value);
 }
 type UserContentBlock = Exclude<SDKUserMessage['message']['content'], string>[number];
 type Base64ImageSource = Extract<
@@ -220,18 +231,37 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
         failed_child_recovery: true,
       });
   }
-  private require_carried_values(options: PromptOptions): void {
+  /** Return the effort to apply to the live session, or null when it already carries it. */
+  private require_carried_values(options: PromptOptions): EffortLevel | null {
     if (options.model_change !== null && options.model_change !== this.session_model)
       throw new B.NeedsRebind(
         `claude takes its model when the child starts, so ${JSON.stringify(options.model_change)} needs a child started on it`,
       );
+    const change = options.reasoning_effort_change;
     if (
-      (options.reasoning_effort_change !== null || options.reasoning_effort_is_set) &&
-      options.reasoning_effort_change !== this.session_reasoning_effort
+      (change === null && !options.reasoning_effort_is_set) ||
+      change === this.session_reasoning_effort
     )
+      return null;
+    // A live reset returns to the model default, not the user's settings, so clearing restarts.
+    if (change === null || !is_live_reasoning_effort(change))
       throw new B.NeedsRebind(
-        `claude takes its reasoning effort when the child starts, so ${JSON.stringify(options.reasoning_effort_change)} needs a child started on it`,
+        `claude takes this reasoning effort when the child starts, so ${JSON.stringify(change)} needs a child started on it`,
       );
+    return change;
+  }
+  private async apply_reasoning_effort(
+    client: ClaudeSdkClient,
+    reasoning_effort: EffortLevel | null,
+  ): Promise<void> {
+    if (reasoning_effort === null) return;
+    try {
+      await client.apply_reasoning_effort(reasoning_effort);
+    } catch (error) {
+      this.wire_broken = true;
+      throw new B.PromptWriteFailed(error_text(error));
+    }
+    this.session_reasoning_effort = reasoning_effort;
   }
   private is_catalog_command(content: MessageContent): boolean {
     return (
@@ -301,7 +331,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
-    this.require_carried_values(options);
+    const reasoning_effort = this.require_carried_values(options);
     const client = this.connected_client();
     this.require_live_wire();
     const native_command =
@@ -324,6 +354,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     }
     if (automatic || native_command) {
       const asked = await this.query_argument(delivered);
+      await this.apply_reasoning_effort(client, reasoning_effort);
       this.turn = new TurnInFlight(turn_token, automatic);
       try {
         await client.query(asked);
@@ -335,6 +366,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     }
     const uuid = randomUUID();
     const asked = await this.query_argument(delivered, uuid);
+    await this.apply_reasoning_effort(client, reasoning_effort);
     const turn = new TurnInFlight(turn_token);
     this.turn = turn;
     client.watch_user_message(uuid);

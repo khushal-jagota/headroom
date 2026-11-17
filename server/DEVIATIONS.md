@@ -856,3 +856,18 @@ custody comparison. Focused launch tests check the real request and prompt paths
 The home Worker abort comparison likewise asserts the stored Ticket launch folder
 and the explicit checkout prompt before it normalizes only those two differences.
 The remaining conversation rows and abort custody compare exactly with Python.
+
+## Claude SDK single read and live effort
+
+TypeScript gives the Claude child's stdout straight to the SDK. Panels no longer reads each line first.
+A malformed JSON stdout line no longer ends the child. The SDK skips it.
+The Panels 4 MiB stdout line cap is gone. Stderr keeps its existing line bound.
+Panels drains the SDK messages into its own queue as they arrive. Steer admission and settlement read that queue's receipts, so a slow save never holds them.
+Stop reads the receipt that the SDK returns for the interrupt. The SDK drops non-string members from that receipt.
+Panels therefore no longer refuses Stop on a malformed queued uuid. A receipt without both lists still refuses.
+A permission ask waits until Panels has taken in the assistant message holding its own tool use.
+It no longer counts frames. The wait keeps its five-second bound and still ends on abort, cleanup, stream close, and a turn result.
+An effort change to a named level on a live session applies with `applyFlagSettings`, without a restart.
+Clearing effort still restarts the child, because a live reset returns to the model default rather than the user's settings.
+A model change still restarts the child. Python restarts the child for every effort change.
+The scripted comparison CLI's malformed Stop receipt now omits `cancelled`, which both servers refuse.

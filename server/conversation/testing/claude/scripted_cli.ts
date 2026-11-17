@@ -289,7 +289,8 @@ input.on('line', (line) => {
       });
       if (initDelayed) log({ kind: 'system-init-withheld' });
     } else if (message.request.subtype === 'interrupt') {
-      const cancelled = malformedCancel ? [null] : message.request.cancel_queued ? [...queued] : [];
+      // The SDK drops malformed members, so a malformed receipt omits `cancelled`.
+      const cancelled = malformedCancel ? [] : message.request.cancel_queued ? [...queued] : [];
       const still_queued = message.request.cancel_queued ? [] : [...queued];
       log({
         kind: 'interrupt',
@@ -297,12 +298,10 @@ input.on('line', (line) => {
         cancelled,
         still_queued,
       });
-      answer(message, { cancelled, still_queued });
+      answer(message, malformedCancel ? { still_queued } : { cancelled, still_queued });
       for (const uuid of cancelled) {
-        if (uuid !== null) {
-          queued.delete(uuid);
-          lifecycle(uuid, 'cancelled');
-        }
+        queued.delete(uuid);
+        lifecycle(uuid, 'cancelled');
       }
       pending.clear();
       setImmediate(() => {
