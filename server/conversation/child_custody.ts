@@ -24,6 +24,8 @@ import type {
 import { BackendCommands } from './snapshot/commands.ts';
 import { control_retained_with_timeout } from './worker_unit/control.ts';
 
+/** Marks a generation whose driver reports a supervision record before it spawns a child. */
+export const SUPERVISED_CHILD_GENERATION_PREFIX = 'supervised-';
 const UNIT = /^panels-worker-[0-9a-f]{32}\.service$/;
 const PROPERTIES =
   '--property=LoadState,ActiveState,SubState,Result,MainPID,ControlGroup,Slice,KillMode';
@@ -71,6 +73,9 @@ export class LocalChildCustody implements LocalChildCustodyInspection {
       if (row.state === 'launch_pending') {
         if (row.supervision_record !== null)
           return this.inspect_supervision(row.supervision_record, undefined, { deadline });
+        // A marked driver reports its record before it spawns, so a marked row without one never
+        // spawned. Callers judge only rows no launch of this process is still writing.
+        if (row.generation.startsWith(SUPERVISED_CHILD_GENERATION_PREFIX)) return true;
         const current = (await this.#runtime.context(deadline)).host;
         return row.boot !== null && current.host === row.host && current.boot !== row.boot;
       }

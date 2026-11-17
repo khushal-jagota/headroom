@@ -150,7 +150,10 @@ export interface DeliveryServices {
   ): Promise<void>;
   readonly options: ConversationCoreOptions;
   readonly shutting_down: boolean;
-  make_sink(state: import('./state.ts').ConversationState): CoreBackendEventSink;
+  make_sink(
+    state: import('./state.ts').ConversationState,
+    options?: { supervised_launch?: boolean },
+  ): CoreBackendEventSink;
   ensure_local_custody(state: import('./state.ts').ConversationState): Promise<void>;
   record_local_child_preparation(
     state: import('./state.ts').ConversationState,

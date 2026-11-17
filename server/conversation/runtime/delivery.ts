@@ -47,6 +47,7 @@ import { uncertain_row, refused_row, prompt_row } from './messages.ts';
 import { field_mutation } from './save_attempt.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { wait_for_item } from '../../executor/item_budget.ts';
+import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../child_custody.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
@@ -93,9 +94,14 @@ async function ensure_child(
     model: target.model!,
     reasoning_effort: target.reasoning_effort,
   });
-  const sink = host.make_sink(state);
+  const instance = host.options.backend_registry.require_live(resolved.backend_key);
+  // The factory may still return a remote child. A remote child writes no custody row, so its
+  // marked generation is never judged.
+  const sink = host.make_sink(state, {
+    supervised_launch: instance.supervises_local_launches === true,
+  });
   state.child_event_sink = sink;
-  const child = host.options.backend_registry.require_live(resolved.backend_key).child_factory({
+  const child = instance.child_factory({
     resolved_start: resolved,
     event_sink: sink,
     message_files: host.options.message_files,
@@ -135,6 +141,27 @@ async function ensure_child(
   if (host.shutting_down || state.reserved_turn !== reservation) {
     if (!host.shutting_down || !child.stop_outside_lock) await host.discard_child(state, child);
     throw new DeliveryCancelled();
+  }
+  // A marked row without a record reads as never spawned after a restart, so a child that broke
+  // that promise is stopped while its handle is still here. A cancelled launch was stopped above.
+  if (!child.stop_outside_lock && sink.generation.startsWith(SUPERVISED_CHILD_GENERATION_PREFIX)) {
+    let recorded: string | null = null;
+    try {
+      recorded = host.options.store.local_child_supervision_record(
+        state.record.conversation_id,
+        sink.generation,
+      );
+    } finally {
+      if (recorded === null) {
+        state.child = child;
+        state.child_is_quarantined = true;
+        await host.discard_child(state, child);
+      }
+    }
+    if (recorded === null)
+      throw new BackendSpawnFailed(
+        'the agent started without a supervision record, so Panels stopped it',
+      );
   }
   state.child = child;
   state.child_selection = {

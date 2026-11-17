@@ -58,6 +58,8 @@ export interface DriverInstance {
   readonly allowance_usage?: BackendUsageAdapter;
   readonly transcript_usage?: TranscriptUsageSource;
   readonly sign_in?: DriverSignInController;
+  /** Every local child reports a supervision record before `start()` resolves. */
+  readonly supervises_local_launches?: boolean;
   /** How a running child takes a new model or effort. Must not use `this`: callers spread instances. */
   plan_selection_transition(input: SelectionTransitionInput): SelectionTransitionPlan;
   /** Must not rely on `this`: callers may spread an instance. May be called again. */
