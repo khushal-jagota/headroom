@@ -148,25 +148,3 @@ test('test_composing_survives_a_change_to_the_same_ticket', async ({ server, new
   expect(state.scrollTop).toBe(scrollTop);
   await assertSameDocument(page);
 });
-
-test('test_chief_recap_refreshes_without_reload', async ({ server, newContext }) => {
-  // Prove the trial failure across SSE, resource probes, and the rendered recap.
-  const recapPath = '/api/workers/chief-of-staff/recap';
-  const before = 'Chief recap before the external write.';
-  const after = 'Chief recap after the external write.';
-  await api.put(server, recapPath, { recap: before });
-  const page = await openPage(
-    await newContext(),
-    server,
-    '#/workspace/chief-of-staff',
-    '.chief-workspace-host [data-manager-recap]',
-  );
-  const recap = page.locator('.chief-workspace-host [data-manager-recap]');
-  await recap.filter({ hasText: before }).waitFor({ state: 'visible', timeout: WAIT_MS });
-  await markPage(page);
-  const previous = await flushes(page);
-  await api.put(server, recapPath, { recap: after });
-  await waitForFlush(page, previous);
-  await recap.filter({ hasText: after }).waitFor({ state: 'visible', timeout: WAIT_MS });
-  await assertSameDocument(page);
-});

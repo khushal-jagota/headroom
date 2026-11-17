@@ -100,11 +100,7 @@ export async function agentHeaders(
   const started = withDatabase(server, (db) =>
     db.read((tx) => tx.get('SELECT 1 FROM conversations WHERE conversation_id=?', [conversation])),
   );
-  // The test host runs a conversation system, so the record starts through its route.
-  // Test-mode server/main.ts runs none and mounts no conversation routes, so the record
-  // is written directly: the launch token needs only the canonical association.
-  const writeRecord = started === undefined && server.host === 'main';
-  if (started === undefined && !writeRecord) {
+  if (started === undefined) {
     const answer = await post(server, '/api/conversation/conversations', {
       conversation_id: conversation,
       backend_key: 'codex',
@@ -114,11 +110,6 @@ export async function agentHeaders(
   }
   const token = withDatabase(server, (db) => {
     db.write((tx) => {
-      if (writeRecord)
-        tx.run(
-          'INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,identity_environment_variables,access,created_at) VALUES(?,?,?,?,?,?,?)',
-          [conversation, 'codex', 'gpt-6.1-sol', process.cwd(), '[]', 'full', 1],
-        );
       if (actor === 'worker') {
         tx.run('INSERT OR IGNORE INTO ticket_conversations(conversation_id,ticket_id) VALUES(?,?)', [
           conversation,
