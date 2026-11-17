@@ -2,9 +2,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
-import { dirname, join } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 import { createDatabaseFromSeed } from '../../../core/database/index.ts';
 import type { ApplicationSchemaSeed } from '../../../core/database/contracts.ts';
@@ -30,13 +29,8 @@ import {
   WorkspacePathPolicy,
   PromptDeliveryStarted,
 } from '../../../conversation/contracts.ts';
-import {
-  MessageFile,
-  MessageText,
-  text_message_content,
-} from '../../../conversation/message_content.ts';
+import { MessageText, text_message_content } from '../../../conversation/message_content.ts';
 import type { MessageContent } from '../../../conversation/message_content.ts';
-import { ConversationMessageFiles } from '../../../conversation/record/message_files.ts';
 import { create_ticket, write_ticket_conversation_start } from '../../../tickets/data/index.ts';
 
 /** One deadline bounds a fixture observation. Production owns every operation and process. */
@@ -112,7 +106,6 @@ export async function start_native_server() {
   const endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)!;
   assert.ok(endpoint);
   const credential = issue_original_credential(context.database, randomUUID()).credential;
-  const files = new ConversationMessageFiles(path);
   return {
     address: server.address,
     context,
@@ -120,7 +113,6 @@ export async function start_native_server() {
     registry,
     endpoint,
     credential,
-    message_files: files,
     diagnostics() {
       return {
         health: endpoint.health_payload(),
@@ -160,7 +152,6 @@ export async function start_native_server() {
     async create_turn(
       backend: 'claude' | 'codex',
       content: MessageContent = text_message_content('[CASE:plain]'),
-      attachment?: Uint8Array,
     ) {
       const conversation_id = 'native_' + backend + '_' + randomUUID().replaceAll('-', '');
       const model = backend === 'claude' ? 'haiku' : 'gpt-6.1-sol';
@@ -206,18 +197,6 @@ export async function start_native_server() {
           now: context.clock.nowUnix(),
         }),
       );
-      if (attachment) {
-        const kept = await files.keep(conversation_id, attachment, { media_type: 'text/plain' });
-        content = [
-          ...content,
-          new MessageFile({
-            stored_file_id: kept.stored_file_id,
-            media_type: kept.media_type,
-            byte_count: kept.byte_count,
-            file_name: 'native-input.txt',
-          }),
-        ];
-      }
       const fate = await core.send(conversation_id, content, { sender_label: 'owner' });
       assert.ok(
         fate instanceof PromptDeliveryStarted,
@@ -261,9 +240,6 @@ export async function start_native_server() {
       );
       return events;
     },
-    async wait_for_turn(conversation_id: string) {
-      return this.turn_result(conversation_id);
-    },
     async active_stop(conversation_id: string, claude_trace: string) {
       const fate = await core.send(conversation_id, text_message_content('[CASE:interrupt-base]'), {
         sender_label: 'owner',
@@ -288,82 +264,6 @@ export async function start_native_server() {
         ),
       );
     },
-    async files(options: {
-      root: string;
-      runtime: string;
-      environment: NodeJS.ProcessEnv;
-      claude_trace: string;
-      command: (args: string[]) => Promise<unknown>;
-    }) {
-      const expected = Buffer.from('native transfer: \u03bb and \u96ea\n');
-      const turn = await this.create_turn(
-        'claude',
-        text_message_content('native file transfer'),
-        expected,
-      );
-      await this.turn_result(turn.conversation_id);
-      const events = context.record.store.read_events_after(turn.conversation_id, 0);
-      const prompt = events.find((event) => event.payload.kind === 'prompt');
-      assert.ok(prompt && prompt.payload.kind === 'prompt');
-      const piece = prompt.payload.content.find((item) => item instanceof MessageFile);
-      assert.ok(piece instanceof MessageFile);
-      assert.deepEqual(
-        await readFile(
-          join(
-            options.root,
-            'artifacts/files/conversations',
-            turn.conversation_id,
-            piece.stored_file_id,
-          ),
-        ),
-        expected,
-      );
-      const launch = await wait_until(
-        async () =>
-          (await readFile(options.claude_trace, 'utf8'))
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => JSON.parse(line)),
-        (rows) =>
-          rows.some(
-            (row) =>
-              row.kind === 'launch' &&
-              row.environment.PLAN_CONVERSATION_ID === turn.conversation_id,
-          ),
-      );
-      const identity = launch.find(
-        (row) =>
-          row.kind === 'launch' && row.environment.PLAN_CONVERSATION_ID === turn.conversation_id,
-      ).environment;
-      const relative_path = 'artifacts/native-upload.txt';
-      const artifact = join(options.root, 'artifacts/tickets', turn.ticket_id, relative_path);
-      await mkdir(dirname(artifact), { recursive: true });
-      await writeFile(artifact, expected);
-      const ipc = await import(
-        pathToFileURL(join(options.runtime, 'server/executor/mac/ipc_client.ts')).href
-      );
-      const response = await ipc.request(
-        'write',
-        {
-          operation: 'ticket.propose',
-          arguments: {
-            ticket_id: turn.ticket_id,
-            body: { body: `[Native upload](/files/tickets/${turn.ticket_id}/${relative_path})` },
-          },
-        },
-        { ...options.environment, ...identity },
-      );
-      assert.equal(response.error, null);
-      assert.equal(response.unconfirmed, undefined);
-      await this.verify_upload(turn.ticket_id, relative_path, expected);
-      const saved = context.database.read((sql) =>
-        sql.get<{ pending_proposal: string }>('SELECT pending_proposal FROM tickets WHERE id=?', [
-          turn.ticket_id,
-        ]),
-      );
-      assert.ok(saved?.pending_proposal?.includes('Native upload'));
-      await this.stop_turn(turn.conversation_id);
-    },
     async stop_turn(conversation_id: string) {
       await core.interrupt(conversation_id);
       await wait_until(
@@ -371,22 +271,6 @@ export async function start_native_server() {
         (running) => !running,
       );
       await core.kill(conversation_id);
-    },
-    async verify_upload(ticket_id: string, relative_path: string, expected: Uint8Array) {
-      const target = join(dirname(path), 'files', 'tickets', ticket_id, relative_path);
-      const bytes = await wait_until(
-        async () => {
-          try {
-            return await readFile(target);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-            throw error;
-          }
-        },
-        (value) => value !== null,
-      );
-      assert.deepEqual(bytes, Buffer.from(expected));
-      return target;
     },
     async stop() {
       await server.close({ deadline: performance.now() / 1000 + 30 });

@@ -12,6 +12,7 @@ import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
 import { mac_installation_paths } from '../platform.ts';
+import { native_file_peer, file_peer_bytes, file_peer_digest } from './native_file_peer.ts';
 import { native_failure_snapshot } from './native_failure_snapshot.ts';
 import { credential_path, write_credential } from '../../credential_file.ts';
 
@@ -55,6 +56,7 @@ let server:
 let app: ReturnType<ChildProcesses['spawn']> | undefined;
 let app_closed: Promise<unknown> | undefined;
 let proxy_target = '';
+let file_peer: ReturnType<typeof native_file_peer> | undefined;
 const traffic = createWriteStream(join(evidence, 'https-requests.jsonl'));
 const traffic_closed = once(traffic, 'finish');
 let request_number = 0;
@@ -64,7 +66,7 @@ const proxy = createServer(
     key: await readFile(join(root, 'tls/key.pem')),
     cert: await readFile(join(root, 'tls/cert.pem')),
   },
-  (incoming, outgoing) => {
+  async (incoming, outgoing) => {
     const request_started = performance.now();
     const request_id = ++request_number;
     traffic.write(
@@ -87,6 +89,14 @@ const proxy = createServer(
         }) + '\n',
       );
     });
+    if (file_peer) {
+      try {
+        if (await file_peer.handle(incoming, outgoing)) return;
+      } catch (error) {
+        outgoing.writeHead(500).end(String(error));
+        return;
+      }
+    }
     if (!proxy_target) {
       outgoing.writeHead(503).end();
       return;
@@ -250,14 +260,37 @@ try {
     else await server.stop_turn(turn.conversation_id);
     steps[`${backend}_turn_and_stop`] = 'passed';
   }
-  await server.files({
-    root: paths.state,
-    command,
-    runtime: paths.supervisor,
+  const identity = server.endpoint.presence.current_identity();
+  assert.ok(identity);
+  file_peer = native_file_peer(server.credential, identity.executor_incarnation);
+  const transfer_root = join(root, 'transfers');
+  await mkdir(transfer_root);
+  const transfer_input = join(transfer_root, 'input.json');
+  await writeFile(
+    transfer_input,
+    JSON.stringify({
+      runtime: paths.supervisor,
+      root: transfer_root,
+      origin,
+      identity,
+      credential_path: credential_path(paths.state),
+      sha256: file_peer_digest,
+      byte_count: file_peer_bytes.length,
+    }),
+  );
+  await run(
+    [
+      paths.node,
+      join(source, 'server/executor/mac/testing/native_transfer_probe.ts'),
+      transfer_input,
+    ],
     environment,
-    claude_trace: join(evidence, 'claude.jsonl'),
-  });
-  steps.upload_and_download = 'passed';
+  );
+  steps.upload_and_download = file_peer.result();
+  await writeFile(
+    join(evidence, 'file-peer.json'),
+    JSON.stringify(steps.upload_and_download, null, 2) + '\n',
+  );
   const quiesce = await command(['executor', 'quiesce', '--exit-when-ready']);
   const status = JSON.parse(quiesce.stdout);
   assert.equal(status.exit_committed, true);

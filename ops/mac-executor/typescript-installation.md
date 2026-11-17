@@ -29,7 +29,10 @@ The workflow does not install, sign, launch, or contact the configured peer.
 
 The pull-request workflow `typescript-mac-executor.yml` runs a separate hosted rehearsal.
 It uses a private home, temporary state, a local TypeScript server over HTTPS, and scripted Claude and Codex commands.
-It checks protocol 26 presence, both turns, upload, download, and Stop through the packaged executor.
+It checks protocol 26 presence, both turns, and active Stop against the real local TypeScript home.
+A small test double serves the home file routes for upload and download and checks bytes and digests.
+This proves the Mac file transport, not the real Linux home intake.
+The real Linux intake check remains part of the live check after the Mac switch.
 Its launcher uses ad-hoc signing because the hosted runner has no owner signing identity.
 Ad-hoc signing does not prove the live Mac's requester attribution or file consent.
 Use the owner's Apple Development identity for the live app, as described below.

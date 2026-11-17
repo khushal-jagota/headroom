@@ -25,3 +25,5 @@ The update artifact contains only the archive and receipt. The separate installa
 
 The pull-request workflow `typescript-mac-executor.yml` exercises the packaged runtime with a private TypeScript home and scripted provider CLIs.
 Its ad-hoc signature is a hosted check. The live app needs the owner's Apple Development identity and normal file consent.
+
+The file-transfer part uses a test double of the home file routes because home file custody requires Linux procfs. It checks the packaged Mac transport and exact bytes and digests. Real Linux home file intake remains a live check after the Mac switch.
