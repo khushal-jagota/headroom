@@ -16,7 +16,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Some Python remains, on purpose:
   - The Python Mac runtime in `src/planner/` is the Mac's emergency rollback until Khushal approves its removal. It keeps `pyproject.toml`, `requirements*.txt`, the `tests/unit` executor, Darwin, Mac, and worker supervision tests, `python-mac-runtime.yml`, and the mypy check in `typecheck.yml`. The server still accepts a Python (version-1) release for now.
   - The TypeScript Hermes driver runs two helper scripts in `src/planner/conversation/backends/`. The skill seeds in `src/planner/skills` and `src/planner/worker_types/shipped_worker_types.json` are still read from there.
-  - Twenty browser checks of the TypeScript server in `tests/e2e` run in `typescript-backend.yml`. `server/tools/smoke.ts` uses `tests/support/production_smoke_seed.py`.
+  - `server/tools/smoke.ts` uses `tests/support/production_smoke_seed.py`.
   - `scripts/panels_install.py` is the download the Linux machine join runs. `scripts/check_published_http2.py` serves route recovery.
 - Skill text is a row in `managed_skills`, and the row is the authority. Panels writes `data/skills/<name>/SKILL.md` from the rows whenever a database opens, and every agent home — Hermes, Codex, Claude — links to those copies. The packaged `src/planner/skills` tree is only what a database holding no skills is seeded from, and nothing consults it again: an edit there changes a fresh install and no running agent. Skills use `PATCH /api/skills/<name>`, atomic `POST /api/skills/apply`, `DELETE /api/skills/<name>`, and `PUT /api/skills/<name>/files` for a supporting file that lives only on disk, all behind the same owner-only door. Worker and Chief routes remain compatibility adapters. `panels skill list`, `show`, `edit`, `apply`, `delete`, and `write-file` expose this system in the CLI. Workers must hand exact live skill edits to the owner or the Chief. `panels skill check` reports a row naming a command, Stage or skill this build lacks.
 - `docs/` is the live plain-language system documentation. `orchestration/tickets/` holds historical ticket plans, dispatches, and reviews.
@@ -43,8 +43,8 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   - Server: `scripts/dev npm --prefix server run check` for types, `scripts/dev npm --prefix server run test -- <file>` for vitest, and `scripts/dev npm --prefix server run format:check`.
   - Browser app: `scripts/dev npm --prefix web run check` and `scripts/dev npm --prefix web run test -- <file>`.
   - Remaining Python: `ruff`, `mypy`, and `pytest`.
-- `tests/unit` and `tests/e2e` must each get their own `pytest` process. Playwright's sync API holds an event loop for the whole session, so a unit fixture that calls `asyncio.run()` in teardown raises `asyncio.run() cannot be called from a running event loop` once an E2E test has run in the same process. A single `pytest tests` reports failures that are not real.
-- `tests/unit` holds the Python Mac runtime tests: `scripts/dev pytest tests/unit -n 6`. The `tests/e2e` browser checks run against the TypeScript server with `PANELS_TEST_SERVER_BACKEND=typescript`; `typescript-backend.yml` shows their exact setup. Because test processes run side by side, a test must not write outside its own `tmp_path`: not into the shared `.venv`, the repository tree, or a fixed path or port. Give it its own copy instead.
+- `tests/unit` holds the Python Mac runtime tests: `scripts/dev pytest tests/unit -n 6`. Because test processes run side by side, a test must not write outside its own `tmp_path`: not into the shared `.venv`, the repository tree, or a fixed path or port. Give it its own copy instead.
+- The browser checks are TypeScript Playwright tests in `tests/e2e/*.spec.ts`. Each test starts its own TypeScript server on a database built from the schema seed. [tests/e2e/README.md](tests/e2e/README.md) shows how to run them. Run them on hosted CI (`typescript-backend.yml`, by hand or on its schedule), not on the VPS.
 - Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior with vitest in `web/tests`, and never rely on an eyeball check.
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
@@ -85,7 +85,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   ```
 
   The Python environment is needed only for the remaining Python: the Mac runtime
-  tests, mypy, and the `tests/e2e` browser checks.
+  tests and mypy.
 
   An older checkout can have `node_modules` folders that link into
   `~/.cache/headroom/dependencies`. Run `npm ci` there first, which replaces the links,
