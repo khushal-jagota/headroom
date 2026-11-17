@@ -545,6 +545,17 @@ import UniformTypeIdentifiers
         let held = json.replacingOccurrences(of: #""held_prompt_id""#, with: #""queue_reason":"attachment","held_prompt_id""#)
         model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(held.utf8)))
         XCTAssertEqual(model.latestLine, "You: Waiting · Queued · attachments wait for the turn to end")
+        // Risk: a backend that cannot join a running turn still offers Steer, or an older
+        // server's view, which has no supports_steer, loses it.
+        XCTAssertTrue(configuration.supportsSteer, "A view without supports_steer keeps Steer")
+        XCTAssertTrue(model.supportsSteer)
+        XCTAssertEqual(model.deliveryMode, "steer")
+        let withoutSteer = json.replacingOccurrences(of: #""model":"sol""#, with: #""supports_steer":false,"model":"sol""#)
+        let refused = try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(withoutSteer.utf8))
+        XCTAssertFalse(refused.supportsSteer)
+        model.applyConfiguration(refused)
+        XCTAssertFalse(model.supportsSteer)
+        XCTAssertEqual(model.deliveryMode, "queue", "Steer is not offered, so it is not the kept choice")
     }
 
     // The server holds any message that names a model until a new turn, so an unchanged

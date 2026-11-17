@@ -498,11 +498,59 @@ struct ConversationThread: View {
     }
 }
 
+/// A backend's mark in a 16-point frame: the bundled mark, the driver's PNG icon, or its
+/// initials. With no backend at all the frame stays clear, so nothing moves.
 struct ConversationBackendMark: View {
-    let backend: String
-    var body: some View {
-        Image("conversation-" + backend).renderingMode(backend == "hermes" ? .original : .template).resizable().scaledToFit().frame(width: 16, height: 16).accessibilityLabel(backend.capitalized)
+    let backend: String?
+    @Environment(AppStore.self) private var store
+    @State private var picture: UIImage?
+    @State private var pictureURL: URL?
+    @State private var failedURL: URL?
+    private var mark: DriverMark? {
+        backend.map { key in DriverMark.resolve(key: key, catalog: store.drivers, bundled: { UIImage(named: $0) != nil }, server: store.baseURL) }
     }
+    var body: some View {
+        let mark = self.mark
+        Group {
+            switch mark {
+            case .bundled(let name)?:
+                // The asset's own rendering intent decides tinting.
+                Image(name).resizable().scaledToFit()
+            case .remote(let url, let template)?:
+                if pictureURL == url, let picture {
+                    Image(uiImage: picture).renderingMode(template ? .template : .original).resizable().scaledToFit()
+                } else if failedURL == url {
+                    initials(DriverMark.initials(backend ?? ""))
+                } else { Color.clear }
+            case .initials(let text)?: initials(text)
+            case nil: Color.clear
+            }
+        }
+        .frame(width: 16, height: 16)
+        .accessibilityLabel(backend.map { store.backendLabel($0) } ?? "")
+        .accessibilityHidden(backend == nil)
+        .task(id: mark) {
+            guard case .remote(let url, _)? = mark, pictureURL != url else { return }
+            if let cached = DriverIconCache.pictures[url] { picture = cached; pictureURL = url; return }
+            do {
+                let data = try await store.client.driverIcon(url)
+                guard let image = UIImage(data: data) else { throw URLError(.cannotDecodeContentData) }
+                DriverIconCache.pictures[url] = image
+                picture = image; pictureURL = url
+            } catch {
+                if !Task.isCancelled { failedURL = url }
+            }
+        }
+    }
+    private func initials(_ text: String) -> some View {
+        RoundedRectangle(cornerRadius: PanelsTheme.Radius.sm).fill(PanelsTheme.recessed)
+            .overlay(Text(text).font(.caption2).lineLimit(1).minimumScaleFactor(0.5))
+    }
+}
+
+/// Driver icons fetched this session, keyed by their versioned URL.
+@MainActor enum DriverIconCache {
+    static var pictures: [URL: UIImage] = [:]
 }
 
 struct ConversationModelSheet: View {
@@ -523,7 +571,7 @@ struct ConversationModelSheet: View {
                 Section("Agent") {
                     Picker("Agent", selection: $backend) {
                         ForEach(backends.filter(\.installed)) { entry in
-                            HStack { ConversationBackendMark(backend: entry.id); Text(entry.id.capitalized) }.tag(entry.id)
+                            HStack { ConversationBackendMark(backend: entry.id); Text(store.backendLabel(entry.id)) }.tag(entry.id)
                         }
                     }.pickerStyle(.segmented).disabled(model.conversationID != nil)
                 }

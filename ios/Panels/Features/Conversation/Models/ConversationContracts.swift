@@ -232,6 +232,8 @@ protocol ConversationServing: Sendable {
 // Existing conversation detail and owner start-values contracts.
 struct ConversationConfiguration: Decodable, Sendable {
     let backendKey: String
+    /// The backend can join a running turn. Older servers omit it; then Steer stays offered.
+    let supportsSteer: Bool
     let model: String?
     let reasoningEffort: String?
     var heldPrompts: [HeldPrompt] = []
@@ -254,12 +256,13 @@ struct ConversationConfiguration: Decodable, Sendable {
             }
         }
     }
-    enum CodingKeys: String, CodingKey { case backendKey, model, reasoningEffort, heldPrompts, latestSequence, ownerReadThroughSequence }
+    enum CodingKeys: String, CodingKey { case backendKey, supportsSteer, model, reasoningEffort, heldPrompts, latestSequence, ownerReadThroughSequence }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         latestSequence = try values.decodeIfPresent(Int.self, forKey: .latestSequence)
         ownerReadThroughSequence = try values.decodeIfPresent(Int.self, forKey: .ownerReadThroughSequence)
         backendKey = try values.decode(String.self, forKey: .backendKey)
+        supportsSteer = try values.decodeIfPresent(Bool.self, forKey: .supportsSteer) ?? true
         model = try values.decodeIfPresent(String.self, forKey: .model)
         reasoningEffort = try values.decodeIfPresent(String.self, forKey: .reasoningEffort)
         heldPrompts = try values.decodeIfPresent([HeldPrompt].self, forKey: .heldPrompts) ?? []

@@ -3,24 +3,6 @@ import type { DriverImportAllowance, DriverNameAllowance } from './check_driver_
 
 export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
   {
-    path: 'ios/Panels/',
-    driver_kind: 'claude',
-    reason: 'The iPhone app names, marks and colours each backend until it reads the drivers list.',
-    until: 'Apps',
-  },
-  {
-    path: 'ios/Panels/',
-    driver_kind: 'codex',
-    reason: 'The iPhone app names, marks and colours each backend until it reads the drivers list.',
-    until: 'Apps',
-  },
-  {
-    path: 'ios/Panels/',
-    driver_kind: 'hermes',
-    reason: 'The iPhone app names, marks and colours each backend until it reads the drivers list.',
-    until: 'Apps',
-  },
-  {
     path: 'server/environments/registry/store.ts',
     driver_kind: 'hermes',
     reason:

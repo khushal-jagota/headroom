@@ -403,7 +403,7 @@ presentation and API extension are confined to `Features/More/Feedback`.
 
 ## Usage, VPS and Settings
 
-Usage reads cached Codex and Claude allowances, plus recorded local CLI token and
+Usage reads cached allowances for the backends the server says report them, plus recorded local CLI token and
 cost totals for today, 7, 30 or 90 days. Provider filters apply to the totals and
 chart. Missing values stay unavailable and partial source reads show their issues.
 Pull-to-refresh and the toolbar refresh button request fresh provider allowances
@@ -552,14 +552,16 @@ opens a card with the input above the controls. At accessibility text sizes the
 model and delivery choices stack above the action row, and icon sizes stay within
 their tap targets. Labels can grow with the text size. The bottom uses the
 system safe area plus one point, matching the 35-point reference on the target
-phone. The model sheet reads the backend catalog and applies the selected model
+phone. Backend names and marks come from the server's driver list. The three built-in
+backends keep their bundled marks; another backend shows its PNG icon, or its initials.
+The model sheet reads the backend catalog and applies the selected model
 and reasoning to the next message. A message names a model or reasoning only when
 the pick differs from what the conversation runs on. The server holds a message
 that names a model until a new turn, so an unchanged pick would turn every steer
 into a wait. The selection follows the conversation until the owner picks another
 value. An existing conversation keeps its backend.
 The plus menu accepts files, library pictures, camera photos and a slash command. Steer, Queue and Send now
-use the existing delivery modes. Stop interrupts the running turn. The separate
+use the existing delivery modes; Steer is offered only when the conversation's backend can join a running turn. Stop interrupts the running turn. The separate
 microphone remains available while working or editing a draft.
 
 Messages appear immediately with Sending, Queued or an explicit failure.
