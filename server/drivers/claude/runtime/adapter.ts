@@ -105,7 +105,6 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private client: ClaudeSdkClient | null = null;
   private session_id: string | null = null;
   private resume_confirmed = false;
-  private session_model: string | null = null;
   private session_reasoning_effort: string | null = null;
   private turn: TurnInFlight | null = null;
   private last_ended_turn: TurnInFlight | null = null;
@@ -182,7 +181,6 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     this.wire_failure = null;
     this.session_id = cursor || minted;
     this.resume_confirmed = cursor === null;
-    this.session_model = resolved_start.model;
     this.session_reasoning_effort = resolved_start.reasoning_effort;
     const cancel = new AbortController();
     this.reader_cancel = cancel;
@@ -253,24 +251,12 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     this.wire_broken = true;
     this.wire_failure ??= { why, cause };
   }
-  /** Return the effort to apply to the live session, or null when it already carries it. */
-  private require_carried_values(options: PromptOptions): EffortLevel | null {
-    if (options.model_change !== null && options.model_change !== this.session_model)
-      throw new B.NeedsRebind(
-        `claude takes its model when the child starts, so ${JSON.stringify(options.model_change)} needs a child started on it`,
-      );
+  /** The live effort this prompt applies, or null. The core restarts the child for any other
+   * change (`claude_selection_transition`), so one that arrives anyway applies nothing. */
+  private effort_to_apply(options: PromptOptions): EffortLevel | null {
     const change = options.reasoning_effort_change;
-    if (
-      (change === null && !options.reasoning_effort_is_set) ||
-      change === this.session_reasoning_effort
-    )
-      return null;
-    // A live reset returns to the model default, not the user's settings, so clearing restarts.
-    if (change === null || !is_live_reasoning_effort(change))
-      throw new B.NeedsRebind(
-        `claude takes this reasoning effort when the child starts, so ${JSON.stringify(change)} needs a child started on it`,
-      );
-    return change;
+    if (change === null || change === this.session_reasoning_effort) return null;
+    return is_live_reasoning_effort(change) ? change : null;
   }
   private async apply_reasoning_effort(
     client: ClaudeSdkClient,
@@ -359,7 +345,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     content: MessageContent,
     options: PromptOptions,
   ): Promise<B.BackendPromptAccepted> {
-    const reasoning_effort = this.require_carried_values(options);
+    const reasoning_effort = this.effort_to_apply(options);
     const client = this.connected_client();
     this.require_live_wire();
     const native_command =
@@ -601,6 +587,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
           error_summary,
           standard_error_tail:
             ending === ConversationTurnEnding.failed ? this.standard_error_tail() : null,
+          child_disposition: this.wire_broken ? 'broken' : 'reusable',
         }),
       );
     } finally {

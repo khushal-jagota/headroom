@@ -9,14 +9,15 @@ import {
   BackendStreamEnded,
   BackendSpawnFailed,
   BackendInitializationTimeout,
-  NeedsRebind,
   PromptWriteFailed,
   SessionLoadFailed,
+  TurnEnded,
 } from '../../../conversation/backends/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
 import type { ClaudeSdkClient, ClaudeSdkMessage } from './query_contracts.ts';
 import { Deferred } from '../../../core/deferred.ts';
+import { CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS } from './configuration.ts';
 
 it('clears a failed reader and disconnects once across repeated stop calls', async () => {
   const next = new Deferred<IteratorResult<ClaudeSdkMessage>>();
@@ -173,14 +174,34 @@ it('classifies only the native SDK initialization-timeout discriminator before r
   }
 });
 
-it('applies an effort change to the live Claude session and restarts to clear effort', async () => {
-  const apply_reasoning_effort = vi.fn(async (_level: string) => {});
+/** A started child on a client that admits every prompt and yields what the test delivers. */
+async function live_child(
+  conversation_id: string,
+  options: {
+    vendor_session_cursor?: string | null;
+    client?: Partial<ClaudeSdkClient>;
+  } = {},
+) {
+  const delivered: IteratorResult<ClaudeSdkMessage>[] = [];
+  let arrived = new Deferred<void>();
+  const deliver = (result: IteratorResult<ClaudeSdkMessage>) => {
+    delivered.push(result);
+    arrived.resolve();
+  };
   const client: ClaudeSdkClient = {
     connect: async () => {},
     get_server_info: async () => null,
     query: async () => {},
     receive_messages: () => ({
-      [Symbol.asyncIterator]: () => ({ next: () => new Promise<never>(() => {}) }),
+      [Symbol.asyncIterator]: () => ({
+        next: async () => {
+          while (!delivered.length) {
+            arrived = new Deferred<void>();
+            await arrived.promise;
+          }
+          return delivered.shift()!;
+        },
+      }),
     }),
     watch_user_message: () => {},
     forget_user_message: () => {},
@@ -189,11 +210,12 @@ it('applies an effort change to the live Claude session and restarts to clear ef
     user_message_is_settled: () => true,
     wait_for_user_message_settlement: async () => {},
     interrupt_and_cancel_queued: async () => [new Set(), new Set()],
-    apply_reasoning_effort,
+    apply_reasoning_effort: async () => {},
     disconnect: async () => {},
+    ...options.client,
   };
   const start = new ResolvedConversationStart({
-    conversation_id: 'live-effort',
+    conversation_id,
     backend_key: parse_backend_instance_id('claude'),
     model: 'haiku',
     reasoning_effort: 'low',
@@ -202,6 +224,8 @@ it('applies an effort change to the live Claude session and restarts to clear ef
     workspace_path_policy: 'absolute',
     access: 'full',
   });
+  const turn_endings: TurnEnded[] = [];
+  const stream_ended = new Deferred<void>();
   const child_processes = new ChildProcesses();
   const child = new ClaudeAgentSdkBackendChild({
     child_processes,
@@ -210,7 +234,12 @@ it('applies an effort change to the live Claude session and restarts to clear ef
     launch: { claude_executable: '/synthetic/claude' },
     resolved_start: start,
     client_factory: () => client,
-    event_sink: { report: async () => {} },
+    event_sink: {
+      report: async (_turn, event) => {
+        if (event instanceof TurnEnded) turn_endings.push(event);
+        if (event instanceof BackendStreamEnded) stream_ended.resolve();
+      },
+    },
     message_files: {
       keep: async () => {
         throw new Error('No message file belongs to this check');
@@ -220,10 +249,10 @@ it('applies an effort change to the live Claude session and restarts to clear ef
       path_of: () => '/synthetic/unused',
     },
   });
-  await child.start(start, { vendor_session_cursor: null });
+  await child.start(start, { vendor_session_cursor: options.vendor_session_cursor ?? null });
   const content = text_message_content('hello');
   const prompt = (turn_number: number, reasoning_effort_change: string | null) =>
-    child.write_prompt({ conversation_id: 'live-effort', turn_number }, content, {
+    child.write_prompt({ conversation_id, turn_number }, content, {
       sender_label: 'Owner',
       sender_content: content,
       mode: 'send_now',
@@ -231,15 +260,74 @@ it('applies an effort change to the live Claude session and restarts to clear ef
       reasoning_effort_change,
       reasoning_effort_is_set: true,
     });
+  return { child, prompt, deliver, turn_endings, stream_ended: stream_ended.promise };
+}
+
+it('applies an effort change to the live Claude session and applies nothing it cannot carry', async () => {
+  const apply_reasoning_effort = vi.fn(async (_level: string) => {});
+  const { child, prompt } = await live_child('live-effort', { client: { apply_reasoning_effort } });
   await prompt(1, 'high');
   expect(apply_reasoning_effort).toHaveBeenCalledExactlyOnceWith('high');
   await prompt(2, 'high');
   expect(apply_reasoning_effort).toHaveBeenCalledTimes(1);
-  await expect(prompt(3, null)).rejects.toBeInstanceOf(NeedsRebind);
+  // The core restarts the child to clear effort, so a clear that reaches the child anyway is not applied.
+  await prompt(3, null);
   expect(apply_reasoning_effort).toHaveBeenCalledTimes(1);
   apply_reasoning_effort.mockRejectedValueOnce(new Error('control channel closed'));
   await expect(prompt(4, 'max')).rejects.toBeInstanceOf(PromptWriteFailed);
   // The failed apply broke the wire, so even an unchanged prompt needs a new child.
   await expect(prompt(5, 'high')).rejects.toMatchObject({ failed_child_recovery: true });
+  await child.stop();
+});
+
+it('ends the turn broken when Claude answers under a session other than the one resumed', async () => {
+  const { child, prompt, deliver, turn_endings } = await live_child('session-mismatch', {
+    vendor_session_cursor: 'retained-session',
+  });
+  await prompt(1, null);
+  deliver({
+    value: {
+      type: 'stream_event',
+      uuid: 'event',
+      session_id: 'substitute-session',
+      event: { type: 'message_start' },
+    },
+    done: false,
+  });
+  await vi.waitFor(() => expect(turn_endings).toHaveLength(1));
+  expect(turn_endings[0]).toMatchObject({ ending: 'failed', child_disposition: 'broken' });
+  await child.stop();
+});
+
+it('ends the turn broken after a cancel that Claude never settles, ignoring its late result', async () => {
+  const { child, prompt, deliver, turn_endings, stream_ended } =
+    await live_child('cancel-unsettled');
+  await prompt(1, null);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    const cancelled = child.cancel_running_turn();
+    const refused = expect(cancelled).rejects.toBeInstanceOf(PromptWriteFailed);
+    await vi.advanceTimersByTimeAsync(CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS * 1000);
+    await refused;
+  } finally {
+    vi.useRealTimers();
+  }
+  deliver({
+    value: {
+      type: 'result',
+      subtype: 'success',
+      duration_ms: 1,
+      duration_api_ms: 1,
+      is_error: false,
+      num_turns: 1,
+      session_id: null,
+      terminal_reason: 'aborted_streaming',
+    },
+    done: false,
+  });
+  deliver({ value: undefined, done: true });
+  await stream_ended;
+  expect(turn_endings).toHaveLength(1);
+  expect(turn_endings[0]).toMatchObject({ ending: 'failed', child_disposition: 'broken' });
   await child.stop();
 });
