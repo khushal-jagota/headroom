@@ -265,10 +265,19 @@ def test_previous_runtime_parses_the_handoff_this_runtime_writes(
 ) -> None:
     """Risk: a rollback to the previous runtime cannot read the handoff.json this one wrote,
     so the reverted runtime refuses to start. Its handoff_identity runs unchanged here."""
+    import ast
     import os
+    from typing import Any
     from uuid import UUID
 
-    from tests.unit.test_update_bridge import REPOSITORY, function
+    def function(source: str, name: str, namespace: dict[str, Any]) -> Any:
+        """Define one top-level function from old source text, without importing it."""
+        tree = ast.parse(source)
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+        exec(compile(ast.Module([node], []), name, "exec"), namespace)
+        return namespace[name]
+
+    REPOSITORY = Path(__file__).resolve().parents[2]
 
     # The last protocol-21 release: the parent of this change's first commit.
     source = subprocess.run(
