@@ -14,6 +14,15 @@ import {
 import type { MacFileTransport } from './transport/files.ts';
 import { ExecutorHttpError, failure_name } from './transport/errors.ts';
 export class InputDownloadRefused extends Error {}
+/** Every stored file a prompt or steer names, images and files alike, once each. */
+export function input_file_ids(command: ChildCommand): string[] {
+  const args = command.arguments;
+  if (args.kind !== 'write_prompt' && args.kind !== 'steer') return [];
+  const ids = new Set<string>();
+  for (const piece of [...args.content, ...(args.sender_content ?? [])])
+    if ('stored_file_id' in piece) ids.add(piece.stored_file_id);
+  return [...ids];
+}
 export class MacInputs {
   private readonly transport: Pick<MacFileTransport, 'download_command_file'>;
   private readonly files: FilesService;
@@ -31,49 +40,43 @@ export class MacInputs {
     this.on_failure = on_failure;
   }
   async download_inputs(command: ChildCommand, signal: AbortSignal): Promise<void> {
-    const args = command.arguments;
-    if (args.kind !== 'write_prompt' && args.kind !== 'steer') return;
-    const seen = new Set<string>();
-    for (const content of [args.content, args.sender_content ?? []])
-      for (const piece of content) {
-        if (!('byte_count' in piece) || seen.has(piece.stored_file_id)) continue;
-        seen.add(piece.stored_file_id);
-        const conversation = safe_component(command.child.conversation_id);
-        const target = contained_path(
-          join(this.paths.root, 'artifacts/files/conversations'),
-          `${conversation}/${safe_component(piece.stored_file_id)}`,
-        );
-        let delay = INPUT_DOWNLOAD_RETRY_INITIAL_SECONDS;
-        for (;;) {
-          signal.throwIfAborted();
-          try {
-            await this.download(command.command_id, piece.stored_file_id, target, signal);
-            break;
-          } catch (error) {
-            if (signal.aborted) throw error;
-            if (error instanceof ExecutorHttpError && [403, 404, 409].includes(error.status))
-              throw new InputDownloadRefused(
-                `input ${piece.stored_file_id} is no longer served (${error.status})`,
-              );
-            console.warn(
-              `Input download failed command=${command.command_id}: ${failure_name(error)}`,
+    for (const stored_file_id of input_file_ids(command)) {
+      const conversation = safe_component(command.child.conversation_id);
+      const target = contained_path(
+        join(this.paths.root, 'artifacts/files/conversations'),
+        `${conversation}/${safe_component(stored_file_id)}`,
+      );
+      let delay = INPUT_DOWNLOAD_RETRY_INITIAL_SECONDS;
+      for (;;) {
+        signal.throwIfAborted();
+        try {
+          await this.download(command.command_id, stored_file_id, target, signal);
+          break;
+        } catch (error) {
+          if (signal.aborted) throw error;
+          if (error instanceof ExecutorHttpError && [403, 404, 409].includes(error.status))
+            throw new InputDownloadRefused(
+              `input ${stored_file_id} is no longer served (${error.status})`,
             );
-            try {
-              await sleep(delay * 1000, undefined, { signal });
-            } catch (error) {
-              if (
-                signal.aborted &&
-                error instanceof Error &&
-                error.name === 'AbortError' &&
-                error.cause === signal.reason
-              )
-                throw signal.reason;
-              throw error;
-            }
-            delay = Math.min(delay * 2, INPUT_DOWNLOAD_RETRY_MAX_SECONDS);
+          console.warn(
+            `Input download failed command=${command.command_id}: ${failure_name(error)}`,
+          );
+          try {
+            await sleep(delay * 1000, undefined, { signal });
+          } catch (error) {
+            if (
+              signal.aborted &&
+              error instanceof Error &&
+              error.name === 'AbortError' &&
+              error.cause === signal.reason
+            )
+              throw signal.reason;
+            throw error;
           }
+          delay = Math.min(delay * 2, INPUT_DOWNLOAD_RETRY_MAX_SECONDS);
         }
       }
+    }
   }
   private async download(
     command_id: string,
