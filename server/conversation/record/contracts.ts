@@ -354,6 +354,8 @@ export interface ConversationRecordStore {
     operation: () => T | Promise<T>,
     options?: RecordingSettlementOptions,
   ): Promise<T>;
+  /** The first error that made the database unusable, or null. Every later save refuses with it. */
+  readonly database_unusable_error: unknown;
   finish_writes(): Promise<void>;
   update_work_metadata(): ReadonlyMap<string, readonly [string, string]>;
   create_conversation(start: ResolvedConversationStart): ConversationRecord;

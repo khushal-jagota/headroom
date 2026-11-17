@@ -15,6 +15,7 @@ import { ScriptedCustody } from '../conversation/testing/scripted_custody.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';
 import type { ConversationCoreOptions } from '../conversation/runtime/contracts.ts';
+import type { Database } from '../core/database/contracts.ts';
 import { BackendStateStore } from '../conversation/backend_state.ts';
 import {
   canonical_ticket_execution_refusal,
@@ -37,15 +38,18 @@ export function setup(
     record?: ConversationStoreOptions;
     core?: Partial<ConversationCoreOptions>;
     database?: Parameters<typeof fixture>[0];
+    /** Reopen this database, as a server restart does. */
+    restart_of?: Database;
   } = {},
 ) {
-  const database = fixture(options.database);
+  const database = options.restart_of ?? fixture(options.database);
   const database_path = fixture_path(database);
   const directory = mkdtempSync(join(tmpdir(), 'conversation-core-'));
   directories.push(directory);
-  database.write((tx) =>
-    tx.run('INSERT INTO conversation_runtime_epoch VALUES (1,?)', ['test-runtime']),
-  );
+  if (!options.restart_of)
+    database.write((tx) =>
+      tx.run('INSERT INTO conversation_runtime_epoch VALUES (1,?)', ['test-runtime']),
+    );
   const custody = new ScriptedCustody();
   custody_scopes.push(custody);
   const store = new ConversationStore(database, {

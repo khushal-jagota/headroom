@@ -179,6 +179,13 @@ function new_running_turn(reservation: ReservedTurn): RunningTurn {
   };
 }
 
+function save_failure_detail(error: unknown): string {
+  const code =
+    error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : null;
+  return code !== null ? `Save error ${code}` : `Save error: ${String(error)}`;
+}
 export class SqliteProcessConversationSystem implements DeliveryServices, ConversationSystem {
   readonly options: ConversationCoreOptions;
   readonly workspace_admission = new WorkspaceAdmission();
@@ -333,7 +340,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       async (admitted) => {
         if (!admitted) throw new Error('Workspace admission is closed for an owner update.');
         this.require_runtime_ownership();
-        const refusal = this.options.execution_refusal(request.conversation_id);
+        const refusal = this.execution_refusal(request.conversation_id);
         if (refusal !== null) throw refusal;
         const resolved = resolve_conversation_start_request(request);
         if (
@@ -394,9 +401,70 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
           throw error;
         }
       },
-      { shutdown_signal: this.shutdown_controller.signal, retry_later_at },
+      {
+        shutdown_signal: this.shutdown_controller.signal,
+        retry_later_at,
+        single_attempt: state.save_failure !== null,
+      },
     );
-    return task.finally(() => tracked?.close());
+    return task
+      .catch((error: unknown) => {
+        if (!(error instanceof Error && error.name === 'AbortError'))
+          this.note_save_gave_up(state, error, retry_later_at !== undefined);
+        throw error;
+      })
+      .finally(() => tracked?.close());
+  }
+  private database_unusable_alarmed = false;
+  /** A save gave up. Fail its conversation, and alarm once if the database is unusable. */
+  private note_save_gave_up(state: ConversationState, error: unknown, bounded: boolean): void {
+    if (this.shutting_down) return;
+    const unusable = this.options.store.database_unusable_error;
+    if (unusable !== null && !this.database_unusable_alarmed) {
+      this.database_unusable_alarmed = true;
+      console.error(
+        'the database is unusable; conversations refuse new work until a restart',
+        unusable,
+      );
+      this.options.wait_registry?.track('vps_save_failed', 'database', {
+        detail: save_failure_detail(unusable),
+        conversation_id: null,
+      });
+    }
+    // A bounded caller owns its own failure while the database itself still works.
+    if ((bounded && unusable === null) || state.save_failure !== null) return;
+    const conversation_id = state.record.conversation_id;
+    state.save_failure = error;
+    console.error(
+      `conversation ${conversation_id} save gave up; it refuses new work until a restart`,
+      error,
+    );
+    this.options.wait_registry?.track('vps_save_failed', conversation_id, {
+      detail: save_failure_detail(error),
+      conversation_id,
+    });
+    // Owned, so quiescence and shutdown wait for the stop and the failed turn.
+    void own_settlement(state, controls.fail_after_save_failure(this, state)).catch(
+      (failure: unknown) =>
+        console.error(
+          `conversation ${conversation_id} could not stop after its save failed`,
+          failure,
+        ),
+    );
+  }
+  /** Database and save failures refuse first, then the owner's execution admission. */
+  private execution_refusal(conversation_id: string): PlannerError | null {
+    if (this.options.store.database_unusable_error !== null)
+      return new PlannerError(
+        'conversation_save_failed',
+        'The database is unusable, so Panels refuses new work until a restart.',
+      );
+    if ((this.conversations.get(conversation_id)?.save_failure ?? null) !== null)
+      return new PlannerError(
+        'conversation_save_failed',
+        'This conversation could not save, so it refuses new work until a restart.',
+      );
+    return this.options.execution_refusal(conversation_id);
   }
   native_operation<T>(operation: () => Promise<T>): Promise<T> {
     if (this.shutting_down)
@@ -467,7 +535,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         if (options.record_refusal && options.sender_message_id == null)
           throw new Error('record_refusal requires a sender_message_id');
         this.require_runtime_ownership();
-        const refusal = this.options.execution_refusal(conversation_id);
+        const refusal = this.execution_refusal(conversation_id);
         if (refusal !== null) throw refusal;
         const state = this.conversation_state(conversation_id);
         if (!state) return new PromptDeliveryRefused({ refusal_reason: R.no_such_conversation });
@@ -884,6 +952,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       )
       .map((message) => message.owner_read_through_sequence!);
     const drain_read_through = drain_bounds.length > 0 ? Math.max(...drain_bounds) : null;
+    let receipt_save_gave_up = false;
     const fate = await state.lock.run(async () => {
       if (reservation.shutdown_owned)
         return reservation.shutdown_fate ?? new PromptDeliveryUncertain();
@@ -959,30 +1028,37 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
             : null
           : first.owner_read_through_sequence;
         const running = new_running_turn(reservation);
-        const written = await this.persist(
-          state,
-          () =>
-            this.options.store.append_delivered_prompt(state.record.conversation_id, {
-              prompt: prompt_row(first, reservation.mode),
-              extra_prompts: survivors
-                .slice(1)
-                .map((message) => prompt_row(message, reservation.mode)),
-              model_change: change,
-              lifecycle: [
-                turn_fact(reservation.token, S.running),
-                prompt_fact(reservation.token, S.started),
-              ],
-              composed_content_delivered: delivery.composed_content_delivered,
-              recording_receipt: first.recording_receipt,
-              extra_recording_receipts: survivors
-                .slice(1)
-                .flatMap((message) =>
-                  message.recording_receipt ? [message.recording_receipt] : [],
-                ),
-              owner_read_through_sequence: boundary,
-            }),
-          [field_mutation(state, 'running_turn', running)],
-        );
+        let written: readonly StoredConversationEvent[];
+        try {
+          written = await this.persist(
+            state,
+            () =>
+              this.options.store.append_delivered_prompt(state.record.conversation_id, {
+                prompt: prompt_row(first, reservation.mode),
+                extra_prompts: survivors
+                  .slice(1)
+                  .map((message) => prompt_row(message, reservation.mode)),
+                model_change: change,
+                lifecycle: [
+                  turn_fact(reservation.token, S.running),
+                  prompt_fact(reservation.token, S.started),
+                ],
+                composed_content_delivered: delivery.composed_content_delivered,
+                recording_receipt: first.recording_receipt,
+                extra_recording_receipts: survivors
+                  .slice(1)
+                  .flatMap((message) =>
+                    message.recording_receipt ? [message.recording_receipt] : [],
+                  ),
+                owner_read_through_sequence: boundary,
+              }),
+            [field_mutation(state, 'running_turn', running)],
+          );
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error;
+          receipt_save_gave_up = true;
+          return new PromptDeliveryUncertain();
+        }
         this.note_written(state, written);
         const owner_rows = written.filter(
           (row) => row.payload.kind === 'prompt' && row.payload.sender?.kind === 'owner',
@@ -1017,6 +1093,18 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         }
       }
     });
+    if (receipt_save_gave_up) {
+      // The agent has this prompt, but its receipt save gave up. Record it as possibly
+      // delivered, so no sender resends it.
+      await this.record_delivery_uncertainty(state, reservation, survivors, batch).catch(
+        (failure: unknown) =>
+          console.error(
+            `conversation ${state.record.conversation_id} could not record an uncertain delivery`,
+            failure,
+          ),
+      );
+      await state.lock.run(() => this.abandon_reservation(state, reservation, 'idle'));
+    }
     await state.lock.run(() => this.finish_held_deliveries(state, batch));
     if (fate instanceof PromptDeliveryRefused && (!queued || promoted)) this.schedule_drain(state);
     return fate;
@@ -1160,7 +1248,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     )
       return;
     this.require_runtime_ownership();
-    if (this.options.execution_refusal(state.record.conversation_id) !== null) {
+    if (this.execution_refusal(state.record.conversation_id) !== null) {
       this.deprioritize_held(state);
       return;
     }
@@ -1184,10 +1272,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     }
     while (true) {
       const next = await state.lock.run(async () => {
-        if (
-          this.shutting_down ||
-          this.options.execution_refusal(state.record.conversation_id) !== null
-        ) {
+        if (this.shutting_down || this.execution_refusal(state.record.conversation_id) !== null) {
           set_phase(state, 'idle');
           this.deprioritize_held(state);
           return null;
@@ -2075,7 +2160,7 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     mode: HeldPromptPromotionMode,
   ): Promise<PromptDeliveryFate | null> {
     this.require_runtime_ownership();
-    const refusal = this.options.execution_refusal(conversation_id);
+    const refusal = this.execution_refusal(conversation_id);
     if (refusal !== null) throw refusal;
     const state = this.conversation_state(conversation_id);
     return state

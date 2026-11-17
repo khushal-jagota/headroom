@@ -3,6 +3,8 @@ export const STALL_CHECK_INTERVAL_SECONDS = 15;
 export const MAC_ITEM_NO_PROGRESS_LIMIT_SECONDS = 180;
 export const COMMAND_UNFETCHED_LIMIT_SECONDS = 120;
 export const VPS_SAVE_RETRY_LIMIT_SECONDS = 120;
+// A save that gave up does not recover by waiting, so it alarms at the next check.
+export const VPS_SAVE_FAILED_LIMIT_SECONDS = 0;
 export const MAC_STOP_PROOF_LIMIT_SECONDS = 180;
 export const MAC_ITEM_SETTLING_LIMIT_SECONDS = 120;
 export const MAC_REPLACEMENT_PENDING_LIMIT_SECONDS = 180;
@@ -26,6 +28,7 @@ export function stall_limit_seconds(kind: TrackedWaitKind): number {
     mac_lease_failing: MAC_LEASE_FAILING_LIMIT_SECONDS,
     mac_item_still_saving: MAC_ITEM_SETTLING_LIMIT_SECONDS,
     vps_save_retrying: VPS_SAVE_RETRY_LIMIT_SECONDS,
+    vps_save_failed: VPS_SAVE_FAILED_LIMIT_SECONDS,
     mac_cancel_retirement: MAC_CANCEL_RETIREMENT_LIMIT_SECONDS,
     vps_replacement_retiring: VPS_REPLACEMENT_RETIRING_LIMIT_SECONDS,
   }[kind];

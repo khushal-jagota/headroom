@@ -9,6 +9,7 @@ export const TRACKED_WAIT_KINDS = [
   'mac_lease_failing',
   'mac_item_still_saving',
   'vps_save_retrying',
+  'vps_save_failed',
   'mac_cancel_retirement',
   'vps_replacement_retiring',
 ] as const;
