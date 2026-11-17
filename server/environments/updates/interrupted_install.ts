@@ -114,13 +114,20 @@ export async function recover_interrupted_install(
   const owned = await with_installer_lock(data_directory, seen.attempt_id, async () => {
     const attempt = swapped_attempt(data_directory, app_sha);
     if (attempt?.attempt_id !== seen.attempt_id) return 'none';
-    let revisions: string[] | null;
+    let revisions: string[] | null | undefined;
     try {
       revisions = read_schema_revisions(database);
     } catch {
-      return 'none'; // Admission reports an unreadable database.
+      revisions = undefined; // Admission reports an unreadable database.
     }
-    const decision = interrupted_install_decision(revisions, inputs.chain ?? APPLICATION_CHAIN);
+    const decision =
+      revisions === undefined
+        ? 'leave'
+        : interrupted_install_decision(revisions, inputs.chain ?? APPLICATION_CHAIN);
+    // The journal's record of why this start kept, undid, or left an update.
+    console.warn(
+      `Interrupted update ${attempt.attempt_id}: database revision ${revisions === undefined ? '<unreadable>' : JSON.stringify(revisions)}; decision ${decision}`,
+    );
     if (decision === 'leave') return 'none';
     const record = new InstallationRecord({ data_directory, attempt_id: attempt.attempt_id });
     if (decision === 'keep_new_app') {

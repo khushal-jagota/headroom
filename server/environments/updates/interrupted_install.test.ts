@@ -11,7 +11,7 @@ import {
   SEED_STATEMENT_QUERY,
 } from '../../core/database/index.ts';
 import { require_schema_revision } from '../../core/database/admission.ts';
-import { BASELINE_SEED } from '../../core/database/schema_steps/testing/steps.ts';
+import { BASELINE_SEED, probe_step } from '../../core/database/schema_steps/testing/steps.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { create_database_backup } from '../backup/capture.ts';
 import { UpdateBarrier } from '../update_barrier.ts';
@@ -108,7 +108,16 @@ it('a kill before the steps commit: the next start puts back the previous app an
       assert.throws(() => require_schema_revision(killed.database, killed.head));
       assert.equal(installed_sha(killed.root), TO);
 
+      const journal = vi.spyOn(console, 'warn').mockImplementation(() => {});
       assert.equal(await killed.recover(TO), 'rolled_back');
+      const revision =
+        point === 'first_step_open' ? BASELINE_SEED.alembicRevision : probe_step.revision;
+      assert.deepEqual(journal.mock.calls, [
+        [
+          `Interrupted update ${KILLED_ATTEMPT}: database revision ["${revision}"]; decision roll_back`,
+        ],
+      ]);
+      journal.mockRestore();
       assert.equal(installed_sha(killed.root), FROM);
       assert(existsSync(join(killed.root, '.app-next-' + TO)));
       assert(!existsSync(join(killed.root, '.app-previous-' + FROM)));
@@ -131,7 +140,14 @@ it('a kill after the steps commit keeps the new app on the stepped database', as
   const killed = await killed_install('steps_committed');
   try {
     assert.equal(record(killed.root).steps.service_started, undefined);
+    const journal = vi.spyOn(console, 'warn').mockImplementation(() => {});
     assert.equal(await killed.recover(TO), 'kept_new_app');
+    assert.deepEqual(journal.mock.calls, [
+      [
+        `Interrupted update ${KILLED_ATTEMPT}: database revision ["${killed.head}"]; decision keep_new_app`,
+      ],
+    ]);
+    journal.mockRestore();
     assert.equal(installed_sha(killed.root), TO);
     require_schema_revision(killed.database, killed.head);
     assert(existsSync(join(killed.root, '.app-previous-' + FROM)));
