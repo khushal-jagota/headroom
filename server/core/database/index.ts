@@ -133,6 +133,25 @@ function invoke<Row>(
   return result;
 }
 
+/** Compiled statements per connection. Most SQL text is fixed, so compiling once saves
+ * the work on every later call. The bound keeps generated SQL (IN lists) from growing it. */
+const STATEMENT_CACHE_LIMIT = 1000;
+const statementCaches = new WeakMap<BetterSqlite3.Database, Map<string, BetterSqlite3.Statement>>();
+function compiled(connection: BetterSqlite3.Database, sql: string): BetterSqlite3.Statement {
+  let cache = statementCaches.get(connection);
+  if (!cache) statementCaches.set(connection, (cache = new Map()));
+  let statement = cache.get(sql);
+  if (statement) {
+    cache.delete(sql);
+  } else {
+    assertScopedStatement(sql);
+    statement = connection.prepare(sql);
+    if (cache.size >= STATEMENT_CACHE_LIMIT) cache.delete(cache.keys().next().value!);
+  }
+  cache.set(sql, statement);
+  return statement;
+}
+
 function scope<T, Sql extends ReadSql = TransactionSql>(
   connection: BetterSqlite3.Database,
   writable: boolean,
@@ -144,9 +163,7 @@ function scope<T, Sql extends ReadSql = TransactionSql>(
   const clearFunctions: (() => void)[] = [];
   function prepare(sql: string): BetterSqlite3.Statement {
     if (!active) throw new TypeError('database SQL scope is no longer active');
-    assertScopedStatement(sql);
-    const statement = connection.prepare(sql);
-    return safeIntegers ? statement.safeIntegers(true) : statement;
+    return compiled(connection, sql).safeIntegers(safeIntegers);
   }
   const reader: ReadSql = Object.freeze({
     get: <Row>(sql: string, parameters?: SqlParameters): Row | undefined =>
@@ -355,6 +372,10 @@ export function createDatabase(
     writer.pragma('synchronous = FULL');
     writer.pragma('foreign_keys = ON');
     writer.pragma('recursive_triggers = ON');
+    // Only this connection writes in normal use, so its page cache survives between transactions
+    // and commit steps find re-read pages in memory. The reader's cache is not raised:
+    // every commit clears it. A negative value is in KiB: 256 MB.
+    writer.pragma('cache_size = -262144');
     reader = createReadAccess(path);
   } catch (error) {
     writer.close();

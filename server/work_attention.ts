@@ -1,8 +1,8 @@
 import type { Database } from './core/database/contracts.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
-import { readAllDurableFacts } from './conversation/publication/durable.ts';
+import { readDurableFactsFor } from './conversation/publication/durable.ts';
 async function signals(
-  durableRows: ReturnType<typeof readAllDurableFacts>,
+  durableRows: ReturnType<typeof readDurableFactsFor>,
   system: ConversationSystem | undefined,
   ids: Set<string>,
 ) {
@@ -34,24 +34,17 @@ export async function read_running_conversation_count(
   database: Database,
   system: ConversationSystem | undefined,
 ): Promise<number> {
-  const ids = new Set(
-    database.read((sql) =>
+  const { ids, durable } = database.read((sql) => {
+    const ids = new Set(
       sql
         .all<{ conversation_id: string }>(
           "SELECT conversation_id FROM tickets WHERE conversation_id IS NOT NULL UNION SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff' AND conversation_id IS NOT NULL UNION SELECT a.conversation_id FROM managers si JOIN agents a ON a.agent_key='manager_'||si.id WHERE a.conversation_id IS NOT NULL",
         )
         .map((r) => r.conversation_id),
-    ),
-  );
-  return [
-    ...(
-      await signals(
-        database.read((sql) => readAllDurableFacts(sql)),
-        system,
-        ids,
-      )
-    ).values(),
-  ].filter((v) => v.signal.working).length;
+    );
+    return { ids, durable: readDurableFactsFor(sql, ids) };
+  });
+  return [...(await signals(durable, system, ids)).values()].filter((v) => v.signal.working).length;
 }
 interface WorkAttention {
   awaiting_reply: boolean;
@@ -93,7 +86,7 @@ export async function add_work_attention(
 ): Promise<void> {
   const manager_ids = new Set(managers.map((row) => String(row.id)));
   const ticket_ids = new Set(tickets.map((row) => String(row.id)));
-  const { records, children, links, durable } = database.read((sql) => {
+  const { records, children, links, conversation_ids, durable } = database.read((sql) => {
     const children = new Map<string, string[]>([...manager_ids].map((id) => [id, []]));
     const links = new Map<string, string>();
     if (manager_ids.size) {
@@ -126,12 +119,18 @@ export async function add_work_attention(
       ))
         records.set(row.id, JSON.parse(row.value) as Record<string, unknown>);
     }
-    return { records, children, links, durable: readAllDurableFacts(sql) };
+    const conversation_ids = new Set(links.values());
+    for (const row of records.values()) {
+      if (typeof row.conversation_id === 'string') conversation_ids.add(row.conversation_id);
+    }
+    return {
+      records,
+      children,
+      links,
+      conversation_ids,
+      durable: readDurableFactsFor(sql, conversation_ids),
+    };
   });
-  const conversation_ids = new Set(links.values());
-  for (const row of records.values()) {
-    if (typeof row.conversation_id === 'string') conversation_ids.add(row.conversation_id);
-  }
   const conversations = await signals(durable, system, conversation_ids);
   const attention = new Map<string, WorkAttention>();
   for (const [id, stored] of records) {

@@ -422,8 +422,11 @@ export class WorkerStepReadinessLoop {
   private ready_ticket_ids(): string[] {
     const database = this.options.connect_database();
     return database.read((sql) => {
-      const rows = sql.all<{ id: string }>(`SELECT t.id FROM tickets t
-        WHERE t.integrity_error_reason IS NULL AND t.is_backlogged=0
+      // Every workflow ends in exactly one terminal stage, named done (worker_types/registry.ts).
+      // The stage index skips done Tickets without reading their workflow copies.
+      const rows = sql.all<{ id: string }>(`SELECT t.id FROM tickets t INDEXED BY idx_tickets_stage
+        WHERE (t.stage<'done' OR t.stage>'done')
+          AND t.integrity_error_reason IS NULL AND t.is_backlogged=0
           AND t.worker_step_claim='none' AND t.pending_proposal IS NULL
           AND NOT EXISTS (SELECT 1 FROM json_each(t.workflow_json, '$.stages') stage
             WHERE json_extract(stage.value, '$.id')=t.stage
