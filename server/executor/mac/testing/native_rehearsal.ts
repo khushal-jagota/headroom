@@ -57,6 +57,7 @@ let app_closed: Promise<unknown> | undefined;
 let proxy_target = '';
 const traffic = createWriteStream(join(evidence, 'https-requests.jsonl'));
 const traffic_closed = once(traffic, 'finish');
+let request_number = 0;
 void traffic_closed.catch(() => {});
 const proxy = createServer(
   {
@@ -65,9 +66,20 @@ const proxy = createServer(
   },
   (incoming, outgoing) => {
     const request_started = performance.now();
+    const request_id = ++request_number;
+    traffic.write(
+      JSON.stringify({
+        phase: 'request',
+        request_id,
+        method: incoming.method,
+        path: incoming.url?.split('?')[0],
+      }) + '\n',
+    );
     outgoing.on('finish', () => {
       traffic.write(
         JSON.stringify({
+          phase: 'response',
+          request_id,
           method: incoming.method,
           path: incoming.url?.split('?')[0],
           status: outgoing.statusCode,
@@ -255,6 +267,16 @@ try {
   steps.executor_exit = 'passed';
   steps.passed = true;
 } catch (error) {
+  if (server) {
+    try {
+      await writeFile(
+        join(evidence, 'server-state.json'),
+        JSON.stringify(server.diagnostics(), null, 2) + '\n',
+      );
+    } catch (failure) {
+      await writeFile(join(evidence, 'server-snapshot-error.txt'), String(failure));
+    }
+  }
   await native_failure_snapshot(paths.state, evidence).catch(async (failure) => {
     await writeFile(join(evidence, 'snapshot-error.txt'), String(failure));
   });

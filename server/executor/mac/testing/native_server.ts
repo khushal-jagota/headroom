@@ -28,6 +28,7 @@ import {
   ConversationRoleMaterials,
   ConversationStartRequest,
   WorkspacePathPolicy,
+  PromptDeliveryStarted,
 } from '../../../conversation/contracts.ts';
 import {
   MessageFile,
@@ -162,7 +163,7 @@ export async function start_native_server() {
       attachment?: Uint8Array,
     ) {
       const conversation_id = 'native_' + backend + '_' + randomUUID().replaceAll('-', '');
-      const model = backend === 'claude' ? 'claude-sonnet-4-5' : 'gpt-6.1-sol';
+      const model = backend === 'claude' ? 'haiku' : 'gpt-6.1-sol';
       const ticket = context.database.write((tx) =>
         create_ticket(tx, {
           title: 'Native ' + backend + ' rehearsal',
@@ -218,6 +219,10 @@ export async function start_native_server() {
         ];
       }
       const fate = await core.send(conversation_id, content, { sender_label: 'owner' });
+      assert.ok(
+        fate instanceof PromptDeliveryStarted,
+        `Native ${backend} prompt did not start: ${JSON.stringify(fate)}`,
+      );
       return { conversation_id, ticket_id: ticket.id, fate };
     },
     async turn_result(conversation_id: string) {
@@ -260,9 +265,13 @@ export async function start_native_server() {
       return this.turn_result(conversation_id);
     },
     async active_stop(conversation_id: string, claude_trace: string) {
-      await core.send(conversation_id, text_message_content('[CASE:interrupt-base]'), {
+      const fate = await core.send(conversation_id, text_message_content('[CASE:interrupt-base]'), {
         sender_label: 'owner',
       });
+      assert.ok(
+        fate instanceof PromptDeliveryStarted,
+        `Active Stop prompt did not start: ${JSON.stringify(fate)}`,
+      );
       await wait_until(
         async () =>
           (await readFile(claude_trace, 'utf8'))
