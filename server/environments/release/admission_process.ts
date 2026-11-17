@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import { stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 import { observe_promise } from '../../core/promise_observer.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import { AppValidationError } from './contracts.ts';
 import {
   RUNTIME_PROBE_TIMEOUT_SECONDS,
@@ -25,6 +26,13 @@ export class RuntimeProbeUnsettled extends AppValidationError {
   }
 }
 
+const DRIVER_HOMES = BUILT_IN_MANIFESTS.flatMap(({ manifest }) =>
+  manifest.home ? [manifest.home] : [],
+);
+/** Each driver home's directory inside probe state, in manifest order. */
+export const PROBE_HOME_DIRECTORIES: readonly string[] = DRIVER_HOMES.map(
+  (home) => home.isolated_directory_name,
+);
 export function probe_environment(state: string): NodeJS.ProcessEnv {
   return {
     PATH: '/usr/local/bin:/usr/bin:/bin',
@@ -35,12 +43,20 @@ export function probe_environment(state: string): NodeJS.ProcessEnv {
     LANG: 'C.UTF-8',
     PYTHONDONTWRITEBYTECODE: '1',
     PLAN_DISPATCH_ENABLED: 'false',
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    ...Object.fromEntries(
+      BUILT_IN_MANIFESTS.flatMap(({ manifest }) =>
+        Object.entries(manifest.install?.admission_environment ?? {}),
+      ),
+    ),
     DISABLE_AUTOUPDATER: '1',
-    CODEX_HOME: join(state, 'codex'),
-    CLAUDE_CONFIG_DIR: join(state, 'claude'),
-    HERMES_HOME: join(state, 'hermes'),
-    PLAN_HERMES_HOME: join(state, 'hermes'),
+    ...Object.fromEntries(
+      DRIVER_HOMES.flatMap((home) =>
+        [home.environment_name, ...(home.extra_environment_names ?? [])].map((name) => [
+          name,
+          join(state, home.isolated_directory_name),
+        ]),
+      ),
+    ),
     PLAN_SERVER_URL: 'http://127.0.0.1:0',
     PLAN_CONFIG_PATH: join(state, 'config.yaml'),
     PLAN_DB_PATH: join(state, 'data/probe.sqlite'),

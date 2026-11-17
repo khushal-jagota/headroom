@@ -1,4 +1,12 @@
 /** Frozen runtime edges, including the Manager-required trusted admission closure. */
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
+
+/** Each built-in driver's static files, which built_in_manifests.ts imports. */
+const DRIVER_STATIC_FILES = BUILT_IN_MANIFESTS.flatMap((driver) =>
+  ['manifest', 'client', ...(driver.models ? ['models'] : [])].map(
+    (name) => `server/drivers/${driver.driver_kind}/${name}.ts`,
+  ),
+);
 export const INSTALLER_RECIPE_PATH = 'runtime/installer-files.json';
 export const INSTALLER_ENTRY = 'server/environments/updates/installer/main.ts';
 export const INSTALLER_SOURCE_FILES = [
@@ -52,6 +60,9 @@ export const INSTALLER_SOURCE_FILES = [
   'server/lifecycle/contracts.ts',
   'server/runtime/abort.ts',
   'server/conversation/backends/contracts.ts',
+  'server/drivers/built_in_manifests.ts',
+  'server/drivers/core/identity.ts',
+  ...DRIVER_STATIC_FILES,
   'server/package.json',
 ] as const;
 export const INSTALLER_PACKAGE_ROOTS = [

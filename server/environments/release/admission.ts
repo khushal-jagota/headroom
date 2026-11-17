@@ -6,6 +6,7 @@ import { constants } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { path_is_within } from '../../core/path_containment.ts';
 import { is_record } from '../../core/records.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import { is_file } from '../backup/evidence.ts';
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type {
@@ -25,6 +26,7 @@ import {
 import { RUNTIME_ADMISSION_TIMEOUT_SECONDS } from './process_configuration.ts';
 import { find_release_executable } from './process.ts';
 import {
+  PROBE_HOME_DIRECTORIES,
   RuntimeProbeUnsettled,
   run_runtime_json_probe,
   run_runtime_probe,
@@ -142,46 +144,33 @@ async function verify_host(
   require_host_node(await run_runtime_probe([node, '--version'], state, deadline, owner), contract);
   return node;
 }
+/** Each driver's admission commands for this system, drivers in manifest order. */
 export function native_tool_commands(
   root: string,
   contract: RuntimeContract,
   node = 'node',
 ): string[][] {
-  const modules = join(root, 'agent_backends/node_modules');
-  if (contract.system === 'darwin') {
-    const vendor = join(modules, '@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin');
-    return [
-      [node, join(modules, '@anthropic-ai/claude-code/cli-wrapper.cjs'), '--version'],
-      [node, join(modules, '@openai/codex/bin/codex.js'), '--version'],
-      ...[
-        join(modules, '@anthropic-ai/claude-code-darwin-arm64/claude'),
-        join(modules, '@anthropic-ai/claude-code/bin/claude.exe'),
-        join(root, 'server/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'),
-        join(vendor, 'bin/codex'),
-        join(vendor, 'codex-path/rg'),
-      ].map((path) => [path, '--version']),
-      [join(vendor, 'bin/codex-code-mode-host'), '--help'],
-    ];
-  }
-  const vendor = join(modules, '@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl');
-  const site = join(root, '.venv/lib/python3.12/site-packages');
-  const runtime =
-    contract.version === 2
-      ? [join(root, 'server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude')]
-      : [join(site, 'claude_agent_sdk/_bundled/claude'), join(site, 'playwright/driver/node')];
-  return [
-    [node, join(modules, '@anthropic-ai/claude-code/cli-wrapper.cjs'), '--version'],
-    [node, join(modules, '@openai/codex/bin/codex.js'), '--version'],
-    ...[
-      join(modules, '@anthropic-ai/claude-code-linux-x64/claude'),
-      join(modules, '@anthropic-ai/claude-code/bin/claude.exe'),
-      ...runtime,
-      join(vendor, 'bin/codex'),
-      join(vendor, 'codex-resources/bwrap'),
-      join(vendor, 'codex-path/rg'),
-    ].map((path) => [path, '--version']),
-    [join(vendor, 'bin/codex-code-mode-host'), '--help'],
-  ];
+  const commands = BUILT_IN_MANIFESTS.flatMap(
+    ({ manifest }) => manifest.install?.admission_commands ?? [],
+  )
+    .filter(
+      (command) =>
+        command.systems.includes(contract.system) &&
+        (contract.system !== 'linux' ||
+          command.runtime_contracts === undefined ||
+          command.runtime_contracts.includes(contract.version)),
+    )
+    .map((command) =>
+      command.runner === 'node'
+        ? [node, join(root, command.path), ...command.arguments]
+        : [join(root, command.path), ...command.arguments],
+    );
+  if (contract.system === 'linux' && contract.version === 1)
+    commands.push([
+      join(root, '.venv/lib/python3.12/site-packages/playwright/driver/node'),
+      '--version',
+    ]);
+  return commands;
 }
 export async function validate_node_probe_report(
   root: string,
@@ -256,9 +245,7 @@ export async function admit_runtime(
     for (const name of [
       'config',
       'cache',
-      'codex',
-      'claude',
-      'hermes',
+      ...PROBE_HOME_DIRECTORIES,
       'data',
       'logs',
       'backups',

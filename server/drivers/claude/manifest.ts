@@ -24,6 +24,7 @@ export const claude_manifest: DriverManifest = {
     version_pattern: /^(\S+) \(Claude Code\)$/,
   },
   install: {
+    admission_environment: { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
     npm_packages: ['@anthropic-ai/claude-code'],
     release_files: [
       `${MODULES}/@anthropic-ai/claude-code/package.json`,

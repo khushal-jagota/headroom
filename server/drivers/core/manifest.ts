@@ -55,6 +55,8 @@ export interface DriverManifest {
   };
   readonly install?: {
     readonly npm_packages?: readonly string[];
+    /** Variables the release probe sets for this driver's tools. */
+    readonly admission_environment?: Readonly<Record<string, string>>;
     /** Repository paths a release must ship for this driver. */
     readonly release_files?: readonly string[];
     /** On macOS, the installed PATH also holds the directory of this executable. */

@@ -31,12 +31,13 @@ import {
 import { complete_node_runtime } from './native_inventory.ts';
 import { validate_public_cli_entrypoint, write_app_entrypoints } from './entrypoints.ts';
 import { assert_release_execution, run_release_command } from './process.ts';
-import { probe_environment } from './admission_process.ts';
+import { PROBE_HOME_DIRECTORIES, probe_environment } from './admission_process.ts';
 import { extract_git_export, remove_owned_tree } from './archive.ts';
 import { require_generated_schema_frontier } from './migrations.ts';
 import { resolved_path, expand_path } from '../paths.ts';
 import { exists, is_symlink } from '../backup/evidence.ts';
 import { write_installer_file_manifest } from './installer_bundle.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
 const BUILD_PATH = dirname(process.execPath) + ':/usr/local/bin:/usr/bin:/bin';
 function git_environment(object_directory?: string, home?: string): NodeJS.ProcessEnv {
@@ -81,9 +82,7 @@ async function install_app_dependencies(
     '',
     'config',
     'cache',
-    'codex',
-    'claude',
-    'hermes',
+    ...PROBE_HOME_DIRECTORIES,
     'data',
     'logs',
     'backups',
@@ -137,16 +136,17 @@ async function install_app_dependencies(
       join(root, 'agent_backends'),
       '--package-lock=false',
       '--save=false',
-      '@anthropic-ai/claude-code@latest',
-      '@openai/codex@latest',
+      ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.install?.npm_packages ?? []).map(
+        (name) => `${name}@latest`,
+      ),
     ]);
   if (await exists(join(root, 'web/package.json')))
     await run('web', ['npm', 'run', 'build', '--prefix', join(root, 'web')]);
-  // The supported Linux runtime uses glibc. Keep its SDK binary and all Codex tools.
-  // The server serves web/dist, so browser build tools are no longer needed either.
+  // The server serves web/dist, so browser build tools are no longer needed. Each driver names
+  // the dependencies the supported Linux runtime does not use.
   for (const name of [
     'web/node_modules',
-    'server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl',
+    ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.install?.linux_pruned_paths ?? []),
   ]) {
     const unused_dependency = join(root, name);
     if (await exists(unused_dependency)) {
