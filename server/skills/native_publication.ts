@@ -124,6 +124,8 @@ export type NativePublicationPolicy =
   | {
       kind: 'mac-owned';
       state_root: string;
+      /** The provider's skills folder inside home: one path component. */
+      skills_directory: string;
       source_names: readonly string[];
       directory: NativePublicationDirectory;
     };
@@ -183,7 +185,9 @@ export function prepare_native_skill_publication(
   const owned = (target: string) =>
     path_is_within(
       state,
-      resolve_native_skill_path(isAbsolute(target) ? target : home + '/skills/' + target),
+      resolve_native_skill_path(
+        isAbsolute(target) ? target : home + '/' + policy.skills_directory + '/' + target,
+      ),
     );
   const scan = () => {
     directory.assert_current();

@@ -40,6 +40,7 @@ import { Deferred } from '../core/deferred.ts';
 import { write_bindings } from '../conversation/start_admission/index.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { decode_value } from '../executor/protocol.ts';
+import { accept_lease_in_transaction } from '../executor/vps_presence_store.ts';
 import { createReadAccess } from '../core/database/index.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 
@@ -505,8 +506,8 @@ test('production constructs its real executor and reconciles that executor inven
   }
 });
 
-// Gap: a remote Ticket naming a backend kind the Mac cannot run must be refused before any mailbox write.
-test('a remote Ticket that starts a backend kind outside the Mac legacy set is refused before the remote factory runs', () => {
+// Gap: a remote Ticket naming a backend kind its machine cannot run must be refused before any mailbox write.
+test("a remote Ticket start follows its machine's advertised driver kinds, or the legacy set without them", () => {
   const database = fixture();
   try {
     const ticket = create(database, { locale: 'macos' });
@@ -537,26 +538,61 @@ test('a remote Ticket that starts a backend kind outside the Mac legacy set is r
         now: 100,
       }),
     );
-    const start = new ResolvedConversationStart({
-      conversation_id: 'scripted-conversation',
-      backend_key: parse_backend_instance_id('scripted'),
-      model: 'model',
-      reasoning_effort: null,
-      role_materials: materials,
-      workspace_folder: '/tmp',
-      access: 'full',
-    });
     const local = vi.fn(),
       remote = Object.assign(vi.fn(), { recover: () => null, retained_runs: () => [] });
     const factory = new LocaleBackendChildFactory(database, local, remote);
-    expect(() =>
+    const start_remote = (backend: string) =>
       factory.create({
-        resolved_start: start,
+        resolved_start: new ResolvedConversationStart({
+          conversation_id: 'scripted-conversation',
+          backend_key: parse_backend_instance_id(backend),
+          model: 'model',
+          reasoning_effort: null,
+          role_materials: materials,
+          workspace_folder: '/tmp',
+          access: 'full',
+        }),
         event_sink: { async report() {} },
         message_files: {} as never,
-      }),
-    ).toThrow(BackendSpawnFailed);
+      });
+    const store_lease = (driver_kinds?: string[]) =>
+      database.write((tx) =>
+        accept_lease_in_transaction(
+          tx,
+          {
+            identity: {
+              protocol_version: PROTOCOL_VERSION,
+              application_revision: 'synthetic',
+              spool_format_version: 5,
+              executor_incarnation: incarnation,
+            },
+            process_id: 4242,
+            mac_wall_clock_ms: 0,
+            queue_depth: 0,
+            oldest_item_age_ms: null,
+            waiting_conversations: [],
+            waiting_conversations_truncated: false,
+            working_turns: [],
+            admission_stopped: false,
+            cleanup_uncertainties: [],
+            ...(driver_kinds === undefined ? {} : { driver_kinds }),
+          },
+          0,
+          ticket.machine_id,
+        ),
+      );
+    expect(() => start_remote('scripted')).toThrow(BackendSpawnFailed);
+    store_lease(['hermes']);
+    expect(() => start_remote('codex')).toThrow(BackendSpawnFailed);
     expect(remote).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+    store_lease(['hermes', 'codex']);
+    start_remote('codex');
+    expect(remote).toHaveBeenCalledTimes(1);
+    // The Python Mac's lease carries no driver kinds and keeps the legacy set.
+    store_lease();
+    start_remote('claude');
+    expect(remote).toHaveBeenCalledTimes(2);
     expect(local).not.toHaveBeenCalled();
   } finally {
     database.close();

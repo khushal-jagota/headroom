@@ -1,7 +1,8 @@
 /** Production bindings use the invocation's existing stores and process owners. */
 import { backend_executable_path } from '../../../conversation/snapshot/environment.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
-import { create_mac_adapter_host } from '../adapters.ts';
+import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
+import type { LoadedExecutorDriver } from '../adapters.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
 import { MAC_RUNTIME_UPDATE_EXIT_CODE } from '../configuration.ts';
 import { MacUpdateController, create_update_session } from '../updates/controller.ts';
@@ -11,11 +12,13 @@ import type { MacHostBindings, MacHostOptions } from './contracts.ts';
 export function production_bindings(
   configuration: MacHostOptions,
   environment: Readonly<NodeJS.ProcessEnv>,
+  drivers: readonly LoadedExecutorDriver[],
 ): MacHostBindings {
   return {
     adapters: (owners) =>
       create_mac_adapter_host({
         ...owners,
+        drivers,
         panels_server_url: configuration.panels_server_url,
         environment,
         executable_path: (name) => backend_executable_path(name, environment),
@@ -56,7 +59,7 @@ export async function run_mac_service(
   try {
     service = await MacService.open(
       configuration,
-      production_bindings(configuration, environment),
+      production_bindings(configuration, environment, await load_executor_drivers()),
       options(),
     );
     if (interrupted !== undefined) {

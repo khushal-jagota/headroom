@@ -162,7 +162,7 @@ async function managed_workspace_phase(): Promise<unknown> {
     native: native_fixture_options({
       paths,
       workspace_home: phase_root,
-      native_skill_home: () => join(phase_root, 'native'),
+      native_skill_home: () => ({ path: join(phase_root, 'native'), skills_directory: 'skills' }),
       snapshot_directory: join(phase_root, 'skills'),
       on_failure,
       factory: (resolved) => {
@@ -438,7 +438,7 @@ const make_native_children = () =>
       paths: new ExecutorPaths(join(root, 'state')),
       workspace_home: root,
       factory: () => () => native,
-      native_skill_home: () => join(root, 'native'),
+      native_skill_home: () => ({ path: join(root, 'native'), skills_directory: 'skills' }),
       snapshot_directory: join(root, 'skills'),
       on_failure,
     }),

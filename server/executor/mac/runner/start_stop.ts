@@ -4,10 +4,10 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import {
   BackendSpawnFailed,
-  ClaudeInitializationTimeout,
+  BackendInitializationTimeout,
 } from '../../../conversation/backends/contracts.ts';
 import { setTimeout as pause } from 'node:timers/promises';
-import { CLAUDE_START_RETRY_DELAY_SECONDS } from './configuration.ts';
+import { BACKEND_START_RETRY_DELAY_SECONDS } from './configuration.ts';
 import { FifoLock } from '../../../conversation/runtime/state.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
@@ -109,8 +109,8 @@ export class MacNativeChildren implements MacNativeChildrenContract {
           try {
             return await this.start_admitted(reference, input, invoking, ticket_id);
           } catch (error) {
-            if (!(error instanceof ClaudeInitializationTimeout) || attempt === 2) throw error;
-            await pause(CLAUDE_START_RETRY_DELAY_SECONDS * 1000);
+            if (!(error instanceof BackendInitializationTimeout) || attempt === 2) throw error;
+            await pause(BACKEND_START_RETRY_DELAY_SECONDS * 1000);
           }
         }
       })
@@ -160,13 +160,16 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     const capability = randomBytes(32).toString('base64url');
     try {
       this.assert_start(entry);
+      // Refuses a backend this machine does not run before anything is written.
+      const native_home = this.options.native_skill_home(input.resolved_start.backend_key);
       let generation: string;
       try {
         generation = await this.options.skills.install_native_skill_snapshot(
           input.canonical_skill_snapshot,
           {
             root: this.options.paths.root,
-            native_home: this.options.native_skill_home(input.resolved_start.backend_key),
+            native_home: native_home.path,
+            native_skills_directory: native_home.skills_directory,
           },
         );
       } catch (error) {

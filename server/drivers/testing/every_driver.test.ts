@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { shipped_worker_types } from '../../worker_types/shipped.ts';
 import { BUILT_IN_DRIVERS } from '../built_in.ts';
+import { BUILT_IN_EXECUTORS } from '../built_in_executors.ts';
 import { BUILT_IN_MANIFESTS } from '../built_in_manifests.ts';
 import type { AnyAgentDriver } from '../core/driver.ts';
 import { default_instance_configs } from '../core/registry.ts';
@@ -37,6 +38,12 @@ const EVERY_DRIVER_LISTS: readonly EveryDriverList[] = [
       missing([driver.client.icon.file], (file) =>
         existsSync(new URL(`../${driver.driver_kind}/${file}`, import.meta.url)),
       ),
+  },
+  {
+    // Until the executor half moves onto each driver (after the driver build's Core part 2).
+    name: 'built_in_executors.ts holds the executor half',
+    covers: (driver) =>
+      missing([driver.driver_kind], (kind) => Object.hasOwn(BUILT_IN_EXECUTORS, kind)),
   },
 ];
 
