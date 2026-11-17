@@ -8,11 +8,11 @@ and preferences, with its own durable queue. `/api/changes` is a
 content-free foreground refresh signal, not a notification stream. Polling it
 cannot wake a suspended iOS app. The native app already follows it while open.
 
-`src/planner/notifications/contracts.py` defines the notification catalog. Tickets,
+`server/notifications/contracts.ts` defines the notification catalog. Tickets,
 Chief, and managers each offer the event types that apply to them.
-`attention.py` records false-to-true transitions. `logic/policy.py` applies the
+`attention.ts` records false-to-true transitions. `logic/policy.ts` applies the
 saved preferences and constructs a title, body, route and replacement tag.
-`runtime.py`, `web_push.py`, and `apns.py` deliver those intents to browser
+`runtime.ts`, `web_push.ts`, and `apns.ts` deliver those intents to browser
 subscriptions and registered native devices.
 `web/src/routes/NotificationsRoute.svelte` manages preferences and Web Push
 subscriptions. An APNs token is not a Web Push subscription: it has neither a

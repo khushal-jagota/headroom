@@ -48,7 +48,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 
 ## Code
 
-- `src/planner/notifications/`: flags and edges (`attention.py`), the policy (`logic/policy.py`), deliveries, preferences, and Web Push.
+- `server/notifications/`: flags and edges (`attention.ts`), the policy (`logic/policy.ts`), deliveries, preferences, Web Push, and APNs.
 - `static/service-worker.js`: the service worker.
 - `web/src/routes/NotificationsRoute.svelte`: the settings section.
 

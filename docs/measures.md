@@ -5,7 +5,7 @@ A measure is a dated number that belongs to a Project: monthly revenue, events p
 ## What it is made of
 
 - **Measures.** A name, unit, Project, and timezone. Kind (reading, running total, period count) and period are descriptive. They do not restrict arithmetic.
-- **Sources.** A saved Python script that collects values for a Project, run on a schedule or on request. A source has a responsible Chief, Manager, or goal. That owner, and Workers it authorizes, edit and run it. Goals have no agent of their own.
+- **Sources.** A saved JavaScript script that collects values for a Project, run on a schedule or on request. A source has a responsible Chief, Manager, or goal. That owner, and Workers it authorizes, edit and run it. Goals have no agent of their own.
 - **Datasets.** A retained table owned by a source: rows by date, with category dimensions and numeric fields. A measure is one number per date. A dataset is a breakdown, such as events by team. Goal charts read both.
 - **Credentials.** Named API keys that scripts look up by name. [Credentials](credentials.md) owns how they are stored and requested.
 
@@ -23,7 +23,7 @@ A measure is a dated number that belongs to a Project: monthly revenue, events p
 
 ## How collection works
 
-A source runs its script as an ordinary child process in the application's Python environment. The owner chose trusted scripts and simple secrets over a sandbox. The script has installed packages, files, and network access. Naming credentials by key avoids embedding secrets in code, and is not a security boundary.
+A source runs its script as a JavaScript module in its own Node child process, with a filtered environment and a scratch folder. The owner chose trusted scripts and simple secrets over a sandbox. The script has files and network access. Naming credentials by key avoids embedding secrets in code, and is not a security boundary.
 
 The script emits dated values through runtime helpers. Printed output creates nothing. Headroom checks only that numbers are finite, dates valid, and outputs owned by the source. Meaning belongs to the script: signs, units, and whether a period is finished.
 
@@ -49,8 +49,8 @@ There is no measures screen. Values appear on goal pages, and manual controls si
 
 ## Code
 
-- `src/planner/measures/`: definitions, formulas, coverage, manual writes.
-- `src/planner/measure_sources/`: sources, the script runtime, scheduling, failure notices.
-- `src/planner/datasets/` and `src/planner/credentials/`.
+- `server/measures/`: definitions, formulas, coverage, manual writes.
+- `server/measure_sources/`: sources, the script runtime, scheduling, failure notices.
+- `server/datasets/` and `server/credentials/`.
 
 _Last verified: 2026-11-11._

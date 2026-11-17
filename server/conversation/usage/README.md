@@ -1,7 +1,7 @@
 # Recorded usage
 
 This area reads local native transcripts and returns priced usage buckets. It
-keeps the existing Python contract version 5 and scan cache version 5. The browser
+keeps contract version 5 and scan cache version 5. The browser
 DTO types mechanically copy the existing frontend contracts. Their extensionless
 `./index` imports require bundler resolution and fail the server's NodeNext check,
 so the server keeps only the required DTOs locally with the same shapes and brands.
@@ -39,53 +39,51 @@ The full MIT copyright and permission notice is retained in [T3-LICENSE](T3-LICE
   `routes.ts` consumes only the service and backend state.
 
 The public runtime interface is `RecordedUsageService`: `readSummary`,
-`refreshRates`, and `finish_operations`. The concrete constructor keeps the Python
-shape `UsageService(stateDir, transcriptDirs, options)`. Defaults and limits live
+`refreshRates`, and `finish_operations`. The concrete constructor is
+`UsageService(stateDir, transcriptDirs, options)`. Defaults and limits live
 in `configuration.ts`. No Effect runtime or provider adapter is required.
 
 `finish_operations` drains admitted operations and unreferences an idle worker
 without discarding its cache. `stop({deadline})` seals admission, aborts injected
 rate work, and terminates and joins the worker within the shutdown budget.
 
-## Adaptations for the current Python implementation
+## Adaptations to the copied modules
 
 The copied modules retain their original responsibilities and Map-based
-contracts. These language-boundary changes preserve Python behavior:
+contracts. These changes keep the existing Panels usage behavior:
 
 - Timestamp intake uses the shared ISO parser, with millisecond truncation. It
   rejects invalid calendar values that JavaScript's `Date.parse` normalizes.
 - Codex parsing retains native JSON integer and float kinds in its duplicate
   signature. Token arithmetic projects only the consumed numeric values.
-- Object checks reject arrays wherever Python requires a dictionary. A valid
+- Object checks reject arrays wherever an object is required. A valid
   empty Claude usage object still produces its zero-total record.
-- Directory walks use `opendir` iteration to retain native `os.scandir` order.
-  First-copy deduplication therefore uses the same source order as Python.
+- Directory walks use `opendir` iteration to retain native directory order.
+  First-copy deduplication follows that source order.
 - Bigint file metadata preserves device and inode identities. Modification time
   converts the integer quotient and fractional remainder separately, avoiding an
   early rounded conversion of nanoseconds.
 - Bucket order uses Unicode code points rather than locale collation. Model
-  normalization uses Python's whitespace set.
+  normalization uses a fixed whitespace set.
 - Database paths resolve filesystem symlinks before composition chooses the cache
-  parent through `core/path_resolution.ts`. Missing path tails retain Python's
-  non-strict resolution behavior. A DB-file symlink places `usage` beside its target.
-- Transcript home paths retain pathlib's lexical `..` segments. They do not use
+  parent through `core/path_resolution.ts`. Missing path tails resolve
+  non-strictly. A DB-file symlink places `usage` beside its target.
+- Transcript home paths retain lexical `..` segments. They do not use
   Node's collapsing path join before source fingerprints and filesystem reads.
 - Persisted cache documents use strict UTF-8 decoding and reject text BOMs.
-  Transcript decoding retains Python's replacement behavior.
+  Transcript decoding replaces invalid bytes.
 - Installed timezone aliases such as `posixrules` use their canonical zone target.
   An installed key without an ICU mapping uses UTC under the accepted zone-data
-  deviation. Invalid or uninstalled HTTP keys still answer 422. A focused test
-  uses one tiny public fixed-offset TZif file under a synthetic key to pin this
-  distinction. Python uses that file's real offset, so this fallback is not
-  described as exact custom-zone parity.
+  deviation. Invalid or uninstalled HTTP keys still answer 422. This fallback
+  ignores a custom zone file's real offset.
 
 Request pricing selects long-context rates above 272,000 prompt tokens and retains
 Claude one-hour cache-write tokens. Codex compaction records count once, with
 covered identities reserved across all files before date filtering. Cache version 5
 retains pending compactions, service tiers, and cache-write duration metadata.
 
-These are parity adaptations, not additional usage policies. Later upstream
-provider types, compressed transcripts, and speed pricing do not enter this port.
+These are adaptations, not additional usage policies. Later upstream provider
+types, compressed transcripts, and speed pricing are not part of this copy.
 
 ## Safety and evidence
 
@@ -95,17 +93,9 @@ rate fetchers. The production
 rates transport refuses test contexts. Real provider transcripts, authentication
 files, provider CLIs, and billing endpoints do not participate in local proof.
 
-The rates transport follows Linux urllib's scheme-specific proxy environment
+The rates transport follows the usual scheme-specific proxy environment
 selection, lowercase precedence, CGI exclusion for uppercase `HTTP_PROXY`, and
 `no_proxy` suffix bypass. HTTPS tunnels use `https-proxy-agent` through HTTP or
-HTTPS proxies. Each redirect selects the proxy again. Recording proofs exercise
-the pure selector without a network connection. `/limits` requires a conversation
+HTTPS proxies. Each redirect selects the proxy again. `/limits` requires a conversation
 runtime and answers 503 when it is absent. Summary and rates refresh remain local
 service routes independent of that runtime.
-
-Direct reader/cache comparisons use tiny source files and hash only the 64-byte
-guard. The HTTP proof uses the ordinary app adapters with the actual service and
-recording dependencies. It compares populated summaries, saved limits, and rate
-refresh answers. Focused service tests cover concurrency and retained scan
-lifetime. Verification results belong to the Ticket evidence after those checks
-run. No browser host is needed for these server boundaries.

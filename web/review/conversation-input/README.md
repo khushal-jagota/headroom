@@ -23,14 +23,3 @@ Viewport widths are 736, 1250, and 390 pixels, capped by the available artifact 
 Drafts survive conversation open/dock movement because the production composer remains mounted. Switching between Ticket and Manager layouts replaces that mount. The opaque sandbox rejects session storage, so drafts do not survive that replacement or an artifact reload. This is existing production storage behavior, not a preview persistence mechanism.
 
 The document contains synthetic local conversations and local send responses. Files, slash commands, provider changes, live endpoints, and module-worker isolation are outside the preview's scope. No production component styling changes are part of this preview.
-
-
-Run the acceptance probe against the managed sandbox:
-
-```sh
-.venv/bin/python scripts/conversation_input_review/verify_preview.py --base-url http://127.0.0.1:8767 --ticket t_2g0vwu4y --path clarification/candidate/preview.html --output /home/vps/Deployments/Panels/current/data/files/tickets/t_2g0vwu4y/artifacts/clarification/evidence
-```
-
-The probe reuses the existing deployed artifact host. It adds no permanent browser host. Its forty-eight recovery cases cross four outcomes, four hosts, and three real child viewport widths. The twelve five-second timeout cases cost at least sixty seconds. The evidence records elapsed time, native text location, scroll geometry, request activity, and browser errors. Existing frontend cases retain the deeper admission and cancellation matrix. A real-app held HTTP 200 probe remains necessary for live endpoint and worker-parser evidence.
-
-The probe observes product mutations and animation frames from scenario setup through pending restoration, final placement, and late response release. It asserts that no restoration-specific status or text appears. Held-body cases prove a pending reader and ordinary loading semantics before release. The genuine newest-fetch failure case proves the production Connection trouble indication in the dock.

@@ -41,6 +41,6 @@ The Usage label in the shell, at `#/backends`, and the same page inside the Work
 
 ## Code
 
-`src/planner/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`, with sign-in in `web/src/lib/conversation/backendSignIn.ts`.
+`server/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`, with sign-in in `web/src/lib/conversation/backendSignIn.ts`.
 
 _Last verified: 2026-11-13._

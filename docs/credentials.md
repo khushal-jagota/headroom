@@ -40,8 +40,8 @@ The agent then learns the outcome through an ordinary prompt that names the requ
 
 ## Code
 
-- `src/planner/credentials/`: the store, cipher, resolver, public metadata routes, and the CLI.
-- `src/planner/credentials/requests/`: requests, owner answers, and result delivery.
+- `server/credentials/`: the store, cipher, resolver, public metadata routes, and the CLI.
+- `server/credentials/requests/`: requests, owner answers, and result delivery.
 - `web/src/components/conversation/ConversationCredentialRequestCard.svelte`: the card.
 
 _Last verified: 2026-11-04._

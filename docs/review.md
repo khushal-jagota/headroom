@@ -41,7 +41,7 @@ A file linked from a proposal opens on its own page. At the bottom, that page sh
 
 ## Code
 
-- `src/planner/navigation/`: the index, and Review's membership and ordering (`review.py`, `review_logic.py`).
+- `server/navigation/`: the index, and Review's membership and ordering (`views/review.ts`).
 - `web/src/routes/ReviewRoute.svelte` and `web/src/components/Review*.svelte`: the pass and its cards.
 - `ios/Panels/Features/Review/`: the native pass and its saved-work snapshot.
 

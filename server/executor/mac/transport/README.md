@@ -8,8 +8,7 @@ The reporter retains the reader's close capability.
 
 `MacFileTransport` uses an invocation-owned `FilesService` for bounded transfer bytes,
 digest checks, retained descriptors and full flush. This binding discards a failed download through
-its retained parent. Python's low-level HTTP client leaves the partial file, but its `MacFiles`
-binding removes the temporary in `finally`. This binding supplies that cleanup before host composition.
+its retained parent.
 Transfer close failure faults the files owner and retains both primary and cleanup errors.
 The host must retain and stop the supplied files owner separately.
 
@@ -18,10 +17,6 @@ remain retained until actual completion. `reset()` replaces sessions and joins t
 `stop()` seals admission and observes that join with the host's original absolute deadline.
 `settled()` waits for actual cleanup. Neither timeout nor cancellation proves cleanup.
 
-The direct comparison owns a numeric-loopback TLS listener, private certificate and synthetic homes.
-It compares populated requests and replies against fresh Python, including unsafe integers,
-redirect and size refusals, transfer bytes, and reset. The same fixture proves channel isolation
-and actual producer ownership. The containment check precedes client construction and network I/O.
 Imports start no loops or providers. The host explicitly starts `MacLeaseLoop`.
 Its lease reports backlog and working turns, offers updates, and fences a replaced incarnation.
 It captures the journal cursor before the request so a restore cannot erase a concurrent poll advance.

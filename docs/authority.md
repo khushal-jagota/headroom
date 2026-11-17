@@ -67,11 +67,10 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 
 ## Code
 
-- `src/planner/core/authority/logic.py`: the rule, the own-record check, and who may hold a review.
-- `src/planner/core/authority/intake.py`: checks requests and Mac commands against the target and relation at intake.
-- `src/planner/core/authority/service.py`: supplies the database facts for the rank rule.
-- `src/planner/core/authctx.py`: turns a request into a caller, and holds the owner-only doors.
-- `src/planner/agent_identity/` and `server/agent_identity/`: conversation credentials, hash storage and private launch delivery.
-- `server/core/authority/identity.ts`: the TypeScript request identity boundary. Executor self-reads enter through a verified in-process context.
+- `server/core/authority/logic.ts`: the rule, the own-record check, and who may hold a review.
+- `server/core/authority/intake.ts`: checks requests and Mac commands against the target and relation at intake.
+- `server/core/authority/service.ts`: supplies the database facts for the rank rule.
+- `server/core/authority/identity.ts`: turns a request into a caller. Executor self-reads enter through a verified in-process context.
+- `server/agent_identity/`: conversation credentials, hash storage and private launch delivery.
 
 _Last verified: 2026-11-16._

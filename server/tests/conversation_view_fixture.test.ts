@@ -32,7 +32,7 @@ interface Oracle {
   }[];
 }
 const root = resolve(import.meta.dirname, '../..');
-const source = readFileSync(resolve(root, 'tests/fixtures/conversation_views.json'));
+const source = readFileSync(resolve(root, 'server/conversation/views/conversation_views.json'));
 const fixtures = JSON.parse(source.toString()) as Fixture[];
 const oracle = JSON.parse(
   readFileSync(resolve(root, 'server/conversation/views/fixture_oracle.json'), 'utf8'),

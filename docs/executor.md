@@ -122,15 +122,14 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 
 ## Code
 
-- `src/planner/executor/`: shared protocol, registry, transport, journals, mailboxes, files, and replay.
-- `src/planner/machines/`: destinations and credentials.
-- `src/planner/conversation/start_admission/`: automatic-start capacity and pacing.
-- `src/planner/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
-- `src/planner/stalls/`: wait checks and watchdog.
-- `src/planner/environments/mac_executor.py` and `environments/mac_app/`: Mac installation and signed launcher.
-- `src/planner/environments/linux_executor.py`: Linux installation and systemd user service.
-- `scripts/build_linux_executor.py`: Python executor archive and native startup proof.
-- `server/environments/linux_executor/`: native TypeScript executor archive, installation, and private enrollment entry.
+- `server/executor/`: shared protocol, registry, transport, journals, mailboxes, files, and replay.
+- `server/executor/mac/`: the TypeScript Mac executor and its packaging.
+- `server/machines/`: destinations and credentials.
+- `server/conversation/start_admission/`: automatic-start capacity and pacing.
+- `server/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
+- `server/stalls/`: wait checks and watchdog.
+- `server/environments/linux_executor/`: Linux executor archive, installation, systemd user service, and private enrollment entry.
 - `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
+- `src/planner/executor/`, `src/planner/environments/mac_executor.py`, and `environments/mac_app/`: the Python Mac executor, its installation, and its signed launcher. They stay as the Mac's rollback until the owner approves their removal.
 
 _Last verified: 2026-11-14._

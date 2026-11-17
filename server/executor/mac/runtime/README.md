@@ -10,7 +10,6 @@ Failed native closes retain their capabilities. The file worker seals admission,
 
 Python places these records under the executor's `updates/` directory, beside `updates/releases/`.
 The update controller and fixed supervisor will supply their deterministic local record paths.
-Linux synthetic checks prove byte parity, staged-write failure, retained-parent publication, and close retry.
 Darwin ABI and power-loss durability remain later native checks.
 
 `supervisor.ts` keeps the original installation fixed and launches the selected runtime with the same CLI arguments.
