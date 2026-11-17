@@ -14,7 +14,7 @@ import type {
   WorkerProcessRecord,
 } from './contracts.ts';
 import { INSPECTION_SECONDS, STOP_SECONDS, TERM_SECONDS } from './config.ts';
-import { discover, validate_pending_shape } from './logic/ownership.ts';
+import { alive, discover, validate_pending_shape } from './logic/ownership.ts';
 import { capture_observation } from './observation.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import * as records from './records.ts';
@@ -87,7 +87,15 @@ export async function observe_unlocked(
         );
       }
     }
-    record.processes = found;
+    // Retire only incarnations the cleanup check would already count as ended. Absence
+    // from the stable pair is not that proof: a live process can change between inventories.
+    record.processes = [];
+    for (const process of found)
+      if (
+        alive(process, observation.stable) ||
+        !(await context.primitives.is_absent(process, deadline))
+      )
+        record.processes.push(process);
     record.unattributed_session_members = members;
     delete record.observation_error;
   }
