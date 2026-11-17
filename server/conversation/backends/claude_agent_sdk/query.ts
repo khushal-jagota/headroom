@@ -12,7 +12,7 @@ import type {
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import { PromptWriteFailed } from '../contracts.ts';
-import { ensure_cli_compatible } from '../cli_compatibility.ts';
+import { confirm_reported_cli_version, ensure_cli_compatible } from '../cli_compatibility.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
 import { local_process_identity } from '../../../worker_supervision/identity.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
@@ -280,6 +280,12 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       // The SDK can invoke its synchronous spawn callback after query() returns.
       const [info] = await Promise.all([this.cli.initializationResult(), this.registered.promise]);
       this.info = object(info) ? info : null;
+      // The running process states its own version, which a wrapper or update can change.
+      await confirm_reported_cli_version(
+        'claude',
+        this.options.pathToClaudeCodeExecutable,
+        this.info?.claude_code_version,
+      );
     } catch (cause) {
       await this.revoke_unspawned();
       await this.disconnect();

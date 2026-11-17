@@ -868,3 +868,16 @@ runs still waits for it. The `automatic_compaction` wire flag and the database
 columns stay the same. The unit 15b maintenance comparison sends its owner message
 after that window, so both runtimes deliver it at once. The focused maintenance test
 in `server/tests/conversation_core_maintenance.test.ts` proves the TypeScript behavior.
+
+## Remembered CLI version verdicts
+
+TypeScript no longer runs `claude --version` or `codex --version` before every Claude or
+Codex start. Python still does. The native server keeps each definite feature-floor verdict
+for the exact executable file: backend, resolved path, device, inode, size, and modification
+and change times. The backend snapshot's version read fills it, and a miss runs one check and keeps its
+result. A failed or unreadable check is not kept. A conversation turn checks before its child
+launch record is written, so a too-old CLI is refused without launch custody.
+The connection still enforces each floor. Claude's initialize reply and Codex's
+`initialize` userAgent report the running version. A version below the floor fails that
+start with the same update message and replaces the kept verdict. A missing or unreadable
+reported version does not fail the start.

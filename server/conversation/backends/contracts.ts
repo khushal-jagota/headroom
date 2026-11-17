@@ -318,6 +318,8 @@ export interface BackendEventSink {
 }
 export interface BackendChild {
   readonly stop_outside_lock: boolean;
+  /** Refuse a CLI below the backend's feature floor before any launch record is written. */
+  confirm_cli_compatible?(): Promise<void>;
   local_child_identity?(): Promise<LocalChildIdentity | null>;
   withdraw_delivery(): Promise<boolean>;
   detach(options?: StopOptions): Promise<void>;
