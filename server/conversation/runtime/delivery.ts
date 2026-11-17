@@ -229,6 +229,8 @@ export async function deliver_prompt(
     }
   }
   const had_child = state.child !== null;
+  if (reservation.automatic_compaction && !had_child)
+    return result({ suppression_reason: 'automatic_compaction_child_stopped' });
   let child: BackendChild;
   try {
     child = await ensure_child(host, state, reservation, first);
@@ -363,6 +365,8 @@ export async function deliver_prompt(
     return await write(child);
   } catch (error) {
     if (!(error instanceof NeedsRebind)) return refusal_or_throw(error);
+    if (reservation.automatic_compaction)
+      return result({ suppression_reason: 'automatic_compaction_child_requires_rebind' });
     reservation.prompt_write_attempted = false;
     host.start_admission.bind_source(reservation.token, null);
     rebound = true;

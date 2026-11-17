@@ -10,6 +10,7 @@ import type {
 import type { WorkspaceIdentity } from '../../../ticket_workspaces/contracts.ts';
 import type { TurnToken } from '../../backends/contracts.ts';
 import { BackendSpawnFailed } from '../../backends/contracts.ts';
+import { AUTOMATIC_COMPACTION_MINIMUM_INPUT_TOKENS } from '../../runtime/configuration.ts';
 import { read_unresolved_turns } from '../../deploy_interruptions/capture.ts';
 import * as custody from './child_custody.ts';
 import * as supervision_records from '../../../worker_supervision/records.ts';
@@ -1248,8 +1249,15 @@ export class ConversationStore
           'SELECT conversation_id FROM conversations WHERE latest_agent_activity_at IS NOT NULL ' +
             'AND latest_agent_activity_at<=? AND latest_agent_activity_at>? ' +
             'AND latest_agent_activity_sequence>automatic_compaction_attempted_through_sequence ' +
+            "AND NOT EXISTS (SELECT 1 FROM tickets WHERE tickets.conversation_id=conversations.conversation_id AND tickets.stage='done') " +
+            "AND (SELECT json_extract(payload,'$.input_tokens') FROM conversation_events " +
+            "WHERE conversation_id=conversations.conversation_id AND kind='token_usage' ORDER BY sequence DESC LIMIT 1)>=? " +
             'ORDER BY latest_agent_activity_at,conversation_id',
-          [options.due_at_or_before, options.activity_after],
+          [
+            options.due_at_or_before,
+            options.activity_after,
+            AUTOMATIC_COMPACTION_MINIMUM_INPUT_TOKENS,
+          ],
         )
         .filter(
           (row) =>
@@ -1296,6 +1304,14 @@ export class ConversationStore
             this.#participants.automated_maintenance_suppression_reason?.(tx, conversation_id) ??
             null;
         }
+        if (
+          reason === null &&
+          options.automatic_compaction &&
+          tx.get("SELECT 1 FROM tickets WHERE conversation_id=? AND stage='done'", [
+            conversation_id,
+          ]) !== undefined
+        )
+          reason = 'worker_ticket_done';
         if (
           reason === null &&
           memory_notice &&
