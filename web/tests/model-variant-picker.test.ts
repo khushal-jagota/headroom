@@ -130,6 +130,16 @@ describe("drivers, marks and reasoning in the picker", () => {
     expect(view.face).toBe("gpt-6.1-sol high");
   });
 
+  it("keeps a stored effort word on a known but empty card, as a not-installed one is", () => {
+    // The server sends an empty card when a backend is not installed or awaits a fresh read.
+    const view = resolveModelPicker({
+      backendKey: "codex", model: "gpt-6.1-sol", reasoningEffort: "high", drivers: DRIVERS,
+      backends: [card({ installed: false })]
+    });
+    expect(view.offersReasoning).toBe(true);
+    expect(view.face).toBe("gpt-6.1-sol high");
+  });
+
   it("takes the effort rows from the model's reasoning descriptor", () => {
     const view = picker([{
       model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,

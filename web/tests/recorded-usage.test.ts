@@ -90,7 +90,7 @@ describe("usage names and colours come from the drivers", () => {
     expect(body).toContain("background: #d97757");
     expect(body).toContain("Grok Build");
     expect(body).toMatch(/<i[^>]*style="background: #a1a1aa;"[^>]*><\/i>Grok Build<\/span>/);
-    expect(body).toMatch(/<i[^>]*style="background: #a1a1aa;"[^>]*><\/i>antigravity<\/span>/);
+    expect(body).toMatch(/<i[^>]*style="background: #a1a1aa;"[^>]*><\/i>Antigravity<\/span>/);
     expect(body).toMatch(/<i[^>]*style="background: #d97757;"[^>]*><\/i>Claude<\/span>/);
   });
   it("colours an allowance pool with its driver's accent", () => {

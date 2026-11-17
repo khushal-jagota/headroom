@@ -22,7 +22,9 @@
   } = $props();
   const queryClient = useQueryClient();
   const driversQuery = createQuery(() => queries.drivers());
-  const drivers = $derived(driversQuery.data?.drivers);
+  // Usage names, colours and stacking come from the driver list, so the usage body waits
+  // for it. A failed list falls back to each key's own name and the neutral colour.
+  const drivers = $derived(driversQuery.data?.drivers ?? (driversQuery.isError ? [] : undefined));
   let days = $state<UsageDays>(1);
   let windowSelection = $state(makeWindow(1, new Date(), "hour"));
   let providerSelection = $state<string[] | null>(null);
@@ -76,13 +78,13 @@
     {#if refreshError}<p class="error" role="alert">{refreshError}</p>{/if}
     {#if tab === "limits"}
       {#if limits.error}<p class="error" role="alert">Could not refresh limits. Showing the last known values.</p>{/if}
-      <SkeletonRegion shape="rows" loading={limits.isPending && !Object.keys(allowance).length && !limits.error} loadingText="Reading subscription limits…">
-        <UsageLimits limits={allowance} providers={selectedProviders} outcomes={refreshOutcomes} {now} {drivers} />
+      <SkeletonRegion shape="rows" loading={drivers === undefined || (limits.isPending && !Object.keys(allowance).length && !limits.error)} loadingText="Reading subscription limits…">
+        {#if drivers !== undefined}<UsageLimits limits={allowance} providers={selectedProviders} outcomes={refreshOutcomes} {now} {drivers} />{/if}
       </SkeletonRegion>
     {:else}
       {#if recorded.error}<p class="error" role="alert">Usage unavailable{summary ? " · showing saved totals" : ""}</p>{/if}
-      <SkeletonRegion shape="rows" loading={recorded.isPending && !summary && !recorded.error} loadingText="Scanning provider transcripts…">
-        {#if summary}<RecordedUsage {summary} input={windowSelection} providers={selectedProviders} metric={tab} {drivers} />{/if}
+      <SkeletonRegion shape="rows" loading={drivers === undefined || (recorded.isPending && !summary && !recorded.error)} loadingText="Scanning provider transcripts…">
+        {#if summary && drivers !== undefined}<RecordedUsage {summary} input={windowSelection} providers={selectedProviders} metric={tab} {drivers} />{/if}
       </SkeletonRegion>
     {/if}
   {/if}

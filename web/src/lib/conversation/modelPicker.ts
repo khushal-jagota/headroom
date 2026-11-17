@@ -108,9 +108,11 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
   const models = catalogModels.filter(modelIsEnabled);
   const backendEffortOptions =
     input.backendEffortOptions ?? snapshot?.reasoning_effort_options ?? [];
-  // A catalogue not read yet says nothing against reasoning, so the stored effort stays.
-  const catalogKnown = snapshot !== undefined || catalogModels.length > 0;
-  const offersReasoning = !catalogKnown
+  // A catalogue with nothing in it (not read yet, not installed, or awaiting a fresh read)
+  // says nothing against reasoning, so the stored effort stays. Only models offered with
+  // no effort anywhere mean the backend has none.
+  const catalogSaysNothing = catalogModels.length === 0 && backendEffortOptions.length === 0;
+  const offersReasoning = catalogSaysNothing
     || backendEffortOptions.length > 0
     || catalogModels.some((model) => (reasoningDescriptor(model)?.options.length ?? 0) > 0);
   const defaultModel = input.defaultModel ?? snapshot?.default_model_id ?? null;

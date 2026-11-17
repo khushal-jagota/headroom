@@ -22,6 +22,16 @@
   } = $props();
 
   let returnUrl = $state("");
+  /** The pasted address belongs to one waiting session. A sign-in that moves on, or a new
+   *  one, starts with an empty box rather than an old OAuth return address. */
+  const waitingSession = $derived(signInState.signIn?.state === "awaiting_return_url"
+    ? signInState.signIn.session_id : null);
+  let returnUrlSession: string | null = null;
+  $effect(() => {
+    if (waitingSession === returnUrlSession) return;
+    returnUrlSession = waitingSession;
+    returnUrl = "";
+  });
   const shows = $derived(backendCanBeSignedIn(snapshot)
     && (snapshot.identity?.status === "unauthenticated" || signInIsPending(signInState.signIn)));
 </script>

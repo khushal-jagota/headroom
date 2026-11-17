@@ -6,13 +6,13 @@
  */
 import type { UsageProviderKind } from "@t3tools/contracts";
 import type { DriverPresentation } from "../drivers/contracts";
-import { driverFor } from "../drivers/presentation";
+import { backendLabel, driverFor } from "../drivers/presentation";
 
 export const NON_DRIVER_USAGE_SOURCES: Readonly<Record<string, { label: string; color: string }>> = {
   grok: { label: "Grok Build", color: "#a1a1aa" },
 };
 
-/** A source nobody names shows itself in the neutral colour. */
+/** A source nobody names shows its capitalised key in the neutral colour. */
 const UNKNOWN_USAGE_SOURCE_COLOR = "#a1a1aa";
 
 /** Stacking order, bottom first: the drivers in the server's order, then the other sources. */
@@ -21,7 +21,7 @@ export function usageSourceOrder(drivers: readonly DriverPresentation[] | undefi
 }
 
 export function usageSourceLabel(key: UsageProviderKind, drivers: readonly DriverPresentation[] | undefined): string {
-  return driverFor(key, drivers)?.label ?? NON_DRIVER_USAGE_SOURCES[key]?.label ?? key;
+  return driverFor(key, drivers)?.label ?? NON_DRIVER_USAGE_SOURCES[key]?.label ?? backendLabel(key, undefined);
 }
 
 export function usageSourceColor(key: UsageProviderKind, drivers: readonly DriverPresentation[] | undefined): string {
