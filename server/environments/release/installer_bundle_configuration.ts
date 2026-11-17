@@ -62,6 +62,7 @@ export const INSTALLER_SOURCE_FILES = [
   'server/conversation/backends/contracts.ts',
   'server/drivers/built_in_manifests.ts',
   'server/drivers/core/identity.ts',
+  'server/drivers/core/paths.ts',
   ...DRIVER_STATIC_FILES,
   'server/package.json',
 ] as const;
