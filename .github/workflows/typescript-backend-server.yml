@@ -47,6 +47,9 @@ jobs:
             STYLE_BASE=$(git rev-parse HEAD~1)
           fi
           node server/tools/native_style.ts "$STYLE_BASE"
+      - name: Check driver names stay in their packages
+        if: matrix.node == '22'
+        run: node server/tools/check_driver_names.ts
       - name: Check formatting
         if: matrix.node == '22'
         run: scripts/dev npm --prefix server run format:check
