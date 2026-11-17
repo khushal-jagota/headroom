@@ -8,16 +8,13 @@ This area owns the seven Goal routes, saved Goal facts, completion rules, rich p
 
 `logic/documents.ts` extends the existing Manager page preparer with chart validation and canonical dependency collectors. `manager_documents.ts` composes the four Manager seams: held Goals, rich preparation, binding validation, and document readings. `resource_versions.ts` keeps saved Goal revisions separate from measurement revisions and adds dependency-local calendar dates to readings.
 
-Authored documents retain `JsonNumber` metadata through the shared numeric JSON helpers. Validation and arithmetic use numeric projections. Storage uses native JSON and preserves exact integer digits. Deadline and reference-date checks share `calendar.ts`. The accepted depth policy remains in the [measure README](../measures/README.md) and [deviation record](../DEVIATIONS.md).
+Authored documents retain `JsonNumber` metadata through the shared numeric JSON helpers. Validation and arithmetic use numeric projections. Storage uses native JSON and preserves exact integer digits. Deadline and reference-date checks share `calendar.ts`. The accepted depth policy is in the [measure README](../measures/README.md) and the [deviation record](../DEVIATIONS.md).
 
-Completion requires retained, dated evidence. `rule_evaluation.ts` finds the first proven date. `outcomes.ts` reconciles persisted completion facts without replacing them after a failed evaluation. `scheduling.ts` supplies `GoalCompletionParticipant` without its own timer or writer. Unit 13 still must attach this participant to the shared collection clock and prove that integration.
+Completion requires retained, dated evidence. `rule_evaluation.ts` finds the first proven date. `outcomes.ts` reconciles persisted completion facts without replacing them after a failed evaluation. `scheduling.ts` supplies `GoalCompletionParticipant` without its own timer or writer. `measure_sources/scheduling.ts` attaches this participant to the shared collection clock.
 
 ## Proof locations
 
 - `logic/categories.test.ts` ports the thirteen category rule groups. `logic/completion.test.ts` ports the three selected-checklist groups.
-- `tests/compare/lists/unit-12.goals.json` compares Goal routes, writes, navigation, and resource bodies against Python.
-- `tests/compare/direct/test_unit12_populated_pages.py` compares populated Goal and holder readings, all six page routes, calendars, bindings, and retained page bytes.
-- `tests/compare/direct/test_unit12_goal_completion.py` and `test_unit12_goal_deletion.py` compare the actual completion and deletion writers on synthetic database copies.
-- The unchanged eligible tests in `tests/e2e/test_goals_browser.py` exercise mounted formula refresh and confirmed deletion. The owned-conversation test and both holder tests retain their separate core/source prerequisites.
+- The tests in `tests/e2e/test_goals_browser.py` exercise mounted formula refresh and confirmed deletion. The owned-conversation test and both holder tests retain their separate core/source prerequisites.
 
 Proof files describe executable checks, not a claim that a particular revision passed. Ticket evidence records results, execution costs, and remaining integration limits.

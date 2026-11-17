@@ -44,8 +44,8 @@ The browser uses server messages directly, with TypeScript types during developm
 
 ## Code
 
-- `src/planner/core/change_signal.py`: the signal. `src/planner/core/db.py`: the connection that announces commits, and the quiet commit. `src/planner/core/sse.py`: the change stream.
-- `src/planner/navigation/`: the navigation index and its feed.
+- `server/core/changes/`: the signal. `server/core/database/`: the writer that announces commits, and the silent commit. `server/core/routes.ts`: the change stream.
+- `server/navigation/`: the navigation index and its feed.
 - `web/src/lib/changeStream.ts` and `web/src/lib/resourceVersions/`: the browser's stream and revision check.
 - `ios/Panels/Core/Networking/ResourceOwner.swift`: the phone's ordinary resources, active demand, and revision admission.
 - `web/src/lib/conversation/view/`: the conversation tail reader.
