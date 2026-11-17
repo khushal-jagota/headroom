@@ -217,7 +217,9 @@
     const gap = parseFloat(getComputedStyle(panelElement).getPropertyValue("--space-1")) || 4;
     const top = Math.max(0, area.top);
     // The resting conversation dock can overlay a full-height document.
-    const dock = boundary.closest(".ticket-page")?.querySelector<HTMLElement>("[data-conversation-layer-host]")?.getBoundingClientRect();
+    // A dock that steps aside for an artifact's own bar is not drawn, and is no limit.
+    const dockLayer = boundary.closest(".ticket-page")?.querySelector<HTMLElement>("[data-conversation-layer-host]");
+    const dock = dockLayer?.getClientRects().length ? dockLayer.getBoundingClientRect() : undefined;
     const bottom = Math.min(window.innerHeight, area.bottom, dock?.top ?? area.bottom);
     if (button.bottom <= top || button.top >= bottom) { close(false); return; }
     const above = Math.max(0, button.top - top - gap);

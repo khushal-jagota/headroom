@@ -5316,6 +5316,21 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* The covered document keeps its reading position through dock and preview layout changes. */
 :is(.manager-reading, .ticket-reading):has(.ticket-artifact) > :is(.manager-doc, .ticket-doc) { overflow-anchor: none; }
 :is(.manager-page, .ticket-page):has(.ticket-artifact) > .conversation-layer::before { display: none; }
+/* An artifact that carries its own bar (a proposal's note and decisions) runs to the page's
+ * foot, and the conversation steps aside until it closes. The bar is the artifact's footer,
+ * so nothing is reserved for a composer that is not there. */
+:is(.manager-page, .ticket-page) .ticket-artifact[data-artifact-with-bar] { bottom: 0; }
+:is(.manager-page, .ticket-page):has(.ticket-artifact[data-artifact-with-bar]) > .conversation-layer { display: none; }
+.ticket-artifact-footer {
+  flex: none;
+  padding: var(--space-3) 0 var(--conversation-edge-gap, max(var(--space-4), env(safe-area-inset-bottom)));
+  background: var(--surface-1);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+.ticket-artifact-footer-column {
+  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
+  margin-inline: auto;
+}
 .manager-column { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear)); }
 .ticket-col { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear) - var(--space-7)); }
 
