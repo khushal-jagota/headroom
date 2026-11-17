@@ -1,3 +1,4 @@
+import { count_rows, timed_task } from '../slow_tasks.ts';
 import { assert_test_database_path } from '../test_paths.ts';
 import BetterSqlite3 from 'better-sqlite3';
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
@@ -124,7 +125,13 @@ function invoke<Row>(
   parameters?: SqlParameters,
 ): Row {
   const values = parameters ?? [];
-  return (Array.isArray(values) ? statement[method](...values) : statement[method](values)) as Row;
+  const result = (
+    Array.isArray(values) ? statement[method](...values) : statement[method](values)
+  ) as Row;
+  if (method === 'all') count_rows((result as unknown[]).length);
+  else if (method === 'run') count_rows((result as BetterSqlite3.RunResult).changes);
+  else if (result !== undefined) count_rows(1);
+  return result;
 }
 
 function scope<T, Sql extends ReadSql = TransactionSql>(
@@ -587,11 +594,14 @@ function createOwnedDatabase<Tx extends TransactionSql>(
           writer.pragma(`busy_timeout = ${writeOptions.busyTimeoutMs}`);
         writer.exec('BEGIN IMMEDIATE');
         const before = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
-        result = scope(writer, true, work, options.auxiliary, options.safeIntegers);
-        for (const step of commitSteps) scope(writer, true, step);
+        result = timed_task('db.write', () =>
+          scope(writer, true, work, options.auxiliary, options.safeIntegers),
+        );
+        for (const step of commitSteps)
+          timed_task('db.commit_step', () => scope(writer, true, step), step.name || undefined);
         const after = writer.prepare('SELECT total_changes() AS count').get() as { count: number };
         changed = after.count !== before.count;
-        writer.exec('COMMIT');
+        timed_task('db.commit', () => writer.exec('COMMIT'));
       } catch (error) {
         if (writer.inTransaction) writer.exec('ROLLBACK');
         throw error;
@@ -618,7 +628,7 @@ function createOwnedDatabase<Tx extends TransactionSql>(
         throw new TypeError('nested read callbacks are not allowed; use the current read scope');
       reading = true;
       try {
-        return reader.read(work);
+        return timed_task('db.read', () => reader.read(work));
       } finally {
         reading = false;
       }

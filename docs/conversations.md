@@ -34,7 +34,7 @@ Every adapter keeps the same event rules, written in the backend contract. Each 
 
 Panels gives a local agent a private launch credential for its current conversation. It enters only the child’s environment, after saved launch settings have been written. The database keeps its hash, never the token. A new child receives a fresh credential from its canonical association, including after a restart. Reset revokes the old conversation’s authority while preserving its notebook. Generic conversation starts cannot choose a privileged identity. Remote children retain the executor’s existing per-child capability; a local token never enters an executor command.
 
-Claude and Codex run from owner-maintained CLI installations outside the app. Settings → Backends shows their installed and latest versions on the VPS. Only the owner can update them there. Updates change the selected user-local installation, and new agent processes use that version. A failed lookup of newer releases does not stop ordinary conversations. Before each backend starts, it checks its selected CLI. The native server remembers each version verdict for the exact installed file, from the backend card's version read or an earlier check, so a start reads the version again only after the CLI changes. It also checks the version the running CLI reports when it connects. If that CLI lacks a required feature, the backend names the required update, and a turn is refused before any launch is recorded. The adapter reads only the protocol fields it needs and ignores unrelated additions. The feature minimums and their reasons live in each driver's manifest and in `src/planner/conversation/backends/cli_compatibility.py`. Mac CLI updates stay local to the Mac.
+Claude and Codex run from owner-maintained CLI installations outside the app. Settings → Backends shows their installed and latest versions on the VPS. Only the owner can update them there. Updates change the selected user-local installation, and new agent processes use that version. A failed lookup of newer releases does not stop ordinary conversations. Before each backend starts, it checks its selected CLI. The native server remembers each version verdict for the exact installed file, from the backend card's version read or an earlier check, so a start reads the version again only after the CLI changes. It also checks the version the running CLI reports when it connects. If that CLI lacks a required feature, the backend names the required update, and a turn is refused before any launch is recorded. The adapter reads only the protocol fields it needs and ignores unrelated additions. The feature minimums and their reasons live in each driver's manifest and in `server/conversation/backends/cli_compatibility.ts`. Mac CLI updates stay local to the Mac.
 
 ## How a send works
 
@@ -152,8 +152,8 @@ The pane reads a stored view that is built from the notebook. When the app conne
 
 ## Code
 
-- `src/planner/conversation/`: the contract (`contracts.py`), the core (`system.py`), the notebook store, the stored views and their rebuild (`views/rebuild.py`), the live tail, attachments and video uploads, deploy recovery, and one adapter per backend under `backends/`.
-- `src/planner/message_delivery/`: Send Message.
+- `server/conversation/`: the contract (`contracts.ts`), the core (`system.ts`), the notebook store (`record/`), the stored views and their rebuild (`views/data/rebuild.ts`), the live tail, attachments and video uploads, and deploy recovery. Each backend's adapter is a driver under `server/drivers/`.
+- `server/message_delivery/`: Send Message.
 - `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 

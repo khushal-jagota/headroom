@@ -1,6 +1,5 @@
 /** Linux process evidence and signals bound to one process incarnation. */
-import { readFile, readdir } from 'node:fs/promises';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { getPriority, setPriority } from 'node:os';
 import { join } from 'node:path';
 import type { LocalHostBootIdentity } from '../../conversation/local_child_contracts.ts';
@@ -52,17 +51,17 @@ export class LinuxWorkerProcesses implements WorkerProcessPrimitives {
   }
   async host_boot(deadline: number): Promise<LocalHostBootIdentity> {
     if (this.#clock() >= deadline) throw new Error('Worker inspection deadline expired');
-    const [machine, boot] = await Promise.all([
-      readFile(this.#machine_id, 'utf8'),
-      readFile(join(this.#proc_root, 'sys/kernel/random/boot_id'), 'utf8'),
-    ]);
+    const machine = readFileSync(this.#machine_id, 'utf8');
+    const boot = readFileSync(join(this.#proc_root, 'sys/kernel/random/boot_id'), 'utf8');
     return { host: `linux:${machine.trim()}`, boot: boot.trim() };
   }
-  async #read(pid: number): Promise<WorkerProcess | null> {
+  // Reads are synchronous on purpose: an awaited read returns only when the busy main thread
+  // returns, so the deadline would measure main-thread load instead of /proc work.
+  #read(pid: number): WorkerProcess | null {
     try {
       return parse_linux_worker_process(
         pid,
-        await readFile(join(this.#proc_root, String(pid), 'stat'), 'utf8'),
+        readFileSync(join(this.#proc_root, String(pid), 'stat'), 'utf8'),
       );
     } catch (error) {
       if (['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) return null;
@@ -71,17 +70,17 @@ export class LinuxWorkerProcesses implements WorkerProcessPrimitives {
   }
   async snapshot(deadline: number): Promise<ReadonlyMap<number, WorkerProcess>> {
     const found = new Map<number, WorkerProcess>();
-    for (const entry of await readdir(this.#proc_root)) {
+    for (const entry of readdirSync(this.#proc_root)) {
       if (this.#clock() >= deadline) throw new Error('Worker inspection deadline expired');
       if (!/^\d+$/.test(entry)) continue;
-      const current = await this.#read(Number(entry));
+      const current = this.#read(Number(entry));
       if (current) found.set(current.pid, current);
     }
     return found;
   }
   async is_absent(recorded: WorkerProcess, deadline: number): Promise<boolean> {
     if (this.#clock() >= deadline) throw new Error('Worker inspection deadline expired');
-    const current = await this.#read(recorded.pid);
+    const current = this.#read(recorded.pid);
     return current === null || current.birth !== recorded.birth || current.zombie;
   }
   async signal(recorded: WorkerProcess, signum: number, deadline: number): Promise<boolean> {

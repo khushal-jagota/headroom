@@ -59,10 +59,8 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 
 ## Code
 
-- `server/cli/`: the TypeScript command tree and shared authenticated transport.
-
-- `src/planner/cli/main.py`: the command tree. `src/planner/cli/http.py`: the HTTP client and launch credential.
-- `src/planner/server_lifecycle/control.py`: the control socket and its messages. `event_loop_tasks.py`: the event loop tasks and the creation times it reads.
-- Each domain's `cli.py` holds its own group, such as `src/planner/credentials/cli.py` and `src/planner/goals/cli.py`. The routes they call are in each domain's `api.py`.
+- `server/cli/main.ts`: the command tree. `server/cli/http.ts`: the HTTP client and launch credential.
+- `server/lifecycle/control.ts`: the control socket and its messages. `server/lifecycle/cli.ts`: the event loop tasks command.
+- Each domain's `cli/` folder holds its own group, such as `server/credentials/cli/` and `server/goals/cli/`. The routes they call are in each domain's `routes.ts`.
 
 _Last verified: 2026-11-16._

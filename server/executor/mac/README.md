@@ -39,7 +39,7 @@ The existing safe-removal platform limits still apply.
 ## Unix CLI client
 
 `ipc/gateway.ts` owns the private Unix listener and admitted CLI publications.
-`ipc/outbox.ts` captures files through the real spool and retains receipt waiters.
+`ipc/outbox.ts` appends through the real spool, notes the Ticket's activity for the file sync, and retains receipt waiters.
 The sender calls `notify_confirmed` after its durable acknowledgement callback.
 `storage/envelopes.ts` supplies the shared row-to-envelope and receipt projections.
 The host supplies runner admission, catalog settlement, presence, reads, and exit.
@@ -137,9 +137,7 @@ Directory creation retains Python's stricter parent-flush sequence.
 
 Normal failure cleanup removes each private `.tmp-` entry through its retained directory.
 This file helper does not perform a startup sweep after process death.
-Python's outbox startup calls `_sweep_blobs` at `mac_outbox.py:183-191` and defines it at `mac_outbox.py:542-560`.
-`OutboxStore` sweeps its spool blobs at startup and after durable acknowledgements.
-That sweep does not cover temporary files under other artifact or update directories.
+`OutboxStore` deletes the old spool blobs at startup. Nothing writes them now.
 No blanket crash-cleanup claim applies to those directories.
 
 ## Native checks still required
@@ -164,23 +162,6 @@ The shared `server/skills/sources.ts` publisher remains outside this platform mo
 Its `openat` declaration is variadic and passes an explicit promoted `int` mode argument.
 
 The TypeScript default state directory is `~/Library/Application Support/Panels/executor-typescript`.
-The Python directory remains `~/Library/Application Support/Panels/executor`.
-The Manager requested this default-root difference. Explicit configuration refuses the Python root and its descendants, including symlink aliases.
+The Python executor, kept as the Mac's rollback, uses `~/Library/Application Support/Panels/executor`. Explicit configuration refuses the Python root and its descendants, including symlink aliases.
 `packaging/build.ts` produces the runtime archive and unsigned app and LaunchAgent assets.
-The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and later owner procedure.
-Real-Mac installation, consent, and provider checks remain unproved.
-
-## Hosted end-to-end checks
-
-The five `tests/compare/direct/test_unit22_mac_end_to_end*.py` modules retain all 24 original names and 29 expanded cases against the Python VPS.
-They reuse its TLS proxy, core, database, and scripted providers with one Node Mac host.
-The companion refuses any peer outside the fixture's allocated loopback port before it opens the host.
-The hosted direct comparison job collects these cases automatically. Run them only on a hosted runner:
-
-```sh
-scripts/dev pytest tests/compare/direct/test_unit22_mac_end_to_end*.py
-```
-
-The Manager dropped `test_three_sleep_cycles_lose_and_duplicate_nothing` on Linux.
-Sleep and wake require the later real-Mac session with the owner, as described in the installation document.
-The TS/TS run needs the same VPS fixtures bound to the TypeScript VPS API and core after both halves merge.
+The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and owner procedure.

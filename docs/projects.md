@@ -20,6 +20,6 @@ Project selectors on Idea capture and Ticket and Manager editing. `panels projec
 
 ## Code
 
-`src/planner/projects/`. The folder rule is in `src/planner/runtime/conversation_start.py`, and previews read it in `src/planner/previews/`.
+`server/projects/`. The folder rule is in `server/runtime/conversation_start.ts`, and previews read it in `server/previews/`.
 
 _Last verified: 2026-11-04._

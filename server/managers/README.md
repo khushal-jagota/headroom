@@ -1,4 +1,4 @@
-# Managers during the TypeScript migration
+# Managers
 
 Manager and Chief pages use `core/http/numeric_json.ts`. Page intake retains numeric markers for validation and exact integer storage. Integer markers keep a bigint, so parsing never rounds their digits. Native `JSON.rawJSON` emits these integers as JSON numbers. Ordinary routes retain their existing parser.
 
@@ -13,6 +13,6 @@ Stored documents use native compact JSON and number spelling. Page schemas rejec
 - `validate_page_bindings(sql, document)` validates measure references, formula graphs, dataset/category references, and manual-control origins.
 - `document_readings(sql, subject, now)` produces rich readings for the supplied holder identity, document, and revision.
 
-Plain documents work without these dependencies. A held goal or chart requires its dependency explicitly. Empty goal or readings arrays are not evidence of rich behavior. The goals unit must compose the dependencies and rerun all six page routes with populated data.
+Plain documents work without these dependencies. A held goal or chart requires its dependency explicitly. Empty goal or readings arrays are not evidence of rich behavior. `goals/manager_documents.ts` composes these dependencies.
 
-The wake loop remains behind `AreaLoopOptions.managerWakes` in `areas.ts` (passed through `ServerOptions.areaLoops`), which defaults to off. The lifecycle unit controls later production composition and dispatch admission. Its test-only pass route is one owned factory entry in `test_host.ts`. That factory runs only after the server acquires database ownership.
+The wake loop remains behind `AreaLoopOptions.managerWakes` in `areas.ts` (passed through `ServerOptions.areaLoops`), which defaults to off. Production composition in `lifecycle/production.ts` turns it on. Its test-only pass route is one owned factory entry in `test_host.ts`. That factory runs only after the server acquires database ownership.

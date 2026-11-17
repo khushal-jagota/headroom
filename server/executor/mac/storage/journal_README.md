@@ -67,5 +67,5 @@ This narrows an observed cross-thread failure window. It does not atomically fen
 The main-owned lock still excludes replacement writers until all registered databases and workers actually settle.
 
 Queue, runner, HTTP, provider, and catalog composition remain later slices.
-Finite fixture modules isolate fault cases. Actual shared-codec journal comparisons own message-meaning and wire-validation evidence.
+Finite fixture modules isolate fault cases.
 Provider exchange and native Mac verification remain later work.

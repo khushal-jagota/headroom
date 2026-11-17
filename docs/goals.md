@@ -70,8 +70,8 @@ Deletion removes the goal, its page and files, and its own completion and outcom
 
 ## Code
 
-- `src/planner/goals/`: records, the writer, completion rules, outcomes, holders, and the background check. `src/planner/managers/pages.py`: Chief and Manager page documents.
-- `src/planner/measures/` and `src/planner/datasets/`: the numbers that charts and rules read.
+- `server/goals/`: records, the writer, completion rules, outcomes, holders, and the background check. `server/managers/pages.ts`: Chief and Manager page documents.
+- `server/measures/` and `server/datasets/`: the numbers that charts and rules read.
 - `web/src/components/goals/` and `web/src/lib/goals/`: the page, rail, previews, and overview.
 
 _Last verified: 2026-11-11._

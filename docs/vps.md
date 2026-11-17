@@ -26,7 +26,7 @@ The Mac collector uses native host and process observations through the same sto
 
 ## Code
 
-- `src/planner/environments/vps_metrics/`: sampler, collectors, store, and retention. Limits are in `config.py`.
+- `server/environments/vps_metrics/`: sampler, collectors, store, and retention. Limits are in `configuration.ts`.
 - `web/src/components/vps/`: the page.
 
 _Last verified: 2026-11-13._

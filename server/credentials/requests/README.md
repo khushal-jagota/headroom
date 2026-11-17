@@ -25,7 +25,7 @@ not open another database connection, commit, await, or deliver a prompt.
 conversation's stored identity. A request never changes its origin after reset.
 
 `data.ts` owns `read`, `row_for`, `update`, and `settle_attempt`. Public snapshots
-reuse the generated Python contract and the canonical conversation decoder.
+reuse the shared contract and the canonical conversation decoder.
 The existing credential store owns encryption, revisions, and plaintext access.
 
 ## Delivery and transaction boundaries
@@ -76,10 +76,5 @@ conversation event and view pipeline.
 
 ## Verification boundary
 
-`tests/compare/direct/test_unit_19_credential_requests.py` passes against Python.
-It compares exact returned events and source rows for receipt races, obsolete
-attempts, write failures, and startup recovery. It uses synthetic rows and a fixed
-SQL clock, without a listener or provider. The complete HTTP comparison through
-the real core passes with no differences. It proves actual prompt delivery, card
-projections, and persisted attention. The unchanged hosted credential-wire browser
-proof remains pending for reload and private-wire behavior.
+The browser check `tests/e2e/test_ticket_conversation_shared_behaviors.py` covers
+reload and private-wire behavior of a saved credential.

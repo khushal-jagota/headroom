@@ -37,6 +37,6 @@ Only through `panels attention summary` and `GET /api/attention/summary`. No scr
 
 ## Code
 
-`src/planner/attention/`: history capture, the calculator in `logic/`, the CLI, and the collection setup.
+`server/attention/`: history capture, the calculator in `logic/`, the CLI, and the collection setup.
 
 _Last verified: 2026-11-04._
