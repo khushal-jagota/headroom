@@ -17,6 +17,8 @@ import { ConversationRoleMaterials, ResolvedConversationStart } from '../convers
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import type { BackendChildFactory } from '../conversation/backends/contracts.ts';
 import { VpsExecutor } from '../executor/vps_transport.ts';
+import { LocaleBackendChildFactory } from '../executor/routing.ts';
+import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { MacRemoteChild } from '../executor/vps_remote_child.ts';
 import { ExecutorStore } from '../executor/data/runs.ts';
@@ -505,5 +507,63 @@ test('production constructs its real executor and reconciles that executor inven
     await server?.shutdown_settled;
     inventory.mockRestore();
     vi.unstubAllEnvs();
+  }
+});
+
+// Gap: a remote Ticket naming a backend kind the Mac cannot run must be refused before any mailbox write.
+test('a remote Ticket that starts a backend kind outside the Mac legacy set is refused before the remote factory runs', () => {
+  const database = fixture();
+  try {
+    const ticket = create(database, { locale: 'macos' });
+    const materials = new ConversationRoleMaterials({
+      role_text: 'Synthetic Worker',
+      identity_environment_variables: [
+        ['PLAN_ACTOR', 'worker'],
+        ['PLAN_TICKET_ID', ticket.id],
+      ],
+    });
+    new ConversationStore(database, { integer_now: () => 100 }).create_conversation(
+      new ResolvedConversationStart({
+        conversation_id: 'scripted-conversation',
+        backend_key: parse_backend_instance_id('codex'),
+        model: 'model',
+        reasoning_effort: null,
+        role_materials: materials,
+        workspace_folder: '/tmp',
+        access: 'full',
+      }),
+    );
+    database.write((tx) =>
+      write_ticket_conversation_start(tx, ticket.id, {
+        conversation_id: 'scripted-conversation',
+        backend: 'codex',
+        model: 'model',
+        reasoning_effort: null,
+        now: 100,
+      }),
+    );
+    const start = new ResolvedConversationStart({
+      conversation_id: 'scripted-conversation',
+      backend_key: parse_backend_instance_id('scripted'),
+      model: 'model',
+      reasoning_effort: null,
+      role_materials: materials,
+      workspace_folder: '/tmp',
+      access: 'full',
+    });
+    const local = vi.fn(),
+      remote = Object.assign(vi.fn(), { recover: () => null, retained_runs: () => [] });
+    const factory = new LocaleBackendChildFactory(database, local, remote);
+    expect(() =>
+      factory.create({
+        resolved_start: start,
+        event_sink: { async report() {} },
+        message_files: {} as never,
+      }),
+    ).toThrow(BackendSpawnFailed);
+    expect(remote).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+  } finally {
+    database.close();
   }
 });

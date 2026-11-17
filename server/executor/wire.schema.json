@@ -40,7 +40,7 @@
   "ComposerCatalogReported": {"properties":{"composer_catalog":{"items":{"$ref":"#/$defs/ComposerCatalogEntry"},"type":"array"}},"required":["composer_catalog"],"type":"object"},
   "ContextCompacted": {"properties":{},"type":"object"},
   "ConversationAccess": {"enum":["full"],"type":"string"},
-  "ConversationBackendKey": {"enum":["hermes","codex","claude"],"type":"string"},
+  "ConversationBackendKey": {"maxLength":64,"pattern":"^[a-zA-Z][a-zA-Z0-9_-]*$","type":"string"},
   "ConversationRoleMaterials": {"properties":{"identity_environment_variables":{"default":[],"items":{"maxItems":2,"minItems":2,"prefixItems":[{"type":"string"},{"type":"string"}],"type":"array"},"type":"array"},"role_text":{"type":"string"}},"required":["role_text"],"type":"object"},
   "ConversationTurnEnding": {"enum":["completed","failed","interrupted"],"type":"string"},
   "DurableAnswer": {"properties":{"accepted_at_vps_ms":{"maximum":9007199254740991,"minimum":-9007199254740991,"type":"integer"},"answer_id":{"type":"string"},"ask":{"$ref":"#/$defs/AskReference"},"option_id":{"anyOf":[{"type":"string"},{"type":"null"}]},"user_input_answers":{"anyOf":[{"items":{"$ref":"#/$defs/UserInputAnswer"},"type":"array"},{"type":"null"}],"default":null}},"required":["answer_id","ask","option_id","accepted_at_vps_ms"],"type":"object"},

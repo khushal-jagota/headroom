@@ -72,10 +72,10 @@ function admitted_runs(factory: BackendChildFactory): readonly AdoptedRun[] {
   });
 }
 export function retained_open_runs(
-  factories: Readonly<Record<string, BackendChildFactory>>,
+  factories: readonly BackendChildFactory[],
 ): ReadonlyMap<string, OpenRunTurn> {
   const result = new Map<string, OpenRunTurn>();
-  for (const factory of new Set(Object.values(factories)))
+  for (const factory of new Set(factories))
     for (const run of admitted_runs(factory))
       if (!run.stop_requested && !run.retirement_confirmed)
         result.set(run.reference.conversation_id, {

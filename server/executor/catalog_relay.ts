@@ -2,6 +2,7 @@
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
+import { machine_driver_ids } from './machine_drivers.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { inspect } from 'node:util';
@@ -292,7 +293,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
   }
   connected(): void {
     if (this.closed) return;
-    for (const backend of KNOWN_BACKEND_INSTANCE_IDS) {
+    for (const backend of machine_driver_ids(KNOWN_BACKEND_INSTANCE_IDS)) {
       this.tasks.get(backend)?.controller.abort(cancelled());
       this.start_read(backend, true);
     }

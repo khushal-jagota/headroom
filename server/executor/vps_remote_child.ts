@@ -26,12 +26,7 @@ import { now_ms } from './clock.ts';
 import { ProtocolRefused, ExecutorValidationError } from './protocol.ts';
 import { inspect } from 'node:util';
 import { validate_skill_snapshot } from './skills.ts';
-import type {
-  WireTypes,
-  ChildCommandArguments,
-  ChildOperation,
-  ConversationBackendKey,
-} from './wire.generated.ts';
+import type { WireTypes, ChildCommandArguments, ChildOperation } from './wire.generated.ts';
 
 export type SkillSnapshotSupplier = (
   start: ResolvedConversationStart,
@@ -191,7 +186,7 @@ export class MacRemoteChild implements BackendChild {
       canonical_skill_snapshot: snapshot,
       resolved_start: {
         ...start,
-        backend_key: start.backend_key as ConversationBackendKey,
+        backend_key: start.backend_key,
         role_materials:
           start.role_materials === null
             ? null
