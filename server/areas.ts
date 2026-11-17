@@ -110,14 +110,10 @@ export function createAreasRuntime(
         const snapshot = conversation_attention_snapshot(tx, conversation_id);
         if (snapshot === null) return null;
         return (source, change) => {
-          const attention = advance_conversation_attention(
-            snapshot,
-            change.written.map((event) => event.payload),
-            {
-              owner_read_through_sequence: change.owner_read_through_sequence,
-              occurred_at: change.occurred_at,
-            },
-          );
+          const attention = advance_conversation_attention(source, snapshot, change.written, {
+            owner_read_through_sequence: change.owner_read_through_sequence,
+            occurred_at: change.occurred_at,
+          });
           capture_conversation_attention(source, conversation_id, change.occurred_at, attention);
         };
       },
