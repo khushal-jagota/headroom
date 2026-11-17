@@ -129,7 +129,7 @@ export function create_mac_catalog(options: {
       } catch (error) {
         if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
         if (error instanceof NativeClaudeUnavailable)
-          throw new ClaudeModelCatalogUnavailable(error.message);
+          throw new ClaudeModelCatalogUnavailable(error.message, { cause: error });
         throw error;
       } finally {
         controllers.delete(controller);

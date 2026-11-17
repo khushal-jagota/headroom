@@ -79,9 +79,9 @@ export function normalized_failure_summary(detail: string | null): string {
   if (!text) return 'the turn failed for an unknown reason';
   return capped_failure_text(text, FAILURE_SUMMARY_MAXIMUM_CHARACTERS);
 }
-/** A backend's failure text as a refusal records it: redacted and capped like a failed turn. */
 /** A CLI error often ends with its cause, so a cut keeps the start and the end. */
 const RECORDED_FAILURE_DETAIL_CUT_MARKER = ' … ';
+/** A backend's failure text as a refusal records it: redacted and capped like a failed turn. */
 export function recorded_failure_detail(detail: string | null): string | null {
   const text = redacted_failure_text(detail);
   if (!text) return null;

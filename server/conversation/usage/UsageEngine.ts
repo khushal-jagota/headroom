@@ -245,19 +245,29 @@ export class UsageEngine implements Omit<RecordedUsageService, 'stop' | 'settled
     });
   }
 
-  /** Each parser module is imported once. A module that cannot load fails the scan. */
+  /**
+   * Each parser module is imported once. A module that cannot load fails this scan and is
+   * not kept, so a later scan imports it again.
+   */
   private loadParser(directory: TranscriptDirectory): Promise<TranscriptParser> {
     let loaded = this.parsers.get(directory.parser_module);
     if (loaded === undefined) {
-      loaded = import(directory.parser_module).then((module: { default?: TranscriptParser }) => {
-        const parser = module.default;
-        if (parser?.kind !== directory.kind)
-          throw new Error(
-            `${directory.parser_module} does not export a ${directory.kind} transcript parser.`,
-          );
-        return parser;
+      const loading: Promise<TranscriptParser> = import(directory.parser_module).then(
+        (module: { default?: TranscriptParser }) => {
+          const parser = module.default;
+          if (parser?.kind !== directory.kind)
+            throw new Error(
+              `${directory.parser_module} does not export a ${directory.kind} transcript parser.`,
+            );
+          return parser;
+        },
+      );
+      loading.catch(() => {
+        if (this.parsers.get(directory.parser_module) === loading)
+          this.parsers.delete(directory.parser_module);
       });
-      this.parsers.set(directory.parser_module, loaded);
+      this.parsers.set(directory.parser_module, loading);
+      loaded = loading;
     }
     return loaded;
   }

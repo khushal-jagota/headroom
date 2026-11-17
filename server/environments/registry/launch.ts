@@ -36,14 +36,14 @@ export function build_environment_run_env(
   };
 }
 /**
- * The child uses the account's normal homes. A home Panels carries to its provider under
- * further variables is pinned to its default; a provider that reads its own variable keeps
- * its own default.
+ * The child uses the account's normal homes. A home named by a Panels setting (`PLAN_`) is
+ * pinned to its default, because the launch rebuilds Panels settings instead of inheriting
+ * them. A home named by the provider's own variable is left to the provider's default.
  */
 function carried_homes(account_home: string): Record<string, string> {
   const homes: Record<string, string> = {};
   for (const { manifest } of BUILT_IN_MANIFESTS)
-    if (manifest.home?.extra_environment_names?.length)
+    if (manifest.home?.environment_name.startsWith('PLAN_'))
       homes[manifest.home.environment_name] = expand_path(manifest.home.default_path, account_home);
   return homes;
 }
