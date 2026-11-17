@@ -80,9 +80,23 @@ export function normalized_failure_summary(detail: string | null): string {
   return capped_failure_text(text, FAILURE_SUMMARY_MAXIMUM_CHARACTERS);
 }
 /** A backend's failure text as a refusal records it: redacted and capped like a failed turn. */
+/** A CLI error often ends with its cause, so a cut keeps the start and the end. */
+const RECORDED_FAILURE_DETAIL_CUT_MARKER = ' … ';
 export function recorded_failure_detail(detail: string | null): string | null {
   const text = redacted_failure_text(detail);
-  return text ? capped_failure_text(text, FAILURE_SUMMARY_MAXIMUM_CHARACTERS) : null;
+  if (!text) return null;
+  const points = Array.from(text);
+  if (points.length <= FAILURE_SUMMARY_MAXIMUM_CHARACTERS) return text;
+  const kept = FAILURE_SUMMARY_MAXIMUM_CHARACTERS - RECORDED_FAILURE_DETAIL_CUT_MARKER.length;
+  const start = Math.floor(kept / 2);
+  return (
+    points.slice(0, start).join('').trimEnd() +
+    RECORDED_FAILURE_DETAIL_CUT_MARKER +
+    points
+      .slice(points.length - (kept - start))
+      .join('')
+      .trimStart()
+  );
 }
 function copy_turn(running: RunningTurn): RunningTurn {
   return {
