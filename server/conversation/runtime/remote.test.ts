@@ -20,7 +20,10 @@ import type { WireValue } from '../../executor/contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { Deferred } from '../../core/deferred.ts';
 import { retained_open_runs } from './remote.ts';
-import { registry_of_factories } from '../../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+} from '../../drivers/testing/registry.ts';
 import { PromptDeliveryInjected, PromptDeliveryStarted } from '../contracts.ts';
 
 // An acknowledgement must wait for receipt and steer settlement, then recheck its exact source.
@@ -195,7 +198,7 @@ test('a retained run on a backend this build lacks is left unrecovered, not a st
   );
   const f = setup({
     restart_of: first.database,
-    core: { backend_registry: registry_of_factories({ codex: remote, claude: remote }) },
+    core: { backend_registry: registry_of_factories(for_every_built_in_backend(() => remote)) },
   });
   try {
     const state = f.core.conversations.get('stored-hermes')!;

@@ -118,6 +118,13 @@ function in_built_in_order<T>(entries: readonly [string, T][]): [string, T][] {
   };
   return [...entries].sort(([left], [right]) => rank(left) - rank(right));
 }
+/** Every built-in backend id, each with what `value_for` gives it, so a test composition covers
+ * every driver this build carries without naming one. */
+export function for_every_built_in_backend<T>(
+  value_for: (id: BackendInstanceId) => T,
+): Record<string, T> {
+  return Object.fromEntries(KNOWN_BACKEND_INSTANCE_IDS.map((id) => [id, value_for(id)]));
+}
 /** Drivers whose create returns the factory each binding gives for the host. */
 export function drivers_of_factories(
   bindings: Readonly<Record<string, (host: DriverHost) => BackendChildFactory>>,

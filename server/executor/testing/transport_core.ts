@@ -1,5 +1,8 @@
 /** Joined executor consumers on the existing fixture-owned listener. */
-import { registry_of_factories } from '../../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+} from '../../drivers/testing/registry.ts';
 import assert from 'node:assert/strict';
 import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -31,7 +34,7 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
   let core!: SqliteProcessConversationSystem;
   core = new SqliteProcessConversationSystem({
     store,
-    backend_registry: registry_of_factories({ codex: remote, claude: remote }),
+    backend_registry: registry_of_factories(for_every_built_in_backend(() => remote)),
     message_files: endpoint.message_files,
     delivery_model_refusal: (backend, model, ticket_id) =>
       new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),

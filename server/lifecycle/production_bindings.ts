@@ -58,8 +58,9 @@ export function require_backend_bindings(
 ): ProductionBackendBindings {
   if (!Array.isArray(value.drivers) || value.drivers.length === 0)
     throw new Error('Production backend drivers are required');
-  // Stored conversations may name any built-in backend, and keys stay closed until the
-  // Database stage, so every built-in backend needs a driver.
+  // Launches are admitted against KNOWN_BACKEND_INSTANCE_IDS (require_conversation_backend_key),
+  // so every built-in backend needs a driver here, or an admitted launch has nothing to run on.
+  // A stored key outside that list is not this check's concern: it reads as unavailable.
   const ids = new Set<string>(default_instance_configs(value.drivers).keys());
   const missing = KNOWN_BACKEND_INSTANCE_IDS.filter((id) => !ids.has(id)).sort();
   if (missing.length)

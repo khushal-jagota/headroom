@@ -2,6 +2,7 @@ import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import {
   drivers_of_factories,
+  for_every_built_in_backend,
   registry_of_factories,
   unread_driver_host,
 } from '../drivers/testing/registry.ts';
@@ -179,7 +180,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         bound = compose_production_backends(
           current,
           {
-            registry: registry_of_factories({ claude: local, codex: local }),
+            registry: registry_of_factories(for_every_built_in_backend(() => local)),
             host: unread_driver_host,
           },
           {
@@ -282,7 +283,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     const unconfigured = compose_production_backends(
       { ...context, config: { ...context.config, executor_id: null }, executor: null },
       {
-        registry: registry_of_factories({ claude: local, codex: local }),
+        registry: registry_of_factories(for_every_built_in_backend(() => local)),
         host: unread_driver_host,
       },
       {
@@ -483,10 +484,7 @@ test('production constructs its real executor and reconciles that executor inven
   try {
     server = await start_production_server({
       backends: {
-        drivers: drivers_of_factories({
-          claude: () => local,
-          codex: () => local,
-        }),
+        drivers: drivers_of_factories(for_every_built_in_backend(() => () => local)),
         driver_host: () => unread_driver_host,
         http: (current) =>
           create_backend_runtime({

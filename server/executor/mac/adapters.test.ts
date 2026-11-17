@@ -7,6 +7,7 @@ import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../lifecycle/
 import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
 import { BackendSpawnFailed } from '../../conversation/backends/contracts.ts';
 import { create_mac_adapter_host, load_executor_drivers } from './adapters.ts';
+import { BUILT_IN_DRIVERS } from '../../drivers/built_in.ts';
 
 const { claude_launches } = vi.hoisted(() => ({
   claude_launches: [] as ClaudeAgentSdkChildLaunch[],
@@ -75,7 +76,11 @@ test('the shared Linux executor host still names the resolved Claude folder', ()
 
 test('a backend this build has no driver for is refused, not launched as another', () => {
   const host = mac_host({});
-  expect(host.drivers.map((driver) => driver.driver_kind)).toEqual(['codex', 'claude']);
+  const kinds = host.drivers.map((driver) => driver.driver_kind);
+  expect(kinds).toEqual(
+    BUILT_IN_DRIVERS.filter((driver) => driver.executor).map((driver) => driver.driver_kind),
+  );
+  expect(kinds).not.toContain('hermes');
   const start = { backend_key: 'hermes' } as ResolvedConversationStart;
   expect(() => host.factory(start)).toThrow(BackendSpawnFailed);
   expect(() => host.native_skill_home('hermes')).toThrow(

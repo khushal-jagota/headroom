@@ -472,7 +472,8 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
 // Distinct gap: a mistaken production composition must fail before process or network I/O.
 test('test compositions cannot acquire production catalogs, login, updates, or HTTP usage', async () => {
   const environment = new RecordingBackendProbeEnvironment();
-  for (const name of ['codex', 'claude']) environment.executables.set(name, `/synthetic/${name}`);
+  for (const { manifest } of BUILT_IN_DRIVERS)
+    environment.executables.set(manifest.executable.name, `/synthetic/${manifest.executable.name}`);
   const host = {
     test_mode: true,
     environment: {},
