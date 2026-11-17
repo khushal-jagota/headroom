@@ -10,6 +10,7 @@ import {
 } from '../conversation/contracts.ts';
 import {
   ContextCompacted,
+  TokenUsageReported,
   ToolCallStarted,
   TurnEnded,
 } from '../conversation/backends/contracts.ts';
@@ -60,6 +61,7 @@ test('duplicate waits for idle compaction and runs once', async () => {
   await f.start();
   expect(await f.send('first')).toBeInstanceOf(PromptDeliveryStarted);
   const child = f.children[0];
+  await child.emit(new TokenUsageReported({ context_input_tokens: 30000 }));
   await child.finish();
   await f.core.wait_until_quiescent();
   f.advance(50 * 60);
@@ -123,6 +125,7 @@ test('accepted compaction retains its child and retries storage only', async () 
   await f.start();
   await f.send('first');
   const child = f.children[0];
+  await child.emit(new TokenUsageReported({ context_input_tokens: 30000 }));
   await child.finish();
   await f.core.wait_until_quiescent();
   f.advance(50 * 60);
