@@ -38,7 +38,7 @@ All of these must hold:
 
 The ceiling is not a readiness question. It decides what a finished proposal does, not whether the Worker may start. Manager settlement does not gate a step either.
 
-One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass, so automation never steers into an unrelated turn.
+One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass.
 
 Automatic starts share the existing gate with Manager wakes and recovery notices. Each destination has its own pacing and pending capacity. The home reserves capacity for Chief and Managers. Extra destinations use their full capacity for Workers. A busy or absent destination cannot consume another destination's permits.
 
@@ -52,7 +52,7 @@ Automatic admission carries the same stable machine ID as the Ticket. A rename n
 
 Decision notes use the same conversation door as separate system messages before ordinary stage openers. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. Undelivered decision feedback must settle or be explicitly retried before another stage opener starts. A late failure for an older decision cannot change a newer proposal’s claim. Its delivery outcome remains recorded for explicit recovery. Panels checks for a later receipt and updates the outcome if one appears; it does not replay an uncertain note automatically. See [Review](review.md).
 
-One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. Queue mode waits for a free turn.
+One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. The step uses steer, which can join a turn if one starts after the readiness check.
 
 | Delivery fate | What happens to the claim |
 | --- | --- |

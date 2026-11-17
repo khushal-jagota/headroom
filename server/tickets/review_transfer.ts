@@ -115,7 +115,7 @@ async function deliver(
                     item.manager_agent_key,
                   ),
                   sender_label: 'Panels',
-                  mode: 'queue',
+                  mode: 'steer',
                   required_manager_id: item.id,
                 },
               ),
@@ -134,7 +134,7 @@ async function deliver(
                 CHIEF_SETTINGS_KEY,
               ),
               sender_label: 'Panels',
-              mode: 'queue',
+              mode: 'steer',
             },
           ),
         );

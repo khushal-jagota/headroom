@@ -208,7 +208,7 @@ async function _admitted_start_ready_worker_step(
             conversation_id: claimed.conversation_id,
             created_conversation_id: conversation_start.new_conversation_id(),
             sender_label: LOOP_SENDER_LABEL,
-            mode: 'queue',
+            mode: 'steer',
             sender_message_id,
             worker_type_registry: options.worker_type_registry,
             retain_definite_start_refusal: !paired_opener,
@@ -323,7 +323,7 @@ export async function tell_a_worker_it_lost_its_memory(
           {
             conversation_id,
             sender_label: LOOP_SENDER_LABEL,
-            mode: 'queue',
+            mode: 'steer',
             sender_message_id: worker_memory.new_memory_notice_message_id(),
             worker_type_registry: options.worker_type_registry,
             now: options.now(),
