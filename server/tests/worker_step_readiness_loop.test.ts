@@ -266,7 +266,7 @@ test.each([
   expect(read(db, ticket.id).worker_step_claim).toBe(expected_claim);
   if (_name === 'backend_did_not_start') expect(read(db, ticket.id).conversation_id).not.toBeNull();
 });
-test('an occupied conversation prevents another claim or opener', async () => {
+test('an occupied conversation queues one claimed step without a preparation permit', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
   await start_ready_worker_step(ticket.id, options);
@@ -286,17 +286,20 @@ test('an occupied conversation prevents another claim or opener', async () => {
     work_class: 'worker',
     destination: HOME_MACHINE_ID,
   });
-  const refusal = vi.fn(() => new PlannerError('validation', 'Execution refused'));
-  configure_conversation_start(db, {
-    db_path: fixture_path(db),
-    workspace_root: dirname(fixture_path(db)),
-    execution_refusal: refusal,
-  });
+  const prepare = vi.spyOn(starts, 'try_start');
+  expect((await start_ready_worker_step(ticket.id, options)).delivery_fate).toBe('queued');
+  expect(prepare).not.toHaveBeenCalled();
+  expect(starts.snapshots()).toEqual([
+    expect.objectContaining({ state: 'queued', permit_identity: null }),
+  ]);
+  expect(read(db, ticket.id).worker_step_claim).toBe('out');
   expect((await start_ready_worker_step(ticket.id, options)).started).toBe(false);
-  expect(starts.snapshots()).toEqual([]);
-  expect(refusal).not.toHaveBeenCalled();
-  expect(read(db, ticket.id).worker_step_claim).toBe('none');
+  expect(await system.held_prompts(taken.conversation_id!)).toHaveLength(1);
   expect(system.backend_prompt_writes(taken.conversation_id!)).toHaveLength(1);
+  system.complete_running_turn(taken.conversation_id!);
+  expect(system.backend_prompt_writes(taken.conversation_id!)).toHaveLength(2);
+  expect(await system.held_prompts(taken.conversation_id!)).toHaveLength(0);
+  expect(read(db, ticket.id).worker_step_claim).toBe('out');
 });
 test('start refusal releases a new link and the claim', async () => {
   const { db, system, options } = setup();
@@ -358,12 +361,6 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
       decision_id: 'test-reject',
       now,
     }),
-  );
-  // Another turn can start after the idle check; retain the combined prompt in the queue.
-  vi.spyOn(system, 'is_running').mockResolvedValueOnce(false);
-  const send = system.send.bind(system);
-  vi.spyOn(system, 'send').mockImplementationOnce((id, content, options) =>
-    send(id, content, { ...options, mode: 'queue' }),
   );
   await start_ready_worker_step(ticket.id, options);
   await start_ready_worker_step(ticket.id, options);
@@ -498,9 +495,9 @@ test('automatic preparation transfers the claim identity, refunds refusal, and e
 });
 
 // Existing start cases do not hold asynchronous preparation open across polls.
-// Reuse their in-memory conversations and SQLite source. Machine policy has its
-// own direct proof, so this case isolates destination fairness and preparation caps.
-test('blocked preparations cap each destination and rotate the next pass', async () => {
+// Reuse their in-memory conversations and SQLite source to prove that unrelated
+// Tickets remain eligible without weakening per-Ticket task ownership.
+test('blocked preparations do not cap hand-overs and retain per-Ticket ownership', async () => {
   const { db, system, options } = setup();
   const tickets = Array.from({ length: 4 }, () => create(db));
   for (const ticket of tickets) {
@@ -534,14 +531,19 @@ test('blocked preparations cap each destination and rotate the next pass', async
   });
   const loop = new WorkerStepReadinessLoop(options);
   try {
-    expect(loop.poll_once()).toEqual([tickets[0]!.id, tickets[3]!.id, tickets[1]!.id]);
+    expect(loop.poll_once()).toEqual([
+      tickets[0]!.id,
+      tickets[3]!.id,
+      tickets[1]!.id,
+      tickets[2]!.id,
+    ]);
     await new Promise((resolve) => setImmediate(resolve));
-    expect(running).toHaveBeenCalledTimes(3);
+    expect(running).toHaveBeenCalledTimes(4);
     expect(loop.poll_once()).toEqual([]);
     gate.resolve();
     await loop.drain();
     running.mockRestore();
-    expect(loop.poll_once()[0]).toBe(tickets[3]!.id);
+    expect(loop.poll_once()).toContain(tickets[3]!.id);
     await loop.drain();
   } finally {
     gate.resolve();
