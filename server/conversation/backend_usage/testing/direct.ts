@@ -30,7 +30,6 @@ function windows_json(windows: readonly BackendUsageWindow[] | null): unknown {
       used_percent: window.used_percent,
       resets_at: window.resets_at.toISOString(),
       model_scope: window.model_scope,
-      scope_label: window.scope_label,
     })) ?? null
   );
 }
