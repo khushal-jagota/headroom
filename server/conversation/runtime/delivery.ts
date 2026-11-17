@@ -426,7 +426,7 @@ export async function deliver_prompt(
       throw new NeedsRebind('exact desired default or alias target requires a fresh child');
     }
     // A local child implies a live instance. A remote child's backend may have none on this
-    // home; the remote child refuses a selection it cannot carry before placing the prompt.
+    // home; then the machine's adapter refuses a selection its child cannot carry.
     const entry = host.options.backend_registry.get(state.record.backend_key);
     if (had_child && entry?.kind === 'live') {
       const instance = entry.instance;

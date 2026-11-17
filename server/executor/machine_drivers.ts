@@ -4,16 +4,9 @@ import { built_in_driver_of, KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built
 import type { ReadSql } from '../core/database/contracts.ts';
 import { read_presence } from './vps_presence_store.ts';
 
-/**
- * The fallback for a machine that advertises no drivers: the backend keys the Python Mac
- * runtime accepts. Kept until the Manager lifts Python Mac compatibility.
- */
-export const PYTHON_MAC_BACKEND_KEYS: ReadonlySet<string> = new Set(['hermes', 'codex', 'claude']);
-
-/** The driver kinds a machine's latest stored lease advertises, or the fallback set. */
+/** The driver kinds a machine's latest stored lease advertises. None advertised: it runs none. */
 export function machine_driver_kinds(sql: ReadSql, machine_id: string): ReadonlySet<string> {
-  const advertised = read_presence(sql, machine_id)?.lease?.driver_kinds;
-  return advertised === undefined ? PYTHON_MAC_BACKEND_KEYS : new Set(advertised);
+  return new Set(read_presence(sql, machine_id)?.lease?.driver_kinds ?? []);
 }
 
 /** A backend id without a built-in driver runs on no remote machine. */
