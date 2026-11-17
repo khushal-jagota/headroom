@@ -147,7 +147,7 @@ export function ceilingOptionsFor(
   // Leash option labels are the Worker type's own Stage labels, so the control reads
   // "Until What Changes" and follows a Stage rename without a code change. This
   // replaces the earlier lowercase stageLabel(id) wording ("needs approach").
-  return lc.stageOrder.slice(start).filter((stage) => lc.ceilingRange.includes(stage) && !lc.stageIsTerminal[stage]).map((stage) => ({
+  return lc.stageOrder.slice(start).filter((stage) => lc.ceilingRange.includes(stage)).map((stage) => ({
     value: stage,
     label: stageLabelFor(lc, stage)
   }));

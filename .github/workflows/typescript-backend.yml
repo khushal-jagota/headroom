@@ -74,7 +74,11 @@ jobs:
             bash --noprofile --norc -euo pipefail <<'BROWSER' 2>&1 | tee "$browser_evidence/job.log"
           sudo apt-get update
           sudo apt-get install -y libicu-dev pkg-config build-essential ffmpeg
-          scripts/dev setup
+          npm ci --prefix server
+          npm ci --prefix web
+          npm install --prefix agent_backends --no-save --no-package-lock
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt -e .
           (cd web && node node_modules/vite/bin/vite.js build)
           .venv/bin/python -m playwright install --with-deps chromium
 

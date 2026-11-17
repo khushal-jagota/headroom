@@ -67,14 +67,15 @@ Requires **Python 3.12+**, **Node.js 22.18+ or 24+**, and npm. Run these command
 git clone https://github.com/khushal-jagota/headroom.git
 cd headroom
 
-scripts/dev setup
+npm ci --prefix server
+npm ci --prefix web
+npm install --prefix agent_backends --no-save --no-package-lock
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
 source .venv/bin/activate
 scripts/dev npm --prefix web run build
 
 panels serve
 ```
-
-Setup reuses built dependencies from the account’s `~/.cache/headroom/dependencies` directory. Changed dependency inputs or runtimes build a new entry. Each checkout keeps its own Python source installation and writable Node tool caches. Set `PANELS_DEPENDENCY_CACHE` to select a separate development cache.
 
 Open [localhost:8767](http://127.0.0.1:8767). The server binds to loopback. Configuration lives in [`config.yaml`](config.yaml), with `PLAN_*` environment overrides; for example, `PLAN_PORT=8768 panels serve` selects another port. SQLite data and runtime files live under the gitignored `data/` directory by default.
 

@@ -18,7 +18,8 @@ export function parse_next_ceiling(
     (consequences_follows(current_stage, workflow) || completion_follows(current_stage, workflow))
   ) {
     const target = advance_target(workflow, current_stage)!;
-    if (raw === null || raw === 'none' || raw === target || raw === 'done') return target;
+    if (raw === null || raw === 'none' || raw === target) return target;
+    if (raw === 'done' && completion_follows(current_stage, workflow)) return target;
     if (completion_follows(current_stage, workflow))
       throw new PlannerError('scope_invalid', 'final approval authorizes completion through Done');
   }

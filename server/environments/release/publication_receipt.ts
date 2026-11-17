@@ -1,7 +1,7 @@
 /** Bind the actual uploaded ZIPs and inner sealed Linux payload before publication. */
 import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, realpath, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { check_head_review } from '../../ios_compatibility/check.ts';
@@ -30,14 +30,13 @@ import {
   PUBLICATION_RECEIPT_NAME,
   RUNTIME_INVENTORY_PATH,
 } from './configuration.ts';
-import { PUBLICATION_MAC_VALIDATION_SECONDS } from './publication_configuration.ts';
 import { extract_app_archive, inspect_mac_archive, remove_owned_tree } from './archive.ts';
 import { MacArchiveInspectionUnsettled } from './contracts.ts';
 import { validate_app_manifest } from './identity.ts';
 import type { ReleaseExecution } from './contracts.ts';
 import { manifest_identity } from './logic/manifest.ts';
 import { migration_frontier, read_migration_graph } from './migrations.ts';
-import { assert_release_execution, run_release_command } from './process.ts';
+import { assert_release_execution } from './process.ts';
 import {
   publication_id,
   publication_json_file,
@@ -46,6 +45,7 @@ import {
 } from './publication_identity.ts';
 import type { PublicationSourceRun } from './publication_contracts.ts';
 import { mac_home_receipt_options, validate_mac_home_receipt } from './mac_home_receipt.ts';
+import { validate_mac_publication } from './mac_publication.ts';
 import type { MacHomeReceipt, MacHomeReceiptOptions } from './mac_home_receipt.ts';
 
 export type PublicationReceipt = Omit<PublishedUpdate, 'proof_artifact_id' | 'mac'> & {
@@ -373,45 +373,13 @@ export async function write_publication_receipt(
       !isDeepStrictEqual(licenses.missing_own_licenses, inventory.missing_own_licenses)
     )
       throw new Error('Publication license evidence differs from its inventory');
-    const mac_receipt = await json_file(join(mac_root, 'mac-runtime-publication.json'));
-    if (mac_receipt.run_attempt !== source_run.run_attempt)
-      throw new Error('Mac publication differs from the current attempt');
-    fence();
-    const environment = {
-      PATH: dirname(process.execPath) + ':/usr/local/bin:/usr/bin:/bin',
-      HOME: work,
-      TMPDIR: work,
-      LANG: 'C.UTF-8',
-      PYTHONDONTWRITEBYTECODE: '1',
-    };
-    const checked_mac = await run_release_command(
-      [
-        'python3',
-        '-I',
-        '-S',
-        '-B',
-        join(source, 'scripts/typescript_publication_mac.py'),
-        mac_root,
-        source_run.source_sha,
-        source_run.run_id,
-        options.mac_artifact_id,
-        options.mac_build_result,
-      ],
-      { timeout_seconds: PUBLICATION_MAC_VALIDATION_SECONDS, environment, cwd: source },
+    const published_mac = await validate_mac_publication(
+      mac_root,
+      source_run,
+      mac_artifact_id,
+      options.mac_build_result,
       execution,
     );
-    const mac = record(JSON.parse(checked_mac.stdout));
-    if (
-      integer(mac.artifact_id) !== mac_artifact_id ||
-      integer(mac.archive_size) <= 0 ||
-      integer(mac.archive_size) > MAX_MAC_RUNTIME_ARCHIVE_BYTES
-    )
-      throw new Error('Mac validation differs from its actual artifact');
-    const published_mac: PublishedMacUpdate = {
-      artifact_id: mac_artifact_id,
-      archive_sha256: digest(mac.archive_sha256),
-      archive_size: integer(mac.archive_size),
-    };
     let published_linux_executor: PublishedLinuxExecutorUpdate | undefined;
     if (has_linux_executor) {
       const executor_root = join(work, 'linux-executor');

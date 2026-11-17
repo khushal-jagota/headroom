@@ -153,7 +153,7 @@ export async function build_linux_publication(
         'Default production backend/environment composition and public release commands',
         'Sealed Node-only startup, relocation, and usage/proxy shutdown',
         'Copied installer launch/rollback and installed service/OOM behavior',
-        'Human source-bound iOS compatibility and eligible publication',
+        'Source-bound iOS compatibility review and eligible publication',
       ],
     };
     fence();

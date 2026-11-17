@@ -152,7 +152,7 @@ export function workflow_manifest(
         s.is_terminal ? [] : [[s.id, definition.stages[i + 1].id]],
       ),
     ),
-    ceiling_range: definition.stages.filter((s) => !s.is_terminal).map((s) => s.id),
+    ceiling_range: definition.stages.map((s) => s.id),
     default_ceiling: definition.stages[0].id,
     worker_profile_id: specialist_skill,
   };

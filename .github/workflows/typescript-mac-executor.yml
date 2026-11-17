@@ -1,0 +1,96 @@
+name: TypeScript Mac executor rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "server/executor/**"
+      - "server/conversation/**"
+      - "server/worker_supervision/**"
+      - "server/platform_runtime/**"
+      - "server/lifecycle/**"
+      - "server/core/**"
+      - "server/environments/**"
+      - "server/machines/**"
+      - "server/runtime/**"
+      - "server/tickets/**"
+      - "server/package*.json"
+      - "server/cli/**"
+      - ".github/workflows/typescript-mac-executor.yml"
+      - ".github/workflows/publish-typescript-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-executor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rehearsal:
+    name: Packaged Mac executor against a local TypeScript server
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          architecture: arm64
+      - name: Prepare independent production inputs and test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          native_root="$RUNNER_TEMP/mac-executor-rehearsal"
+          mkdir -p "$native_root"/{source,home,tmp,tls,evidence,config,data,logs,backups,workspace,files,scratch,run}
+          git archive --format=tar HEAD | tar -xf - -C "$native_root/source"
+          npm ci --prefix server
+          npm ci --prefix "$native_root/source/server" --omit=dev
+          cat > "$native_root/tls/request.cnf" <<'TLS'
+          [req]
+          distinguished_name = dn
+          x509_extensions = extension
+          prompt = no
+          [dn]
+          CN = localhost
+          [extension]
+          subjectAltName = IP:127.0.0.1,DNS:localhost
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,digitalSignature,keyEncipherment,keyCertSign
+          TLS
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -config "$native_root/tls/request.cnf" \
+            -keyout "$native_root/tls/key.pem" -out "$native_root/tls/cert.pem"
+          printf '{}\n' > "$native_root/config/config.yaml"
+      - name: Rehearse the sealed package without real provider credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          native_root="$RUNNER_TEMP/mac-executor-rehearsal"
+          native_revision=$(git rev-parse HEAD)
+          env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+            HOME="$native_root/home" TMPDIR="$RUNNER_TEMP/" \
+            MAC_REHEARSAL_ROOT="$native_root" MAC_REHEARSAL_EVIDENCE="$native_root/evidence" \
+            MAC_REHEARSAL_INPUTS="$native_root/source" MAC_REHEARSAL_REVISION="$native_revision" \
+            MAC_REHEARSAL_RUN_ID="$GITHUB_RUN_ID" MAC_REHEARSAL_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false PLAN_PORT=0 PLAN_SERVER_URL=http://127.0.0.1:0 \
+            PLAN_CONFIG_PATH="$native_root/config/config.yaml" PLAN_DB_PATH="$native_root/data/planner.sqlite" \
+            PLAN_DATA_DIR="$native_root/data" PLAN_LOGS_DIR="$native_root/logs" PLAN_BACKUP_DIR="$native_root/backups" \
+            PLAN_WORKSPACE_ROOT="$native_root/workspace" PLAN_TICKET_FILES_DIR="$native_root/files" \
+            PLAN_TICKET_SCRATCH_ROOT="$native_root/scratch" PLAN_TICKET_SCRATCH_DATABASE="$native_root/data/planner.sqlite" \
+            PLAN_CREDENTIAL_KEY_PATH="$native_root/data/key" PLAN_APP_ROOT="$GITHUB_WORKSPACE" \
+            PLAN_DISPATCHER_LOCK_PATH="$native_root/run/dispatcher.lock" \
+            PLAN_SERVER_CONTROL_SOCKET="$native_root/run/control.sock" \
+            PLAN_SERVER_LIFECYCLE_LEASE_PATH="$native_root/run/lifecycle.lock" \
+            node server/executor/mac/testing/native_rehearsal.ts
+      - name: Preserve native execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: typescript-mac-executor-rehearsal-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mac-executor-rehearsal/evidence/
+          if-no-files-found: error
+          retention-days: 14

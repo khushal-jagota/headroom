@@ -10,7 +10,8 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write \"**/*.ts\"",
-    "format:check": "prettier --check \"**/*.ts\""
+    "format:check": "prettier --check \"**/*.ts\"",
+    "test-server": "PLAN_TEST_MODE=1 node main.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.6.0",

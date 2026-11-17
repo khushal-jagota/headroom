@@ -249,7 +249,7 @@ struct DecisionApprovalSheet: View {
                         Button { flow.selected = nil } label: { Image(systemName: "chevron.left").frame(width: 28, height: 36) }
                             .accessibilityLabel("Back to How far")
                     }
-                    Text(reviewerOnly ? "Who reviews" : flow.selected.map { selectedID in "Who reviews · until \(stages.first { $0.id == selectedID }?.label ?? selectedID)" } ?? "How far")
+                    Text(reviewerOnly ? "Who reviews" : flow.selected.map { selectedID in "\(selectedID == "done" ? "Ceiling holder" : "Who reviews") · until \(stages.first { $0.id == selectedID }?.label ?? selectedID)" } ?? "How far")
                         .textCase(.uppercase).tracking(0.66).panelsScaledFont(size: 11, weight: .medium)
                         .foregroundStyle(PanelsTheme.Web.tertiary)
                 }.frame(minHeight: 36).padding(.horizontal, 12)

@@ -159,28 +159,18 @@
     void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
   }
 
-  function showModels(): void {
-    if (disabled) return;
-    showing = "models";
-    pendingModel = null;
-    void tick().then(() => picker.setActiveValue(displayed.model));
-  }
-
   async function runRefresh(): Promise<void> {
     if (refreshing) return;
     refreshing = true;
     feedback = null;
     try {
-      if (onRetry) {
-        await onRetry();
-      } else {
-        const result = await refreshBackendSnapshots();
-        if (result.snapshots !== null) snapshots = result.snapshots;
-        feedback = result.error ?? (result.outcomes
-          .filter(outcome => outcome.outcome !== "succeeded")
-          .map(outcome => `${outcome.backend_key}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
-          .join(" · ") || null);
-      }
+      const result = await refreshBackendSnapshots();
+      if (result.snapshots !== null && !onRetry) snapshots = result.snapshots;
+      feedback = result.error ?? (result.outcomes
+        .filter(outcome => outcome.outcome !== "succeeded")
+        .map(outcome => `${outcome.backend_key}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
+        .join(" · ") || null);
+      if (onRetry) await onRetry();
     } catch (error) {
       feedback = error instanceof Error ? error.message : "The read failed. Check again.";
     } finally { refreshing = false; }
@@ -247,16 +237,6 @@
         </PickerRailRow>
       {/each}
       <div class="model-picker-tools">
-        {#if showing === "efforts"}
-          <PickerRailRow
-            disabled={pickerBusy}
-            label="Models"
-            attributes={{ "data-conversation-picker-models": "", "aria-pressed": "false" }}
-            onclick={showModels}
-          >
-            {#snippet icon()}<span aria-hidden="true">←</span>{/snippet}
-          </PickerRailRow>
-        {/if}
         <PickerRailRow
           disabled={pickerBusy || refreshing}
           label={refreshControl.label}

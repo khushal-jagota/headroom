@@ -1202,7 +1202,7 @@ def run(browser, urls):
     leash.get_by_role("listbox").press("Enter")
     expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
     expect(leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail')).to_have_text(
-        "Success"
+        "Done"
     )
     leash.get_by_role("listbox").press("Escape")
     expect(leash.get_by_role("listbox")).to_have_count(0)
@@ -1228,8 +1228,7 @@ def run(browser, urls):
     expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
     leash.locator('[data-ceiling-part="ceiling"]').click()
     expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Ceiling stage")
-    leash.get_by_role("listbox").press("End")
-    leash.get_by_role("listbox").press("Enter")
+    leash.locator('[data-ceiling-picker-choice="needs_success_condition"]').click()
     expect(leash.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
     leash.get_by_role("listbox").press("c")
     leash.get_by_role("listbox").press("Enter")

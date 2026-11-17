@@ -60,7 +60,14 @@ jobs:
       - name: Set up independent source-local dependencies
         run: |
           set -o pipefail
-          scripts/dev setup 2>&1 | tee "$RUNNER_TEMP/worker-pressure-evidence/setup.log"
+          (
+            set -e
+            npm ci --prefix server
+            npm ci --prefix web
+            npm install --prefix agent_backends --no-save --no-package-lock
+            python3 -m venv .venv
+            .venv/bin/pip install -r requirements.txt -e .
+          ) 2>&1 | tee "$RUNNER_TEMP/worker-pressure-evidence/setup.log"
       - name: Probe a real home under builds and low memory
         run: |
           set -o pipefail

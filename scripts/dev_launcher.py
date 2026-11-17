@@ -1,4 +1,4 @@
-"""Launch checkout development tools and install checkout dependencies."""
+"""Launch checkout development tools."""
 
 from __future__ import annotations
 
@@ -40,39 +40,17 @@ def python_command(tree: Path, args: Sequence[str]) -> list[str]:
     return [str(tree / ".venv/bin" / name), *tail]
 
 
-def setup(tree: Path, env: Mapping[str, str]) -> int:
-    """Reuse built dependencies with checkout-local source wiring."""
-    return subprocess.run(
-        ["node", str(tree / "scripts/dev_setup.mts")], cwd=tree, env=env,
-    ).returncode
-
-
-def detach_npm_dependencies(tree: Path, arguments: Sequence[str], env: Mapping[str, str]) -> None:
-    if len(arguments) < 3 or arguments[0] != "--prefix" or arguments[2] not in {"ci", "install"}:
-        return
-    destination = tree / arguments[1] / "node_modules"
-    if (destination / ".panels-cache.json").exists():
-        subprocess.run(
-            ["node", str(tree / "scripts/dev_setup.mts"), "--detach", str(destination)],
-            cwd=tree, env=env, check=True,
-        )
-
-
 def main(args: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if args is None else args)
     environment = os.environ.copy()
     try:
         if not arguments:
-            raise ValueError("Use setup, npm, pytest, mypy, or python -m pytest|mypy.")
-        if arguments == ["setup"]:
-            return setup(TREE, environment)
+            raise ValueError("Use npm, pytest, mypy, or python -m pytest|mypy.")
         command = (
             npm_command(TREE, arguments[1:], environment)
             if arguments[0] == "npm"
             else python_command(TREE, arguments)
         )
-        if arguments[0] == "npm":
-            detach_npm_dependencies(TREE, arguments[1:], environment)
         is_pytest = arguments[0] != "npm" and (
             Path(arguments[0]).name == "pytest"
             or (len(arguments) > 2 and arguments[1:3] == ["-m", "pytest"])

@@ -85,9 +85,7 @@ test('a07_closeout_routing', () => {
   expect(t1.stage).toBe('done');
   expect(t1.field_values.consequences).toBe('c');
   expect(t1.ceiling).toBe('done');
-  expect(() => edit(db, create(db), { ceiling: 'done' })).toThrow(
-    expect.objectContaining({ code: 'scope_invalid' }),
-  );
+  expect(edit(db, create(db), { ceiling: 'done' }).ceiling).toBe('done');
   let t3 = edit(db, create(db), { ceiling: 'needs_implementation' });
   t3 = propose(db, t3, 'a');
   expect(t3.stage).toBe('needs_implementation');
@@ -96,6 +94,13 @@ test('a07_closeout_routing', () => {
   expect(t3.pending_proposal).not.toBeNull();
   t3 = accept(db, t3, 'implementation', 'done');
   expect(t3.stage).toBe('needs_consequences');
+  expect(t3.ceiling).toBe('done');
+  expect(
+    compose_worker_step_prompt(t3, { worker_type_definition: t3.workflow }).model_text,
+  ).toContain('The Consequences report settles below the ceiling.');
+  t3 = propose(db, t3, 'c');
+  expect(t3.stage).toBe('done');
+  expect(t3.pending_proposal).toBeNull();
 });
 test('a36_onward_scope', () => {
   const db = fixture();
@@ -150,6 +155,12 @@ test('a36_onward_scope', () => {
     field_values: { implementation: 'a' },
     pending_proposal: null,
   });
+  let early = propose(db, create(db), 'scope');
+  early = accept(db, early, 'what_changes', 'done');
+  expect(early.ceiling).toBe('done');
+  early = propose(db, early, 'implementation');
+  early = propose(db, early, 'consequences');
+  expect(early).toMatchObject({ stage: 'done', pending_proposal: null });
   const t4 = advance(db, create(db));
   expect(t4.stage).toBe('done');
   expect(t4.ceiling).toBe('done');
@@ -339,7 +350,7 @@ test('Consequences remains a reviewed report and preserves final approval replay
   const options = {
     principal: OWNER,
     now,
-    next_ceiling: 'done',
+    next_ceiling: 'needs_consequences',
     expected_proposal_revision: ticket.pending_proposal_revision,
     decision_id: 'final-scope-replay',
   };

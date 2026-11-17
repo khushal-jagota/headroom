@@ -49,7 +49,7 @@ When the current approved step creates a Ticket, load and follow `panels-ticket-
 
 File proposals canonically and stop at the gate. Let Panels route review and continuation. Do not duplicate a proposal or its status in chat.
 
-After the last decision is approved, perform only the authorized Consequences work and verify the result. Submit the Consequences report with `panels worker propose`. The ceiling holder reviews that report before the Ticket reaches Done. If the work fails or needs new authority, request help instead of reporting completion. The report does not grant permission for human-owned work.
+After the last decision is approved, perform only the authorized Consequences work and verify the result. Submit the Consequences report with `panels worker propose`. If the ceiling is Done, the report settles automatically. Otherwise the ceiling holder reviews it. If the work fails or needs new authority, request help instead of reporting completion. The report does not grant permission for human-owned work.
 
 Explicit owner requests still apply.
 
