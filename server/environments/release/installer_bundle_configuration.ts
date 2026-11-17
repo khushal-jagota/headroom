@@ -3,9 +3,12 @@ import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
 /** Each built-in driver's static files, which built_in_manifests.ts imports. */
 const DRIVER_STATIC_FILES = BUILT_IN_MANIFESTS.flatMap((driver) =>
-  ['manifest', 'client', ...(driver.models ? ['models'] : [])].map(
-    (name) => `server/drivers/${driver.driver_kind}/${name}.ts`,
-  ),
+  [
+    'manifest',
+    'client',
+    ...(driver.models ? ['models'] : []),
+    ...(driver.readable_tool_call_detail ? ['tool_detail'] : []),
+  ].map((name) => `server/drivers/${driver.driver_kind}/${name}.ts`),
 );
 export const INSTALLER_RECIPE_PATH = 'runtime/installer-files.json';
 export const INSTALLER_ENTRY = 'server/environments/updates/installer/main.ts';

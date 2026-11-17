@@ -5,6 +5,7 @@ import { parse_driver_kind } from '../core/identity.ts';
 import { claude_client } from './client.ts';
 import { claude_manifest } from './manifest.ts';
 import { claude_models } from './models.ts';
+import { claude_readable_tool_call_detail } from './tool_detail.ts';
 
 export const claude_driver: AgentDriver<null> = {
   driver_kind: parse_driver_kind('claude'),
@@ -12,6 +13,7 @@ export const claude_driver: AgentDriver<null> = {
   manifest: claude_manifest,
   config: NO_DRIVER_CONFIG,
   models: claude_models,
+  readable_tool_call_detail: claude_readable_tool_call_detail,
   async create(input, host) {
     const { create_claude_instance } = await import('./runtime/instance.ts');
     return create_claude_instance(input, host);

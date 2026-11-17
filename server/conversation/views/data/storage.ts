@@ -121,12 +121,16 @@ export function _row_record(sql: ReadSql, conversation_id: string, sequence: num
   return row;
 }
 
-export function conversation_backend(sql: ReadSql, conversation_id: string): BackendInstanceId {
+/** The conversation's backend, or null when the conversation row is absent. */
+export function conversation_backend(
+  sql: ReadSql,
+  conversation_id: string,
+): BackendInstanceId | null {
   return (
     sql.get<{ backend_key: BackendInstanceId }>(
       'SELECT backend_key FROM conversations WHERE conversation_id=?',
       [conversation_id],
-    )?.backend_key ?? ('hermes' as BackendInstanceId)
+    )?.backend_key ?? null
   );
 }
 
@@ -137,7 +141,7 @@ export function _body(
   options: {
     stopped?: boolean;
     full_tool_detail?: boolean;
-    backend_key?: BackendInstanceId;
+    backend_key?: BackendInstanceId | null;
   } = {},
 ): ViewRowBody {
   let settlement =
@@ -181,7 +185,10 @@ export function _body(
       row.settlement_sequence ?? (source.kind === 'tool_call_finished' ? row.sequence : null),
     dead_reason: dead,
     full_tool_detail: options.full_tool_detail ?? false,
-    backend_key: options.backend_key ?? conversation_backend(sql, conversation_id),
+    backend_key:
+      options.backend_key !== undefined
+        ? options.backend_key
+        : conversation_backend(sql, conversation_id),
   });
   if (value === null) {
     throw new Error('Source does not produce a view row');
@@ -208,7 +215,7 @@ export function read_row(
   sequence: number,
   options: {
     stopped?: boolean;
-    backend_key?: BackendInstanceId;
+    backend_key?: BackendInstanceId | null;
   } = {},
 ): [ConversationViewRow, number] {
   const row = _row_record(sql, conversation_id, sequence);

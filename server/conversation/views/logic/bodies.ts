@@ -89,7 +89,7 @@ export interface RowBodyOptions {
   settlement_sequence?: number | null;
   dead_reason?: AskDeadReason | null;
   full_tool_detail?: boolean;
-  backend_key?: BackendInstanceId;
+  backend_key?: BackendInstanceId | null;
 }
 export function row_body(
   source: ConversationEventPayload,
@@ -101,7 +101,7 @@ export function row_body(
     settlement_sequence = null,
     dead_reason = null,
     full_tool_detail = false,
-    backend_key = 'hermes' as BackendInstanceId,
+    backend_key = null,
   } = options;
   switch (source.kind) {
     case 'credential_request':
