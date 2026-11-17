@@ -100,7 +100,7 @@ function scripted_driver(
     driver_kind,
     client: {
       label: key,
-      icon: { file: 'icon.svg', monochrome: true },
+      icon: { file: new URL('./icon.svg', import.meta.url), monochrome: true },
       accent_color: '#000000',
     },
     manifest: scripted_manifest(key),

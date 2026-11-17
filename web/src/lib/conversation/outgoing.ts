@@ -796,7 +796,8 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     knownFate: knownFate as OutgoingMessageKnownFate,
     ...(pickedModel === null ? {} : { pickedModel }),
     ...(typeof held.effortIsSet === "boolean" ? {effortIsSet: held.effortIsSet} : {}),
-    ...(held.pickedBackend === "claude" || held.pickedBackend === "codex" || held.pickedBackend === "hermes" ? {pickedBackend: held.pickedBackend} : {}),
+    // Any backend the server runs may be held here; the server judges the key on send.
+    ...(typeof held.pickedBackend === "string" && held.pickedBackend !== "" ? {pickedBackend: held.pickedBackend} : {}),
     ...(pickedReasoningEffort === null && held.effortIsSet !== true ? {} : { pickedReasoningEffort })
   };
 }

@@ -14,7 +14,7 @@ import {
 import type { Database } from '../../../core/database/contracts.ts';
 import { BackendUsageService } from '../../backend_usage/service.ts';
 import type { BackendUsageAdapter, BackendUsageResult } from '../../backend_usage/contracts.ts';
-import { BUILT_IN_MANIFESTS } from '../../../drivers/built_in_manifests.ts';
+import { BUILT_IN_MANIFESTS, built_in_driver_of } from '../../../drivers/built_in_manifests.ts';
 import { default_instance_id_for_driver } from '../../../drivers/core/identity.ts';
 import { BackendSnapshotService } from '../service.ts';
 import type { BackendSnapshot, BackendHttpRuntime } from '../contracts.ts';
@@ -207,6 +207,9 @@ export async function run(spec: Spec) {
     backend_ids: ids,
     sign_in: (key) => (key === 'codex' ? sign_in : null),
     machine_catalog: (machine_id) => (machine_id === spec.named_machine ? named_catalog : null),
+    drivers: BUILT_IN_MANIFESTS,
+    driver_of: (key) => built_in_driver_of(key) ?? null,
+    reports_allowance_usage: (key) => spec.usage.some((result) => result.backend_key === key),
   };
   const config = loadConfig();
   config.db_path = spec.db_path;

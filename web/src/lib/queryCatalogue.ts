@@ -6,6 +6,8 @@ import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
 import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
+import { readDrivers } from "./drivers/read";
+import type { DriversResponse } from "./drivers/contracts";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   ChiefManagementSettings,
@@ -52,6 +54,11 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 
 export const queries = {
   machines: () => ({...jsonQuery<import("./machines/contracts").MachinesResponse>(["machines"], "/api/machines"), refetchInterval: MACHINE_HEALTH_POLL_MS, retry: false}),
+  // The driver list changes only with a release, so it does not follow the change stream.
+  drivers: () => queryOptions<DriversResponse>({
+    queryKey: ["drivers"], queryFn: readDrivers, staleTime: Infinity, retry: false,
+    meta: { followsChangeStream: false }
+  }),
   backends: (refresh = false) => queryOptions<BackendSnapshot[]>({
     queryKey: ["backends"], queryFn: () => readBackends(refresh), staleTime: Infinity, retry: false
   }),

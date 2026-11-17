@@ -71,7 +71,6 @@ type DriverFacts = Pick<AnyAgentDriver, 'driver_kind' | 'manifest'>;
 const SCANNED_ROOTS = ['server/', 'web/src/', 'ios/Panels/'];
 const EXEMPT_FILES = new Set([
   'server/drivers/built_in.ts',
-  'server/drivers/built_in_manifests.ts',
   'server/tools/driver_name_allowances.ts',
 ]);
 const PACKAGE_ENTRY_FILES = new Set([
@@ -377,7 +376,7 @@ function import_findings(
       add(
         reference.line,
         target,
-        'Reach a driver package only through server/drivers/built_in.ts or built_in_manifests.ts.',
+        'Reach a driver package only through server/drivers/built_in.ts.',
         target_package,
       );
     if (!entry_file || reference.type_only) continue;

@@ -33,23 +33,5 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
     reason: 'The smoke drives a scripted Codex app-server peer.',
     until: 'Permanent',
   },
-  {
-    path: 'web/src/',
-    driver_kind: 'claude',
-    reason: 'The web app names, marks and colours each backend until it reads the drivers list.',
-    until: 'Apps',
-  },
-  {
-    path: 'web/src/',
-    driver_kind: 'codex',
-    reason: 'The web app names, marks and colours each backend until it reads the drivers list.',
-    until: 'Apps',
-  },
-  {
-    path: 'web/src/',
-    driver_kind: 'hermes',
-    reason: 'The web app names, marks and colours each backend until it reads the drivers list.',
-    until: 'Apps',
-  },
 ];
 export const DRIVER_IMPORT_ALLOWANCES: readonly DriverImportAllowance[] = [];

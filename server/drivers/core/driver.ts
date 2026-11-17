@@ -48,6 +48,8 @@ export interface DriverModelRules {
   version(model_id: string): readonly number[];
   /** Whether a requested model is among the offered ones. Absent: exact match. */
   is_offered?(requested: string, offered: readonly string[]): boolean;
+  /** A readable name for a model id its catalog does not label well, or null. Absent: none. */
+  readable_name?(model_id: string): string | null;
 }
 /** Each driver decodes its own config, so a list of drivers erases it. */
 export type AnyAgentDriver = AgentDriver<any>;

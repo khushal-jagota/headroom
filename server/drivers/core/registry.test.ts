@@ -34,7 +34,7 @@ function scripted_driver(
     driver_kind,
     client: {
       label: kind,
-      icon: { file: 'icon.svg', monochrome: true },
+      icon: { file: new URL('../testing/icon.svg', import.meta.url), monochrome: true },
       accent_color: '#000000',
     },
     manifest: scripted_manifest(kind),

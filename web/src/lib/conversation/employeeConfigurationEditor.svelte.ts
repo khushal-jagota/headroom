@@ -12,14 +12,11 @@ export function createEmployeeConfigurationEditor(
   save: (next: EmployeeConfigurationSnapshot) => Promise<EmployeeConfigurationSnapshot>,
   read: (refresh?: boolean) => ReturnType<typeof queries.backends> = queries.backends
 ) {
-  let selected = $state<EmployeeConfigurationSnapshot>({
-    employee_backend: "claude",
-    employee_launch_model: null,
-    employee_launch_reasoning_effort: null
-  });
+  let selected = $state<EmployeeConfigurationSnapshot>({ ...incoming() });
   let lastIncomingSignature = "";
   const providerChoices = new Map<string, EmployeeConfigurationSnapshot>();
   const catalogue = createQuery(() => read(), () => queryClient);
+  const drivers = createQuery(() => queries.drivers(), () => queryClient);
   let backends = $derived(catalogue.data ?? []);
   let saving = $state(false);
   let saveError = $state<unknown>(null);
@@ -28,6 +25,7 @@ export function createEmployeeConfigurationEditor(
   let snapshot = $derived(backends.find((candidate) => candidate.backend_key === backendKey) ?? null);
   let picker = $derived(resolveModelPicker({
     backendKey,
+    drivers: drivers.data?.drivers,
     model: selected.employee_launch_model,
     reasoningEffort: selected.employee_launch_reasoning_effort,
     backends

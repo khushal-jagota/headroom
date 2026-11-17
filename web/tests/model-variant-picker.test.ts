@@ -1,39 +1,53 @@
 import { describe, expect, it } from "vitest";
 import { resolveModelPicker } from "../src/lib/conversation/modelPicker";
-import type { BackendModel } from "../src/lib/conversation/wire";
+import type { BackendModel, BackendSnapshot } from "../src/lib/conversation/wire";
+import type { ProviderOptionDescriptor } from "../src/lib/usage/contracts/model";
+import { DRIVERS } from "./support/drivers";
+
+/** The descriptor the server builds from a model's own effort list. */
+function reasoning(efforts: string[]): ProviderOptionDescriptor[] {
+  return efforts.length ? [{
+    type: "select", id: "reasoning_effort", label: "Reasoning", role: "reasoning",
+    options: efforts.map((effort) => ({ id: effort, label: effort }))
+  }] : [];
+}
 
 function picker(models: BackendModel[], model = "gpt-6.1-sol") {
   return resolveModelPicker({
-    backendKey: "codex", model, reasoningEffort: "medium", backends: [],
+    backendKey: "codex", model, reasoningEffort: "medium", backends: [], drivers: DRIVERS,
+    // Deliberate fixture shape: models carry the server's option_descriptors. These label
+    // fixtures declare known support; unknown support is tested below.
     models: models.map((entry) => ({
       ...entry,
-      // These label fixtures declare known support. Unknown support is tested below.
-      reasoning_effort_options: "reasoning_effort_options" in entry
-        ? entry.reasoning_effort_options : ["medium"],
+      option_descriptors: entry.option_descriptors ?? reasoning(["medium"])
     })),
     backendEffortOptions: ["medium"]
   });
 }
 
+function card(overrides: Partial<BackendSnapshot>): BackendSnapshot {
+  return {
+    backend_key: "codex", installed: true, executable_path: null, version: null, identity: null,
+    available_models: [], reasoning_effort_options: [], cached_usage: null, update_advisory: null,
+    diagnoses: [], ...overrides
+  };
+}
+
 describe("current model variants in the shared picker", () => {
-  it("shows the readable resolved model on the face and in one list label", () => {
+  it("shows the catalogue name on the face and in one list label", () => {
     const view = picker([{
       model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
-      selected_variant: "sol", resolved_model_id: "gpt-6.1-sol"
+      selected_variant: "sol", resolved_model_id: "gpt-6.1-sol", resolved_display_name: "GPT 6.1 Sol"
     }]);
     expect(view.face).toBe("GPT 6.1 Sol medium");
     expect(view.modelValue).toBe("gpt-6.1-sol");
     expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "GPT 6.1 Sol" }]);
   });
 
-
-
-
-
-  it("keeps a Claude alias as the selection while it shows the resolved version", () => {
+  it("keeps an alias as the selection while it shows the server's name for the resolution", () => {
     const view = picker([{
       model_id: "opus", display_name: "Opus", enabled: true,
-      selected_variant: "opus", resolved_model_id: "claude-opus-5-5"
+      selected_variant: "opus", resolved_model_id: "claude-opus-5-5", resolved_display_name: "Opus 5.5"
     }], "opus");
     expect(view.modelValue).toBe("opus");
     expect(view.face).toBe("Opus 5.5 medium");
@@ -49,36 +63,90 @@ describe("current model variants in the shared picker", () => {
   });
 
   it.each([
-    { resolved: null, expected: "Opus medium" },
-    { resolved: "opus", expected: "Opus medium" },
-    { resolved: "unrecognized-model-vNext", expected: "unrecognized-model-vNext medium" },
-    { resolved: "claude-opus-5-5[1m]", expected: "Opus 5.5 (1M) medium" },
-    { resolved: "claude-haiku-4-5-20251001", expected: "Haiku 4.5 medium", efforts: [] },
-    { resolved: "gpt-6.1-sol", expected: "GPT 6.1 Sol medium", model: "gpt-6.1-sol", alias: "sol" }
-  ])("uses resolved evidence without invented versions or unsupported effort: $expected", ({
-    resolved, expected, efforts, model = "opus", alias = "opus"
+    { resolved: null, readable: null, expected: "Opus medium" },
+    { resolved: "opus", readable: null, expected: "Opus medium" },
+    { resolved: "unrecognized-model-vNext", readable: null, expected: "unrecognized-model-vNext medium" },
+    { resolved: "claude-haiku-4-5-20251001", readable: "Haiku 4.5", expected: "Haiku 4.5 medium", efforts: [] }
+  ])("names the resolution from the server, else the raw id: $expected", ({
+    resolved, readable, expected, efforts
   }) => {
     const view = picker([{
-      model_id: model, display_name: alias === "opus" ? "Opus" : alias, enabled: true,
-      selected_variant: alias, resolved_model_id: resolved,
-      ...(efforts ? { reasoning_effort_options: efforts } : {})
-    }], model);
+      model_id: "opus", display_name: "Opus", enabled: true,
+      selected_variant: "opus", resolved_model_id: resolved, resolved_display_name: readable,
+      ...(efforts ? { option_descriptors: reasoning(efforts) } : {})
+    }], "opus");
     expect(view.face).toBe(expected);
-    expect(view.modelValue).toBe(model);
-    expect(view.models).toEqual([{ value: model, name: expected.replace(/ medium$/, "") }]);
+    expect(view.modelValue).toBe("opus");
+    expect(view.models).toEqual([{ value: "opus", name: expected.replace(/ medium$/, "") }]);
+  });
+});
+
+describe("drivers, marks and reasoning in the picker", () => {
+  it("lists the backends in the drivers' order, with their labels and marks", () => {
+    const view = picker([]);
+    expect(view.backends.map((backend) => [backend.key, backend.name])).toEqual([
+      ["hermes", "Hermes"], ["codex", "Codex"], ["claude", "Claude"]
+    ]);
+    expect(view.backends.map((backend) => backend.mark.kind)).toEqual(["icon", "icon", "icon"]);
+    expect(view.backendName).toBe("Codex");
+    expect(view.backendMark).toEqual(view.backends[1].mark);
   });
 
-  it("prefers the catalogue name for the concrete resolution over an alias label", () => {
-    const view = picker([
-      {
-        model_id: "opus", display_name: "Opus", enabled: true,
-        selected_variant: "opus", resolved_model_id: "provider:custom"
-      },
-      { model_id: "provider:custom", display_name: "Custom model", enabled: true }
-    ], "opus");
-    expect(view.face).toBe("Custom model medium");
-    expect(view.modelValue).toBe("opus");
-    expect(view.models[0]).toEqual({ value: "opus", name: "Custom model" });
+  it("appends an unknown current key with its capitalised name, initials and a reason", () => {
+    const view = resolveModelPicker({
+      backendKey: "open-code", model: null, reasoningEffort: null, backends: [], drivers: DRIVERS
+    });
+    const appended = view.backends.at(-1);
+    expect(view.backends.map((backend) => backend.key)).toEqual(["hermes", "codex", "claude", "open-code"]);
+    expect(appended).toMatchObject({
+      key: "open-code", name: "Open-code", selected: true,
+      mark: { kind: "initials", text: "OC" },
+      unavailableReason: "This backend is not available on this machine."
+    });
+    expect(view.emptyReason).toBe("Open-code model list is unavailable.");
+  });
+
+  it("offers no reasoning for a Hermes-shaped card, even with a stored effort", () => {
+    const hermes = card({
+      backend_key: "hermes", reasoning_effort_options: [],
+      available_models: [{ model_id: "hermes-model", display_name: "Hermes model", enabled: true,
+        reasoning_effort_options: null, option_descriptors: [] }],
+      default_model_id: "hermes-model"
+    });
+    const view = resolveModelPicker({
+      backendKey: "hermes", model: "hermes-model", reasoningEffort: "high", backends: [hermes], drivers: DRIVERS
+    });
+    expect(view.offersReasoning).toBe(false);
+    expect(view.efforts).toEqual([]);
+    expect(view.effortFace).toBe("");
+    expect(view.face).toBe("Hermes model");
+  });
+
+  it("keeps a stored effort word while no catalogue has been read", () => {
+    const view = resolveModelPicker({
+      backendKey: "codex", model: "gpt-6.1-sol", reasoningEffort: "high", backends: [], drivers: DRIVERS
+    });
+    expect(view.offersReasoning).toBe(true);
+    expect(view.face).toBe("gpt-6.1-sol high");
+  });
+
+  it("keeps a stored effort word on a known but empty card, as a not-installed one is", () => {
+    // The server sends an empty card when a backend is not installed or awaits a fresh read.
+    const view = resolveModelPicker({
+      backendKey: "codex", model: "gpt-6.1-sol", reasoningEffort: "high", drivers: DRIVERS,
+      backends: [card({ installed: false })]
+    });
+    expect(view.offersReasoning).toBe(true);
+    expect(view.face).toBe("gpt-6.1-sol high");
+  });
+
+  it("takes the effort rows from the model's reasoning descriptor", () => {
+    const view = picker([{
+      model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
+      option_descriptors: reasoning(["low", "high"])
+    }]);
+    expect(view.offersReasoning).toBe(true);
+    expect(view.efforts).toEqual([{ value: "low", name: "low" }, { value: "high", name: "high" }]);
   });
 });
 

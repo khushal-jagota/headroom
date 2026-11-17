@@ -66,6 +66,6 @@
   .picker-rail-row.dim { color: var(--text-faintest); opacity: .45; }
   .picker-rail-row.dim:hover { background: transparent; color: var(--text-faintest); }
   /* A backend mark is the one coloured icon a row carries. An unavailable part greys it. */
-  .picker-rail-row.dim :global(.model-picker-mark:not(.hermes)) { filter: grayscale(1); }
+  .picker-rail-row.dim :global(.model-picker-mark:not(.picture)) { filter: grayscale(1); }
   :global(.listbox-picker-panel[aria-busy="true"]) .picker-rail-row { cursor: progress; opacity: .55; }
 </style>

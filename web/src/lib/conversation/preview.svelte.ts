@@ -45,6 +45,7 @@ export function conversationPreview(source: () => ConversationPreviewSource) {
       enabled: current.visible && current.target !== null
     };
   });
+  const drivers = createQuery(() => queries.drivers());
   const health = createQuery(() => ({ ...queries.executorHealth(source().machineId), enabled: source().visible && source().locale === "macos" }));
 
   const activeConversationId = $derived.by(() => {
@@ -76,7 +77,7 @@ export function conversationPreview(source: () => ConversationPreviewSource) {
   const modelLabel = $derived.by(() => {
     const values = source().conversationId === null ? start.data : record.data;
     if (!values) return "";
-    return resolveModelPicker({ backendKey: values.backend_key,
+    return resolveModelPicker({ backendKey: values.backend_key, drivers: drivers.data?.drivers,
       model: preselectedValue(values.model, start.data?.model),
       reasoningEffort: preselectedValue(values.reasoning_effort, start.data?.reasoning_effort),
       backends: backends.data ?? [] }).face;

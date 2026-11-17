@@ -153,6 +153,10 @@ export function compose_production_backends(
           backend_ids: supplied_http.backend_ids,
           sign_in: (backend_key) => supplied_http.sign_in(backend_key),
           machine_catalog: (machine_id) => context.executor!.catalog_for(machine_id),
+          drivers: supplied_http.drivers,
+          driver_of: (backend_key) => supplied_http.driver_of(backend_key),
+          reports_allowance_usage: (backend_key) =>
+            supplied_http.reports_allowance_usage(backend_key),
           shutdown: (options) => supplied_http.shutdown?.(options) ?? Promise.resolve(),
           settled: () => supplied_http.settled(),
         };

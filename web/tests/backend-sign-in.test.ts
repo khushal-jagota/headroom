@@ -20,6 +20,7 @@ function snapshot(
 ): BackendSnapshot {
   return {
     backend_key: "codex",
+    can_sign_in: true,
     installed: true,
     executable_path: "/usr/bin/codex",
     version: "0.163.0",
@@ -59,8 +60,13 @@ describe("backendCanBeSignedIn", () => {
     expect(backendCanBeSignedIn(snapshot())).toBe(true);
   });
 
-  it("offers nothing for claude, which Panels cannot sign in", () => {
-    expect(backendCanBeSignedIn(snapshot({ backend_key: "claude" }))).toBe(false);
+  it("offers nothing for a backend whose card says Panels cannot sign it in", () => {
+    expect(backendCanBeSignedIn(snapshot({ backend_key: "claude", can_sign_in: false }))).toBe(false);
+    expect(backendCanBeSignedIn(snapshot({ can_sign_in: undefined }))).toBe(false);
+  });
+
+  it("follows the card, not the backend's name", () => {
+    expect(backendCanBeSignedIn(snapshot({ backend_key: "scripted-agent" }))).toBe(true);
   });
 
   it("offers nothing for a codex that is not installed", () => {
@@ -111,19 +117,21 @@ describe("signInCaveat", () => {
   });
 
   it("says nothing for a backend that cannot be signed in at all", () => {
-    expect(signInCaveat(snapshot({ backend_key: "claude" }))).toBeNull();
+    expect(signInCaveat(snapshot({ can_sign_in: false }))).toBeNull();
   });
 });
 
 describe("signInOutcome", () => {
   it("says nothing while a sign-in is pending", () => {
-    expect(signInOutcome(signIn())).toBeNull();
+    expect(signInOutcome(signIn(), "Codex")).toBeNull();
+    expect(signInOutcome(signIn({ state: "awaiting_return_url", user_code: null }), "Codex")).toBeNull();
   });
 
   it("names the account a confirmed sign-in landed on", () => {
     expect(
       signInOutcome(
-        signIn({ state: "confirmed", account_label: "owner@example.com", user_code: null })
+        signIn({ state: "confirmed", account_label: "owner@example.com", user_code: null }),
+        "Codex"
       )
     ).toBe("Signed in as owner@example.com.");
   });
@@ -133,15 +141,18 @@ describe("signInOutcome", () => {
       signIn({
         state: "unconfirmed",
         detail: "Codex reported a sign-in, but the saved login still holds the credential it had before."
-      })
+      }),
+      "Codex"
     );
 
     expect(outcome).toContain("still holds the credential");
     expect(outcome).not.toContain("Signed in");
   });
 
-  it("falls back to plain words when an unconfirmed sign-in carries no detail", () => {
-    expect(signInOutcome(signIn({ state: "unconfirmed" }))).toContain("could not confirm");
+  it("falls back to plain words, naming the backend, when an unconfirmed sign-in carries no detail", () => {
+    expect(signInOutcome(signIn({ state: "unconfirmed" }), "Scripted Agent")).toBe(
+      "Scripted Agent reported a sign-in and Panels could not confirm a usable credential."
+    );
   });
 
   it("reports an ended sign-in with the reason it was given", () => {
@@ -149,7 +160,7 @@ describe("signInOutcome", () => {
       signInOutcome({
         ...signIn({ state: "ended" }),
         detail: "Panels stopped showing the code after its own time limit."
-      })
+      }, "Codex")
     ).toBe("Panels stopped showing the code after its own time limit.");
   });
 });
@@ -188,9 +199,9 @@ describe("signInCaveat and running turns", () => {
   });
 
   it("offers no caveat for a backend that cannot be signed in, running turn or not", () => {
-    expect(signInCaveat(snapshot({ backend_key: "claude" }), { turnsInFlight: true })).toBeNull();
+    expect(signInCaveat(snapshot({ can_sign_in: false }), { turnsInFlight: true })).toBeNull();
     expect(
-      signInCaveat(snapshot({ backend_key: "claude" }), { turnsInFlight: "unknown" })
+      signInCaveat(snapshot({ can_sign_in: false }), { turnsInFlight: "unknown" })
     ).toBeNull();
   });
 });

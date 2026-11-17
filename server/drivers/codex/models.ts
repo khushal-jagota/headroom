@@ -3,6 +3,7 @@ import type { DriverModelRules } from '../core/driver.ts';
 
 const VARIANTS = new Set(['sol', 'astra', 'luna', 'codex', 'mini', 'nano', 'pro', 'terra']);
 const VERSION = /^gpt-(\d+(?:\.\d+)*)(?:-([a-z][a-z0-9-]*))?$/;
+const NAMED = /^gpt-\d+(?:\.\d+)*(?:-[a-z0-9]+)*$/;
 
 export const codex_models: DriverModelRules = {
   variant(model_id) {
@@ -13,6 +14,12 @@ export const codex_models: DriverModelRules = {
   version(model_id) {
     const match = VERSION.exec(model_id);
     return match && match[0] === model_id ? match[1].split('.').map(Number) : [];
+  },
+  /** gpt-6.1-sol is GPT 6.1 Sol. */
+  readable_name(model_id) {
+    if (!NAMED.test(model_id)) return null;
+    const words = model_id.slice(4).split('-');
+    return ['GPT', ...words.map((word) => word[0].toUpperCase() + word.slice(1))].join(' ');
   },
 };
 export function codex_launch_model_refusal(model: string): string | null {
