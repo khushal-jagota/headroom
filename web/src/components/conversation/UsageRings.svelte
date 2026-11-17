@@ -14,12 +14,8 @@
     compact?: boolean;
   } = $props();
 
-  let fiveHour = $derived(usageWindow(windows, "five_hour", modelId));
   let week = $derived(usageWindow(windows, "seven_day", modelId));
-  let values = $derived([
-    { kind: "five_hour", label: "5 hr", window: fiveHour },
-    { kind: "seven_day", label: "week", window: week }
-  ]);
+  let values = $derived([{ kind: "seven_day", label: "week", window: week }]);
 
   function circumference(radius: number): number {
     return 2 * Math.PI * radius;

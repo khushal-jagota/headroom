@@ -2861,6 +2861,18 @@ def _overlay_menu_bounds(browser, url):
         settle()
 
     try:
+        used = {'claude': 20, 'opus': 30}
+        def backends_body():
+            def snap(key, windows):
+                return {'backend_key':key,'installed':True,'version':'fixture','available_models':[],'reasoning_effort_options':[],
+                        'cached_usage':None if windows is None else {'observed_at':'2030-01-01T00:00:00Z','windows':windows},
+                        'update_advisory':None,'diagnoses':[],'identity':None}
+            def win(kind, percent, model=None):
+                return {'kind':kind,'used_percent':percent,'resets_at':'2030-01-01T00:00:00Z','model_id':model}
+            return {'backends':[
+                snap('claude',[win('five_hour',10),win('seven_day',used['claude']),win('five_hour',10,'opus'),win('seven_day',used['opus'],'opus')]),
+                snap('codex',[win('five_hour',40),win('seven_day',50)]),snap('hermes',None)]}
+        page.route('**/api/conversation/backends', lambda route: route.fulfill(json=backends_body()))
         page.route('**/api/conversation/backends/refresh', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
         page.goto(url, wait_until="domcontentloaded")
         page.evaluate("window.__setConversationState('opened')")
@@ -2984,7 +2996,7 @@ def _overlay_menu_bounds(browser, url):
                 picker.locator('[data-conversation-picker-choice="opus"]').click()
                 picker.locator('[data-conversation-picker-choice="high"]').click()
                 trigger.click()
-                for control in ('backend:claude','backend:codex','backend:hermes','reasoning','models','refresh'):
+                for control in ('backend:claude','backend:codex','backend:hermes','reasoning','refresh'):
                     settle()
                     selector = '[data-conversation-backend="'+control.split(':')[1]+'"]' if control.startswith('backend:') else '[data-conversation-picker-'+control+']'
                     item=picker.locator(selector)
@@ -2997,8 +3009,6 @@ def _overlay_menu_bounds(browser, url):
                         expect(picker.locator('[data-conversation-picker-feedback]')).to_be_visible()
                     elif control=='reasoning':
                         expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
-                    elif control=='models':
-                        expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
                     elif control=='refresh':
                         expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
                         feedback = picker.locator('[data-conversation-picker-feedback]')
@@ -3009,12 +3019,48 @@ def _overlay_menu_bounds(browser, url):
                 page.screenshot(path=str(output / (mode+'-run-picker.png')))
                 picker.get_by_role('listbox').press('Escape')
                 expect(trigger).to_be_focused()
-            # Models removes its own rail button. Enter and Space must both leave
+            if not proof.get('usageProved'):
+                # Refresh must ask the server for new usage, show one weekly ring per provider and
+                # model, and the provider row must return from reasoning to models.
+                refresh_posts = []
+                def answer_refresh(route):
+                    refresh_posts.append(route.request.method)
+                    used.update(claude=35, opus=45)
+                    route.fulfill(json={**backends_body(),'usage_outcomes':[{'backend_key':'claude','outcome':'succeeded','detail':None}]})
+                page.unroute('**/api/conversation/backends/refresh')
+                page.route('**/api/conversation/backends/refresh', answer_refresh)
+                trigger.click()
+                claude_ring = picker.locator('[data-conversation-backend="claude"] [data-usage-window]')
+                opus_ring = picker.locator('[data-conversation-picker-choice="opus"] [data-usage-window]')
+                for ring in (claude_ring, opus_ring, picker.locator('[data-conversation-backend="codex"] [data-usage-window]')):
+                    expect(ring).to_have_count(1)
+                    expect(ring).to_have_attribute('data-usage-window','seven_day')
+                expect(claude_ring).to_have_attribute('data-remaining-percent','80')
+                expect(opus_ring).to_have_attribute('data-remaining-percent','70')
+                page.screenshot(path=str(output / (mode+'-usage-before-refresh.png')))
+                picker.locator('[data-conversation-picker-refresh]').click()
+                expect(claude_ring).to_have_attribute('data-remaining-percent','65')
+                expect(opus_ring).to_have_attribute('data-remaining-percent','55')
+                assert refresh_posts == ['POST'], refresh_posts
+                page.screenshot(path=str(output / (mode+'-usage-after-refresh.png')))
+                picker.locator('[data-conversation-picker-reasoning]').click()
+                expect(picker.get_by_role('listbox')).to_have_attribute('aria-label','Reasoning efforts')
+                expect(picker.locator('[data-conversation-picker-models]')).to_have_count(0)
+                page.screenshot(path=str(output / (mode+'-reasoning-no-models-button.png')))
+                picker.locator('[data-conversation-backend="claude"]').click()
+                expect(picker.get_by_role('listbox')).to_have_attribute('aria-label','Models')
+                page.screenshot(path=str(output / (mode+'-provider-returns-to-models.png')))
+                picker.get_by_role('listbox').press('Escape')
+                proof['usageProved'] = True
+                page.unroute('**/api/conversation/backends/refresh')
+                page.route('**/api/conversation/backends/refresh', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
+                used.update(claude=20, opus=30)
+            # The active provider returns to models; there is no separate Models button. Enter and Space must both leave
             # the surviving list usable, then dismiss back to the stable trigger.
             for key in ('Enter','Space'):
                 trigger.click()
                 keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
-                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                keyboard_rail(picker.locator('[data-conversation-backend="claude"]'),key)
                 box=picker.get_by_role('listbox')
                 expect(box).to_be_focused()
                 expect(box).to_have_attribute('aria-label','Models')
@@ -3025,7 +3071,7 @@ def _overlay_menu_bounds(browser, url):
                 expect(trigger).to_have_attribute('aria-label',re.compile('opus high',re.I))
                 trigger.click()
                 keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
-                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                keyboard_rail(picker.locator('[data-conversation-backend="claude"]'),key)
                 picker.get_by_role('listbox').press('Escape')
                 expect(trigger).to_be_focused()
                 proof['actions'].append([mode,'modelsFocus',key,'selection works; Escape restores trigger'])
