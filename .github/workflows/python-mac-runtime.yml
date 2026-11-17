@@ -3,7 +3,7 @@ name: Python Mac runtime
 # Mac moves to the TypeScript runtime. Then this workflow goes.
 on:
   pull_request:
-    branches: [staging]
+    branches: [staging, driver-model]
     paths: ['src/**', 'tests/unit/**', 'requirements.txt', 'pyproject.toml']
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
