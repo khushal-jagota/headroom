@@ -231,7 +231,7 @@ export async function install_native_skill_snapshot(
     target_fd: number | undefined;
   try {
     signal.throwIfAborted();
-    const { snapshot, root, native_home } = input;
+    const { snapshot, root, native_home, native_skills_directory } = input;
     no_linked_state_ancestors(root);
     // This argument comes from the trusted adapter host, never from the command snapshot.
     if (
@@ -245,10 +245,10 @@ export async function install_native_skill_snapshot(
       invalid(`configured native provider home resolves elsewhere: ${native_home}`);
     home_fd = retain(open_directory_descriptor(home));
     try {
-      target_fd = open_directory_at(home_fd, 'skills');
+      target_fd = open_directory_at(home_fd, native_skills_directory);
     } catch {
       invalid(
-        `native provider skills entry must be an existing real directory: ${join(home, 'skills')}`,
+        `native provider skills entry must be an existing real directory: ${join(home, native_skills_directory)}`,
       );
     }
     const held_home = home_fd,
@@ -257,7 +257,7 @@ export async function install_native_skill_snapshot(
       no_linked_state_ancestors(root);
       // Metadata rechecks never supply mutation authority. All mutations keep held_target.
       require_same_directory(home, held_home);
-      require_same_directory(join(home, 'skills'), held_target);
+      require_same_directory(join(home, native_skills_directory), held_target);
       if (root_fd !== undefined) require_same_directory(root, root_fd);
     };
     const digest = generation_digest(snapshot),
@@ -269,6 +269,7 @@ export async function install_native_skill_snapshot(
       policy: {
         kind: 'mac-owned',
         state_root: root,
+        skills_directory: native_skills_directory,
         source_names: snapshot.sources.map((value) => value.skill_name),
         directory: {
           assert_current,

@@ -3,6 +3,8 @@ import type { BackendSnapshot } from '../../wire.generated.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 export interface MacCatalogDependencies {
   readonly snapshots: BackendSnapshotSource;
+  /** The backends this machine runs. Any other is answered with a card that says so. */
+  readonly backend_ids: readonly string[];
   /** Cancel current provider probes without sealing later reads. */
   cancel_sources?(reason: unknown): Promise<void>;
   /** Seal and join actual provider probes; retry a failed native close on a later call. */

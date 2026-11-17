@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { setTimeout as pause } from 'node:timers/promises';
 import {
-  ClaudeInitializationTimeout,
+  BackendInitializationTimeout,
   BackendSpawnFailed,
 } from '../../../conversation/backends/contracts.ts';
 import { Deferred } from '../../../core/deferred.ts';
@@ -60,7 +60,7 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
         ...native_fixture_options({
           paths: new ExecutorPaths(join(root, mode)),
           workspace_home: root,
-          native_skill_home: () => root,
+          native_skill_home: () => ({ path: root, skills_directory: 'skills' }),
           snapshot_directory: root,
           on_failure: (error) => {
             throw error;
@@ -81,7 +81,7 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
                 events.push(`start${attempt}`);
                 if (mode === 'other') throw new BackendSpawnFailed('ordinary startup failure');
                 if (mode === 'exhaust' || attempt < 3)
-                  throw new ClaudeInitializationTimeout('initialize');
+                  throw new BackendInitializationTimeout('initialize');
               },
               async stop() {
                 events.push(`stop${attempt}`);
@@ -108,7 +108,7 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
       if (mode === 'recover') expect(error).toBeNull();
       else
         expect(error).toBeInstanceOf(
-          mode === 'other' ? BackendSpawnFailed : ClaudeInitializationTimeout,
+          mode === 'other' ? BackendSpawnFailed : BackendInitializationTimeout,
         );
       expect(attempts).toBe(mode === 'other' ? 1 : 3);
       expect(vi.mocked(pause).mock.calls.map((call) => call[0])).toEqual(
@@ -139,7 +139,7 @@ test('managed Mac launch starts in the Ticket folder and names its prepared chec
     const options = native_fixture_options({
       paths,
       workspace_home: root,
-      native_skill_home: () => root,
+      native_skill_home: () => ({ path: root, skills_directory: 'skills' }),
       snapshot_directory: root,
       factory: () => () => {
         throw new Error('No native process belongs to localization');

@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, delimiter } from 'node:path';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
 import { testModeFromEnvironment } from '../../core/config.ts';
-import { BUILT_IN_MANIFESTS, built_in_driver_of } from '../../drivers/built_in_manifests.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import type { DriverManifest } from '../../drivers/core/manifest.ts';
 import { configured_file_path } from '../../drivers/core/paths.ts';
 export function backend_io_is_test(): boolean {
@@ -44,17 +44,6 @@ export function executable_override(
         executable.ignored_override_path;
   const expanded = expand_path(override);
   return expanded === ignored ? undefined : expanded;
-}
-/** Ignore the retired bundled Claude path in both native starts and machine discovery. */
-export function claude_executable_override(
-  environment: Readonly<NodeJS.ProcessEnv>,
-  expand_path: (path: string) => string,
-): string | undefined {
-  return executable_override(
-    built_in_driver_of('claude')!.manifest.executable,
-    environment,
-    expand_path,
-  );
 }
 /** The built-in manifest executable of that name. */
 function built_in_executable(name: string): DriverManifest['executable'] | undefined {

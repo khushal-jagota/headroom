@@ -1,8 +1,6 @@
-import { NODE_RUNTIME_FILES } from '../../../environments/release/configuration.ts';
+import { DRIVER_SOURCE_FILES } from '../../../environments/release/configuration.ts';
 export const MAC_STATIC_FILES = [
-  ...NODE_RUNTIME_FILES.filter((path) =>
-    path.startsWith('src/planner/conversation/backends/hermes'),
-  ),
+  ...DRIVER_SOURCE_FILES,
   'src/planner/worker_types/shipped_worker_types.json',
   'pyproject.toml',
 ] as const;

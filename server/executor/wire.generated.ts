@@ -271,6 +271,7 @@ export type LeaseReply = {
 export type LeaseRequest = {
   admission_stopped: boolean;
   cleanup_uncertainties?: WorkerCleanupUncertainty[];
+  driver_kinds?: ConversationBackendKey[];
   going_to_sleep?: boolean;
   identity: ExecutorIdentity;
   legacy_cleanup_notice?: string | null;

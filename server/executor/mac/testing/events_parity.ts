@@ -211,7 +211,7 @@ try {
           },
         };
       },
-      native_skill_home: () => join(root, 'native'),
+      native_skill_home: () => ({ path: join(root, 'native'), skills_directory: 'skills' }),
       snapshot_directory: join(root, 'skills'),
     }),
   };

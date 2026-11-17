@@ -1,4 +1,5 @@
 /** Retained native custody. Command outcomes and event retirement stay with the runner. */
+import type { AccountSkillHome } from '../../../skills/account.ts';
 import type {
   BackendChild,
   BackendChildFactory,
@@ -50,7 +51,7 @@ export interface MacNativeChildrenOptions {
     workspace: WorkspaceIdentity,
   ) => Promise<void>;
   readonly factory: (start: ResolvedConversationStart) => BackendChildFactory;
-  readonly native_skill_home: (backend: ConversationBackendKey) => string;
+  readonly native_skill_home: (backend: ConversationBackendKey) => AccountSkillHome;
   readonly event_sink: (reference: ChildReference) => BackendEventSink;
   readonly message_files: ConversationMessageFiles;
   readonly files: Pick<FilesService, 'open_directory' | 'close_directory'>;

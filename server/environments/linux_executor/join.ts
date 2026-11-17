@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { copy_environment } from '../../core/environment.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import { is_record } from '../../core/records.ts';
 import { valid_uuid } from '../../execution_identity.ts';
 import { validate_server_url } from '../../executor/mac/configuration.ts';
@@ -83,14 +84,11 @@ export async function provider_environment(
 ): Promise<Record<string, string>> {
   if (!isolated) return {};
   const environment: Record<string, string> = {};
-  for (const [variable, name] of [
-    ['CODEX_HOME', 'codex'],
-    ['CLAUDE_CONFIG_DIR', 'claude'],
-    ['PLAN_HERMES_HOME', 'hermes'],
-  ]) {
-    const path = join(root, 'providers', name!);
+  for (const { manifest } of BUILT_IN_MANIFESTS) {
+    if (manifest.home === undefined) continue;
+    const path = join(root, 'providers', manifest.home.isolated_directory_name);
     await mkdir(path, { recursive: true, mode: 0o700 });
-    environment[variable!] = path;
+    environment[manifest.home.environment_name] = path;
   }
   return environment;
 }

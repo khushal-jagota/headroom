@@ -48,7 +48,7 @@ test('refresh capture and publication share the same owner', async () => {
     native: native_fixture_options({
       paths: new ExecutorPaths('/synthetic/state'),
       workspace_home: '/synthetic',
-      native_skill_home: () => '/synthetic/native',
+      native_skill_home: () => ({ path: '/synthetic/native', skills_directory: 'skills' }),
       snapshot_directory: '/synthetic/skills',
       on_failure: (error) => {
         throw error;

@@ -46,7 +46,11 @@ import {
   }
   const faults: string[] = [],
     publisher = new MacSkillsPublisher((error) => faults.push(error.message));
-  const options = { root: join(root, 'state'), native_home: join(root, 'provider') };
+  const options = {
+    root: join(root, 'state'),
+    native_home: join(root, 'provider'),
+    native_skills_directory: 'skills',
+  };
   const report: unknown[] = [];
   let corrupt_rebuilt = false,
     corrupt_preserved = false;
@@ -155,6 +159,7 @@ import {
       await negative.install_native_skill_snapshot(snapshots[0]!, {
         root: state,
         native_home: selected_home,
+        native_skills_directory: 'skills',
       });
     } catch (error) {
       if (!(error instanceof Error) || error.constructor.name !== 'BackendSpawnFailed') throw error;
@@ -196,6 +201,7 @@ import {
   const swap_work = swapping.install_native_skill_snapshot(snapshots[0]!, {
     root: swap_state,
     native_home: swap_home,
+    native_skills_directory: 'skills',
   });
   void swap_work.catch(() => {});
   let swap_refused = false,
@@ -259,6 +265,7 @@ import {
   const work = blocked.install_native_skill_snapshot(snapshots[0]!, {
     root: blocked_root,
     native_home: join(root, 'unused-provider'),
+    native_skills_directory: 'skills',
   });
   void work.catch(() => {});
   await pause(30);

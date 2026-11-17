@@ -223,6 +223,7 @@ export class MacService {
       journal,
       runner: this.runner,
       updates: this.updates,
+      driver_kinds: adapters.drivers.map((driver) => driver.driver_kind),
       replaced: () => this.request_exit(1),
       on_failure: (error) => on_failure(error instanceof Error ? error : new Error(String(error))),
       warn: console.warn,

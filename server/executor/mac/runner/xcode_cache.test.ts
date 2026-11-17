@@ -68,7 +68,7 @@ test('managed Mac starts deliver a shared cache through the backend without shar
         ...native_fixture_options({
           paths,
           workspace_home: root,
-          native_skill_home: () => root,
+          native_skill_home: () => ({ path: root, skills_directory: 'skills' }),
           snapshot_directory: root,
           on_failure: (error) => {
             throw error;

@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { MacService } from '../host/service.ts';
 import { production_bindings } from '../host/entry.ts';
 import type { MacHostBindings } from '../host/contracts.ts';
-import { create_mac_adapter_host } from '../adapters.ts';
+import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
 import { MacCatalog } from '../catalog/index.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { row_envelope } from '../storage/envelopes.ts';
@@ -69,7 +69,8 @@ const configuration = {
   runtime: input.runtime ?? { child: true, ready_path: null, handoff_path: null },
   http: { tls: { ca: await readFile(input.ca_path) } },
 };
-const concrete = production_bindings(configuration, input.environment);
+const drivers = await load_executor_drivers();
+const concrete = production_bindings(configuration, input.environment, drivers);
 const claude_cleanup = input.claude_cleanup ? create_claude_cleanup_fixture() : null;
 let expected_input: { id: string; base64: string } | null = null;
 let early_event = input.early_event === true;
@@ -101,6 +102,7 @@ const bindings: MacHostBindings = {
   adapters(owners) {
     const host = create_mac_adapter_host({
       ...owners,
+      drivers,
       environment: input.environment,
       panels_server_url: origin.origin,
       executable_path: () => null,
@@ -124,7 +126,12 @@ const bindings: MacHostBindings = {
       ...host,
       factory: (resolved) => {
         if (claude_cleanup && resolved.backend_key === 'claude') {
-          const create = create_claude_backend_child_factory(host.launches.claude, {
+          const claude = host.drivers.find((driver) => driver.instance_id === 'claude')!;
+          const launch = {
+            claude_executable: claude.host.executable,
+            environment_overrides: [['PLAN_SERVER_URL', origin.origin]] as [string, string][],
+          };
+          const create = create_claude_backend_child_factory(launch, {
             ...owners,
             client_factory: claude_cleanup.client_factory,
           });
@@ -224,6 +231,7 @@ const bindings: MacHostBindings = {
   catalog(_host, _owners, on_failure) {
     return new MacCatalog({
       on_failure,
+      backend_ids: drivers.map(({ driver_kind }) => driver_kind),
       async stop_sources() {},
       snapshots: {
         retained: () => null,
