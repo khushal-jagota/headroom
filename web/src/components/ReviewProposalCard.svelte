@@ -46,6 +46,7 @@
     footer,
     decisionActions,
     embedded = false,
+    composerOnly = false,
     initialRevisionDraft = "",
     onRevisionDraftChange,
     initialEditedBody,
@@ -53,6 +54,8 @@
   }: {
     identity: NavigationReviewProposalItem;
     embedded?: boolean;
+    /** Show only the note and the decisions, for the artifact view's composer slot. */
+    composerOnly?: boolean;
     initialRevisionDraft?: string;
     initialEditedBody?: string;
     onEditedBodyChange?: (text: string) => void;
@@ -276,7 +279,7 @@
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={returnProposal}
-              {revisionEditor} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
+              {revisionEditor} {composerOnly} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
           {/if}
