@@ -862,6 +862,7 @@ The remaining conversation rows and abort custody compare exactly with Python.
 TypeScript gives the Claude child's stdout straight to the SDK. Panels no longer reads each line first.
 A malformed JSON stdout line no longer ends the child. The SDK skips it.
 The Panels 4 MiB stdout line cap is gone. Stderr keeps its existing line bound.
+The SDK reads stdout with Node `readline` and sets no line limit. Memory for a very long line now depends only on that reader.
 Panels drains the SDK messages into its own queue as they arrive. Steer admission and settlement read that queue's receipts, so a slow save never holds them.
 Stop reads the receipt that the SDK returns for the interrupt. The SDK drops non-string members from that receipt.
 Panels therefore no longer refuses Stop on a malformed queued uuid. A receipt without both lists still refuses.
