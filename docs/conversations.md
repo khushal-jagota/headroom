@@ -42,9 +42,9 @@ A busy agent is not a refusal. The sender picks how a busy agent meets the messa
 - **Queue** holds the message until the agent is free.
 - **Send now** ends the running turn and runs this message ahead of anything held.
 
-Messages that cannot join a running turn, such as attachments or a model change, wait in the queue with a visible reason. **Stop** ends the running turn.
+Messages that cannot join a running turn, such as attachments or a model change, wait in the queue with a visible reason. A refused steer also waits there, and a held message promoted to steer keeps its place when the steer is refused. **Stop** ends the running turn.
 
-Every send returns a fate. The fate is about delivery, not about whether the model agreed or obeyed.
+Every send returns a fate. The fate is about delivery, not about whether the model agreed or obeyed. A proven failure before a native send is a refusal. A failure after a possible native send retains uncertainty and never authorizes a replay.
 
 | Fate | Meaning |
 | --- | --- |

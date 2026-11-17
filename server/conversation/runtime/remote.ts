@@ -8,7 +8,17 @@ import type {
   RetainedBackendRun,
   TurnToken,
 } from '../backends/contracts.ts';
-import { DeliveryCancelled } from '../backends/contracts.ts';
+import {
+  DeliveryCancelled,
+  PromptWriteRefused,
+  BackendPromptRejected,
+  BackendSpawnFailed,
+  SessionLoadFailed,
+  NeedsRebind,
+} from '../backends/contracts.ts';
+import type { ReservedTurn } from './contracts.ts';
+import { Deferred } from '../../core/deferred.ts';
+import { field_mutation } from './save_attempt.ts';
 import { is_shutdown_business_cancellation } from '../shutdown.ts';
 import { AnswerFate, PromptDeliveryMode } from '../contracts.ts';
 import {
@@ -33,6 +43,7 @@ import {
   LifecycleStatus as S,
 } from '../record/lifecycle.ts';
 import type { JsonObject } from '../../executor/wire.generated.ts';
+import type { WireValue } from '../../executor/contracts.ts';
 import { RemoteTurnRejected, admit_remote_turn } from './remote_turn.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import { ConversationState, own_settlement, same_turn, set_phase } from './state.ts';
@@ -82,6 +93,7 @@ export function retained_open_runs(
         result.set(run.reference.conversation_id, {
           turn_number: run.turn.turn_number,
           executor_process_current: run.incarnation_current,
+          ...(run.pending_prompt !== null ? { prompt_admission_pending: true } : {}),
         });
   return result;
 }
@@ -122,6 +134,78 @@ export async function confirm_remote_prompt_accepted(
       } finally {
         lease.release();
       }
+    })(),
+  );
+}
+/** Native command facts settle a stale active turn without dependence on artifact delivery. */
+export async function reconcile_remote_command(
+  host: SqliteProcessConversationSystem,
+  command: WireValue<'ChildCommand'>,
+  outcome: WireValue<'CommandOutcome'>,
+): Promise<void> {
+  if (
+    command.turn === null ||
+    command.turn.conversation_id !== command.child.conversation_id ||
+    command.command_id !== outcome.command_id ||
+    !same_reference(command.child, outcome.child)
+  )
+    return;
+  const failed_prompt =
+    command.operation === 'write_prompt' &&
+    outcome.disposition !== 'succeeded' &&
+    outcome.result.reason !== 'executor_process_replaced' &&
+    outcome.result.reason !== 'delivery_withdrawn';
+  const no_turn =
+    command.operation === 'steer' &&
+    outcome.disposition === 'succeeded' &&
+    outcome.result.kind === 'steer_refused' &&
+    outcome.result.refusal_reason === 'no_running_turn_to_steer_into';
+  if (!failed_prompt && !no_turn) return;
+  const turn = admit_remote_turn(command.turn);
+  const state = host.conversation_state_for_admitted_remote_acknowledgement(
+    command.child.conversation_id,
+  );
+  if (state === null || !same_reference(state.retained_child_reference, command.child)) return;
+  await own_settlement(
+    state,
+    (async () => {
+      await host.wait_for_reservation(state, turn);
+      const lease = await acquire_after_steers(state, undefined, { admitted_settlement: true });
+      try {
+        host.options.require_runtime_ownership?.();
+        const running = state.running_turn;
+        if (
+          !same_reference(state.retained_child_reference, command.child) ||
+          running === null ||
+          !same_turn(running.token, turn) ||
+          running.ended ||
+          running.ending_is_the_cores ||
+          // A replayed prompt's own delivery path settles its failure.
+          (failed_prompt &&
+            state.reserved_turn !== null &&
+            same_turn(state.reserved_turn.token, turn))
+        )
+          return;
+        const detail = no_turn
+          ? 'The remote agent has no running turn to steer into.'
+          : typeof outcome.result.error_message === 'string'
+            ? outcome.result.error_message
+            : 'The remote prompt failed.';
+        await host.persist(state, () =>
+          outcome.disposition === 'uncertain'
+            ? host.start_admission.failed_attempt(host.options.store.start_admission_database, turn)
+            : host.start_admission.reject(host.options.store.start_admission_database, turn),
+        );
+        if (outcome.disposition === 'uncertain') {
+          state.delivery_uncertain = true;
+          state.child_is_quarantined = true;
+        }
+        await host.end_turn(state, running, 'failed', detail);
+        set_phase(state, 'idle');
+      } finally {
+        lease.release();
+      }
+      if (!host.shutting_down) host.schedule_drain(state);
     })(),
   );
 }
@@ -189,14 +273,17 @@ export function initialize_retained_runs(
               )
           : [],
       );
-      const running = adopted_running_turn(run.turn, facts, questions, {
-        executor_process_current: run.incarnation_current,
-      });
+      const pending = run.incarnation_current && run.pending_prompt !== null;
+      const running = pending
+        ? null
+        : adopted_running_turn(run.turn, facts, questions, {
+            executor_process_current: run.incarnation_current,
+          });
       if (running !== null)
         running.memory_notice_only = host.options.store.open_turn_holds_only_memory_notices(
           record.conversation_id,
         );
-      if (run.incarnation_current && (running !== null || !run.delivery_uncertain)) {
+      if (run.incarnation_current && (pending || running !== null || !run.delivery_uncertain)) {
         const sink = host.make_sink(state);
         const child = retained_factory(child_factory_for(host, record.backend_key))!.recover(
           run.reference,
@@ -213,12 +300,120 @@ export function initialize_retained_runs(
         }
       }
       state.running_turn = running;
-      if (running !== null) state.last_ended_turn_token = null;
+      if (running !== null || pending) state.last_ended_turn_token = null;
       set_phase(state, running === null ? 'idle' : 'running');
+      // Without a recovered child the prompt settles as uncertain and is never sent again.
+      if (pending) resume_pending_admission(host, state, run, state.child);
     }
     host.conversations.set(record.conversation_id, state);
   }
   return adopted;
+}
+/** A crash lost the caller's metadata. Observe native truth without reconstructing a prompt row. */
+function resume_pending_admission(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  run: AdoptedRun,
+  child: BackendChild | null,
+): void {
+  const prompt = run.pending_prompt;
+  if (prompt?.arguments.kind !== 'write_prompt') return;
+  const reservation: ReservedTurn = {
+    token: run.turn,
+    resolved: new Deferred<void>(),
+    automatic_compaction: prompt.arguments.automatic_compaction ?? false,
+    automatic_notice: false,
+    memory_notice_only: false,
+    prompt_accepted: false,
+    prompt_write_attempted: true,
+    messages: [],
+    mode: prompt.arguments.mode,
+    shutdown_owned: false,
+    shutdown_fate: null,
+  };
+  state.reserved_turn = reservation;
+  set_phase(state, 'starting');
+  const task = own_settlement(
+    state,
+    Promise.resolve().then(async () => {
+      let accepted: Awaited<ReturnType<BackendChild['write_prompt']>> | null = null;
+      let refused = false;
+      try {
+        const resume = child?.resume_prompt_admission?.bind(child);
+        if (resume === undefined)
+          throw new Error('The retained backend cannot observe its pending prompt');
+        accepted = await host.native_operation(() => resume(run.turn));
+      } catch (error) {
+        if (host.shutting_down || reservation.shutdown_owned) return;
+        refused =
+          error instanceof PromptWriteRefused ||
+          error instanceof BackendPromptRejected ||
+          error instanceof BackendSpawnFailed ||
+          error instanceof SessionLoadFailed ||
+          error instanceof NeedsRebind;
+      }
+      await state.lock.run(async () => {
+        if (
+          host.shutting_down ||
+          reservation.shutdown_owned ||
+          state.reserved_turn !== reservation ||
+          !same_reference(state.retained_child_reference, run.reference)
+        )
+          return;
+        const facts = host.options.store.lifecycle_facts(state.record.conversation_id);
+        const running =
+          accepted === null
+            ? null
+            : adopted_running_turn(run.turn, facts, new Map(), {
+                executor_process_current: true,
+              });
+        await host.persist(
+          state,
+          () =>
+            host.options.store.transition_lifecycle(state.record.conversation_id, [
+              {
+                kind: K.turn,
+                identity: String(run.turn.turn_number),
+                turn_number: run.turn.turn_number,
+                operation: O.turn,
+                status: accepted !== null ? S.running : S.unavailable,
+                provider_identity: null,
+              },
+              {
+                kind: K.attempt,
+                identity: `prompt:${run.turn.turn_number}`,
+                turn_number: run.turn.turn_number,
+                operation: O.prompt,
+                status: accepted !== null ? S.started : refused ? S.refused : S.unknown,
+                provider_identity: null,
+              },
+            ]),
+          [field_mutation(state, 'running_turn', running)],
+        );
+        if (accepted?.agent_acceptance_proven) await host.accept_automatic_start(state, run.turn);
+        else if (refused)
+          await host.persist(state, () =>
+            host.start_admission.reject(host.options.store.start_admission_database, run.turn),
+          );
+        else if (accepted === null)
+          await host.persist(state, () =>
+            host.start_admission.failed_attempt(
+              host.options.store.start_admission_database,
+              run.turn,
+            ),
+          );
+        state.has_delivered_prompt ||= accepted !== null;
+        state.delivery_uncertain = accepted === null && !refused;
+        state.child_is_quarantined = state.delivery_uncertain;
+        state.reserved_turn = null;
+        set_phase(state, running === null ? 'idle' : 'running');
+        reservation.resolved.resolve();
+        host.options.emit_change?.();
+      });
+      if (!host.shutting_down) host.schedule_drain(state);
+    }),
+  );
+  void task.catch((error) => console.error('A retained prompt admission could not settle.', error));
 }
 export async function take_answer_application(
   host: SqliteProcessConversationSystem,

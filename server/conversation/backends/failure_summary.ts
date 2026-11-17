@@ -32,7 +32,7 @@ export function normalized_failure_summary(
 /** The longest backend failure text one log line keeps. */
 const LOGGED_FAILURE_TEXT_MAXIMUM_CHARACTERS = 4096;
 function class_name(value: unknown): string {
-  return value instanceof Error ? value.constructor.name : typeof value;
+  return value !== null && typeof value === 'object' ? value.constructor.name : typeof value;
 }
 /** One log line for one backend failure, with the backend's own text redacted. */
 export function log_backend_failure(

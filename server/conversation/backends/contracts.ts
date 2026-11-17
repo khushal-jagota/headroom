@@ -24,6 +24,7 @@ import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { TurnToken as WireTurnToken } from '../../executor/wire.generated.ts';
+import type { ChildCommand as WireChildCommand } from '../../executor/wire.generated.ts';
 import type { LocalChildIdentity } from '../local_child_contracts.ts';
 export interface TurnToken {
   readonly conversation_id: string;
@@ -119,6 +120,8 @@ export class BackendUserInputRequest {
   }
 }
 export class RetainedBackendRun {
+  /** Exact existing remote prompt whose native admission lacks a committed receipt. */
+  readonly pending_prompt: WireChildCommand | null;
   readonly reference: ChildReference;
   readonly turn: WireTurnToken;
   readonly delivery_uncertain: boolean;
@@ -126,6 +129,7 @@ export class RetainedBackendRun {
   readonly stop_requested: boolean;
   readonly incarnation_current: boolean;
   constructor(values: {
+    pending_prompt?: WireChildCommand | null;
     reference: ChildReference;
     turn: WireTurnToken;
     delivery_uncertain: boolean;
@@ -133,6 +137,7 @@ export class RetainedBackendRun {
     stop_requested?: boolean;
     incarnation_current?: boolean;
   }) {
+    this.pending_prompt = values.pending_prompt ?? null;
     this.reference = values.reference;
     this.turn = values.turn;
     this.delivery_uncertain = values.delivery_uncertain;
@@ -337,10 +342,20 @@ export interface BackendChild {
   detach(options?: StopOptions): Promise<void>;
   /** Actual already-started stop work, without an observer deadline. */
   settled?(): Promise<void>;
+  /** Observe a retained pending prompt after a home restart, without another send.
+   * The exact stored command supplies the result. Original sender and receipt
+   * metadata cannot be reconstructed here. Native acceptance and cancellation
+   * follow write_prompt's contract.
+   */
+  resume_prompt_admission?(turn: TurnToken): Promise<BackendPromptAccepted>;
   start(
     resolved_start: ResolvedConversationStart,
     options: { vendor_session_cursor: string | null },
   ): Promise<void>;
+  /** Resolves only after native acceptance, never merely mailbox placement.
+   * Proven pre-send failures use PromptWriteRefused. Possible sends retain
+   * PromptWriteFailed uncertainty. Acceptance proof is a separate fact.
+   */
   write_prompt(
     turn_token: TurnToken,
     content: MessageContent,

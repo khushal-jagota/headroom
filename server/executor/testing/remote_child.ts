@@ -54,6 +54,14 @@ const commands: RemoteChildCommands = {
     }
     return true;
   },
+  async wait_prompt_result(command) {
+    return {
+      command_id: command.command_id,
+      child,
+      disposition: 'succeeded',
+      result: { kind: 'prompt_accepted', composed_content_delivered: true },
+    };
+  },
   mac_is_present: () => present,
   async deliver_steer(command) {
     capture(command);
