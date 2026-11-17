@@ -22,6 +22,7 @@ export interface ServerOptions {
 }
 
 export interface ServerHandle {
+  host: ServerHost;
   base: string;
   port: number;
   root: string;
@@ -155,7 +156,7 @@ export async function startServer(options: ServerOptions = {}): Promise<ServerHa
   }
   // The listener descriptor belongs to this child alone.
   const { PLAN_SERVER_LISTENER_FD: _listener, ...shared } = environment;
-  const handle: ServerHandle = { base, port, root, dbPath, logPath, environment: shared, process: child };
+  const handle: ServerHandle = { host: options.host ?? 'main', base, port, root, dbPath, logPath, environment: shared, process: child };
   try {
     // The request waits in the listener queue until the server accepts it, however long
     // boot takes. If the server exits first, the queued connection fails at once.
