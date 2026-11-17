@@ -1,0 +1,6 @@
+{
+  "contract_sha256": "1bfd3cd4560910f879d11d7e90ab2b39324e9f765a9e81c9f424538018f3fc7d",
+  "oldest_supported_build": 1,
+  "decision": "compatible",
+  "evidence": "Reviewed by the release agent. Between main 0a09cb02e and this staging revision, no HTTP route or view file changed; the only wire change is inside the Claude backend. The new agent_message conversation event is already read by the iPhone app (ConversationModel.swift), and the app ignores unknown stream events. Native iOS builds pass. No signed-device test."
+}
