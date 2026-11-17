@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, expect, test, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { decode_bounded } from '../../protocol.ts';
 import type { MacUpdateCheck, MacUpdateTarget } from '../../wire.generated.ts';

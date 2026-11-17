@@ -758,7 +758,7 @@ export class CodexAppServerBackendChild implements B.BackendChild {
       ),
       turn.started.promise,
     ]);
-    if (turn.started.done) {
+    if (turn.started.settled) {
       if (compact) void accepted.catch(() => {});
       else
         void accepted

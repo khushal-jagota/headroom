@@ -18,7 +18,7 @@ import {
 } from '../backends/contracts.ts';
 import type { WireValue } from '../../executor/contracts.ts';
 import { text_message_content } from '../message_content.ts';
-import { Deferred } from './state.ts';
+import { Deferred } from '../../core/deferred.ts';
 import { retained_open_runs } from './remote.ts';
 
 // An acknowledgement must wait for receipt and steer settlement, then recheck its exact source.

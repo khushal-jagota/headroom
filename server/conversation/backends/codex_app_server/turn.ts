@@ -2,24 +2,7 @@
 import type { TurnToken } from '../contracts.ts';
 import type { CodexLoginGeneration } from '../../snapshot/provider_contracts.ts';
 import type * as P from './protocol.ts';
-export class Deferred<T> {
-  readonly promise: Promise<T>;
-  done = false;
-  value: T | undefined;
-  private resolve_value!: (value: T) => void;
-  constructor() {
-    this.promise = new Promise<T>((resolve) => {
-      this.resolve_value = resolve;
-    });
-  }
-  resolve(value: T): void {
-    if (!this.done) {
-      this.done = true;
-      this.value = value;
-      this.resolve_value(value);
-    }
-  }
-}
+import { Deferred } from '../../../core/deferred.ts';
 export class TurnInFlight {
   readonly token: TurnToken;
   readonly started = new Deferred<string>();

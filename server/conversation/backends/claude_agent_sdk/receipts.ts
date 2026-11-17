@@ -3,12 +3,13 @@ import {
   CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
   CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS,
 } from './configuration.ts';
-import { Pending, raw_user_message_uuids } from './wire.ts';
+import { Deferred } from '../../../core/deferred.ts';
+import { raw_user_message_uuids } from './wire.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 
 interface ObservedUserMessage {
-  admission: Pending<boolean | null>;
-  settled: Pending<void>;
+  admission: Deferred<boolean | null>;
+  settled: Deferred<void>;
   started: boolean;
   admission_consumed: boolean;
   conflicting_admission: boolean;
@@ -22,8 +23,8 @@ export class ClaudeReceipts {
 
   watch_user_message(uuid: string): void {
     this.user_messages.set(uuid, {
-      admission: new Pending(),
-      settled: new Pending(),
+      admission: new Deferred(),
+      settled: new Deferred(),
       started: false,
       admission_consumed: false,
       conflicting_admission: false,

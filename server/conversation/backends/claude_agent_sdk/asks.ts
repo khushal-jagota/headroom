@@ -3,7 +3,7 @@ import { AnswerFate } from '../../contracts.ts';
 import { PermissionAskOption, UserInputOption, UserInputQuestion } from '../../events.ts';
 import type { UserInputAnswer } from '../../events.ts';
 import * as B from '../contracts.ts';
-import { Pending } from './turn.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import type { TurnInFlight, UserQuestion, ParkedPermission, ParkedUserInput } from './turn.ts';
 import { canonical_json, record } from './events.ts';
 import { error_text } from './failure_summary.ts';
@@ -83,8 +83,8 @@ export class ClaudeAsks {
         };
       }
       const input: ParkedUserInput = {
-        answer: new Pending(),
-        handed_over: new Pending(),
+        answer: new Deferred(),
+        handed_over: new Deferred(),
         tool_input: { ...tool_input },
         questions,
       };
@@ -112,8 +112,8 @@ export class ClaudeAsks {
       );
     } else {
       const permission: ParkedPermission = {
-        answer: new Pending(),
-        handed_over: new Pending(),
+        answer: new Deferred(),
+        handed_over: new Deferred(),
         tool_input: { ...tool_input },
         suggestions: context.suggestions ?? [],
       };

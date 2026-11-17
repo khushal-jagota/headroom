@@ -13,7 +13,7 @@ import type { ConversationMessageFiles } from '../../message_files.ts';
 import { HermesAcpBackendChild } from './adapter.ts';
 import { HermesAcpLauncher } from './client.ts';
 import type { HermesAcpClient, HermesAcpHandlers } from './client.ts';
-import { Deferred } from './events.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
 afterEach(() => vi.restoreAllMocks());
 test('stop after a successful prompt write cannot turn acceptance into an unwritten refusal', async () => {

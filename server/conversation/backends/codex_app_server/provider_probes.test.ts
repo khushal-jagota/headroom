@@ -4,7 +4,7 @@ import { expect, test, vi } from 'vitest';
 import { read_codex_rate_limits } from './usage.ts';
 import { create_codex_providers } from './providers.ts';
 import * as login from './login.ts';
-import { Deferred } from '../../runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import type { Database } from '../../../core/database/contracts.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 

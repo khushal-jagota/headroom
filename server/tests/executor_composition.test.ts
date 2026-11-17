@@ -31,7 +31,7 @@ import {
 import type { StallSource } from '../stalls/contracts.ts';
 import { MacUpdateService } from '../environments/updates/mac/service.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { write_bindings } from '../conversation/start_admission/index.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { decode_value } from '../executor/protocol.ts';

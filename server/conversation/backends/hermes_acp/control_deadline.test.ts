@@ -4,7 +4,7 @@ import type { ResolvedConversationStart } from '../../contracts.ts';
 import { NeedsRebind, PromptWriteFailed, SessionLoadFailed } from '../contracts.ts';
 import { HermesAcpClient } from './client.ts';
 import { HermesConfiguration } from './configuration.ts';
-import { Deferred } from './events.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
 test('hung ordered persistence bounds controls without failing other requests or the wire', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

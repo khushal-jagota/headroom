@@ -30,7 +30,7 @@ import type { BackendChild, BackendChildFactory } from '../conversation/backends
 import { message_content_text, text_message_content } from '../conversation/message_content.ts';
 import { AgentMessageEventPayload } from '../conversation/events.ts';
 import { conversation_attention } from '../notifications/attention.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
 import type { ConversationStoreOptions } from '../conversation/record/contracts.ts';

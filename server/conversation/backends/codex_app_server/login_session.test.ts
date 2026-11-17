@@ -8,7 +8,7 @@ import {
   type SignInClient,
 } from './login_session.ts';
 import type { CodexServerMessageHandler } from './client.ts';
-import { Deferred } from '../../runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import { StoredCodexLogin } from './login.ts';
 
 afterEach(() => {

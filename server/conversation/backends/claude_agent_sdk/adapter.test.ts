@@ -15,14 +15,14 @@ import {
 import { text_message_content } from '../../message_content.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
 import type { ClaudeSdkClient, ClaudeSdkMessage } from './query_contracts.ts';
-import { Pending } from './wire.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
 it('clears a failed reader and disconnects once across repeated stop calls', async () => {
-  const next = new Pending<IteratorResult<ClaudeSdkMessage>>();
-  const failedReport = new Pending<void>();
+  const next = new Deferred<IteratorResult<ClaudeSdkMessage>>();
+  const failedReport = new Deferred<void>();
   const failure = Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
   const disconnect = vi.fn(async (_options?: { deadline: number }) => {});
-  const native_settled = new Pending<void>();
+  const native_settled = new Deferred<void>();
   const client: ClaudeSdkClient = {
     connect: async () => {},
     get_server_info: async () => null,

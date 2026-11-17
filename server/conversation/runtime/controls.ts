@@ -28,7 +28,8 @@ import { PlannerError } from '../../core/contracts.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import type { Message, ReservedTurn } from './contracts.ts';
 import { discarded_row, prompt_row, refused_row, uncertain_row } from './messages.ts';
-import { ConversationState, Deferred, same_turn, set_phase } from './state.ts';
+import { Deferred } from '../../core/deferred.ts';
+import { ConversationState, same_turn, set_phase } from './state.ts';
 import type { LockLease } from './synchronization.ts';
 import { kill_initial_delivery, retained_factory } from './remote.ts';
 

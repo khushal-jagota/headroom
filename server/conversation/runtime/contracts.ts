@@ -19,7 +19,7 @@ import type { ConversationLiveTailFrame } from '../events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
 import type { ConversationRecordStore, StoredConversationEvent } from '../record/contracts.ts';
-import type { Deferred } from './state.ts';
+import type { Deferred } from '../../core/deferred.ts';
 
 export type ConversationPhase = 'idle' | 'starting' | 'running' | 'ending' | 'draining';
 export interface Message {

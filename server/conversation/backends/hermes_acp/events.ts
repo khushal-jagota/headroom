@@ -37,23 +37,8 @@ import type { MessageContent, MessagePiece } from '../../message_content.ts';
 import { normalized_failure_summary } from '../claude_agent_sdk/failure_summary.ts';
 import { hermes_error_text } from './configuration.ts';
 import type { HermesMessages } from './messages.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
-export class Deferred<T> {
-  readonly promise: Promise<T>;
-  settled = false;
-  private resolve_value!: (value: T) => void;
-  constructor() {
-    this.promise = new Promise<T>((resolve) => {
-      this.resolve_value = resolve;
-    });
-  }
-  resolve(value: T): void {
-    if (!this.settled) {
-      this.settled = true;
-      this.resolve_value(value);
-    }
-  }
-}
 export interface ParkedPermissionAsk {
   readonly answer: Deferred<RequestPermissionResponse>;
   readonly request_id: JsonRpcId;

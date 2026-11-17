@@ -27,7 +27,8 @@ import {
 } from './configuration.ts';
 import type { ClaudeSdkClient, ClaudeSdkOptions, ClaudeSdkMessage } from './query_contracts.ts';
 import { ClaudeReceipts } from './receipts.ts';
-import { ObservedStderr, Pending, object, raw_uuid_set } from './wire.ts';
+import { Deferred } from '../../../core/deferred.ts';
+import { ObservedStderr, object, raw_uuid_set } from './wire.ts';
 import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { observe_shutdown } from '../../shutdown.ts';
@@ -43,7 +44,7 @@ export type {
 
 class InputQueue implements AsyncIterable<SDKUserMessage> {
   private readonly values: SDKUserMessage[] = [];
-  private waiting: Pending<IteratorResult<SDKUserMessage>> | null = null;
+  private waiting: Deferred<IteratorResult<SDKUserMessage>> | null = null;
   private ended = false;
   push(value: SDKUserMessage): void {
     if (this.ended) throw new Error('Cannot write to closed transport');
@@ -65,7 +66,7 @@ class InputQueue implements AsyncIterable<SDKUserMessage> {
         const value = this.values.shift();
         if (value !== undefined) return { value, done: false };
         if (this.ended) return { value: undefined, done: true };
-        this.waiting = new Pending();
+        this.waiting = new Deferred();
         return this.waiting.promise;
       },
       return: async () => {
@@ -77,7 +78,7 @@ class InputQueue implements AsyncIterable<SDKUserMessage> {
 }
 interface PendingWrite {
   uuid: string | undefined;
-  completed: Pending<void>;
+  completed: Deferred<void>;
 }
 function native_exit_failure(cause: unknown): unknown {
   if (!(cause instanceof Error)) return cause;
@@ -102,16 +103,16 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private readonly receipts = new ClaudeReceipts();
   private readonly input = new InputQueue();
   private readonly pending_writes: PendingWrite[] = [];
-  private readonly active_writes = new Set<Pending<void>>();
+  private readonly active_writes = new Set<Deferred<void>>();
   private cli: Query | null = null;
   private info: Record<string, unknown> | null = null;
   private owned_process: OwnedCodexProcess | null = null;
-  private stream_closed: Pending<void> | null = null;
+  private stream_closed: Deferred<void> | null = null;
   private supervisor: WorkerSupervisor | null = null;
   private scratch: WorkerScratch | null = null;
   private worker_stop: Promise<void> | null = null;
   private registration: Promise<void> = Promise.resolve();
-  private readonly registered = new Pending<void>();
+  private readonly registered = new Deferred<void>();
   private preparation: Promise<void> = Promise.resolve();
   private identity: LocalChildIdentity | null = null;
   private supervision_settlement: Promise<void> = Promise.resolve();
@@ -126,14 +127,14 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private reader_started = false;
   // SDK messages drained eagerly, waiting for the adapter to take them in.
   private readonly drained_messages: ClaudeSdkMessage[] = [];
-  private drained_message_ready: Pending<void> | null = null;
+  private drained_message_ready: Deferred<void> | null = null;
   private drain_ended = false;
   private drain_failure: { cause: unknown } | null = null;
   // Tool uses whose assistant message the adapter has taken in.
   private readonly processed_tool_use_ids = new Set<string>();
   private readonly permission_waiters = new Set<{
     tool_use_id: string;
-    ready: Pending<boolean>;
+    ready: Deferred<boolean>;
   }>();
 
   constructor(options: ClaudeSdkOptions) {
@@ -293,7 +294,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         this.stream_failure ??= error instanceof Error ? error : new Error(String(error));
         this.fail_writes(this.stream_failure);
       });
-    const stream_closed = new Pending<void>();
+    const stream_closed = new Deferred<void>();
     this.stream_closed = stream_closed;
     child.once('close', () => {
       stream_closed.resolve();
@@ -318,7 +319,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     let outgoing = '';
     const stdin = new Writable({
       write: (chunk: Buffer, encoding, callback) => {
-        let completed: Pending<void> | null = null;
+        let completed: Deferred<void> | null = null;
         try {
           outgoing += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
           const lines = outgoing.split('\n');
@@ -443,7 +444,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private async wait_for_tool_use(tool_use_id: string, signal: AbortSignal): Promise<boolean> {
     if (this.cleanup_started || signal.aborted) return false;
     if (!this.reader_started || this.processed_tool_use_ids.delete(tool_use_id)) return true;
-    const waiter = { tool_use_id, ready: new Pending<boolean>() };
+    const waiter = { tool_use_id, ready: new Deferred<boolean>() };
     const cancelled = () => waiter.ready.resolve(false);
     this.permission_waiters.add(waiter);
     signal.addEventListener('abort', cancelled, { once: true });
@@ -534,7 +535,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       if (this.cli === null || this.cleanup_started)
         throw new Error('Not connected. Call connect() first.');
       if (this.stream_failure !== null) throw this.stream_failure;
-      const pending: PendingWrite = { uuid: message.uuid, completed: new Pending<void>() };
+      const pending: PendingWrite = { uuid: message.uuid, completed: new Deferred<void>() };
       this.pending_writes.push(pending);
       try {
         this.input.push({ ...message, session_id: message.session_id ?? 'default' });
@@ -563,7 +564,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         const message = this.drained_messages.shift();
         if (message === undefined) {
           if (this.drain_ended) break;
-          this.drained_message_ready = new Pending();
+          this.drained_message_ready = new Deferred();
           await this.drained_message_ready.promise;
           continue;
         }

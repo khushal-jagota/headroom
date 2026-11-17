@@ -10,7 +10,7 @@ import {
   probe_claude_model_catalog,
 } from './claude_model_catalog.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
-import { Deferred } from '../runtime/state.ts';
+import { Deferred } from '../../core/deferred.ts';
 
 const { query } = vi.hoisted(() => ({
   query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),

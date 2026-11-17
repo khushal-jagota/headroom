@@ -15,7 +15,7 @@ import {
   TurnEnded,
 } from '../conversation/backends/contracts.ts';
 import { message_content_text, text_message_content } from '../conversation/message_content.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import { ConversationStartAborted } from '../runtime/abort.ts';
 function maintenance_setup() {

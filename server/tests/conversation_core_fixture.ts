@@ -9,7 +9,7 @@ import { ConversationMessageFiles } from '../conversation/record/message_files.t
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import { ConversationRoleMaterials, ConversationStartRequest } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import { ScriptedCustody } from '../conversation/testing/scripted_custody.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';

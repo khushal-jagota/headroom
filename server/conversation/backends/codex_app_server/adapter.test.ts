@@ -15,7 +15,7 @@ import type { CodexServerMessageHandler } from './client.ts';
 import { CodexRequestRejected, CodexWireFailed } from './client.ts';
 import { CodexAppServerBackendChild } from './adapter.ts';
 import type { CodexClient } from './adapter.ts';
-import { Deferred } from './turn.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
 async function setup() {
   let handler!: CodexServerMessageHandler;

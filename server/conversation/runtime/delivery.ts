@@ -20,7 +20,8 @@ import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
 import { ROLE_TEXT_PROMPT_SEPARATOR } from './configuration.ts';
-import { Deferred, same_turn } from './state.ts';
+import { Deferred } from '../../core/deferred.ts';
+import { same_turn } from './state.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
   return {

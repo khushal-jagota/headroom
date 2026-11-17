@@ -1,8 +1,7 @@
 import type { PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { TurnToken } from '../contracts.ts';
 import type { ClaudeSdkMessage } from './query_contracts.ts';
-import { Pending } from './wire.ts';
-export { Pending } from './wire.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
 export interface UserQuestion {
   text: string;
@@ -11,14 +10,14 @@ export interface UserQuestion {
   multi_select: boolean;
 }
 export interface ParkedPermission {
-  answer: Pending<PermissionResult>;
-  handed_over: Pending<void>;
+  answer: Deferred<PermissionResult>;
+  handed_over: Deferred<void>;
   tool_input: Record<string, unknown>;
   suggestions: readonly PermissionUpdate[];
 }
 export interface ParkedUserInput {
-  answer: Pending<PermissionResult>;
-  handed_over: Pending<void>;
+  answer: Deferred<PermissionResult>;
+  handed_over: Deferred<void>;
   tool_input: Record<string, unknown>;
   questions: readonly UserQuestion[];
 }
@@ -29,8 +28,8 @@ export class TurnInFlight {
   command_replies: string[] = [];
   readonly owned_steer_uuids = new Set<string>();
   held_result: ClaudeSdkMessage | null = null;
-  steer_settlement_watch: { cancelled: Pending<void>; task: Promise<void> } | null = null;
-  readonly ended = new Pending<void>();
+  steer_settlement_watch: { cancelled: Deferred<void>; task: Promise<void> } | null = null;
+  readonly ended = new Deferred<void>();
   readonly parked_asks = new Map<string, ParkedPermission>();
   readonly parked_user_inputs = new Map<string, ParkedUserInput>();
   readonly user_input_tool_use_ids = new Set<string>();

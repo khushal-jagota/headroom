@@ -51,7 +51,8 @@ import {
   HermesConfiguration,
   hermes_error_text,
 } from './configuration.ts';
-import { Deferred, HermesEvents } from './events.ts';
+import { Deferred } from '../../../core/deferred.ts';
+import { HermesEvents } from './events.ts';
 import type { HermesTurn } from './events.ts';
 import { HermesMessages } from './messages.ts';
 

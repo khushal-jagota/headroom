@@ -10,7 +10,7 @@ import {
   ConversationStartRequest,
   PromptDeliveryStarted,
 } from '../conversation/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
 import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts';
 import { decode_snapshot, validate_request } from '../credentials/requests/logic/validation.ts';

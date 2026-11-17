@@ -130,13 +130,8 @@ import {
   uncertain_row,
 } from './runtime/messages.ts';
 import { field_mutation, save_attempt } from './runtime/save_attempt.ts';
-import {
-  ConversationState,
-  Deferred,
-  own_settlement,
-  same_turn,
-  set_phase,
-} from './runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
+import { ConversationState, own_settlement, same_turn, set_phase } from './runtime/state.ts';
 import { WorkspaceAdmission } from './workspace_admission.ts';
 
 function turn_fact(token: TurnToken, status: LifecycleFact['status']): LifecycleFact {

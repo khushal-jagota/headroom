@@ -15,7 +15,7 @@ import {
 import { AgentMessageDelta, TurnEnded } from '../conversation/backends/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { ConversationRoleMaterials, ConversationStartRequest } from '../conversation/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { save_attempt } from '../conversation/runtime/save_attempt.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';

@@ -1,32 +1,6 @@
 import { StringDecoder } from 'node:string_decoder';
 import { CLAUDE_SDK_MAX_BUFFER_SIZE } from './configuration.ts';
-
-export class Pending<T> {
-  readonly promise: Promise<T>;
-  settled = false;
-  value: T | undefined;
-  private resolve_value!: (value: T) => void;
-  private reject_value!: (cause: unknown) => void;
-  constructor() {
-    this.promise = new Promise<T>((resolve, reject) => {
-      this.resolve_value = resolve;
-      this.reject_value = reject;
-    });
-    // Producers can fail before their owner begins to await the result.
-    void this.promise.catch(() => {});
-  }
-  resolve(value: T): void {
-    if (this.settled) return;
-    this.settled = true;
-    this.value = value;
-    this.resolve_value(value);
-  }
-  reject(cause: unknown): void {
-    if (this.settled) return;
-    this.settled = true;
-    this.reject_value(cause);
-  }
-}
+import { Deferred } from '../../../core/deferred.ts';
 
 export function raw_uuid_set(value: unknown): Set<string> {
   return new Set(

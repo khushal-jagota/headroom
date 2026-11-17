@@ -35,6 +35,7 @@ import {
   STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
   ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS,
 } from './configuration.ts';
+import { Deferred } from '../../../core/deferred.ts';
 
 // 2.6.0's public ClientApp starts handlers without awaiting them, and replies bypass
 // its handlers. Use the official lower-level middleware and schemas from this exact
@@ -49,24 +50,6 @@ const validators = (await import(
   new URL('./schema/zod.gen.js', sdk_root).href
 )) as typeof Validators;
 
-class Pending<T> {
-  readonly promise: Promise<T>;
-  private resolve_value!: (value: T) => void;
-  private reject_value!: (error: unknown) => void;
-  constructor() {
-    this.promise = new Promise<T>((resolve, reject) => {
-      this.resolve_value = resolve;
-      this.reject_value = reject;
-    });
-    void this.promise.catch(() => {});
-  }
-  resolve(value: T): void {
-    this.resolve_value(value);
-  }
-  reject(error: unknown): void {
-    this.reject_value(error);
-  }
-}
 export interface HermesAcpHandlers {
   session_update?(params: SessionNotification): Promise<void>;
   /** Admission completes after the ask reaches the core. The answer stays parked. */
@@ -91,11 +74,11 @@ interface WriteReceipt {
   method: string;
   params: unknown;
   request: boolean;
-  pending: Pending<void>;
+  pending: Deferred<void>;
   effect: ResponseEffect;
 }
 interface ResponseEffect {
-  readonly pending: Pending<void>;
+  readonly pending: Deferred<void>;
   completed: boolean;
   id?: JsonRpcId;
 }
@@ -105,10 +88,10 @@ export class HermesAcpClient {
   private readonly connection: Rpc.Connection;
   private readonly receipts = new Set<WriteReceipt>();
   private readonly response_effects = new Map<JsonRpcId, ResponseEffect>();
-  private readonly response_receipts = new Map<JsonRpcId, Pending<void>>();
-  private readonly active_answers = new Set<Pending<never>>();
+  private readonly response_receipts = new Map<JsonRpcId, Deferred<void>>();
+  private readonly active_answers = new Set<Deferred<never>>();
   private failure: unknown = null;
-  private gate: Pending<void> | null = null;
+  private gate: Deferred<void> | null = null;
   private stopped = false;
   private readonly handlers: HermesAcpHandlers;
   constructor(stream: Stream, handlers: HermesAcpHandlers = {}) {
@@ -132,7 +115,7 @@ export class HermesAcpClient {
               }
               const message = next.value;
               if (rpc.isRequestMessage(message) || rpc.isNotificationMessage(message))
-                this.gate = new Pending<void>();
+                this.gate = new Deferred<void>();
               else
                 this.gate =
                   'id' in message ? (this.response_effects.get(message.id)?.pending ?? null) : null;
@@ -205,7 +188,7 @@ export class HermesAcpClient {
           ) {
             const params = validators.zRequestPermissionRequest.parse(message.params);
             const parked = await this.handlers.request_permission(params, message.responder.id);
-            const interrupted = new Pending<never>();
+            const interrupted = new Deferred<never>();
             this.active_answers.add(interrupted);
             void Promise.race([parked.answer, interrupted.promise])
               .then((answer) => message.responder.respond(answer))
@@ -273,8 +256,8 @@ export class HermesAcpClient {
     params: unknown,
     options: AcpRequestOptions = {},
   ): AcpRequest<T> {
-    const written = new Pending<void>();
-    const effect: ResponseEffect = { pending: new Pending<void>(), completed: false };
+    const written = new Deferred<void>();
+    const effect: ResponseEffect = { pending: new Deferred<void>(), completed: false };
     const receipt = { method, params, request: true, pending: written, effect };
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -346,7 +329,7 @@ export class HermesAcpClient {
     this.require_wire();
     let receipt = this.response_receipts.get(id);
     if (!receipt) {
-      receipt = new Pending<void>();
+      receipt = new Deferred<void>();
       this.response_receipts.set(id, receipt);
     }
     return this.wait_for_permission_write(receipt.promise).finally(() =>

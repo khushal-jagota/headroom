@@ -13,7 +13,7 @@ import { ExecutorPaths } from '../configuration.ts';
 import { create_mac_adapter_host } from '../adapters.ts';
 import { request } from '../ipc_client.ts';
 import { decode_json, decode_value, encode_bounded, parse_identity } from '../../protocol.ts';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import type { CanonicalReader } from '../storage/journal_contracts.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';

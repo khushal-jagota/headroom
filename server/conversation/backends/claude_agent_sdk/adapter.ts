@@ -47,13 +47,8 @@ import {
 } from './configuration.ts';
 import { ClaudeEvents, composer_catalog, durable_session_id, validate_message } from './events.ts';
 import { ClaudeAsks } from './asks.ts';
-import {
-  Pending,
-  TurnInFlight,
-  same_turn,
-  settle_parked_asks,
-  stop_waiting_for_steers,
-} from './turn.ts';
+import { Deferred } from '../../../core/deferred.ts';
+import { TurnInFlight, same_turn, settle_parked_asks, stop_waiting_for_steers } from './turn.ts';
 import { error_text, result_error_summary } from './failure_summary.ts';
 
 export interface ClaudeAgentSdkChildLaunch {
@@ -694,7 +689,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
   private wait_out_steers(turn: TurnInFlight, client: ClaudeSdkClient): void {
     const waiting_for = [...turn.owned_steer_uuids];
     turn.steer_settlement_watch?.cancelled.resolve();
-    const cancelled = new Pending<void>();
+    const cancelled = new Deferred<void>();
     const task = (async () => {
       try {
         for (const uuid of waiting_for) {

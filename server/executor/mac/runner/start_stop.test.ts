@@ -10,7 +10,7 @@ import {
   ClaudeInitializationTimeout,
   BackendSpawnFailed,
 } from '../../../conversation/backends/contracts.ts';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { native_fixture_options } from '../testing/runner_fixture.ts';
 import { MacNativeChildren } from './start_stop.ts';

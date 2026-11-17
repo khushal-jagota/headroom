@@ -9,7 +9,7 @@ import { deployment_participants } from '../../conversation/deploy_interruptions
 import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
 import { message_content_text, text_message_content } from '../../conversation/message_content.ts';
 import { ConversationLiveTail } from '../../conversation/live_tail.ts';
-import { Deferred } from '../../conversation/runtime/state.ts';
+import { Deferred } from '../../core/deferred.ts';
 import { executor_remote_recovery } from '../../lifecycle/production.ts';
 import { BackendStateStore } from '../../conversation/backend_state.ts';
 import type { VpsExecutor } from '../vps_transport.ts';

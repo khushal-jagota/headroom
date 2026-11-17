@@ -5,7 +5,7 @@ import { setImmediate } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
 import { expect, test, vi } from 'vitest';
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { VideoUploadService } from '../conversation/video_uploads/service.ts';
 import { UsageService } from '../conversation/usage/UsageService.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
