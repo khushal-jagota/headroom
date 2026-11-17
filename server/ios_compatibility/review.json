@@ -1,6 +1,6 @@
 {
-  "contract_sha256": "3e224fd2cf306cfa60828b16aea87cbef62838b2225de6cd558af2ec3667c11c",
+  "contract_sha256": "779ee2c4900271eb2da0b2aee7eb7dfcebe33c77f8fb305ad8e5cbd66a1e26fe",
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "evidence": "Reviewed by the release agent. No HTTP route or view file changed since the previous review; the server changes are internal. The iPhone app ignores unknown stream events. Native iOS builds pass. No signed-device test."
+  "evidence": "Reviewed by the release agent. Six route and view files changed since the previous review. The changes replace the fixed backend key type with the driver registry ids. The ids and their order stay hermes, codex, claude, so request validation and response lists do not change. Two sign-in routes are new (DELETE sign-in and POST return-url). They are additive. Response shapes do not change. No iOS build or signed-device test ran for this review."
 }
