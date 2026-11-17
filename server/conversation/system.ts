@@ -24,6 +24,7 @@ import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import {
   AgentMessageDelta,
+  BackendAdapterError,
   ComposerCatalogReported,
   ContextCompacted,
   ModelThinkingHappened,
@@ -35,6 +36,7 @@ import {
   VendorSessionCursorRebound,
 } from './backends/contracts.ts';
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
+import { log_backend_failure } from './backends/failure_summary.ts';
 import type { BackendChild, ChildReference } from './backends/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
 import {
@@ -768,7 +770,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   ): PromptDeliveryQueued {
     const held: Message = {
       ...message,
-      held_prompt_id: `held_${randomUUID().replaceAll('-', '')}`,
+      // A message held again keeps the identity the queue already showed.
+      held_prompt_id: message.held_prompt_id || `held_${randomUUID().replaceAll('-', '')}`,
       snapshot_sent_at_unix_milliseconds:
         message.sent_at_unix_milliseconds ?? Math.floor(this.unix_time_now() * 1000),
     };
@@ -905,6 +908,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         error instanceof PromptWriteFailed ||
         (reservation.prompt_write_attempted && !is_shutdown_business_cancellation(error))
       ) {
+        // An uncertain delivery row has no text, so the log keeps the backend's.
+        if (error instanceof BackendAdapterError)
+          log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
         if (queued && !reservation.prompt_write_attempted)
           await this.settle_automatic_ids(
             state,
@@ -1573,6 +1579,12 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     turn: WireValue<'TurnToken'>,
   ): Promise<void> {
     return remote.confirm_remote_prompt_accepted(this, reference, admit_remote_turn(turn));
+  }
+  reconcile_remote_command(
+    command: WireValue<'ChildCommand'>,
+    outcome: WireValue<'CommandOutcome'>,
+  ): Promise<void> {
+    return remote.reconcile_remote_command(this, command, outcome);
   }
   fence_replaced_remote_child(
     reference: ChildReference,

@@ -44,8 +44,15 @@ export interface InterpretedBackendEvent {
   readonly compaction_result: AutomaticCompactionResult | null;
   readonly failure_notice: boolean;
 }
-export function normalized_failure_summary(detail: string | null): string {
+/** The longest failed-turn summary and recorded backend failure detail. */
+const FAILURE_SUMMARY_MAXIMUM_CHARACTERS = 240;
+// A credential in a URL query, such as `?key=` or `&access_token=`.
+const SECRET_QUERY_VALUE =
+  /([?&](?:[\p{L}\p{N}]+[_-])*(?:key|token|secret|password|signature|sig)=)[^&#\s]+/giu;
+/** Failure text on one line with credentials redacted, before any length cap. */
+export function redacted_failure_text(detail: string | null): string {
   let text = (detail ?? '').trim().replace(/\s+/gu, ' ');
+  text = text.replace(SECRET_QUERY_VALUE, '$1[redacted]');
   // Credential recognition retains control separators even when native display whitespace keeps them.
   // Keep Unicode credential-name boundaries and redaction for dotted/dotless I.
   const assignment =
@@ -55,9 +62,27 @@ export function normalized_failure_summary(detail: string | null): string {
     /(?<![\p{L}\p{N}_])bearer[ \u0085\u001c-\u001f]+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^ \u0085\u001c-\u001f]+)/giu,
     'Bearer [redacted]',
   );
-  if (!text) return 'the turn failed for an unknown reason';
+  return text;
+}
+/** Redacted failure text cut to at most `maximum` characters. */
+export function capped_failure_text(text: string, maximum: number): string {
   const points = Array.from(text);
-  return points.length > 240 ? points.slice(0, 239).join('').replace(/ +$/u, '') + '…' : text;
+  return points.length > maximum
+    ? points
+        .slice(0, maximum - 1)
+        .join('')
+        .replace(/ +$/u, '') + '…'
+    : text;
+}
+export function normalized_failure_summary(detail: string | null): string {
+  const text = redacted_failure_text(detail);
+  if (!text) return 'the turn failed for an unknown reason';
+  return capped_failure_text(text, FAILURE_SUMMARY_MAXIMUM_CHARACTERS);
+}
+/** A backend's failure text as a refusal records it: redacted and capped like a failed turn. */
+export function recorded_failure_detail(detail: string | null): string | null {
+  const text = redacted_failure_text(detail);
+  return text ? capped_failure_text(text, FAILURE_SUMMARY_MAXIMUM_CHARACTERS) : null;
 }
 function copy_turn(running: RunningTurn): RunningTurn {
   return {

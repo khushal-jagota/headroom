@@ -19,11 +19,18 @@ import { createReadAccess } from '../../../core/database/index.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { FilesService } from '../files.ts';
-import { ProtocolRefused, ExecutorValidationError } from '../../protocol.ts';
+import {
+  ProtocolRefused,
+  ExecutorValidationError,
+  decode_json,
+  encode_bounded,
+} from '../../protocol.ts';
+import { MacPresence } from '../transport/presence.ts';
 import { MAX_ENVELOPE_BYTES } from '../configuration.ts';
 import { acquire_process_lock } from '../platform.ts';
 import { DATABASE_NAME } from './schema.ts';
 import { OutboxStore } from './outbox.ts';
+import { delivery_state } from './delivery.ts';
 import type { CaptureRows, ItemColumns, ItemFileColumns, TicketFileRow } from './contracts.ts';
 import type { OutboxCleanup } from './resources.ts';
 
@@ -226,19 +233,206 @@ test('committed capture and receipt results survive their distinct cleanup failu
     store.append(columns('write'), ...captured(rows), () => {}),
   );
   expect(store.lookup('write')?.sequence).toBe(row.sequence);
-  expect(warning).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(1));
   cleanup.mockRejectedValueOnce(new Error('receipt sweep failed'));
   const receipt = Buffer.from('opaque committed receipt');
-  await expect(
-    store.acknowledge('write', store.sender_id, receipt, true, [], () => {
-      expect(store.lookup('write')?.receipt_json).toEqual(receipt);
-    }),
-  ).rejects.toThrow('receipt sweep failed');
-  expect(warning).toHaveBeenCalledTimes(2);
+  await store.acknowledge('write', store.sender_id, receipt, true, [], () => {
+    expect(store.lookup('write')?.receipt_json).toEqual(receipt);
+  });
+  await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(2));
+  expect(warning).toHaveBeenNthCalledWith(
+    1,
+    'Mac outbox cleanup deferred:',
+    'Error: capture sweep failed',
+  );
+  expect(warning).toHaveBeenNthCalledWith(
+    2,
+    'Mac outbox cleanup deferred:',
+    'Error: receipt sweep failed',
+  );
   cleanup.mockRestore();
   await store.stop(deadline());
   await store.settled();
   expect(warning).toHaveBeenCalledTimes(2);
+});
+
+test('owned cleanup cannot delay committed receipts, local failures, or the next capture', async () => {
+  const { store, artifacts } = await fixture();
+  writeFileSync(join(artifacts, 'file'), 'durable authored bytes');
+  const entered = deferred(),
+    release = deferred();
+  const cleanup = vi
+    .spyOn(FilesService.prototype, 'sweep_directory')
+    .mockImplementationOnce(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+  await store.with_capture('ticket', (rows) =>
+    store.append(columns('first'), ...captured(rows), () => {}),
+  );
+  await entered.promise;
+  await store.acknowledge('first', store.sender_id, Buffer.from('{}'), true, [], () => {});
+  store.append({ ...columns('failed'), kind: 'backend_event' }, payload, [], [], () => {});
+  await store.fail_delivery('failed', Buffer.from('{}'), 'deadline expired', () => {});
+  await store.with_capture('ticket', (rows) =>
+    store.append(columns('next'), ...captured(rows), () => {}),
+  );
+  expect(store.lookup('first')?.receipt_json).not.toBeNull();
+  expect(store.lookup('failed')?.receipt_json).not.toBeNull();
+  expect(store.lookup('next')).not.toBeNull();
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  let stopped = false;
+  const stopping = store.stop(deadline()).then(() => {
+    stopped = true;
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(stopped).toBe(false);
+  release.resolve();
+  await stopping;
+  expect(stopped).toBe(true);
+});
+
+test('a restart retains the delivery deadline and a failed backend event after child cleanup', async () => {
+  const { spool, artifacts, store } = await fixture();
+  const wall = vi.spyOn(clock, 'now_ns').mockReturnValue(1_700_000_000_000_000_000n);
+  writeFileSync(join(artifacts, 'recoverable.txt'), 'retain failed file content');
+  const original = await store.with_capture('ticket', (rows) => {
+    const [encoded, files, updates] = captured(rows);
+    const wrapper = JSON.parse(encoded.toString());
+    wrapper.payload = { message: 'preserve this agent message' };
+    return store.append(
+      { ...columns('failed'), kind: 'backend_event' },
+      Buffer.from(JSON.stringify(wrapper)),
+      files,
+      updates,
+      () => {},
+    );
+  });
+  const digest = JSON.parse(original.payload_json.toString()).files[0].sha256;
+  expect(store.delivery_started('failed')).toBe(1_700_000_000_000);
+  wall.mockReturnValue(1_700_000_120_000_000_000n);
+  expect(store.delivery_started('failed')).toBe(1_700_000_000_000);
+  await store.stop(deadline());
+  const resumed = await OutboxStore.open(spool, clock, deadline(), () => {});
+  stores.push(resumed);
+  expect(resumed.delivery_started('failed')).toBe(1_700_000_000_000);
+  const receipt = Buffer.from('{"local_delivery_failure":true}');
+  const confirmed = vi.fn(() => {
+    expect(resumed.lookup('failed')?.receipt_json).toEqual(receipt);
+  });
+  await resumed.fail_delivery('failed', receipt, 'HTTP 503 remained unavailable', confirmed);
+  expect(confirmed).toHaveBeenCalledOnce();
+  expect(resumed.pending_count()).toBe(0);
+  resumed.append({ ...columns('stop'), kind: 'child_stopped' }, payload, [], [], () => {});
+  await resumed.acknowledge('stop', resumed.sender_id, Buffer.from('{}'), true, [], () => {});
+  await resumed.stop(deadline());
+  const reopened = await OutboxStore.open(spool, clock, deadline(), () => {});
+  stores.push(reopened);
+  const retained = reopened.lookup('failed')!;
+  expect(JSON.parse(retained.payload_json.toString()).payload).toEqual({
+    message: 'preserve this agent message',
+  });
+  expect(delivery_state(retained)).toEqual({
+    started_at_ms: 1_700_000_000_000,
+    file_refusals: [],
+    failure: 'HTTP 503 remained unavailable',
+  });
+  expect(reopened.delivery_status()).toEqual({
+    failed_count: 1,
+    refused_file_count: 0,
+    last_error: 'HTTP 503 remained unavailable',
+  });
+  expect(readFileSync(join(spool, 'blobs', digest), 'utf8')).toBe('retain failed file content');
+  const presence = new MacPresence(
+    {
+      application_revision: 'test',
+      executor_incarnation: 'incarnation',
+      protocol_version: 26,
+      spool_format_version: 5,
+    },
+    () => 1_700_000_180_000,
+    42,
+    () => ({ ...reopened.delivery_status() }),
+  );
+  presence.failed('lease was offline');
+  presence.accepted();
+  const status = decode_json(
+    encode_bounded(presence.status(false), 'MacLocalStatus'),
+    'MacLocalStatus',
+  );
+  expect(status.last_lease_failure).toBeNull();
+  expect(status.outbox_delivery).toEqual({
+    failed_count: 1,
+    refused_file_count: 0,
+    last_error: 'HTTP 503 remained unavailable',
+  });
+});
+
+test('partial file refusal preserves the event and other file through acceptance and restart', async () => {
+  const { spool, artifacts, store } = await fixture();
+  writeFileSync(join(artifacts, 'missing.txt'), 'unavailable content');
+  writeFileSync(join(artifacts, 'good.txt'), 'keep this content');
+  const row = await store.with_capture('ticket', (rows) => {
+    const [encoded, files, updates] = captured(rows);
+    const wrapper = JSON.parse(encoded.toString());
+    wrapper.payload = { message: 'deliver this agent event' };
+    return store.append(
+      { ...columns('partial'), kind: 'backend_event' },
+      Buffer.from(JSON.stringify(wrapper)),
+      files,
+      updates,
+      () => {},
+    );
+  });
+  const missing = JSON.parse(row.payload_json.toString()).files.find(
+    (file: { relative_path: string }) => file.relative_path === 'missing.txt',
+  );
+  await store.refuse_file(
+    'partial',
+    {
+      ticket_id: 'ticket',
+      relative_path: missing.relative_path,
+      sha256: missing.sha256,
+    },
+    'missing.txt: local blob is absent',
+  );
+  const partial = store.lookup('partial')!;
+  const wrapper = JSON.parse(partial.payload_json.toString());
+  expect(wrapper.payload).toEqual({ message: 'deliver this agent event' });
+  expect(wrapper.files.map((file: { relative_path: string }) => file.relative_path)).toEqual([
+    'good.txt',
+  ]);
+  const read = createReadAccess(join(spool, DATABASE_NAME));
+  try {
+    expect(read.read((sql) => sql.all('SELECT relative_path FROM item_files'))).toEqual([
+      { relative_path: 'good.txt' },
+    ]);
+    expect(read.read((sql) => sql.all('SELECT relative_path FROM ticket_files'))).toEqual([
+      { relative_path: 'good.txt' },
+    ]);
+  } finally {
+    read.close();
+  }
+  await store.acknowledge('partial', store.sender_id, Buffer.from('{}'), true, [], () => {});
+  store.append({ ...columns('stop'), kind: 'child_stopped' }, payload, [], [], () => {});
+  await store.acknowledge('stop', store.sender_id, Buffer.from('{}'), true, [], () => {});
+  await store.stop(deadline());
+  const reopened = await OutboxStore.open(spool, clock, deadline(), () => {});
+  stores.push(reopened);
+  expect(reopened.pending_count()).toBe(0);
+  expect(delivery_state(reopened.lookup('partial')!).file_refusals).toEqual([
+    {
+      relative_path: 'missing.txt',
+      sha256: missing.sha256,
+      reason: 'missing.txt: local blob is absent',
+    },
+  ]);
+  expect(reopened.delivery_status()).toEqual({
+    failed_count: 0,
+    refused_file_count: 1,
+    last_error: 'missing.txt: local blob is absent',
+  });
 });
 
 test('capture yields the writer and shutdown drains its reservation despite a failed inner stop', async () => {

@@ -63,6 +63,7 @@ endpoint.runs.conversations = {
   await_late_steer: unexpected,
   confirm_remote_child_termination: unexpected,
   confirm_remote_prompt_accepted: unexpected,
+  reconcile_remote_command: unexpected,
   stop_interrupted_remote_child: unexpected,
 };
 const reports: unknown[] = [];

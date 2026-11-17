@@ -146,8 +146,8 @@ export class ClaudeAsks {
     } catch (error) {
       const failed =
         tool_name === 'AskUserQuestion'
-          ? new B.UserInputAnswerWriteFailed(error_text(error))
-          : new B.PermissionAnswerWriteFailed(error_text(error));
+          ? new B.UserInputAnswerWriteFailed(error_text(error), { cause: error })
+          : new B.PermissionAnswerWriteFailed(error_text(error), { cause: error });
       parked.handed_over.reject(failed);
       throw error;
     } finally {
@@ -177,8 +177,8 @@ export class ClaudeAsks {
     parked.answer.resolve(answer);
     try {
       await parked.handed_over.promise;
-    } catch {
-      throw new B.PermissionAnswerWriteFailed(ask_id);
+    } catch (error) {
+      throw new B.PermissionAnswerWriteFailed(`${ask_id}: ${error_text(error)}`, { cause: error });
     }
     return AnswerFate.applied;
   }
@@ -219,8 +219,10 @@ export class ClaudeAsks {
     });
     try {
       await parked.handed_over.promise;
-    } catch {
-      throw new B.UserInputAnswerWriteFailed(request_id);
+    } catch (error) {
+      throw new B.UserInputAnswerWriteFailed(`${request_id}: ${error_text(error)}`, {
+        cause: error,
+      });
     }
     return AnswerFate.applied;
   }

@@ -42,9 +42,9 @@ A busy agent is not a refusal. The sender picks how a busy agent meets the messa
 - **Queue** holds the message until the agent is free.
 - **Send now** ends the running turn and runs this message ahead of anything held.
 
-Messages that cannot join a running turn, such as attachments or a model change, wait in the queue with a visible reason. **Stop** ends the running turn.
+Messages that cannot join a running turn, such as attachments or a model change, wait in the queue with a visible reason. A refused steer also waits there, and a held message promoted to steer keeps its place when the steer is refused. **Stop** ends the running turn.
 
-Every send returns a fate. The fate is about delivery, not about whether the model agreed or obeyed.
+Every send returns a fate. The fate is about delivery, not about whether the model agreed or obeyed. A proven failure before a native send is a refusal. A failure after a possible native send retains uncertainty and never authorizes a replay.
 
 | Fate | Meaning |
 | --- | --- |
@@ -82,7 +82,7 @@ Values accept fractions between -9007199254740991 and 9007199254740991, inclusiv
 
 A conversation has at most one child process. During a server restart, local native processes stop. Startup checks ownership and automatically resumes eligible interrupted conversations in fresh processes with new credentials. Cleanup that remains unproven keeps the conversation fenced.
 
-An executor agent can keep its process, turn and open asks across a home restart. Its existing capability keeps working. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused.
+An executor agent can keep its process, turn and open asks across a home restart. Its existing capability keeps working. A child that sits idle is stopped, and the next send resumes the stored session. If the backend cannot restore that session, the send is refused. A refusal or failed turn that a backend caused keeps the backend's own error text in the notebook and in one log line, so the reason can be read later.
 
 A Mac Claude start that times out during initialization can recover before the waiting message is delivered. The [executor](executor.md#commands-and-output) keeps the message in order and only replaces a child after proving cleanup. This does not retry a message that may have reached an agent.
 

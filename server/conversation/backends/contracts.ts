@@ -1,4 +1,10 @@
-/** Backend children report facts. The core owns delivery and queue semantics. */
+/**
+ * Backend children report facts. The core owns delivery and queue semantics.
+ *
+ * Every backend error carries the backend's own error text in `message` and the original
+ * error as the standard `cause`. A failed turn carries that text in `error_summary`. The
+ * core records the text with the refusal or the failed turn, and logs it once.
+ */
 import type {
   AnswerFate,
   ComposerCatalogEntry,
@@ -18,6 +24,7 @@ import type { MessageContent } from '../message_content.ts';
 import type { ConversationMessageFiles } from '../message_files.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { TurnToken as WireTurnToken } from '../../executor/wire.generated.ts';
+import type { ChildCommand as WireChildCommand } from '../../executor/wire.generated.ts';
 import type { LocalChildIdentity } from '../local_child_contracts.ts';
 export interface TurnToken {
   readonly conversation_id: string;
@@ -44,8 +51,8 @@ export class PermissionAnswerWriteFailed extends BackendAdapterError {}
 export class UserInputAnswerWriteFailed extends BackendAdapterError {}
 export class NeedsRebind extends BackendAdapterError {
   readonly failed_child_recovery: boolean;
-  constructor(message: string, options: { failed_child_recovery?: boolean } = {}) {
-    super(message);
+  constructor(message: string, options: { failed_child_recovery?: boolean; cause?: unknown } = {}) {
+    super(message, 'cause' in options ? { cause: options.cause } : undefined);
     this.failed_child_recovery = options.failed_child_recovery ?? false;
   }
 }
@@ -66,8 +73,14 @@ export class BackendSteerAccepted {
 }
 export class BackendSteerRefused {
   readonly refusal_reason: PromptDeliveryRefusalReason;
-  constructor(values: { refusal_reason: PromptDeliveryRefusalReason }) {
+  /** The backend's own text for this refusal, when it gave one. */
+  readonly refusal_detail: string | null;
+  constructor(values: {
+    refusal_reason: PromptDeliveryRefusalReason;
+    refusal_detail?: string | null;
+  }) {
     this.refusal_reason = values.refusal_reason;
+    this.refusal_detail = values.refusal_detail ?? null;
   }
 }
 export class BackendSteerUncertain {
@@ -110,6 +123,8 @@ export class BackendUserInputRequest {
   }
 }
 export class RetainedBackendRun {
+  /** Exact existing remote prompt whose native admission lacks a committed receipt. */
+  readonly pending_prompt: WireChildCommand | null;
   readonly reference: ChildReference;
   readonly turn: WireTurnToken;
   readonly delivery_uncertain: boolean;
@@ -117,6 +132,7 @@ export class RetainedBackendRun {
   readonly stop_requested: boolean;
   readonly incarnation_current: boolean;
   constructor(values: {
+    pending_prompt?: WireChildCommand | null;
     reference: ChildReference;
     turn: WireTurnToken;
     delivery_uncertain: boolean;
@@ -124,6 +140,7 @@ export class RetainedBackendRun {
     stop_requested?: boolean;
     incarnation_current?: boolean;
   }) {
+    this.pending_prompt = values.pending_prompt ?? null;
     this.reference = values.reference;
     this.turn = values.turn;
     this.delivery_uncertain = values.delivery_uncertain;
@@ -328,10 +345,20 @@ export interface BackendChild {
   detach(options?: StopOptions): Promise<void>;
   /** Actual already-started stop work, without an observer deadline. */
   settled?(): Promise<void>;
+  /** Observe a retained pending prompt after a home restart, without another send.
+   * The exact stored command supplies the result. Original sender and receipt
+   * metadata cannot be reconstructed here. Native acceptance and cancellation
+   * follow write_prompt's contract.
+   */
+  resume_prompt_admission?(turn: TurnToken): Promise<BackendPromptAccepted>;
   start(
     resolved_start: ResolvedConversationStart,
     options: { vendor_session_cursor: string | null },
   ): Promise<void>;
+  /** Resolves only after native acceptance, never merely mailbox placement.
+   * Proven pre-send failures use PromptWriteRefused. Possible sends retain
+   * PromptWriteFailed uncertainty. Acceptance proof is a separate fact.
+   */
   write_prompt(
     turn_token: TurnToken,
     content: MessageContent,

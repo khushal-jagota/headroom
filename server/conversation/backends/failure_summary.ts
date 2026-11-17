@@ -1,4 +1,5 @@
 /** Failure text shared by the backend runtimes. Secrets are redacted and the length is capped. */
+import { capped_failure_text, redacted_failure_text } from '../logic/backend_events.ts';
 const SECRET_ASSIGNMENT =
   /(["']?\b(?:authorization|password|api[ -]key|(?:[a-z0-9]+[_-])*(?:api[_-]?key|authorization|password|secret|token)(?:[_-][a-z0-9]+)*)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:bearer\s+)?[^,;}]+)/gi;
 const BEARER_VALUE = /\bbearer\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi;
@@ -27,4 +28,29 @@ export function normalized_failure_summary(
     text += ` (HTTP ${http_status})`;
   const points = Array.from(text);
   return points.length > 240 ? points.slice(0, 239).join('').trimEnd() + '…' : text;
+}
+/** The longest backend failure text one log line keeps. */
+const LOGGED_FAILURE_TEXT_MAXIMUM_CHARACTERS = 4096;
+function class_name(value: unknown): string {
+  return value !== null && typeof value === 'object' ? value.constructor.name : typeof value;
+}
+/** One log line for one backend failure, with the backend's own text redacted. */
+export function log_backend_failure(
+  conversation_id: string,
+  backend_key: string,
+  error: unknown,
+  text: string = error_text(error),
+): void {
+  const cause =
+    error instanceof Error && error.cause !== undefined
+      ? ` cause_class=${class_name(error.cause)}`
+      : '';
+  const logged = capped_failure_text(
+    redacted_failure_text(text),
+    LOGGED_FAILURE_TEXT_MAXIMUM_CHARACTERS,
+  );
+  console.error(
+    `conversation backend failed conversation_id=${conversation_id} backend=${backend_key} ` +
+      `error_class=${class_name(error)}${cause} error=${JSON.stringify(logged)}`,
+  );
 }

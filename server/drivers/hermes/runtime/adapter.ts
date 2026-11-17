@@ -125,7 +125,9 @@ export class HermesAcpBackendChild implements BackendChild {
           clientInfo: { name: 'panels', title: 'Panels', version: '2.0.0' },
         });
       } catch (error) {
-        throw new BackendSpawnFailed(hermes_error_text(error));
+        throw new BackendSpawnFailed(this.with_standard_error(hermes_error_text(error)), {
+          cause: error,
+        });
       }
       this.require_running();
       const binding = new Deferred<void>();
@@ -142,7 +144,9 @@ export class HermesAcpBackendChild implements BackendChild {
               { after_response: () => binding.promise },
             );
           } catch (error) {
-            throw new SessionLoadFailed(hermes_error_text(error));
+            throw new SessionLoadFailed(this.with_standard_error(hermes_error_text(error)), {
+              cause: error,
+            });
           }
           config.bind(response.sessionId, response);
           await this.sink.report(
@@ -162,7 +166,9 @@ export class HermesAcpBackendChild implements BackendChild {
               { after_response: () => binding.promise },
             );
           } catch (error) {
-            throw new SessionLoadFailed(hermes_error_text(error));
+            throw new SessionLoadFailed(this.with_standard_error(hermes_error_text(error)), {
+              cause: error,
+            });
           }
           config.bind(options.vendor_session_cursor, response);
         }
@@ -179,6 +185,11 @@ export class HermesAcpBackendChild implements BackendChild {
       }
       throw error;
     }
+  }
+  /** Hermes states a startup failure on standard error, so the failure keeps its tail. */
+  private with_standard_error(why: string): string {
+    const tail = this.launcher.standard_error_tail()?.trim();
+    return tail ? `${why}: ${tail}` : why;
   }
   private require_running(): void {
     if (this.stopped) throw new PromptWriteFailed('this child is being shut down');
@@ -238,7 +249,7 @@ export class HermesAcpBackendChild implements BackendChild {
         );
       } catch (error) {
         if (!(error instanceof ComposedMessageDoesNotContainSenderContent)) throw error;
-        throw new PromptWriteFailed(error.message);
+        throw new PromptWriteFailed(error.message, { cause: error });
       }
     }
     const { config } = this.bound();
@@ -247,7 +258,7 @@ export class HermesAcpBackendChild implements BackendChild {
       await config.apply_values(options.model_change, options.reasoning_effort_change);
     } catch (error) {
       if (!(error instanceof ConfigurationNotApplied)) throw error;
-      throw new PromptWriteFailed(error.message);
+      throw new PromptWriteFailed(error.message, { cause: error });
     }
     try {
       await this.write_prompt_to_wire(
@@ -309,11 +320,16 @@ export class HermesAcpBackendChild implements BackendChild {
       );
       void turn.ending_reporter.catch((error) => this.log(error));
     } catch (error) {
-      config.wire_broken = true;
+      config.break_wire(error);
       void request.response.catch((failure) => {
         if (!this.stopped) this.log(failure);
       });
-      throw new PromptWriteFailed(`the prompt did not reach the wire: ${hermes_error_text(error)}`);
+      throw new PromptWriteFailed(
+        `the prompt did not reach the wire: ${hermes_error_text(error)}`,
+        {
+          cause: error,
+        },
+      );
     } finally {
       writing.resolve();
     }
@@ -341,6 +357,7 @@ export class HermesAcpBackendChild implements BackendChild {
       if (!(error instanceof PromptWriteFailed)) throw error;
       return new BackendSteerRefused({
         refusal_reason: PromptDeliveryRefusalReason.write_to_backend_failed,
+        refusal_detail: error.message,
       });
     }
     let wire_content: MessageContent;
@@ -417,15 +434,17 @@ export class HermesAcpBackendChild implements BackendChild {
       client = bound.client;
     } catch (error) {
       if (!(error instanceof PromptWriteFailed)) throw error;
-      throw new PermissionAnswerWriteFailed(ask_id);
+      throw new PermissionAnswerWriteFailed(`${ask_id}: ${error.message}`, { cause: error });
     }
     const reached_wire = client.response_written(parked.request_id);
     parked.answer.resolve({ outcome: { outcome: 'selected', optionId: option_id } });
     try {
       await reached_wire;
-    } catch {
+    } catch (error) {
       turn.parked_asks.delete(ask_id);
-      throw new PermissionAnswerWriteFailed(ask_id);
+      throw new PermissionAnswerWriteFailed(`${ask_id}: ${hermes_error_text(error)}`, {
+        cause: error,
+      });
     }
     turn.parked_asks.delete(ask_id);
     return AnswerFate.applied;

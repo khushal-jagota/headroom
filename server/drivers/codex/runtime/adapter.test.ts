@@ -9,7 +9,8 @@ import {
   ConversationAccess,
   PromptDeliveryMode,
 } from '../../../conversation/contracts.ts';
-import { text_message_content } from '../../../conversation/message_content.ts';
+import { MessageImage, text_message_content } from '../../../conversation/message_content.ts';
+import { MessageFileMissing } from '../../../conversation/record/message_files.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
 import type { CodexServerMessageHandler } from './client.ts';
 import { CodexRequestRejected, CodexWireFailed } from './client.ts';
@@ -17,7 +18,7 @@ import { CodexAppServerBackendChild } from './adapter.ts';
 import type { CodexClient } from './adapter.ts';
 import { Deferred } from '../../../core/deferred.ts';
 
-async function setup() {
+async function setup(message_files = {} as ConversationMessageFiles) {
   let handler!: CodexServerMessageHandler;
   let next = 0;
   const pending = new Map<number, Deferred<unknown>>();
@@ -68,7 +69,7 @@ async function setup() {
     launch: { argv: ['/never/run/codex', 'app-server'] },
     resolved_start: start,
     event_sink: { report },
-    message_files: {} as ConversationMessageFiles,
+    message_files,
     client_factory(options) {
       handler = options.handler;
       return client;
@@ -87,6 +88,62 @@ async function setup() {
   const reply = (id: number, result: unknown) => pending.get(id)!.resolve(result);
   return { child, client, handler, report, calls, token, prompt, reply, pending };
 }
+
+// Existing post-request failure coverage does not distinguish local input failure from a send.
+test('missing prompt input refuses before any native start and leaves no active turn', async () => {
+  const state = await setup({
+    path_of() {
+      throw new MessageFileMissing('missing');
+    },
+  } as unknown as ConversationMessageFiles);
+  try {
+    const content = [new MessageImage({ stored_file_id: 'missing', media_type: 'image/png' })];
+    const begin = vi.spyOn(state.client, 'begin_request');
+    await expect(
+      state.child.write_prompt(state.token, content, {
+        sender_label: 'Owner',
+        sender_content: content,
+        mode: PromptDeliveryMode.queue,
+        model_change: null,
+        reasoning_effort_change: null,
+      }),
+    ).rejects.toBeInstanceOf(B.PromptWriteRefused);
+    expect(begin).not.toHaveBeenCalled();
+    await expect(
+      state.child.steer(state.token, text_message_content('more'), { sender_label: 'Owner' }),
+    ).resolves.toMatchObject({ refusal_reason: 'no_running_turn_to_steer_into' });
+    expect(state.report.mock.calls.some(([, event]) => event instanceof B.TurnEnded)).toBe(false);
+  } finally {
+    await state.child.stop();
+  }
+});
+
+// Native commands bypass ordinary input preparation, so their validation needs its own proof.
+test('invalid native command input refuses before a native command starts', async () => {
+  const state = await setup();
+  try {
+    const content = [
+      ...text_message_content('/review'),
+      new MessageImage({ stored_file_id: 'attachment', media_type: 'image/png' }),
+    ];
+    const begin = vi.spyOn(state.client, 'begin_request');
+    await expect(
+      state.child.write_prompt(state.token, content, {
+        sender_label: 'Owner',
+        sender_content: content,
+        mode: PromptDeliveryMode.queue,
+        model_change: null,
+        reasoning_effort_change: null,
+      }),
+    ).rejects.toBeInstanceOf(B.PromptWriteRefused);
+    expect(begin).not.toHaveBeenCalled();
+    await expect(
+      state.child.steer(state.token, text_message_content('more'), { sender_label: 'Owner' }),
+    ).resolves.toMatchObject({ refusal_reason: 'no_running_turn_to_steer_into' });
+  } finally {
+    await state.child.stop();
+  }
+});
 
 test('an invalid or failed permission answer retains the ask for another answer', async () => {
   const state = await setup();

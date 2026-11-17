@@ -7,12 +7,12 @@ import {
   PromptWriteRefused,
 } from '../backends/contracts.ts';
 import type { BackendChild, BackendSteerOutcome, TurnToken } from '../backends/contracts.ts';
+import { log_backend_failure } from '../backends/failure_summary.ts';
 import {
   backend_supports_steer,
   PromptDeliveryInjected,
   PromptDeliveryMode,
   PromptDeliveryQueued,
-  PromptDeliveryRefused,
   PromptDeliveryRefusalReason as R,
   PromptDeliveryStarted,
   PromptDeliverySuppressed,
@@ -27,7 +27,7 @@ import { LifecycleOperation as O, LifecycleStatus as S } from '../record/lifecyc
 import { PlannerError } from '../../core/contracts.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import type { Message, ReservedTurn } from './contracts.ts';
-import { discarded_row, prompt_row, refused_row, uncertain_row } from './messages.ts';
+import { discarded_row, prompt_row, uncertain_row } from './messages.ts';
 import { Deferred } from '../../core/deferred.ts';
 import { ConversationState, same_turn, set_phase } from './state.ts';
 import type { LockLease } from './synchronization.ts';
@@ -58,6 +58,28 @@ function finish_held(state: ConversationState, message: Message): void {
   state.sender_messages_being_delivered.delete(message.sender_message_id);
   admission?.settled.resolve();
 }
+function position_after(state: ConversationState, held_before: readonly string[]): number {
+  let position = 0;
+  state.held_prompts.forEach((held, index) => {
+    if (held_before.includes(held.held_prompt_id)) position = index + 1;
+  });
+  return position;
+}
+// A refused promotion was not delivered. Hold it again where it was, as direct steer does.
+function keep_refused_promotion(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  message: Message,
+  held_before: readonly string[],
+  refusal_reason: R,
+): PromptDeliveryQueued {
+  finish_held(state, message);
+  return host.hold_prompt(
+    state,
+    { ...message, queue_reason: queue_reason(refusal_reason) },
+    position_after(state, held_before),
+  );
+}
 export async function cancel_and_end_running_turn(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
@@ -77,10 +99,7 @@ export async function cancel_and_end_running_turn(
       cancel_fact = { ...attempt, status: S.accepted };
     } catch (error) {
       if (host.shutting_down) throw error;
-      console.error(
-        `conversation turn cancel failed conversation_id=${state.record.conversation_id} backend=${state.record.backend_key}`,
-        error,
-      );
+      log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
       await host.discard_child(state, child);
       cancel_fact = { ...attempt, status: S.unknown };
     }
@@ -350,9 +369,22 @@ async function attempt_steer(
         sender_label: message.sender_label,
       }),
     );
+    // A refused steer goes back to the queue unrecorded, so its backend text is logged here.
+    if (outcome instanceof BackendSteerRefused && outcome.refusal_detail !== null)
+      log_backend_failure(
+        state.record.conversation_id,
+        state.record.backend_key,
+        outcome,
+        outcome.refusal_detail,
+      );
   } catch (error) {
+    if (error instanceof PromptWriteRefused || error instanceof PromptWriteFailed)
+      log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
     if (error instanceof PromptWriteRefused)
-      outcome = new BackendSteerRefused({ refusal_reason: R.write_to_backend_failed });
+      outcome = new BackendSteerRefused({
+        refusal_reason: R.write_to_backend_failed,
+        refusal_detail: error.message,
+      });
     else {
       outcome = new BackendSteerUncertain();
       if (!(error instanceof PromptWriteFailed)) adapter_error = error;
@@ -393,14 +425,10 @@ export function watch_late_steer(
           message.sender_message_id === null ||
           !state.held_prompts.some((held) => held.sender_message_id === message.sender_message_id)
         ) {
-          let position = 0;
-          state.held_prompts.forEach((held, index) => {
-            if (held_before.includes(held.held_prompt_id)) position = index + 1;
-          });
           host.hold_prompt(
             state,
             { ...message, recording_receipt: null, queue_reason: PromptQueueReason.steer_refused },
-            position,
+            position_after(state, held_before),
           );
         }
       });
@@ -416,32 +444,23 @@ async function record_steer_outcome(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   message: Message,
-  outcome: BackendSteerOutcome,
-  token: TurnToken | null,
-  attempt: LifecycleFact | null = null,
-  automatic_notice = false,
-  memory_notice_only = false,
-  held_before: readonly string[] = [],
+  outcome: BackendSteerAccepted | BackendSteerUncertain,
+  token: TurnToken,
+  attempt: LifecycleFact,
+  automatic_notice: boolean,
+  memory_notice_only: boolean,
+  held_before: readonly string[],
 ): Promise<PromptDeliveryFate> {
   const accepted = outcome instanceof BackendSteerAccepted;
-  const refused = outcome instanceof BackendSteerRefused;
-  const fate = accepted
-    ? new PromptDeliveryInjected()
-    : refused
-      ? new PromptDeliveryRefused({ refusal_reason: outcome.refusal_reason })
-      : new PromptDeliveryUncertain();
+  const fate = accepted ? new PromptDeliveryInjected() : new PromptDeliveryUncertain();
   const payload = accepted
     ? prompt_row(message, PromptDeliveryMode.steer)
-    : refused
-      ? refused_row(message, PromptDeliveryMode.steer, outcome.refusal_reason)
-      : uncertain_row(message, PromptDeliveryMode.steer);
+    : uncertain_row(message, PromptDeliveryMode.steer);
   let rows: Awaited<ReturnType<typeof host.options.store.append_events>>;
   try {
     rows = await host.persist(state, () =>
       host.options.store.append_events(state.record.conversation_id, [payload], {
-        lifecycle: attempt
-          ? [{ ...attempt, status: accepted ? S.injected : refused ? S.refused : S.unknown }]
-          : [],
+        lifecycle: [{ ...attempt, status: accepted ? S.injected : S.unknown }],
         native_message_admission: { fate },
         recording_receipt: message.recording_receipt,
         owner_read_through_sequence:
@@ -452,7 +471,7 @@ async function record_steer_outcome(
     );
   } catch (error) {
     // The agent can have this steer. A save that gave up must not tell the sender it was not sent.
-    if (refused || (error instanceof Error && error.name === 'AbortError')) throw error;
+    if (error instanceof Error && error.name === 'AbortError') throw error;
     console.error(`conversation ${state.record.conversation_id} could not record a steer`, error);
     return new PromptDeliveryUncertain();
   }
@@ -467,8 +486,10 @@ async function record_steer_outcome(
       owner_read_through_sequence: Math.max(state.record.owner_read_through_sequence, boundary),
     });
   try {
-    if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
-    if (accepted && token !== null) await host.accept_automatic_start(state, token);
+    if (accepted) {
+      await host.settle_automatic_ids(state, [message.sender_message_id]);
+      await host.accept_automatic_start(state, token);
+    }
   } catch (error) {
     // The outcome is recorded. A later save that gave up must not change what the sender hears.
     if ((error instanceof Error && error.name === 'AbortError') || !host.save_gave_up(state))
@@ -477,16 +498,14 @@ async function record_steer_outcome(
   }
   if (outcome instanceof BackendSteerUncertain && outcome.not_delivered !== null)
     watch_late_steer(host, state, outcome.not_delivered, message, held_before);
-  if (accepted || !refused) {
-    if (
-      outcome.composed_content_delivered &&
-      state.running_turn &&
-      same_turn(state.running_turn.token, token)
-    ) {
-      state.running_turn.automatic_notice = state.running_turn.automatic_notice && automatic_notice;
-      state.running_turn.memory_notice_only =
-        state.running_turn.memory_notice_only && memory_notice_only;
-    }
+  if (
+    outcome.composed_content_delivered &&
+    state.running_turn &&
+    same_turn(state.running_turn.token, token)
+  ) {
+    state.running_turn.automatic_notice = state.running_turn.automatic_notice && automatic_notice;
+    state.running_turn.memory_notice_only =
+      state.running_turn.memory_notice_only && memory_notice_only;
   }
   return fate;
 }
@@ -567,13 +586,14 @@ export async function steer(
         queue_reason: queue_reason(result.outcome.refusal_reason),
       });
     }
+    const outcome = result.outcome;
     const fate = await state.lock.run(() =>
       record_steer_outcome(
         host,
         state,
         message,
-        result.outcome as BackendSteerOutcome,
-        token,
+        outcome,
+        token!,
         result.lifecycle,
         result.automatic_notice,
         result.memory_notice_only,
@@ -600,6 +620,7 @@ export async function promote_held_prompt(
   let barrier: Deferred<void> | null = null;
   let immediate: PromptDeliveryFate | null = null;
   let held_before: readonly string[] = [];
+  let owns_delivery = true;
   try {
     const index = state.held_prompts.findIndex((entry) => entry.held_prompt_id === identity);
     if (index < 0) return null;
@@ -655,16 +676,8 @@ export async function promote_held_prompt(
         : state.running_turn === null || state.child === null
           ? R.no_running_turn_to_steer_into
           : null;
-      if (reason) {
-        immediate = await record_steer_outcome(
-          host,
-          state,
-          message,
-          new BackendSteerRefused({ refusal_reason: reason }),
-          null,
-        );
-        finish_held(state, message);
-      } else {
+      if (reason) immediate = keep_refused_promotion(host, state, message, held_before, reason);
+      else {
         child = state.child;
         token = state.running_turn!.token;
         await host.persist(state, () =>
@@ -687,17 +700,15 @@ export async function promote_held_prompt(
     }
   }
   if (immediate) {
-    await host.drain_held_prompts(state);
+    // The next turn can wait on a remote result. This call must not wait for it.
+    host.schedule_drain(state);
     return immediate;
   }
   try {
     const result = await attempt_steer(host, state, token!, child!, message!);
     if (result.outcome instanceof PromptDeliverySuppressed) return result.outcome;
-    if (
-      result.outcome instanceof BackendSteerRefused &&
-      (result.outcome.refusal_reason === R.command_cannot_join_running_turn ||
-        result.outcome.refusal_reason === R.remote_steer_not_delivered)
-    ) {
+    if (result.outcome instanceof BackendSteerRefused) {
+      const { refusal_reason } = result.outcome;
       await host.persist(state, () =>
         host.options.store.transition_lifecycle(state.record.conversation_id, [
           { ...result.lifecycle, status: S.refused },
@@ -705,21 +716,21 @@ export async function promote_held_prompt(
       );
       release_steer(state, barrier!);
       barrier = null;
-      return state.lock.run(() => {
-        finish_held(state, message!);
-        return host.hold_prompt(state, {
-          ...message!,
-          queue_reason: queue_reason((result.outcome as BackendSteerRefused).refusal_reason),
-        });
+      const queued = await state.lock.run(() => {
+        owns_delivery = false;
+        return keep_refused_promotion(host, state, message!, held_before, refusal_reason);
       });
+      host.schedule_drain(state);
+      return queued;
     }
+    const outcome = result.outcome;
     const fate = await state.lock.run(() =>
       record_steer_outcome(
         host,
         state,
         message!,
-        result.outcome as BackendSteerOutcome,
-        token,
+        outcome,
+        token!,
         result.lifecycle,
         result.automatic_notice,
         result.memory_notice_only,
@@ -729,7 +740,8 @@ export async function promote_held_prompt(
     if (result.adapter_error !== null) throw result.adapter_error;
     return fate;
   } finally {
-    await state.lock.run(() => finish_held(state, message!));
+    // A message held again belongs to the queue. A later promotion can own its delivery now.
+    if (owns_delivery) await state.lock.run(() => finish_held(state, message!));
     if (barrier) release_steer(state, barrier);
   }
 }
