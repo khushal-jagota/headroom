@@ -352,12 +352,16 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )
-    _propose(server, identity, "The proposal remains beside the conversation.")
+    note = server.db_path.parent / "files" / "tickets" / identity / "note.html"
+    note.parent.mkdir(parents=True)
+    note.write_text("<h1>Reviewed file</h1>", encoding="utf-8")
+    note_link = f"[the note](/files/tickets/{identity}/note.html)"
+    _propose(server, identity, f"The proposal remains beside the conversation. See {note_link}.")
     conversation = "review-reply-proof"
     _post(server, f"/api/test/signals/{conversation}/start")
     _bind(server, "ticket", identity, conversation)
     sender = Principal(PrincipalKind.ticket, identity)
-    _message(server, conversation, sender, "Please answer this displayed message.")
+    _message(server, conversation, sender, f"Please answer this displayed message about {note_link}.")
     context = context_factory()
     page = open_page(context, server, "#/review", "[data-review-card]")
     page.set_default_timeout(WAIT_MS)
@@ -378,13 +382,31 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
     page.set_viewport_size({"width": 390, "height": 844})
     capture_success(page, "connected-review-narrow.png")
     page.set_viewport_size({"width": 1440, "height": 1000})
-    ticket_card.locator("[data-accept]").click()
-    ticket_card.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
+    # A file opens over its card. The bar under it belongs to what held the link: the
+    # message's reply, or the proposal's decisions as the artifact's own foot, with no
+    # room reserved between them. Only a real browser lays out that geometry.
+    artifact = page.locator("[data-ticket-artifact]")
+    bar = artifact.locator("[data-artifact-bar]")
+    card.locator('a[href*="note.html"]').click()
+    expect(bar.locator("[data-review-reply]")).to_be_visible()
+    expect(bar.locator("[data-accept]")).to_have_count(0)
+    artifact.locator("[data-ticket-artifact-close]").click()
+    ticket_card.locator('[data-approval-block] a[href*="note.html"]').click()
+    expect(bar.locator("[data-accept]")).to_be_visible()
+    expect(bar.locator("[data-review-reply]")).to_have_count(0)
+    gap = page.evaluate(
+        """() => document.querySelector('[data-artifact-bar]').getBoundingClientRect().top
+        - document.querySelector('.ticket-artifact-body').getBoundingClientRect().bottom"""
+    )
+    assert gap == 0
+    # The decision is made from the bar, and it closes the file with it.
+    bar.locator("[data-accept]").click()
+    bar.locator('[data-ceiling-picker-choice="needs_implementation"]').click()
     decision_url = f"{server.base}/api/tickets/{identity}/decision-operations/"
     with page.expect_response(
         lambda response: response.request.method == "POST" and response.url.startswith(decision_url)
     ) as approved:
-        ticket_card.locator('[data-ceiling-picker-choice="owner"]').click()
+        bar.locator('[data-ceiling-picker-choice="owner"]').click()
     assert approved.value.ok, approved.value.text()
     approval_body = approved.value.request.post_data_json
     assert isinstance(approval_body, dict)
@@ -416,6 +438,7 @@ def test_combined_review_approval_reply_and_bounded_read_reach_canonical_writers
         assert receipt["transition"][field] == canonical[field]
     assert canonical["field_values"]["what_changes"] == proposal["body"]
     assert canonical["pending_proposal"] is None
+    expect(artifact).to_have_count(0)
     expect(ticket_card.locator("[data-approval-block]")).to_have_count(0)
     expect(card.locator("[data-review-message-sequence]")).to_have_count(1)
     expect(badge).to_have_text("1")

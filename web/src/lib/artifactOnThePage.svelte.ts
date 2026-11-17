@@ -1,5 +1,5 @@
-import { artifactForPressOnThePage } from "./managedArtifactPress";
-import type { ManagedFileTarget } from "./filePreview";
+import { artifactForPressOnThePage, artifactOriginOfPress } from "./managedArtifactPress";
+import { previewHashHref, type ManagedFileTarget } from "./filePreview";
 import type { ConversationState } from "./conversation/conversationState";
 
 /** The artifact a pane is showing, and everything that goes with showing it there.
@@ -23,6 +23,9 @@ export function createArtifactOnThePage(host: {
   root: () => HTMLElement | null;
 }) {
   let reloadSignal = $state(0);
+  /** What held the link the shown artifact was opened from, named by the holder's
+   *  `data-artifact-origin`. The page reads it to choose the bar under the artifact. */
+  let openedFrom = $state<{ file: string; origin: string } | null>(null);
   let element = $state<HTMLElement | null>(null);
   let whatHadFocus: HTMLElement | null = null;
 
@@ -91,7 +94,8 @@ export function createArtifactOnThePage(host: {
       ?.focus({ preventScroll: true });
   }
 
-  function show(file: ManagedFileTarget | null): void {
+  function show(file: ManagedFileTarget | null, origin: string | null = null): void {
+    openedFrom = file && origin ? { file: previewHashHref(file), origin } : null;
     if (file && !host.shown()) {
       whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }
@@ -109,6 +113,11 @@ export function createArtifactOnThePage(host: {
   return {
     get shown(): ManagedFileTarget | null {
       return host.shown();
+    },
+    /** What held the link, while the artifact it opened is still the one shown. */
+    get origin(): string | null {
+      const shown = host.shown();
+      return shown && openedFrom?.file === previewHashHref(shown) ? openedFrom.origin : null;
     },
     get reloadSignal(): number {
       return reloadSignal;
@@ -134,7 +143,7 @@ export function createArtifactOnThePage(host: {
       const file = artifactForPressOnThePage(event);
       if (!file) return;
       event.preventDefault();
-      show(file);
+      show(file, artifactOriginOfPress(event));
     },
     /** Escape closes the artifact, unless the conversation is open over it.
      *

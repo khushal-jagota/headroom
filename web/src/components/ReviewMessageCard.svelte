@@ -25,10 +25,13 @@
   import SkeletonRegion from './SkeletonRegion.svelte';
   import ErrorLine from './ErrorLine.svelte';
 
-  let { item, onSkip, onResolved, onBusy, footer, decisionActions, embedded=false }: {
+  let { item, onSkip, onResolved, onBusy, footer, decisionActions, embedded=false, replyOnly=false }: {
     /** The queue's Skip / Open ticket for the Ticket this message belongs to, in the card's action row. */
     decisionActions?:Snippet;
-    embedded?:boolean; item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
+    embedded?:boolean;
+    /** Only the reply and its row, for the bar under an artifact opened from this message. */
+    replyOnly?:boolean;
+    item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
     onBusy?:(busy:boolean)=>void; footer?:Snippet;
   } = $props();
   const navigation = navigationApplication()!;
@@ -144,7 +147,7 @@
   }
 </script>
 
-<div bind:this={card} data-review-card data-review-item-type="message" data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
+<div bind:this={card} data-review-card data-review-item-type="message" data-artifact-origin={`message:${conversationId}`} data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
   {#snippet ownActions()}
     {#if embedded}<div class="review-ticket-decision-line review-ticket-decision-line--inline">
       <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>
@@ -163,12 +166,13 @@
   {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
   <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id}/></div>
   {/if}
-  <SkeletonRegion shape="block" loading={!loaded && !error} loadingText="Loading messages...">
+  <!-- The bar under an artifact holds no placeholder: it appears when the reply can be written. -->
+  <SkeletonRegion shape="block" loading={!loaded && !error && !replyOnly} loadingText="Loading messages...">
     {#if loaded}
-      <div class="review-message-card">
-        <div class="review-message-run">
+      <div class="review-message-card" class:review-message-card--reply-only={replyOnly}>
+        {#if !replyOnly}<div class="review-message-run">
           {#each events as event (event.sequence)}<div class="review-message-said" data-review-message-sequence={event.sequence}><MessagePieces content={messageContentOf(event.payload)} {conversationId}/></div>{/each}
-        </div>
+        </div>{/if}
         <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive {draftKey}
           {disabled} sendDisabled={busy || !ready} sending={busy}
           sendLabel={retryingUnknown?'Retry reply':'Send reply'} onSend={send} onError={problem=>error=problem}/>
@@ -178,7 +182,7 @@
     {:else if error}<ErrorLine {error}/><div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div><Button variant="secondary" class="review-card-main" onclick={()=>void load()}>Retry</Button></div>{/if}
   </SkeletonRegion>
   <!-- Until the card has drawn, the actions wait below it rather than vanish. -->
-  {#if !loaded && !error}<div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div></div>{/if}
+  {#if !loaded && !error && !replyOnly}<div class="review-read-row"><div class="review-card-utilities">{@render ownActions()}</div></div>{/if}
 </div>
 {@render footer?.()}
 
@@ -197,6 +201,9 @@
   .review-ticket-decision-line--top{padding:0;margin-right:calc(var(--space-3) * -1)}
   @media (max-width:720px){.review-ticket-decision-line--top{margin-right:0}}
   .review-message-card{margin-top:var(--space-5);padding:var(--space-5);background:var(--surface-2);border-radius:var(--radius-lg)}
+  /* Under an artifact the reply stands bare, like the composer it takes the place of. */
+  .review-message-card--reply-only{margin-top:0;padding:0;background:none;border-radius:0}
+  .review-message-card--reply-only :global(.review-reply){margin-top:0}
   .review-message-run{font-family:var(--font-ui);font-size:var(--type-md);line-height:1.68}
   .review-message-said+.review-message-said{position:relative;margin-top:var(--space-5);padding-top:var(--space-4)}
   .review-message-said+.review-message-said::before{content:"";position:absolute;inset-block-start:0;inset-inline-start:0;inline-size:var(--space-6);border-block-start:var(--border-hairline) solid var(--text-faintest);opacity:.55}
