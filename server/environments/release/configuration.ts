@@ -22,6 +22,7 @@ export const NODE_RUNTIME_FILES = [
   'server/environments/release/archive_unpack_main.ts',
   'server/environments/updates/interruption_capture_main.ts',
   'server/environments/updates/restore_main.ts',
+  'server/environments/updates/schema_step_main.ts',
   'server/environments/updates/installer/main.ts',
   'server/package.json',
   'server/package-lock.json',

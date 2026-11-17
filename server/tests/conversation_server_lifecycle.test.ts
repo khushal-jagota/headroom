@@ -444,7 +444,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           collector: null,
           staging: { stage: async () => unavailable() },
           installer: {
-            require_exact_schema_frontier: unavailable,
+            node_schema_steps_pending: unavailable,
             schema_change_pending: unavailable,
             create_backup: async () => unavailable(),
             prepare: unavailable,

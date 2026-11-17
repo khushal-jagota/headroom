@@ -10,6 +10,8 @@ export const MAC_HOME_REQUIRED_FILES = [
   ...MAC_STATIC_FILES,
   'server/core/database/application_schema.json',
   'server/environments/release/migration_graph.json',
+  'server/core/database/python_baseline/application_schema.json',
+  'server/core/database/python_baseline/migration_graph.json',
   'server/skills/cli_commands.json',
   'server/installation/database_main.ts',
   'web/src/lib/conversation/view/contracts.ts',

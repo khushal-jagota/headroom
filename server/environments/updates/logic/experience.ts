@@ -75,8 +75,14 @@ export function resolve(
     return attempt.mode === 'idle' || attempt.detail
       ? ['waiting', ['cancel', 'update_now'], attempt.detail, attempt.deadline_at]
       : ['updating', [], null, attempt.deadline_at];
+  // An installing attempt carries a detail only while its backup runs.
   if (attempt.state === 'preparing' || attempt.state === 'installing')
-    return ['updating', [], null, attempt.deadline_at];
+    return [
+      'updating',
+      [],
+      attempt.state === 'installing' ? attempt.detail : null,
+      attempt.deadline_at,
+    ];
   if (attempt.state === 'failed') {
     if (available === null) return ['failed', [], attempt.detail, null];
     if (available.manifest.app_sha !== attempt.to_sha) return idle;

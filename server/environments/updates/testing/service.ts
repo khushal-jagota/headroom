@@ -147,7 +147,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
       },
     },
     installer: {
-      require_exact_schema_frontier: (path, candidate) => {
+      node_schema_steps_pending: (path, candidate) => {
         trace.push('frontier');
         if (path !== request.database_path || candidate !== staged)
           throw new Error('frontier adapter received a different fixture');
@@ -171,6 +171,7 @@ function harness(request: ServiceProbeRequest, hooks: Hooks = {}) {
             'This release requires the database to be at exactly its schema revision. ' +
               'Install the Python release that carries the same migrations first.',
           );
+        return false;
       },
       schema_change_pending: () => hooks.schema?.() ?? hooks.migrate ?? false,
       create_backup: async () => {

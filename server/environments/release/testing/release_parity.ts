@@ -42,8 +42,9 @@ import {
 } from '../archive.ts';
 import { digest_app_artifact, digest_app_source, validate_app_manifest } from '../identity.ts';
 import {
+  migration_frontier,
+  node_schema_steps_pending,
   read_migration_graph,
-  require_node_database_frontier,
   schema_change_pending,
 } from '../migrations.ts';
 import { AppValidationError, MAC_HOME } from '../contracts.ts';
@@ -1066,7 +1067,12 @@ async function compare_release(
         pending_error = error.message;
       }
       try {
-        access.read((sql) => require_node_database_frontier(sql, graph));
+        access.read((sql) =>
+          node_schema_steps_pending(sql, {
+            head: [...migration_frontier(graph)][0]!,
+            step_ancestors: new Set(),
+          }),
+        );
       } catch (error) {
         if (!(error instanceof AppValidationError)) throw error;
         node_error = error.message;

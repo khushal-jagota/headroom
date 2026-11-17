@@ -21,6 +21,8 @@ import type {
   DurableSidecarDatabaseOptions,
   DatabaseCloseHandle,
 } from './contracts.ts';
+import { select_schema_steps } from './schema_steps/contracts.ts';
+import type { SchemaStep, SchemaStepOutcome, SchemaTransaction } from './schema_steps/contracts.ts';
 export type * from './contracts.ts';
 
 /** Keep native SQLite error identity behind the database boundary. */
@@ -386,6 +388,107 @@ export function verifyDatabaseIntegrity(path: string): void {
   try {
     if (connection.pragma('integrity_check', { simple: true }) !== 'ok')
       throw new Error(`SQLite integrity check failed for ${path}`);
+  } finally {
+    connection.close();
+  }
+}
+
+/** The seed's statement order. A fresh and a stepped database must read back the same rows. */
+export const SEED_STATEMENT_QUERY =
+  "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY " +
+  "CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END,name";
+
+function schemaRevision(connection: BetterSqlite3.Database): string {
+  const rows = connection.prepare('SELECT version_num FROM alembic_version').pluck().all();
+  if (rows.length !== 1)
+    throw new Error(`Schema steps need exactly one alembic_version row, found ${rows.length}`);
+  return String(rows[0]);
+}
+
+/**
+ * Bring a stopped database to `head_revision`, one transaction per step. Each step
+ * either commits whole, with its revision, or leaves the database as it was.
+ */
+export function applySchemaSteps(
+  path: string,
+  steps: readonly SchemaStep[],
+  options: {
+    head_revision: string;
+    /** The release seed's statements, checked before the last commit. Null only in the generator. */
+    expected_statements: readonly string[] | null;
+    /** Refuse before any write when steps are pending. Used when no backup was taken. */
+    refuse_pending: boolean;
+  },
+): SchemaStepOutcome {
+  path = assert_test_database_path(path);
+  const connection = new BetterSqlite3(path, { fileMustExist: true, timeout: BUSY_TIMEOUT_MS });
+  try {
+    // Foreign keys can only change outside a transaction. A table rebuild needs them off.
+    connection.pragma('journal_mode = WAL');
+    connection.pragma('synchronous = FULL');
+    connection.pragma('foreign_keys = OFF');
+    if (Number(connection.pragma('foreign_keys', { simple: true })) !== 0)
+      throw new Error('Schema steps need foreign keys off');
+    const from_revision = schemaRevision(connection);
+    const pending = select_schema_steps(steps, from_revision, options.head_revision);
+    if (pending.length === 0) return { from_revision, to_revision: from_revision, applied: [] };
+    if (options.refuse_pending)
+      throw new Error(
+        `The database needs ${pending.length} schema step(s), but no backup was taken, so none ran`,
+      );
+    const applied: string[] = [];
+    for (const [index, step] of pending.entries()) {
+      connection.exec('BEGIN IMMEDIATE');
+      let active = true;
+      try {
+        const revision = schemaRevision(connection);
+        if (revision !== step.previous_revision)
+          throw new Error(
+            `Schema step ${step.revision} expects ${step.previous_revision}, but the database is at ${revision}`,
+          );
+        const transaction: SchemaTransaction = Object.freeze({
+          run(sql: string): void {
+            if (!active) throw new TypeError('schema step transaction is no longer active');
+            assertScopedStatement(sql);
+            connection.prepare(sql).run();
+          },
+        });
+        try {
+          assertSynchronous(step.apply(transaction));
+        } finally {
+          active = false;
+        }
+        const violations = connection.prepare('PRAGMA foreign_key_check').all();
+        if (violations.length > 0)
+          throw new Error(
+            `Schema step ${step.revision} left ${violations.length} foreign key violation(s)`,
+          );
+        const changed = connection
+          .prepare('UPDATE alembic_version SET version_num = ? WHERE version_num = ?')
+          .run(step.revision, step.previous_revision).changes;
+        if (changed !== 1)
+          throw new Error(`Schema step ${step.revision} changed ${changed} revision rows`);
+        if (index === pending.length - 1 && options.expected_statements !== null) {
+          const actual = connection.prepare(SEED_STATEMENT_QUERY).pluck().all() as string[];
+          const expected = options.expected_statements;
+          if (
+            actual.length !== expected.length ||
+            actual.some((statement, position) => statement !== expected[position])
+          )
+            throw new Error(
+              `The schema after ${step.revision} differs from this release's seed, so the step was undone`,
+            );
+        }
+        connection.exec('COMMIT');
+      } catch (error) {
+        if (connection.inTransaction) connection.exec('ROLLBACK');
+        throw error;
+      }
+      if (connection.pragma('integrity_check', { simple: true }) !== 'ok')
+        throw new Error(`SQLite integrity check failed after schema step ${step.revision}`);
+      applied.push(step.revision);
+    }
+    return { from_revision, to_revision: applied.at(-1)!, applied };
   } finally {
     connection.close();
   }

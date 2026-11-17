@@ -7,7 +7,7 @@ import { createReadAccess, is_sqlite_error } from '../../core/database/index.ts'
 import { validate_app_manifest } from '../release/identity.ts';
 import { AppValidationError } from '../release/contracts.ts';
 import type { AppManifest } from '../release/contracts.ts';
-import { read_migration_graph, require_node_database_frontier } from '../release/migrations.ts';
+import { node_schema_steps_pending, read_node_schema_frontier } from '../release/migrations.ts';
 import { RuntimeProbeUnsettled, run_runtime_json_probe } from '../release/admission_process.ts';
 import { RUNTIME_PROBE_TIMEOUT_SECONDS } from '../release/process_configuration.ts';
 import { candidate_tool_path } from '../release/admission.ts';
@@ -93,14 +93,14 @@ async function python_schema_change_pending(
 
 export function create_migration_status(
   child_processes: OwnedChildProcesses,
-): Pick<InstallerOperations, 'require_exact_schema_frontier' | 'schema_change_pending'> {
+): Pick<InstallerOperations, 'node_schema_steps_pending' | 'schema_change_pending'> {
   return {
-    async require_exact_schema_frontier(database, staged_app) {
-      const graph = await read_migration_graph(staged_app);
+    async node_schema_steps_pending(database, staged_app) {
+      const frontier = await read_node_schema_frontier(staged_app);
       try {
         const reader = createReadAccess(database);
         try {
-          reader.read((sql) => require_node_database_frontier(sql, graph));
+          return reader.read((sql) => node_schema_steps_pending(sql, frontier));
         } finally {
           reader.close();
         }

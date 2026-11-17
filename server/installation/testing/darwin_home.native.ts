@@ -64,7 +64,7 @@ const server=createServer(async(req,res)=>{
    const home=await current_darwin_home(application,process.execPath,scope,process.env);
    const ops=create_installer_operations({application_root:application,node_executable:process.execPath,admitted_legacy_null_sha:null,child_processes:children,signal:controller.signal,environment:{...process.env},darwin_home:home});
    if(ops.requires_snapshot!==true)throw Error('Mac home updater requires its snapshot');
-   await ops.require_exact_schema_frontier(database,join(root,'.app-next-'+input.manifest.app_sha));
+   await ops.node_schema_steps_pending(database,join(root,'.app-next-'+input.manifest.app_sha));
    const backup=await ops.create_backup(database,join(data,'backups'),revision),now=utc_now();
    const release={publication_run_id:1,artifact_id:1,proof_artifact_id:2,manifest:input.manifest,archive_sha256:input.archive_sha256,schema_floor:seed.alembicRevision,expires_at:'2099-01-01T00:00:00+00:00',mac:null};
    new FileUpdateAttemptStore(join(data,'update-attempt.json'),()=>{}).create({attempt_id:input.attempt_id,from_sha:revision,to_sha:input.manifest.app_sha,mode:'now',confirm_activity:false,state:'installing',created_at:now,updated_at:now,release,detail:null,deadline_at:null,backup,steps:{},mac_attempt_id:null,extra:{}});

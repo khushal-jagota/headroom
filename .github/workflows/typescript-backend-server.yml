@@ -53,6 +53,8 @@ jobs:
       - name: Check types
         run: |
           node server/node_modules/typescript/bin/tsc --noEmit -p server/tsconfig.json
+      - name: Check the generated schema seed
+        run: node server/core/database/tools/generate_seed.ts --check
       - name: Check foundation behavior
         run: |
           cd server

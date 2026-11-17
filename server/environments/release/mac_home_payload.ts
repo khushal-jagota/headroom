@@ -5,7 +5,7 @@ import { MAC_STATIC_FILES } from '../../executor/mac/packaging/configuration.ts'
 import { is_record } from '../../core/records.ts';
 import type { ReleaseExecution } from './contracts.ts';
 import type { MacHomePayloadOptions } from './mac_home_contracts.ts';
-import { read_migration_graph, migration_frontier } from './migrations.ts';
+import { require_generated_schema_frontier } from './migrations.ts';
 import { assert_release_execution } from './process.ts';
 
 async function production_packages(source: string, modules: string): Promise<void> {
@@ -29,15 +29,6 @@ async function production_packages(source: string, modules: string): Promise<voi
       throw new Error(`Production dependency differs from the source pin: ${name}`);
   }
 }
-async function require_schema_frontier(app: string): Promise<void> {
-  const heads = migration_frontier(await read_migration_graph(app));
-  const seed: unknown = JSON.parse(
-    await readFile(join(app, 'server/core/database/application_schema.json'), 'utf8'),
-  );
-  if (!is_record(seed) || heads.size !== 1 || !heads.has(String(seed.alembicRevision)))
-    throw new Error('Migration graph differs from the generated schema frontier');
-}
-
 export async function compose_mac_home_payload(
   options: MacHomePayloadOptions,
   execution: ReleaseExecution,
@@ -93,6 +84,6 @@ export async function compose_mac_home_payload(
   for (const name of await readdir(exported))
     if (/^(LICENSE|LICENCE|COPYING|NOTICE|COPYRIGHT)([._-].+)?$/i.test(name))
       await copy(join(exported, name), join(app, name));
-  await require_schema_frontier(app);
+  await require_generated_schema_frontier(app);
   assert_release_execution(execution);
 }

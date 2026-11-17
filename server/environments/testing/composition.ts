@@ -22,7 +22,7 @@ export function create_test_environment_operations(
     collector: null,
     staging: { stage: async () => unavailable() },
     installer: {
-      require_exact_schema_frontier: unavailable,
+      node_schema_steps_pending: unavailable,
       schema_change_pending: unavailable,
       create_backup: async () => unavailable(),
       prepare: unavailable,

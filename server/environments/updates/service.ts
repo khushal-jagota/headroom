@@ -20,9 +20,9 @@ import {
   SUPPORTED_UPDATE_SCHEMA_FLOOR,
   UPDATE_AVAILABILITY_REFRESH_SECONDS,
   UPDATE_HEALTH_TIMEOUT_SECONDS,
-  UPDATE_INSTALL_DEADLINE_SECONDS,
   UPDATE_DRAIN_SECONDS,
 } from './configuration.ts';
+import { backup_detail, install_deadline_seconds } from './logic/install_deadline.ts';
 import type {
   InstallerOperations,
   MacUpdateOperations,
@@ -103,6 +103,13 @@ export function validate_release(release: PublishedUpdate): void {
   }
   if (expired)
     throw new UpdateConflict('The pinned publication expired. Select a retained publication.');
+}
+/** The database file and its WAL, which a backup or a restore copies. */
+function database_file_bytes(path: string): number {
+  let total = 0;
+  for (const file of [path, path + '-wal'])
+    total += statSync(file, { throwIfNoEntry: false })?.size ?? 0;
+  return total;
 }
 function signature(path: string): string | null {
   try {
@@ -259,8 +266,9 @@ export class UpdateService {
     if (JSON.stringify(release) === JSON.stringify(this.ready)) return;
     const staged = await this.options.staging.stage(provider, release, this.options.current_root);
     if (!this.active(incarnation)) return;
+    // Admission only. The install decides on the backup when it starts.
     if (release.manifest.runtime_contract?.version === 2)
-      await this.options.installer.require_exact_schema_frontier(this.options.database, staged);
+      await this.options.installer.node_schema_steps_pending(this.options.database, staged);
     if (!this.active(incarnation)) return;
     await this.options.mac.prepare(release);
     if (!this.active(incarnation)) return;
@@ -377,8 +385,8 @@ export class UpdateService {
       if (this.update_wait === controller) this.update_wait = null;
     }
   }
-  private deadline(): string {
-    return timestamp(this.now() + UPDATE_INSTALL_DEADLINE_SECONDS);
+  private deadline(seconds: number): string {
+    return timestamp(this.now() + seconds);
   }
   install(
     app_sha: string,
@@ -682,6 +690,7 @@ export class UpdateService {
       this.attempts.change(attempt_id, states('preparing'), (current) => ({
         ...current,
         state: 'installing',
+        detail: null,
       }));
       await this.start_installer(attempt_id, incarnation);
     } catch (error) {
@@ -707,10 +716,38 @@ export class UpdateService {
     const staged = staged_app_path(this.options.current_root, attempt.to_sha);
     if (!statSync(staged, { throwIfNoEntry: false })?.isDirectory())
       throw new Error('the staged release is missing');
-    let backup: string | null = null;
-    if (attempt.release.manifest.runtime_contract?.version === 2)
-      await this.options.installer.require_exact_schema_frontier(this.options.database, staged);
-    else {
+    let backup: string | null = null,
+      steps_pending = false;
+    const database_bytes = database_file_bytes(this.options.database);
+    if (attempt.release.manifest.runtime_contract?.version === 2) {
+      steps_pending = await this.options.installer.node_schema_steps_pending(
+        this.options.database,
+        staged,
+      );
+      if (!this.active(incarnation)) return;
+      // The deadline covers the backup before it starts, so neither settle() nor the
+      // Updating card gives up while it runs.
+      this.options.runtime.assert_database_owned();
+      this.attempts.change(attempt_id, states('installing'), (current) => ({
+        ...current,
+        deadline_at: this.deadline(
+          install_deadline_seconds({
+            backup: steps_pending,
+            steps: steps_pending,
+            database_bytes,
+          }),
+        ),
+        ...(steps_pending ? { detail: backup_detail(database_bytes) } : {}),
+      }));
+      if (steps_pending) {
+        backup = await this.options.installer.create_backup(
+          this.options.database,
+          this.options.backup_directory,
+          attempt.from_sha,
+        );
+        if (!this.active(incarnation)) return;
+      }
+    } else {
       const pending = await this.options.installer.schema_change_pending(
         this.options.database,
         staged,
@@ -749,7 +786,10 @@ export class UpdateService {
       ...current,
       state: 'installing',
       backup,
-      deadline_at: this.deadline(),
+      detail: null,
+      deadline_at: this.deadline(
+        install_deadline_seconds({ backup: false, steps: steps_pending, database_bytes }),
+      ),
       steps: {
         ...current.steps,
         ...(backup === null ? {} : { backup: this.record_now() }),
