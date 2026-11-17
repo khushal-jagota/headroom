@@ -6,7 +6,7 @@ import * as B from '../contracts.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import type { TurnInFlight, UserQuestion, ParkedPermission, ParkedUserInput } from './turn.ts';
 import { canonical_json, record } from './events.ts';
-import { error_text } from './failure_summary.ts';
+import { error_text } from '../failure_summary.ts';
 
 const PERMISSION_OPTIONS = [
   new PermissionAskOption({

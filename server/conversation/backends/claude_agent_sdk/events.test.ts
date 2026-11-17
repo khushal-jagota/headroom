@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import * as B from '../contracts.ts';
 import { ClaudeEvents, validate_message } from './events.ts';
 import { TurnInFlight } from './turn.ts';
-import { normalized_failure_summary } from './failure_summary.ts';
+import { normalized_failure_summary } from '../failure_summary.ts';
 
 function fixture() {
   const events: { turn: B.TurnToken | null; event: B.BackendEventValue }[] = [];

@@ -6,7 +6,7 @@ import { text_message_content } from '../../message_content.ts';
 import * as B from '../contracts.ts';
 import type { ClaudeSdkMessage } from './query_contracts.ts';
 import type { TurnInFlight } from './turn.ts';
-import { display_text } from './failure_summary.ts';
+import { display_text } from '../failure_summary.ts';
 
 export function record(value: unknown): Record<string, unknown> | null {
   return is_record(value) ? value : null;

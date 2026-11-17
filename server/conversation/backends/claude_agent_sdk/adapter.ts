@@ -49,7 +49,7 @@ import { ClaudeEvents, composer_catalog, durable_session_id, validate_message } 
 import { ClaudeAsks } from './asks.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { TurnInFlight, same_turn, settle_parked_asks, stop_waiting_for_steers } from './turn.ts';
-import { error_text, result_error_summary } from './failure_summary.ts';
+import { display_text, error_text, normalized_failure_summary } from '../failure_summary.ts';
 
 export interface ClaudeAgentSdkChildLaunch {
   claude_executable: string;
@@ -753,4 +753,11 @@ export function create_claude_backend_child_factory(
   },
 ): B.BackendChildFactory {
   return (values) => new ClaudeAgentSdkBackendChild({ ...values, launch, ...options });
+}
+function result_error_summary(message: Record<string, unknown>): string {
+  const status = typeof message.api_error_status === 'number' ? message.api_error_status : null;
+  if (status === 401) return normalized_failure_summary(null, status);
+  if (Array.isArray(message.errors) && message.errors.length)
+    return normalized_failure_summary(message.errors.map(display_text).join('; '), status);
+  return normalized_failure_summary(message.result || message.subtype, status);
 }

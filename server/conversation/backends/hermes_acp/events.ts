@@ -34,7 +34,7 @@ import {
 } from '../../events.ts';
 import { joined_runs_of_text, MessageText } from '../../message_content.ts';
 import type { MessageContent, MessagePiece } from '../../message_content.ts';
-import { normalized_failure_summary } from '../claude_agent_sdk/failure_summary.ts';
+import { normalized_failure_summary } from '../failure_summary.ts';
 import { hermes_error_text } from './configuration.ts';
 import type { HermesMessages } from './messages.ts';
 import { Deferred } from '../../../core/deferred.ts';

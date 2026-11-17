@@ -16,7 +16,7 @@ import type {
 import { ConversationAccess } from '../../contracts.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { NeedsRebind, PromptWriteFailed, SessionLoadFailed } from '../contracts.ts';
-import { error_text } from '../claude_agent_sdk/failure_summary.ts';
+import { error_text } from '../failure_summary.ts';
 import type { HermesAcpClient } from './client.ts';
 
 export function hermes_error_text(error: unknown): string {
