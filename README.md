@@ -8,7 +8,7 @@ Headroom keeps the priorities, plans, conversations, and approvals together. You
 
 ## Use the agents you already use
 
-Codex, Claude Code, and Hermes are supported today. Choose the agent, model, and reasoning level for each task. You can have different tasks running with different agents. The Backends screen shows the remaining allowance and reset times reported by Codex and Claude.
+Codex and Claude Code are supported today. Choose the agent, model, and reasoning level for each task. You can have different tasks running with different agents. The Backends screen shows the remaining allowance and reset times reported by Codex and Claude.
 
 Use your existing Codex or Claude login, including subscription access where your plan supports it. Headroom runs the agents themselves and uses their existing authentication. Your provider's usage limits and billing still apply. See [Codex authentication](https://developers.openai.com/codex/auth) and [Claude authentication](https://code.claude.com/docs/en/authentication).
 
@@ -83,7 +83,6 @@ Before starting agent work, configure and authenticate the backend you intend to
 
 - **Codex:** install the `codex` CLI and make it available on `PATH`.
 - **Claude Code:** install the `claude` CLI and make it available on `PATH`. `PLAN_CLAUDE_EXECUTABLE` can select another executable.
-- **Hermes:** configure an installed Hermes environment with `PLAN_HERMES_PYTHON` pointing to its Python interpreter.
 
 Voice input uses Groq transcription; set `PLAN_GROQ_API_KEY` to enable it. This is separate from your agent subscription.
 

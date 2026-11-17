@@ -11,6 +11,8 @@ import { create_backend_runtime } from '../conversation/snapshot/composition.ts'
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import { create_test_environment_runtime } from '../environments/testing/composition.ts';
 import { readinessTestRoutes } from '../runtime/testing.ts';
+import { managerWakeTestArea } from '../manager_wakes/testing.ts';
+import { create_wake } from '../manager_wakes/data.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -71,11 +73,20 @@ function stored_hermes() {
         VALUES ('goal_hermes','project','Goal','Why','binary',1,0,'{}',1,0,0,'hermes',?)`,
       [MODEL],
     );
-    return create_manager(tx, {
+    const manager = create_manager(tx, {
       title: 'Saved Hermes Manager',
       project_id: 'project',
       clock: { nowUnix: () => 0, now: () => new Date(0) } as never,
     });
+    create_wake(tx, {
+      manager_id: manager.id,
+      ticket_id: ticket.id,
+      source_kind: 'worker_error',
+      source_revision: 1,
+      summary: 'A notice for a Manager saved on Hermes',
+      now: 0,
+    });
+    return manager;
   });
   return { database, path, ticket, manager };
 }
@@ -141,7 +152,13 @@ test('a build without Hermes reads every saved Hermes row and refuses only its l
           publish_status_changed: (id) => context.record.live_tail.views.publish_status_changed(id),
         });
       },
-      testAreas: (context) => [readinessTestRoutes(context.shutdown_options)],
+      testAreas: (context) => [
+        readinessTestRoutes(context.shutdown_options),
+        managerWakeTestArea(
+          { ...context, assert_database_owned: context.require_runtime_ownership },
+          context.shutdown_options,
+        ),
+      ],
     });
     type Body = Record<string, any>;
     const call = async (method: 'GET' | 'POST', path: string, body?: unknown) => {
@@ -226,12 +243,20 @@ test('a build without Hermes reads every saved Hermes row and refuses only its l
       },
     });
 
+    // A notice for a Manager saved on Hermes waits, quietly, for a new choice.
+    expect((await call('POST', '/test/poll/manager-wakes')).status).toBe(200);
+    expect(f.database.read((sql) => sql.all('SELECT status FROM manager_wake_batches'))).toEqual([
+      { status: 'pending' },
+    ]);
+
     // Nothing launched, and nothing failed unhandled.
     expect(await registry.inspect('stored-hermes')).toEqual([]);
     expect(f.database.read((sql) => sql.all('SELECT conversation_id FROM conversations'))).toEqual([
       { conversation_id: 'stored-hermes' },
     ]);
-    expect(failures.mock.calls.flat().join('\n')).not.toMatch(/unhandled|HTTP 500/);
+    expect(failures.mock.calls.flat().join('\n')).not.toMatch(
+      /unhandled|uncertain failure|HTTP 500/,
+    );
   } finally {
     await server?.close({ deadline: performance.now() / 1000 + 30 });
     await registry.close();

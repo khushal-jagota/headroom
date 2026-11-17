@@ -291,10 +291,11 @@ export function initialize_retained_runs(
         );
       if (run.incarnation_current && (pending || running !== null || !run.delivery_uncertain)) {
         const sink = host.make_sink(state);
-        const child = retained_factory(child_factory_for(host, record.backend_key))!.recover(
-          run.reference,
-          { event_sink: sink },
-        );
+        // A run on a backend this build lacks is not recovered: it settles as unrecovered.
+        const child =
+          retained_factory(child_factory_for(host, record.backend_key))?.recover(run.reference, {
+            event_sink: sink,
+          }) ?? null;
         if (child !== null) {
           state.child_event_sink = sink;
           state.child = child;

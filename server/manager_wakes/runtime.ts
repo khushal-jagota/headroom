@@ -233,6 +233,8 @@ async function admitted_deliver_batch(
       database.write((sql) => data.close_undeliverable_batch(sql, batch.id, { now: now() }));
       return false;
     }
+    // Saved settings name a backend this build lacks. The batch waits for a new choice.
+    if (error instanceof PlannerError && error.message === 'unknown agent backend') return false;
     throw error;
   }
   const link_key = agent_key === null ? `ticket:${target.id}` : `agent:${agent_key}`;
