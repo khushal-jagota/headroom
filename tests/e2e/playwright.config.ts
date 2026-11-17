@@ -13,11 +13,12 @@ export default defineConfig({
   retries: 0,
   // Each server boots inside its test, so the limit covers boot as well as the checks.
   timeout: 180_000,
-  // WAIT_MS of the Python gates: every wait carries this limit.
-  expect: { timeout: 10_000 },
+  // The Python Playwright defaults the gates were written against. Explicit waits pass
+  // WAIT_MS themselves.
+  expect: { timeout: 5_000 },
   outputDir: process.env.PANELS_E2E_FAILURE_DIR ?? 'test-results',
   reporter: evidence
     ? [['list'], ['junit', { outputFile: join(evidence, 'results.xml') }]]
     : [['list']],
-  use: { browserName: 'chromium', headless: true },
+  use: { browserName: 'chromium', headless: true, actionTimeout: 30_000, navigationTimeout: 30_000 },
 });

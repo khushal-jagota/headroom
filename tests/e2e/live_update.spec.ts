@@ -1,0 +1,172 @@
+/**
+ * Browser proof that open screens follow the server, and that composing survives it.
+ *
+ * The server says only "something changed"; the browser answers by refetching what it is
+ * showing. These two tests hold that behaviour to what a person actually experiences: a
+ * change made elsewhere lands on the open screen without a reload, and a change that lands
+ * while someone is typing leaves the typing — the caret, the text, and the place on the
+ * page — exactly where it was.
+ *
+ * Waits are on the browser's own counters (`window.__plannerDebug`) plus the resulting
+ * DOM, never on a sleep.
+ */
+import type { Page } from '@playwright/test';
+import { WAIT_MS, api, cli, expect, openPage, test, type ServerHandle } from './support/fixtures.ts';
+
+const RECAP_SEED = 'Recap as it stood before anyone started typing.';
+const FIRST_HALF = ' Composed the first half,';
+const SECOND_HALF = ' and the second half after the change.';
+
+/** Page-side state these tests keep on `window`. */
+type TestWindow = Window & {
+  __composer: { editor: HTMLElement; scroller: Element };
+  __plannerDebug: { flushes: number };
+  __documentMark?: string;
+};
+
+// Find the surface the composer scrolls inside, bring the composer to its top, and keep
+// both for later: the same editor node must still hold the caret at the end, and its
+// surface must still be sitting at the same place. The page header sits tight above the
+// recap, so centring the recap would not scroll; bringing it to the top always does.
+const CAPTURE_COMPOSER = (selector: string): number => {
+  const editor = document.querySelector(selector) as HTMLElement;
+  editor.scrollIntoView({ block: 'start' });
+  let node = editor.parentElement;
+  while (node) {
+    const style = getComputedStyle(node);
+    const scrolls = style.overflowY === 'auto' || style.overflowY === 'scroll';
+    if (scrolls && node.scrollHeight > node.clientHeight + 1) break;
+    node = node.parentElement;
+  }
+  const scroller = node || document.scrollingElement!;
+  (window as unknown as TestWindow).__composer = { editor, scroller };
+  return scroller.scrollTop;
+};
+
+// Focus without scrolling (focus() would otherwise move the page), then put the caret at
+// the end of what is already written — where a person would carry on.
+const FOCUS_AT_END = (): void => {
+  const editor = (window as unknown as TestWindow).__composer.editor;
+  editor.focus({ preventScroll: true });
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  const selection = getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+};
+
+async function setRecap(server: ServerHandle, ticketId: string, recap: string): Promise<void> {
+  await api.patch(server, `/api/tickets/${ticketId}`, { recap });
+}
+
+async function flushes(page: Page): Promise<number> {
+  return Number(await page.evaluate(() => (window as unknown as TestWindow).__plannerDebug.flushes));
+}
+
+async function waitForFlush(page: Page, previous: number): Promise<void> {
+  await page.waitForFunction(
+    (previous) => (window as unknown as TestWindow).__plannerDebug.flushes > previous,
+    previous,
+    { timeout: WAIT_MS },
+  );
+}
+
+/** A value that only survives while this document does — a reload wipes it. */
+async function markPage(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as TestWindow).__documentMark = 'same document';
+  });
+}
+
+async function assertSameDocument(page: Page): Promise<void> {
+  expect(await page.evaluate(() => (window as unknown as TestWindow).__documentMark)).toBe('same document');
+}
+
+test('test_composing_survives_a_change_to_the_same_ticket', async ({ server, newContext }) => {
+  const ticketId = (
+    await cli(server, ['ticket', 'create', '--input-json', '-'], {
+      stdin: JSON.stringify({
+        worker_type: 'coding',
+        title: 'Composer ticket before the change',
+        brief: 'Agreed brief.',
+        manager: { kind: 'chief', id: 'chief' },
+      }),
+      settleBrief: true,
+    })
+  ).id as string;
+  await setRecap(server, ticketId, RECAP_SEED);
+
+  const page = await openPage(
+    await newContext(),
+    server,
+    `#/workspace/${ticketId}`,
+    `section[data-screen="ticket"][data-ticket-id="${ticketId}"]`,
+  );
+  // A short window makes the ticket's own column scroll, so "the page did not jump"
+  // is a claim with something behind it.
+  await page.setViewportSize({ width: 1280, height: 400 });
+
+  const composer = '[data-recap] [data-markdown-inline-edit]';
+  await page.locator(composer).waitFor({ state: 'visible', timeout: WAIT_MS });
+  const scrollTop = await page.evaluate(CAPTURE_COMPOSER, composer);
+  expect(scrollTop, String(scrollTop)).toBeGreaterThan(0);
+
+  await page.evaluate(FOCUS_AT_END);
+  await page.keyboard.type(FIRST_HALF);
+  await page.waitForFunction(
+    (text) => (window as unknown as TestWindow).__composer.editor.textContent!.includes(text),
+    FIRST_HALF.trim(),
+    { timeout: WAIT_MS },
+  );
+
+  const before = await flushes(page);
+  await markPage(page);
+  await api.patch(server, `/api/tickets/${ticketId}`, { title: 'Composer ticket after the change' });
+
+  // The change reaches this very screen mid-composition: the title on the page behind
+  // the composer is rewritten from the server's answer.
+  await waitForFlush(page, before);
+  await page
+    .locator('.ticket-title', { hasText: 'Composer ticket after the change' })
+    .waitFor({ state: 'visible', timeout: WAIT_MS });
+
+  await page.keyboard.type(SECOND_HALF);
+
+  const state = await page.evaluate(() => {
+    const { editor, scroller } = (window as unknown as TestWindow).__composer;
+    return {
+      focused: document.activeElement === editor,
+      stillAttached: editor.isConnected,
+      text: editor.textContent,
+      scrollTop: scroller.scrollTop,
+    };
+  });
+  expect(state.stillAttached).toBe(true);
+  expect(state.focused).toBe(true);
+  expect(state.text).toBe(RECAP_SEED + FIRST_HALF + SECOND_HALF);
+  expect(state.scrollTop).toBe(scrollTop);
+  await assertSameDocument(page);
+});
+
+test('test_chief_recap_refreshes_without_reload', async ({ server, newContext }) => {
+  // Prove the trial failure across SSE, resource probes, and the rendered recap.
+  const recapPath = '/api/workers/chief-of-staff/recap';
+  const before = 'Chief recap before the external write.';
+  const after = 'Chief recap after the external write.';
+  await api.put(server, recapPath, { recap: before });
+  const page = await openPage(
+    await newContext(),
+    server,
+    '#/workspace/chief-of-staff',
+    '.chief-workspace-host [data-manager-recap]',
+  );
+  const recap = page.locator('.chief-workspace-host [data-manager-recap]');
+  await recap.filter({ hasText: before }).waitFor({ state: 'visible', timeout: WAIT_MS });
+  await markPage(page);
+  const previous = await flushes(page);
+  await api.put(server, recapPath, { recap: after });
+  await waitForFlush(page, previous);
+  await recap.filter({ hasText: after }).waitFor({ state: 'visible', timeout: WAIT_MS });
+  await assertSameDocument(page);
+});
