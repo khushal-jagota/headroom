@@ -1,9 +1,9 @@
 <script lang="ts">
   import Button from "../components/Button.svelte";
-  import { tick, onDestroy } from "svelte";
-  import { previewHashHref } from "../lib/filePreview";
-  import { rememberReviewVisit, takeReviewVisit, reviewVisitItemKey } from "../lib/review/visit";
-  import { artifactForPressOnThePage } from "../lib/managedArtifactPress";
+  import { tick, onDestroy, untrack } from "svelte";
+  import type { ManagedFileTarget } from "../lib/filePreview";
+  import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
+  import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationWindow, reviewProposalIdentity } from "../lib/navigation/presentation";
 
@@ -17,15 +17,15 @@
   import ReviewFinalState from "../components/ReviewFinalState.svelte";
   import { reviewMessageHref } from "../lib/review/messages";
   import {reviewHistoryKey,reviewReturnLabel,sameReviewHistory} from "../lib/review/return";
+  import {shownReviewItem} from "../lib/review/shown";
   import type {ReviewHistoryKey} from "../lib/navigation/contracts";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
-  const restoredVisit = takeReviewVisit(navigation);
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let review = $derived(displayed ? navigation.presentationFor(displayed).review : null);
 
-  let reviewAnchor=$state<string|null>(restoredVisit?.anchor ?? null);
+  let reviewAnchor=$state<string|null>(null);
   let queueWindow=$derived(navigationWindow(displayed?navigation.presentationFor(displayed):undefined,'review'));
   let reviewRequest=$state.raw(navigation.owner.getRequest());
   function updateReviewDemand():void {
@@ -42,24 +42,15 @@
     finalLatched=true;
   }});
   onDestroy(()=>navigation.owner.setDemand('review',undefined));
-  function openArtifact(event: MouseEvent): void {
-    const file = artifactForPressOnThePage(event);
-    if (!file) return;
-    event.preventDefault();
-    const artifactHref = previewHashHref(file);
-    rememberReviewVisit(navigation, {
-      artifactHref, proposal: currentItem?.review_item_type === 'ticket' ? currentItem.proposal ?? null : null, anchor: reviewAnchor, skipped: { ...skipped },
-      skippedHistory: [...skippedHistory], returnCohort: [...returnCohort],
-      currentKey: currentItem ? itemKey(currentItem) : null, finalLatched,
-      proposalDraft: proposalDraft ? { ...proposalDraft } : null
-    });
-    window.location.hash = artifactHref;
-  }
-  let skipped = $state<Record<string, boolean>>(restoredVisit?.skipped ?? {});
-  let skippedHistory=$state<ReviewHistoryKey[]>(restoredVisit?.skippedHistory ?? []);
-  let returnCohort=$state<ReviewHistoryKey[]>(restoredVisit?.returnCohort ?? []);
-  let resumeKey=$state<string|null>(restoredVisit?.currentKey ?? null);
-  let proposalDraft=$state<{identity:string;text:string;editedBody?:string}|null>(restoredVisit?.proposalDraft ?? null);
+  let skipped = $state<Record<string, boolean>>({});
+  let skippedHistory=$state<ReviewHistoryKey[]>([]);
+  let returnCohort=$state<ReviewHistoryKey[]>([]);
+  // The note and edited text of the proposal on screen. The card and the bar under its
+  // artifact are one decision, so they read and write the same draft.
+  let proposalDraft=$state<{identity:string;text:string;editedBody?:string}|null>(null);
+  // Proposals decided on this screen. The decided card leaves at once: the queue's own
+  // refresh confirms it later, and nothing waits on that read.
+  let decidedProposals=$state<Record<string,boolean>>({});
   let returnLabel=$derived.by(()=>{void reviewRequest;return reviewReturnLabel(displayed,navigation.owner.getRequest(),skippedHistory);});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
   // card mounted by another screen at the same time can never be the one a Review
@@ -67,13 +58,20 @@
   let screenElement = $state<HTMLElement | null>(null);
 
   function itemKey(item: ReviewItem): string {
-    return reviewVisitItemKey(item);
+    return item.review_item_type === 'message' ? `message:${item.conversation_id}` : `ticket:${item.ticket_id}`;
+  }
+  /** The item as this screen knows it: a proposal decided here is gone from its card, and a
+   *  card with nothing left is gone from the queue. */
+  function undecided(item: ReviewItem): ReviewItem | null {
+    if (item.review_item_type !== 'ticket' || !item.proposal || !decidedProposals[reviewProposalIdentity(item.proposal)]) return item;
+    return item.messages.length ? { ...item, proposal: null } : null;
   }
 
-  let items = $derived(queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'message' ? 'address' : 'ticket') && key.id===(item.review_item_type === 'message' ? item.address_id : item.ticket_id))) : review?.items ?? []);
+  let items = $derived((queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'message' ? 'address' : 'ticket') && key.id===(item.review_item_type === 'message' ? item.address_id : item.ticket_id))) : review?.items ?? [])
+    .map(undecided).filter((item): item is ReviewItem => item !== null));
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
   let waitingCount = $derived(displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null);
-  let finalLatched = $state(restoredVisit?.finalLatched ?? false);
+  let finalLatched = $state(false);
   let returning = $state(false);
   let returnError = $state<unknown>(null);
   let busyConversations = $state<Record<string,boolean>>({});
@@ -81,6 +79,14 @@
   // Keep a painted conversation through delivery uncertainty and its exit. Owner
   // state and canonical address still govern admission, even for a retained draft.
   let heldCard = $state<ReviewItem|null>(null);
+  // The card on screen. Chosen when the previous card leaves, then kept by id.
+  // A refresh that inserts older work leaves this card in place.
+  let pinnedKey=$state<string|null>(null);
+  function advancePast(item:ReviewItem):void {
+    const key=itemKey(item);
+    const next=items.find(candidate=>itemKey(candidate)!==key && !skipped[itemKey(candidate)]);
+    pinnedKey=next ? itemKey(next) : null;
+  }
   function messageEligible(message:import('../lib/types').ReviewMessageItem):boolean {
     if(!displayed)return false;
     const presentation=navigation.presentationFor(displayed);
@@ -101,30 +107,7 @@
     }
     return true;
   }
-  let restoring = $state(Boolean(restoredVisit));
-  let restoredScopeReady = $derived(Boolean(displayed?.runtimeCurrent && review && queueWindow
-    && displayed.publication.view?.scopeGeneration === reviewRequest.scope_generation
-    && reviewRequest.windows.find(window=>window.section==='review')?.anchor === reviewAnchor));
-  $effect(() => {
-    if (!restoring || !restoredScopeReady || !queueWindow) return;
-    const saved = items.find(item=>itemKey(item)===resumeKey && !skipped[itemKey(item)]);
-    if (resumeKey && !saved) {
-      if (queueWindow.next) {
-        // Earlier arrivals can push the saved card beyond this bounded page.
-        // Seek it in fresh pages, rather than replaying its old decision.
-        reviewAnchor = queueWindow.next;
-        return;
-      }
-      // The card left Review elsewhere. Rebase the pass onto the live first page.
-      resumeKey = null;
-      reviewAnchor = null;
-      return;
-    }
-    // The server can rebase an expired page anchor while the file is open.
-    reviewAnchor = queueWindow.request.anchor;
-    restoring = false;
-  });
-  let reviewReady = $derived(Boolean(review) && !restoring);
+  let reviewReady = $derived(Boolean(review));
   let currentItem = $derived.by<ReviewItem | null>(() => {
     if (!reviewReady) return null;
     if(heldCard && !skipped[itemKey(heldCard)]) {
@@ -140,8 +123,8 @@
         }
       }
     }
-    return items.find(item=>itemKey(item)===resumeKey && !skipped[itemKey(item)])
-      ?? items.find(item=>!skipped[itemKey(item)]) ?? null;
+    const waiting=items.filter(item=>!skipped[itemKey(item)]);
+    return shownReviewItem(waiting,pinnedKey,itemKey).item;
   });
   let messageBusy = $derived(currentItem?.review_item_type==='message' ? Boolean(busyConversations[currentItem.conversation_id]) : Boolean(currentItem?.messages.some(message=>busyConversations[message.conversation_id])));
   // Only a completed last window is terminal. An exhausted intermediate window
@@ -154,10 +137,13 @@
   });
   $effect(()=>{
     if (!reviewReady || finalLatched) return;
-    if(!heldCard && currentItem && (currentItem.review_item_type==='message' || currentItem.messages.length))heldCard=currentItem;
+    if(!heldCard && currentItem && (currentItem.review_item_type==='message' ? messageEligible(currentItem) : currentItem.messages.some(messageEligible)))heldCard=currentItem;
     else if(heldCard?.review_item_type==='ticket' && currentItem?.review_item_type==='ticket' && heldCard.ticket_id===currentItem.ticket_id
       && currentItem.messages.some(message=>!heldCard || heldCard.review_item_type!=='ticket' || !heldCard.messages.some(held=>held.conversation_id===message.conversation_id && held.address_id===message.address_id)))heldCard=currentItem;
     if(heldCard && !(heldCard.review_item_type==='message' ? messageEligible(heldCard) : heldCard.messages.some(messageEligible)))heldCard=null;
+    const shown=currentItem;
+    const key=shown ? itemKey(shown) : null;
+    if(key!==pinnedKey)pinnedKey=key;
   });
 
   $effect(()=>{
@@ -174,7 +160,7 @@
     reviewAnchor = null;
     skipped = {};
     heldCard = null;
-    resumeKey = null;
+    pinnedKey = null;
     try {
       // Let the reset window demand reach the owner before requesting a fresh view.
       // Keep the composer mounted until that read succeeds, even for an empty result.
@@ -195,7 +181,7 @@
 
   function skip(item: ReviewItem): void {
     if(messageBusy)return;
-    resumeKey=null;
+    advancePast(item);
     const key=reviewHistoryKey(item);
     if(!skippedHistory.some(previous=>previous.kind===key.kind && previous.id===key.id))skippedHistory=[...skippedHistory,key];
     skipped = { ...skipped, [itemKey(item)]: true };
@@ -210,6 +196,12 @@
   // The card says a decision has left the queue — approved, sent back, or already
   // gone by the time its Ticket was read. Re-read the queue so the next ask comes up.
   function messageResolved(conversationId:string):void {
+    // While an artifact is open only its bar can resolve a message: that reply finishes with it.
+    if (heldFile) artifact.close();
+    const item=currentItem;
+    const leaves=item?.review_item_type==='message' ? item.conversation_id===conversationId
+      : item?.review_item_type==='ticket' && !item.proposal && item.messages.every(message=>message.conversation_id===conversationId);
+    if(item && leaves)advancePast(item);
     if(heldCard?.review_item_type==='message' && heldCard.conversation_id===conversationId)heldCard=null;
     else if(heldCard?.review_item_type==='ticket') {
       const messages=heldCard.messages.filter(message=>message.conversation_id!==conversationId);
@@ -223,9 +215,44 @@
     if(Boolean(busyConversations[conversationId])!==busy)busyConversations={...busyConversations,[conversationId]:busy};
   }
 
-  function proposalResolved(): void {
+  function proposalResolved(identity: string): void {
+    // A decision made under the artifact finishes with it, even when the card stays for its messages.
+    if (heldFile) artifact.close();
+    const item=currentItem;
+    if(item?.review_item_type==='ticket' && item.proposal && reviewProposalIdentity(item.proposal)===identity && item.messages.length===0)advancePast(item);
+    decidedProposals = { ...decidedProposals, [identity]: true };
     void navigation.owner.recover().catch(() => undefined);
   }
+
+  // An artifact opens over the card it was named on. The bar under it is the card's own
+  // controls, chosen by what held the link: a message's reply, or else the proposal's
+  // decisions. Close, Escape, or the card leaving returns to the queue.
+  let heldFile = $state<ManagedFileTarget | null>(null);
+  const artifact = createArtifactOnThePage({
+    shown: () => heldFile,
+    keep: (file) => { heldFile = file; },
+    conversationState: () => "rest",
+    dismissConversation: () => undefined,
+    root: () => screenElement
+  });
+  let artifactCardKey: string | null = null;
+  $effect(() => {
+    const key = !showFinal && currentItem ? itemKey(currentItem) : null;
+    const file = heldFile;
+    untrack(() => {
+      if (file && artifactCardKey !== null && key !== artifactCardKey) artifact.close();
+      artifactCardKey = key;
+    });
+  });
+  /** The message whose reply stands under the artifact, or null for the proposal's decisions. */
+  let barMessage = $derived.by(() => {
+    if (!artifact.shown || !currentItem) return null;
+    if (currentItem.review_item_type === 'message') return currentItem;
+    const origin = artifact.origin;
+    const named = origin?.startsWith('message:') ? currentItem.messages.find(message => `message:${message.conversation_id}` === origin) : undefined;
+    if (named) return named;
+    return currentItem.proposal ? null : currentItem.messages[0] ?? null;
+  });
 
   // Global review shortcuts (approved addition): s = skip, o = open ticket,
   // Cmd/Ctrl+Enter = approve the current ask. They fire only when the keystroke
@@ -284,9 +311,42 @@
   </div>
 {/snippet}
 
+{#snippet proposalCard(proposal: import("../lib/types").NavigationReviewProposalItem, composerOnly: boolean)}
+  {@const identity = reviewProposalIdentity(proposal)}
+  {#key identity}
+    <ReviewProposalCard identity={proposal} embedded {composerOnly} ticketId={proposal.ticket_id} field={proposal.field}
+      title={proposal.title} onResolved={() => proposalResolved(identity)}
+      initialRevisionDraft={proposalDraft?.identity===identity ? proposalDraft.text : ""}
+      initialEditedBody={proposalDraft?.identity===identity ? proposalDraft.editedBody : undefined}
+      onEditedBodyChange={editedBody=>{proposalDraft={identity,text:proposalDraft?.identity===identity ? proposalDraft.text : "",editedBody};}}
+      onRevisionDraftChange={text=>{proposalDraft={identity,text,editedBody:proposalDraft?.identity===identity ? proposalDraft.editedBody : undefined};}}/>
+  {/key}
+{/snippet}
+
+<!-- The card's own controls, under an artifact opened from it. -->
+{#snippet reviewBar()}
+  {#if barMessage}
+    {@const message = barMessage}
+    {#key `${message.conversation_id}:${messageGenerations[message.conversation_id] ?? 0}`}
+      <ReviewMessageCard item={message} embedded replyOnly onSkip={() => { if (currentItem) skip(currentItem); }}
+        onResolved={()=>messageResolved(message.conversation_id)} onBusy={value=>messageBusyChanged(message.conversation_id,value)}/>
+    {/key}
+  {:else if currentItem?.review_item_type === "ticket" && currentItem.proposal}
+    {@render proposalCard(currentItem.proposal, true)}
+  {/if}
+{/snippet}
+
+<svelte:window onkeydown={artifact.closeOnEscape} />
+
+{#if artifact.shown && currentItem && !showFinal}
+  <section class="review-artifact-screen" data-screen="review" data-review-artifact bind:this={screenElement}>
+    <ArtifactPreview target={artifact.shown} reloadSignal={artifact.reloadSignal} bind:element={artifact.element}
+      onRefresh={artifact.refresh} onClose={artifact.close} bar={reviewBar} />
+  </section>
+{:else}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement} onclick={openArtifact}>
+<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement} onclick={artifact.claimPress}>
   <ResourceState shape="block" loading={!reviewReady} hasData={reviewReady} loadingText="Loading review...">
     {#if showFinal}
       <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
@@ -303,14 +363,7 @@
           <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>
             {#if ticket.proposal}
               {@const proposal = ticket.proposal}
-              {#key reviewProposalIdentity(proposal)}
-                <ReviewProposalCard identity={proposal} embedded ticketId={proposal.ticket_id} field={proposal.field}
-                  title={proposal.title} onResolved={proposalResolved}
-                  initialRevisionDraft={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.text : ""}
-                  initialEditedBody={proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined}
-                  onEditedBodyChange={editedBody=>{proposalDraft={identity:reviewProposalIdentity(proposal),text:proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.text : "",editedBody};}}
-                  onRevisionDraftChange={text=>{proposalDraft={identity:reviewProposalIdentity(proposal),text,editedBody:proposalDraft?.identity===reviewProposalIdentity(proposal) ? proposalDraft.editedBody : undefined};}}/>
-              {/key}
+              {@render proposalCard(proposal, false)}
             {/if}
             {#each ticket.messages as message, index (message.conversation_id)}
               {#key messageGenerations[message.conversation_id] ?? 0}
@@ -326,8 +379,11 @@
     {/if}
   </ResourceState>
 </section>
+{/if}
 
 
 <style>
   .review-screen-final { max-width:calc(var(--measure-index) + var(--page-gutter)*2); }
+  /* The artifact covers the whole Review pane, and the card's controls stand under it. */
+  .review-artifact-screen { position:relative; flex:1; width:100%; height:100%; min-height:0; }
 </style>

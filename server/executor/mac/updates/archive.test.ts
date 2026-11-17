@@ -16,7 +16,6 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { inspect_mac_archive } from '../../../environments/release/archive.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
-import { Header } from 'tar';
 import { afterEach, expect, test } from 'vitest';
 import { FilesService } from '../files.ts';
 import { runtime_archive } from './testing/runtime_archive.ts';
@@ -151,33 +150,14 @@ test('inspects a native Linux executor without a private Node and rejects an unb
   };
   try {
     const result = await inspect();
-    expect(result.python).toBe(false);
     expect(result.node).toBe(false);
     expect(result.entrypoint).toBe(true);
     expect(result.native_linux).toMatchObject({ version: 2, app_sha: revision, panels: true });
     const raw = gunzipSync(readFileSync(f.archive));
     const inventory = raw.indexOf(Buffer.from('runtime/inventory.json'));
     expect(inventory).toBeGreaterThanOrEqual(0);
-    const header = Buffer.alloc(512);
-    new Header({
-      path: '.venv/bin/python',
-      type: 'File',
-      size: 1,
-      mode: 0o755,
-      mtime: new Date(0),
-    }).encode(header);
-    const mixed = Buffer.concat([
-      raw.subarray(0, -1024),
-      header,
-      Buffer.from('x'),
-      Buffer.alloc(511 + 1024),
-    ]);
-    writeFileSync(f.archive, gzipSync(mixed));
-    const with_python = await inspect();
-    expect(with_python.python).toBe(true);
-    expect(with_python.native_linux).toMatchObject({ version: 2, app_sha: revision, panels: true });
-    mixed[inventory + 512] = '!'.charCodeAt(0);
-    writeFileSync(f.archive, gzipSync(mixed));
+    raw[inventory + 512] = '!'.charCodeAt(0);
+    writeFileSync(f.archive, gzipSync(raw));
     await expect(inspect()).rejects.toThrow('Runtime inventory differs from contract.');
   } finally {
     controller.abort();

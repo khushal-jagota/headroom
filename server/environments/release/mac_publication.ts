@@ -87,8 +87,7 @@ export async function validate_mac_publication(
       architecture: 'arm64',
     }) ||
     !inspected.node ||
-    !inspected.entrypoint ||
-    inspected.python
+    !inspected.entrypoint
   )
     throw new Error('Mac archive lacks its source-bound TypeScript runtime');
   assert_release_execution(execution);

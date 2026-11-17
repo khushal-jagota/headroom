@@ -13,7 +13,6 @@ test('renders the managed policy and watchdog without private stop inputs in the
   const managed = await render_managed_unit({
     ...options,
     runtime_directory_name: 'panels-proof',
-    admitted_legacy_null_sha: null,
     control_socket_path: root + '/control/server.sock',
     lease_path: root + '/run/lifecycle.lock',
     environment_file_path: root + '/managed.env',

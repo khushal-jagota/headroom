@@ -1,1 +1,0 @@
-"""Framework-free notification rules."""

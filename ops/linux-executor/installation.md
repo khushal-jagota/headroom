@@ -4,7 +4,7 @@ A Linux executor runs Workers for one home. It holds private credentials, worksp
 
 The archive supports the same Linux x86_64 hosts as the Linux home: Debian 13 and Ubuntu 24.04 with the declared processor features. Host Node 22.18.0 or newer, `python3` for the join script, an authenticated GitHub CLI, and a systemd user manager are prerequisites. Provider sign-ins belong to this Linux account.
 
-Each release publication builds the archive in `publish-typescript-release.yml` with `server/environments/linux_executor/build_main.ts`. The publication holds `panels-linux-executor.tar.gz` and `linux-executor-publication.json`. The receipt records the exact revision, digest, size, and executor target. The archive uses the host Node. It holds no private Node or Python interpreter.
+Each release publication builds the archive in `publish-typescript-release.yml` with `server/environments/linux_executor/build_main.ts`. The publication holds `panels-linux-executor.tar.gz` and `linux-executor-publication.json`. The receipt records the exact revision, digest, size, and executor target. The archive uses the host Node. It holds no private Node.
 
 On the home, register the machine and print its join command:
 

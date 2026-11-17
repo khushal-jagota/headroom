@@ -35,7 +35,7 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
     await put(join(source, 'server/executor/wire.schema.json'), wire_schema);
     await put(join(source, 'server/executor/mac/service.test.ts'), '// excluded');
     await put(join(source, 'src/planner/executor/mac_service.py'), '# not shipped');
-    await put(join(source, 'src/planner/skills/panels/SKILL.md'), '# seed asset');
+    await put(join(source, 'server/skills/seeds/panels/SKILL.md'), '# seed asset');
     await put(
       join(source, 'ops/mac-executor/typescript-installation.md'),
       'Structural fixture instructions',
@@ -91,7 +91,7 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
         'server/executor/mac/entrypoint.ts',
         'server/executor/wire.generated.ts',
         'server/executor/wire.schema.json',
-        'src/planner/worker_types/shipped_worker_types.json',
+        'server/worker_types/shipped_worker_types.json',
       ]),
     );
     expect(members).not.toEqual(expect.arrayContaining(['src/planner/executor/mac_service.py']));

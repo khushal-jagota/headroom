@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync,
   closeSync,
   mkdirSync,
   mkdtempSync,
@@ -58,7 +57,6 @@ function installation(prefix: string, backup: string | null) {
     service_unit: 'never-start.service',
     health_url: 'http://127.0.0.1:0',
     health_timeout_seconds: 1,
-    admitted_legacy_null_sha: null,
   };
   const attempt = (snapshot: string | null) =>
     writeFileSync(
@@ -254,8 +252,8 @@ it('step applied, health fails, old app runs on the restored database', async ()
   }
 });
 
-it('only node-v2 launches the child, with the lock fd; no-backup plus pending steps refuses before writing', async () => {
-  // A step must never run on a Python v1 app or without a backup. The real classifier
+it('node-v2 launches the child with the lock fd; no-backup plus pending steps refuses before writing', async () => {
+  // A step must never run without a backup. The real classifier
   // and the real schema_step_main.ts in a structural app.
   const { root, request } = installation('panels-schema-step-child-', null);
   const owner = new ChildProcesses(),
@@ -292,20 +290,6 @@ it('only node-v2 launches the child, with the lock fd; no-backup plus pending st
     assert.deepEqual(launched, [
       { argv: [process.execPath, main, request.database, 'no-backup'], descriptor: lock },
     ]);
-
-    // The same app as Python version 1 upgrades itself, so no step child starts.
-    const contract = JSON.stringify({ version: 1 });
-    const manifest = JSON.parse(readFileSync(join(root, 'app/manifest.json'), 'utf8'));
-    writeFileSync(
-      join(root, 'app/manifest.json'),
-      JSON.stringify({ ...manifest, runtime_contract: { version: 1 } }),
-    );
-    writeFileSync(join(root, 'app/runtime/contract.json'), contract);
-    mkdirSync(join(root, 'app/.venv/bin'), { recursive: true });
-    writeFileSync(join(root, 'app/.venv/bin/python'), '#!/bin/sh\nexit 99\n');
-    chmodSync(join(root, 'app/.venv/bin/python'), 0o755);
-    await effects.schema_steps(lock, true);
-    assert.equal(launched.length, 1);
 
     // Pending steps without a backup refuse before the first write.
     const stepped = join(root, 'baseline.sqlite');

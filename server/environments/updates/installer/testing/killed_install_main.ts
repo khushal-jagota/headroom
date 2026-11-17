@@ -53,7 +53,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       service_unit: 'never-start.service',
       health_url: 'http://127.0.0.1:0',
       health_timeout_seconds: 1,
-      admitted_legacy_null_sha: null,
     },
     {
       async service() {},

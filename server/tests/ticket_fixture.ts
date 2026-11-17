@@ -1,10 +1,11 @@
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, copyFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import { afterAll, afterEach } from 'vitest';
 import {
   createDatabase,
+  createDatabaseFromSeed,
+  type ApplicationSchemaSeed,
   type Database,
   type ReadSql,
   type TransactionSql,
@@ -16,41 +17,23 @@ import { seed_shipped_worker_types, seed_chief_settings } from '../worker_types/
 import { OWNER, type Principal } from '../core/contracts.ts';
 import * as data from '../tickets/data/index.ts';
 import type { Ticket, TicketEdit } from '../tickets/contracts.ts';
-const repository = resolve(import.meta.dirname, '../..');
 const root = mkdtempSync(join(tmpdir(), 'panels-ticket-rules-'));
 const seed = join(root, 'seed.sqlite');
-// Follow the existing database fixture's Python-stdlib boundary. Read the fresh
-// generated schema without importing Planner or Alembic. This proves
+// Seed directly from the generated schema statements. This proves
 // rule writers on the current schema, but does not exercise migration/bootstrap.
-execFileSync(
-  'python3',
-  [
-    '-c',
-    `import json, pathlib, sqlite3, sys
-schema = json.loads((pathlib.Path(sys.argv[2]) / 'server/core/database/application_schema.json').read_text())
-with sqlite3.connect(sys.argv[1]) as connection:
-    for statement in schema['statements']:
-        connection.execute(statement)
-    connection.execute('INSERT INTO alembic_version(version_num) VALUES (?)', (schema['alembicRevision'],))
-    connection.execute('INSERT OR IGNORE INTO attention_history_metadata VALUES (1,0)')
-    connection.executemany('INSERT INTO projects (id,name,created_at,updated_at) VALUES (?,?,0,0)', [('project_other','Other'),('project_vylo','Vylo')])
-`,
-    seed,
-    repository,
-  ],
-  { cwd: repository, stdio: 'pipe' },
-);
-const seedDatabase = createDatabase(seed);
-try {
-  seedDatabase.write((tx) => {
-    seed_machine_rows(tx);
-    seed_packaged_skills(tx);
-    seed_shipped_worker_types(tx);
-    seed_chief_settings(tx);
-  });
-} finally {
-  seedDatabase.close();
-}
+const schema = JSON.parse(
+  readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
+) as ApplicationSchemaSeed;
+createDatabaseFromSeed(seed, schema, (tx) => {
+  tx.run('INSERT OR IGNORE INTO attention_history_metadata VALUES (1,0)');
+  tx.run(
+    "INSERT INTO projects (id,name,created_at,updated_at) VALUES ('project_other','Other',0,0),('project_vylo','Vylo',0,0)",
+  );
+  seed_machine_rows(tx);
+  seed_packaged_skills(tx);
+  seed_shipped_worker_types(tx);
+  seed_chief_settings(tx);
+}).close();
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 const databases: Database[] = [];
 afterEach(() => {

@@ -1,1 +1,0 @@
-"""Named machine destinations."""

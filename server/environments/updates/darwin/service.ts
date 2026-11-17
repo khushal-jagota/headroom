@@ -84,9 +84,9 @@ export class DarwinHomeService {
   readonly io: DarwinHomeIO;
   readonly resume_labels = new Set<string>();
   stopped = false;
-  constructor(root: string, service: string, node: string, io: DarwinHomeIO) {
+  constructor(root: string, service: string, io: DarwinHomeIO) {
     this.io = io;
-    this.identity = read_home_identity(root, service, node, io.uid);
+    this.identity = read_home_identity(root, service, io.uid);
   }
   private scope(): ReleaseExecution & { deadline: number } {
     const until = Math.min(
@@ -106,7 +106,6 @@ export class DarwinHomeService {
     const current = read_home_identity(
       this.identity.root,
       `${this.identity.domain}/${this.identity.label}`,
-      this.identity.installer_node,
       this.io.uid,
     );
     if (!isDeepStrictEqual(current, this.identity))

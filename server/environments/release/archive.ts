@@ -399,7 +399,6 @@ async function extract_archive(
           inspection &&
           message.type === 'mac-inspection-result' &&
           result === undefined &&
-          typeof message.python === 'boolean' &&
           typeof message.node === 'boolean' &&
           typeof message.entrypoint === 'boolean'
         ) {
@@ -414,25 +413,22 @@ async function extract_archive(
             throw new Error('invalid Mac inspection manifest bytes');
           const native = message.native_linux;
           if (purpose.purpose === 'mac-inspection' && purpose.platform === 'linux') {
-            // Existing Python Linux archives need no native Node metadata.
             if (
-              !(native === undefined && message.python === true) &&
-              (!is_record(native) ||
-                native.version !== 2 ||
-                typeof native.app_sha !== 'string' ||
-                native.app_sha.length !== 40 ||
-                !/^[0-9a-f]{40}$/.test(native.app_sha) ||
-                typeof native.inventory_sha256 !== 'string' ||
-                native.inventory_sha256.length !== 64 ||
-                !/^[0-9a-f]{64}$/.test(native.inventory_sha256) ||
-                typeof native.panels !== 'boolean')
+              !is_record(native) ||
+              native.version !== 2 ||
+              typeof native.app_sha !== 'string' ||
+              native.app_sha.length !== 40 ||
+              !/^[0-9a-f]{40}$/.test(native.app_sha) ||
+              typeof native.inventory_sha256 !== 'string' ||
+              native.inventory_sha256.length !== 64 ||
+              !/^[0-9a-f]{64}$/.test(native.inventory_sha256) ||
+              typeof native.panels !== 'boolean'
             )
               throw new Error('invalid Linux inspection evidence');
           } else if (native !== undefined) throw new Error('unexpected Linux inspection evidence');
           // Decode only after the exact child's actual close, below.
           result = {
             manifest: bytes,
-            python: message.python,
             node: message.node,
             entrypoint: message.entrypoint,
             ...(native === undefined
@@ -554,7 +550,6 @@ async function extract_archive(
             inspected.manifest === null
               ? null
               : decode_mac_manifest(Buffer.from(inspected.manifest as string, 'base64')),
-          python: inspected.python,
           node: inspected.node,
           entrypoint: inspected.entrypoint,
           ...(inspected.native_linux ? { native_linux: inspected.native_linux } : {}),

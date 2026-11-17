@@ -97,7 +97,6 @@ export async function build_schema_artifacts(
   root: string,
   steps: readonly SchemaStep[],
 ): Promise<SchemaArtifacts> {
-  // The baseline graph's digest binds the current Python migration files.
   const baseline_graph = await read_migration_graph_file(root, BASELINE_MIGRATION_GRAPH_PATH);
   const baseline_seed = read_baseline_seed(root);
   const [baseline_head] = migration_frontier(baseline_graph);

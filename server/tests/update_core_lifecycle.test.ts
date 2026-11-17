@@ -128,32 +128,6 @@ function release(): PublishedUpdate {
       source_digest: 'c'.repeat(64),
       artifact_digest: 'd'.repeat(64),
       runtime_contract: {
-        version: 1,
-        system: 'linux',
-        architecture: 'x86_64',
-        platforms: SUPPORTED_PLATFORMS.map((platform) => ({ ...platform })),
-        python_version: '3.12.12',
-        node_major: 22,
-        cpu_features: [...SUPPORTED_CPU_FEATURES],
-        external_libraries: [...GLIBC_LIBRARIES],
-        external_executables: ['sh', 'node'],
-        inventory_sha256: 'e'.repeat(64),
-      },
-    },
-    archive_sha256: 'f'.repeat(64),
-    schema_floor: 'video_upload_ledger',
-    expires_at: new Date(Date.now() + 86400_000).toISOString(),
-    mac: null,
-  };
-}
-/** The same publication as a TypeScript release, whose install may run schema steps. */
-function node_release(): PublishedUpdate {
-  const published = release();
-  return {
-    ...published,
-    manifest: {
-      ...published.manifest,
-      runtime_contract: {
         version: 2,
         system: 'linux',
         architecture: 'x86_64',
@@ -166,6 +140,10 @@ function node_release(): PublishedUpdate {
         inventory_sha256: 'e'.repeat(64),
       },
     },
+    archive_sha256: 'f'.repeat(64),
+    schema_floor: 'video_upload_ledger',
+    expires_at: new Date(Date.now() + 86400_000).toISOString(),
+    mac: null,
   };
 }
 async function owned_server(
@@ -174,8 +152,8 @@ async function owned_server(
     before_start(root: string): void;
     configure_environment(environment: ComposedEnvironmentRuntime): void;
   },
-  published: PublishedUpdate = release(),
 ) {
+  const published = release();
   const root = mkdtempSync(join(tmpdir(), 'panels-update-core-'));
   const path = join(root, 'data/planner.db');
   const registry = new ScriptedBackendRegistry();
@@ -272,10 +250,7 @@ async function owned_server(
             },
           },
           installer: {
-            node_schema_steps_pending: () => {
-              throw new Error('Node frontier admission is unavailable in this v1 fixture');
-            },
-            schema_change_pending: () => false,
+            node_schema_steps_pending: () => false,
             create_backup: async () => {
               throw new Error('no actual backup');
             },
@@ -363,7 +338,7 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
   const launch = deferred<void>(),
     launch_entered = deferred<void>();
   const owned = await owned_server({
-    schema_change_pending: () => true,
+    node_schema_steps_pending: () => true,
     create_backup: () => {
       backup_entered.resolve();
       return backup.promise;
@@ -468,21 +443,17 @@ test('ancestor database: the backup is taken after the deadline is written, and 
     backup_entered = deferred<void>();
   const launch = deferred<void>(),
     launch_entered = deferred<void>();
-  const owned = await owned_server(
-    {
-      node_schema_steps_pending: () => true,
-      create_backup: () => {
-        backup_entered.resolve();
-        return backup.promise;
-      },
-      launch: () => {
-        launch_entered.resolve();
-        return launch.promise;
-      },
+  const owned = await owned_server({
+    node_schema_steps_pending: () => true,
+    create_backup: () => {
+      backup_entered.resolve();
+      return backup.promise;
     },
-    undefined,
-    node_release(),
-  );
+    launch: () => {
+      launch_entered.resolve();
+      return launch.promise;
+    },
+  });
   const attempt = () =>
     JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8'));
   const seconds_left = (deadline_at: string) =>

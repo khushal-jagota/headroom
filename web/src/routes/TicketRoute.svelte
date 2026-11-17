@@ -173,6 +173,27 @@
     dismissConversation: () => { conversationState = "rest"; },
     root: () => screenElement
   });
+  /** The current stage's proposal, when one waits. A link inside it opens its artifact with
+   *  the note and decisions under it, in place of the conversation. */
+  let pageProposal = $derived(section && section.detail.pending_proposal?.field === section.record.value.gating_field ? section.detail.pending_proposal : null);
+  let pageProposalKey = $derived(pageProposal ? `${pageProposal.field}:${pageProposal.created_at}:${pageProposal.revision}` : null);
+  // The card and the bar under its artifact are one decision: one note and one edited text.
+  let proposalNote = $state("");
+  let proposalEditedBody = $state<string | undefined>(undefined);
+  let notedProposalKey: string | null = null;
+  $effect(() => {
+    const key = pageProposalKey;
+    untrack(() => {
+      if (key === notedProposalKey) return;
+      const replaced = notedProposalKey !== null;
+      notedProposalKey = key;
+      if (!replaced) return;
+      proposalNote = "";
+      proposalEditedBody = undefined;
+      // A decided or replaced proposal takes its bar with it: the reader is back on the Ticket.
+      if (artifact.origin === "proposal") artifact.close();
+    });
+  });
   // Which stages the reader has opened or closed with their own hands, by field name. A
   // stage that settles moves into the fold above and is rebuilt there, so the answer
   // cannot live in the stage. It lives here, where it outlives the move.
@@ -424,6 +445,8 @@
                       onAccept={async () => {}}
                       onScope={updateScope}
                       onReturn={async () => {}}
+                      bind:revisionText={proposalNote} initialEditedBody={proposalEditedBody}
+                      onEditedBodyChange={(text) => { proposalEditedBody = text; }}
                       contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
                   {/key}
                 {:else}
@@ -480,8 +503,21 @@
           bind:element={artifact.element}
           onRefresh={artifact.refresh}
           onClose={artifact.close}
+          bar={artifact.origin === "proposal" && pageProposal ? proposalBar : undefined}
         />
       {/if}
+      {#snippet proposalBar()}
+        {#if section && pageProposal}
+          {#key pageProposalKey}
+            <WorkerProposalCard composerOnly ticketId={stableId} proposal={pageProposal} lifecycle={section.lifecycle} stage={section.detail.stage}
+              ceiling={section.detail.ceiling} holder={section.detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(section.detail.conversation_id)}
+              bind:revisionText={proposalNote} initialEditedBody={proposalEditedBody}
+              onAccept={async () => artifact.close()}
+              onScope={updateScope}
+              onReturn={async () => artifact.close()} />
+          {/key}
+        {/if}
+      {/snippet}
       </div>
       <div
         class="conversation-layer"

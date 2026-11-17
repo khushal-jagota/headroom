@@ -28,15 +28,9 @@ function read_request(path: string): InstallerRequest {
     if (key !== 'node_executable') assert_installer_path(item);
     return item;
   };
-  const timeout = value.health_timeout_seconds,
-    legacy = value.admitted_legacy_null_sha;
+  const timeout = value.health_timeout_seconds;
   if (typeof timeout !== 'number' || !Number.isFinite(timeout))
     throw new Error('Invalid installer health timeout');
-  if (
-    legacy !== null &&
-    (typeof legacy !== 'string' || legacy.length !== 40 || !/^[0-9a-f]{40}$/.test(legacy))
-  )
-    throw new Error('Invalid admitted legacy SHA');
   const health_url = text('health_url');
   assert_installer_health_url(health_url);
   return {
@@ -48,7 +42,6 @@ function read_request(path: string): InstallerRequest {
     health_url,
     health_timeout_seconds: timeout,
     node_executable: absolute('node_executable'),
-    admitted_legacy_null_sha: legacy,
   };
 }
 function stderr(text: string): void {

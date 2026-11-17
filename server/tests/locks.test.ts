@@ -20,19 +20,27 @@ import {
   runtime_authority_path,
   observe_existing_flock,
 } from '../core/locks/index.ts';
-// A fake lock cannot prove interoperability with Python's fcntl.flock.
-// The two cases use private files and stdlib Python, without a server or planner import.
-test('Python ownership excludes Node until the Python owner exits', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'panels-lock-py-')),
+// A fake lock cannot prove exclusion between processes. The two cases use private files
+// and a Node child that takes the flock through the server's lock module, without a server import.
+const locks = new URL('../core/locks/index.ts', import.meta.url).href;
+const probe =
+  'const { acquireLock } = await import(process.argv[1]); if (acquireLock(process.argv[2]) === null) process.exit(23);';
+test('another process owner excludes Node until that owner exits', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'panels-lock-child-')),
     db = join(dir, 'db');
   writeFileSync(db, '');
   const child = spawn(
-    'python3',
+    process.execPath,
     [
-      '-u',
-      '-c',
-      "import fcntl,sys;f=open(sys.argv[1] + '.conversation-owner.lock','a+b');fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB);print('ready',flush=True);sys.stdin.read()",
-      db,
+      '--input-type=module',
+      '-e',
+      `const { acquireLock } = await import(process.argv[1]);
+const lock = acquireLock(process.argv[2]);
+if (lock === null) process.exit(23);
+console.log('ready');
+process.stdin.on('end', () => lock.close()).resume();`,
+      locks,
+      `${db}.conversation-owner.lock`,
     ],
     { stdio: ['pipe', 'pipe', 'pipe'] },
   );
@@ -54,13 +62,11 @@ test('Python ownership excludes Node until the Python owner exits', async () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
-test('Node ownership excludes Python and dispatcher contention returns false', () => {
+test('Node ownership excludes another process and dispatcher contention returns false', () => {
   const dir = mkdtempSync(join(tmpdir(), 'panels-lock-node-')),
     db = join(dir, 'db');
   writeFileSync(db, '');
   const handle = acquireRuntimeOwnership(db);
-  const probe =
-    "import fcntl,sys;f=open(sys.argv[1],'a+b');\ntry: fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)\nexcept BlockingIOError: sys.exit(23)";
   try {
     if (['linux', 'darwin'].includes(process.platform)) {
       const absent = join(dir, 'absent', 'probe.lock');
@@ -80,8 +86,12 @@ test('Node ownership excludes Python and dispatcher contention returns false', (
       renameSync(dir + '.moved', dir);
     }
     expect(() =>
-      execFileSync('python3', ['-c', probe, `${db}.conversation-owner.lock`], { stdio: 'pipe' }),
-    ).toThrow();
+      execFileSync(
+        process.execPath,
+        ['--input-type=module', '-e', probe, locks, `${db}.conversation-owner.lock`],
+        { stdio: 'pipe' },
+      ),
+    ).toThrow(expect.objectContaining({ status: 23 }));
     expect(acquireLock(`${db}.conversation-owner.lock`)).toBeNull();
     const alias = join(dir, 'db-alias');
     symlinkSync(db, alias);
@@ -106,7 +116,11 @@ test('Node ownership excludes Python and dispatcher contention returns false', (
       missing.close();
     }
     expect(() =>
-      execFileSync('python3', ['-c', probe, `${db}.conversation-owner.lock`], { stdio: 'pipe' }),
+      execFileSync(
+        process.execPath,
+        ['--input-type=module', '-e', probe, locks, `${db}.conversation-owner.lock`],
+        { stdio: 'pipe' },
+      ),
     ).not.toThrow();
   } finally {
     handle.close();

@@ -2,8 +2,7 @@
 import type { ReadSql } from '../../core/database/contracts.ts';
 import { AppValidationError } from './contracts.ts';
 import type { MigrationGraph } from './contracts.ts';
-import { createHash } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 function validate_migration_topology(revisions: MigrationGraph['revisions']): void {
@@ -38,21 +37,7 @@ export const BASELINE_MIGRATION_GRAPH_PATH =
 export const BASELINE_SEED_PATH = 'server/core/database/python_baseline/application_schema.json';
 export const SEED_PATH = 'server/core/database/application_schema.json';
 
-/** The digest of the raw Python migration bytes that a graph file binds. */
-export async function python_migration_digest(root: string): Promise<string> {
-  const directory = join(root, 'src/planner/core/migrations/versions');
-  const digest = createHash('sha256');
-  for (const name of (await readdir(directory))
-    .filter((name) => name.endsWith('.py'))
-    .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
-    digest.update(name + '\0');
-    digest.update(await readFile(join(directory, name)));
-    digest.update('\0');
-  }
-  return digest.digest('hex');
-}
-
-/** Parse, digest and topology checks for one graph file. Missing files stay ENOENT. */
+/** Format and topology checks for one graph file. Missing files stay ENOENT. */
 export async function read_migration_graph_file(
   root: string,
   relative_path: string,
@@ -88,15 +73,11 @@ export async function read_migration_graph_file(
     )
   )
     throw new AppValidationError('invalid generated migration graph');
-  if ((await python_migration_digest(root)) !== graph.source_digest)
-    throw new AppValidationError(
-      'migration graph differs from the current Python migration source',
-    );
   validate_migration_topology((graph as MigrationGraph).revisions);
   return graph as MigrationGraph;
 }
 
-/** Build input, bound to raw migration bytes without a runtime Python parser. */
+/** The release's own migration graph. */
 export async function read_migration_graph(root: string): Promise<MigrationGraph> {
   return read_migration_graph_file(root, MIGRATION_GRAPH_PATH);
 }
@@ -196,17 +177,6 @@ function database_revisions(sql: ReadSql): Set<string> {
       .map(({ version_num }) => String(version_num)),
   );
 }
-/** Preserve Python's existing v1 backup decision. It does not admit a v2 migration. */
-export function schema_change_pending(sql: ReadSql, graph: MigrationGraph): boolean {
-  const revisions = database_revisions(sql);
-  if (
-    !revisions.size ||
-    [...revisions].some((revision) => !Object.hasOwn(graph.revisions, revision))
-  )
-    throw new AppValidationError("This release does not know the database's schema revision.");
-  const heads = migration_frontier(graph);
-  return revisions.size !== heads.size || [...revisions].some((revision) => !heads.has(revision));
-}
 /** Admit a TypeScript release's database, and say whether its steps still need to run. */
 export function node_schema_steps_pending(sql: ReadSql, frontier: NodeSchemaFrontier): boolean {
   const revisions = [...database_revisions(sql)];
@@ -216,8 +186,7 @@ export function node_schema_steps_pending(sql: ReadSql, frontier: NodeSchemaFron
     (revision !== frontier.head && !frontier.step_ancestors.has(revision!))
   )
     throw new AppValidationError(
-      'This release requires the database to be at exactly its schema revision. ' +
-        'Install the Python release that carries the same migrations first.',
+      'This release requires the database to be at its schema revision or one of its schema steps.',
     );
   return revision !== frontier.head;
 }

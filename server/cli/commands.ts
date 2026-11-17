@@ -332,7 +332,7 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   );
   command(
     'environment run',
-    'Replace this process with `python -m planner serve` for one prepared instance.',
+    'Replace this process with `panels serve` for one prepared instance.',
     [
       option('kind', '--kind <CHOICE>', choice(['staging']), { required: true }),
       option('instance_id', '--instance-id <TEXT>', text, {}),

@@ -1,4 +1,5 @@
 import { revoke_launch_tokens } from '../agent_identity/data.ts';
+import { prepare_agent_home } from '../agent_homes/agent_home.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { read_machine } from '../machines/data.ts';
 import { filesRoot } from '../files/logic/paths.ts';
@@ -284,7 +285,7 @@ export function worker_resolve(
       (ticket.machine_id === HOME_MACHINE_ID
         ? '\n\n[Panels-owned Ticket workspace]\n' +
           `Panels starts you in the Ticket folder: ${values.workspace_folder}. Panels supplies this worktree: ${join(values.workspace_folder, 'worktree')}. Put reviewable output in ${join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'artifacts')}. ` +
-          'Follow the repository setup instructions and install dependencies yourself. Use this worktree for code, dependencies, and scratch. Do not create or remove worktrees. Workers commit, push, open PRs, and merge through the approved repository route. Stop the processes you start. Panels removes the full Ticket folder seven days after the Ticket ends, unless unpublished work or a failed safety check prevents removal. This workspace instruction supersedes older instructions to create or remove your own worktree.\n[/Panels-owned Ticket workspace]'
+          'Follow the repository setup instructions and install dependencies yourself. Use this worktree for code, dependencies, and scratch. Do not create or remove worktrees. Workers commit, push, open PRs, and merge through the approved repository route. Stop the processes you start. Panels removes everything in the Ticket folder except logs/ seven days after the Ticket ends, unless unpublished work or a failed safety check prevents removal. This workspace instruction supersedes older instructions to create or remove your own worktree.\n[/Panels-owned Ticket workspace]'
         : ''),
   });
   if (ticket.employee_launch_model === null || overrides.model != null)
@@ -728,13 +729,13 @@ export async function start_agent_conversation(
     required_manager_id?: string | null;
   },
 ): Promise<LinkedConversation> {
-  const home =
-    agent_key === CHIEF_SETTINGS_KEY
-      ? chief_home_folder(database)
-      : options.required_manager_id != null
-        ? manager_home_folder(database, options.required_manager_id)
-        : null;
-  if (home !== null && values.workspace_folder === home) mkdirSync(home, { recursive: true });
+  if (agent_key === CHIEF_SETTINGS_KEY) {
+    const home = chief_home_folder(database);
+    if (values.workspace_folder === home) mkdirSync(home, { recursive: true });
+  } else if (options.required_manager_id != null) {
+    const home = manager_home_folder(database, options.required_manager_id);
+    if (values.workspace_folder === home) await prepare_agent_home(home, 'manager');
+  }
   await observe_conversation_operation(
     () => system.start_conversation(start_request(options.conversation_id, values)),
     options.signal,

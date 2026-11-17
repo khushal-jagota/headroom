@@ -574,15 +574,29 @@ export function delivery_outcome_kind(
   conversation_id: string,
   sender_message_id: string,
 ): string | null {
-  return (
-    sql.get<{ kind: string }>(
-      `SELECT kind FROM conversation_events WHERE conversation_id=?
-     AND json_extract(payload,'$.sender_message_id')=? AND kind IN
-     ('prompt','prompt_delivery_refused','prompt_delivery_uncertain','prompt_discarded')
+  // Wake sender ids carry a delivery prefix, so the settled kinds use the partial
+  // unique index and the rare uncertain kind uses the kind index. Neither scans the
+  // conversation's payloads. The earliest of the two is the outcome.
+  const settled = sql.get<{ kind: string; sequence: number }>(
+    `SELECT kind,sequence FROM conversation_events
+     INDEXED BY idx_conversation_events_sender_message_id
+     WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=?
+     AND kind IN ('prompt','prompt_delivery_refused','prompt_discarded')
+     AND (json_extract(payload,'$.sender_message_id') LIKE 'supervisor_delivery_%'
+       OR json_extract(payload,'$.sender_message_id') LIKE 'manager_delivery_%')
      ORDER BY sequence LIMIT 1`,
-      [conversation_id, sender_message_id],
-    )?.kind ?? null
+    [conversation_id, sender_message_id],
   );
+  const uncertain = sql.get<{ sequence: number }>(
+    `SELECT sequence FROM conversation_events
+     INDEXED BY idx_conversation_events_kind_recipient
+     WHERE kind='prompt_delivery_uncertain' AND conversation_id=?
+     AND json_extract(payload,'$.sender_message_id')=? ORDER BY sequence LIMIT 1`,
+    [conversation_id, sender_message_id],
+  );
+  if (uncertain && (!settled || uncertain.sequence < settled.sequence))
+    return 'prompt_delivery_uncertain';
+  return settled?.kind ?? null;
 }
 export function record_batch_offering(
   sql: TransactionSql,

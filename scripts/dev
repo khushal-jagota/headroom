@@ -1,7 +1,46 @@
 #!/bin/sh
+# Run npm for this checkout: `scripts/dev npm --prefix <folder> <command> ...`.
+# The folder after --prefix resolves inside this checkout. `agent_backends install`
+# installs the current Claude Code and Codex releases, without a lockfile.
+set -eu
 case "$0" in
     */*) scripts_directory=${0%/*} ;;
     *) scripts_directory=. ;;
 esac
-scripts_directory=$(CDPATH= cd -- "$scripts_directory" && pwd)
-exec /usr/bin/python3 -I -S -B "$scripts_directory/dev_launcher.py" "$@"
+tree=$(CDPATH= cd -- "$scripts_directory/.." && pwd)
+
+if [ "$#" -lt 1 ] || [ "$1" != npm ]; then
+    echo "Development command failed: use scripts/dev npm --prefix <folder> ..." >&2
+    exit 2
+fi
+shift
+if ! command -v npm >/dev/null 2>&1; then
+    echo "Development command failed: npm is absent from PATH." >&2
+    exit 2
+fi
+
+if [ "$#" -ge 2 ] && [ "$1" = --prefix ]; then
+    prefix=$2
+    shift 2
+    case "$prefix" in
+        /*) ;;
+        *) prefix=$tree/$prefix ;;
+    esac
+    if [ "${prefix%/}" = "$tree/agent_backends" ] && [ "$#" -ge 1 ]; then
+        case "$1" in
+            ci)
+                echo "Development command failed: Backend CLIs have no lockfile. Use install." >&2
+                exit 2
+                ;;
+            install)
+                cd "$tree"
+                exec npm --prefix "$prefix" install --package-lock=false --save=false \
+                    @anthropic-ai/claude-code@latest @openai/codex@latest
+                ;;
+        esac
+    fi
+    cd "$tree"
+    exec npm --prefix "$prefix" "$@"
+fi
+cd "$tree"
+exec npm "$@"

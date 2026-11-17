@@ -1,4 +1,4 @@
-/** Closed Python/Node release metadata validation, not a runtime admission probe. */
+/** Closed Node release metadata validation, not a runtime admission probe. */
 import { isDeepStrictEqual as equal } from 'node:util';
 import { is_record as object } from '../../../core/records.ts';
 import type { DarwinNodeRuntimeContract, RuntimeContract, RuntimePlatform } from '../contracts.ts';
@@ -90,13 +90,13 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
   if (value === null || value === undefined) return null;
   if (!object(value)) fail('runtime contract must be an object');
   if (value.system === 'darwin') return parse_darwin_contract(value);
-  const node = value.version === 2;
+  if (value.version !== 2) fail('unsupported runtime contract version; republish the app');
   const required = [
     'version',
     'system',
     'architecture',
     'platforms',
-    node ? 'minimum_node_version' : 'python_version',
+    'minimum_node_version',
     'node_major',
     'cpu_features',
     'external_libraries',
@@ -108,12 +108,7 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
   if (!equal(value.platforms, SUPPORTED_PLATFORMS)) fail('unsupported runtime platform boundary');
   for (const key of ['version', 'node_major'])
     if (!Number.isInteger(value[key])) fail(`runtime ${key} must be an integer`);
-  for (const key of [
-    'system',
-    'architecture',
-    node ? 'minimum_node_version' : 'python_version',
-    'inventory_sha256',
-  ])
+  for (const key of ['system', 'architecture', 'minimum_node_version', 'inventory_sha256'])
     if (typeof value[key] !== 'string') fail(`runtime ${key} must be a string`);
   for (const key of ['cpu_features', 'external_libraries', 'external_executables'])
     if (
@@ -121,14 +116,11 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
       !(value[key] as unknown[]).every((item) => typeof item === 'string')
     )
       fail(`runtime ${key} must be a list of strings`);
-  if (value.version !== 1 && !node) fail('unsupported runtime contract version; republish the app');
   if (value.system !== 'linux' || value.architecture !== 'x86_64')
     fail('unsupported runtime operating system or architecture');
   if (value.node_major !== 22) fail('runtime requires host Node major 22');
-  if (node && value.minimum_node_version !== MINIMUM_NODE_VERSION)
+  if (value.minimum_node_version !== MINIMUM_NODE_VERSION)
     fail(`runtime requires minimum Node ${MINIMUM_NODE_VERSION}`);
-  if (!node && !fullmatch(/^3\.12\.\p{Decimal_Number}+$/u, value.python_version as string))
-    fail('runtime requires a concrete CPython 3.12 patch version');
   if (!fullmatch(/^[0-9a-f]{64}$/, value.inventory_sha256 as string))
     fail('invalid runtime inventory SHA256');
   if (!equal(value.external_libraries, GLIBC_LIBRARIES))
