@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextEnabledIndex, pickerRoom, placePickerPanel, type PickerBox } from "../src/lib/pickerPlacement";
+import { pickerRoom, placePickerPanel, type PickerBox } from "../src/lib/pickerPlacement";
 
 const anchor = (top: number, bottom: number, left = 900): PickerBox => ({
   left, top, right: left + 88, bottom
@@ -60,14 +60,5 @@ describe("picker placement", () => {
     expect(placed.left + Math.min(404, placed.maxWidth)).toBeLessThanOrEqual(720);
     expect(placed.left).toBeGreaterThanOrEqual(280);
     expect(placed.maxWidth).toBeLessThanOrEqual(440);
-  });
-
-  it("skips disabled rows in both directions and wraps", () => {
-    const disabled = [true, false, true, false];
-    expect(nextEnabledIndex(disabled, 0, 1)).toBe(1);
-    expect(nextEnabledIndex(disabled, 1, 1)).toBe(3);
-    expect(nextEnabledIndex(disabled, 3, 1)).toBe(1);
-    expect(nextEnabledIndex(disabled, 1, -1)).toBe(3);
-    expect(nextEnabledIndex([true, true], 0, 1)).toBe(0);
   });
 });

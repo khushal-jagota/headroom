@@ -1,12 +1,10 @@
 <script lang="ts">
   import { tick, type Snippet } from "svelte";
-  import { nextEnabledIndex, pickerRoom, placePickerPanel, type PickerPlacement } from "../../lib/pickerPlacement";
+  import { pickerRoom, placePickerPanel, type PickerPlacement } from "../../lib/pickerPlacement";
 
   export type ListboxPickerItem = {
     value: string;
     name: string;
-    /** Shown, but not a choice. The approval picker uses this for stages that have gone by. */
-    disabled?: boolean;
   };
 
   export type ListboxPageWindow = {
@@ -54,7 +52,6 @@
     onOpen,
     onClose,
     onChoose,
-    onActiveChange,
     triggerContent,
     beforeList,
     optionContent,
@@ -101,8 +98,6 @@
     /** Every close, dismissal or not. A picker with a draft discards it here. */
     onClose?: () => void;
     onChoose: (value: string) => void;
-    /** Optional explanatory preview only; activation still belongs to onChoose. */
-    onActiveChange?: (value: string | null) => void;
     triggerContent: Snippet<[boolean]>;
     beforeList?: Snippet;
     optionContent: Snippet<[ListboxPickerItem, boolean]>;
@@ -147,18 +142,13 @@
     if(index<itemOffset || (index+8>=itemOffset+items.length && itemOffset+items.length<totalItems)) pageWindow.onWindow(index);
   }
 
-  $effect(() => {
-    onActiveChange?.(open ? items[localActive]?.value ?? null : null);
-  });
-
   function focusList(): void {
     void tick().then(() => list?.focus(anchor || placeInViewport ? {preventScroll:true} : undefined));
   }
 
   function setActiveValue(value: string | null): void {
-    const index = value === null ? -1 : items.findIndex((item) => item.value === value && !item.disabled);
-    const fallback = items.findIndex((item) => !item.disabled);
-    activate(itemOffset+Math.max(0, index >= 0 ? index : fallback));
+    const index = value === null ? -1 : items.findIndex((item) => item.value === value);
+    activate(itemOffset+Math.max(0, index));
     // A rail switch puts different words in the list. Letters typed at the old one must
     // not join letters typed at the new one, or the match silently finds nothing.
     forgetTypeahead();
@@ -360,9 +350,8 @@
     const anchorRect = anchor?.getBoundingClientRect();
     anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
     anchorPositionReady = anchorOffset === null && !fitWithin;
-    const selectedIndex = items.findIndex((item) => item.value === selectedValue && !item.disabled);
-    const fallbackIndex = items.findIndex((item) => !item.disabled);
-    activate(itemOffset+Math.max(0, selectedIndex >= 0 ? selectedIndex : fallbackIndex));
+    const selectedIndex = items.findIndex((item) => item.value === selectedValue);
+    activate(itemOffset+Math.max(0, selectedIndex));
     viewportBox = null;
     painted = true;
     open = true;
@@ -401,7 +390,6 @@
 
   function choose(value: string): void {
     if (disabled || selectionDisabled) return;
-    if (items.some((item) => item.value === value && item.disabled)) return;
     onChoose(value);
   }
 
@@ -431,7 +419,7 @@
     const start = items.length === 0 ? 0 : (active + 1) % items.length;
     for (let offset = 0; offset < items.length; offset += 1) {
       const index = (start + offset) % items.length;
-      if (!items[index]?.disabled && items[index]?.name.toLocaleLowerCase().startsWith(typeahead)) {
+      if (items[index]?.name.toLocaleLowerCase().startsWith(typeahead)) {
         activeIndex = index;
         return;
       }
@@ -447,11 +435,6 @@
     if (totalItems === 0) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (!pageWindow) {
-        const local = nextEnabledIndex(items.map((item) => item.disabled === true), localActive, event.key === "ArrowDown" ? 1 : -1);
-        activate(itemOffset + local);
-        return;
-      }
       const step = event.key === "ArrowDown" ? 1 : totalItems - 1;
       activate((active + step) % totalItems);
       return;
@@ -465,19 +448,13 @@
     }
     if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      if (!pageWindow) {
-        const flags = items.map((item) => item.disabled === true);
-        const index = event.key === "Home" ? flags.findIndex((item) => !item) : flags.findLastIndex((item) => !item);
-        activate(itemOffset + Math.max(0, index));
-        return;
-      }
       activate(event.key === "Home" ? 0 : totalItems - 1);
       return;
     }
     if (event.key === " " && pageWindow && typeahead) {
       event.preventDefault(); moveToMatch(" "); return;
     }
-    if ((event.key === "Enter" || event.key === " ") && items[localActive] !== undefined && !items[localActive].disabled) {
+    if ((event.key === "Enter" || event.key === " ") && items[localActive] !== undefined) {
       event.preventDefault();
       choose(items[localActive].value);
       return;
@@ -534,9 +511,8 @@
     <button
       type="button"
       class="listbox-picker-option"
-      class:cursor={index+itemOffset === active && !item.disabled}
+      class:cursor={index+itemOffset === active}
       class:on={item.value === selectedValue}
-      class:passed={item.disabled}
       id={`${listId}-${index+itemOffset}`}
       role="option"
       aria-posinset={pageWindow ? index+itemOffset+1 : undefined}
@@ -547,14 +523,13 @@
       disabled={selectionDisabled}
       data-listbox-picker-value={item.value}
       data-listbox-picker-active={index+itemOffset === active ? "true" : undefined}
-      onmousemove={() => { if (pointerReallyMoved && !item.disabled) activeIndex = index+itemOffset; }}
+      onmousemove={() => { if (pointerReallyMoved) activeIndex = index+itemOffset; }}
       onmousedown={(event) => event.preventDefault()}
       onclick={() => choose(item.value)}
       {...optionAttributes?.(item, index+itemOffset === active, item.value === selectedValue)}
-      aria-disabled={item.disabled ? "true" : undefined}
     >
       {@render optionContent(item, item.value === selectedValue)}
-      <span class="listbox-picker-tick" aria-hidden="true">{item.disabled ? "Done" : item.value === selectedValue ? "✓" : ""}</span>
+      <span class="listbox-picker-tick" aria-hidden="true">{item.value === selectedValue ? "✓" : ""}</span>
     </button>
   {/each}
   {#if pageWindow}<div aria-hidden="true" style:height={`${Math.max(0,totalItems-itemOffset-items.length)*pageWindow.rowHeight}px`}></div>{/if}
@@ -705,15 +680,15 @@
   .listbox-picker-option:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
   .listbox-picker-option.cursor { background: var(--surface-recessed); color: var(--text-strong); }
   .listbox-picker-option.on { color: var(--text-strong); }
-  .listbox-picker-option.passed { color: var(--text-faintest); cursor: default; }
-  .listbox-picker-option.passed .listbox-picker-tick { font-family: var(--font-ui); color: var(--text-faintest); }
-  .listbox-picker-option.passed:hover,
-  .listbox-picker-option.passed.cursor { background: transparent; background-image: none; color: var(--text-faintest); }
   .listbox-picker-tick { flex: none; font-family: var(--font-mono); font-size: var(--type-xs); }
+  /* The top layer's own popover rules add a border, padding, and canvas fill.
+     Restate the panel's own chrome so placement does not change how it looks. */
   .listbox-picker-panel.viewport {
-    position: fixed; inset: auto; margin: 0; height: auto; padding: 0; overflow: visible;
+    position: fixed; inset: auto; margin: 0; height: auto; padding: 0; overflow: hidden;
+    color: inherit; background: var(--surface-2);
+    border: var(--border-hairline) solid var(--border-color);
+    border-radius: var(--radius-lg); box-shadow: none;
     transform-origin: var(--picker-origin, top left);
-    border: 0; border-radius: var(--radius-md); box-shadow: var(--shadow-float);
   }
   .listbox-picker-panel.viewport.right { right: auto; }
   .viewport > .listbox-picker-list {

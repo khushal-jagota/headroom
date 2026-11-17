@@ -69,18 +69,6 @@ export function placePickerPanel(input: {
   return { top, left, maxHeight, maxWidth, side };
 }
 
-/** The next index whose entry is not disabled, wrapping around the list. */
-export function nextEnabledIndex(disabled: readonly boolean[], index: number, direction: 1 | -1): number {
-  const count = disabled.length;
-  if (count === 0) return 0;
-  for (let step = 1; step <= count; step += 1) {
-    const wrapped = (index + direction * step) % count;
-    const candidate = wrapped < 0 ? wrapped + count : wrapped;
-    if (!disabled[candidate]) return candidate;
-  }
-  return index;
-}
-
 function intersectBox(a: PickerBox, b: PickerBox): PickerBox {
   return {
     left: Math.max(a.left, b.left),
