@@ -170,11 +170,14 @@ async function remove_retired(path: string, options: WorkspaceOptions): Promise<
     }
   }
   // The seven-day removal keeps the agent's logs in the Ticket folder. A retry
-  // after an interruption returns them the same way.
+  // after an interruption returns them the same way. If a reopened Ticket has
+  // a file with the same name, that newer file stays.
   const logs = join(path, LOGS_DIRECTORY);
   if (!record.checkout_only && (await entry_stat(logs))?.isDirectory()) {
-    await mkdir(record.source, { recursive: true });
-    await rename(logs, join(record.source, LOGS_DIRECTORY));
+    const kept = join(record.source, LOGS_DIRECTORY);
+    await mkdir(kept, { recursive: true });
+    for (const name of await readdir(logs))
+      if (!(await entry_stat(join(kept, name)))) await rename(join(logs, name), join(kept, name));
   }
   const names = record.scratch_names ?? [];
   if (!Array.isArray(names) || names.some((name) => typeof name !== 'string'))
