@@ -491,6 +491,12 @@ export class InMemoryConversationSystem implements ConversationSystem {
         sender: held.sender,
         recipient: held.recipient,
       });
+    if (fate instanceof PromptDeliveryRefused && mode === 'steer') {
+      // A refused steer was not delivered. It waits where it was, as a direct steer does.
+      state.held_prompts.splice(position, 0, { ...held, queue_reason: 'steer_refused' });
+      this._drain(state);
+      return new PromptDeliveryQueued({ queue_position: position + 1 });
+    }
     if (fate instanceof PromptDeliveryRefused) {
       state.observations.push(
         new InMemoryConversationObservation({

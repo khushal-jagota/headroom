@@ -770,7 +770,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   ): PromptDeliveryQueued {
     const held: Message = {
       ...message,
-      held_prompt_id: `held_${randomUUID().replaceAll('-', '')}`,
+      // A message held again keeps the identity the queue already showed.
+      held_prompt_id: message.held_prompt_id || `held_${randomUUID().replaceAll('-', '')}`,
       snapshot_sent_at_unix_milliseconds:
         message.sent_at_unix_milliseconds ?? Math.floor(this.unix_time_now() * 1000),
     };

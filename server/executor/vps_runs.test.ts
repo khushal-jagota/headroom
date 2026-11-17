@@ -122,12 +122,19 @@ async function remote_fixture(early_result = false) {
   const reference = { ...answer.child, conversation_id: 'core' };
   const placed = new Deferred<WireValue<'ChildCommand'>>();
   const put_released = new Deferred<void>();
+  const prompts: WireValue<'ChildCommand'>[] = [];
+  let steer = async (
+    _command: WireValue<'ChildCommand'>,
+  ): Promise<WireValue<'CommandOutcome'> | null> => {
+    throw new Error('unexpected steer');
+  };
   let may_have_sent = false;
   const proxy = new MacRemoteChild(
     reference,
     {
       async put(command) {
         if (command.operation === 'write_prompt') {
+          prompts.push(command);
           placed.resolve(command);
           if (early_result) await put_released.promise;
         }
@@ -137,8 +144,8 @@ async function remote_fixture(early_result = false) {
         return runs.wait_prompt_result(command, options);
       },
       mac_is_present: () => true,
-      async deliver_steer() {
-        throw new Error('unexpected steer');
+      deliver_steer(command) {
+        return steer(command);
       },
       async stop(command) {
         return {
@@ -194,27 +201,28 @@ async function remote_fixture(early_result = false) {
   const state = f.core.conversations.get('core')!;
   if (!early_result)
     await vi.waitFor(() => expect(mailbox.has_waiter(command.command_id)).toBe(true));
-  const finish = async (outcome: WireValue<'CommandOutcome'>) => {
+  const finish = async (outcome: WireValue<'CommandOutcome'>, target = command) => {
+    const envelope = {
+      command_id: target.command_id,
+      command_sequence: prompts.indexOf(target) + 1,
+      created_at_vps_ms: 1,
+      child_command: target,
+    };
     // Native results commit before publication. An early observer can reread the row.
     f.database.write((tx) =>
       tx.run(
         "INSERT INTO executor_commands(command_id,executor_incarnation,operation,conversation_id,child_id,turn_number,command_json,state,created_at_ms,machine_id,outcome_json) VALUES(?,?,?,?,?,?,?,'finished',1,?,?)",
         [
-          command.command_id,
-          command.child.executor_incarnation,
-          command.operation,
+          target.command_id,
+          target.child.executor_incarnation,
+          target.operation,
           'core',
-          command.child.child_id,
-          command.turn!.turn_number,
-          JSON.stringify({
-            command_id: command.command_id,
-            command_sequence: 1,
-            created_at_vps_ms: 1,
-            child_command: command,
-          }),
+          target.child.child_id,
+          target.turn!.turn_number,
+          JSON.stringify(envelope),
           runs.machine_id,
           JSON.stringify({
-            command_id: command.command_id,
+            command_id: target.command_id,
             child_outcome: outcome,
             model_list: null,
           }),
@@ -223,15 +231,7 @@ async function remote_fixture(early_result = false) {
     );
     put_released.resolve();
     await mailbox.publish_settlements([
-      [
-        {
-          command_id: command.command_id,
-          command_sequence: 1,
-          created_at_vps_ms: 1,
-          child_command: command,
-        },
-        { command_id: command.command_id, child_outcome: outcome, model_list: null },
-      ],
+      [envelope, { command_id: target.command_id, child_outcome: outcome, model_list: null }],
     ]);
     return sending;
   };
@@ -255,6 +255,10 @@ async function remote_fixture(early_result = false) {
     finish,
     close,
     mailbox,
+    prompts,
+    on_steer: (answer: typeof steer) => {
+      steer = answer;
+    },
     fetched: () => {
       may_have_sent = true;
     },
@@ -521,3 +525,109 @@ test('a native no-turn refusal crosses the steer barrier and leaves a newer turn
     await Promise.all([runs.settled(), presence.settled(), mailbox.settled(), f.core.settled()]);
   }
 });
+
+// The fixture has no artifact transport, so artifact delivery stays blocked throughout.
+// The Mac's prompt failed before its native send while the home still showed that turn
+// running. A recap promoted into that turn must wait for the next turn, not disappear.
+// The uncertain case is the control: a send that may have arrived is never repeated.
+test.each(['refused', 'uncertain'] as const)(
+  'a promoted recap whose remote steer is %s after a remote pre-send failure',
+  async (steer_fate) => {
+    const f = await remote_fixture();
+    const publish = (command: WireValue<'ChildCommand'>, outcome: WireValue<'CommandOutcome'>) =>
+      f.mailbox.publish_settlements([
+        [
+          {
+            command_id: command.command_id,
+            command_sequence: 100,
+            created_at_vps_ms: 1,
+            child_command: command,
+          },
+          { command_id: command.command_id, child_outcome: outcome, model_list: null },
+        ],
+      ]);
+    const recap_rows = () =>
+      f.store
+        .read_events_after('core', 0)
+        .filter(
+          (row) => 'sender_message_id' in row.payload && row.payload.sender_message_id === 'recap',
+        )
+        .map((row) => row.kind);
+    try {
+      await f.finish({
+        command_id: f.command.command_id,
+        child: f.reference,
+        disposition: 'succeeded',
+        result: {
+          kind: 'prompt_accepted',
+          composed_content_delivered: true,
+          agent_acceptance_proven: true,
+        },
+      });
+      expect((await f.send('recap', 'recap')).constructor.name).toBe('PromptDeliveryQueued');
+      const held = (await f.core.held_prompts('core'))[0];
+      let steer_command: WireValue<'ChildCommand'> | null = null;
+      let steer_outcome: WireValue<'CommandOutcome'> | null = null;
+      f.on_steer(async (command) => {
+        steer_command = command;
+        steer_outcome = {
+          command_id: command.command_id,
+          child: f.reference,
+          ...(steer_fate === 'refused'
+            ? {
+                disposition: 'succeeded',
+                result: { kind: 'steer_refused', refusal_reason: 'no_running_turn_to_steer_into' },
+              }
+            : {
+                disposition: 'uncertain',
+                result: { error_type: 'PromptWriteFailed', error_message: 'reply lost' },
+              }),
+        };
+        await publish(command, steer_outcome);
+        return steer_outcome;
+      });
+      const promoted = await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer');
+      expect(promoted?.constructor.name).toBe(
+        steer_fate === 'refused' ? 'PromptDeliveryQueued' : 'PromptDeliveryUncertain',
+      );
+      // The definite native failure of the earlier prompt reaches the core and ends its turn.
+      await publish(f.command, {
+        command_id: f.command.command_id,
+        child: f.reference,
+        disposition: 'refused',
+        result: { error_type: 'PromptWriteRefused', error_message: 'input failed before send' },
+      });
+      if (steer_fate === 'refused') {
+        await vi.waitFor(() => expect(f.prompts).toHaveLength(2));
+        expect(f.prompts[1].arguments).toMatchObject({ content: [{ text: 'recap' }] });
+        await f.finish(
+          {
+            command_id: f.prompts[1].command_id,
+            child: f.reference,
+            disposition: 'succeeded',
+            result: {
+              kind: 'prompt_accepted',
+              composed_content_delivered: true,
+              agent_acceptance_proven: true,
+            },
+          },
+          f.prompts[1],
+        );
+        await vi.waitFor(() => expect(recap_rows()).toEqual(['prompt']));
+        expect(await f.core.held_prompts('core')).toEqual([]);
+        // A late copy of the same native refusal changes nothing.
+        await publish(steer_command!, steer_outcome!);
+        await f.core.wait_until_quiescent();
+        expect(recap_rows()).toEqual(['prompt']);
+      } else {
+        await vi.waitFor(() => expect(f.state.running_turn).toBe(null));
+        await f.core.wait_until_quiescent();
+        expect(recap_rows()).toEqual(['prompt_delivery_uncertain']);
+        expect(await f.core.held_prompts('core')).toEqual([]);
+      }
+      expect(f.prompts).toHaveLength(steer_fate === 'refused' ? 2 : 1);
+    } finally {
+      await f.close();
+    }
+  },
+);
