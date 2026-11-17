@@ -9,7 +9,7 @@ import {
 import type { BackendChild, BackendSteerOutcome, TurnToken } from '../backends/contracts.ts';
 import { log_backend_failure } from '../backends/failure_summary.ts';
 import {
-  backend_supports_steer,
+  backend_supports_active_steering,
   PromptDeliveryInjected,
   PromptDeliveryMode,
   PromptDeliveryQueued,
@@ -554,7 +554,7 @@ export async function steer(
       state.held_prompts.some((entry) => entry.delivery_uncertain) ||
       state.running_turn === null ||
       state.child === null ||
-      !backend_supports_steer(state.record.backend_key)
+      !backend_supports_active_steering(host.options.backend_registry, state.record.backend_key)
     )
       queued = host.hold_prompt(state, {
         ...message,
@@ -678,7 +678,10 @@ export async function promote_held_prompt(
       held_before = state.held_prompts.slice(0, index).map((held) => held.held_prompt_id);
       state.held_prompts.splice(index, 1);
       host.publish_held_prompts_changed(state);
-      const reason = !backend_supports_steer(state.record.backend_key)
+      const reason = !backend_supports_active_steering(
+        host.options.backend_registry,
+        state.record.backend_key,
+      )
         ? R.backend_cannot_steer
         : state.running_turn === null || state.child === null
           ? R.no_running_turn_to_steer_into

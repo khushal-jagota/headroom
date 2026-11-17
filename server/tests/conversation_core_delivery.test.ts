@@ -1,4 +1,6 @@
-import { registry_of_factories } from '../drivers/testing/registry.ts';
+import { registry_of_factories, scripted_instance_controls } from '../drivers/testing/registry.ts';
+import type { SelectionTransitionPlan } from '../drivers/core/selection.ts';
+import { AUTOMATIC_COMPACTION_AFTER_SECONDS } from '../conversation/runtime/configuration.ts';
 import { setup } from './conversation_core_fixture.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 /** Internal ordering risks that HTTP request lists cannot pause at their exact boundary. */
@@ -24,6 +26,7 @@ import {
   AgentMessageCompleted,
   AgentMessageDelta,
   BackendSpawnFailed,
+  TokenUsageReported,
   TurnEnded,
   ToolCallStarted,
 } from '../conversation/backends/contracts.ts';
@@ -757,4 +760,137 @@ test('a repeated identical session-load failure is recorded and logged once', as
   expect(observed.fates).toEqual([SESSION_DID_NOT_LOAD, SESSION_DID_NOT_LOAD]);
   expect(observed.refusals).toHaveLength(1);
   expect(observed.logged).toHaveLength(1);
+});
+
+// The selection plan replaced the adapters' own restart throws, and `reject` has no producer
+// yet, so each plan outcome is driven here through a stub on the scripted driver instance.
+function stub_selection_plan(f: ReturnType<typeof setup>, plan: SelectionTransitionPlan) {
+  const controls = scripted_instance_controls(
+    f.core.options.backend_registry,
+    f.core.conversations.get('core')!.record.backend_key,
+  );
+  const stub = vi.fn((_input: Parameters<typeof controls.plan_selection_transition>[0]) => plan);
+  controls.plan_selection_transition = stub;
+  return stub;
+}
+function written_prompts(child: ScriptedChild) {
+  return child
+    .inspect()
+    .then((snapshot) => snapshot.calls.filter((call) => call.command === 'write_prompt'));
+}
+
+test('a restart plan retires the child and writes once on a fresh one', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    const first = stub_selection_plan(f, { type: 'apply_on_next_turn' });
+    expect(await f.send('one', 'one')).toBeInstanceOf(PromptDeliveryStarted);
+    // A fresh child is started on its target, so no plan is asked for.
+    expect(first).not.toHaveBeenCalled();
+    const child = await f.child;
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    // The HTTP route names an effort without `reasoning_effort_is_set`.
+    const send = (text: string, reasoning_effort_change: string) =>
+      f.core.send('core', text_message_content(text), {
+        sender_label: 'Owner',
+        sender_message_id: text,
+        reasoning_effort_change,
+      });
+    expect(await send('two', 'high')).toBeInstanceOf(PromptDeliveryStarted);
+    expect(first.mock.calls.map(([input]) => [input.current, input.target])).toEqual([
+      [
+        { model: 'model', reasoning_effort: null },
+        { model: 'model', reasoning_effort: 'high' },
+      ],
+    ]);
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    const restart = stub_selection_plan(f, { type: 'restart_session' });
+    expect(await send('three', 'low')).toBeInstanceOf(PromptDeliveryStarted);
+    // The applied change is what the child now runs with.
+    expect(restart.mock.calls.map(([input]) => [input.current, input.target])).toEqual([
+      [
+        { model: 'model', reasoning_effort: 'high' },
+        { model: 'model', reasoning_effort: 'low' },
+      ],
+    ]);
+    expect(f.children).toHaveLength(2);
+    expect(f.core.conversations.get('core')!.child).toBe(f.children[1]);
+    // The retired child kept only its own two prompts.
+    const retired = child.last_observation!.calls.map((call) => call.command);
+    expect(retired.filter((command) => command === 'write_prompt')).toHaveLength(2);
+    expect(retired.at(-1)).toBe('stop');
+    expect(await written_prompts(f.children[1])).toHaveLength(1);
+    expect((await f.children[1].inspect()).delivered_text).toEqual(['three']);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+test('a rejected selection refuses the prompt, records why, and logs nothing', async () => {
+  const f = setup();
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await f.start();
+    await f.send('one', 'one');
+    const child = await f.child;
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    stub_selection_plan(f, { type: 'reject', reason: 'This session cannot switch models.' });
+    expect(await f.send('two', 'two')).toEqual(
+      new PromptDeliveryRefused({
+        refusal_reason: PromptDeliveryRefusalReason.backend_rejected_prompt,
+      }),
+    );
+    expect(
+      f.store
+        .read_events_after('core', 0)
+        .filter((row) => row.kind === 'prompt_delivery_refused')
+        .map((row) => row.payload),
+    ).toMatchObject([
+      {
+        sender_message_id: 'two',
+        refusal_reason: 'backend_rejected_prompt',
+        refusal_detail: 'This session cannot switch models.',
+      },
+    ]);
+    expect(f.children).toHaveLength(1);
+    expect(await written_prompts(child)).toHaveLength(1);
+    expect(logged).not.toHaveBeenCalled();
+  } finally {
+    logged.mockRestore();
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+test('an automatic compaction that needs a fresh child is suppressed', async () => {
+  let now = 100;
+  const f = setup({
+    record: { integer_now: () => now },
+    core: {
+      unix_time_now: () => now,
+      monotonic_now: () => now,
+      idle_child_stop_after_seconds: 10000,
+    },
+  });
+  try {
+    await f.start();
+    await f.send();
+    const child = await f.child;
+    await child.emit(new TokenUsageReported({ context_input_tokens: 30000 }));
+    await child.finish();
+    await f.core.wait_until_quiescent();
+    now += AUTOMATIC_COMPACTION_AFTER_SECONDS;
+    f.store.conversations_due_for_automatic_compaction = () => ['core'];
+    const restart = stub_selection_plan(f, { type: 'restart_session' });
+    await f.core.sweep_idle_children();
+    await f.core.wait_until_quiescent();
+    expect(restart).toHaveBeenCalledOnce();
+    expect(f.children).toHaveLength(1);
+    expect(f.core.conversations.get('core')!.child).toBe(child);
+    expect((await child.inspect()).delivered_text).toEqual(['Role\n\none']);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
 });

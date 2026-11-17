@@ -1,5 +1,8 @@
 /** One shared scripted process per child, including its actual retired wire observations. */
-import { registry_of_factories } from '../../drivers/testing/registry.ts';
+import {
+  registry_of_factories,
+  scripted_instance_controls,
+} from '../../drivers/testing/registry.ts';
 import type { BackendChildFactory } from '../backends/contracts.ts';
 import type { DriverRegistry } from '../../drivers/core/registry.ts';
 import type { ScriptedBehavior, ScriptedSnapshot } from './scripted_protocol.ts';
@@ -55,6 +58,16 @@ export class ScriptedBackendRegistry {
       return child;
     };
     this.registry = registry_of_factories({ codex: factory, claude: factory, hermes: factory });
+  }
+
+  /** Only these backends steer from now on, including in conversations already running. */
+  set_active_steering(keys: readonly string[]): void {
+    for (const entry of this.registry.list()) {
+      if (entry.kind !== 'live') continue;
+      const id = entry.instance.instance_id;
+      scripted_instance_controls(this.registry, id).capabilities.turns.supportsActiveSteering =
+        keys.includes(id);
+    }
   }
 
   child(conversation_id: string): ScriptedChild {
