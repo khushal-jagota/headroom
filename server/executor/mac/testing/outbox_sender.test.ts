@@ -4,29 +4,15 @@ import { setImmediate } from 'node:timers/promises';
 import { MacOutboxSender } from '../transport/outbox.ts';
 import type { OutboxSenderOptions } from '../transport/outbox.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
-import { ExecutorValidationError } from '../../protocol.ts';
 import type { ItemRow } from '../storage/contracts.ts';
-import { Deferred } from '../../../core/deferred.ts';
-import type { ItemBatch, ItemBatchReply, FileManifest } from '../../wire.generated.ts';
+import type { ItemBatch, ItemBatchReply } from '../../wire.generated.ts';
 
 const child = {
   executor_incarnation: 'incarnation',
   conversation_id: 'conversation',
   child_id: 'child',
 };
-const file = (path: string, digest: string): FileManifest => ({
-  scope: 'ticket',
-  owner_id: 'ticket',
-  relative_path: path,
-  sha256: digest.repeat(64),
-  byte_count: 1,
-});
-function row(
-  id: string,
-  sequence: number,
-  files: FileManifest[] = [],
-  conversation_id = 'conversation',
-): ItemRow {
+function row(id: string, sequence: number, conversation_id = 'conversation'): ItemRow {
   return {
     sequence,
     submission_id: id,
@@ -34,7 +20,7 @@ function row(
     child_id: 'child',
     kind: 'backend_event',
     payload_json: Buffer.from(
-      JSON.stringify({ payload: { child: { ...child, conversation_id }, event: id }, files }),
+      JSON.stringify({ payload: { child: { ...child, conversation_id }, event: id }, files: [] }),
     ),
     receipt_json: null,
   };
@@ -51,14 +37,10 @@ function accepted(batch: ItemBatch): ItemBatchReply {
     stop: null,
   };
 }
-function fixture(
-  post: OutboxSenderOptions['client']['post_items'],
-  upload: OutboxSenderOptions['files']['upload_file'] = async () => {},
-) {
+function fixture(post: OutboxSenderOptions['client']['post_items']) {
   const rows: ItemRow[] = [],
     events = new EventEmitter(),
     starts = new Map<string, number>(),
-    refused: string[] = [],
     warnings: string[] = [];
   const receipts: { id: string; result: unknown }[] = [];
   const pending = (id?: string) =>
@@ -77,26 +59,16 @@ function fixture(
         if (!starts.has(id)) starts.set(id, Date.now());
         return starts.get(id)!;
       },
-      async refuse_file(id, key, reason) {
-        const held = rows.find((r) => r.submission_id === id)!;
-        const value = JSON.parse(held.payload_json.toString());
-        value.files = value.files.filter(
-          (f: FileManifest) => f.relative_path !== key.relative_path || f.sha256 !== key.sha256,
-        );
-        held.payload_json = Buffer.from(JSON.stringify(value));
-        refused.push(reason);
-      },
       async fail_delivery(id, receipt, _reason, done) {
         rows.find((r) => r.submission_id === id)!.receipt_json = receipt;
         done();
       },
-      async acknowledge(id, _sender, body, _accepted, _invalidated, done) {
+      async acknowledge(id, _sender, body, done) {
         rows.find((r) => r.submission_id === id)!.receipt_json = body;
         done();
       },
     },
     client: { post_items: post },
-    files: { upload_file: upload },
     notify_confirmed(receipt) {
       receipts.push({ id: receipt.submission_id, result: receipt.result });
       events.emit('confirmed');
@@ -113,7 +85,6 @@ function fixture(
     rows,
     starts,
     sender,
-    refused,
     warnings,
     receipts,
     pending,
@@ -162,51 +133,6 @@ test('a committed append wakes an idle sender and shutdown retains a transient i
   expect(f.warnings[0]).toContain('sequence=2 attempt=1 retry_in=1s: Error: offline');
 });
 
-test('missing and corrupt files are refused individually while messages and turn end reach acceptance', async () => {
-  const missing = file('missing.txt', 'a'),
-    corrupt = file('corrupt.txt', 'b'),
-    good = file('good.txt', 'c');
-  const manifests: string[][] = [],
-    uploaded = new Set<string>();
-  const f = fixture(
-    async (_, batch) => {
-      const envelope = batch.items[0]!.envelope;
-      manifests.push((envelope.file_dependencies ?? []).map((m) => m.relative_path));
-      const needed = (envelope.file_dependencies ?? []).filter((m) => !uploaded.has(m.sha256));
-      if (needed.length)
-        return {
-          receipts: [],
-          stop: {
-            sequence: envelope.sequence,
-            reason: 'missing_files',
-            message: 'upload needed',
-            missing_files: needed,
-          },
-        };
-      return accepted(batch);
-    },
-    async ({ manifest }) => {
-      if (manifest.sha256 === missing.sha256)
-        throw Object.assign(new Error('blob absent'), { code: 'ENOENT' });
-      if (manifest.sha256 === corrupt.sha256)
-        throw new ExecutorValidationError('snapshot digest differs from manifest');
-      uploaded.add(manifest.sha256);
-    },
-  );
-  f.rows.push(row('message', 1, [missing, corrupt, good]), row('turn_end', 2));
-  f.sender.start();
-  await flush();
-  expect(f.pending()).toEqual([]);
-  expect(f.receipts.map((r) => r.id)).toEqual(['message', 'turn_end']);
-  expect(manifests).toEqual([['missing.txt', 'corrupt.txt', 'good.txt'], ['good.txt'], []]);
-  expect(f.refused).toEqual([
-    'missing.txt: Error: blob absent',
-    'corrupt.txt: ExecutorValidationError: snapshot digest differs from manifest',
-  ]);
-  expect(f.rows[0]!.payload_json.toString()).toContain('"event":"message"');
-  await f.stop();
-});
-
 test('HTTP404 settles the head with a local refusal before the later message and turn end', async () => {
   const f = fixture(async (_, batch) => {
     if (batch.items[0]!.envelope.submission_id === 'deleted')
@@ -227,40 +153,6 @@ test('HTTP404 settles the head with a local refusal before the later message and
   expect(f.rows[0]!.receipt_json?.toString()).toContain('"accepted_at_vps_ms":0');
   await f.stop();
 });
-
-test.each([400, 403])(
-  'HTTP%s upload refusal settles the item and releases its turn end',
-  async (status) => {
-    const f = fixture(
-      async (_, batch) => {
-        const envelope = batch.items[0]!.envelope;
-        return envelope.file_dependencies?.length
-          ? {
-              receipts: [],
-              stop: {
-                sequence: envelope.sequence,
-                reason: 'missing_files',
-                message: 'upload needed',
-                missing_files: envelope.file_dependencies,
-              },
-            }
-          : accepted(batch);
-      },
-      async () => {
-        throw new ExecutorHttpError(status, 'upload_refused', 'file cannot be published');
-      },
-    );
-    f.rows.push(row('blocked', 1, [file('file.txt', 'a')]), row('turn_end', 2));
-    f.sender.start();
-    await flush();
-    expect(f.receipts.map((r) => r.id)).toEqual(['blocked', 'turn_end']);
-    expect(f.receipts[0]!.result).toMatchObject({
-      delivery_outcome: 'refused',
-      error: { message: `HTTP ${status} upload_refused: file cannot be published` },
-    });
-    await f.stop();
-  },
-);
 
 test('transient HTTP and retry_later failures keep bounded backoff and real diagnostics', async () => {
   fake_time();
@@ -305,51 +197,6 @@ test('transient HTTP and retry_later failures keep bounded backoff and real diag
   await f.stop();
 });
 
-test('a blocked upload releases later messages at the deadline while actual cleanup stays owned', async () => {
-  fake_time();
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const f = fixture(
-    async (_, batch) => {
-      const envelope = batch.items[0]!.envelope;
-      return envelope.file_dependencies?.length
-        ? {
-            receipts: [],
-            stop: {
-              sequence: envelope.sequence,
-              reason: 'missing_files',
-              message: 'upload needed',
-              missing_files: envelope.file_dependencies,
-            },
-          }
-        : accepted(batch);
-    },
-    async () => held,
-  );
-  f.rows.push(row('blocked', 1, [file('file.txt', 'a')]), row('message', 2), row('turn_end', 3));
-  f.sender.start();
-  await flush();
-  await vi.advanceTimersByTimeAsync(300_000);
-  await flush();
-  expect(f.pending()).toEqual([]);
-  expect(f.receipts.map((r) => r.id)).toEqual(['blocked', 'message', 'turn_end']);
-  expect(f.receipts[0]!.result).toMatchObject({
-    delivery_outcome: 'unconfirmed',
-    error: { message: expect.stringContaining('VPS may already have accepted') },
-  });
-  let stopped = false;
-  const stop = f.stop().then(() => {
-    stopped = true;
-  });
-  await flush();
-  expect(stopped).toBe(false);
-  release();
-  await stop;
-  expect(stopped).toBe(true);
-});
-
 test('an expired persisted start survives restart without another delivery attempt', async () => {
   fake_time();
   const sent: string[] = [];
@@ -381,11 +228,11 @@ test('four active senders rotate after one batch before a busy conversation gets
     return accepted(batch);
   });
   for (let index = 0; index < 6; index++) {
-    const item = row(`item${index}`, index + 1, [], `c${index}`);
+    const item = row(`item${index}`, index + 1, `c${index}`);
     item.kind = 'cli_write';
     f.rows.push(item);
   }
-  const again = row('again', 7, [], 'c0');
+  const again = row('again', 7, 'c0');
   again.kind = 'cli_write';
   f.rows.push(again);
   f.sender.start();
@@ -437,44 +284,26 @@ test('network retries cap their delay and fail visibly at five minutes before la
   await f.stop();
 });
 
-test('a receipted prefix cannot expire its newer successor during file negotiation', async () => {
+test('a receipted prefix cannot expire its newer successor while the home defers it', async () => {
   fake_time();
-  let uploaded = false;
-  const f = fixture(
-    async (_, batch) => {
-      const needed = batch.items.find(
-        (item) => item.envelope.file_dependencies?.length && !uploaded,
-      );
-      if (needed)
-        return {
-          receipts: accepted(batch).receipts.filter(
-            (receipt) => receipt.submission_id === 'earlier',
-          ),
-          stop: {
-            sequence: needed.envelope.sequence,
-            reason: 'missing_files',
-            message: 'upload needed',
-            missing_files: needed.envelope.file_dependencies,
-          },
-        };
-      return accepted(batch);
-    },
-    async (_, _source, signal) => {
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, 1500);
-        signal!.addEventListener(
-          'abort',
-          () => {
-            clearTimeout(timer);
-            reject(signal!.reason);
-          },
-          { once: true },
-        );
-      });
-      uploaded = true;
-    },
-  );
-  f.rows.push(row('earlier', 1), row('newer', 2, [file('file.txt', 'a')]));
+  let deferred = false;
+  const f = fixture(async (_, batch) => {
+    const newer = batch.items.find((item) => item.envelope.submission_id === 'newer');
+    if (newer && !deferred) {
+      deferred = true;
+      return {
+        receipts: accepted(batch).receipts.filter((receipt) => receipt.submission_id === 'earlier'),
+        stop: {
+          sequence: newer.envelope.sequence,
+          reason: 'retry_later',
+          message: 'home is busy',
+          missing_files: [],
+        },
+      };
+    }
+    return accepted(batch);
+  });
+  f.rows.push(row('earlier', 1), row('newer', 2));
   f.starts.set('earlier', Date.now() - 299_000);
   f.sender.start();
   await flush();
@@ -488,51 +317,4 @@ test('a receipted prefix cannot expire its newer successor during file negotiati
     ),
   ).toBe(true);
   await f.stop();
-});
-
-// Other cases prove refusal and deadline release, not one recap delivery after a resumed upload.
-test('a retained recap arrives once after its artifact upload resumes', async () => {
-  const evidence = file('artifacts/evidence.txt', 'd');
-  const uploading = new Deferred<void>(),
-    resume = new Deferred<void>();
-  const accepted_ids: string[] = [];
-  let uploaded = false;
-  const f = fixture(
-    async (_, batch) => {
-      if (!uploaded)
-        return {
-          receipts: [],
-          stop: {
-            sequence: batch.items[0]!.envelope.sequence,
-            reason: 'missing_files',
-            message: 'upload required',
-            missing_files: [evidence],
-          },
-        };
-      accepted_ids.push(...batch.items.map(({ envelope }) => envelope.submission_id));
-      return accepted(batch);
-    },
-    async () => {
-      uploading.resolve();
-      await resume.promise;
-      uploaded = true;
-    },
-  );
-  f.rows.push(row('artifact', 1, [evidence]), row('retained-recap', 2));
-  try {
-    f.sender.start();
-    await uploading.promise;
-    expect(accepted_ids).toEqual([]);
-    expect(f.pending().map((r) => r.submission_id)).toEqual(['artifact', 'retained-recap']);
-    resume.resolve();
-    await vi.waitFor(() => expect(f.pending()).toEqual([]));
-    f.events.emit('pending');
-    await flush();
-    expect(accepted_ids).toEqual(['artifact', 'retained-recap']);
-    expect(f.receipts.filter((r) => r.id === 'retained-recap')).toHaveLength(1);
-  } finally {
-    resume.resolve();
-    await f.stop();
-    await f.sender.settled();
-  }
 });

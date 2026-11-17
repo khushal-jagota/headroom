@@ -5,7 +5,6 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
-import type { FileUploadRequest } from '../../wire.generated.ts';
 
 const input = JSON.parse(await readFile(process.argv[2]!, 'utf8')) as {
   runtime: string;
@@ -38,21 +37,16 @@ try {
   assert.deepEqual(await files.file_digest(target), [input.sha256, input.byte_count]);
   const source = join(input.root, 'upload.bin');
   await writeFile(source, bytes, { flag: 'wx' });
-  const upload: FileUploadRequest = {
-    child: {
-      executor_incarnation: input.identity.executor_incarnation,
-      child_id: 'rehearsal-child',
-      conversation_id: 'rehearsal-files',
-    },
-    manifest: {
+  await transport.upload_ticket_file(
+    {
       scope: 'ticket',
       owner_id: 'rehearsal-ticket',
       relative_path: 'artifacts/rehearsal.bin',
       sha256: input.sha256,
       byte_count: input.byte_count,
     },
-  };
-  await transport.upload_file(upload, source);
+    source,
+  );
   process.stdout.write(
     JSON.stringify({
       packaged_mac_transfer: 'passed',

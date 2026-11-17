@@ -502,15 +502,14 @@ Python instead refuses that existing generation. No source or provider user data
 The Mac host does not collect unreferenced generations or abandoned stages.
 This slice adds no generation sweeper. Native durability, Darwin directory ABI, and filesystem failure behavior remain later Mac checks.
 
-## Mac outbox cleanup after commit
+## Ticket files travel apart from items
 
-The Manager required this correction during the Mac slice 2 review on November 12, 2026.
-Python can reject a successful capture callback after its append commits, when the final blob sweep fails.
-A caller without a fixed submission ID can then retry and queue the same output twice as new.
-TypeScript logs that cleanup failure and retains the callback result. A later sweep retries blob cleanup.
-
-The Mac outbox now returns committed capture and receipt results before blob cleanup finishes. One coalesced cleanup task remains owned through shutdown. This keeps slow cleanup from holding a delivery slot or the next capture.
-The durable append and receipt behavior otherwise retain Python's contract.
+Khushal approved this redesign on November 17, 2026, in the Ticket "Redesign how Mac Workers send Ticket files to the home".
+Python attaches the Ticket folder's changed files to each item. The item waits for their capture, upload, and publication, and a large folder stalls or loses finished output.
+TypeScript items carry no files. The executor's file sync sends the Ticket's `artifacts/` folder on its own path, and it also removes deleted files from the home.
+A message can therefore arrive before a file it links. Files outside `artifacts/` no longer transfer.
+The home keeps the earlier item-bound upload and publication for an executor that still runs the earlier version. The spool format and the item wire format do not change.
+The Python spool, sender, gateway, and HTTP comparison cases that capture or upload files no longer match by design.
 
 ## CLI workspace artifact field
 

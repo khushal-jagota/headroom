@@ -47,10 +47,6 @@ async function execute(
       return transfers.finish_transfer(...message.arguments);
     case 'close_transfer':
       return transfers.close_transfer(...message.arguments);
-    case 'capture_file': {
-      const [source, handle, checked_ns] = message.arguments;
-      return files.capture_file(source, descriptor(handle), checked_ns);
-    }
     case 'sweep_directory': {
       const [handle, path, retained] = message.arguments;
       const names = readdirSync(path);

@@ -5,7 +5,7 @@ import { setImmediate as yield_turn } from 'node:timers/promises';
 import { register_test_root } from '../../../../core/test_paths.ts';
 import type { Database } from '../../../../core/database/contracts.ts';
 import { OutboxStore } from '../outbox.ts';
-import type { CaptureRows, ItemColumns, TicketFileKey } from '../contracts.ts';
+import type { ItemColumns } from '../contracts.ts';
 interface Step {
   operation: 'append' | 'acknowledge' | 'recent' | 'orphan' | 'crash';
   columns?: ItemColumns;
@@ -15,7 +15,6 @@ interface Step {
   submission_id?: string;
   receipt_hex?: string;
   accepted?: boolean;
-  invalidated?: TicketFileKey[];
 }
 interface Input {
   root: string;
@@ -79,22 +78,14 @@ export async function spool_parity(input: Input): Promise<unknown> {
           step.submission_id!,
           store.sender_id,
           Buffer.from(step.receipt_hex!, 'hex'),
-          step.accepted!,
-          step.invalidated ?? [],
           () => {},
         );
         receipts.push(store.lookup(step.submission_id!)?.receipt_json?.toString('hex') ?? null);
       } else {
-        const append = (capture: CaptureRows = { files: [], updates: [] }) =>
-          store.append(
-            step.columns!,
-            Buffer.from(step.payload_hex!, 'hex'),
-            capture.files,
-            capture.updates,
-            () => {
-              if (step.operation === 'crash') process.exit(71);
-            },
-          );
+        const append = () =>
+          store.append(step.columns!, Buffer.from(step.payload_hex!, 'hex'), () => {
+            if (step.operation === 'crash') process.exit(71);
+          });
         if (step.reject) {
           try {
             append();
@@ -103,10 +94,9 @@ export async function spool_parity(input: Input): Promise<unknown> {
             refusals.push((error as Error).message);
           }
         } else if (step.capture) {
-          await store.with_capture('ticket', (capture) => {
-            append(capture);
-            captures.push(capture.files);
-          });
+          // Items no longer capture files. The file sync owns them.
+          append();
+          captures.push([]);
         } else append();
       }
     }
@@ -174,21 +164,12 @@ export async function spool_burst(parent: string): Promise<unknown> {
           kind: 'backend_event',
         },
         payload,
-        [],
-        [],
         () => {},
       );
       max_operation_ms = Math.max(max_operation_ms, performance.now() - before);
       await yield_turn();
       before = performance.now();
-      await store.acknowledge(
-        row.submission_id,
-        store.sender_id,
-        Buffer.from('{}'),
-        true,
-        [],
-        () => {},
-      );
+      await store.acknowledge(row.submission_id, store.sender_id, Buffer.from('{}'), () => {});
       max_operation_ms = Math.max(max_operation_ms, performance.now() - before);
       max_rss = Math.max(max_rss, process.memoryUsage().rss);
       await yield_turn();

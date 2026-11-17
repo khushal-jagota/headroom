@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { OutboxStore } from '../storage/outbox.ts';
 import { MacOutboxSender } from '../transport/outbox.ts';
@@ -32,14 +30,6 @@ export async function deliver(input: { root: string; replies: Record<string, (st
             decode_value(Object.fromEntries(Object.entries(manifest).reverse()), 'FileManifest'),
           );
         return response;
-      },
-    },
-    files: {
-      async upload_file(request, source) {
-        uploaded.push([
-          Buffer.from(encode_bounded(request, 'FileUploadRequest')).toString(),
-          createHash('sha256').update(readFileSync(source)).digest('hex'),
-        ]);
       },
     },
     notify_confirmed(receipt) {

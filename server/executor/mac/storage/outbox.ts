@@ -1,9 +1,7 @@
 import { counter } from '../../logic/counters.ts';
-import { ExecutorValidationError } from '../../protocol_errors.ts';
-/** Durable local rows and immutable blobs. Wire codecs and send loops belong to the host. */
-import type { BigIntStats } from 'node:fs';
-import { readdir, lstat, opendir } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+/** Durable local rows. Wire codecs and send loops belong to the host. */
+import { readdir, lstat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
@@ -11,15 +9,12 @@ import {
   createDurableSidecarDatabase,
 } from '../../../core/database/index.ts';
 import type { Database, DurableSidecarOpenFailure } from '../../../core/database/contracts.ts';
-import { PRIVATE_TICKET_NAMES } from '../../../files/logic/paths.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
-import { FilesService, contained_path, safe_component } from '../files.ts';
-import type { DirectoryHandle } from '../files.ts';
+import { FilesService, safe_component } from '../files.ts';
 import { error_code, file_error } from '../file_metadata.ts';
 import { acquire_process_lock } from '../platform.ts';
-import { failure_name } from '../failure_name.ts';
 import { failure_detail } from '../failure_detail.ts';
 import { MAX_ITEM_BATCH_ITEMS, MAX_LEASE_WAITING_CONVERSATIONS } from '../configuration.ts';
 import { OutboxResources } from './resources.ts';
@@ -33,13 +28,10 @@ import {
   stored_payload,
 } from './delivery.ts';
 import type {
-  CaptureRows,
   ItemColumns,
-  ItemFileColumns,
   ItemRow,
   OutboxClock,
   OutboxDeliveryStatus,
-  TicketFileKey,
   TicketFileRow,
 } from './contracts.ts';
 export type * from './contracts.ts';
@@ -70,12 +62,6 @@ function synchronous<T>(value: T): T {
   }
   return value;
 }
-function unreadable(error: unknown): boolean {
-  return (
-    ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error_code(error) ?? '') ||
-    error instanceof ExecutorValidationError
-  );
-}
 export class OutboxStore {
   readonly pending_events = new EventEmitter();
   readonly health_fence = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
@@ -83,26 +69,19 @@ export class OutboxStore {
   readonly root: string;
   private readonly database: Database;
   private readonly files: FilesService;
-  private readonly blobs: DirectoryHandle;
   private readonly clock: OutboxClock;
   private readonly resources: OutboxResources;
   private readonly on_failure: (error: Error) => void;
   private faulted = false;
   private closed = false;
-  private callback_scope = 0;
-  private capturing = 0;
   private readonly first_held = new Map<number, number>();
-  private readonly capture_tails = new Map<string, Promise<void>>();
   private readonly operations = new Set<Promise<unknown>>();
-  private sweep_task: Promise<void> | undefined;
-  private sweep_requested = false;
   private drained: Promise<void> | undefined;
   private cleanup: Promise<void> | undefined;
   private constructor(
     root: string,
     database: Database,
     files: FilesService,
-    blobs: DirectoryHandle,
     clock: OutboxClock,
     resources: OutboxResources,
     on_failure: (error: Error) => void,
@@ -110,7 +89,6 @@ export class OutboxStore {
     this.root = root;
     this.database = database;
     this.files = files;
-    this.blobs = blobs;
     this.clock = clock;
     this.resources = resources;
     this.on_failure = on_failure;
@@ -151,12 +129,16 @@ export class OutboxStore {
       });
       resources.database = database;
       if (!existed) await files.fsync_directory(root);
-      const blobs = await files.open_directory(join(root, 'blobs'), { create: true });
-      await files.fsync_directory(root);
-      const store = new OutboxStore(root, database, files, blobs, clock, resources, on_failure);
+      const store = new OutboxStore(root, database, files, clock, resources, on_failure);
       files.assert_healthy();
       database.write((tx) => {
         tx.run(`DELETE FROM items WHERE receipt_json IS NOT NULL AND ${NO_DELIVERY_DIAGNOSTICS}`);
+        // Items no longer carry files. A file that waited on an item never reached the home,
+        // so the file sync must send it. `ticket_files` records only what the home holds.
+        tx.run(
+          'DELETE FROM ticket_files WHERE EXISTS(SELECT 1 FROM item_files f JOIN items i USING(sequence) WHERE i.receipt_json IS NULL AND f.relative_path=ticket_files.relative_path AND f.sha256=ticket_files.sha256)',
+        );
+        tx.run('DELETE FROM item_files');
         files.assert_healthy();
       });
       const opened = clock.monotonic();
@@ -166,7 +148,7 @@ export class OutboxStore {
         ),
       );
       for (const row of sequences) store.first_held.set(counter(row.sequence), opened);
-      await store.sweep();
+      await store.clear_legacy_blobs();
       return store;
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
@@ -187,9 +169,8 @@ export class OutboxStore {
       throw failure;
     }
   }
-  private admit(capture_append = false): void {
-    if (this.closed && (!capture_append || this.callback_scope === 0))
-      throw new ServerLifecycleError('outbox is closed');
+  private admit(): void {
+    if (this.closed) throw new ServerLifecycleError('outbox is closed');
     this.assert_healthy();
   }
   private failed(error: Error): void {
@@ -302,43 +283,6 @@ export class OutboxStore {
     });
     return started_at_ms;
   }
-  refuse_file(submission_id: string, file: TicketFileKey, reason: string): Promise<void> {
-    this.admit();
-    const task = (async () => {
-      await Promise.resolve();
-      const row = this.held(submission_id);
-      if (row === null || row.receipt_json !== null) return;
-      const value = stored_payload(row),
-        state = delivery_state(row);
-      const matches = (entry: (typeof value.files)[number]) =>
-        entry.owner_id === file.ticket_id &&
-        entry.relative_path === file.relative_path &&
-        entry.sha256 === file.sha256;
-      if (!value.files.some(matches)) return;
-      value.files = value.files.filter((entry) => !matches(entry));
-      state.file_refusals.push({ relative_path: file.relative_path, sha256: file.sha256, reason });
-      value.delivery = state;
-      this.database.write((tx) => {
-        tx.run('UPDATE items SET payload_json=? WHERE submission_id=?', [
-          Buffer.from(JSON.stringify(value)),
-          submission_id,
-        ]);
-        tx.run('DELETE FROM item_files WHERE sequence=? AND relative_path=? AND sha256=?', [
-          row.sequence,
-          file.relative_path,
-          file.sha256,
-        ]);
-        tx.run('DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=? AND sha256=?', [
-          file.ticket_id,
-          file.relative_path,
-          file.sha256,
-        ]);
-        this.assert_healthy();
-      });
-      this.defer_sweep();
-    })();
-    return this.track(task);
-  }
   fail_delivery(
     submission_id: string,
     receipt: Buffer,
@@ -358,17 +302,10 @@ export class OutboxStore {
           receipt,
           submission_id,
         ]);
-        for (const file of value.files)
-          tx.run('DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=? AND sha256=?', [
-            file.owner_id,
-            file.relative_path,
-            file.sha256,
-          ]);
         this.assert_healthy();
       });
       this.first_held.delete(row.sequence);
       synchronous(confirmed());
-      this.defer_sweep();
     })();
     return this.track(task);
   }
@@ -448,14 +385,8 @@ export class OutboxStore {
     const held = first === undefined ? undefined : this.first_held.get(counter(first.sequence));
     return held === undefined ? null : Math.trunc((this.clock.monotonic() - held) * 1000);
   }
-  append(
-    columns: ItemColumns,
-    payload: Buffer,
-    files: readonly ItemFileColumns[],
-    updates: readonly TicketFileRow[],
-    validate: (row: ItemRow) => void,
-  ): ItemRow {
-    this.admit(true);
+  append(columns: ItemColumns, payload: Buffer, validate: (row: ItemRow) => void): ItemRow {
+    this.admit();
     if (columns.submission_id !== undefined) {
       const prior = this.held(safe_component(columns.submission_id));
       if (prior !== null) return prior;
@@ -471,18 +402,6 @@ export class OutboxStore {
       );
       const sequence = counter(result.lastInsertRowid);
       size_guard(sequence);
-      for (const file of files)
-        tx.run('INSERT INTO item_files VALUES(?,?,?,?)', [
-          sequence,
-          file.relative_path,
-          file.sha256,
-          file.byte_count,
-        ]);
-      for (const file of updates)
-        tx.run(
-          'INSERT INTO ticket_files VALUES(?,?,?,?,?) ON CONFLICT(ticket_id,relative_path) DO UPDATE SET byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,sha256=excluded.sha256',
-          [file.ticket_id, file.relative_path, file.byte_count, file.modified_ns, file.sha256],
-        );
       const held = item_row(tx.get<ItemRow>('SELECT * FROM items WHERE sequence=?', [sequence])!);
       synchronous(validate(held));
       this.assert_healthy();
@@ -492,119 +411,47 @@ export class OutboxStore {
     this.pending_events.emit('pending');
     return row;
   }
-  with_capture<T>(ticket_id: string, callback: (capture: CaptureRows) => T): Promise<T> {
-    this.admit();
-    safe_component(ticket_id);
-    const previous = this.capture_tails.get(ticket_id) ?? Promise.resolve();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = previous.then(() => gate);
-    this.capture_tails.set(ticket_id, tail);
-    const task = (async () => {
-      await previous;
-      this.capturing++;
-      try {
-        const captured = await this.capture(ticket_id);
-        this.callback_scope++;
-        try {
-          return synchronous(callback(captured));
-        } finally {
-          this.callback_scope--;
-        }
-      } finally {
-        this.capturing--;
-        release();
-        if (this.capture_tails.get(ticket_id) === tail) this.capture_tails.delete(ticket_id);
-        this.defer_sweep();
-      }
-    })();
-    return this.track(task);
+  /** The file sync listens for this. A Ticket's files can differ after any of its items. */
+  note_ticket_activity(ticket_id: string): void {
+    this.pending_events.emit('ticket_activity', safe_component(ticket_id));
   }
-  private async capture(ticket_id: string): Promise<CaptureRows> {
-    const root = join(dirname(this.root), 'artifacts', 'tickets', ticket_id);
-    const files: TicketFileRow[] = [],
-      updates: TicketFileRow[] = [];
-    const checked_ns = this.clock.now_ns();
-    const folders = (await exists(root)) ? [root] : [];
-    while (folders.length) {
-      const folder = folders.pop()!;
-      let entries: string[];
-      let held: DirectoryHandle | undefined;
-      try {
-        held = await this.files.open_directory(folder);
-        entries = (await readdir(folder)).sort((left, right) =>
-          Buffer.compare(Buffer.from(left), Buffer.from(right)),
-        );
-      } catch (error) {
-        if (!unreadable(error)) throw error;
-        console.warn(`Skipping unreadable artifact directory: ${folder}`);
-        continue;
-      } finally {
-        if (held !== undefined) await this.files.close_directory(held);
-      }
-      for (const name of entries) {
-        if (folder === root && PRIVATE_TICKET_NAMES.has(name)) continue;
-        const relative_path = relative(root, join(folder, name));
-        let source: string, info: BigIntStats;
-        try {
-          source = contained_path(root, relative_path);
-          info = await lstat(source, { bigint: true });
-          if (!info.isDirectory() && !info.isFile())
-            throw file_error('artifact is not regular file');
-        } catch (error) {
-          if (!unreadable(error)) throw error;
-          console.warn(`Skipping unreadable artifact: ${relative_path}`);
-          continue;
-        }
-        if (info.isDirectory()) {
-          folders.push(source);
-          continue;
-        }
-        const previous = this.database.read((sql) => {
-          const stored = sql.get<TicketFileRow>(
-            'SELECT * FROM ticket_files WHERE ticket_id=? AND relative_path=?',
-            [ticket_id, relative_path],
-          );
-          const row =
-            stored === undefined
-              ? undefined
-              : { ...stored, byte_count: counter(stored.byte_count) };
-          if (
-            row === undefined ||
-            row.byte_count !== counter(info.size) ||
-            row.modified_ns !== info.mtimeNs
-          )
-            return undefined;
-          const waiting = sql.get(
-            'SELECT 1 FROM item_files JOIN items USING(sequence) WHERE sha256=? AND receipt_json IS NULL LIMIT 1',
-            [row.sha256],
-          );
-          return { row, waiting: waiting !== undefined };
-        });
-        if (previous !== undefined) {
-          if (previous.waiting) files.push(previous.row);
-          continue;
-        }
-        const captured = await this.files.capture_file(source, this.blobs, checked_ns);
-        if (captured === null) {
-          console.warn(`Skipping unreadable or changing artifact: ${relative_path}`);
-          continue;
-        }
-        const row = { ticket_id, relative_path, ...captured };
-        files.push(row);
-        updates.push(row);
-      }
-    }
-    return { files, updates };
+  /** The file versions that the home confirmed for this Ticket. */
+  home_files(ticket_id: string): TicketFileRow[] {
+    this.admit();
+    return this.database
+      .read((sql) =>
+        sql.all<TicketFileRow>('SELECT * FROM ticket_files WHERE ticket_id=?', [ticket_id]),
+      )
+      .map((row) => ({
+        ...row,
+        byte_count: counter(row.byte_count),
+        modified_ns: BigInt(row.modified_ns),
+      }));
+  }
+  record_home_file(file: TicketFileRow): void {
+    this.admit();
+    this.database.write((tx) => {
+      tx.run(
+        'INSERT INTO ticket_files VALUES(?,?,?,?,?) ON CONFLICT(ticket_id,relative_path) DO UPDATE SET byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,sha256=excluded.sha256',
+        [file.ticket_id, file.relative_path, file.byte_count, file.modified_ns, file.sha256],
+      );
+      this.assert_healthy();
+    });
+  }
+  forget_home_file(ticket_id: string, relative_path: string): void {
+    this.admit();
+    this.database.write((tx) => {
+      tx.run('DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=?', [
+        ticket_id,
+        relative_path,
+      ]);
+      this.assert_healthy();
+    });
   }
   acknowledge(
     submission_id: string,
     sender_id: string,
     receipt: Buffer,
-    accepted: boolean,
-    invalidated: readonly TicketFileKey[],
     confirmed: () => void,
   ): Promise<void> {
     this.admit();
@@ -616,13 +463,6 @@ export class OutboxStore {
       if (sender_id !== this.sender_id) throw file_error('receipt identity mismatch');
       this.assert_healthy();
       this.database.write((tx) => {
-        if (!accepted)
-          for (const file of invalidated)
-            tx.run('DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=? AND sha256=?', [
-              file.ticket_id,
-              file.relative_path,
-              file.sha256,
-            ]);
         if (row.kind === 'cli_write' || delivery_diagnostics(row))
           tx.run('UPDATE items SET receipt_json=? WHERE submission_id=?', [receipt, submission_id]);
         else tx.run('DELETE FROM items WHERE submission_id=?', [submission_id]);
@@ -634,58 +474,24 @@ export class OutboxStore {
         this.assert_healthy();
       });
       this.first_held.delete(row.sequence);
-      // The host can settle its waiter even when subsequent blob cleanup fails.
       synchronous(confirmed());
-      this.defer_sweep();
     })();
     return this.track(task);
   }
-  private defer_sweep(): void {
-    this.sweep_requested = true;
-    if (this.sweep_task !== undefined) return;
-    const task = (async () => {
-      // Register cleanup before it can finish or before a caller can stop the store.
-      await Promise.resolve();
-      do {
-        this.sweep_requested = false;
-        try {
-          await this.sweep();
-        } catch (error) {
-          // Durable results survive cleanup failure. Later activity retries cleanup.
-          console.warn(
-            'Mac outbox cleanup deferred:',
-            error instanceof Error ? `${failure_name(error)}: ${error.message}` : String(error),
-          );
-        }
-      } while (this.sweep_requested);
-    })();
-    this.sweep_task = task;
-    this.track(task);
-    void task.finally(() => {
-      if (this.sweep_task === task) {
-        this.sweep_task = undefined;
-        if (this.sweep_requested) this.defer_sweep();
-      }
-    });
-  }
-  private async sweep(): Promise<void> {
-    if (this.capturing) return;
-    const directory = await opendir(join(this.root, 'blobs'));
+  /** Older runtimes copied each file into `blobs` before they sent it. Nothing uses them now. */
+  private async clear_legacy_blobs(): Promise<void> {
+    const path = join(this.root, 'blobs');
+    if (!(await exists(path))) return;
     try {
-      if ((await directory.read()) === null) return;
-    } finally {
-      await directory.close();
+      const blobs = await this.files.open_directory(path);
+      try {
+        await this.files.sweep_directory(blobs, path, []);
+      } finally {
+        await this.files.close_directory(blobs);
+      }
+    } catch (error) {
+      console.warn('Mac outbox could not clear old file copies:', failure_detail(error));
     }
-    // A capture can start during the asynchronous empty-directory observation.
-    if (this.capturing) return;
-    const keep = this.database.read((sql) =>
-      sql
-        .all<{ sha256: string }>(
-          "SELECT DISTINCT sha256 FROM item_files JOIN items USING(sequence) WHERE receipt_json IS NULL OR json_extract(CAST(payload_json AS TEXT),'$.delivery.failure') IS NOT NULL",
-        )
-        .map((row) => row.sha256),
-    );
-    await this.files.sweep_directory(this.blobs, join(this.root, 'blobs'), keep);
   }
   stop(options: StopOptions): Promise<void> {
     this.closed = true;
@@ -695,7 +501,7 @@ export class OutboxStore {
       while (this.operations.size) await Promise.allSettled([...this.operations]);
     })();
     // Delegate every stop attempt after the admitted work drains. A failed stop-frame
-    // send remains retryable without sealing the file service during capture.
+    // send remains retryable.
     const attempt = this.drained.then(() => this.resources.stop(options));
     this.cleanup ??= this.drained.then(() => this.resources.settled());
     return observe_shutdown(

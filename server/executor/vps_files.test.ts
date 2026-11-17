@@ -12,6 +12,7 @@ import { file_fixture, held_upload } from './testing/files.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { FILE_TRANSFER_STALL_SECONDS } from './configuration.ts';
 import { ExecutorValidationError } from './protocol.ts';
+import { PlannerError } from '../core/contracts.ts';
 import { FileCleanupError, copy_verified, directory_descriptor, unlink_at } from './files.ts';
 
 const faults = vi.hoisted(() => ({
@@ -416,4 +417,44 @@ test('an image piece in a prompt or steer is served as a command input', async (
     ]);
     await input.close();
   }
+});
+
+test('a synced Ticket file is served once its bytes match, and leaves on removal', async () => {
+  const { service, path } = world();
+  const file = { ...manifest, relative_path: 'artifacts/report/a.txt' };
+  const authorize = vi.fn();
+  const send = (sent: typeof manifest, bytes: Uint8Array) =>
+    service.save_ticket_file(
+      sent.sha256,
+      sent,
+      bytes.byteLength,
+      Readable.from([bytes]),
+      authorize,
+    );
+  const served = join(dirname(path), 'files/tickets/ticket-1', file.relative_path);
+  await send(file, content);
+  expect(readFileSync(served)).toEqual(Buffer.from(content));
+  // The hashing thread refuses changed bytes of the right length. The served copy stays.
+  await expect(send(file, Buffer.alloc(content.byteLength, 'x'))).rejects.toMatchObject({
+    code: 'validation',
+    message: 'upload is short or corrupt',
+  });
+  expect(readFileSync(served)).toEqual(Buffer.from(content));
+  await expect(
+    send({ ...manifest, relative_path: 'build/app.bin' }, content),
+  ).rejects.toMatchObject({
+    code: 'validation',
+    message: 'Only files in the artifacts folder transfer',
+  });
+  authorize.mockImplementationOnce(() => {
+    throw new PlannerError('agent_forbidden', 'Ticket belongs to another machine');
+  });
+  await expect(send({ ...file, relative_path: 'artifacts/b.txt' }, content)).rejects.toMatchObject({
+    code: 'agent_forbidden',
+  });
+  expect(readdirSync(dirname(dirname(served)))).toEqual(['report']);
+  await service.remove_ticket_file(file, authorize);
+  expect(readdirSync(dirname(dirname(served)))).toEqual([]);
+  await service.remove_ticket_file(file, authorize);
+  expect(readdirSync(service.staging)).toEqual([]);
 });

@@ -173,7 +173,7 @@ export async function run(spec: Spec): Promise<unknown> {
     assert.equal((await files.read_transfer(capped, 1)).length, 1);
     await files.close_transfer(capped);
     await save(() => client.post_live('conversation', root('LiveEventBatch')));
-    await save(() => transfer.upload_file(root('FileUploadRequest'), spec.source));
+    await save(() => transfer.upload_ticket_file(root('FileUploadRequest').manifest, spec.source));
     await save(() => transfer.download_command_file('command', 'file', spec.target));
     await save(() =>
       transfer.download_command_file('command', 'corrupt', spec.target + '-corrupt'),

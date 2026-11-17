@@ -265,7 +265,7 @@ export async function journal_parity(input: Input): Promise<unknown> {
           });
           break;
         case 'publish':
-          store.append(step.columns!, Buffer.from(step.payload_hex!, 'hex'), [], [], () => {});
+          store.append(step.columns!, Buffer.from(step.payload_hex!, 'hex'), () => {});
           break;
         // The parent directly joins this process. Both committed stores survive actual process exit.
         case 'crash':

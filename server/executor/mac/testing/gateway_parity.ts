@@ -180,8 +180,6 @@ try {
     'first',
     store.sender_id,
     Buffer.from(encode_bounded(receipt, 'AcceptanceReceipt')),
-    true,
-    [],
     () => spool.notify_confirmed(receipt),
   );
   const confirmed = await waiting;
