@@ -7,6 +7,8 @@ import type {
   RetainedBackendChildFactory,
   RetainedBackendRun,
   TurnToken,
+  BackendEventValue,
+  BackendEventSink,
 } from '../backends/contracts.ts';
 import {
   DeliveryCancelled,
@@ -51,6 +53,7 @@ import { background_tasks_ended_with_child } from './maintenance.ts';
 import { acquire_after_steers, contention_only_write } from './synchronization.ts';
 import { write_replayed_prompt } from './delivery.ts';
 import { log_backend_failure } from '../backends/failure_summary.ts';
+import { take_backend_event_with_receipt } from './backend_events.ts';
 
 /** A key with no live instance gives undefined at run time, exactly as indexing the old factory table did. */
 export function child_factory_for(
@@ -963,4 +966,30 @@ export async function kill_initial_delivery(
     if (child?.stop_outside_lock) schedule_child_retirement(host, state, child);
     return true;
   });
+}
+
+export function take_wire_backend_event(
+  host: SqliteProcessConversationSystem,
+  turn: WireValue<'TurnToken'> | null,
+  event: BackendEventValue,
+  options: {
+    in_commit?: RecordCommitParticipant<WireValue<'JsonObject'>>;
+    conversation_id?: string;
+    retry_later_at?: number;
+    expected_sink?: BackendEventSink;
+  } = {},
+): Promise<AcceptedRecordEvent<WireValue<'JsonObject'>>> {
+  host.require_runtime_ownership();
+  const token = turn === null ? null : admit_remote_turn(turn);
+  if (
+    token !== null &&
+    options.conversation_id !== undefined &&
+    options.conversation_id !== token.conversation_id
+  )
+    throw new TypeError('event conversation conflicts with turn');
+  const id = token?.conversation_id ?? options.conversation_id;
+  if (id === undefined) throw new TypeError('a session event must name its conversation');
+  const state = host.conversation_state(id);
+  if (state === null) throw new TypeError('event names an unknown conversation');
+  return own_settlement(state, take_backend_event_with_receipt(host, state, token, event, options));
 }

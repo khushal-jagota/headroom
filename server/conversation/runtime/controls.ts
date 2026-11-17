@@ -32,6 +32,13 @@ import { Deferred } from '../../core/deferred.ts';
 import { ConversationState, same_turn, set_phase } from './state.ts';
 import type { LockLease } from './synchronization.ts';
 import { child_factory_for, kill_initial_delivery, retained_factory } from './remote.ts';
+import {
+  PromptDeliveryUncertainEventPayload,
+  PromptEventPayload,
+  PromptDeliveryRefusedEventPayload,
+  PromptDiscardedEventPayload,
+} from '../events.ts';
+import { isDeepStrictEqual } from 'node:util';
 
 function settle_phase(state: ConversationState): void {
   set_phase(state, state.running_turn === null ? 'idle' : 'running');
@@ -744,4 +751,64 @@ export async function promote_held_prompt(
     if (owns_delivery) await state.lock.run(() => finish_held(state, message!));
     if (barrier) release_steer(state, barrier);
   }
+}
+
+export async function await_late_steer(
+  host: SqliteProcessConversationSystem,
+  conversation_id: string,
+  sequence: number,
+  not_delivered: Promise<boolean>,
+): Promise<void> {
+  host.require_runtime_ownership();
+  const state = host.conversation_state(conversation_id);
+  if (state === null) return;
+  const row = host.options.store.read_event(conversation_id, sequence);
+  if (
+    !(row?.payload instanceof PromptDeliveryUncertainEventPayload) ||
+    row.payload.mode !== PromptDeliveryMode.steer
+  )
+    return;
+  const payload = row.payload;
+  const later = host.options.store.read_events_after(conversation_id, sequence);
+  if (
+    later.some(
+      (event) =>
+        (event.payload instanceof PromptEventPayload ||
+          event.payload instanceof PromptDeliveryRefusedEventPayload ||
+          event.payload instanceof PromptDeliveryUncertainEventPayload ||
+          event.payload instanceof PromptDiscardedEventPayload) &&
+        (payload.sender_message_id !== null
+          ? event.payload.sender_message_id === payload.sender_message_id
+          : event.payload instanceof PromptEventPayload &&
+            isDeepStrictEqual(event.payload.content, payload.content) &&
+            event.payload.sender_label === payload.sender_label),
+    )
+  )
+    return;
+  watch_late_steer(
+    host,
+    state,
+    not_delivered,
+    {
+      held_prompt_id: '',
+      content: payload.content,
+      sender_label: payload.sender_label,
+      model_change: null,
+      reasoning_effort_change: null,
+      reasoning_effort_is_set: false,
+      sender_message_id: payload.sender_message_id,
+      sent_at_unix_milliseconds: payload.sent_at_unix_milliseconds,
+      snapshot_sent_at_unix_milliseconds: 0,
+      sender: payload.sender,
+      recipient: payload.recipient,
+      queue_reason: PromptQueueReason.steer_refused,
+      owner_read_through_sequence: null,
+      acknowledge_owner_on_failure: false,
+      recovery_references: payload.recovery_references,
+      recording_receipt: null,
+      delivery_uncertain: false,
+      system_generated: payload.sender === null,
+    },
+    [],
+  );
 }

@@ -328,6 +328,32 @@ export class LostBackgroundTaskNotices {
   }
 }
 
+export async function tell_agents_of_background_tasks_lost_at_restart(
+  host: SqliteProcessConversationSystem,
+): Promise<void> {
+  host.require_runtime_ownership();
+  const left_behind = host.background_tasks_left_by_previous_process;
+  host.background_tasks_left_by_previous_process = new Map();
+  for (const [conversation_id, task_ids] of [...left_behind].sort(([first], [second]) =>
+    first < second ? -1 : first > second ? 1 : 0,
+  )) {
+    try {
+      const state = host.conversation_state(conversation_id);
+      if (state === null) continue;
+      const lost = await host.persist(state, () =>
+        host.options.store.take_background_tasks(conversation_id, { task_ids }),
+      );
+      tell_agent_about_lost_background_tasks(host, state, lost);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      console.error(
+        `conversation ${conversation_id} could not hear about background tasks lost at restart`,
+        error,
+      );
+    }
+  }
+}
+
 export function tell_agent_about_lost_background_tasks(
   host: SqliteProcessConversationSystem,
   state: ConversationState,

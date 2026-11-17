@@ -8,6 +8,9 @@ import {
   TurnEnded,
   UserInputRequested,
   VendorSessionCursorRebound,
+  AgentMessageDelta,
+  ModelThinkingHappened,
+  ToolCallProgress,
 } from '../backends/contracts.ts';
 import type { BackendEventSink, BackendEventValue, TurnToken } from '../backends/contracts.ts';
 import { ConversationRecord } from '../record/contracts.ts';
@@ -16,17 +19,21 @@ import { interpret_backend_event } from '../logic/backend_events.ts';
 import type { InterpretedBackendEvent } from '../logic/backend_events.ts';
 import type { AcceptedRecordEvent, RecordCommitParticipant } from '../record/contracts.ts';
 import type { JsonObject } from '../../executor/wire.generated.ts';
-import type { RuntimeMutation } from './contracts.ts';
+import type { RuntimeMutation, CoreBackendEventSink } from './contracts.ts';
 import { field_mutation, RemoteEventPrediction } from './save_attempt.ts';
 import { acquire_after_steers } from './synchronization.ts';
-import { turn_is_maintenance, same_turn, set_phase } from './state.ts';
+import { turn_is_maintenance, same_turn, set_phase, own_settlement } from './state.ts';
 import type { ConversationState } from './state.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import {
   BACKGROUND_TASK_ENDINGS_OF_THEIR_OWN,
   STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
+  MODEL_THINKING_PULSE_INTERVAL_SECONDS,
 } from './configuration.ts';
 import { tell_agent_about_lost_background_tasks } from './maintenance.ts';
+import { randomUUID } from 'node:crypto';
+import type { ConversationLiveTailFrame } from '../events.ts';
+import { AgentMessageDeltaFrame, ToolCallProgressFrame, ModelThinkingFrame } from '../events.ts';
 
 export function standard_error_tail(value: string | null): string | null {
   return value === null
@@ -311,4 +318,109 @@ export async function take_backend_event_with_receipt(
   if (applied) tell_agent_about_lost_background_tasks(host, state, lost_background_tasks);
   if (drain) host.schedule_drain(state);
   return accepted;
+}
+
+export function make_sink(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): CoreBackendEventSink {
+  const generation = randomUUID().replaceAll('-', '');
+  const sink: CoreBackendEventSink = {
+    generation,
+    record_local_child_supervision: (path) =>
+      host.options.store.record_child_supervision(state.record.conversation_id, generation, path),
+    record_local_child_custody: (identity) =>
+      host.options.store.record_child_custody(state.record.conversation_id, generation, identity),
+    report: (token, event) =>
+      own_settlement(
+        state,
+        (async () => {
+          if (host.shutting_down || state.child_event_sink !== sink) return;
+          if (
+            token !== null &&
+            same_turn(state.running_turn?.token ?? null, token) &&
+            !state.running_turn?.ended
+          )
+            await host.accept_automatic_start(state, token);
+          if (
+            event instanceof AgentMessageDelta ||
+            event instanceof ModelThinkingHappened ||
+            event instanceof ToolCallProgress
+          ) {
+            if (token === null) return;
+            const show = async () => {
+              await host.wait_for_reservation(state, token);
+              if (
+                state.child_event_sink === sink &&
+                same_turn(state.running_turn?.token ?? null, token) &&
+                !state.running_turn?.ended
+              ) {
+                await host.accept_automatic_start(state, token);
+                publish_live(host, state, token, event);
+              }
+            };
+            if (state.reserved_turn) enqueue_backend_event(host, state, show);
+            else publish_live(host, state, token, event);
+            return;
+          }
+          enqueue_backend_event(host, state, async () => {
+            await host.take_local_backend_event(state, token, event, sink);
+          });
+        })().catch((error: unknown) => {
+          state.backend_event_failures += 1;
+          throw error;
+        }),
+      ),
+  };
+  return sink;
+}
+
+function publish_live(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  token: TurnToken,
+  event: AgentMessageDelta | ModelThinkingHappened | ToolCallProgress,
+): void {
+  if (host.shutting_down || !same_turn(state.running_turn?.token ?? null, token)) return;
+  host.options.require_runtime_ownership?.();
+  let frame: ConversationLiveTailFrame;
+  if (event instanceof AgentMessageDelta) frame = new AgentMessageDeltaFrame(event);
+  else if (event instanceof ToolCallProgress) frame = new ToolCallProgressFrame(event);
+  else {
+    const now = host.monotonic_now();
+    if (now - state.model_thinking_shown_at_monotonic < MODEL_THINKING_PULSE_INTERVAL_SECONDS)
+      return;
+    state.model_thinking_shown_at_monotonic = now;
+    frame = new ModelThinkingFrame();
+  }
+  host.options.publish_frame?.(state.record.conversation_id, frame);
+}
+
+function enqueue_backend_event(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  event: () => Promise<void>,
+): void {
+  state.backend_events.push(event);
+  if (state.backend_event_pump !== null || host.shutting_down) return;
+  const pump = async () => {
+    try {
+      while (state.backend_events.length > 0 && !host.shutting_down) {
+        const take = state.backend_events.shift()!;
+        try {
+          await take();
+        } catch (error) {
+          state.backend_event_failures += 1;
+          console.error(
+            `conversation ${state.record.conversation_id} could not take in a backend event`,
+            error,
+          );
+        }
+      }
+    } finally {
+      state.backend_event_pump = null;
+    }
+  };
+  // Start after assignment, so a synchronous event cannot clear then overwrite the pump.
+  state.backend_event_pump = Promise.resolve().then(pump);
 }
