@@ -51,7 +51,8 @@ export async function prepare_launch(
             }
             await records.write(path, record);
           }
-          runtime.primitives.prepare_launch();
+          // Only a Worker yields CPU and memory; an older record without the field is a Worker's.
+          runtime.primitives.prepare_launch({ lower_priority: record.worker_priority !== false });
           root = (await runtime.primitives.snapshot(deadline)).get(process.pid);
           if (!root) throw new Error('Worker bootstrap process identity is unavailable');
           Object.assign(record, {

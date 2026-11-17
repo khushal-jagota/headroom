@@ -135,6 +135,22 @@ export class ServerServices {
     this.update_barrier = new UpdateBarrier(join(dirname(config.db_path), 'update-barrier.json'));
     this.worker_supervision = create_worker_supervision_runtime({
       one_shot_children: lifetime.one_shot_children,
+      // An unopened database throws here, and supervision then prunes nothing.
+      record_paths_in_use: () => {
+        if (!this.database)
+          throw new Error(
+            'The database is not open, so the supervision records in use are unknown',
+          );
+        return new Set(
+          this.database
+            .read((sql) =>
+              sql.all<{ supervision_record: string }>(
+                "SELECT supervision_record FROM conversation_child_custody WHERE state != 'retired' AND supervision_record IS NOT NULL",
+              ),
+            )
+            .map((row) => row.supervision_record),
+        );
+      },
     });
   }
 

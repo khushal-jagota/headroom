@@ -1,13 +1,17 @@
 import { parse_backend_instance_id } from '../../core/identity.ts';
-import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { join } from 'node:path';
+import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
 import { expect, test } from 'vitest';
 import { ConversationAccess, ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import { HermesAcpLauncher } from './client.ts';
+import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
 
 // A real child exit and a buffered reply are separate OS facts. Memory streams
 // cannot prove that the launcher preserves the latter after the former.
 test('request timeout and cancellation keep the same child until its ordered final exit', async () => {
-  const launcher = new HermesAcpLauncher(new ChildProcesses());
+  const child_processes = new ChildProcesses();
+  const runtime = uncontained_worker_supervision(new OneShotChildren(child_processes));
+  const launcher = new HermesAcpLauncher(child_processes, runtime);
   const order: string[] = [];
   const program = `
     const readline = require('node:readline');
@@ -40,7 +44,10 @@ test('request timeout and cancellation keep the same child until its ordered fin
   });
   try {
     const client = await launcher.start(
-      { argv: [process.execPath, '-e', program], environment_overrides: [] },
+      {
+        argv: [process.execPath, '-e', program],
+        environment_overrides: [['PLAN_WORKER_PROCESS_ROOT', join(home, 'worker-processes')]],
+      },
       resolved,
       {
         async session_update(params) {
@@ -89,5 +96,6 @@ test('request timeout and cancellation keep the same child until its ordered fin
     ]);
   } finally {
     await launcher.stop();
+    await runtime.close();
   }
 });

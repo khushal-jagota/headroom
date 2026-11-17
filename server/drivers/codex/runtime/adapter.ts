@@ -2,6 +2,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { StopOptions, OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
 import type { LocalChildIdentity } from '../../../conversation/local_child_contracts.ts';
 import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import * as B from '../../../conversation/backends/contracts.ts';
@@ -263,7 +264,8 @@ export class CodexAppServerBackendChild implements B.BackendChild {
         argv: this.launch.argv,
         environment,
         working_directory: resolved_start.workspace_folder,
-        worker_ticket_id: new Map(identity).get('PLAN_TICKET_ID'),
+        conversation_id: resolved_start.conversation_id,
+        worker_ticket_id: worker_ticket_id(resolved_start),
         supervision_reporter: this.sink.record_local_child_supervision?.bind(this.sink),
         custody_reporter: this.sink.record_local_child_custody?.bind(this.sink),
       });

@@ -16,7 +16,6 @@ import {
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
-import { local_process_identity } from '../../../worker_supervision/identity.ts';
 import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import type { LocalChildIdentity } from '../../../conversation/local_child_contracts.ts';
 import { WorkerScratch } from '../../../conversation/worker_scratch.ts';
@@ -66,6 +65,9 @@ export interface CodexClientStart {
   argv: readonly string[];
   environment: Readonly<Record<string, string>>;
   working_directory: string;
+  /** A conversation's child, always supervised. Catalog, usage and sign-in children have none. */
+  conversation_id?: string;
+  /** From `worker_ticket_id(resolved_start)`. Only a Worker's child gets scratch. */
   worker_ticket_id?: string | null;
   supervision_reporter?: (path: string) => Promise<void>;
   custody_reporter?: (identity: LocalChildIdentity) => Promise<void>;
@@ -175,23 +177,25 @@ export class CodexAppServerClient {
     let supervisor: WorkerSupervisor | null = null;
     let scratch: WorkerScratch | null = null;
     try {
-      if (options.worker_ticket_id && !this.worker_supervision)
+      if (options.conversation_id !== undefined && !this.worker_supervision)
         throw new CodexChildWouldNotStart('Worker supervision is unavailable');
       this.cli_executable = options.argv[0]!;
       await this.confirm_cli_compatible(options.argv[0]!, environment, options.working_directory);
       assert_current();
-      if (options.worker_ticket_id) {
-        environment = { ...environment, PLAN_TICKET_ID: options.worker_ticket_id };
+      if (options.conversation_id !== undefined) {
+        const worker_ticket_id = options.worker_ticket_id ?? null;
         supervisor = await WorkerSupervisor.create(environment, options.working_directory, {
           runtime: this.worker_supervision!,
+          conversation_id: options.conversation_id,
+          worker_ticket_id,
         });
-        if (!supervisor)
-          throw new CodexChildWouldNotStart('Worker supervision did not retain launch custody');
         this.supervisor = supervisor;
-        scratch = await WorkerScratch.create(environment, { processes: this.child_processes });
-        this.scratch = scratch;
-        environment = scratch.environment;
-        Object.assign(supervisor.environment, environment);
+        if (worker_ticket_id !== null) {
+          environment = { ...environment, PLAN_TICKET_ID: worker_ticket_id };
+          scratch = await WorkerScratch.create(environment, { processes: this.child_processes });
+          this.scratch = scratch;
+          Object.assign(supervisor.environment, scratch.environment);
+        }
         assert_current();
         await options.supervision_reporter?.(supervisor.path);
       }
@@ -236,11 +240,9 @@ export class CodexAppServerClient {
     }
   }
   async local_child_identity(): Promise<LocalChildIdentity | null> {
-    if (!this.process?.child.pid) return null;
-    if (this.supervisor) return this.supervisor.identity();
-    return this.worker_supervision
-      ? local_process_identity(this.process.child.pid, this.worker_supervision)
-      : null;
+    // Only a supervised child has an identity: catalog, usage and sign-in children need none.
+    if (!this.process?.child.pid || !this.supervisor) return null;
+    return this.supervisor.identity();
   }
   private async cleanup(
     owned: OwnedProcess | null,

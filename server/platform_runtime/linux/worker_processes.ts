@@ -98,8 +98,9 @@ export class LinuxWorkerProcesses implements WorkerProcessPrimitives {
       }
     });
   }
-  prepare_launch(): void {
+  prepare_launch(options: { lower_priority: boolean }): void {
     this.#native().prepare_session();
+    if (!options.lower_priority) return;
     setPriority(0, Math.max(NICE, getPriority(0)));
     const path = join(this.#proc_root, 'self/oom_score_adj');
     const score = Number(readFileSync(path, 'utf8').trim());

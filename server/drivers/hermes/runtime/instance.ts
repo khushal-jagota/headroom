@@ -48,6 +48,7 @@ export async function create_hermes_instance(
       turns: { supportsActiveSteering: true },
     },
     plan_selection_transition: acp_selection_transition,
+    supervises_local_launches: true,
     child_factory: create_hermes_backend_child_factory(hermes_launch(host), {
       child_processes: host.child_processes,
       worker_supervision: host.worker_supervision,

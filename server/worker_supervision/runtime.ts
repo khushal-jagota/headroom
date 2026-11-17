@@ -16,6 +16,8 @@ export class WorkerSupervisionRuntime {
   readonly jobs: WorkerJobPrimitives | undefined;
   readonly active_jobs = new Set<string>();
   readonly clock: () => number;
+  /** Record paths a durable owner still names. Without it, no record is pruned. */
+  readonly record_paths_in_use: (() => ReadonlySet<string>) | undefined;
   readonly fresh: FreshProcessObservations;
   readonly observer: SharedProcessObserver;
   readonly #operations = new Set<Promise<unknown>>();
@@ -27,11 +29,13 @@ export class WorkerSupervisionRuntime {
     cgroups?: WorkerCgroupPrimitives;
     jobs?: WorkerJobPrimitives;
     clock?: () => number;
+    record_paths_in_use?: () => ReadonlySet<string>;
   }) {
     this.primitives = options.primitives;
     this.cgroups = options.cgroups;
     this.jobs = options.jobs;
     this.clock = options.clock ?? (() => performance.now() / 1000);
+    this.record_paths_in_use = options.record_paths_in_use;
     this.fresh = new FreshProcessObservations(this.clock);
     this.observer = new SharedProcessObserver((deadline) => this.context(deadline), this.clock);
   }

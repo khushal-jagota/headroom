@@ -18,7 +18,6 @@ import {
   ensure_cli_compatible,
 } from '../../../conversation/backends/cli_compatibility.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
-import { local_process_identity } from '../../../worker_supervision/identity.ts';
 import { WorkerScratch } from '../../../conversation/worker_scratch.ts';
 import type { LocalChildIdentity } from '../../../conversation/local_child_contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
@@ -176,7 +175,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.options.enableFileCheckpointing)
       environment.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING = 'true';
     try {
-      this.preparation = this.prepare_worker(environment, Boolean(overrides.PLAN_TICKET_ID));
+      this.preparation = this.prepare_supervision(environment);
       await this.preparation;
       const { query: sdk_query } = await load_claude_sdk();
       if (this.cleanup_started) throw new Error('Claude startup stopped before SDK construction');
@@ -185,6 +184,8 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         child_processes: _native,
         one_shot_children: _probes,
         worker_supervision: _supervision,
+        conversation_id: _conversation,
+        worker_ticket_id: _ticket,
         custody_sink: _custody,
         ...sdk_options
       } = this.options;
@@ -240,29 +241,27 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     }
     return this.revocation;
   }
-  private async prepare_worker(
-    environment: Record<string, string>,
-    worker: boolean,
-  ): Promise<void> {
-    if (worker) {
-      if (!this.options.worker_supervision) throw new Error('Worker supervision is required');
-      this.supervisor = await WorkerSupervisor.create(
-        environment,
-        this.options.cwd ?? process.cwd(),
-        {
-          runtime: this.options.worker_supervision,
-        },
-      );
-      if (this.supervisor !== null) Object.assign(environment, this.supervisor.environment);
+  /** Every launch writes its supervision record before spawn. Only a Worker gets scratch. */
+  private async prepare_supervision(environment: Record<string, string>): Promise<void> {
+    const supervisor = await WorkerSupervisor.create(
+      environment,
+      this.options.cwd ?? process.cwd(),
+      {
+        runtime: this.options.worker_supervision,
+        conversation_id: this.options.conversation_id,
+        worker_ticket_id: this.options.worker_ticket_id,
+      },
+    );
+    this.supervisor = supervisor;
+    Object.assign(environment, supervisor.environment);
+    if (this.options.worker_ticket_id !== null) {
       this.scratch = await WorkerScratch.create(environment, {
         processes: this.options.child_processes,
       });
       Object.assign(environment, this.scratch.environment);
-      if (this.supervisor !== null) {
-        Object.assign(this.supervisor.environment, environment);
-        await this.options.custody_sink?.record_local_child_supervision?.(this.supervisor.path);
-      }
     }
+    Object.assign(supervisor.environment, environment);
+    await this.options.custody_sink?.record_local_child_supervision?.(supervisor.path);
   }
   private start_process(
     options: SpawnOptions,
@@ -270,8 +269,9 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   ): SpawnedProcess {
     if (this.cleanup_started || this.owned_process !== null)
       throw new Error('a Claude transport cannot reconnect after cleanup');
-    const original = [options.command, ...options.args];
-    const command = this.supervisor === null ? original : this.supervisor.argv(original);
+    const supervisor = this.supervisor;
+    if (supervisor === null) throw new Error('a Claude child cannot start without supervision');
+    const command = supervisor.argv([options.command, ...options.args]);
     const child: ChildProcessWithoutNullStreams = this.options.child_processes.spawn(
       command[0]!,
       [...command.slice(1)],
@@ -284,7 +284,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     );
     const owned = new OwnedProcess(child);
     this.owned_process = owned;
-    this.registration = this.register_process(owned);
+    this.registration = this.register_process(owned, supervisor);
     void this.registration.then(
       () => this.registered.resolve(),
       (error: unknown) => this.registered.reject(error),
@@ -463,20 +463,12 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       this.permission_waiters.delete(waiter);
     }
   }
-  private async register_process(owned: OwnedProcess): Promise<void> {
+  private async register_process(owned: OwnedProcess, supervisor: WorkerSupervisor): Promise<void> {
     const pid = owned.child.pid;
-    if (pid === undefined) {
-      if (this.supervisor !== null || this.options.custody_sink?.record_local_child_custody)
-        throw new Error('Claude process PID is unavailable');
-      return;
-    }
-    if (this.supervisor !== null) {
-      await this.supervisor.spawned(pid);
-      await this.supervisor.started(pid);
-      this.identity = await this.supervisor.identity();
-    } else if (this.options.worker_supervision) {
-      this.identity = await local_process_identity(pid, this.options.worker_supervision);
-    }
+    if (pid === undefined) throw new Error('Claude process PID is unavailable');
+    await supervisor.spawned(pid);
+    await supervisor.started(pid);
+    this.identity = await supervisor.identity();
     if (this.options.custody_sink?.record_local_child_custody) {
       if (this.identity === null) throw new Error('Cannot establish the Claude process identity');
       await this.options.custody_sink.record_local_child_custody(this.identity);

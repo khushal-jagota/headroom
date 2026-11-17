@@ -1,5 +1,8 @@
-import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
 import { CodexAppServerClient, CodexWireFailed } from './client.ts';
@@ -11,6 +14,8 @@ import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runti
 import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
 import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import { ensure_cli_compatible } from '../../../conversation/backends/cli_compatibility.ts';
+import * as records from '../../../worker_supervision/records.ts';
+import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
 
 vi.mock('../../../lifecycle/owned_processes.ts', async (original) => ({
   ...(await original<typeof import('../../../lifecycle/owned_processes.ts')>()),
@@ -341,6 +346,7 @@ async function supervised_client() {
     ...launch_options,
     environment: {},
     working_directory: '/private',
+    conversation_id: 'synthetic-conversation',
     worker_ticket_id: 't_synthetic',
     supervision_reporter: vi.fn(async () => {
       order.push('report');
@@ -448,7 +454,7 @@ test('failed Worker registration retains its native handle and scratch until cle
   }
 });
 
-test('an explicit Worker without supervision never starts even a version probe', async () => {
+test('a conversation launch without supervision never starts even a version probe', async () => {
   vi.mocked(spawn_owned_process).mockReset();
   vi.mocked(ensure_cli_compatible).mockClear();
   const client = new CodexAppServerClient({
@@ -465,9 +471,90 @@ test('an explicit Worker without supervision never starts even a version probe',
       argv: ['/synthetic/codex'],
       environment: {},
       working_directory: '/private',
-      worker_ticket_id: 'explicit',
+      conversation_id: 'synthetic-conversation',
     }),
   ).rejects.toThrow('supervision is unavailable');
   expect(ensure_cli_compatible).not.toHaveBeenCalled();
   expect(spawn_owned_process).not.toHaveBeenCalled();
+});
+
+// Risk (review B1): a Mac runner sink has only `report`, and its launch must still start.
+test('a supervised launch whose sink has no reporters still starts under supervision', async () => {
+  const f = await supervised_client();
+  const { supervision_reporter: _record, custody_reporter: _custody, ...options } = f.options;
+  try {
+    await f.client.start(options);
+    expect(f.order).toEqual(['spawn', 'spawned', 'started']);
+    expect(spawn_owned_process).toHaveBeenCalledWith(
+      ['/synthetic/bootstrap', '/synthetic/codex', 'app-server'],
+      expect.anything(),
+    );
+    expect(await f.client.local_child_identity()).toEqual(f.identity);
+  } finally {
+    f.prove();
+    await f.client.stop();
+  }
+});
+
+// Risk: a non-Worker launch escapes custody or takes the Worker settings. A real record and a
+// real supervised child prove what the Chief's custody row will name.
+test('a Chief launch is supervised by its conversation, never by an inherited Ticket', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'codex-chief-'));
+  const child_processes = new ChildProcesses();
+  const runtime = uncontained_worker_supervision(new OneShotChildren(child_processes));
+  const real_spawn = (
+    await vi.importActual<typeof import('../../../lifecycle/owned_processes.ts')>(
+      '../../../lifecycle/owned_processes.ts',
+    )
+  ).spawn_owned_process;
+  const scratch = vi.spyOn(WorkerScratch, 'create');
+  const order: string[] = [];
+  let record_path = '';
+  vi.mocked(spawn_owned_process).mockReset();
+  vi.mocked(spawn_owned_process).mockImplementationOnce((...input) => {
+    order.push('spawn');
+    return real_spawn(...input);
+  });
+  const client = new CodexAppServerClient({
+    child_processes,
+    worker_supervision: runtime,
+    description: 'chief',
+    handler: {
+      async on_notification() {},
+      async on_server_request() {},
+      async on_child_ended() {},
+    },
+  });
+  try {
+    await client.start({
+      argv: [process.execPath, '-e', 'process.stdin.resume()'],
+      environment: {
+        PLAN_ACTOR: 'chief',
+        PLAN_TICKET_ID: 'inherited-worker',
+        PLAN_WORKER_PROCESS_ROOT: join(folder, 'records'),
+      },
+      working_directory: folder,
+      conversation_id: 'chief-conversation',
+      worker_ticket_id: null,
+      supervision_reporter: async (path) => {
+        order.push('record');
+        record_path = path;
+        expect(await records.read(path)).toMatchObject({
+          ticket_id: '',
+          conversation_id: 'chief-conversation',
+          worker_priority: false,
+        });
+      },
+      custody_reporter: async (identity) => {
+        order.push('custody');
+        expect(identity.supervision_record).toBe(record_path);
+      },
+    });
+    expect(order).toEqual(['record', 'spawn', 'custody']);
+    expect(scratch).not.toHaveBeenCalled();
+  } finally {
+    await client.stop();
+    await runtime.close();
+    await rm(folder, { recursive: true, force: true });
+  }
 });

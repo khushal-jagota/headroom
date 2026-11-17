@@ -35,9 +35,48 @@ import {
 import * as records from './records.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import { local_process_identity } from './identity.ts';
+import { cleanup_transport } from '../platform_runtime/darwin/launchd/transport.ts';
 
 const expand_home = (path: string): string =>
   path === '~' ? homedir() : path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
+/**
+ * Removes a finished record no custody row names. Pruning is best effort: a busy or unreadable
+ * record, or an unknown set of records in use, leaves the record for a later scan.
+ */
+async function prune_complete_record(
+  path: string,
+  runtime: WorkerSupervisionRuntime,
+  record_paths_in_use: () => ReadonlySet<string>,
+): Promise<void> {
+  try {
+    if (record_paths_in_use().has(path)) return;
+    await records.locked(
+      path,
+      runtime.clock() + INSPECTION_SECONDS,
+      async () => {
+        let record: WorkerProcessRecord;
+        try {
+          record = await records.read(path);
+        } catch (error) {
+          // Locking a removed record created a fresh lock file. Remove that too.
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') await records.remove(path);
+          return;
+        }
+        // Ask again under the lock. A driver names its record before it spawns, so a finished
+        // record is named already or never will be; the earlier answer can miss a newer launch.
+        if (record.state !== 'complete' || record_paths_in_use().has(path)) return;
+        // A finished Mac job's transport directory is named only by its record.
+        if (record.launchd_socket_directory)
+          await cleanup_transport(record.launchd_socket_directory);
+        await records.remove(path);
+        runtime.active_jobs.delete(path);
+      },
+      { clock: runtime.clock, wait: false },
+    );
+  } catch {
+    /* Keeping a finished record costs one more scan entry; it never fails a launch. */
+  }
+}
 export class WorkerSupervisor {
   readonly environment: Record<string, string>;
   readonly working_directory: string;
@@ -66,22 +105,47 @@ export class WorkerSupervisor {
   static create(
     environment: Readonly<Record<string, string>>,
     working_directory: string,
-    options: { runtime: WorkerSupervisionRuntime },
-  ): Promise<WorkerSupervisor | null> {
-    const { runtime } = options;
+    options: {
+      runtime: WorkerSupervisionRuntime;
+      conversation_id: string;
+      /** From `worker_ticket_id(resolved_start)`. Null keys the record by conversation. */
+      worker_ticket_id: string | null;
+    },
+  ): Promise<WorkerSupervisor> {
+    const { runtime, conversation_id, worker_ticket_id } = options;
+    // A Worker's record is its Ticket's: a new Worker stops the previous one. Every other
+    // record writes no Ticket, so it is keyed by its own conversation alone.
+    const ticket_id = worker_ticket_id ?? '';
+    const same_key = (record: WorkerProcessRecord): boolean =>
+      record.ticket_id === ticket_id &&
+      (worker_ticket_id !== null || record.conversation_id === conversation_id);
+    // Only a Worker launch speaks of its Ticket and of Worker custody.
+    const words =
+      worker_ticket_id === null
+        ? {
+            holder: 'Conversation',
+            agent: 'agent',
+            Agent: 'Agent',
+            foreign: 'Prior custody of this conversation belongs to another machine',
+          }
+        : {
+            holder: 'Ticket',
+            agent: 'Worker',
+            Agent: 'Worker',
+            foreign: 'Prior Worker custody belongs to another machine',
+          };
     return runtime.operation(async () => {
-      if (!environment.PLAN_TICKET_ID) return null;
       if (runtime.closed) throw new Error('Worker supervision is closed');
       const configured = environment[RECORD_ROOT_ENV] || process.env[RECORD_ROOT_ENV];
       const db = environment.PLAN_DB_PATH;
-      if (!configured && !db) throw new Error('Worker process record root is missing');
+      if (!configured && !db) throw new Error(`${words.Agent} process record root is missing`);
       const root = configured
         ? resolve(expand_home(configured))
         : join(dirname(resolve(expand_home(db!))), 'worker-processes');
       await mkdir(root, { mode: 0o700, recursive: true });
       const info = await lstat(root);
       if (!info.isDirectory() || info.uid !== process.getuid!() || (info.mode & 0o077) !== 0)
-        throw new Error('Worker process record root must be private and owned');
+        throw new Error(`${words.Agent} process record root must be private and owned`);
       const context = await runtime.context(runtime.clock() + INSPECTION_SECONDS);
       for (const name of (await readdir(root)).filter((name) => name.endsWith('.json')).sort()) {
         const prior = join(root, name);
@@ -91,22 +155,25 @@ export class WorkerSupervisor {
         } catch {
           continue;
         }
-        if (previous.ticket_id !== environment.PLAN_TICKET_ID) continue;
         if (previous.state === 'complete') {
-          validate_pending_shape(previous);
-          runtime.active_jobs.delete(prior);
+          if (same_key(previous)) {
+            validate_pending_shape(previous);
+            runtime.active_jobs.delete(prior);
+          }
+          if (runtime.record_paths_in_use)
+            await prune_complete_record(prior, runtime, runtime.record_paths_in_use);
           continue;
         }
+        if (!same_key(previous)) continue;
         if (previous.launchd && runtime.active_jobs.has(prior))
-          throw new Error('Ticket already has retained Worker job custody');
+          throw new Error(`${words.holder} already has retained ${words.agent} job custody`);
         const inspected = await inspect_record(prior, { runtime, context });
         if (inspected.complete) continue;
-        if (context.host.host !== previous.host)
-          throw new Error('Prior Worker custody belongs to another machine');
+        if (context.host.host !== previous.host) throw new Error(words.foreign);
         if (!previous.launchd && context.host.boot === previous.boot) {
           const table = await context.primitives.snapshot(runtime.clock() + INSPECTION_SECONDS);
           if (previous.owner != null && alive(previous.owner, table))
-            throw new Error('Ticket already has retained Worker process custody');
+            throw new Error(`${words.holder} already has retained ${words.agent} process custody`);
         }
         const stopped = await stop_record(prior, { runtime, context });
         if (!stopped.complete) throw new Error(stopped.reason);
@@ -116,12 +183,13 @@ export class WorkerSupervisor {
         : (await context.primitives.snapshot(runtime.clock() + INSPECTION_SECONDS)).get(
             process.pid,
           );
-      if (!runtime.jobs && !owner) throw new Error('Worker supervisor identity is unavailable');
+      if (!runtime.jobs && !owner)
+        throw new Error(`${words.Agent} supervisor identity is unavailable`);
       if (runtime.closed) throw new Error('Worker supervision is closed');
       const path = join(root, randomUUID().replaceAll('-', '') + '.json');
       await records.write(path, {
         version: 1,
-        ticket_id: environment.PLAN_TICKET_ID,
+        ticket_id,
         host: context.host.host,
         boot: context.host.boot,
         owner,
@@ -130,10 +198,11 @@ export class WorkerSupervisor {
         isolated: false,
         state: 'pending',
         launch_phase: 'pending',
-        conversation_id: environment.PLAN_CONVERSATION_ID ?? null,
+        conversation_id,
         source_child_id: environment.PLAN_EXECUTOR_CHILD_ID ?? null,
         source_incarnation: environment.PLAN_EXECUTOR_SOURCE_INCARNATION ?? null,
         reason: 'Launch pending',
+        worker_priority: worker_ticket_id !== null,
         ...(runtime.jobs ? { launchd: runtime.jobs.identity(root, path.slice(-37, -5)) } : {}),
       });
       if (runtime.jobs) runtime.active_jobs.add(path);

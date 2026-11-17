@@ -16,8 +16,11 @@ export interface WorkerProcessPrimitives {
   snapshot(deadline: number): Promise<ReadonlyMap<number, WorkerProcess>>;
   is_absent(process: WorkerProcess, deadline: number): Promise<boolean>;
   signal(process: WorkerProcess, signum: number, deadline: number): Promise<boolean>;
-  /** Runs only in the isolated bootstrap, before backend execution. */
-  prepare_launch(): void;
+  /**
+   * Runs only in the isolated bootstrap, before backend execution. `lower_priority` raises the
+   * nice value and, on Linux, the OOM score: a Worker's settings, never another conversation's.
+   */
+  prepare_launch(options: { lower_priority: boolean }): void;
 }
 export interface CgroupIdentity {
   readonly path: string;
@@ -107,4 +110,6 @@ export interface WorkerProcessRecord {
   unattributed_session_members?: WorkerProcess[];
   launchd?: WorkerJobIdentity;
   launchd_socket_directory?: string;
+  /** Absent means true: every record older than this field is a Worker's. */
+  readonly worker_priority?: boolean;
 }

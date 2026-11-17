@@ -15,7 +15,11 @@ export type ClaudeSdkOptions = Options & {
   pathToClaudeCodeExecutable: string;
   child_processes: OwnedChildProcesses;
   one_shot_children: OwnedOneShotChildren;
-  worker_supervision?: WorkerSupervisionRuntime;
+  worker_supervision: WorkerSupervisionRuntime;
+  /** Every launch is supervised under the conversation it serves. */
+  conversation_id: string;
+  /** From `worker_ticket_id(resolved_start)`. Null for every conversation but a Worker's. */
+  worker_ticket_id: string | null;
   custody_sink?: BackendEventSink;
 };
 export interface ClaudeSdkClient {
