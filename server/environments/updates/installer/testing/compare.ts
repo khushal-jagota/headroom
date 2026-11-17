@@ -65,7 +65,7 @@ function write(path: string, text: string, mode = 0o644): void {
   fs.writeFileSync(path, text, { mode });
 }
 /** Only the classifier consumes this structure. This is not an admitted release. */
-function structural_app(app: string, sha: string): void {
+export function structural_app(app: string, sha: string): void {
   const contract = { version: 2 };
   write(
     join(app, 'manifest.json'),
@@ -159,6 +159,7 @@ export async function installer_probe(input: Input) {
             ? { kind: 'unavailable', detail: spec.capture_detail }
             : { kind: 'returned', returncode: spec.scenario === 'rollback' ? 7 : 0 };
         },
+        async schema_steps() {},
         async restore(snapshot) {
           events.push(['restore', snapshot, value.database]);
           fs.copyFileSync(join(snapshot, 'database.sqlite'), value.database);

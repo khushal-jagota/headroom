@@ -60,7 +60,10 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
     case "waiting":
       return { word: "Update waits for work to finish", tone: "changing", sentence: true, action: { label: "View", does: "waiting" } };
     case "updating":
-      return { word: "Updating…", tone: "changing", track: true };
+      // While the database backs up, the server says how long that takes. A press shows
+      // Updating… over the previous answer, whose detail belongs to that earlier state.
+      return { word: "Updating…", tone: "changing", track: true,
+        ...(status?.state === "updating" && status.detail ? { detail: status.detail } : {}) };
     case "complete":
       return { word: "Update complete", tone: "done", action: { label: "Refresh", does: "refresh" } };
     case "failed":

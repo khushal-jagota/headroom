@@ -17,6 +17,7 @@ import {
   SERVICE_COMMAND_TIMEOUT_SECONDS,
   INTERRUPTION_CAPTURE_BUDGET_SECONDS,
   DATABASE_RESTORE_TIMEOUT_SECONDS,
+  SCHEMA_STEP_TIMEOUT_SECONDS,
 } from './configuration.ts';
 import type {
   InstallerCommandOptions,
@@ -333,6 +334,21 @@ export function create_installer_effects(
         output: 'inherit',
         lifetime_lock_fd,
       });
+    },
+    async schema_steps(lifetime_lock_fd, backup_taken) {
+      const value = phase(execution, SCHEMA_STEP_TIMEOUT_SECONDS);
+      // Python version-1 apps upgrade their own database through Alembic.
+      if ((await runtime(request, value)) !== 'node-v2') return;
+      const app = join(request.current_root, 'app'),
+        main = join(app, 'server/environments/updates/schema_step_main.ts');
+      assert_installer_path(request.database, execution.environment);
+      assert_installer_path(app, execution.environment);
+      assert_installer_path(main, execution.environment);
+      await run_installer_command(
+        [request.node_executable, main, request.database, backup_taken ? 'backup' : 'no-backup'],
+        value,
+        { check: true, output: 'inherit', lifetime_lock_fd },
+      );
     },
     healthy(sha) {
       assert_installer_health_url(request.health_url, execution.environment);

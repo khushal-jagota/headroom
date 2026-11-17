@@ -3,12 +3,13 @@ import { readFileSync } from 'node:fs';
 import { createReadAccess } from './index.ts';
 import type { ApplicationSchemaSeed, ReadAccess } from './contracts.ts';
 
-const seed = JSON.parse(
+/** This application's seed. Its revision is the only one startup admits. */
+export const application_schema_seed = JSON.parse(
   readFileSync(new URL('./application_schema.json', import.meta.url), 'utf8'),
 ) as ApplicationSchemaSeed;
 
 export function require_application_schema(database_path: string): void {
-  const expected = seed.alembicRevision;
+  const expected = application_schema_seed.alembicRevision;
   let reader: ReadAccess | undefined;
   let actual: string[] | null;
   try {

@@ -6,7 +6,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Stack and system map
 - For TypeScript server work, read [server/STYLE.md](server/STYLE.md) before changes.
-- Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
+- Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and the Python Alembic schema baseline in `src/planner/core/db.py`. Later schema changes are TypeScript schema steps in `server/core/database/schema_steps/`, run by the installer before the server starts.
 - Domain code is grouped by system: `tickets/`, `managers/`, `ideas/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
 - `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `ticket`, `manager`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
 - Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: conversation busy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.

@@ -132,7 +132,8 @@ export interface ReleaseStaging {
 }
 export interface InstallerOperations {
   readonly requires_snapshot?: boolean;
-  require_exact_schema_frontier(database: string, staged_app: string): void | Promise<void>;
+  /** Refuse a database off the staged chain. True when the installer must run steps. */
+  node_schema_steps_pending(database: string, staged_app: string): boolean | Promise<boolean>;
   schema_change_pending(database: string, staged_app: string): boolean | Promise<boolean>;
   create_backup(
     database: string,

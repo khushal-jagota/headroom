@@ -254,6 +254,7 @@ export async function darwin_updates(input: { cases: Case[]; account_home: strin
           events.push(['capture']);
           return { kind: 'returned', returncode: 0 };
         },
+        async schema_steps() {},
         async restore(snapshot, descriptor) {
           assert.equal(typeof descriptor, 'number');
           events.push(['restore']);

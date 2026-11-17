@@ -50,6 +50,7 @@ import {
   SUPPORTED_PLATFORMS,
 } from '../environments/updates/logic/runtime_contract.ts';
 import { collect_vps_status } from '../environments/vps_status/collect.ts';
+import { instant } from '../environments/updates/logic/experience.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -142,12 +143,35 @@ function release(): PublishedUpdate {
     mac: null,
   };
 }
+/** The same publication as a TypeScript release, whose install may run schema steps. */
+function node_release(): PublishedUpdate {
+  const published = release();
+  return {
+    ...published,
+    manifest: {
+      ...published.manifest,
+      runtime_contract: {
+        version: 2,
+        system: 'linux',
+        architecture: 'x86_64',
+        platforms: SUPPORTED_PLATFORMS.map((platform) => ({ ...platform })),
+        node_major: 22,
+        minimum_node_version: '22.18.0',
+        cpu_features: [...SUPPORTED_CPU_FEATURES],
+        external_libraries: [...GLIBC_LIBRARIES],
+        external_executables: ['sh', 'node'],
+        inventory_sha256: 'e'.repeat(64),
+      },
+    },
+  };
+}
 async function owned_server(
   installer?: Partial<InstallerOperations>,
   startup?: {
     before_start(root: string): void;
     configure_environment(environment: ComposedEnvironmentRuntime): void;
   },
+  published: PublishedUpdate = release(),
 ) {
   const root = mkdtempSync(join(tmpdir(), 'panels-update-core-'));
   const path = join(root, 'data/planner.db');
@@ -199,7 +223,6 @@ async function owned_server(
   vi.stubEnv('PLAN_TICKET_SCRATCH_ROOT', undefined);
   vi.stubEnv('PLAN_TICKET_SCRATCH_DATABASE', undefined);
   expect(process.env.VITEST).toBe('true');
-  const published = release();
   const provider = {
     available: async () => published,
     download_artifact: async () => {
@@ -248,7 +271,7 @@ async function owned_server(
             },
           },
           installer: {
-            require_exact_schema_frontier: () => {
+            node_schema_steps_pending: () => {
               throw new Error('Node frontier admission is unavailable in this v1 fixture');
             },
             schema_change_pending: () => false,
@@ -432,6 +455,70 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
     await owned.registry.child(resumed_delivery.conversation_id).finish();
   } finally {
     backup.resolve(join(owned.root, 'backups/scripted-snapshot'));
+    launch.reject(new Error('test cleanup'));
+    await owned.close();
+  }
+}, 20_000);
+
+test('ancestor database: the backup is taken after the deadline is written, and the deadline includes the backup allowance', async () => {
+  // settle() and the Updating card read deadline_at. A backup under the old deadline
+  // could expire mid-copy. The fixture database is small, so each copy gets the 120 s floor.
+  const backup = deferred<string>(),
+    backup_entered = deferred<void>();
+  const launch = deferred<void>(),
+    launch_entered = deferred<void>();
+  const owned = await owned_server(
+    {
+      node_schema_steps_pending: () => true,
+      create_backup: () => {
+        backup_entered.resolve();
+        return backup.promise;
+      },
+      launch: () => {
+        launch_entered.resolve();
+        return launch.promise;
+      },
+    },
+    undefined,
+    node_release(),
+  );
+  const attempt = () =>
+    JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8'));
+  const seconds_left = (deadline_at: string) =>
+    Number(instant(deadline_at).epochMicroseconds) / 1_000_000 - Date.now() / 1000;
+  const snapshot = join(owned.root, 'backups/scripted-snapshot');
+  try {
+    // The same idle admission as the first proof: the update starts when this work finishes.
+    const sent = await owned.send('native work before a stepped update');
+    expect(sent.status).toBe(200);
+    const child = owned.registry.child((await sent.json()).conversation_id);
+    await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
+    const install = await owned.post('/api/updates/install', {
+      app_sha: 'b'.repeat(40),
+      mode: 'idle',
+    });
+    expect(install.status).toBe(200);
+    await child.finish();
+    await reached(backup_entered.promise, 'backup of an ancestor database', attempt);
+    const during = attempt();
+    expect(during).toMatchObject({ state: 'installing', backup: null });
+    expect(seconds_left(during.deadline_at)).toBeGreaterThan(900 + 120 + 900 + 120 - 30);
+    expect(seconds_left(during.deadline_at)).toBeLessThanOrEqual(900 + 120 + 900 + 120);
+    expect(await owned.status()).toMatchObject({
+      state: 'updating',
+      detail: 'Backing up the database first (about 2 min)',
+    });
+    backup.resolve(snapshot);
+    await reached(launch_entered.promise, 'installer launch after the backup', attempt);
+    const launched = attempt();
+    expect(launched).toMatchObject({ state: 'installing', backup: snapshot, detail: null });
+    // The backup is done. The steps and a rollback restore still count.
+    expect(seconds_left(launched.deadline_at)).toBeGreaterThan(900 + 900 + 120 - 30);
+    expect(seconds_left(launched.deadline_at)).toBeLessThanOrEqual(900 + 900 + 120);
+    launch.reject(new Error('scripted installer did not start'));
+    await vi.waitFor(async () => expect((await owned.status()).attempt.state).toBe('failed'));
+  } finally {
+    backup.resolve(snapshot);
     launch.reject(new Error('test cleanup'));
     await owned.close();
   }
