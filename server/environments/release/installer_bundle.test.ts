@@ -348,7 +348,6 @@ it('copies a complete selected closure once and refuses changed source or an app
       'server/skills/seeds/panels/SKILL.md',
       'server/worker_types/shipped_worker_types.json',
       'web/src/lib/conversation/view/contracts.ts',
-      'pyproject.toml',
     ])
       assert.deepEqual(readFileSync(join(payload, name)), readFileSync(join(checkout, name)));
     for (const [name, bytes] of Object.entries(package_bytes)) {
@@ -380,7 +379,6 @@ it('copies a complete selected closure once and refuses changed source or an app
       service_unit: 'fixture.service',
       health_url: 'http://127.0.0.1:0',
       health_timeout_seconds: 3,
-      admitted_legacy_null_sha: null,
     };
     const command = copy_installer_runtime(app, request, controller.signal);
     assert.equal(command[1], join(data, 'update-installer-first/runtime', INSTALLER_ENTRY));

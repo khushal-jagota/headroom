@@ -7,7 +7,6 @@ export type {
   NodeRuntimeContract,
   LinuxNodeRuntimeContract,
   DarwinNodeRuntimeContract,
-  PythonRuntimeContract,
   RuntimeContract,
 } from '../updates/contracts.ts';
 export class AppValidationError extends AppManifestValidationFailure {
@@ -160,7 +159,6 @@ export class MacArchiveJsonError extends Error {
 }
 export interface MacArchiveInspection {
   readonly manifest: unknown;
-  readonly python: boolean;
   readonly node: boolean;
   readonly entrypoint: boolean;
   readonly native_linux?: {

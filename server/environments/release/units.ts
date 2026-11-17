@@ -9,7 +9,6 @@ import { resolved_path } from '../paths.ts';
 import { path_is_within } from '../../core/path_containment.ts';
 import { is_record } from '../../core/records.ts';
 
-export type ClassifiedRuntime = 'node-v2' | 'python-v1' | 'python-legacy-null';
 export interface ManagedUnitOptions {
   readonly current_root: string;
   readonly node_executable: string;
@@ -18,7 +17,6 @@ export interface ManagedUnitOptions {
   readonly lease_path: string;
   readonly environment_file_path: string;
   readonly runtime_directory_name: string;
-  readonly admitted_legacy_null_sha: string | null;
   readonly environment: Readonly<Record<string, string>>;
 }
 export interface WatchdogUnitOptions {
@@ -38,13 +36,12 @@ export interface WatchdogUnitOptions {
 export const INSTALLED_RUNTIME_CLASSIFIER_SOURCE = String.raw`
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-function classify_installed_runtime(input, admitted_null_sha) {
+function classify_installed_runtime(input) {
   const object = ${is_record.toString()};
   const matches = (pattern, value) => typeof value === 'string' && pattern.exec(value)?.[0] === value;
   const fail = message => { throw new Error(message); };
   if (!path.isAbsolute(input)) fail('application root must be absolute');
   if (fs.lstatSync(input.replace(/\/+$/, '') || '/').isSymbolicLink()) fail('application root must not be a symlink');
-  if (admitted_null_sha && !matches(/^[0-9a-f]{40}$/, admitted_null_sha)) fail('invalid admitted legacy SHA');
   const root = fs.realpathSync(input);
   const sources = new WeakMap();
   function regular(name, executable = false) {
@@ -75,8 +72,7 @@ function classify_installed_runtime(input, admitted_null_sha) {
     return a === b;
   }
   function version(value) {
-    if (!object(value) || (value.version !== 1 && value.version !== 2) || sources.get(value)?.get('version') !== String(value.version)) fail('unsupported runtime contract version');
-    return value.version;
+    if (!object(value) || value.version !== 2 || sources.get(value)?.get('version') !== String(value.version)) fail('unsupported runtime contract version');
   }
   const manifest = read_json('manifest.json');
   if (!object(manifest) || manifest.format !== 'panels-app-v1') fail('unsupported application manifest');
@@ -84,24 +80,17 @@ function classify_installed_runtime(input, admitted_null_sha) {
   regular('bin/panels', true);
   regular('bin/panels-launcher', true);
   const contract = manifest.runtime_contract;
-  if (contract === null || contract === undefined) {
-    if (!admitted_null_sha || manifest.app_sha !== admitted_null_sha) fail('legacy null runtime is not admitted');
-    regular('.venv/bin/python', true);
-    return 'python-legacy-null';
-  }
-  const selected = version(contract);
+  if (contract === null || contract === undefined) fail('application lacks a runtime contract');
+  version(contract);
   const payload = read_json('runtime/contract.json');
-  if (version(payload) !== selected || !equal(contract, payload)) fail('manifest runtime contract differs from payload');
-  if (selected === 1) {
-    regular('.venv/bin/python', true);
-    return 'python-v1';
-  }
+  version(payload);
+  if (!equal(contract, payload)) fail('manifest runtime contract differs from payload');
   for (const name of ['server/environments/release/launcher_main.ts', 'server/lifecycle/foreground_main.ts', 'server/lifecycle/managed_main.ts', 'server/lifecycle/application.ts', 'server/lifecycle/stop_main.ts', 'server/stalls/watchdog_main.ts', 'server/environments/updates/interruption_capture_main.ts', 'server/environments/updates/restore_main.ts', 'runtime/installer-files.json', 'server/environments/updates/installer/main.ts']) regular(name);
   return 'node-v2';
 }
 try {
-  if (process.argv.length !== 3) throw new Error('expected application root and admitted legacy SHA');
-  process.stdout.write(classify_installed_runtime(process.argv[1], process.argv[2]) + '\n');
+  if (process.argv.length !== 2) throw new Error('expected application root');
+  process.stdout.write(classify_installed_runtime(process.argv[1]) + '\n');
 } catch (error) {
   process.stderr.write('Panels runtime classification failed: ' + (error instanceof Error ? error.message : 'invalid identity') + '\n');
   process.exitCode = 1;
@@ -167,7 +156,7 @@ async function shared_address(value: string): Promise<string> {
       throw new Error('Unit control and lease paths must be outside private temporary directories');
   return path;
 }
-function start_prefix(current: string, node: string, sha: string): string {
+function start_prefix(current: string, node: string): string {
   const app = join(absolute(current), 'app');
   return (
     guarded_prefix() +
@@ -181,9 +170,7 @@ function start_prefix(current: string, node: string, sha: string): string {
     shell_quote(node) +
     ' --input-type=module -e ' +
     shell_quote(INSTALLED_RUNTIME_CLASSIFIER_SOURCE) +
-    ' "/proc/$$/cwd/." ' +
-    shell_quote(sha) +
-    ')\n'
+    ' "/proc/$$/cwd/.")\n'
   );
 }
 const RUNNING_STOP_SOURCE = String.raw`
@@ -211,9 +198,6 @@ export async function render_managed_unit(options: ManagedUnitOptions): Promise<
     name = options.runtime_directory_name;
   if (/^[A-Za-z0-9_-]+$/.exec(name)?.[0] !== name)
     throw new Error('Runtime directory must be one safe component');
-  const sha = options.admitted_legacy_null_sha;
-  if (sha !== null && /^[0-9a-f]{40}$/.exec(sha)?.[0] !== sha)
-    throw new Error('Invalid admitted legacy SHA');
   const [control, lease] = await Promise.all([
     shared_address(options.control_socket_path),
     shared_address(options.lease_path),
@@ -223,12 +207,11 @@ export async function render_managed_unit(options: ManagedUnitOptions): Promise<
     PLAN_SERVER_LIFECYCLE_LEASE_PATH: lease,
   });
   const start =
-    start_prefix(options.current_root, node, sha ?? '') +
+    start_prefix(options.current_root, node) +
     'case "$runtime" in\n' +
     'node-v2) exec ' +
     shell_quote(node) +
     ' server/environments/release/launcher_main.ts serve --managed-linux-runtime-directory "$1";;\n' +
-    'python-v1|python-legacy-null) exec ./bin/panels-launcher serve;;\n' +
     '*) exit 1;;\nesac\n';
   const stop =
     guarded_prefix() +
@@ -254,7 +237,7 @@ export async function render_watchdog_units(
   const node = absolute(options.node_executable),
     environment = environment_bundle(options);
   const script =
-    start_prefix(options.current_root, node, '') +
+    start_prefix(options.current_root, node) +
     '[ "$runtime" = node-v2 ] || exit 1\nexec ' +
     shell_quote(node) +
     ' server/stalls/watchdog_main.ts ' +

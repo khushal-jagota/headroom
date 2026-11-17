@@ -41,7 +41,6 @@ it('keeps actual-test boundaries and stops before rename after a warning abort',
     service_unit: 'never-start.service',
     health_url: 'http://127.0.0.1:0',
     health_timeout_seconds: 1,
-    admitted_legacy_null_sha: null,
   };
   const execution = { child_processes: owner, signal: controller.signal, environment: {} };
   try {
@@ -135,7 +134,6 @@ it('refuses non-loopback health URLs despite a supplied normal-mode environment'
     service_unit: 'never-start.service',
     health_url: 'https://example.com/health',
     health_timeout_seconds: 1,
-    admitted_legacy_null_sha: null,
   };
   const execution = {
     child_processes: owner,
@@ -206,7 +204,6 @@ it('releases the barrier before healthy records on success and rollback as Pytho
             service_unit: 'never-start.service',
             health_url: 'http://127.0.0.1:0',
             health_timeout_seconds: 1,
-            admitted_legacy_null_sha: null,
           },
           {
             async service() {},

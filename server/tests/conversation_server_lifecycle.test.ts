@@ -440,7 +440,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       dependencies: {
         application_root: dirname(f.path),
         node_executable: process.execPath,
-        admitted_legacy_null_sha: null,
       },
       factory: async (value) => {
         context = value;
@@ -452,7 +451,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           staging: { stage: async () => unavailable() },
           installer: {
             node_schema_steps_pending: unavailable,
-            schema_change_pending: unavailable,
             create_backup: async () => unavailable(),
             prepare: unavailable,
             launch: async () => unavailable(),

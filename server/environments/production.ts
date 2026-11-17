@@ -61,7 +61,6 @@ export const create_production_environment_operations: ProductionEnvironmentFact
       const { current_darwin_home } = await import('./updates/darwin/launch.ts');
       darwin_home = await current_darwin_home(
         application_root,
-        dependencies.node_executable,
         { child_processes: context.child_processes, signal, deadline: null },
         environment,
       );
@@ -100,7 +99,6 @@ export const create_production_environment_operations: ProductionEnvironmentFact
     installer: create_installer_operations({
       application_root,
       node_executable: dependencies.node_executable,
-      admitted_legacy_null_sha: dependencies.admitted_legacy_null_sha,
       child_processes: context.child_processes,
       signal,
       environment,

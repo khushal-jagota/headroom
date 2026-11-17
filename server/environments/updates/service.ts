@@ -267,8 +267,7 @@ export class UpdateService {
     const staged = await this.options.staging.stage(provider, release, this.options.current_root);
     if (!this.active(incarnation)) return;
     // Admission only. The install decides on the backup when it starts.
-    if (release.manifest.runtime_contract?.version === 2)
-      await this.options.installer.node_schema_steps_pending(this.options.database, staged);
+    await this.options.installer.node_schema_steps_pending(this.options.database, staged);
     if (!this.active(incarnation)) return;
     await this.options.mac.prepare(release);
     if (!this.active(incarnation)) return;
@@ -716,53 +715,36 @@ export class UpdateService {
     const staged = staged_app_path(this.options.current_root, attempt.to_sha);
     if (!statSync(staged, { throwIfNoEntry: false })?.isDirectory())
       throw new Error('the staged release is missing');
-    let backup: string | null = null,
-      steps_pending = false;
+    let backup: string | null = null;
     const database_bytes = database_file_bytes(this.options.database);
-    if (attempt.release.manifest.runtime_contract?.version === 2) {
-      steps_pending = await this.options.installer.node_schema_steps_pending(
+    const steps_pending = await this.options.installer.node_schema_steps_pending(
+      this.options.database,
+      staged,
+    );
+    if (!this.active(incarnation)) return;
+    // Pending steps need a backup. A Mac home takes its snapshot on every trial.
+    const backup_runs = steps_pending || this.options.installer.requires_snapshot === true;
+    // The deadline covers the backup before it starts, so neither settle() nor the
+    // Updating card gives up while it runs.
+    this.options.runtime.assert_database_owned();
+    this.attempts.change(attempt_id, states('installing'), (current) => ({
+      ...current,
+      deadline_at: this.deadline(
+        install_deadline_seconds({
+          backup: backup_runs,
+          steps: steps_pending,
+          database_bytes,
+        }),
+      ),
+      ...(backup_runs ? { detail: backup_detail(database_bytes) } : {}),
+    }));
+    if (steps_pending) {
+      backup = await this.options.installer.create_backup(
         this.options.database,
-        staged,
+        this.options.backup_directory,
+        attempt.from_sha,
       );
       if (!this.active(incarnation)) return;
-      // Pending steps need a backup. A Mac home takes its snapshot on every trial.
-      const backup_runs = steps_pending || this.options.installer.requires_snapshot === true;
-      // The deadline covers the backup before it starts, so neither settle() nor the
-      // Updating card gives up while it runs.
-      this.options.runtime.assert_database_owned();
-      this.attempts.change(attempt_id, states('installing'), (current) => ({
-        ...current,
-        deadline_at: this.deadline(
-          install_deadline_seconds({
-            backup: backup_runs,
-            steps: steps_pending,
-            database_bytes,
-          }),
-        ),
-        ...(backup_runs ? { detail: backup_detail(database_bytes) } : {}),
-      }));
-      if (steps_pending) {
-        backup = await this.options.installer.create_backup(
-          this.options.database,
-          this.options.backup_directory,
-          attempt.from_sha,
-        );
-        if (!this.active(incarnation)) return;
-      }
-    } else {
-      const pending = await this.options.installer.schema_change_pending(
-        this.options.database,
-        staged,
-      );
-      if (!this.active(incarnation)) return;
-      if (pending) {
-        backup = await this.options.installer.create_backup(
-          this.options.database,
-          this.options.backup_directory,
-          attempt.from_sha,
-        );
-        if (!this.active(incarnation)) return;
-      }
     }
     if (backup === null && this.options.installer.requires_snapshot) {
       backup = await this.options.installer.create_backup(

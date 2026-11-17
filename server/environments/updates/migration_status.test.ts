@@ -19,7 +19,6 @@ import {
   probe_step,
   rebuild_step,
 } from '../../core/database/schema_steps/testing/steps.ts';
-import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { BASELINE_MIGRATION_GRAPH_PATH, MIGRATION_GRAPH_PATH } from '../release/migrations.ts';
 import type { MigrationGraph } from '../release/contracts.ts';
 import { create_migration_status } from './migration_status.ts';
@@ -28,14 +27,13 @@ it('accepts the head and TypeScript ancestors; refuses Python ancestors and unkn
   // The ancestor rule decides the backup and admits the install. A temporary staged app.
   const repository = resolve(import.meta.dirname, '../../..');
   const root = mkdtempSync(join(tmpdir(), 'panels-node-frontier-'));
-  const owner = new ChildProcesses();
   try {
     const staged = join(root, 'staged');
-    const versions = 'src/planner/core/migrations/versions';
-    for (const path of [BASELINE_MIGRATION_GRAPH_PATH, versions]) {
-      mkdirSync(dirname(join(staged, path)), { recursive: true });
-      cpSync(join(repository, path), join(staged, path), { recursive: true });
-    }
+    mkdirSync(dirname(join(staged, BASELINE_MIGRATION_GRAPH_PATH)), { recursive: true });
+    cpSync(
+      join(repository, BASELINE_MIGRATION_GRAPH_PATH),
+      join(staged, BASELINE_MIGRATION_GRAPH_PATH),
+    );
     mkdirSync(dirname(join(staged, MIGRATION_GRAPH_PATH)), { recursive: true });
     writeFileSync(
       join(staged, MIGRATION_GRAPH_PATH),
@@ -60,7 +58,7 @@ it('accepts the head and TypeScript ancestors; refuses Python ancestors and unkn
       ).close();
       return path;
     };
-    const status = create_migration_status(owner);
+    const status = create_migration_status();
     const outcome = async (revision: string) => {
       try {
         return await status.node_schema_steps_pending(at(revision), staged);
@@ -91,8 +89,6 @@ it('accepts the head and TypeScript ancestors; refuses Python ancestors and unkn
       refused,
     ]);
   } finally {
-    owner.seal();
-    await owner.settled();
     rmSync(root, { recursive: true, force: true });
   }
 });
