@@ -571,7 +571,7 @@ test('the CLI floor check refuses a turn before child custody is written', async
 
 // A live Manager's resume failed and nobody could see why. Each real adapter, with only its
 // native client faked, must hand the backend's own words to the record and to one log line.
-async function refused_resume(factory: BackendChildFactory) {
+async function refused_resume(factory: BackendChildFactory, sends = 1) {
   const f = setup({
     core: {
       backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
@@ -585,13 +585,15 @@ async function refused_resume(factory: BackendChildFactory) {
       ...state.record,
       vendor_session_cursor: 'lost-session',
     });
-    const fate = await f.send();
+    const fates = [];
+    for (let index = 0; index < sends; index += 1)
+      fates.push(await f.send('one', `sender-${index}`));
     return {
-      fate,
+      fates,
       refusals: f.store
         .read_events_after('core', 0)
         .filter((row) => row.kind === 'prompt_delivery_refused')
-        .map((row) => row.payload),
+        .map((row) => row.payload as { refusal_reason: string; refusal_detail: string }),
       logged: logged.mock.calls
         .map(([line]) => String(line))
         .filter((line) => line.startsWith('conversation backend failed')),
@@ -601,28 +603,28 @@ async function refused_resume(factory: BackendChildFactory) {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 }
+const SESSION_DID_NOT_LOAD = new PromptDeliveryRefused({
+  refusal_reason: PromptDeliveryRefusalReason.session_did_not_load,
+});
 function expect_session_load_refusal(
   observed: Awaited<ReturnType<typeof refused_resume>>,
   ...texts: string[]
 ): void {
-  expect(observed.fate).toEqual(
-    new PromptDeliveryRefused({ refusal_reason: PromptDeliveryRefusalReason.session_did_not_load }),
-  );
+  expect(observed.fates).toEqual([SESSION_DID_NOT_LOAD]);
   expect(observed.refusals).toHaveLength(1);
-  expect(observed.refusals[0]).toMatchObject({ refusal_reason: 'session_did_not_load' });
+  expect(observed.refusals[0].refusal_reason).toBe('session_did_not_load');
   expect(observed.logged).toHaveLength(1);
   expect(observed.logged[0]).toContain('conversation_id=core');
   expect(observed.logged[0]).toContain('error_class=SessionLoadFailed');
   for (const text of texts) {
-    expect((observed.refusals[0] as { refusal_detail: string }).refusal_detail).toContain(text);
+    expect(observed.refusals[0].refusal_detail).toContain(text);
     expect(observed.logged[0]).toContain(text);
   }
 }
 const unreachable = async (): Promise<never> => {
   throw new Error('nothing runs after a failed resume');
 };
-
-test("a failed Claude resume records Claude's own error text", async () => {
+function failing_claude(): BackendChildFactory {
   const child_processes = new ChildProcesses();
   const claude = create_claude_backend_child_factory(
     { claude_executable: '/synthetic/claude' },
@@ -653,16 +655,9 @@ test("a failed Claude resume records Claude's own error text", async () => {
     },
   );
   // The CLI floor check would run the synthetic executable.
-  const factory: BackendChildFactory = (values) =>
-    Object.assign(claude(values), { confirm_cli_compatible: undefined });
-  expect_session_load_refusal(
-    await refused_resume(factory),
-    'No conversation found with session ID: lost-session',
-    'session file is missing',
-  );
-});
-
-test("a failed Codex resume records Codex's own error text", async () => {
+  return (values) => Object.assign(claude(values), { confirm_cli_compatible: undefined });
+}
+function failing_codex(standard_error: string): BackendChildFactory {
   const client: CodexClient = {
     is_alive: true,
     end_reason: null,
@@ -678,12 +673,12 @@ test("a failed Codex resume records Codex's own error text", async () => {
     async notify() {},
     async respond() {},
     async respond_with_error() {},
-    standard_error_tail: () => 'ERROR codex_core: rollout file is missing\n',
+    standard_error_tail: () => standard_error,
     standard_error_bytes_so_far: () => 0,
     standard_error_since: () => null,
     async settle_standard_error() {},
   };
-  const factory = create_codex_backend_child_factory(
+  return create_codex_backend_child_factory(
     { argv: ['/synthetic/codex', 'app-server'] },
     {
       child_processes: new ChildProcesses(),
@@ -692,8 +687,19 @@ test("a failed Codex resume records Codex's own error text", async () => {
       client_factory: () => client,
     },
   );
+}
+
+test("a failed Claude resume records Claude's own error text", async () => {
   expect_session_load_refusal(
-    await refused_resume(factory),
+    await refused_resume(failing_claude()),
+    'No conversation found with session ID: lost-session',
+    'session file is missing',
+  );
+});
+
+test("a failed Codex resume records Codex's own error text", async () => {
+  expect_session_load_refusal(
+    await refused_resume(failing_codex('ERROR codex_core: rollout file is missing\n')),
     'no rollout found for thread lost-session',
     'rollout file is missing',
   );
@@ -708,20 +714,47 @@ test("a failed Hermes resume records Hermes's own error text", async () => {
     },
     close() {},
   };
-  vi.spyOn(HermesAcpLauncher.prototype, 'start').mockResolvedValue(
-    client as unknown as HermesAcpClient,
+  try {
+    vi.spyOn(HermesAcpLauncher.prototype, 'start').mockResolvedValue(
+      client as unknown as HermesAcpClient,
+    );
+    vi.spyOn(HermesAcpLauncher.prototype, 'stop').mockResolvedValue();
+    vi.spyOn(HermesAcpLauncher.prototype, 'standard_error_tail').mockReturnValue(
+      'KeyError: lost-session\n',
+    );
+    const factory = create_hermes_backend_child_factory(
+      { argv: ['/synthetic/hermes'], environment_overrides: [] },
+      { child_processes: new ChildProcesses(), worker_supervision: {} as WorkerSupervisionRuntime },
+    );
+    expect_session_load_refusal(
+      await refused_resume(factory),
+      'Session lost-session not found',
+      'KeyError: lost-session',
+    );
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+
+// A refusal detail is shown in place of the friendly sentence, so it must hold no secret.
+test('a backend failure text is redacted in the record and the log', async () => {
+  const observed = await refused_resume(
+    failing_codex(
+      'GET https://example.test/v1/models?key=AIzaQUERYSECRET failed\n' +
+        'token rejected: Bearer BEARERSECRET\n' +
+        'config api_key=sk-ASSIGNEDSECRET\n',
+    ),
   );
-  vi.spyOn(HermesAcpLauncher.prototype, 'stop').mockResolvedValue();
-  vi.spyOn(HermesAcpLauncher.prototype, 'standard_error_tail').mockReturnValue(
-    'KeyError: lost-session\n',
-  );
-  const factory = create_hermes_backend_child_factory(
-    { argv: ['/synthetic/hermes'], environment_overrides: [] },
-    { child_processes: new ChildProcesses(), worker_supervision: {} as WorkerSupervisionRuntime },
-  );
-  expect_session_load_refusal(
-    await refused_resume(factory),
-    'Session lost-session not found',
-    'KeyError: lost-session',
-  );
+  expect_session_load_refusal(observed, 'no rollout found for thread lost-session', '[redacted]');
+  const kept = JSON.stringify(observed.refusals) + observed.logged.join('\n');
+  for (const secret of ['QUERYSECRET', 'BEARERSECRET', 'ASSIGNEDSECRET'])
+    expect(kept).not.toContain(secret);
+});
+
+// A worker step retries a lost session. Each retry must not add another row and log line.
+test('a repeated identical session-load failure is recorded and logged once', async () => {
+  const observed = await refused_resume(failing_claude(), 2);
+  expect(observed.fates).toEqual([SESSION_DID_NOT_LOAD, SESSION_DID_NOT_LOAD]);
+  expect(observed.refusals).toHaveLength(1);
+  expect(observed.logged).toHaveLength(1);
 });

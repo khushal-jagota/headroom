@@ -8,6 +8,7 @@ import {
 } from '../backends/contracts.ts';
 import type { BackendChild, BackendSteerOutcome, TurnToken } from '../backends/contracts.ts';
 import { log_backend_failure } from '../backends/failure_summary.ts';
+import { recorded_failure_detail } from '../logic/backend_events.ts';
 import {
   backend_supports_steer,
   PromptDeliveryInjected,
@@ -440,7 +441,7 @@ async function record_steer_outcome(
           message,
           PromptDeliveryMode.steer,
           outcome.refusal_reason,
-          outcome.refusal_detail,
+          recorded_failure_detail(outcome.refusal_detail),
         )
       : uncertain_row(message, PromptDeliveryMode.steer);
   let rows: Awaited<ReturnType<typeof host.options.store.append_events>>;

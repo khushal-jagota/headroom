@@ -160,6 +160,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     if (this.client !== null || this.reader !== null)
       throw new B.BackendSpawnFailed('the previous Claude child still owns cleanup handles');
     this.stopping = null;
+    this.wire_failure = null;
     if (resolved_start.workspace_path_policy === WorkspacePathPolicy.executor_default)
       throw new B.BackendSpawnFailed('executor workspace requires native resolution');
     this.resolved_start = resolved_start;

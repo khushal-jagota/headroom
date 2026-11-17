@@ -16,6 +16,7 @@ import { PromptDiscardedEventPayload } from '../events.ts';
 import { one_prompt_from } from '../logic/held_line.ts';
 import { prefix_message_content_text, text_message_content } from '../message_content.ts';
 import { log_backend_failure } from '../backends/failure_summary.ts';
+import { recorded_failure_detail } from '../logic/backend_events.ts';
 import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
@@ -112,6 +113,7 @@ async function ensure_child(
     throw new DeliveryCancelled();
   }
   state.child = child;
+  state.last_session_load_refusal_detail = null;
   return child;
 }
 async function compose(
@@ -370,13 +372,19 @@ export async function deliver_prompt(
       state.child_is_quarantined = true;
     });
     if (!(await host.retire_child_for_rebind(state, child)))
-      return result({ refusal_reason: R.write_to_backend_failed, refusal_detail: error.message });
+      return result({
+        refusal_reason: R.write_to_backend_failed,
+        refusal_detail: recorded_failure_detail(error.message),
+      });
     const ready = await state.lock.run(() => {
       owned(host, state, reservation);
       return state.child === null && !state.child_is_quarantined;
     });
     if (!ready)
-      return result({ refusal_reason: R.write_to_backend_failed, refusal_detail: error.message });
+      return result({
+        refusal_reason: R.write_to_backend_failed,
+        refusal_detail: recorded_failure_detail(error.message),
+      });
     try {
       child = await ensure_child(host, state, reservation, first);
       owned(host, state, reservation);
@@ -403,12 +411,14 @@ export async function deliver_prompt(
       if (next instanceof PromptWriteFailed) throw next;
       await host.discard_child(state, child);
       if (next instanceof NeedsRebind)
+        // A failed first child was logged above, so the log line names only the fresh one.
         return backend_refusal(
           state,
           R.write_to_backend_failed,
           next,
           error.failed_child_recovery,
           `${error.message}; the fresh agent also needed a restart: ${next.message}`,
+          error.failed_child_recovery ? next.message : undefined,
         );
       const attempt = refusal_or_throw(state, next);
       return { ...attempt, record_refusal: attempt.record_refusal || error.failed_child_recovery };
@@ -420,21 +430,17 @@ export async function deliver_prompt(
     }
   }
 }
-/** A backend refusal keeps the backend's own text as its detail, and is logged once here. */
+/** A backend refusal keeps the backend's own text, redacted, as its detail, and is logged once here. */
 function backend_refusal(
   state: ConversationState,
   refusal_reason: NonNullable<DeliveryAttempt['refusal_reason']>,
   error: Error,
   record_refusal: boolean,
-  refusal_detail: string = error.message,
+  text: string = error.message,
+  logged_text: string = text,
 ): DeliveryAttempt {
-  log_backend_failure(
-    state.record.conversation_id,
-    state.record.backend_key,
-    error,
-    refusal_detail,
-  );
-  return result({ refusal_reason, refusal_detail, record_refusal });
+  log_backend_failure(state.record.conversation_id, state.record.backend_key, error, logged_text);
+  return result({ refusal_reason, refusal_detail: recorded_failure_detail(text), record_refusal });
 }
 function refusal_or_throw(state: ConversationState, error: unknown): DeliveryAttempt {
   // A direct send's caller decides whether to record this refusal. The log keeps its text.
@@ -444,8 +450,14 @@ function refusal_or_throw(state: ConversationState, error: unknown): DeliveryAtt
     return backend_refusal(state, R.backend_rejected_prompt, error, true);
   if (error instanceof BackendSpawnFailed)
     return backend_refusal(state, R.backend_did_not_start, error, true);
-  if (error instanceof SessionLoadFailed)
+  if (error instanceof SessionLoadFailed) {
+    // A worker step retries a lost session. The same failure is recorded and logged once.
+    const detail = recorded_failure_detail(error.message);
+    if (detail !== null && detail === state.last_session_load_refusal_detail)
+      return result({ refusal_reason: R.session_did_not_load, refusal_detail: detail });
+    state.last_session_load_refusal_detail = detail;
     return backend_refusal(state, R.session_did_not_load, error, true);
+  }
   throw error;
 }
 
