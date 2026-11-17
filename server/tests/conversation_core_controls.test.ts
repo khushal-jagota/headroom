@@ -925,25 +925,29 @@ test('an unusable database fails the conversation at once and refuses new work',
   ).rejects.toThrow('did not shut down cleanly');
 });
 
-// Send now cancels the running turn, then its turn reservation save gives up. The phase must
-// settle, or a later stop waits for it forever.
-test('a reservation save that gives up after a cancel still lets the conversation stop', async () => {
+// Send now cancels the running turn, then its turn reservation save gives up. The promoted
+// message must be held again, and the phase must settle, or a later stop waits forever.
+test('a reservation save that gives up after a cancel holds the message and still stops', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const f = setup();
   await f.start();
   expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
+  expect(await f.send('two', 'second')).toBeInstanceOf(PromptDeliveryQueued);
+  const [held] = await f.core.held_prompts('core');
   vi.spyOn(f.store, 'reserve_turn').mockImplementation(() => {
     throw Object.assign(new Error('synthetic constraint'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
   });
   await expect(
-    f.core.send('core', text_message_content('now'), {
-      sender_label: 'Owner',
-      sender_message_id: 'now',
-      mode: 'send_now',
-    }),
+    f.core.promote_held_prompt('core', held.held_prompt_id, 'send_now'),
   ).rejects.toMatchObject({ code: 'SQLITE_CONSTRAINT_UNIQUE' });
-  await f.core.kill('core');
-  expect(f.core.conversations.get('core')!.phase).toBe('idle');
+  const state = f.core.conversations.get('core')!;
+  expect((await f.core.held_prompts('core')).map((entry) => entry.held_prompt_id)).toEqual([
+    held.held_prompt_id,
+  ]);
+  expect(state.sender_messages_being_delivered.size).toBe(0);
+  // The failed conversation stops its child. A stop then completes instead of waiting forever.
   await f.core.wait_until_quiescent();
+  await f.core.kill('core');
+  expect(state.phase).toBe('idle');
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 }, 15_000);

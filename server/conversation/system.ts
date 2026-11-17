@@ -865,7 +865,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       // A save gave up partway through this delivery. Release the reservation, so the
       // conversation settles and a stop does not wait for it.
       await state.lock.run(() => {
-        if (state.reserved_turn === reservation || state.phase === 'starting')
+        // Release only this delivery's own reservation, never a newer one.
+        if (
+          state.reserved_turn === reservation ||
+          (state.reserved_turn === null && !reservation.resolved.settled)
+        )
           this.abandon_reservation(state, reservation, 'idle');
         this.finish_held_deliveries(state, batch);
       });

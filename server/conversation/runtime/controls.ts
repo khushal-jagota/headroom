@@ -640,7 +640,15 @@ export async function promote_held_prompt(
       begin_held(state, message);
       state.held_prompts.splice(index, 1);
       host.publish_held_prompts_changed(state);
-      reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
+      try {
+        reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
+      } catch (error) {
+        // The message was not sent. Hold it again, so it is neither lost nor left in delivery.
+        finish_held(state, message);
+        state.held_prompts.splice(index, 0, message);
+        host.publish_held_prompts_changed(state);
+        throw error;
+      }
       reservation.mode = PromptDeliveryMode.send_now;
     } else {
       if (
