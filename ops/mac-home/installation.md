@@ -84,7 +84,10 @@ export PATH="$(brew --prefix python@3.13)/libexec/bin:$(brew --prefix icu4c)/bin
 export PKG_CONFIG_PATH="$(brew --prefix icu4c)/lib/pkgconfig"
 mkdir -p "$HOME/.panels-build-tmp"
 export TMPDIR="$HOME/.panels-build-tmp"
-scripts/dev setup
+npm ci --prefix server
+npm ci --prefix web
+npm install --prefix agent_backends --no-save --no-package-lock
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
 scripts/dev npm --prefix web run build
 ```
 

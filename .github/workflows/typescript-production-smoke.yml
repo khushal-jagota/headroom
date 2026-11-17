@@ -69,7 +69,11 @@ jobs:
           printf '{}\n' > "$PLAN_CONFIG_PATH"
           sudo apt-get update
           sudo apt-get install -y libicu-dev pkg-config build-essential
-          scripts/dev setup
+          npm ci --prefix server
+          npm ci --prefix web
+          npm install --prefix agent_backends --no-save --no-package-lock
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt -e .
           scripts/dev npm --prefix web run build
           .venv/bin/python -m playwright install --with-deps --only-shell chromium
           # The entry owns seeding and switches its actual server to production mode.
