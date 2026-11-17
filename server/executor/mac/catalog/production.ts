@@ -42,15 +42,16 @@ export function create_mac_catalog(options: {
       if (closed) throw new DOMException('Mac catalogs stopped.', 'AbortError');
       const controller = new AbortController();
       controllers.add(controller);
-      const operation = read(controller.signal);
-      probes.add(operation);
+      let operation: Promise<unknown> | undefined;
       try {
-        return await operation;
+        const reading = read(controller.signal);
+        probes.add((operation = reading));
+        return await reading;
       } catch (error) {
         if (error instanceof ModelCatalogCleanupFailed) throw retain(error);
         throw error;
       } finally {
-        probes.delete(operation);
+        if (operation) probes.delete(operation);
         controllers.delete(controller);
       }
     },
