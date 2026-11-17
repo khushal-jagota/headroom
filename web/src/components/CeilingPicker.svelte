@@ -27,6 +27,7 @@
     manager = null,
     stageLocked = false,
     below = false,
+    fitWithin = ".ticket-doc",
     document = false,
     triggerLabel = null,
     holderLabel = null,
@@ -51,6 +52,8 @@
     stageLocked?: boolean;
     /** Open the panel downward, for a host that sits under the page header. */
     below?: boolean;
+    /** The area the open panel must fit inside, above or below its trigger. */
+    fitWithin?: string;
     /** Only the halves the user set. A reviewer chosen on its own carries no ceiling. */
     onComplete?: (change: { ceiling?: string; holder: Principal | null; approval?: boolean }) => void;
   } = $props();
@@ -170,7 +173,7 @@
   hideTrigger={externalTrigger}
   anchor={approvalAnchor}
   {below}
-  fitWithin=".ticket-doc"
+  {fitWithin}
   attributes={{ "data-ceiling-picker": "" }}
   triggerAttributes={{ "data-scope-ceiling": "" }}
   panelAttributes={{ "data-ceiling-picker-panel": "" }}

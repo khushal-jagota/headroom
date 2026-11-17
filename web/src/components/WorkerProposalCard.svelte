@@ -133,7 +133,7 @@
 
 </script>
 
-<section inert={disabled || busy || resolved} class="worker-proposal" class:composer-only={composerOnly} data-approval-block data-mode="pending" data-field={proposal.field}>
+<section inert={disabled || busy || resolved} class="worker-proposal" class:composer-only={composerOnly} data-approval-block data-artifact-origin="proposal" data-mode="pending" data-field={proposal.field}>
   {#if !composerOnly}
   <!-- The stage and who decides are small print over the card. The proposal's own first line
        is the card's title: the thing being decided, not the stage's generic name. -->
@@ -174,7 +174,8 @@
         onclick={(event) => finalApproval ? void completeScope({ approval:true, holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     </div>
   </div>
-  <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below pendingStage={stage}
+  <!-- Under an artifact the decisions are the page's foot, so the panel fits inside the artifact, above them. -->
+  <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below={!composerOnly} fitWithin={composerOnly ? ".ticket-artifact" : undefined} pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
   {#if proposal.field !== "brief" && !canReturn}<p class="return-unavailable" data-return-unavailable>{returnUnavailableReason}</p>{/if}
@@ -187,6 +188,7 @@
   .worker-proposal { --decision-button-height:var(--button-main-height); padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
   /* Standing in for the conversation composer: the note and decisions sit bare, like it does. */
   .worker-proposal.composer-only { padding:0; background:none; border:0; border-radius:0; }
+  .worker-proposal.composer-only > .revision { margin-top:0; }
   .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
   /* The header: the stage, a dot, then its approver, one pair at the left. */
