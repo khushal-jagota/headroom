@@ -32,7 +32,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Verification
 - For iPhone work, follow [permanent screen tests and one-off reviews](ios/README.md#permanent-screen-tests-and-one-off-reviews). Keep the five admitted screen methods separate from the review scheme.
-- Put Xcode build output under `TMPDIR`, for example `xcodebuild -derivedDataPath "$TMPDIR/DerivedData"`. Never put it in the Ticket's `artifacts/` folder. Panels sends everything in `artifacts/` to the home, so build output there floods the Mac's delivery. Put only files that a reviewer needs in `artifacts/`.
 - Apply the test-admission policy in **PRINCIPLES.md** during existing plan and implementation review. Record each added test's distinct risk, existing coverage gap, chosen layer, reused setup, and any new connected case or browser host cost.
 - **A check follows a piece of work, not a file and not an edit.** Finish what you set out to do, then run the narrowest check that proves it. A broad suite re-run when nothing since could have changed it proves nothing, and at a hundred repetitions it is not a detail of the work, it is most of the wall clock.
 - There is no single command that checks everything. Run `ruff`, `mypy` and `pytest` yourself, pointed at what your work touched, and read the output. A tool that is missing or a suite that skipped says so on screen, which a wrapper reporting one number does not.
