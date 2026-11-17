@@ -34,6 +34,7 @@ export class PlannerError extends Error {
           already_running: 409,
           gateway_offline: 503,
           skill_save_incomplete: 500,
+          conversation_save_failed: 503,
           executor_version_refused: 409,
           executor_incarnation_not_current: 409,
         } as Record<string, number>

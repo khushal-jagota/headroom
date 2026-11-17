@@ -516,6 +516,10 @@ export class ConversationStore
     return this.#settlement.finish_writes();
   }
 
+  get database_unusable_error(): unknown {
+    return this.#settlement.database_unusable_error;
+  }
+
   readonly #startup_source_proofs = new Map<
     string,
     { row: LocalChildCustodyRow; ticket_worker: boolean }

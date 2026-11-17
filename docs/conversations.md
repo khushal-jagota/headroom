@@ -88,6 +88,8 @@ A Claude agent can start a background task, such as a long test run, that keeps 
 
 Held messages live in memory, so a restart loses anything not yet delivered.
 
+A save that fails for a passing reason, such as contention, retries until it succeeds. A save that cannot succeed gives up after a few tries. Its conversation then stops its agent, ends the turn as failed, and refuses new messages until a restart. A prompt the agent may have is recorded as uncertain, so nothing resends it. A corrupt database stops all new work. Both failures raise an alarm.
+
 New conversation ends the running turn, discards held work, and links a fresh conversation. The old notebook stays as history, and only the active conversation accepts sends.
 
 After a deploy or ordinary crash interrupts a session, an eligible conversation gets one inspection prompt through the ordinary send path. Headroom never replays uncertain actions. Recovery requires proof that the exact previous child stopped. The home records its identity before dispatch and checks its process birth, host boot, and supervision records. Older unit-backed children retain exact-unit checks. If a machine is unavailable, recovery retries with a capped delay. An update can start between attempts, and the next startup resumes any remaining recovery.
