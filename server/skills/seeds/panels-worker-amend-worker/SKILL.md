@@ -60,15 +60,16 @@ The writes are not yours to make. Hand them to the owner or Chief during this re
 1. Prove the record before you hand it over. Validate it with the code that runs live, without a database and without writes to the installed tree:
 
    ```sh
-   PYTHONDONTWRITEBYTECODE=1 /home/vps/Deployments/Panels/current/app/.venv/bin/python -B -c '
-   import sys
-   from planner.worker_types.guidance import render_workflow_guide
-   from planner.worker_types.registry import KNOWN_TOOLSET_PROFILES, validate_definition
-   from planner.worker_types.store import definition_from_json
-   record = definition_from_json(open(sys.argv[1]).read())
-   validate_definition(record, known_skills=frozenset(sys.argv[2:]),
-                       known_toolset_profiles=KNOWN_TOOLSET_PROFILES)
-   sys.stdout.write(render_workflow_guide(record))' record.json $(panels skill list)
+   node --input-type=module -e '
+   const app = "/home/vps/Deployments/Panels/current/app/server/worker_types";
+   const { readFileSync } = await import("node:fs");
+   const { definition_from_json } = await import(app + "/store.ts");
+   const { validate_definition } = await import(app + "/registry.ts");
+   const { render_workflow_guide } = await import(app + "/guidance.ts");
+   const [file, ...skills] = process.argv.slice(1);
+   const record = definition_from_json(readFileSync(file, "utf8"));
+   validate_definition(record, new Set(skills));
+   process.stdout.write(render_workflow_guide(record));' record.json $(panels skill list)
    ```
 
    It prints the skill body that the save will store. Keep that body as an artifact too.

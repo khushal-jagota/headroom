@@ -341,9 +341,7 @@ export async function seed_populated_fixture(
     const exited = once(child, 'exit', { signal: AbortSignal.timeout(45_000) });
     child.kill('SIGTERM');
     const [code, signal] = await exited;
-    // The seed needs the settled database, not a clean test-host shutdown. The test
-    // host can fail to detach a scripted child after settlement, so only report it.
-    if (code !== 0) console.error(`Seed host shutdown: ${code ?? signal}`);
+    assert.equal(code, 0, `Seed host shutdown: ${code ?? signal}`);
     console.log(JSON.stringify({ database: database_path, requests }));
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
