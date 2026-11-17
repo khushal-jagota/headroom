@@ -19,12 +19,12 @@ import { local_process_identity } from '../../../worker_supervision/identity.ts'
 import { WorkerScratch } from '../../worker_scratch.ts';
 import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import { BackendAdapterError, BackendSpawnFailed } from '../contracts.ts';
-import { spawn_codex_process } from '../codex_app_server/process.ts';
+import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
 import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { observe_shutdown } from '../../shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
-import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
+import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
 import { child_environment } from './launch.ts';
 import { require_strict_session_notification } from './strict_updates.ts';
@@ -367,7 +367,7 @@ export class HermesAcpLauncher {
   private cleanup: Promise<void> | null = null;
   private supervision_settlement: Promise<void> = Promise.resolve();
   private sealed = false;
-  private owned: OwnedCodexProcess | null = null;
+  private owned: OwnedProcess | null = null;
   private client: HermesAcpClient | null = null;
   private starting: Promise<HermesAcpClient> | null = null;
   private stopping: Promise<void> | null = null;
@@ -420,7 +420,7 @@ export class HermesAcpLauncher {
       }
       if (this.sealed) throw new Error('this child is being shut down');
       const argv = this.supervisor?.argv(launch.argv) ?? launch.argv;
-      const owned = await spawn_codex_process(argv, {
+      const owned = await spawn_owned_process(argv, {
         child_processes: this.child_processes,
         on_created: (owned) => {
           this.owned = owned;

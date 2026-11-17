@@ -4,8 +4,8 @@ import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ConversationAccess } from '../../contracts.ts';
 import type { ResolvedConversationStart } from '../../contracts.ts';
-import { spawn_codex_process } from '../codex_app_server/process.ts';
-import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
+import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
+import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
 import { worker_supervision_fixture } from '../testing/worker_supervision_fixture.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
@@ -13,9 +13,9 @@ import { HermesAcpLauncher } from './client.ts';
 
 vi.mock('../../../worker_supervision/index.ts', () => ({ WorkerSupervisor: { create: vi.fn() } }));
 vi.mock('../../worker_scratch.ts', () => ({ WorkerScratch: { create: vi.fn() } }));
-vi.mock('../codex_app_server/process.ts', async (original) => ({
-  ...(await original<typeof import('../codex_app_server/process.ts')>()),
-  spawn_codex_process: vi.fn(),
+vi.mock('../../../lifecycle/owned_processes.ts', async (original) => ({
+  ...(await original<typeof import('../../../lifecycle/owned_processes.ts')>()),
+  spawn_owned_process: vi.fn(),
 }));
 vi.mock('./configuration.ts', async (original) => ({
   ...(await original<typeof import('./configuration.ts')>()),
@@ -55,8 +55,8 @@ const launch = {
 
 test('shutdown during spawn joins that child and permanently seals later starts', async () => {
   const owned = fake();
-  let release!: (value: OwnedCodexProcess) => void;
-  vi.mocked(spawn_codex_process).mockImplementationOnce(
+  let release!: (value: OwnedProcess) => void;
+  vi.mocked(spawn_owned_process).mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         release = resolve;
@@ -68,19 +68,19 @@ test('shutdown during spawn joins that child and permanently seals later starts'
   const started = launcher.start(launch, resolved, { log: (error) => errors.push(error) });
   const rejected = expect(started).rejects.toThrow('shut down');
   const stopping = launcher.stop();
-  release(owned as unknown as OwnedCodexProcess);
+  release(owned as unknown as OwnedProcess);
   await stopping;
   await rejected;
   expect(errors).toHaveLength(1);
   expect(owned.stop).toHaveBeenCalled();
-  const count = vi.mocked(spawn_codex_process).mock.calls.length;
+  const count = vi.mocked(spawn_owned_process).mock.calls.length;
   await expect(launcher.start(launch, resolved)).rejects.toThrow('shut down');
-  expect(vi.mocked(spawn_codex_process).mock.calls.length).toBe(count);
+  expect(vi.mocked(spawn_owned_process).mock.calls.length).toBe(count);
 });
 
 test('stdin error settles a write whose callback never returns', async () => {
   const owned = fake();
-  vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
+  vi.mocked(spawn_owned_process).mockResolvedValueOnce(owned as unknown as OwnedProcess);
   vi.spyOn(owned.child.stdin, 'write').mockImplementation(() => true);
   const launcher = new HermesAcpLauncher(new ChildProcesses());
   try {
@@ -107,12 +107,12 @@ test('an uncertain Worker stop retains scratch and retries custody cleanup while
   });
   vi.mocked(WorkerSupervisor.create).mockResolvedValueOnce(supervisor as never);
   vi.mocked(WorkerScratch.create).mockResolvedValueOnce(scratch as never);
-  vi.mocked(spawn_codex_process).mockImplementationOnce(async (argv, options) => {
+  vi.mocked(spawn_owned_process).mockImplementationOnce(async (argv, options) => {
     expect(order).toEqual(['record']);
     expect(argv).toEqual(['/synthetic/bootstrap', ...launch.argv]);
     expect(options.environment.TMPDIR).toBe('/synthetic/scratch');
-    options.on_created?.(owned as unknown as OwnedCodexProcess);
-    return owned as unknown as OwnedCodexProcess;
+    options.on_created?.(owned as unknown as OwnedProcess);
+    return owned as unknown as OwnedProcess;
   });
   const errors: unknown[] = [];
   const launcher = new HermesAcpLauncher(new ChildProcesses(), runtime, {
@@ -163,7 +163,7 @@ test('an uncertain Worker stop retains scratch and retries custody cleanup while
 
 test('a failed stderr reader retains complete lines and logs once while cleanup completes', async () => {
   const owned = fake();
-  vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned as unknown as OwnedCodexProcess);
+  vi.mocked(spawn_owned_process).mockResolvedValueOnce(owned as unknown as OwnedProcess);
   const errors: unknown[] = [];
   const launcher = new HermesAcpLauncher(new ChildProcesses());
   const client = await launcher.start(launch, resolved, { log: (error) => errors.push(error) });

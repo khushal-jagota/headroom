@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { constants as os_constants, homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { OwnedCodexProcess } from '../../../conversation/backends/codex_app_server/process.ts';
+import { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import { copy_environment } from '../../../core/environment.ts';
 import { SUPERVISOR_APP_STOP_SECONDS } from '../../../lifecycle/configuration.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
@@ -51,7 +51,7 @@ function revision_argument(args: readonly string[]): {
   if (!value) throw new TypeError('Executor runtime application revision is empty.');
   return { index, inline, value };
 }
-function status(owned: OwnedCodexProcess): number {
+function status(owned: OwnedProcess): number {
   return (
     owned.child.exitCode ??
     (owned.child.signalCode ? 128 + os_constants.signals[owned.child.signalCode] : 1)
@@ -85,13 +85,13 @@ export async function supervise(
     }
     await files.remove_runtime_record(join(root, 'pending.json'));
   }
-  let current: OwnedCodexProcess | undefined;
+  let current: OwnedProcess | undefined;
   const launch = async (
     runtime: string | null,
     app_revision: string,
     ready: string | null,
     saved: string | null,
-  ): Promise<OwnedCodexProcess> => {
+  ): Promise<OwnedProcess> => {
     options.signal.throwIfAborted();
     const linux = process.platform === 'linux';
     if (runtime !== null)
@@ -123,7 +123,7 @@ export async function supervise(
       ],
       { cwd: directory, env: environment },
     );
-    const owned = new OwnedCodexProcess(child);
+    const owned = new OwnedProcess(child);
     child.stdout.pipe(process.stdout, { end: false });
     child.stderr.pipe(process.stderr, { end: false });
     try {
@@ -137,7 +137,7 @@ export async function supervise(
       throw error;
     }
   };
-  const wait_exit = async (owned: OwnedCodexProcess): Promise<void> => {
+  const wait_exit = async (owned: OwnedProcess): Promise<void> => {
     let interrupted!: () => void;
     const signal = new Promise<void>((resolve) => {
       interrupted = resolve;

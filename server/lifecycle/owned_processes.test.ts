@@ -1,11 +1,10 @@
-import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, expect, test, vi } from 'vitest';
-import { OwnedCodexProcess, spawn_codex_process } from './process.ts';
-import { observe_promise } from '../../../core/promise_observer.ts';
+import { ChildProcesses, OwnedProcess, spawn_owned_process } from './owned_processes.ts';
+import { observe_promise } from '../core/promise_observer.ts';
 
 afterEach(() => vi.restoreAllMocks());
 function fake_child() {
@@ -23,7 +22,7 @@ test('cleanup never signals an already reaped leader or its retired process grou
   const child = fake_child();
   child.exitCode = 0;
   const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
-  const owned = new OwnedCodexProcess(child as unknown as ChildProcessWithoutNullStreams);
+  const owned = new OwnedProcess(child as unknown as ChildProcessWithoutNullStreams);
   await owned.stop();
   expect(owned.signal('SIGTERM')).toBe(false);
   expect(kill).not.toHaveBeenCalled();
@@ -32,7 +31,7 @@ test('cleanup never signals an already reaped leader or its retired process grou
 
 test('a graceful exit during shutdown prevents a later SIGKILL', async () => {
   const child = fake_child();
-  const owned = new OwnedCodexProcess(child as unknown as ChildProcessWithoutNullStreams);
+  const owned = new OwnedProcess(child as unknown as ChildProcessWithoutNullStreams);
   const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
     queueMicrotask(() => {
       child.exitCode = 0;
@@ -47,7 +46,7 @@ test('a graceful exit during shutdown prevents a later SIGKILL', async () => {
 
 test('a later process error does not prove exit and output errors are retained safely', async () => {
   const child = fake_child();
-  const owned = new OwnedCodexProcess(child as unknown as ChildProcessWithoutNullStreams);
+  const owned = new OwnedProcess(child as unknown as ChildProcessWithoutNullStreams);
   let exited = false;
   void owned.exited.then(() => {
     exited = true;
@@ -85,8 +84,8 @@ test.skipIf(process.platform !== 'linux')(
       setInterval(() => {}, 1000);
     `;
     const started = performance.now();
-    const created: OwnedCodexProcess[] = [];
-    const pending = spawn_codex_process([process.execPath, '-e', leader], {
+    const created: OwnedProcess[] = [];
+    const pending = spawn_owned_process([process.execPath, '-e', leader], {
       child_processes: new ChildProcesses(),
       environment: Object.fromEntries(
         Object.entries(process.env).filter(

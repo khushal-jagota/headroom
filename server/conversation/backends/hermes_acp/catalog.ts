@@ -7,8 +7,8 @@ import type { CommandOutcome } from '../../snapshot/contracts.ts';
 import type { HermesModelCatalogSource } from '../../snapshot/provider_contracts.ts';
 import { MODEL_CATALOG_PROBE_TIMEOUT_SECONDS } from '../../snapshot/configuration.ts';
 import { BackendAdapterError } from '../contracts.ts';
-import { spawn_codex_process } from '../codex_app_server/process.ts';
-import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
+import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
+import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import type { AcpChildLaunch } from './launch.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { ModelCatalogCleanupFailed } from '../catalog_cleanup.ts';
@@ -36,7 +36,7 @@ export function hermes_model_catalog_launch(options: {
   };
 }
 interface Probe {
-  owned: OwnedCodexProcess | null;
+  owned: OwnedProcess | null;
   task: Promise<CommandOutcome> | null;
   abort: Promise<never>;
   reject(reason: unknown): void;
@@ -129,7 +129,7 @@ export class HermesModelCatalogOwner {
     }, this.timeout_seconds * 1000);
     try {
       try {
-        probe.owned = await spawn_codex_process(argv, {
+        probe.owned = await spawn_owned_process(argv, {
           child_processes: this.child_processes,
           environment,
           working_directory: process.cwd(),

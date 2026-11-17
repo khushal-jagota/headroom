@@ -21,7 +21,7 @@ import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
 import { CONSUMED_SERVER_NOTIFICATIONS, decode_server_request } from './protocol.ts';
-import { OwnedCodexProcess, spawn_codex_process } from './process.ts';
+import { OwnedProcess, spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { observe_shutdown } from '../../shutdown.ts';
@@ -81,7 +81,7 @@ export class CodexAppServerClient {
   private readonly description: string;
   private readonly notifications: Readonly<Record<string, Reader>>;
   private readonly warning: (message: string) => void;
-  private process: OwnedCodexProcess | null = null;
+  private process: OwnedProcess | null = null;
   private supervisor: WorkerSupervisor | null = null;
   private scratch: WorkerScratch | null = null;
   private readonly worker_supervision: WorkerSupervisionRuntime | undefined;
@@ -171,7 +171,7 @@ export class CodexAppServerClient {
       if (!current()) throw new CodexChildWouldNotStart('the codex child stopped during startup');
     };
     let environment = { ...options.environment };
-    let owned: OwnedCodexProcess | null = null;
+    let owned: OwnedProcess | null = null;
     let supervisor: WorkerSupervisor | null = null;
     let scratch: WorkerScratch | null = null;
     try {
@@ -196,7 +196,7 @@ export class CodexAppServerClient {
         await options.supervision_reporter?.(supervisor.path);
       }
       assert_current();
-      owned = await spawn_codex_process(supervisor?.argv(options.argv) ?? options.argv, {
+      owned = await spawn_owned_process(supervisor?.argv(options.argv) ?? options.argv, {
         child_processes: this.child_processes,
         environment: supervisor?.environment ?? environment,
         working_directory: options.working_directory,
@@ -243,7 +243,7 @@ export class CodexAppServerClient {
       : null;
   }
   private async cleanup(
-    owned: OwnedCodexProcess | null,
+    owned: OwnedProcess | null,
     supervisor: WorkerSupervisor | null,
     scratch: WorkerScratch | null,
     options?: StopOptions,
@@ -299,7 +299,7 @@ export class CodexAppServerClient {
     if (failure !== null) throw failure.error;
   }
   private attach(
-    owned: OwnedCodexProcess,
+    owned: OwnedProcess,
     incarnation: number,
     supervisor: WorkerSupervisor | null,
     scratch: WorkerScratch | null,
@@ -392,7 +392,7 @@ export class CodexAppServerClient {
     });
   }
   private async watch(
-    owned: OwnedCodexProcess,
+    owned: OwnedProcess,
     incarnation: number,
     supervisor: WorkerSupervisor | null,
     scratch: WorkerScratch | null,
@@ -717,7 +717,7 @@ export class CodexAppServerClient {
     this.writes = task.catch(() => {});
     return task;
   }
-  private route_line(line: string, owned: OwnedCodexProcess, incarnation: number): void {
+  private route_line(line: string, owned: OwnedProcess, incarnation: number): void {
     const current = () =>
       this.process === owned && this.incarnation === incarnation && !this.stopping;
     const task = this.dispatch.then(async () => {

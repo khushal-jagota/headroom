@@ -8,13 +8,13 @@ import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
 import { worker_supervision_fixture } from '../testing/worker_supervision_fixture.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
-import { spawn_codex_process } from './process.ts';
-import type { OwnedCodexProcess } from './process.ts';
+import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
+import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import { ensure_cli_compatible } from '../cli_compatibility.ts';
 
-vi.mock('./process.ts', async (original) => ({
-  ...(await original<typeof import('./process.ts')>()),
-  spawn_codex_process: vi.fn(),
+vi.mock('../../../lifecycle/owned_processes.ts', async (original) => ({
+  ...(await original<typeof import('../../../lifecycle/owned_processes.ts')>()),
+  spawn_owned_process: vi.fn(),
 }));
 vi.mock('../cli_compatibility.ts', async (original) => ({
   ...(await original<typeof import('../cli_compatibility.ts')>()),
@@ -58,10 +58,10 @@ function fake() {
 }
 function client_fixture(worker_supervision?: WorkerSupervisionRuntime, wire = fake()) {
   const wire_spawned = vi.fn();
-  vi.mocked(spawn_codex_process).mockImplementationOnce(async (_argv, options) => {
+  vi.mocked(spawn_owned_process).mockImplementationOnce(async (_argv, options) => {
     wire_spawned();
-    options.on_created?.(wire.owned as unknown as OwnedCodexProcess);
-    return wire.owned as unknown as OwnedCodexProcess;
+    options.on_created?.(wire.owned as unknown as OwnedProcess);
+    return wire.owned as unknown as OwnedProcess;
   });
   const notifications: unknown[] = [];
   const warnings: string[] = [];
@@ -162,7 +162,7 @@ test('a retired watcher and queued notification cannot reach a restarted wire', 
   );
   await client.stop();
   const next = fake();
-  vi.mocked(spawn_codex_process).mockResolvedValueOnce(next.owned as unknown as OwnedCodexProcess);
+  vi.mocked(spawn_owned_process).mockResolvedValueOnce(next.owned as unknown as OwnedProcess);
   try {
     await client.start({
       argv: ['/synthetic/codex', 'app-server'],
@@ -205,7 +205,7 @@ test('shutdown joins a pending version probe and prevents a later app-server lau
       async on_child_ended() {},
     },
   });
-  const spawn_count = vi.mocked(spawn_codex_process).mock.calls.length;
+  const spawn_count = vi.mocked(spawn_owned_process).mock.calls.length;
   const starting = client.start({
     argv: ['/synthetic/codex', 'app-server'],
     environment: {},
@@ -216,7 +216,7 @@ test('shutdown joins a pending version probe and prevents a later app-server lau
   await client.stop();
   await refused;
   expect(probe_signal?.aborted).toBe(true);
-  expect(vi.mocked(spawn_codex_process).mock.calls.length - spawn_count).toBe(0);
+  expect(vi.mocked(spawn_owned_process).mock.calls.length - spawn_count).toBe(0);
   expect(client.is_alive).toBe(false);
 });
 
@@ -307,7 +307,7 @@ test('a natural exit permits a new start without an explicit stop', async () => 
   wire.finish();
   await new Promise<void>((resolve) => setImmediate(resolve));
   const next = fake();
-  vi.mocked(spawn_codex_process).mockResolvedValueOnce(next.owned as unknown as OwnedCodexProcess);
+  vi.mocked(spawn_owned_process).mockResolvedValueOnce(next.owned as unknown as OwnedProcess);
   try {
     await client.start({
       argv: ['/synthetic/codex', 'app-server'],
@@ -325,7 +325,7 @@ test('a natural exit permits a new start without an explicit stop', async () => 
 });
 
 async function supervised_client() {
-  vi.mocked(spawn_codex_process).mockReset();
+  vi.mocked(spawn_owned_process).mockReset();
   const wire = fake();
   const { identity, order, result, supervisor, scratch, runtime } = worker_supervision_fixture(
     wire.child.pid,
@@ -449,7 +449,7 @@ test('failed Worker registration retains its native handle and scratch until cle
 });
 
 test('an explicit Worker without supervision never starts even a version probe', async () => {
-  vi.mocked(spawn_codex_process).mockReset();
+  vi.mocked(spawn_owned_process).mockReset();
   vi.mocked(ensure_cli_compatible).mockClear();
   const client = new CodexAppServerClient({
     child_processes: new ChildProcesses(),
@@ -469,5 +469,5 @@ test('an explicit Worker without supervision never starts even a version probe',
     }),
   ).rejects.toThrow('supervision is unavailable');
   expect(ensure_cli_compatible).not.toHaveBeenCalled();
-  expect(spawn_codex_process).not.toHaveBeenCalled();
+  expect(spawn_owned_process).not.toHaveBeenCalled();
 });

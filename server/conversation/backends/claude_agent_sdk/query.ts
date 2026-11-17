@@ -33,7 +33,7 @@ import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { observe_shutdown } from '../../shutdown.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
-import { OwnedCodexProcess } from '../codex_app_server/process.ts';
+import { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 
 export type {
   ClaudeSdkClient,
@@ -106,7 +106,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private readonly active_writes = new Set<Deferred<void>>();
   private cli: Query | null = null;
   private info: Record<string, unknown> | null = null;
-  private owned_process: OwnedCodexProcess | null = null;
+  private owned_process: OwnedProcess | null = null;
   private stream_closed: Deferred<void> | null = null;
   private supervisor: WorkerSupervisor | null = null;
   private scratch: WorkerScratch | null = null;
@@ -278,7 +278,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
         detached: process.platform !== 'win32',
       },
     );
-    const owned = new OwnedCodexProcess(child);
+    const owned = new OwnedProcess(child);
     this.owned_process = owned;
     this.registration = this.register_process(owned);
     void this.registration.then(
@@ -459,7 +459,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       this.permission_waiters.delete(waiter);
     }
   }
-  private async register_process(owned: OwnedCodexProcess): Promise<void> {
+  private async register_process(owned: OwnedProcess): Promise<void> {
     const pid = owned.child.pid;
     if (pid === undefined) {
       if (this.supervisor !== null || this.options.custody_sink?.record_local_child_custody)

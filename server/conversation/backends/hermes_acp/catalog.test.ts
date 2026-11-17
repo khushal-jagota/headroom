@@ -2,13 +2,13 @@ import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
-import { spawn_codex_process } from '../codex_app_server/process.ts';
-import type { OwnedCodexProcess } from '../codex_app_server/process.ts';
+import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
+import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
 import { HermesModelCatalogOwner } from './catalog.ts';
 
-vi.mock('../codex_app_server/process.ts', async (original) => ({
-  ...(await original<typeof import('../codex_app_server/process.ts')>()),
-  spawn_codex_process: vi.fn(),
+vi.mock('../../../lifecycle/owned_processes.ts', async (original) => ({
+  ...(await original<typeof import('../../../lifecycle/owned_processes.ts')>()),
+  spawn_owned_process: vi.fn(),
 }));
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,12 +49,12 @@ const launch = {
   argv: ['/synthetic/python', '/synthetic/inventory.py'],
   environment_overrides: [['HERMES_HOME', '/synthetic/home']] as const,
 };
-const owned = (value: ReturnType<typeof fake>) => value as unknown as OwnedCodexProcess;
+const owned = (value: ReturnType<typeof fake>) => value as unknown as OwnedProcess;
 
 test('catalog inherits the full environment, appends refresh, and leaves parent values unchanged', async () => {
   vi.stubEnv('UNIT16_CATALOG_INHERITED', 'synthetic inherited value');
   const child = fake();
-  vi.mocked(spawn_codex_process).mockImplementationOnce(async () => {
+  vi.mocked(spawn_owned_process).mockImplementationOnce(async () => {
     setImmediate(() => child.finish('{not-json', 'diagnostic', 0));
     return owned(child);
   });
@@ -66,7 +66,7 @@ test('catalog inherits the full environment, appends refresh, and leaves parent 
     standard_output: '{not-json',
     standard_error: 'diagnostic',
   });
-  expect(vi.mocked(spawn_codex_process).mock.lastCall).toEqual([
+  expect(vi.mocked(spawn_owned_process).mock.lastCall).toEqual([
     [...launch.argv, '--refresh'],
     {
       child_processes,
@@ -82,7 +82,7 @@ test('catalog inherits the full environment, appends refresh, and leaves parent 
 test('cancel joins its current child and permits a later fresh catalog read', async () => {
   const first = fake();
   const second = fake();
-  vi.mocked(spawn_codex_process)
+  vi.mocked(spawn_owned_process)
     .mockResolvedValueOnce(owned(first))
     .mockImplementationOnce(async () => {
       setImmediate(() => second.finish('fresh'));
@@ -102,8 +102,8 @@ test('cancel joins its current child and permits a later fresh catalog read', as
 
 test('shutdown seals a pending spawn and joins it before completion', async () => {
   const child = fake();
-  let release!: (value: OwnedCodexProcess) => void;
-  vi.mocked(spawn_codex_process).mockImplementationOnce(
+  let release!: (value: OwnedProcess) => void;
+  vi.mocked(spawn_owned_process).mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         release = resolve;
@@ -113,9 +113,9 @@ test('shutdown seals a pending spawn and joins it before completion', async () =
   const pending = owner.source({ refresh: false });
   const rejected = expect(pending).rejects.toThrow('cancelled');
   const stopping = owner.shutdown();
-  const calls = vi.mocked(spawn_codex_process).mock.calls.length;
+  const calls = vi.mocked(spawn_owned_process).mock.calls.length;
   await expect(owner.source({ refresh: true })).rejects.toThrow('shutdown');
-  expect(vi.mocked(spawn_codex_process).mock.calls.length).toBe(calls);
+  expect(vi.mocked(spawn_owned_process).mock.calls.length).toBe(calls);
   release(owned(child));
   await stopping;
   await rejected;
@@ -125,7 +125,7 @@ test('shutdown seals a pending spawn and joins it before completion', async () =
 test('failed cleanup stays retryable and logs once', async () => {
   const child = fake();
   child.stop.mockRejectedValueOnce(new Error('synthetic cleanup failure'));
-  vi.mocked(spawn_codex_process).mockResolvedValueOnce(owned(child));
+  vi.mocked(spawn_owned_process).mockResolvedValueOnce(owned(child));
   const errors: unknown[] = [];
   const owner = new HermesModelCatalogOwner(launch, {
     child_processes: new ChildProcesses(),

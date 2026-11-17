@@ -8,8 +8,8 @@ import { load_claude_sdk, CLAUDE_AGENT_SDK_VERSION } from './claude_sdk.ts';
 import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ensure_cli_compatible } from './cli_compatibility.ts';
 import { ModelCatalogCleanupFailed } from './catalog_cleanup.ts';
-import { OwnedCodexProcess } from './codex_app_server/process.ts';
-import { CHILD_KILL_WAIT_SECONDS } from './codex_app_server/configuration.ts';
+import { OwnedProcess } from '../../lifecycle/owned_processes.ts';
+import { OWNED_PROCESS_KILL_WAIT_SECONDS } from '../../lifecycle/configuration.ts';
 import { observe_shutdown } from '../shutdown.ts';
 
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
@@ -100,7 +100,7 @@ export async function probe_claude_model_catalog(
   signal.throwIfAborted();
   const environment = copy_environment(options.environment ?? process.env);
   const state: {
-    owned: OwnedCodexProcess | null;
+    owned: OwnedProcess | null;
     cli: Query | null;
     expired: boolean;
     child_error: Error | null;
@@ -144,7 +144,7 @@ export async function probe_claude_model_catalog(
     try {
       if (state.owned) {
         stop_one_shot_child(state.owned.child);
-        cleanup_deadline ??= performance.now() / 1000 + CHILD_KILL_WAIT_SECONDS;
+        cleanup_deadline ??= performance.now() / 1000 + OWNED_PROCESS_KILL_WAIT_SECONDS;
         if (!state.child_exited) {
           await observe_shutdown(
             Promise.race([state.owned.exited, cancellation_observed]),
@@ -211,7 +211,7 @@ export async function probe_claude_model_catalog(
               env: child_environment,
               stdio: ['pipe', 'pipe', 'pipe'],
             });
-            state.owned = new OwnedCodexProcess(started as ChildProcessWithoutNullStreams);
+            state.owned = new OwnedProcess(started as ChildProcessWithoutNullStreams);
             void state.owned.exited.then(() => {
               state.child_exited = true;
             });
