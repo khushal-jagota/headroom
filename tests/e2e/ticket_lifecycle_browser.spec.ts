@@ -8,6 +8,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
+  expectResponse,
   WAIT_MS,
   api,
   bindConversation,
@@ -71,7 +72,7 @@ test('test_ticket_backlog_resume_and_settled_discovery', async ({ railServer, ne
   const backlogPromise = page.waitForResponse((response) => response.url().endsWith(`/${ticketId}/backlog`));
   await worker.locator('[data-ticket-backlog-action]').click();
   const backlogResponse = await backlogPromise;
-  expect(backlogResponse.ok(), await backlogResponse.text()).toBe(true);
+  await expectResponse(backlogResponse.ok(), true, backlogResponse);
   const deferred = await api.get(server, path);
   expect(deferred.is_backlogged).toBe(true);
   expect(deferred.stage).toEqual(before.stage);
@@ -98,7 +99,7 @@ test('test_ticket_backlog_resume_and_settled_discovery', async ({ railServer, ne
   const resumePromise = page.waitForResponse((response) => response.url().endsWith(`/${ticketId}/resume`));
   await worker.locator('[data-ticket-backlog-action]').click();
   const resumeResponse = await resumePromise;
-  expect(resumeResponse.ok(), await resumeResponse.text()).toBe(true);
+  await expectResponse(resumeResponse.ok(), true, resumeResponse);
   const resumed = await api.get(server, path);
   expect(resumed.is_backlogged).toBe(false);
   expect(resumed.pending_proposal).toEqual(before.pending_proposal);
@@ -129,7 +130,7 @@ test('test_ticket_backlog_resume_and_settled_discovery', async ({ railServer, ne
   );
   await picker.locator('[data-scope-holder="owner"]').click();
   const decisionResponse = await decisionPromise;
-  expect(decisionResponse.ok(), await decisionResponse.text()).toBe(true);
+  await expectResponse(decisionResponse.ok(), true, decisionResponse);
   const submitted = decisionResponse.request().postDataJSON();
   expect(typeof submitted === 'object' && submitted !== null && !Array.isArray(submitted)).toBe(true);
   expect(submitted.next_ceiling).toBe('needs_consequences');
@@ -154,7 +155,7 @@ test('test_ticket_backlog_resume_and_settled_discovery', async ({ railServer, ne
   );
   await reportCard.getByRole('button', { name: 'Approve', exact: true }).click();
   const reportResponse = await reportPromise;
-  expect(reportResponse.ok(), await reportResponse.text()).toBe(true);
+  await expectResponse(reportResponse.ok(), true, reportResponse);
   const finalSubmitted = reportResponse.request().postDataJSON();
   expect(
     typeof finalSubmitted === 'object' && finalSubmitted !== null && !Array.isArray(finalSubmitted),

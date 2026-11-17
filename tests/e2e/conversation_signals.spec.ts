@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Locator, Route } from '@playwright/test';
 import {
+  expectResponse,
   WAIT_MS,
   agentHeaders,
   api,
@@ -70,7 +71,7 @@ test('test_exact_conversation_signals_cross_runtime_stream_and_surfaces', async 
     headers: { 'content-type': 'application/json', ...(await agentHeaders(server, 'worker', ticket.id)) },
     body: JSON.stringify({ body: 'Quiet approval remains visible.', recap: 'Browser signal proof.' }),
   });
-  expect(proposed.ok, await proposed.text()).toBe(true);
+  await expectResponse(proposed.ok, true, proposed);
   const identities: Record<string, JsonObject> = {
     'proof-worker': { kind: 'ticket', id: ticket.id, label: 'Signal Worker' },
     'proof-supervisor': { kind: 'manager', id: item.id, label: 'Signal manager' },
@@ -299,7 +300,7 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   );
   await ticketCard.locator('[data-ceiling-picker-choice="owner"]').click();
   const approved = await approvedResponse;
-  expect(approved.ok(), await approved.text()).toBe(true);
+  await expectResponse(approved.ok(), true, approved);
   const approvalBody = approved.request().postDataJSON();
   expect(approvalBody !== null && typeof approvalBody === 'object' && !Array.isArray(approvalBody)).toBe(
     true,
@@ -347,7 +348,7 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   );
   await card.locator('[data-review-send]').click();
   const sent = await sentResponse;
-  expect(sent.ok(), await sent.text()).toBe(true);
+  await expectResponse(sent.ok(), true, sent);
   expect((await sent.json()).fate).toBe('queued');
   expect(submitted[0].conversation_id).toBe(conversation);
   expect(submitted[0].owner_read_through_sequence).toBe(bound);
@@ -423,7 +424,7 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   );
   await card.locator('[data-review-mark-read]').click();
   const read = await readResponse;
-  expect(read.ok(), await read.text()).toBe(true);
+  await expectResponse(read.ok(), true, read);
   expect(reads).toEqual([{ through_sequence: displayedBound }]);
   snapshot = await api.get(server, `/api/conversation/conversations/${conversation}`);
   expect(snapshot.owner_read_through_sequence).toBe(displayedBound);

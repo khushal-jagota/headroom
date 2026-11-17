@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import {
+  expectResponse,
   WAIT_MS,
   agentHeaders,
   captureSuccess,
@@ -437,7 +438,7 @@ test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire',
   );
   await card.getByRole('button', { name: 'Save', exact: true }).click();
   const saved = await savedResponse;
-  expect(saved.status(), await saved.text()).toBe(200);
+  await expectResponse(saved.status(), 200, saved);
   expect(saved.request().postDataJSON()).toEqual({
     name: requestedName + '_edited',
     value: secret,

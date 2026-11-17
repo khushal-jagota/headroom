@@ -6,6 +6,7 @@
  */
 import type { Request } from '@playwright/test';
 import {
+  expectResponse,
   WAIT_MS,
   api,
   bindConversation,
@@ -74,7 +75,7 @@ test('test_goal_promotion_and_stable_url_share_manager_name', async ({ signalSer
   );
   await composer.press('Enter', { timeout: WAIT_MS });
   const delivered = await deliveredResponse;
-  expect(delivered.ok(), await delivered.text()).toBe(true);
+  await expectResponse(delivered.ok(), true, delivered);
   const conversationId = (await delivered.json()).conversation_id;
   expect(conversationId).not.toBe(legacyConversation);
   manager = (await api.get(server, `/api/managers/${managerId}/workspace`)).manager;

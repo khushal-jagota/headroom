@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Page } from '@playwright/test';
 import {
+  expectResponse,
   CHIEF,
   REPO_ROOT,
   WAIT_MS,
@@ -385,7 +386,7 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
   const response = await context.request.patch(server.base + `/api/managers/${manager.id}`, {
     data: { goal: artifactLink },
   });
-  expect(response.ok(), await response.text()).toBe(true);
+  await expectResponse(response.ok(), true, response);
   await page.goto(`${server.base}/#/workspace/manager/${manager.id}`);
   await page.locator('[data-goal-band]').waitFor({ timeout: WAIT_MS });
   await page.locator('[data-goal-band]').evaluate((node) => {

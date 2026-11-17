@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { Response, Route } from '@playwright/test';
-import { REPO_ROOT, WAIT_MS, expect, test, type JsonObject } from './support/fixtures.ts';
+import { expectResponse, REPO_ROOT, WAIT_MS, expect, test, type JsonObject } from './support/fixtures.ts';
 import { createTicketConversation, getJson, openTicketConversation } from './support/conversation.ts';
 
 test('test_video_upload_early_send_and_native_range_playback', async ({
@@ -52,7 +52,7 @@ test('test_video_upload_early_send_and_native_range_playback', async ({
   const response = await fetch(server.base + `/api/test/signals/${conversationId}/finish`, {
     method: 'POST',
   });
-  expect(response.ok, await response.text()).toBe(true);
+  await expectResponse(response.ok, true, response);
   const context = await newContext();
   const page = await openTicketConversation(server, ticketId, context, '[data-conversation-input]');
   await page.locator('[data-conversation-lens-choice="full"]').click();
@@ -100,7 +100,7 @@ test('test_video_upload_early_send_and_native_range_playback', async ({
   );
   await heldTransfers.pop()!.continue();
   const transfer = await transferResponse;
-  expect(transfer.status(), await transfer.text()).toBe(200);
+  await expectResponse(transfer.status(), 200, transfer);
   await expect(pending).toHaveCount(0, { timeout: WAIT_MS });
   await page.locator('[data-media-open="video"]').last().click();
   const player = page.locator('[data-media-viewer] video');

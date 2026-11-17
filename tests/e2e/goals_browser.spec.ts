@@ -8,6 +8,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { APIResponse, Locator, Route } from '@playwright/test';
 import {
+  expectResponse,
   WAIT_MS,
   agentHeaders,
   api,
@@ -639,7 +640,7 @@ test('test_goal_page_persistence_external_refresh_and_owned_conversation', async
   const titledResponse = goalPatch();
   await titleEditor.press('Enter', { timeout: WAIT_MS });
   const titled = await titledResponse;
-  expect(titled.ok(), await titled.text()).toBe(true);
+  await expectResponse(titled.ok(), true, titled);
   expect(titled.request().postDataJSON()).toEqual({
     title: 'Owner title',
     expected_revision: beforeTitle.revision,
@@ -700,7 +701,7 @@ test('test_goal_page_persistence_external_refresh_and_owned_conversation', async
   const localTitleResponse = goalPatch();
   await titleEditor.press('Enter', { timeout: WAIT_MS });
   const localTitle = await localTitleResponse;
-  expect(localTitle.status(), await localTitle.text()).toBe(409);
+  await expectResponse(localTitle.status(), 409, localTitle);
   expect(localTitle.request().postDataJSON()).toEqual({
     title: 'Unaccepted local title',
     expected_revision: current.revision,
@@ -716,7 +717,7 @@ test('test_goal_page_persistence_external_refresh_and_owned_conversation', async
   const freshTitleResponse = goalPatch();
   await titleEditor.press('Enter', { timeout: WAIT_MS });
   const freshTitle = await freshTitleResponse;
-  expect(freshTitle.status(), await freshTitle.text()).toBe(200);
+  await expectResponse(freshTitle.status(), 200, freshTitle);
   expect(freshTitle.request().postDataJSON()).toEqual({
     title: 'Unaccepted local title',
     expected_revision: remote.revision,
@@ -797,7 +798,7 @@ test('test_goal_page_persistence_external_refresh_and_owned_conversation', async
   );
   await page.locator('[data-conversation-input]').press('Enter', { timeout: WAIT_MS });
   const delivered = await deliveredResponse;
-  expect(delivered.ok(), await delivered.text()).toBe(true);
+  await expectResponse(delivered.ok(), true, delivered);
   const conversationId = (await delivered.json()).conversation_id;
   expect(conversationId).toBe(holderConversationId);
   expect((await api.get(server, '/api/chief/conversation')).conversation_id).toBe(conversationId);

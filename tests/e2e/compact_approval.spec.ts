@@ -7,6 +7,7 @@
  */
 import type { Route } from '@playwright/test';
 import {
+  expectResponse,
   WAIT_MS,
   agentHeaders,
   api,
@@ -70,7 +71,7 @@ test('test_shared_compact_card_real_transaction_and_stale_revision', async ({ ra
   );
   await panel.locator(`[data-scope-holder="${item.id}"]`).click();
   const reroute = await reroutePromise;
-  expect(reroute.ok(), await reroute.text()).toBe(true);
+  await expectResponse(reroute.ok(), true, reroute);
   const rerouted = await api.get(server, `/api/tickets?detail=full&id=${ticketId}`);
   expect(rerouted.ceiling_holder).toEqual(manager);
   expect(rerouted.stage).toEqual(original.stage);
@@ -105,7 +106,7 @@ test('test_shared_compact_card_real_transaction_and_stale_revision', async ({ ra
   await panel.locator('[data-scope-holder="owner"]').click();
   const stale = await stalePromise;
   await page.unroute(`${decisionUrl}*`, replaceBeforeAccept);
-  expect(stale.ok(), await stale.text()).toBe(true);
+  await expectResponse(stale.ok(), true, stale);
   const staleResult = await stale.json();
   expect(staleResult.receipt_contract).toBe(1);
   const staleReceipt = staleResult.receipt;
@@ -138,7 +139,7 @@ test('test_shared_compact_card_real_transaction_and_stale_revision', async ({ ra
   );
   await panel.locator('[data-scope-holder="owner"]').click();
   const accepted = await acceptedPromise;
-  expect(accepted.ok(), await accepted.text()).toBe(true);
+  await expectResponse(accepted.ok(), true, accepted);
   const acceptedPayload = accepted.request().postDataJSON();
   expect(
     typeof acceptedPayload === 'object' && acceptedPayload !== null && !Array.isArray(acceptedPayload),

@@ -9,7 +9,7 @@
  */
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { test as base, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
+import { test as base, expect, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
 import {
   WAIT_MS,
   serverLogTail,
@@ -19,7 +19,7 @@ import {
   type ServerOptions,
 } from './server.ts';
 
-export { expect } from '@playwright/test';
+export { expect };
 export * from './server.ts';
 export * from './api.ts';
 export * from './agents.ts';
@@ -132,4 +132,18 @@ export async function captureSuccess(page: Page, name: string): Promise<void> {
   if (!output) return;
   mkdirSync(output, { recursive: true });
   await page.screenshot({ path: join(output, name.split('/').pop()!), fullPage: true, animations: 'disabled' });
+}
+
+/**
+ * Python's `assert actual == expected, response.text()`: the body is read only when the
+ * check fails. A browser response body can be gone once the page moves on, so reading it
+ * on success would fail a passing check.
+ */
+export async function expectResponse<T>(
+  actual: T,
+  expected: T,
+  response: { text(): Promise<string> },
+): Promise<void> {
+  if (Object.is(actual, expected)) return;
+  expect(actual, await response.text().catch((error: unknown) => String(error))).toBe(expected);
 }
