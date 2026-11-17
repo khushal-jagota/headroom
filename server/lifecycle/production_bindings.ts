@@ -23,7 +23,11 @@ import { accessSync, constants, statSync } from 'node:fs';
 import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 import type { AnyAgentDriver } from '../drivers/core/driver.ts';
 import type { DriverHost } from '../drivers/core/host.ts';
-import { driver_registry_from_entries } from '../drivers/core/registry.ts';
+import {
+  default_instance_configs,
+  driver_registry_from_entries,
+} from '../drivers/core/registry.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import type { DriverRegistry, RegistryEntry } from '../drivers/core/registry.ts';
 import { create_production_backend_http } from './production_http.ts';
 import { applicationRootFromEnvironment, HOST } from '../core/config.ts';
@@ -54,6 +58,12 @@ export function require_backend_bindings(
 ): ProductionBackendBindings {
   if (!Array.isArray(value.drivers) || value.drivers.length === 0)
     throw new Error('Production backend drivers are required');
+  // Stored conversations may name any built-in backend, and keys stay closed until the
+  // Database stage, so every built-in backend needs a driver.
+  const ids = new Set<string>(default_instance_configs(value.drivers).keys());
+  const missing = KNOWN_BACKEND_INSTANCE_IDS.filter((id) => !ids.has(id)).sort();
+  if (missing.length)
+    throw new Error(`Missing production backend factories: ${missing.join(', ')}`);
   if (typeof value.driver_host !== 'function')
     throw new Error('Production backend driver host binding is required');
   if (typeof value.http !== 'function' || typeof value.stall_sources !== 'function')
