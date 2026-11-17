@@ -1,174 +1,538 @@
-import { test, expect } from 'vitest';
+import { test, expect, vi, afterEach } from 'vitest';
 import { EventEmitter, once } from 'node:events';
 import { setImmediate } from 'node:timers/promises';
 import { MacOutboxSender } from '../transport/outbox.ts';
+import type { OutboxSenderOptions } from '../transport/outbox.ts';
+import { ExecutorHttpError } from '../transport/errors.ts';
+import { ExecutorValidationError } from '../../protocol.ts';
 import type { ItemRow } from '../storage/contracts.ts';
 import { Deferred } from '../../../core/deferred.ts';
-import type { FileManifest } from '../../wire.generated.ts';
+import type { ItemBatch, ItemBatchReply, FileManifest } from '../../wire.generated.ts';
 
-test('a committed append wakes an idle sender', async () => {
+const child = {
+  executor_incarnation: 'incarnation',
+  conversation_id: 'conversation',
+  child_id: 'child',
+};
+const file = (path: string, digest: string): FileManifest => ({
+  scope: 'ticket',
+  owner_id: 'ticket',
+  relative_path: path,
+  sha256: digest.repeat(64),
+  byte_count: 1,
+});
+function row(
+  id: string,
+  sequence: number,
+  files: FileManifest[] = [],
+  conversation_id = 'conversation',
+): ItemRow {
+  return {
+    sequence,
+    submission_id: id,
+    conversation_id,
+    child_id: 'child',
+    kind: 'backend_event',
+    payload_json: Buffer.from(
+      JSON.stringify({ payload: { child: { ...child, conversation_id }, event: id }, files }),
+    ),
+    receipt_json: null,
+  };
+}
+function accepted(batch: ItemBatch): ItemBatchReply {
+  return {
+    receipts: batch.items.map(({ envelope }) => ({
+      sender_id: 'sender',
+      submission_id: envelope.submission_id,
+      disposition: 'accepted',
+      result: {},
+      accepted_at_vps_ms: 1,
+    })),
+    stop: null,
+  };
+}
+function fixture(
+  post: OutboxSenderOptions['client']['post_items'],
+  upload: OutboxSenderOptions['files']['upload_file'] = async () => {},
+) {
   const rows: ItemRow[] = [],
-    events = new EventEmitter();
-  const confirmed = once(events, 'confirmed'),
-    backoff = once(events, 'retrying');
+    events = new EventEmitter(),
+    starts = new Map<string, number>(),
+    refused: string[] = [],
+    warnings: string[] = [];
+  const receipts: { id: string; result: unknown }[] = [];
+  const pending = (id?: string) =>
+    rows.filter((r) => r.receipt_json === null && (id === undefined || r.conversation_id === id));
   const sender = new MacOutboxSender({
     store: {
       root: '/unused',
       sender_id: 'sender',
       pending_events: events,
-      pending: () => [...rows],
-      pending_conversations: () => (rows.length ? [['conversation', 1]] : []),
-      async acknowledge(_, _sender, _body, _accepted, _invalidated, done) {
-        rows.length = 0;
+      pending,
+      pending_conversations: () =>
+        [...new Set(pending().map((r) => r.conversation_id))].map(
+          (id) => [id, pending(id)[0]!.sequence] as const,
+        ),
+      delivery_started(id) {
+        if (!starts.has(id)) starts.set(id, Date.now());
+        return starts.get(id)!;
+      },
+      async refuse_file(id, key, reason) {
+        const held = rows.find((r) => r.submission_id === id)!;
+        const value = JSON.parse(held.payload_json.toString());
+        value.files = value.files.filter(
+          (f: FileManifest) => f.relative_path !== key.relative_path || f.sha256 !== key.sha256,
+        );
+        held.payload_json = Buffer.from(JSON.stringify(value));
+        refused.push(reason);
+      },
+      async fail_delivery(id, receipt, _reason, done) {
+        rows.find((r) => r.submission_id === id)!.receipt_json = receipt;
+        done();
+      },
+      async acknowledge(id, _sender, body, _accepted, _invalidated, done) {
+        rows.find((r) => r.submission_id === id)!.receipt_json = body;
         done();
       },
     },
-    client: {
-      async post_items(_, batch) {
-        if (batch.items[0]!.envelope.submission_id === 'retry') {
-          events.emit('retrying');
-          throw new Error('offline');
-        }
-        return {
-          receipts: batch.items.map((item) => ({
-            sender_id: 'sender',
-            submission_id: item.envelope.submission_id,
-            disposition: 'accepted',
-            result: {},
-            accepted_at_vps_ms: 1,
-          })),
-          stop: null,
-        };
-      },
-    },
-    files: { async upload_file() {} },
-    notify_confirmed() {
+    client: { post_items: post },
+    files: { upload_file: upload },
+    notify_confirmed(receipt) {
+      receipts.push({ id: receipt.submission_id, result: receipt.result });
       events.emit('confirmed');
     },
-    warn() {},
-    on_failure() {},
+    warn(message) {
+      warnings.push(message);
+      events.emit('warning');
+    },
+    on_failure(error) {
+      events.emit('failure', error);
+    },
   });
-  sender.start();
-  await setImmediate();
-  const item: ItemRow = {
-    sequence: 1,
-    submission_id: 'item',
-    conversation_id: 'conversation',
-    child_id: 'child',
-    kind: 'backend_event',
-    payload_json: Buffer.from('{"payload":{},"files":[]}'),
-    receipt_json: null,
+  return {
+    rows,
+    starts,
+    sender,
+    refused,
+    warnings,
+    receipts,
+    pending,
+    events,
+    stop: () => sender.stop({ deadline: performance.now() / 1000 + 5 }),
   };
-  rows.push(item);
-  events.emit('pending');
-  await confirmed;
-  rows.push({ ...item, sequence: 2, submission_id: 'retry' });
-  events.emit('pending');
-  await backoff;
+}
+async function flush() {
   await setImmediate();
-  await sender.stop({ deadline: performance.now() / 1000 + 5 });
-  expect(rows.map((row) => row.submission_id)).toEqual(['retry']);
+  await setImmediate();
+}
+function fake_time() {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  vi.setSystemTime(1_000_000);
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    const controller = new AbortController();
+    setTimeout(
+      () => controller.abort(new DOMException('Delivery deadline elapsed', 'TimeoutError')),
+      ms,
+    );
+    return controller.signal;
+  });
+}
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
-// Existing coverage proves idle wakes and offline retries, but not a recap behind an artifact upload.
-test('a retained recap arrives once after its artifact upload resumes', async () => {
-  const events = new EventEmitter();
-  const uploading = new Deferred<void>();
-  const resume = new Deferred<void>();
-  const confirmed = new Deferred<void>();
-  const file: FileManifest = {
-    scope: 'ticket',
-    owner_id: 'ticket',
-    relative_path: 'artifacts/evidence.txt',
-    sha256: 'a'.repeat(64),
-    byte_count: 1,
-  };
-  const child = { executor_incarnation: 'inc', child_id: 'child', conversation_id: 'conversation' };
-  const row = (sequence: number, submission_id: string, files: FileManifest[]): ItemRow => ({
-    sequence,
-    submission_id,
-    conversation_id: 'conversation',
-    child_id: 'child',
-    kind: 'backend_event',
-    payload_json: Buffer.from(JSON.stringify({ payload: { child }, files })),
-    receipt_json: null,
+test('a committed append wakes an idle sender and shutdown retains a transient item', async () => {
+  const f = fixture(async (_, batch) => {
+    if (batch.items[0]!.envelope.submission_id === 'retry') throw new Error('offline');
+    return accepted(batch);
   });
-  const rows = [row(1, 'artifact', [file]), row(2, 'retained-recap', [])];
-  const accepted: string[] = [];
-  const failures: unknown[] = [];
-  let uploaded = false;
-  const sender = new MacOutboxSender({
-    store: {
-      root: '/unused',
-      sender_id: 'sender',
-      pending_events: events,
-      pending: () => [...rows],
-      pending_conversations: () => (rows.length ? [['conversation', 1]] : []),
-      async acknowledge(id, _sender, _body, _accepted, _invalidated, done) {
-        rows.splice(
-          rows.findIndex((item) => item.submission_id === id),
-          1,
-        );
-        done();
-      },
+  f.sender.start();
+  await flush();
+  const confirmed = once(f.events, 'confirmed');
+  f.rows.push(row('item', 1));
+  f.events.emit('pending');
+  await confirmed;
+  const failed = once(f.events, 'warning');
+  f.rows.push(row('retry', 2));
+  f.events.emit('pending');
+  await failed;
+  await f.stop();
+  expect(f.pending().map((r) => r.submission_id)).toEqual(['retry']);
+  expect(f.warnings[0]).toContain('sequence=2 attempt=1 retry_in=1s: Error: offline');
+});
+
+test('missing and corrupt files are refused individually while messages and turn end reach acceptance', async () => {
+  const missing = file('missing.txt', 'a'),
+    corrupt = file('corrupt.txt', 'b'),
+    good = file('good.txt', 'c');
+  const manifests: string[][] = [],
+    uploaded = new Set<string>();
+  const f = fixture(
+    async (_, batch) => {
+      const envelope = batch.items[0]!.envelope;
+      manifests.push((envelope.file_dependencies ?? []).map((m) => m.relative_path));
+      const needed = (envelope.file_dependencies ?? []).filter((m) => !uploaded.has(m.sha256));
+      if (needed.length)
+        return {
+          receipts: [],
+          stop: {
+            sequence: envelope.sequence,
+            reason: 'missing_files',
+            message: 'upload needed',
+            missing_files: needed,
+          },
+        };
+      return accepted(batch);
     },
-    client: {
-      async post_items(_, batch) {
-        if (!uploaded)
-          return {
+    async ({ manifest }) => {
+      if (manifest.sha256 === missing.sha256)
+        throw Object.assign(new Error('blob absent'), { code: 'ENOENT' });
+      if (manifest.sha256 === corrupt.sha256)
+        throw new ExecutorValidationError('snapshot digest differs from manifest');
+      uploaded.add(manifest.sha256);
+    },
+  );
+  f.rows.push(row('message', 1, [missing, corrupt, good]), row('turn_end', 2));
+  f.sender.start();
+  await flush();
+  expect(f.pending()).toEqual([]);
+  expect(f.receipts.map((r) => r.id)).toEqual(['message', 'turn_end']);
+  expect(manifests).toEqual([['missing.txt', 'corrupt.txt', 'good.txt'], ['good.txt'], []]);
+  expect(f.refused).toEqual([
+    'missing.txt: Error: blob absent',
+    'corrupt.txt: ExecutorValidationError: snapshot digest differs from manifest',
+  ]);
+  expect(f.rows[0]!.payload_json.toString()).toContain('"event":"message"');
+  await f.stop();
+});
+
+test('HTTP404 settles the head with a local refusal before the later message and turn end', async () => {
+  const f = fixture(async (_, batch) => {
+    if (batch.items[0]!.envelope.submission_id === 'deleted')
+      throw new ExecutorHttpError(404, 'not_found', 'conversation was deleted');
+    return accepted(batch);
+  });
+  const first = row('deleted', 1);
+  first.kind = 'cli_write';
+  f.rows.push(first, row('message', 2), row('turn_end', 3));
+  f.sender.start();
+  await flush();
+  expect(f.receipts.map((r) => r.id)).toEqual(['deleted', 'message', 'turn_end']);
+  expect(f.receipts[0]!.result).toMatchObject({
+    local_delivery_failure: true,
+    delivery_outcome: 'refused',
+    error: { message: 'HTTP 404 not_found: conversation was deleted' },
+  });
+  expect(f.rows[0]!.receipt_json?.toString()).toContain('"accepted_at_vps_ms":0');
+  await f.stop();
+});
+
+test.each([400, 403])(
+  'HTTP%s upload refusal settles the item and releases its turn end',
+  async (status) => {
+    const f = fixture(
+      async (_, batch) => {
+        const envelope = batch.items[0]!.envelope;
+        return envelope.file_dependencies?.length
+          ? {
+              receipts: [],
+              stop: {
+                sequence: envelope.sequence,
+                reason: 'missing_files',
+                message: 'upload needed',
+                missing_files: envelope.file_dependencies,
+              },
+            }
+          : accepted(batch);
+      },
+      async () => {
+        throw new ExecutorHttpError(status, 'upload_refused', 'file cannot be published');
+      },
+    );
+    f.rows.push(row('blocked', 1, [file('file.txt', 'a')]), row('turn_end', 2));
+    f.sender.start();
+    await flush();
+    expect(f.receipts.map((r) => r.id)).toEqual(['blocked', 'turn_end']);
+    expect(f.receipts[0]!.result).toMatchObject({
+      delivery_outcome: 'refused',
+      error: { message: `HTTP ${status} upload_refused: file cannot be published` },
+    });
+    await f.stop();
+  },
+);
+
+test('transient HTTP and retry_later failures keep bounded backoff and real diagnostics', async () => {
+  fake_time();
+  let calls = 0;
+  const f = fixture(async (_, batch) => {
+    calls++;
+    if (calls === 1) throw new ExecutorHttpError(502, 'bad_gateway', 'upstream unavailable');
+    if (calls === 2) throw new ExecutorHttpError(503, 'unavailable', 'server busy');
+    if (calls === 3)
+      return {
+        receipts: [],
+        stop: {
+          sequence: batch.items[0]!.envelope.sequence,
+          reason: 'retry_later',
+          message: 'This item is still being saved; send it again',
+          missing_files: [],
+        },
+      };
+    return accepted(batch);
+  });
+  f.rows.push(row('message', 1));
+  f.sender.start();
+  await flush();
+  expect(calls).toBe(1);
+  await vi.advanceTimersByTimeAsync(1000);
+  await flush();
+  expect(calls).toBe(2);
+  await vi.advanceTimersByTimeAsync(2000);
+  await flush();
+  expect(calls).toBe(3);
+  await vi.advanceTimersByTimeAsync(4000);
+  await flush();
+  expect(calls).toBe(4);
+  expect(f.pending()).toEqual([]);
+  expect(f.warnings).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining('HTTP 502 bad_gateway: upstream unavailable'),
+      expect.stringContaining('HTTP 503 unavailable: server busy'),
+      expect.stringContaining('retry_later: This item is still being saved; send it again'),
+    ]),
+  );
+  await f.stop();
+});
+
+test('a blocked upload releases later messages at the deadline while actual cleanup stays owned', async () => {
+  fake_time();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = fixture(
+    async (_, batch) => {
+      const envelope = batch.items[0]!.envelope;
+      return envelope.file_dependencies?.length
+        ? {
             receipts: [],
             stop: {
-              sequence: 1,
+              sequence: envelope.sequence,
               reason: 'missing_files',
-              message: 'upload required',
-              missing_files: [file],
+              message: 'upload needed',
+              missing_files: envelope.file_dependencies,
             },
-          };
-        return {
-          receipts: batch.items.map(({ envelope }) => {
-            accepted.push(envelope.submission_id);
-            return {
-              sender_id: 'sender',
-              submission_id: envelope.submission_id,
-              disposition: 'accepted',
-              result: {},
-              accepted_at_vps_ms: 1,
-            };
-          }),
-          stop: null,
-        };
-      },
+          }
+        : accepted(batch);
     },
-    files: {
-      async upload_file() {
-        uploading.resolve();
-        await resume.promise;
-        uploaded = true;
-      },
-    },
-    notify_confirmed(receipt) {
-      if (receipt.submission_id === 'retained-recap') confirmed.resolve();
-    },
-    warn() {},
-    on_failure(error) {
-      failures.push(error);
+    async () => held,
+  );
+  f.rows.push(row('blocked', 1, [file('file.txt', 'a')]), row('message', 2), row('turn_end', 3));
+  f.sender.start();
+  await flush();
+  await vi.advanceTimersByTimeAsync(300_000);
+  await flush();
+  expect(f.pending()).toEqual([]);
+  expect(f.receipts.map((r) => r.id)).toEqual(['blocked', 'message', 'turn_end']);
+  expect(f.receipts[0]!.result).toMatchObject({
+    delivery_outcome: 'unconfirmed',
+    error: { message: expect.stringContaining('VPS may already have accepted') },
+  });
+  let stopped = false;
+  const stop = f.stop().then(() => {
+    stopped = true;
+  });
+  await flush();
+  expect(stopped).toBe(false);
+  release();
+  await stop;
+  expect(stopped).toBe(true);
+});
+
+test('an expired persisted start survives restart without another delivery attempt', async () => {
+  fake_time();
+  const sent: string[] = [];
+  const f = fixture(async (_, batch) => {
+    sent.push(...batch.items.map((item) => item.envelope.submission_id));
+    return accepted(batch);
+  });
+  const old = row('old', 1);
+  old.kind = 'cli_write';
+  f.rows.push(old, row('turn_end', 2));
+  f.starts.set('old', Date.now() - 300_001);
+  f.sender.start();
+  await flush();
+  expect(sent).toEqual(['turn_end']);
+  expect(f.receipts[0]).toMatchObject({
+    id: 'old',
+    result: { local_delivery_failure: true, delivery_outcome: 'unconfirmed' },
+  });
+  expect(f.warnings[0]).toContain('sequence=1');
+  await f.stop();
+});
+
+test('four active senders rotate after one batch before a busy conversation gets another slot', async () => {
+  const calls: string[] = [],
+    releases: (() => void)[] = [];
+  const f = fixture(async (id, batch) => {
+    calls.push(id);
+    await new Promise<void>((resolve) => releases.push(resolve));
+    return accepted(batch);
+  });
+  for (let index = 0; index < 6; index++) {
+    const item = row(`item${index}`, index + 1, [], `c${index}`);
+    item.kind = 'cli_write';
+    f.rows.push(item);
+  }
+  const again = row('again', 7, [], 'c0');
+  again.kind = 'cli_write';
+  f.rows.push(again);
+  f.sender.start();
+  await flush();
+  expect(calls).toEqual(['c0', 'c1', 'c2', 'c3']);
+  releases.shift()!();
+  await flush();
+  expect(calls[4]).toBe('c4');
+  releases.shift()!();
+  await flush();
+  expect(calls[5]).toBe('c5');
+  releases.shift()!();
+  await flush();
+  expect(calls[6]).toBe('c0');
+  for (const release of releases) release();
+  await flush();
+  expect(f.pending()).toEqual([]);
+  await f.stop();
+});
+
+test('network retries cap their delay and fail visibly at five minutes before later items proceed', async () => {
+  fake_time();
+  const f = fixture(async (_, batch) => {
+    if (batch.items[0]!.envelope.submission_id === 'offline')
+      throw new ExecutorHttpError(503, 'unavailable', 'home unavailable');
+    return accepted(batch);
+  });
+  const first = row('offline', 1);
+  first.kind = 'cli_write';
+  f.rows.push(first, row('turn_end', 2));
+  f.sender.start();
+  await flush();
+  await vi.advanceTimersByTimeAsync(300_000);
+  await flush();
+  expect(f.pending()).toEqual([]);
+  const delays = f.warnings.flatMap((message) => {
+    const match = /retry_in=(\d+)s/.exec(message);
+    return match ? [Number(match[1])] : [];
+  });
+  expect(Math.max(...delays)).toBe(60);
+  expect(f.receipts[0]).toMatchObject({
+    id: 'offline',
+    result: {
+      delivery_outcome: 'unconfirmed',
+      error: { message: expect.stringContaining('HTTP 503 unavailable: home unavailable') },
     },
   });
+  expect(f.receipts[1]!.id).toBe('turn_end');
+  await f.stop();
+});
+
+test('a receipted prefix cannot expire its newer successor during file negotiation', async () => {
+  fake_time();
+  let uploaded = false;
+  const f = fixture(
+    async (_, batch) => {
+      const needed = batch.items.find(
+        (item) => item.envelope.file_dependencies?.length && !uploaded,
+      );
+      if (needed)
+        return {
+          receipts: accepted(batch).receipts.filter(
+            (receipt) => receipt.submission_id === 'earlier',
+          ),
+          stop: {
+            sequence: needed.envelope.sequence,
+            reason: 'missing_files',
+            message: 'upload needed',
+            missing_files: needed.envelope.file_dependencies,
+          },
+        };
+      return accepted(batch);
+    },
+    async (_, _source, signal) => {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 1500);
+        signal!.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            reject(signal!.reason);
+          },
+          { once: true },
+        );
+      });
+      uploaded = true;
+    },
+  );
+  f.rows.push(row('earlier', 1), row('newer', 2, [file('file.txt', 'a')]));
+  f.starts.set('earlier', Date.now() - 299_000);
+  f.sender.start();
+  await flush();
+  await vi.advanceTimersByTimeAsync(4000);
+  await flush();
+  expect(f.pending()).toEqual([]);
+  expect(f.receipts.map((receipt) => receipt.id)).toEqual(['earlier', 'newer']);
+  expect(
+    f.receipts.every(
+      (receipt) => !(receipt.result as Record<string, unknown>).local_delivery_failure,
+    ),
+  ).toBe(true);
+  await f.stop();
+});
+
+// Other cases prove refusal and deadline release, not one recap delivery after a resumed upload.
+test('a retained recap arrives once after its artifact upload resumes', async () => {
+  const evidence = file('artifacts/evidence.txt', 'd');
+  const uploading = new Deferred<void>(),
+    resume = new Deferred<void>();
+  const accepted_ids: string[] = [];
+  let uploaded = false;
+  const f = fixture(
+    async (_, batch) => {
+      if (!uploaded)
+        return {
+          receipts: [],
+          stop: {
+            sequence: batch.items[0]!.envelope.sequence,
+            reason: 'missing_files',
+            message: 'upload required',
+            missing_files: [evidence],
+          },
+        };
+      accepted_ids.push(...batch.items.map(({ envelope }) => envelope.submission_id));
+      return accepted(batch);
+    },
+    async () => {
+      uploading.resolve();
+      await resume.promise;
+      uploaded = true;
+    },
+  );
+  f.rows.push(row('artifact', 1, [evidence]), row('retained-recap', 2));
   try {
-    sender.start();
+    f.sender.start();
     await uploading.promise;
-    expect(accepted).toEqual([]);
-    expect(rows.map((item) => item.submission_id)).toEqual(['artifact', 'retained-recap']);
+    expect(accepted_ids).toEqual([]);
+    expect(f.pending().map((r) => r.submission_id)).toEqual(['artifact', 'retained-recap']);
     resume.resolve();
-    await confirmed.promise;
-    events.emit('pending');
-    await setImmediate();
-    expect(accepted).toEqual(['artifact', 'retained-recap']);
-    expect(rows).toEqual([]);
-    expect(failures).toEqual([]);
+    await vi.waitFor(() => expect(f.pending()).toEqual([]));
+    f.events.emit('pending');
+    await flush();
+    expect(accepted_ids).toEqual(['artifact', 'retained-recap']);
+    expect(f.receipts.filter((r) => r.id === 'retained-recap')).toHaveLength(1);
   } finally {
     resume.resolve();
-    await sender.stop({ deadline: performance.now() / 1000 + 5 });
-    await sender.settled();
+    await f.stop();
+    await f.sender.settled();
   }
 });

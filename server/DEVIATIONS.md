@@ -508,6 +508,8 @@ The Manager required this correction during the Mac slice 2 review on November 1
 Python can reject a successful capture callback after its append commits, when the final blob sweep fails.
 A caller without a fixed submission ID can then retry and queue the same output twice as new.
 TypeScript logs that cleanup failure and retains the callback result. A later sweep retries blob cleanup.
+
+The Mac outbox now returns committed capture and receipt results before blob cleanup finishes. One coalesced cleanup task remains owned through shutdown. This keeps slow cleanup from holding a delivery slot or the next capture.
 The durable append and receipt behavior otherwise retain Python's contract.
 
 ## CLI workspace artifact field

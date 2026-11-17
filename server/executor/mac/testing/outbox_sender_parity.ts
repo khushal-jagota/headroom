@@ -7,7 +7,7 @@ import { decode_json, decode_value, encode_bounded } from '../../protocol.ts';
 
 export async function deliver(input: { root: string; replies: Record<string, (string | null)[]> }) {
   const options = { deadline: performance.now() / 1000 + 10 };
-  const clock = { monotonic: () => 0, now_ns: () => 0n };
+  const clock = { monotonic: () => 0, now_ns: () => BigInt(Date.now()) * 1_000_000n };
   const store = await OutboxStore.open(join(input.root, 'spool'), clock, options, () => {});
   const calls: Record<string, string[]> = {},
     uploaded: string[][] = [],

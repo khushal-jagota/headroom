@@ -1,13 +1,14 @@
 /** Gap: a transient domain refusal must roll back without sealing an executor receipt.
  * Reuse the Ticket database and real inbox savepoint; file publication is outside this case.
  */
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { fixture, create, edit, propose, read, now } from '../../tests/ticket_fixture.ts';
 import { CHIEF, PlannerError } from '../../core/contracts.ts';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../../execution_identity.ts';
 import { buildClock } from '../../core/clock.ts';
 import { loadConfig } from '../../core/config.ts';
 import { InboxStore } from './inbox.ts';
+import { MacInbox } from '../vps_inbox.ts';
 import { write_ticket_mutation } from '../vps_agent_writes.ts';
 import type { FileStaging } from '../vps_files.ts';
 import type { CliWrite, QueuedEnvelope } from '../wire.generated.ts';
@@ -115,4 +116,95 @@ test('send-back commits once with its receipt and a retry-later leaves no effect
       options,
     ),
   ).toEqual(receipt);
+});
+
+// Gap: a durable receipt can precede completion of an item's post-commit work.
+// Hold that tail at the consumer seam; reuse the real inbox/database without a host.
+test('a duplicate reads its committed receipt while new work still waits for the original task', async () => {
+  const database = fixture();
+  const identity: ExecutorIdentity = {
+    executor_incarnation: '11111111-1111-4111-8111-111111111111',
+    application_revision: 'test',
+    protocol_version: 26,
+    spool_format_version: 5,
+    connection_generation: 0,
+  };
+  database.write((tx) => {
+    tx.run(
+      'INSERT INTO executor_incarnations(executor_incarnation,first_leased_at_ms,machine_id) VALUES(?,0,?)',
+      [identity.executor_incarnation, ORIGINAL_MAC_MACHINE_ID],
+    );
+    tx.run(
+      'INSERT OR REPLACE INTO mac_executor_presence(machine_id,executor_incarnation) VALUES(?,?)',
+      [ORIGINAL_MAC_MACHINE_ID, identity.executor_incarnation],
+    );
+  });
+  const envelope: QueuedEnvelope = {
+    conversation_id: 'delivery-conversation',
+    kind: 'cli_write',
+    payload: {
+      child: {
+        executor_incarnation: identity.executor_incarnation,
+        child_id: 'worker',
+        conversation_id: 'delivery-conversation',
+      },
+      operation: 'message.send',
+      arguments: { body: { target: { kind: 'owner' }, message: 'Deliver once' } },
+      turn: null,
+    },
+    sender_id: 'sender',
+    sequence: 1,
+    submission_id: 'delivered-once',
+    file_dependencies: [],
+  };
+  const store = new InboxStore(database, { machine_id: ORIGINAL_MAC_MACHINE_ID } as FileStaging);
+  const inbox = new MacInbox(store, buildClock(loadConfig(undefined, { PLAN_TEST_MODE: '1' })), {
+    authority: () => CHIEF,
+    validate_stop() {},
+    async accept_stop_receipt() {},
+  });
+  const gate = Promise.withResolvers<void>();
+  const committed = Promise.withResolvers<void>();
+  const consume = vi.spyOn(inbox.agent_writes, 'accept').mockImplementation(async (item) => {
+    const receipt = store.accept(item, () => ({ delivered: true }), now * 1000, {
+      identity,
+      check_files: false,
+    });
+    committed.resolve();
+    await gate.promise;
+    return receipt;
+  });
+  try {
+    const initial = inbox.accept(envelope, identity, {
+      retry_later_at: performance.now() / 1000 + 0.01,
+    });
+    // Observe the failure before awaiting the commit, to avoid an unhandled rejection.
+    const timed_out = expect(initial).rejects.toMatchObject({ code: 'retry_later' });
+    await committed.promise;
+    await timed_out;
+    const stored = store.preflight(envelope, { identity });
+    expect(stored?.disposition).toBe('accepted');
+    await expect(
+      inbox.accept(envelope, identity, { retry_later_at: performance.now() / 1000 }),
+    ).resolves.toEqual(stored);
+    await expect(
+      inbox.accept(envelope, { ...identity, executor_incarnation: 'not-current' }),
+    ).rejects.toMatchObject({ code: 'executor_incarnation_not_current' });
+    await expect(
+      inbox.accept({ ...envelope, sequence: 2, submission_id: 'following' }, identity, {
+        retry_later_at: performance.now() / 1000,
+      }),
+    ).rejects.toMatchObject({ code: 'retry_later' });
+    // Stop replays must still run their retained stop consequence through the normal path.
+    await expect(
+      inbox.accept({ ...envelope, kind: 'child_stopped' }, identity, {
+        retry_later_at: performance.now() / 1000,
+      }),
+    ).rejects.toMatchObject({ code: 'retry_later' });
+    expect(consume).toHaveBeenCalledTimes(1);
+  } finally {
+    gate.resolve();
+    await inbox.stop({ deadline: performance.now() / 1000 + 2 });
+    await inbox.settled();
+  }
 });

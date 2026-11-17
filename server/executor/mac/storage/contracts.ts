@@ -37,3 +37,19 @@ export interface OutboxClock {
   monotonic(): number;
   now_ns(): bigint;
 }
+/** Local delivery evidence, outside the submitted event and file manifests. */
+export interface OutboxFileRefusal {
+  relative_path: string;
+  sha256: string;
+  reason: string;
+}
+export interface OutboxDeliveryState {
+  started_at_ms: number | null;
+  file_refusals: OutboxFileRefusal[];
+  failure: string | null;
+}
+export interface OutboxDeliveryStatus {
+  failed_count: number;
+  refused_file_count: number;
+  last_error: string | null;
+}

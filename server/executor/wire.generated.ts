@@ -290,6 +290,7 @@ export type MacLocalStatus = {
   identity: ExecutorIdentity;
   last_lease_failure: string | null;
   lease_accepted_at_mac_ms: number | null;
+  outbox_delivery?: JsonObject;
   process_id: number;
   refusal: ExecutorRefusal | null;
 };
