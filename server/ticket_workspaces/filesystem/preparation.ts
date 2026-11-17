@@ -1,4 +1,5 @@
 import { mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { prepare_agent_home } from '../../agent_homes/agent_home.ts';
 import { dirname, join, resolve } from 'node:path';
 import { OWNERSHIP_FILE, WORKTREE_DIRECTORY } from '../contracts.ts';
 import type { RetirementRecord, WorkspaceMarker, WorkspaceOptions } from '../contracts.ts';
@@ -206,6 +207,7 @@ export async function prepare_workspace(
     throw new Error('Ticket workspace must not be a symlink');
   const marker = await json<WorkspaceMarker>(marker_path);
   if (marker.ticket_id !== ticket_id) throw new Error('Ticket workspace ownership does not match');
+  await prepare_agent_home(root, 'worker');
   const selected =
     !options.panels_project || (marker.worktree !== undefined && marker.checkout_kind !== 'clone')
       ? await repository_root(repository, options)

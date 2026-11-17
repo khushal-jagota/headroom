@@ -1,7 +1,8 @@
 import { constants, readFileSync, renameSync } from 'node:fs';
 import { constants as os_constants } from 'node:os';
 import { setTimeout } from 'node:timers/promises';
-import { open, mkdir, readdir, rmdir, unlink } from 'node:fs/promises';
+import { open, mkdir, readdir, rename, rmdir, unlink } from 'node:fs/promises';
+import { LOGS_DIRECTORY } from '../../agent_homes/agent_home.ts';
 import { basename, dirname, join } from 'node:path';
 import { flock } from '../../core/locks/flock.ts';
 import {
@@ -168,6 +169,16 @@ async function remove_retired(path: string, options: WorkspaceOptions): Promise<
       return `cannot recover retained Ticket folder ownership: ${String(error)}`;
     }
   }
+  // The seven-day removal keeps the agent's logs in the Ticket folder. A retry
+  // after an interruption returns them the same way. If a reopened Ticket has
+  // a file with the same name, that newer file stays.
+  const logs = join(path, LOGS_DIRECTORY);
+  if (!record.checkout_only && (await entry_stat(logs))?.isDirectory()) {
+    const kept = join(record.source, LOGS_DIRECTORY);
+    await mkdir(kept, { recursive: true });
+    for (const name of await readdir(logs))
+      if (!(await entry_stat(join(kept, name)))) await rename(join(logs, name), join(kept, name));
+  }
   const names = record.scratch_names ?? [];
   if (!Array.isArray(names) || names.some((name) => typeof name !== 'string'))
     return 'invalid retirement scratch snapshot';
@@ -272,12 +283,15 @@ async function cleanup_pass(
     if (!info?.isDirectory() || info.isSymbolicLink()) continue;
     for (const name of (await readdir(root)).sort()) {
       const path = admit(join(root, name), options);
-      if ((await entry_stat(path))?.isSymbolicLink()) continue;
+      const entry = await entry_stat(path);
+      if (entry?.isSymbolicLink()) continue;
       const ticket_id = ticket_match.exec(name)?.[1] ?? null,
         state = states.get(ticket_id ?? '');
       let reason: string | null;
       if (root !== tickets_root)
         reason = 'legacy scratch outside Ticket files requires one-time owner review';
+      else if (entry?.isDirectory() && (await readdir(path)).join('/') === LOGS_DIRECTORY)
+        reason = 'only logs remain';
       else if (!state) reason = 'Ticket owner or end date is unknown; owner review required';
       else if (active.has(ticket_id!) || state.ended_at === null) reason = 'Ticket is active';
       else {

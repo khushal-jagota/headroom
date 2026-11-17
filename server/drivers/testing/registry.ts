@@ -98,6 +98,7 @@ function scripted_driver(
   const driver_kind = parse_driver_kind(key);
   return {
     driver_kind,
+    home_instructions_file: 'AGENTS.md',
     client: {
       label: key,
       icon: { file: 'icon.svg', monochrome: true },

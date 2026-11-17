@@ -10,6 +10,7 @@ export const codex_driver: AgentDriver<null> = {
   driver_kind: parse_driver_kind('codex'),
   client: codex_client,
   manifest: codex_manifest,
+  home_instructions_file: 'AGENTS.md',
   config: NO_DRIVER_CONFIG,
   models: codex_models,
   launch_model_refusal: codex_launch_model_refusal,

@@ -11,6 +11,7 @@ export const claude_driver: AgentDriver<null> = {
   driver_kind: parse_driver_kind('claude'),
   client: claude_client,
   manifest: claude_manifest,
+  home_instructions_file: 'CLAUDE.md',
   config: NO_DRIVER_CONFIG,
   models: claude_models,
   readable_tool_call_detail: claude_readable_tool_call_detail,

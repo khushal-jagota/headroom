@@ -64,8 +64,8 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Each Ticket folder has `worktree/` for code, dependencies, and scratch, and
   `artifacts/` for documents and evidence. Use the paths in the Worker prompt.
   Panels clears the checkout when the Ticket ends or is deleted, subject to work and
-  process safety. It clears the remaining Ticket folder, including artifacts, after
-  seven days. Artifacts inside the checkout leave with the checkout.
+  process safety. After seven days it clears the remaining Ticket folder, including artifacts,
+  except `logs/`. Artifacts inside the checkout leave with the checkout.
   See `docs/environments.md`.
 - Workers still install dependencies, commit, push, open pull requests, and perform
   approved merges. Fetch the integration target before integration. State the base
