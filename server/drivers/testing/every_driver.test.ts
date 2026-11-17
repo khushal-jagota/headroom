@@ -19,6 +19,25 @@ const agent_backend_packages = Object.keys(
     ) as { dependencies: Record<string, string> }
   ).dependencies,
 );
+/** Every CHECK expression in the release seed, parentheses balanced, quoted text skipped. */
+const seed_checks = (
+  JSON.parse(
+    readFileSync(new URL('../../core/database/application_schema.json', import.meta.url), 'utf8'),
+  ) as { statements: string[] }
+).statements.flatMap((statement) =>
+  [...statement.matchAll(/\bCHECK\s*\(/gi)].map((match) => {
+    let depth = 0,
+      quoted = false,
+      end = match.index + match[0].length - 1;
+    for (; end < statement.length; end += 1) {
+      const character = statement[end];
+      if (character === "'") quoted = !quoted;
+      else if (!quoted && character === '(') depth += 1;
+      else if (!quoted && character === ')' && --depth === 0) break;
+    }
+    return statement.slice(match.index, end + 1);
+  }),
+);
 const missing = (items: readonly string[], present: (item: string) => boolean): true | string => {
   const absent = items.filter((item) => !present(item));
   return absent.length ? `missing ${absent.join(', ')}` : true;
@@ -30,6 +49,14 @@ const EVERY_DRIVER_LISTS: readonly EveryDriverList[] = [
       missing(driver.manifest.install?.npm_packages ?? [], (name) =>
         agent_backend_packages.includes(name),
       ),
+  },
+  {
+    // Backend keys are open strings since schema step ts_0001_open_backend_keys.
+    name: 'application_schema.json names the driver kind in no CHECK',
+    covers: (driver) => {
+      const closed = seed_checks.filter((check) => check.includes(`'${driver.driver_kind}'`));
+      return closed.length ? `closed by ${closed.join('; ')}` : true;
+    },
   },
   {
     name: 'the driver package holds its icon',
