@@ -1,5 +1,6 @@
 /** Translate backend facts without provider execution or database access. */
 import {
+  AgentMessageCompleted,
   CommandReplyReported,
   ContextCompacted,
   PermissionAskRaised,
@@ -13,6 +14,7 @@ import {
 } from '../backends/contracts.ts';
 import type { BackendEventValue, TurnToken } from '../backends/contracts.ts';
 import {
+  AgentMessageEventPayload,
   AutomaticCompactionResult,
   CommandReplyEventPayload,
   ContextCompactedEventPayload,
@@ -85,7 +87,9 @@ export function interpret_backend_event(
       event instanceof TurnEnded)
       ? copy_turn(running)
       : null;
-  if (event instanceof ToolCallStarted) payloads = [new ToolCallStartedEventPayload(event)];
+  if (event instanceof AgentMessageCompleted)
+    payloads = [new AgentMessageEventPayload({ content: event.content })];
+  else if (event instanceof ToolCallStarted) payloads = [new ToolCallStartedEventPayload(event)];
   else if (event instanceof ToolCallFinished) payloads = [new ToolCallFinishedEventPayload(event)];
   else if (event instanceof PlanUpdated) payloads = [new PlanUpdatedEventPayload(event)];
   else if (event instanceof TokenUsageReported) payloads = [new TokenUsageEventPayload(event)];

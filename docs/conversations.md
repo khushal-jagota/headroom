@@ -4,8 +4,8 @@ A conversation is one agent, working in one folder, with a permanent record of w
 
 ## What a conversation is made of
 
-- **The notebook.** The append-only record of finished facts: a delivered prompt, a tool call, a permission ask and its answer, a model change, a turn ending, a message to the owner, a refusal, a discard, and a backend's own reply to a slash command such as `/goal`. A row is written once. Private reasoning is dropped.
-- **The live tail.** The text of a running turn, streamed straight to an open pane and not stored as notebook prose.
+- **The notebook.** The append-only record of finished facts: a delivered prompt, an agent's finished reply, a tool call, a permission ask and its answer, a model change, a turn ending, a message to the owner, a refusal, a discard, and a backend's own reply to a slash command such as `/goal`. A row is written once. Private reasoning is dropped. A finished reply shows in the full conversation only. It is not addressed to anyone, so it raises no unread mark or notification.
+- **The live tail.** The text of a running turn, streamed straight to an open pane. When that text finishes, the notebook records it as a reply and the tail clears.
 - **The conversation system.** One core that holds messages while the agent is busy, starts and stops the child process, writes the notebook, and decides each send's fate.
 - **Three backend adapters.** Hermes over ACP, Codex through its app server, and Claude through the Claude Agent SDK. The backends are a closed set, and one door turns an untrusted name into a member of it or refuses it.
 - **Send Message.** The door a person, the Chief, a Manager, or a Worker uses to address someone. It finds the recipient's current conversation and records who sent the message.

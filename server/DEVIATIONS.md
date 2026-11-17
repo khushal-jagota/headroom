@@ -897,3 +897,14 @@ The connection still enforces each floor. Claude's initialize reply and Codex's
 `initialize` userAgent report the running version. A version below the floor fails that
 start with the same update message and replaces the kept verdict. A missing or unreadable
 reported version does not fail the start.
+
+## Finished agent replies are recorded
+
+At the owner's request, TypeScript records each finished agent reply as an
+`agent_message` event in its turn. Python drops the reply and keeps only the live
+tail. This covers home children and Mac children. The Mac already sends
+`agent_message_completed` as a durable envelope, so the protocol is unchanged.
+A reply shows in the full conversation only. It raises no unread mark, notification
+or Manager wake. Replies from before this change are not recovered. The focused test
+in `server/tests/conversation_core_delivery.test.ts` proves the record, the order and
+the unread mark.
