@@ -1,5 +1,5 @@
 /** Mechanical type projection of T3 75e4ceb9, with `role` from b79d277c. See T3-LICENSE and frontend-translation.md. */
-import type { TrimmedNonEmptyString } from "./index";
+import type { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 // model.ts:125
 export type ModelCapabilities = {

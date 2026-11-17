@@ -1,10 +1,13 @@
 /** A driver outside the built-in list reaches the backend routes through the registry alone. */
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { createApp } from '../../app.ts';
 import { loadConfig } from '../../core/config.ts';
 import { fixture, fixture_path } from '../../tests/ticket_fixture.ts';
 import { ConversationHttpWriteScope } from '../http/writes.ts';
 import { createBackendRoutes } from './routes.ts';
+import { createDriverRoutes } from '../../drivers/http/routes.ts';
 import { create_backend_runtime } from './composition.ts';
 import type { AnyAgentDriver, DriverInstance } from '../../drivers/core/driver.ts';
 import { NO_DRIVER_CONFIG } from '../../drivers/core/driver.ts';
@@ -17,6 +20,8 @@ import { scripted_manifest, scripted_status } from '../../drivers/testing/regist
 import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
 import { turn_scoped_selection_transition } from '../../drivers/core/selection.ts';
 
+const scripted_icon = new URL('../../drivers/testing/icon.svg', import.meta.url);
+
 function scripted_entry(
   key: string,
   members: Partial<Pick<DriverInstance, 'sign_in' | 'allowance_usage'>>,
@@ -26,7 +31,7 @@ function scripted_entry(
     driver_kind,
     client: {
       label: `Scripted ${key}`,
-      icon: { file: 'icon.svg', monochrome: true },
+      icon: { file: scripted_icon, monochrome: true },
       accent_color: '#000000',
     },
     manifest: scripted_manifest(key),
@@ -57,8 +62,9 @@ function scripted_entry(
 }
 
 // Gap: every other backend route test reaches only the built-in ids and the Codex sign-in, so a
-// route or card list that still names drivers would pass them. This drives a scripted kind.
-test('a scripted driver gets its card, sign-in routes and labelled allowance window', async () => {
+// route or card list that still names drivers would pass them. This drives a scripted kind,
+// through the cards, the sign-in routes and the driver list the apps draw marks and labels from.
+test('a scripted driver gets its card, sign-in routes, driver list entry, icon and allowance window', async () => {
   const calls: string[] = [];
   let session: SignInSession | null = null;
   const sign_in: DriverSignInController = {
@@ -135,6 +141,7 @@ test('a scripted driver gets its card, sign-in routes and labelled allowance win
         prefix: '/api/conversation',
         routes: createBackendRoutes(runtime, { available: true, writes }),
       },
+      { prefix: '/api', routes: createDriverRoutes(runtime) },
     ],
   });
   const call = async (
@@ -152,11 +159,56 @@ test('a scripted driver gets its card, sign-in routes and labelled allowance win
   try {
     const cards = await call('GET', '');
     expect(
-      (cards.body.backends as { backend_key: string }[]).map((card) => card.backend_key),
-    ).toEqual(['claude', 'scripted']);
+      (cards.body.backends as Record<string, unknown>[]).map((card) => ({
+        backend_key: card.backend_key,
+        can_sign_in: card.can_sign_in,
+        reports_allowance_usage: card.reports_allowance_usage,
+      })),
+    ).toEqual([
+      { backend_key: 'claude', can_sign_in: false, reports_allowance_usage: true },
+      { backend_key: 'scripted', can_sign_in: true, reports_allowance_usage: false },
+    ]);
     expect((cards.body.backends as { diagnoses: string[] }[])[1].diagnoses).toEqual([
       '`scripted` is not installed.',
     ]);
+
+    const icon_bytes = readFileSync(scripted_icon);
+    const version = createHash('sha256').update(icon_bytes).digest('hex').slice(0, 12);
+    const drivers = await app.inject({ method: 'GET', url: '/api/drivers' });
+    expect(drivers.statusCode).toBe(200);
+    expect(drivers.json()).toEqual({
+      drivers: [
+        expect.objectContaining({ driver_kind: 'claude' }),
+        {
+          driver_kind: 'scripted',
+          label: 'Scripted scripted',
+          icon: {
+            url: `/api/drivers/scripted/icon?v=${version}`,
+            media_type: 'image/svg+xml',
+            monochrome: true,
+          },
+          accent_color: '#000000',
+          checks_for_updates: false,
+        },
+      ],
+      default_backend_instance_id: 'codex',
+    });
+    const icon = await app.inject({
+      method: 'GET',
+      url: `/api/drivers/scripted/icon?v=${version}`,
+    });
+    expect(icon.statusCode).toBe(200);
+    expect(icon.rawPayload).toEqual(icon_bytes);
+    expect(icon.headers).toMatchObject({
+      'content-type': 'image/svg+xml',
+      etag: `"${version}"`,
+      'cache-control': 'private, max-age=31536000, immutable',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': 'sandbox',
+    });
+    expect((await app.inject({ method: 'GET', url: '/api/drivers/nope/icon' })).statusCode).toBe(
+      404,
+    );
 
     expect(await call('GET', '/scripted/sign-in')).toEqual({
       status: 200,

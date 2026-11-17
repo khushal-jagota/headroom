@@ -19,6 +19,7 @@ import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
+import { createDriverRoutes } from '../drivers/http/routes.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
@@ -429,6 +430,7 @@ export class ServerServices {
           routes: createVoiceRoutes({ signal: media_lifetime.signal, writes: conversationWrites }),
         },
         ...(environments?.areas ?? []),
+        { prefix: '/api', routes: createDriverRoutes(backendServices) },
         {
           prefix: '/api/conversation',
           routes: createBackendRoutes(backendServices, {

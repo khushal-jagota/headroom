@@ -10,7 +10,11 @@ import type {
 } from '../conversation/snapshot/contracts.ts';
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import type { StatusProbeContext } from '../drivers/core/status.ts';
-import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
+import {
+  BUILT_IN_MANIFESTS,
+  KNOWN_BACKEND_INSTANCE_IDS,
+  built_in_driver_of,
+} from '../drivers/built_in_manifests.ts';
 import { Deferred } from '../core/deferred.ts';
 import { BackendStateStore, model_refusal } from '../conversation/backend_state.ts';
 import { hermes_catalog_reader } from '../drivers/hermes/runtime/status_readers.ts';
@@ -67,6 +71,9 @@ test('backend and voice HTTP work share admission and remain owned until both se
             backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
             sign_in: () => null,
             machine_catalog: () => null,
+            drivers: BUILT_IN_MANIFESTS,
+            driver_of: () => null,
+            reports_allowance_usage: () => false,
           },
           { available: true, writes },
         ),
@@ -171,6 +178,9 @@ test('all eight backend routes require the conversation runtime before validated
               backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
               sign_in: () => null,
               machine_catalog: () => null,
+              drivers: BUILT_IN_MANIFESTS,
+              driver_of: () => null,
+              reports_allowance_usage: () => false,
             },
             { available: false, writes },
           ),
@@ -442,6 +452,9 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
               backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
               sign_in: () => null,
               machine_catalog: () => null,
+              drivers: BUILT_IN_MANIFESTS,
+              driver_of: () => null,
+              reports_allowance_usage: () => false,
             },
             { available: true, writes },
           ),
@@ -606,6 +619,13 @@ test('no card source gives Hermes a complete model list, so no Hermes model is r
 import { readFileSync } from 'node:fs';
 import { run as run_recorded_probes } from '../conversation/snapshot/testing/probe_comparison.ts';
 import { snapshot_json } from '../conversation/snapshot/presentation.ts';
+/** A home card with its built-in driver's rules and no sign-in or allowance usage. */
+const card_json = (card: BackendSnapshot) =>
+  snapshot_json(card, null, {
+    driver: built_in_driver_of(card.backend_key) ?? null,
+    can_sign_in: false,
+    reports_allowance_usage: false,
+  });
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import type { CommandOutcome } from '../conversation/snapshot/contracts.ts';
 import type { CodexLoginStanding, CodexModelCatalog } from '../drivers/codex/runtime/contracts.ts';
@@ -832,8 +852,8 @@ async function codex_login_sequence() {
     const card = await service.snapshot(codex, { refresh });
     steps.push({
       name,
-      card: snapshot_json(card),
-      kept: snapshot_json(service.retained(codex)!),
+      card: card_json(card),
+      kept: card_json(service.retained(codex)!),
       commands: environment.commands.length,
     });
     return card;
@@ -865,7 +885,7 @@ async function hermes_machine_sequence() {
   for (const name of ['first read', 'kept read']) {
     const cards = [];
     for (const key of ['hermes', 'codex'])
-      cards.push(snapshot_json(await service.snapshot(parse_backend_instance_id(key))));
+      cards.push(card_json(await service.snapshot(parse_backend_instance_id(key))));
     steps.push({ name, cards, commands: environment.commands.map((argv) => [...argv]) });
   }
   return steps;
@@ -878,7 +898,7 @@ test('backend card JSON stays the same for every recorded machine and login sequ
     JSON.stringify({
       probes: probes.cards.map((value) => ({
         name: value.name,
-        card: snapshot_json(value.card),
+        card: card_json(value.card),
         commands: value.commands,
         catalog_calls: value.catalog_calls,
         registry_lookups: value.registry_lookups,

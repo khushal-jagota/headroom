@@ -28,7 +28,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           },
           {
             "model_id": "gpt-6-luna",
@@ -42,7 +61,22 @@
             "reasoning_effort_options": [
               "medium"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6 Luna"
           }
         ],
         "reasoning_effort_options": [
@@ -59,7 +93,9 @@
           "detail": "Panels can run this backend's own update command; there is no newer version to report."
         },
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": [
         [
@@ -108,7 +144,9 @@
           "`codex` is not signed in. Run `codex login` in a terminal.",
           "Codex is installed but did not answer when asked what it can run, so no models are listed. Check that `codex app-server` starts from a terminal."
         ],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": [
         [
@@ -156,7 +194,26 @@
               "high",
               "max"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "high",
+                    "label": "high"
+                  },
+                  {
+                    "id": "max",
+                    "label": "max"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "Opus 5 (1M)"
           },
           {
             "model_id": "claude-haiku-4-5-20251001",
@@ -169,7 +226,9 @@
             "resolved_model_id": "claude-haiku-4-5-20251001",
             "detail": "haiku → claude-haiku-4-5-20251001",
             "reasoning_effort_options": [],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [],
+            "resolved_display_name": "Haiku 4.5"
           }
         ],
         "reasoning_effort_options": [
@@ -189,7 +248,9 @@
           "detail": "Version 2.2.0 is available."
         },
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": [
         [
@@ -248,7 +309,9 @@
           "Panels could not read who `claude` is signed in as.",
           "Claude is installed but did not answer when asked what it can run, so no models are listed. Check that `claude` starts from a terminal."
         ],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": [
         [
@@ -287,7 +350,9 @@
             "resolved_model_id": "provider:small",
             "detail": "Configured model",
             "reasoning_effort_options": null,
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [],
+            "resolved_display_name": null
           }
         ],
         "reasoning_effort_options": [],
@@ -295,7 +360,9 @@
         "default_reasoning_effort": null,
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": [
         [
@@ -327,7 +394,9 @@
         "diagnoses": [
           "Hermes' model inventory returned an invalid answer, so no models are listed."
         ],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": [
         [
@@ -373,7 +442,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           },
           {
             "model_id": "gpt-6-luna",
@@ -387,7 +475,22 @@
             "reasoning_effort_options": [
               "medium"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6 Luna"
           }
         ],
         "reasoning_effort_options": [
@@ -398,7 +501,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "kept": {
         "backend_key": "codex",
@@ -426,7 +531,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           },
           {
             "model_id": "gpt-6-luna",
@@ -440,7 +564,22 @@
             "reasoning_effort_options": [
               "medium"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6 Luna"
           }
         ],
         "reasoning_effort_options": [
@@ -451,7 +590,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": 2
     },
@@ -483,7 +624,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           },
           {
             "model_id": "gpt-6-luna",
@@ -497,7 +657,22 @@
             "reasoning_effort_options": [
               "medium"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6 Luna"
           }
         ],
         "reasoning_effort_options": [
@@ -508,7 +683,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "kept": {
         "backend_key": "codex",
@@ -536,7 +713,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           },
           {
             "model_id": "gpt-6-luna",
@@ -550,7 +746,22 @@
             "reasoning_effort_options": [
               "medium"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6 Luna"
           }
         ],
         "reasoning_effort_options": [
@@ -561,7 +772,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": 2
     },
@@ -593,7 +806,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -604,7 +836,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "kept": {
         "backend_key": "codex",
@@ -632,7 +866,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -643,7 +896,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": 4
     },
@@ -667,7 +922,9 @@
           "detail": "Panels only updates `codex` from the configured vps-owned user-local npm prefix; update this installation manually."
         },
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "kept": {
         "backend_key": "codex",
@@ -695,7 +952,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -706,7 +982,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": 6
     },
@@ -738,7 +1016,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -749,7 +1046,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "kept": {
         "backend_key": "codex",
@@ -777,7 +1076,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -788,7 +1106,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": 8
     },
@@ -820,7 +1140,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -831,7 +1170,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "kept": {
         "backend_key": "codex",
@@ -859,7 +1200,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -870,7 +1230,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": 10
     },
@@ -902,7 +1264,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -913,7 +1294,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "kept": {
         "backend_key": "codex",
@@ -941,7 +1324,26 @@
               "medium",
               "high"
             ],
-            "enabled": true
+            "enabled": true,
+            "option_descriptors": [
+              {
+                "type": "select",
+                "id": "reasoning_effort",
+                "label": "Reasoning",
+                "role": "reasoning",
+                "options": [
+                  {
+                    "id": "medium",
+                    "label": "medium"
+                  },
+                  {
+                    "id": "high",
+                    "label": "high"
+                  }
+                ]
+              }
+            ],
+            "resolved_display_name": "GPT 6.1 Sol"
           }
         ],
         "reasoning_effort_options": [
@@ -952,7 +1354,9 @@
         "default_reasoning_effort": "medium",
         "update_advisory": null,
         "diagnoses": [],
-        "cached_usage": null
+        "cached_usage": null,
+        "can_sign_in": false,
+        "reports_allowance_usage": false
       },
       "commands": 12
     }
@@ -976,7 +1380,9 @@
               "resolved_model_id": "provider:small",
               "detail": "Configured model",
               "reasoning_effort_options": null,
-              "enabled": true
+              "enabled": true,
+              "option_descriptors": [],
+              "resolved_display_name": null
             }
           ],
           "reasoning_effort_options": [],
@@ -984,7 +1390,9 @@
           "default_reasoning_effort": null,
           "update_advisory": null,
           "diagnoses": [],
-          "cached_usage": null
+          "cached_usage": null,
+          "can_sign_in": false,
+          "reports_allowance_usage": false
         },
         {
           "backend_key": "codex",
@@ -1012,7 +1420,26 @@
                 "medium",
                 "high"
               ],
-              "enabled": true
+              "enabled": true,
+              "option_descriptors": [
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "label": "Reasoning",
+                  "role": "reasoning",
+                  "options": [
+                    {
+                      "id": "medium",
+                      "label": "medium"
+                    },
+                    {
+                      "id": "high",
+                      "label": "high"
+                    }
+                  ]
+                }
+              ],
+              "resolved_display_name": "GPT 6.1 Sol"
             },
             {
               "model_id": "gpt-6-luna",
@@ -1026,7 +1453,22 @@
               "reasoning_effort_options": [
                 "medium"
               ],
-              "enabled": true
+              "enabled": true,
+              "option_descriptors": [
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "label": "Reasoning",
+                  "role": "reasoning",
+                  "options": [
+                    {
+                      "id": "medium",
+                      "label": "medium"
+                    }
+                  ]
+                }
+              ],
+              "resolved_display_name": "GPT 6 Luna"
             }
           ],
           "reasoning_effort_options": [
@@ -1037,7 +1479,9 @@
           "default_reasoning_effort": "medium",
           "update_advisory": null,
           "diagnoses": [],
-          "cached_usage": null
+          "cached_usage": null,
+          "can_sign_in": false,
+          "reports_allowance_usage": false
         }
       ],
       "commands": [
@@ -1074,7 +1518,9 @@
               "resolved_model_id": "provider:small",
               "detail": "Configured model",
               "reasoning_effort_options": null,
-              "enabled": true
+              "enabled": true,
+              "option_descriptors": [],
+              "resolved_display_name": null
             }
           ],
           "reasoning_effort_options": [],
@@ -1082,7 +1528,9 @@
           "default_reasoning_effort": null,
           "update_advisory": null,
           "diagnoses": [],
-          "cached_usage": null
+          "cached_usage": null,
+          "can_sign_in": false,
+          "reports_allowance_usage": false
         },
         {
           "backend_key": "codex",
@@ -1110,7 +1558,26 @@
                 "medium",
                 "high"
               ],
-              "enabled": true
+              "enabled": true,
+              "option_descriptors": [
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "label": "Reasoning",
+                  "role": "reasoning",
+                  "options": [
+                    {
+                      "id": "medium",
+                      "label": "medium"
+                    },
+                    {
+                      "id": "high",
+                      "label": "high"
+                    }
+                  ]
+                }
+              ],
+              "resolved_display_name": "GPT 6.1 Sol"
             },
             {
               "model_id": "gpt-6-luna",
@@ -1124,7 +1591,22 @@
               "reasoning_effort_options": [
                 "medium"
               ],
-              "enabled": true
+              "enabled": true,
+              "option_descriptors": [
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "label": "Reasoning",
+                  "role": "reasoning",
+                  "options": [
+                    {
+                      "id": "medium",
+                      "label": "medium"
+                    }
+                  ]
+                }
+              ],
+              "resolved_display_name": "GPT 6 Luna"
             }
           ],
           "reasoning_effort_options": [
@@ -1135,7 +1617,9 @@
           "default_reasoning_effort": "medium",
           "update_advisory": null,
           "diagnoses": [],
-          "cached_usage": null
+          "cached_usage": null,
+          "can_sign_in": false,
+          "reports_allowance_usage": false
         }
       ],
       "commands": [

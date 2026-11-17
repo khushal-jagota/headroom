@@ -59,11 +59,13 @@ const EVERY_DRIVER_LISTS: readonly EveryDriverList[] = [
     },
   },
   {
-    name: 'the driver package holds its icon',
-    covers: (driver) =>
-      missing([driver.client.icon.file], (file) =>
-        existsSync(new URL(`../${driver.driver_kind}/${file}`, import.meta.url)),
-      ),
+    // GET /api/drivers takes the media type from the extension and throws on any other.
+    name: 'the driver package holds its icon, an SVG or a PNG',
+    covers: (driver) => {
+      const file = driver.client.icon.file;
+      if (!existsSync(file)) return `missing ${file.pathname}`;
+      return /\.(?:svg|png)$/.test(file.pathname) || `${file.pathname} is neither SVG nor PNG`;
+    },
   },
 ];
 

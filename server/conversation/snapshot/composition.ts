@@ -6,13 +6,14 @@ import type {
   BackendCardSource,
   BackendProbeEnvironment,
   BackendHttpRuntime,
+  CardDriver,
 } from './contracts.ts';
 import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
 import type { DriverRegistry } from '../../drivers/core/registry.ts';
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import { default_instance_id_for_driver } from '../../drivers/core/identity.ts';
 import type { DriverStatus } from '../../drivers/core/status.ts';
-import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
+import { BUILT_IN_MANIFESTS, built_in_driver_of } from '../../drivers/built_in_manifests.ts';
 import type { BuiltInDriverFacts } from '../../drivers/built_in_manifests.ts';
 import { BackendSnapshotService } from './service.ts';
 import { probe_card } from './probe.ts';
@@ -36,6 +37,8 @@ interface RuntimeBackends {
   readonly sources: readonly BackendCardSource[];
   readonly usage: ReadonlyMap<BackendInstanceId, UsageEntry>;
   readonly sign_ins: ReadonlyMap<string, NonNullable<ReturnType<BackendHttpRuntime['sign_in']>>>;
+  readonly drivers: readonly CardDriver[];
+  driver_of(backend_key: string): CardDriver | null;
 }
 /** The registry's live instances, in registry order. */
 function registry_backends(registry: DriverRegistry): RuntimeBackends {
@@ -59,6 +62,8 @@ function registry_backends(registry: DriverRegistry): RuntimeBackends {
         instance.sign_in === undefined ? [] : [[instance.instance_id, instance.sign_in] as const],
       ),
     ),
+    drivers: [...registry.drivers.values()],
+    driver_of: (backend_key) => registry.get(backend_key)?.driver ?? null,
   };
 }
 /**
@@ -97,6 +102,8 @@ function built_in_backends(): RuntimeBackends {
       ]),
     ),
     sign_ins: new Map(),
+    drivers: BUILT_IN_MANIFESTS,
+    driver_of: (backend_key) => built_in_driver_of(backend_key) ?? null,
   };
 }
 export function create_backend_runtime(options: {
@@ -118,6 +125,9 @@ export function create_backend_runtime(options: {
       : new SubprocessBackendProbeEnvironment(require_children(options.one_shot_children)));
   const backends = registry === undefined ? built_in_backends() : registry_backends(registry);
   const backend_state = new BackendStateStore(database);
+  const reporting = new Set<string>(
+    [...backends.usage].flatMap(([key, entry]) => (entry.adapter === undefined ? [] : [key])),
+  );
   let resolve_resource_join!: () => void, reject_resource_join!: (error: unknown) => void;
   const resource_join = new Promise<void>((resolve, reject) => {
     resolve_resource_join = resolve;
@@ -201,6 +211,9 @@ export function create_backend_runtime(options: {
     backend_ids: backends.sources.map((source) => source.instance_id),
     sign_in: (backend_key) => backends.sign_ins.get(backend_key) ?? null,
     machine_catalog: () => null,
+    drivers: backends.drivers,
+    driver_of: (backend_key) => backends.driver_of(backend_key),
+    reports_allowance_usage: (backend_key) => reporting.has(backend_key),
   };
 }
 function require_children(children: OwnedOneShotChildren | undefined): OwnedOneShotChildren {
