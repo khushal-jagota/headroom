@@ -207,12 +207,12 @@
 
 </script>
 
-<!-- The queue's own actions about this item: Skip (when the queue gives it) and Open ticket. -->
+<!-- The queue's own actions about this item: Open ticket and Skip (when the queue gives it). -->
 {#snippet queueActions()}
+  <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
   {#if onSkip}
     <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
   {/if}
-  <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
 {/snippet}
 
 <SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
