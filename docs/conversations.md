@@ -122,7 +122,7 @@ Linux can adopt a late tool from the root's session after the leader exits. This
 
 A model or reasoning change rides the next message that is actually delivered. Each driver states whether its running child applies the change on the next turn, needs a fresh child, or refuses it. Codex and Hermes switch in place. Claude switches effort in place. A new Claude model, or cleared effort, starts a new child and carries the session across. The backend itself is fixed once the conversation exists, so a message to the Chief or a Manager that names only a backend, as the iOS app does with every message, is an ordinary message and is not checked against launch defaults. Only a message that starts a conversation resolves its launch settings, and a start on another backend must name that backend's model. The picker reads the model list from the machine that runs the conversation and shows only the newest version of each Claude and Codex model. A model is refused when a Ticket is created or saved, when a Worker restarts on it, when launch defaults are set, and when a message is dispatched. It is refused if it is disabled in the [Usage](usage.md) catalog. A Codex or Claude model is also refused if the machine that runs it does not offer it. That machine is a Ticket's own, and the VPS for everything else. The refusal names the valid choices. Claude's short names, such as `opus`, and the `[1m]` form of a listed model count as offered. A refused dispatch stays in the notebook with its reason. A Worker step refused this way leaves the Ticket errored, and a restart on another model is the repair. A Ticket's saved starting choice belongs to [Tickets](tickets.md). If that saved choice fails to update after delivery, the accepted turn continues and the error still reaches the caller.
 
-Permission asks are always shown and always wait for an answer. Headroom does not auto-approve and does not remember a grant. Claude and Codex can also ask structured questions. Hermes has only the permission flow. Production agents run with full tool access, so an ask appears because the agent chose to ask.
+Permission asks are always shown and always wait for an answer. Headroom does not auto-approve and does not remember a grant. Claude and Codex can also ask structured questions. Hermes has only the permission flow. Production agents run with full tool access, so an ask appears because the agent chose to ask. Questions and approvals are answered in the composer. A preview of other treatments, none of them the live cards, is at `#/dev/asks`.
 
 ## The workspace for an agent
 
@@ -155,4 +155,4 @@ The pane reads a stored view that is built from the notebook. When the app conne
 - `server/runtime/conversation_start.ts`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
-_Last verified: 2026-11-16._
+_Last verified: 2026-11-17._

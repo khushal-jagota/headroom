@@ -60,10 +60,11 @@
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
       case "backends": return cachedImport("./BackendsRoute.svelte", () => import("./routes/BackendsRoute.svelte"));
       case "preview": return cachedImport("./FilePreviewRoute.svelte", () => import("./routes/FilePreviewRoute.svelte"));
+      case "asks": return cachedImport("./AsksPreviewRoute.svelte", () => import("./routes/AsksPreviewRoute.svelte"));
       default: return null;
     }
   });
-  let routeShape = $derived(route.name === "review" ? "block" as const
+  let routeShape = $derived(route.name === "review" || route.name === "asks" ? "block" as const
     : ["ideas", "goals", "backends"].includes(route.name) ? "rows" as const : "document" as const);
 
   let moreOpen = $state(false);
@@ -220,7 +221,7 @@
 
 {#snippet destinationPane()}
   {#key route.key}
-    <div class="destination-pane" data-utility-scroll class:destination-pane--document={!["review", "preview"].includes(route.name)} class:screen-enter={true}>
+    <div class="destination-pane" data-utility-scroll class:destination-pane--document={!["review", "preview", "asks"].includes(route.name)} class:screen-enter={true}>
       {#snippet selectedRoute()}
         {#if route.name === "review"}
           {#await import("./routes/ReviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
@@ -234,6 +235,8 @@
           {#await import("./routes/BackendsRoute.svelte") then view}<view.default tab={route.params.tab as UsageTab} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "preview"}
           {#await import("./routes/FilePreviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
+        {:else if route.name === "asks"}
+          {#await import("./routes/AsksPreviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else}<div class="quiet-line">no such screen</div>{/if}
       {/snippet}
       {#if routeModule}<LazyRegion promise={routeModule} shape={routeShape} layout="fill">{@render selectedRoute()}</LazyRegion>{:else}{@render selectedRoute()}{/if}

@@ -2,7 +2,7 @@ import { canonicalShellHash } from "./shellRouting";
 import { impliedWorkspaceView, parseWorkspaceAddress, workspaceAddress, type WorkspaceAddress } from "./workspaceAddress";
 import { parseUtilityPath } from "./utilityAddress";
 
-type DestinationName = "workspace" | "review" | "ideas" | "goals" | "settings" | "backends" | "preview" | "unknown";
+type DestinationName = "workspace" | "review" | "ideas" | "goals" | "settings" | "backends" | "preview" | "asks" | "unknown";
 /** One parsed address for the persistent shell. Pane keys never key the shell itself. */
 export type ShellDestination = {
   [Name in DestinationName]: { name: Name; params: Record<string, string>; key: string; hash: string; workspace?: WorkspaceAddress }
@@ -33,6 +33,10 @@ export function parseShellDestination(incoming: string): ShellDestination {
     const address = parseWorkspaceAddress(hash);
     if (!address) return unknown();
     return workspace(address);
+  }
+  // A preview of question and approval treatments. It is not a destination in the dock.
+  if (name === "dev" && segments[1] === "asks" && segments.length === 2) {
+    return { name: "asks", params: {}, key: "asks", hash };
   }
   if (name === "settings" || name === "backends") {
     const placement = parseUtilityPath(name === "settings" ? "settings" : "usage", segments.slice(1));

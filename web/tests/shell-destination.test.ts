@@ -26,6 +26,12 @@ describe("persistent shell addresses", () => {
       .not.toBe(parseShellDestination("#/settings/config/workers/coding").key);
   });
 
+  it("opens the ask preview without listing it, and keeps the other dev addresses unknown", () => {
+    expect(parseShellDestination("#/dev/asks?variant=quiet&scene=single")).toMatchObject({
+      name: "asks", key: "asks", hash: "#/dev/asks?variant=quiet&scene=single"
+    });
+  });
+
   it("preserves preview and workspace open-file query state", () => {
     const query = "?source=ticket&ticket=t_1&path=artifacts%2Freport.html";
     expect(parseShellDestination("#/preview" + query)).toMatchObject({ name: "preview", hash: "#/preview" + query });
