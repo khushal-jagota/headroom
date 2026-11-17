@@ -9,21 +9,24 @@ struct UsageView: View {
     private var backendResource: ResourceHandle<UsageBackends> { store.resources.handle(UsageResources.backends) }
     private var summaryResource: ResourceHandle<RecordedUsageSummary> { store.resources.handle(UsageResources.summary(days: days)) }
     private var summary: UsageSummary? { summaryResource.value.map { UsageSummary($0, days: days) } }
-    private var backends: [UsageBackend] { (backendResource.value?.backends ?? []).filter { ["codex", "claude"].contains($0.backendKey) } }
+    private var backends: [UsageBackend] { backendResource.value?.reporting ?? [] }
     @State private var refreshError: String?
     private var error: String? { refreshError ?? (metric == "Limits" ? backendResource.error : summaryResource.error) }
     private var loading: Bool { metric == "Limits" ? backendResource.value == nil : summary == nil }
     @State private var refreshing = false
     private let metrics = ["Limits", "Tokens", "Cost"]
     private var selectedMetrics: UsageMetrics? {
-        provider == "All" ? summary?.totals : summary?.providers.first { $0.provider == provider.lowercased() }
+        provider == "All" ? summary?.totals : summary?.providers.first { $0.provider == provider }
     }
 
     var body: some View {
         List {
             Section {
                 Picker("Usage", selection: $metric) { ForEach(metrics, id: \.self) { Text($0) } }.accessibleSegmentedPicker().disabled(refreshing)
-                Picker("Provider", selection: $provider) { ForEach(["All", "Codex", "Claude"], id: \.self) { Text($0) } }
+                Picker("Provider", selection: $provider) {
+                    Text("All").tag("All")
+                    ForEach(backends) { Text(store.backendLabel($0.backendKey)).tag($0.backendKey) }
+                }
             }.listRowBackground(PanelsTheme.raised)
             if loading && summary == nil && backends.isEmpty { RingSpinner("Reading usage…") }
             if metric == "Limits" { limits } else { recorded }
@@ -51,7 +54,7 @@ struct UsageView: View {
     }
 
     private var limits: some View {
-        ForEach(backends.filter { provider == "All" || $0.backendKey == provider.lowercased() }) { backend in
+        ForEach(backends.filter { provider == "All" || $0.backendKey == provider }) { backend in
             Section {
                 if let usage = backend.cachedUsage, !usage.windows.isEmpty {
                     ForEach(Array(usage.windows.enumerated()), id: \.offset) { _, window in
@@ -77,7 +80,7 @@ struct UsageView: View {
                     Text(backend.installed ? "No recorded allowance" : "Not installed").foregroundStyle(PanelsTheme.muted)
                 }
                 ForEach(backend.diagnoses, id: \.self) { Text($0).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
-            } header: { Text(backend.backendKey.capitalized).panelsSectionHeading(.usage) }
+            } header: { Text(store.backendLabel(backend.backendKey)).panelsSectionHeading(.usage) }
             .listRowBackground(PanelsTheme.raised)
         }
     }
@@ -126,9 +129,9 @@ struct UsageView: View {
             }
             if let summary {
                 Section {
-                    ForEach(summary.sources.filter { provider == "All" || $0.provider == provider.lowercased() }, id: \.id) { source in
+                    ForEach(summary.sources.filter { provider == "All" || $0.provider == provider }, id: \.id) { source in
                         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
-                            LabeledContent("\(source.provider.capitalized) · \(source.host)", value: source.state.capitalized)
+                            LabeledContent("\(store.backendLabel(source.provider)) · \(source.host)", value: source.state.capitalized)
                             ForEach(source.issues, id: \.self) { Text($0).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
                         }
                     }
@@ -141,7 +144,7 @@ struct UsageView: View {
     }
     private func periodValue(_ period: UsagePeriod) -> Double? {
         if provider == "All" { return metric == "Cost" ? period.costUsd : period.totalTokens }
-        let value = period.providers.first { $0.provider == provider.lowercased() }
+        let value = period.providers.first { $0.provider == provider }
         return metric == "Cost" ? value?.costUsd : value?.totalTokens
     }
     @MainActor private func refresh() async {
@@ -156,7 +159,7 @@ struct UsageView: View {
         do {
             let result = try await allowanceRead
             guard store.baseURL == client.baseURL else { return }
-            if let failure = result.failure { failures.append(failure) }
+            if let failure = result.failure(store.drivers) { failures.append(failure) }
         } catch { failures.append(error.localizedDescription) }
         do {
             try await recordedRead

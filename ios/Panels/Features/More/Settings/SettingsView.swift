@@ -92,7 +92,7 @@ struct SettingsView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                                 Text(worker.label)
-                                Text(worker.launchDefaults.employeeLaunchModel ?? worker.launchDefaults.employeeBackend)
+                                Text(worker.launchDefaults.employeeLaunchModel ?? store.backendLabel(worker.launchDefaults.employeeBackend))
                                     .font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted)
                             }
                         }
@@ -179,13 +179,14 @@ struct SettingsView: View {
 }
 
 private struct SettingsAgentDetail: View {
+    @Environment(AppStore.self) private var store
     let title: String
     let configuration: EmployeeConfiguration
     let skill: ManagedSkill?
     var body: some View {
         List {
             Section {
-                LabeledContent("Backend", value: configuration.employeeBackend.capitalized)
+                LabeledContent("Backend", value: store.backendLabel(configuration.employeeBackend))
                 LabeledContent("Model", value: configuration.employeeLaunchModel ?? "Backend default")
                 LabeledContent("Reasoning", value: configuration.employeeLaunchReasoningEffort?.capitalized ?? "Backend default")
             } header: { Text("Launch Defaults").panelsSectionHeading(.configuration) }.listRowBackground(PanelsTheme.raised)

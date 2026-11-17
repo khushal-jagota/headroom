@@ -117,7 +117,12 @@ struct UsageSource: Sendable {
     let state: String
     let issues: [String]
 }
-struct UsageBackends: Decodable, Sendable { let backends: [UsageBackend] }
+struct UsageBackends: Decodable, Sendable {
+    let backends: [UsageBackend]
+    /// The backends that report allowance usage, in card order. An older server does not
+    /// say, so a backend with a recorded allowance counts.
+    var reporting: [UsageBackend] { backends.filter { $0.reportsAllowanceUsage ?? ($0.cachedUsage != nil) } }
+}
 struct UsageBackend: Decodable, Sendable, Identifiable {
     var id: String { backendKey }
     let backendKey: String
@@ -125,6 +130,7 @@ struct UsageBackend: Decodable, Sendable, Identifiable {
     let version: String?
     let cachedUsage: AllowanceUsage?
     let diagnoses: [String]
+    var reportsAllowanceUsage: Bool? = nil
 }
 struct AllowanceUsage: Decodable, Sendable {
     let observedAt: String
@@ -158,9 +164,9 @@ extension APIClient {
 struct UsageBackendRefresh: Decodable, Sendable {
     let backends: [UsageBackend]
     let usageOutcomes: [UsageRefreshOutcome]
-    var failure: String? {
+    func failure(_ catalog: DriverCatalog?) -> String? {
         let failures = usageOutcomes.filter { $0.outcome == "failed" }.map {
-            $0.detail ?? "\($0.backendKey.capitalized) limits could not be refreshed."
+            $0.detail ?? "\(DriverCatalog.label($0.backendKey, in: catalog)) limits could not be refreshed."
         }
         return failures.isEmpty ? nil : failures.joined(separator: " ")
     }

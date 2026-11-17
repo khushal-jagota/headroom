@@ -5,14 +5,17 @@ Uses one HTTP stub and one existing UI-test host. No live server or simulator
 lifecycle changes. Capture files and build output belong in the supplied directory.
 """
 
+import hashlib
 import http.server
 import json
 import os
 import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -21,6 +24,67 @@ ROOT = Path(__file__).resolve().parents[2]
 DEVICE = os.environ.get("PANELS_CONVERSATION_DEVICE", "5BEBCEA8-BDF2-4F47-9CAA-0E25C1D147B6")
 LANE = os.environ.get("PANELS_CONVERSATION_LANE", "PanelsLaneA")
 BUNDLE = os.environ.get("PANELS_CONVERSATION_BUNDLE", "app.panels.ios.pios-convo-build")
+
+
+def review_png() -> bytes:
+    """A 48x48 full-colour picture with a transparent margin, like a real driver PNG."""
+    size, margin = 48, 5
+
+    def pixel(x: int, y: int) -> bytes:
+        inside = margin <= x < size - margin and margin <= y < size - margin
+        return b"\xf0\x8a\x24\xff" if inside else b"\0\0\0\0"
+
+    raw = b"".join(b"\0" + b"".join(pixel(x, y) for x in range(size)) for y in range(size))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        checksum = struct.pack(">I", zlib.crc32(kind + data))
+        return struct.pack(">I", len(data)) + kind + data + checksum
+
+    header = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+# Review-only driver list (--driver-review). The two bundled built-ins, one driver with a
+# PNG icon and one with only an SVG icon. Hermes is left out on purpose: its stored key is
+# still served as a backend, which the list does not name.
+REVIEW_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">'
+    b'<circle cx="8" cy="8" r="6" fill="currentColor"/></svg>'
+)
+REVIEW_ICONS: dict[str, tuple[bytes, str]] = {
+    "codex": ((ROOT / "server/drivers/codex/icon.svg").read_bytes(), "image/svg+xml"),
+    "claude": ((ROOT / "server/drivers/claude/icon.svg").read_bytes(), "image/svg+xml"),
+    "review-png": (review_png(), "image/png"),
+    "review-svg": (REVIEW_SVG, "image/svg+xml"),
+}
+REVIEW_DRIVERS = {
+    "drivers": [
+        {
+            "driver_kind": kind,
+            "label": label,
+            "icon": {
+                "url": f"/api/drivers/{kind}/icon?v="
+                + hashlib.sha256(REVIEW_ICONS[kind][0]).hexdigest()[:12],
+                "media_type": REVIEW_ICONS[kind][1],
+                "monochrome": kind != "review-png",
+            },
+            "accent_color": "#d97757",
+            "checks_for_updates": kind in {"codex", "claude"},
+        }
+        for kind, label in [
+            ("codex", "Codex"),
+            ("claude", "Claude"),
+            ("review-png", "Pixel Agent"),
+            ("review-svg", "Vector Agent"),
+        ]
+    ],
+    "default_backend_instance_id": "codex",
+}
 
 
 def row(
@@ -135,6 +199,19 @@ class Stub:
 def main() -> int:
     server_only = "--server-only" in sys.argv
     review = "--review" in sys.argv
+    # Review-only: serve the driver list, its icons and two more backends, and/or say the
+    # conversation's backend cannot join a running turn. The permanent run serves neither,
+    # so it keeps exercising the app's fallback.
+    driver_review = "--driver-review" in sys.argv
+    no_steer = "--no-steer" in sys.argv
+    # Review-only: the conversation runs on hermes, whose card lists no efforts.
+    hermes_conversation = "--hermes-conversation" in sys.argv
+    if (driver_review or no_steer or hermes_conversation) and not review:
+        raise SystemExit(
+            "--driver-review, --no-steer and --hermes-conversation are review-only; add --review"
+        )
+    if hermes_conversation and not driver_review:
+        raise SystemExit("--hermes-conversation needs --driver-review")
     if review and not server_only and "/" not in os.environ.get("PANELS_CONVERSATION_TEST", ""):
         raise SystemExit("--review requires one explicit class/method in PANELS_CONVERSATION_TEST")
     if not server_only and "--locked" not in sys.argv:
@@ -184,6 +261,9 @@ def main() -> int:
     ticket = json.loads((fixtures / "ticket-full.json").read_text())
     ticket["conversation_id"] = "stub"
     manager = json.loads((fixtures / "manager.json").read_text())
+    if driver_review:
+        # The Ticket chip and Ticket worker setup show only for an editable configuration.
+        ticket["employee_configuration_editable"] = True
     manager["manager"]["conversation_id"] = "stub"
     manifest = {
         "worker_types": [
@@ -214,6 +294,107 @@ def main() -> int:
             }
         ]
     }
+
+    def backends_body() -> dict[str, Any]:
+        if not driver_review:
+            return {
+                "backends": [
+                    {
+                        "backend_key": key,
+                        "installed": True,
+                        "available_models": [
+                            {
+                                "model_id": name,
+                                "display_name": name,
+                                "enabled": True,
+                                "reasoning_effort_options": ["low", "medium", "high"],
+                            }
+                        ],
+                        "reasoning_effort_options": ["low", "medium", "high"],
+                        "default_model_id": name,
+                        "default_reasoning_effort": "medium",
+                    }
+                    for key, name in [("codex", "sol"), ("claude", "Opus"), ("hermes", "Hermes")]
+                ]
+            }
+        efforts = ["low", "medium", "high"]
+
+        def card(key: str, model: dict[str, Any], card_efforts: list[str]) -> dict[str, Any]:
+            return {
+                "backend_key": key,
+                "installed": True,
+                "available_models": [{"enabled": True, "option_descriptors": [], **model}],
+                "reasoning_effort_options": card_efforts,
+                "default_model_id": model["model_id"],
+                "default_reasoning_effort": "medium" if card_efforts else None,
+                "can_sign_in": False,
+                "reports_allowance_usage": key in {"codex", "claude"},
+                "version": None,
+                "cached_usage": None,
+                "diagnoses": [],
+            }
+
+        def model(model_id: str, name: str, model_efforts: list[str] | None) -> dict[str, Any]:
+            return {
+                "model_id": model_id,
+                "display_name": name,
+                "reasoning_effort_options": model_efforts,
+                "resolved_display_name": None,
+            }
+
+        return {
+            "backends": [
+                # "sol" resolves to a dated model the server names, so the Workspace
+                # preview shows "Sol (November)", neither the id nor the dated id.
+                card("codex", {
+                    **model("sol", "Sol", efforts),
+                    "resolved_model_id": "sol-2026-11-01",
+                    "selected_variant": "sol",
+                    "resolved_display_name": "Sol (November)",
+                }, efforts),
+                card("claude", model("opus", "Opus", efforts), efforts),
+                # As a real hermes card: no efforts on the card or its model.
+                card("hermes", model("hermes-default", "Hermes default", None), []),
+                card("review-png", model("pixel", "Pixel", efforts), efforts),
+                card("review-svg", model("vector", "Vector", efforts), efforts),
+            ]
+        }
+
+    # Settings > Workers and the Workspace Chief card, review-only. One Worker names a
+    # model, the other only a backend, so its subtitle shows the backend's label.
+    chief_detail = {
+        "employee_id": "chief",
+        "label": "Chief of Staff",
+        "recap": manager["recap"],
+        "skill": {"name": "panels-chief-of-staff", "description": "", "markdown_body": ""},
+        "launch_defaults": {
+            "employee_backend": "hermes" if hermes_conversation else "codex",
+            "employee_launch_model": None,
+            "employee_launch_reasoning_effort": None,
+        },
+    }
+    review_workers = [
+        {
+            "worker_type": "product_design",
+            "label": "Product design",
+            "specialist_skill_name": "panels-worker-product-design",
+            "launch_defaults": {
+                "employee_backend": "claude",
+                "employee_launch_model": None,
+                "employee_launch_reasoning_effort": None,
+            },
+        },
+        {
+            "worker_type": "coding",
+            "label": "Coding",
+            "specialist_skill_name": "panels-worker-coding",
+            "launch_defaults": {
+                "employee_backend": "codex",
+                "employee_launch_model": "sol",
+                "employee_launch_reasoning_effort": "high",
+            },
+        },
+    ]
 
     def navigation_snapshot(request: dict[str, Any]) -> dict[str, Any]:
         # Same scoped snapshot envelope as the offline Review host. The detail host
@@ -287,6 +468,14 @@ def main() -> int:
                     },
                 },
             }
+
+        def respond_bytes(self, body: bytes, media_type: str) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", media_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+            self.end_headers()
+            self.wfile.write(body)
 
         def respond(self, value: object, status: int = 200) -> None:
             body = json.dumps(value).encode()
@@ -368,15 +557,23 @@ def main() -> int:
                 self.respond(manifest)
                 return
             if path == "/api/workers":
-                self.respond(
-                    {
-                        "chief_of_staff": {
-                            "label": "Chief of Staff",
-                            "recap": manager["recap"],
-                            "conversation_signal": manager["conversation_signal"],
-                        }
-                    }
-                )
+                chief = {
+                    "label": "Chief of Staff",
+                    "recap": manager["recap"],
+                    "conversation_signal": manager["conversation_signal"],
+                }
+                if driver_review:
+                    self.respond(
+                        {"chief_of_staff": {**chief_detail, **chief}, "workers": review_workers}
+                    )
+                else:
+                    self.respond({"chief_of_staff": chief})
+                return
+            if driver_review and path == "/api/workers/chief-of-staff/settings":
+                self.respond(chief_detail)
+                return
+            if driver_review and path == "/api/skills":
+                self.respond({"skills": []})
                 return
             if path.startswith("/api/artifact-catalog/"):
                 self.respond(
@@ -464,6 +661,16 @@ def main() -> int:
                     {"error": {"message": "Connection unavailable. Your words are saved."}}, 503
                 )
                 return
+            if driver_review and path == "/api/drivers":
+                self.respond(REVIEW_DRIVERS)
+                return
+            if driver_review and path.startswith("/api/drivers/") and path.endswith("/icon"):
+                icon = REVIEW_ICONS.get(path.split("/")[3])
+                if icon is None:
+                    self.respond({"error": {"message": "Unknown driver"}}, 404)
+                else:
+                    self.respond_bytes(*icon)
+                return
             if path.endswith("/view/tail"):
                 # The app applies tail frames instead of reading /view again. A snapshot
                 # frame may arrive at any point, so the stub sends its current view.
@@ -506,37 +713,18 @@ def main() -> int:
                     full = parse_qs(urlparse(self.path).query).get("lens") == ["full"]
                     self.respond(self.conversation_view(full))
                 elif path.endswith("/backends"):
-                    self.respond(
-                        {
-                            "backends": [
-                                {
-                                    "backend_key": key,
-                                    "installed": True,
-                                    "available_models": [
-                                        {
-                                            "model_id": name,
-                                            "display_name": name,
-                                            "enabled": True,
-                                            "reasoning_effort_options": ["low", "medium", "high"],
-                                        }
-                                    ],
-                                    "reasoning_effort_options": ["low", "medium", "high"],
-                                    "default_model_id": name,
-                                    "default_reasoning_effort": "medium",
-                                }
-                                for key, name in [
-                                    ("codex", "sol"),
-                                    ("claude", "Opus"),
-                                    ("hermes", "Hermes"),
-                                ]
-                            ]
-                        }
-                    )
+                    self.respond(backends_body())
                 elif path.endswith("/conversations/stub") or path.endswith("/start-values"):
                     self.respond(
                         {
-                            "backend_key": "codex",
-                            "model": "sol",
+                            **(
+                                # A stored effort the hermes card does not offer: the
+                                # Workspace preview must not show it.
+                                {"backend_key": "hermes", "model": "hermes-default"}
+                                if hermes_conversation
+                                else {"backend_key": "codex", "model": "sol"}
+                            ),
+                            **({"supports_steer": False} if no_steer else {}),
                             "reasoning_effort": "medium",
                             "latest_sequence": len(stub.items),
                             "owner_read_through_sequence": len(stub.items),
@@ -573,6 +761,11 @@ def main() -> int:
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
+            if driver_review and path == "/api/conversation/backends":
+                # A Ticket's own catalogue is read by POST with its ticket_id.
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.respond(backends_body())
+                return
             if path.endswith("/interrupt"):
                 with stub.lock:
                     stub.pending = []

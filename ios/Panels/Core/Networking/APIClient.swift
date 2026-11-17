@@ -137,7 +137,7 @@ extension APIClient {
         !path.contains("/receipts") && !path.contains("/body") && !path.contains("/pages") &&
         (path == "/api/workers" || path.hasPrefix("/api/tickets") ||
          path.hasPrefix("/api/managers") || path.hasPrefix("/api/worker-types") ||
-         path == "/api/workers/chief-of-staff/settings" || path == "/api/chief/conversation" ||
+         path == "/api/workers/chief-of-staff/settings" || path == "/api/chief/conversation" || path == "/api/drivers" ||
          path.hasPrefix("/api/conversation/conversations/"))
     }
     @MainActor func cached<T: Decodable>(_ path: String, query: [URLQueryItem] = []) -> T? {
@@ -163,6 +163,18 @@ extension APIClient {
         let (data, response) = try await session.data(for: request)
         try Self.validate(response, data: data)
         return try Self.decoder().decode(TicketBackendCatalog.self, from: data)
+    }
+}
+
+extension APIClient {
+    /// A driver's icon, through the shared request factory so the build header and the
+    /// update gate apply. The URL carries the icon's content version.
+    func driverIcon(_ target: URL) async throws -> Data {
+        var request = try self.request(target)
+        request.timeoutInterval = 25
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        return data
     }
 }
 
