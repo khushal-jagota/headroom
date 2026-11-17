@@ -56,7 +56,7 @@ export function resolve_next_ceiling(
       missing: ['next_ceiling'],
     });
   if (next_ceiling === 'none') return new_stage;
-  if (!d.stages.some((s) => s.id === next_ceiling && !s.is_terminal))
+  if (!d.stages.some((s) => s.id === next_ceiling && (!s.is_terminal || s.id === 'done')))
     throw new PlannerError('scope_invalid', 'unknown next_ceiling', { next_ceiling });
   if (stage_index(d, next_ceiling) < stage_index(d, new_stage))
     throw new PlannerError('scope_invalid', 'next_ceiling must be at or beyond the new stage', {
@@ -96,7 +96,7 @@ export function validate_ticket_position(
 ): void {
   const s = stage_definition(d, stage);
   if (s.is_terminal && (allow_historical_terminal_ceiling || ceiling === stage)) return;
-  if (!d.stages.some((s) => s.id === ceiling && !s.is_terminal))
+  if (!d.stages.some((s) => s.id === ceiling && (!s.is_terminal || ceiling === 'done')))
     throw new PlannerError('scope_invalid', "ceiling outside the type's range", {
       workflow: d.label,
       ceiling,

@@ -38,7 +38,9 @@ export function compose_worker_step_prompt(
     field === 'consequences' && ownership !== 'user'
       ? `Work ticket ${ticket.id} — ${ticket.title}. It is at Stage '${ticket.stage}'; ` +
         'complete the authorized Consequences work and submit its verified report. ' +
-        'The ceiling holder reviews the Consequences report. ' +
+        (ticket.ceiling === 'done'
+          ? 'The Done ceiling authorizes completion without another review. '
+          : 'The ceiling holder reviews the Consequences report. ') +
         'Preserve actual blockers and required human work. ' +
         'Do not repeat completed side effects. ' +
         `Stage owner: ${ownership_wire}.`

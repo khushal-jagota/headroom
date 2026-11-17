@@ -96,6 +96,10 @@ test('a07_closeout_routing', () => {
   expect(t3.pending_proposal).not.toBeNull();
   t3 = accept(db, t3, 'implementation', 'done');
   expect(t3.stage).toBe('needs_consequences');
+  expect(t3.ceiling).toBe('done');
+  t3 = propose(db, t3, 'closeout');
+  expect(t3.stage).toBe('done');
+  expect(t3.field_values.consequences).toBe('closeout');
 });
 test('a36_onward_scope', () => {
   const db = fixture();
@@ -328,9 +332,7 @@ test('worker model overrides use the named destination rather than the legacy Ma
   });
 });
 
-// Gap: simple stage tests omit final holder preservation, raw receipt replay after
-// advancement, and the actual recovery instructions delivered into existing turns.
-test('Consequences remains a reviewed report and preserves final approval replay', () => {
+test('Done ceiling lets the Worker complete Consequences without another review', () => {
   const db = fixture();
   let ticket = edit(db, advance(db, create(db), 'needs_implementation'), {
     ceiling: 'needs_implementation',
@@ -346,14 +348,14 @@ test('Consequences remains a reviewed report and preserves final approval replay
   ticket = db.write((tx) => data.accept_proposal(tx, ticket.id, 'implementation', options));
   expect(ticket).toMatchObject({
     stage: 'needs_consequences',
-    ceiling: 'needs_consequences',
+    ceiling: 'done',
     ceiling_holder: OWNER,
   });
   expect(
     db.write((tx) => data.accept_proposal(tx, ticket.id, 'implementation', options)).stage,
   ).toBe('needs_consequences');
   const prompt = compose_worker_step_prompt(ticket, { worker_type_definition: ticket.workflow });
-  expect(prompt.model_text).toContain('The ceiling holder reviews the Consequences report.');
+  expect(prompt.model_text).toContain('The Done ceiling authorizes completion without another review.');
   expect(prompt.model_text).toContain('Do not repeat completed side effects.');
   expect(prompt.inputs[1]).toEqual({
     name: 'Consequences work and recovery',
@@ -361,22 +363,12 @@ test('Consequences remains a reviewed report and preserves final approval replay
     text: ticket.workflow.stages.find((s) => s.id === ticket.stage)!.instructions,
   });
   ticket = propose(db, ticket, 'Verified consequences');
-  const final = {
-    principal: OWNER,
-    now,
-    expected_proposal_revision: ticket.pending_proposal_revision,
-    decision_id: 'final-report-replay',
-  };
-  ticket = db.write((tx) => data.accept_proposal(tx, ticket.id, 'consequences', final));
   expect(ticket).toMatchObject({
     stage: 'done',
     ceiling: 'done',
     ceiling_holder: OWNER,
     field_values: { consequences: 'Verified consequences' },
   });
-  expect(db.write((tx) => data.accept_proposal(tx, ticket.id, 'consequences', final))).toEqual(
-    ticket,
-  );
   const historical = {
     ...ticket.workflow,
     specialist_skill: null,

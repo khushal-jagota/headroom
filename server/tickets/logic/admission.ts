@@ -13,6 +13,7 @@ export function parse_next_ceiling(
   workflow: WorkflowDefinition,
   current_stage: string | null = null,
 ): string | null {
+  if (raw === 'done') return 'done';
   if (
     current_stage !== null &&
     (consequences_follows(current_stage, workflow) || completion_follows(current_stage, workflow))
