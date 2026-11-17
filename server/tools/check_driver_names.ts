@@ -7,20 +7,32 @@ import type { AnyAgentDriver } from '../drivers/core/driver.ts';
 import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
 import { DRIVER_IMPORT_ALLOWANCES, DRIVER_NAME_ALLOWANCES } from './driver_name_allowances.ts';
 
+/** The stages of the open driver model that remove allowances. */
+export const DRIVER_STAGES = [
+  'Closed lists',
+  'Core',
+  'Database',
+  'Apps',
+  'ACP',
+  'Executor',
+] as const;
+export type DriverStage = (typeof DRIVER_STAGES)[number];
 export interface DriverNameAllowance {
   /** Repository-relative file, or a directory prefix ending in '/'. */
   readonly path: string;
   /** The driver whose names the path may contain. */
   readonly driver_kind: string;
   readonly reason: string;
-  /** The stage or event that removes the allowance. */
-  readonly until: string;
+  /** The stage that removes the allowance. */
+  readonly until: DriverStage;
 }
 export interface DriverImportAllowance {
   /** Repository-relative file, or a directory prefix ending in '/'. */
   readonly path: string;
+  /** The driver package the path may reach. */
+  readonly driver_kind: string;
   readonly reason: string;
-  readonly until: string;
+  readonly until: DriverStage;
 }
 export interface SourceFile {
   /** Repository-relative, with '/' separators. */
@@ -40,6 +52,8 @@ export type DriverFinding =
       readonly path: string;
       readonly line: number;
       readonly target: string;
+      /** The driver package reached from outside it, which an import allowance may cover. */
+      readonly reached_driver_kind: string | null;
       readonly message: string;
     };
 export interface DriverNameReport {
@@ -47,6 +61,8 @@ export interface DriverNameReport {
   readonly uncovered: readonly DriverFinding[];
   readonly stale_names: readonly DriverNameAllowance[];
   readonly stale_imports: readonly DriverImportAllowance[];
+  /** Allowances whose until names no stage. */
+  readonly invalid: readonly (DriverNameAllowance | DriverImportAllowance)[];
 }
 type DriverFacts = Pick<AnyAgentDriver, 'driver_kind' | 'manifest'>;
 
@@ -57,27 +73,31 @@ const EXEMPT_FILES = new Set([
 ]);
 const PACKAGE_ENTRY_FILES = new Set(['driver.ts', 'manifest.ts', 'client.ts']);
 
-export function in_scope(path: string): boolean {
+function in_scope(path: string): boolean {
   if (!SCANNED_ROOTS.some((root) => path.startsWith(root)) || path.includes('/node_modules/'))
     return false;
   const source = path.startsWith('ios/')
     ? path.endsWith('.swift')
-    : /\.(?:ts|svelte)$/.test(path) && !path.endsWith('.d.ts');
+    : /\.(?:[cm]?tsx?|svelte)$/.test(path) && !/\.d\.[cm]?ts$/.test(path);
   return (
     source &&
     !(
-      path.endsWith('.test.ts') ||
+      /\.test\.[cm]?tsx?$/.test(path) ||
       path.includes('/tests/') ||
       path.includes('/testing/') ||
       path === 'server/test_host.ts'
     )
   );
 }
-/** Lower-case word parts: split on anything not alphanumeric and on camelCase boundaries. */
+/**
+ * Lower-case word parts: split on anything not alphanumeric, on camelCase and on letter/digit
+ * boundaries. An accepted limit: words glued in all capitals (CLAUDECODE) stay one part.
+ */
 export function name_parts(text: string): string[] {
   return text
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/(?<=[A-Za-z])(?=[0-9])|(?<=[0-9])(?=[A-Za-z])/g, ' ')
     .split(/[^A-Za-z0-9]+/)
     .filter(Boolean)
     .map((part) => part.toLowerCase());
@@ -105,41 +125,83 @@ interface Token {
   readonly line: number;
 }
 interface ImportReference {
-  readonly specifier: string;
+  /** Null when the target is computed. */
+  readonly specifier: string | null;
+  /** The literal text inside a computed target, such as a template's fixed parts. */
+  readonly computed_text: string;
   readonly line: number;
   readonly type_only: boolean;
+  /** import() or a require call, rather than a static import. */
   readonly dynamic: boolean;
 }
-function is_module_specifier(node: ts.Node): boolean {
+/**
+ * require(), require.resolve(), and the same through createRequire(...). An ES module has no
+ * require of its own, so a bare require call loads a module only where createRequire binds it.
+ */
+function is_require_call(node: ts.CallExpression, binds_require: boolean): boolean {
+  const is_require = (callee: ts.Expression): boolean =>
+    (binds_require && ts.isIdentifier(callee) && callee.text === 'require') ||
+    (ts.isCallExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === 'createRequire');
+  const callee = node.expression;
+  return (
+    is_require(callee) ||
+    (ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === 'resolve' &&
+      is_require(callee.expression))
+  );
+}
+function is_module_specifier(node: ts.Node, binds_require: boolean): boolean {
   const parent = node.parent;
   if (!parent) return false;
   if (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent))
     return parent.moduleSpecifier === node;
-  if (ts.isCallExpression(parent) && parent.expression.kind === ts.SyntaxKind.ImportKeyword)
+  if (
+    ts.isCallExpression(parent) &&
+    (parent.expression.kind === ts.SyntaxKind.ImportKeyword ||
+      is_require_call(parent, binds_require))
+  )
     return parent.arguments[0] === node;
+  if (ts.isExternalModuleReference(parent)) return parent.expression === node;
   return ts.isLiteralTypeNode(parent) && !!parent.parent && ts.isImportTypeNode(parent.parent);
 }
 function scan_typescript(text: string, line_offset = 0) {
   const source = ts.createSourceFile('source.ts', text, ts.ScriptTarget.Latest, true);
+  const binds_require = /\bcreateRequire\b/.test(text);
+  const literal_text = (node: ts.Node): string => {
+    const parts: string[] = [];
+    const collect = (child: ts.Node): void => {
+      if (ts.isStringLiteralLike(child) || ts.isTemplateLiteralToken(child)) parts.push(child.text);
+      ts.forEachChild(child, collect);
+    };
+    collect(node);
+    return parts.join('');
+  };
   const tokens: Token[] = [];
   const imports: ImportReference[] = [];
   const line_of = (node: ts.Node) =>
     source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1 + line_offset;
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      const clause = node.importClause;
-      const type_only =
-        !!clause &&
-        (clause.isTypeOnly ||
-          (!clause.name &&
-            !!clause.namedBindings &&
-            ts.isNamedImports(clause.namedBindings) &&
-            clause.namedBindings.elements.length > 0 &&
-            clause.namedBindings.elements.every((element) => element.isTypeOnly)));
+      // Only `import type` loads nothing. `import { type X }` still loads the module.
       imports.push({
         specifier: node.moduleSpecifier.text,
         line: line_of(node),
-        type_only,
+        type_only: node.importClause?.isTypeOnly ?? false,
+        computed_text: '',
+        dynamic: false,
+      });
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      const expression = node.moduleReference.expression;
+      imports.push({
+        specifier: ts.isStringLiteralLike(expression) ? expression.text : null,
+        computed_text: literal_text(expression),
+        line: line_of(node),
+        type_only: node.isTypeOnly,
         dynamic: false,
       });
     } else if (
@@ -149,18 +211,19 @@ function scan_typescript(text: string, line_offset = 0) {
     ) {
       imports.push({
         specifier: node.moduleSpecifier.text,
+        computed_text: '',
         line: line_of(node),
         type_only: node.isTypeOnly,
         dynamic: false,
       });
     } else if (
       ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments[0] &&
-      ts.isStringLiteralLike(node.arguments[0])
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword || is_require_call(node, binds_require))
     ) {
+      const argument = node.arguments[0];
       imports.push({
-        specifier: node.arguments[0].text,
+        specifier: argument && ts.isStringLiteralLike(argument) ? argument.text : null,
+        computed_text: argument ? literal_text(argument) : '',
         line: line_of(node),
         type_only: false,
         dynamic: true,
@@ -172,6 +235,7 @@ function scan_typescript(text: string, line_offset = 0) {
     ) {
       imports.push({
         specifier: node.argument.literal.text,
+        computed_text: '',
         line: line_of(node),
         type_only: true,
         dynamic: false,
@@ -181,7 +245,7 @@ function scan_typescript(text: string, line_offset = 0) {
       tokens.push({ text: node.text, line: line_of(node) });
     else if (
       (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
-      !(is_module_specifier(node) && node.text.startsWith('.'))
+      !(is_module_specifier(node, binds_require) && node.text.startsWith('.'))
     )
       tokens.push({ text: node.text, line: line_of(node) });
     else if (ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node))
@@ -261,8 +325,15 @@ function import_findings(
   kinds: ReadonlySet<string>,
 ): DriverFinding[] {
   const findings: DriverFinding[] = [];
-  const add = (line: number, target: string, message: string) =>
-    findings.push({ rule: 'import', path: file.path, line, target, message });
+  const add = (line: number, target: string, message: string, reached: string | null = null) =>
+    findings.push({
+      rule: 'import',
+      path: file.path,
+      line,
+      target,
+      reached_driver_kind: reached,
+      message,
+    });
   const package_of = (path: string): string | null => {
     const match = /^server\/drivers\/([^/]+)\//.exec(path);
     return match && kinds.has(match[1]!) ? match[1]! : null;
@@ -272,35 +343,44 @@ function import_findings(
     own_package !== null &&
     dirname(file.path) === `server/drivers/${own_package}` &&
     PACKAGE_ENTRY_FILES.has(posix.basename(file.path));
+  const driver_file = entry_file && posix.basename(file.path) === 'driver.ts';
+  const package_root = `server/drivers/${own_package}/`;
+  const entry_rule =
+    'driver.ts, manifest.ts and client.ts import values only from drivers/core, manifest.ts and client.ts.';
   for (const reference of imports) {
+    if (reference.specifier === null) {
+      // A computed path cannot be resolved. Refuse one in manifest.ts or client.ts, and one
+      // anywhere else whose fixed text points into server/drivers. driver.ts may compute.
+      if (!driver_file && (entry_file || /(?:^|\/)drivers\//.test(reference.computed_text)))
+        add(reference.line, '(computed)', 'Only driver.ts may load a module from a computed path.');
+      continue;
+    }
     if (!reference.specifier.startsWith('.')) {
       if (file.path.startsWith('server/drivers/core/') && !reference.specifier.startsWith('node:'))
         add(reference.line, reference.specifier, 'drivers/core imports no package.');
+      else if (entry_file && !reference.type_only && !reference.dynamic)
+        add(reference.line, reference.specifier, entry_rule);
       continue;
     }
     const target = posix.normalize(posix.join(posix.dirname(file.path), reference.specifier));
     const target_package = package_of(target);
-    if (!file.path.startsWith('server/drivers/') && target_package !== null)
+    if (target_package !== null && target_package !== own_package)
       add(
         reference.line,
         target,
         'Reach a driver package only through server/drivers/built_in.ts.',
+        target_package,
       );
     if (!entry_file || reference.type_only) continue;
-    const package_root = `server/drivers/${own_package}/`;
     if (reference.dynamic) {
-      if (posix.basename(file.path) !== 'driver.ts')
+      if (!driver_file)
         add(reference.line, target, 'Only driver.ts may load the runtime, with import().');
     } else if (
       !target.startsWith('server/drivers/core/') &&
       target !== `${package_root}manifest.ts` &&
       target !== `${package_root}client.ts`
     )
-      add(
-        reference.line,
-        target,
-        'driver.ts, manifest.ts and client.ts import values only from drivers/core, manifest.ts and client.ts.',
-      );
+      add(reference.line, target, entry_rule);
   }
   return findings;
 }
@@ -348,7 +428,7 @@ export function check_driver_names(options: {
     }
     const allowance = options.import_allowances.find(
       (item) =>
-        covered(finding.path, item.path) && finding.message.startsWith('Reach a driver package'),
+        item.driver_kind === finding.reached_driver_kind && covered(finding.path, item.path),
     );
     if (allowance) used_imports.add(allowance);
     return allowance === undefined;
@@ -358,6 +438,9 @@ export function check_driver_names(options: {
     uncovered,
     stale_names: options.name_allowances.filter((item) => !used_names.has(item)),
     stale_imports: options.import_allowances.filter((item) => !used_imports.has(item)),
+    invalid: [...options.name_allowances, ...options.import_allowances].filter(
+      (item) => !(DRIVER_STAGES as readonly string[]).includes(item.until),
+    ),
   };
 }
 function repository_files(root: string): SourceFile[] {
@@ -413,9 +496,18 @@ function main(print_findings: boolean): void {
     );
   for (const allowance of report.stale_imports)
     console.error(
-      `Stale import allowance: ${allowance.path} no longer imports a driver package. Delete it.`,
+      `Stale import allowance: ${allowance.path} no longer reaches the ${allowance.driver_kind} package. Delete it.`,
     );
-  if (report.uncovered.length || report.stale_names.length || report.stale_imports.length)
+  for (const allowance of report.invalid)
+    console.error(
+      `Allowance for ${allowance.path} names no stage: ${allowance.until}. Use one of ${DRIVER_STAGES.join(', ')}.`,
+    );
+  if (
+    report.uncovered.length ||
+    report.stale_names.length ||
+    report.stale_imports.length ||
+    report.invalid.length
+  )
     process.exitCode = 1;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))

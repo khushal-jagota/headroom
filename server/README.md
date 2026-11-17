@@ -246,8 +246,8 @@ this helper's current contract.
 
 `drivers/codex/runtime/` supplies the small consumed wire contracts,
 JSONL client, saved-login reader, and inherited child environment. Process-group
-ownership comes from `lifecycle/owned_processes.ts`. `adapter.ts` exports `create_codex_backend_child_factory` for the real core.
-`providers.ts` supplies the fixed model, saved-login, sign-in, and usage bindings.
+ownership comes from `lifecycle/owned_processes.ts`. `drivers/codex/runtime/adapter.ts` exports `create_codex_backend_child_factory` for the real core.
+`drivers/codex/runtime/providers.ts` supplies the fixed model, saved-login, sign-in, and usage bindings.
 Production snapshot composition receives its database and clock from `core/start.ts`.
 The sign-in service and snapshot reads share the durable login-rejection state.
 The lifecycle composition must supply `remembered_login_rejection` to the Codex child
@@ -335,8 +335,8 @@ part, as Python does. Nonzero microseconds retain six digits.
 
 `drivers/hermes/runtime/` supplies the Hermes backend:
 the backend child, launch values, and ordered ACP transport. Process ownership comes from `lifecycle/owned_processes.ts`.
-`create_hermes_backend_child_factory` is exported from `adapter.ts`.
-`HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `catalog.ts` supply
+`create_hermes_backend_child_factory` is exported from `drivers/hermes/runtime/adapter.ts`.
+`HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `drivers/hermes/runtime/catalog.ts` supply
 the retained inventory script binding. The lifecycle owner must retain the catalog
 owner and call `shutdown()` when the server stops. The real 4b binding must retain
 that raw shutdown promise beside the HTTP runtime, observe it with the shared

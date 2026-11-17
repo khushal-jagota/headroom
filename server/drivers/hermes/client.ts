@@ -3,6 +3,6 @@ import type { DriverClientDefinition } from '../core/client.ts';
 
 export const hermes_client: DriverClientDefinition = {
   label: 'Hermes',
-  icon: { file: 'icon.png', media_type: 'image/png', monochrome: false },
+  icon: { file: 'icon.png', monochrome: false },
   accent_color: '#a78bfa',
 };

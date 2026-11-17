@@ -2,7 +2,6 @@
 export interface DriverIcon {
   /** File name inside the driver package. */
   readonly file: string;
-  readonly media_type: 'image/svg+xml' | 'image/png';
   /** True: the apps may tone or grey the icon. */
   readonly monochrome: boolean;
 }

@@ -17,6 +17,8 @@ export type RegistryEntry =
       readonly instance_id: BackendInstanceId;
       readonly driver: AnyAgentDriver | null;
       readonly reason: string;
+      /** The error behind the reason, when one was thrown. */
+      readonly cause?: unknown;
     };
 
 export interface DriverRegistry {
@@ -32,7 +34,7 @@ export interface DriverRegistry {
 function message_of(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-export function registry_entry_id(entry: RegistryEntry): BackendInstanceId {
+function registry_entry_id(entry: RegistryEntry): BackendInstanceId {
   return entry.kind === 'live' ? entry.instance.instance_id : entry.instance_id;
 }
 /** One entry per driver that has a default instance. There is no stored instance config yet. */
@@ -123,6 +125,7 @@ async function build_entry(
       instance_id,
       driver,
       reason: `Invalid config for backend '${instance_id}': ${message_of(error)}`,
+      cause: error,
     };
   }
   try {
@@ -134,6 +137,7 @@ async function build_entry(
       instance_id,
       driver,
       reason: `Backend '${instance_id}' could not start: ${message_of(error)}`,
+      cause: error,
     };
   }
 }

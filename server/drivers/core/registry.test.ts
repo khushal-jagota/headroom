@@ -32,7 +32,7 @@ function scripted_driver(
     driver_kind,
     client: {
       label: kind,
-      icon: { file: 'icon.svg', media_type: 'image/svg+xml', monochrome: true },
+      icon: { file: 'icon.svg', monochrome: true },
       accent_color: '#000000',
     },
     manifest: { executable: { name: kind } },
@@ -166,14 +166,16 @@ describe('registry build', () => {
       kind: 'unavailable',
       driver,
       reason: "Invalid config for backend 'codex_bad': model must be text",
+      cause: new Error('model must be text'),
     });
   });
 
   it('turns a failed create into an unavailable entry and keeps building', async () => {
+    const failure = new TypeError('the Claude SDK is not installed');
     const registry = await build([
       scripted_driver('claude', {
         create: async () => {
-          throw new Error('the Claude SDK is not installed');
+          throw failure;
         },
       }),
       scripted_driver('codex'),
@@ -182,6 +184,7 @@ describe('registry build', () => {
       kind: 'unavailable',
       instance_id: 'claude',
       reason: "Backend 'claude' could not start: the Claude SDK is not installed",
+      cause: failure,
     });
     expect(registry.get('codex')?.kind).toBe('live');
   });

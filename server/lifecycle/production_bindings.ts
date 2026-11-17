@@ -77,8 +77,12 @@ export function compose_production_backends(
   // A broken install still fails startup.
   const unavailable = prepared.registry
     .list()
-    .flatMap((entry) => (entry.kind === 'live' ? [] : [entry.reason]));
-  if (unavailable.length) throw new Error(unavailable.join('\n'));
+    .flatMap((entry) => (entry.kind === 'live' ? [] : [entry]));
+  if (unavailable.length)
+    throw new AggregateError(
+      unavailable.map((entry) => entry.cause ?? new Error(entry.reason)),
+      unavailable.map((entry) => entry.reason).join('\n'),
+    );
   // Only an invocation-owned executor supplies remote execution. Persisted presence alone does not.
   const policy =
     context.executor == null ? local_ticket_execution_refusal : canonical_ticket_execution_refusal;

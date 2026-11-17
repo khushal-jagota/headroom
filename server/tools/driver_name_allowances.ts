@@ -870,21 +870,55 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
 export const DRIVER_IMPORT_ALLOWANCES: readonly DriverImportAllowance[] = [
   {
     path: 'server/conversation/snapshot/production.ts',
-    reason: 'Composes the Claude and Codex card sources from their runtimes.',
+    driver_kind: 'claude',
+    reason: 'Composes the Claude card source from its runtime.',
+    until: 'Closed lists',
+  },
+  {
+    path: 'server/conversation/snapshot/production.ts',
+    driver_kind: 'codex',
+    reason: 'Composes the Codex card and sign-in sources from its runtime.',
     until: 'Closed lists',
   },
   {
     path: 'server/lifecycle/production_http.ts',
+    driver_kind: 'hermes',
     reason: 'Owns the Hermes model catalog with the Hermes launch options.',
     until: 'Closed lists',
   },
   {
     path: 'server/executor/mac/adapters.ts',
+    driver_kind: 'claude',
+    reason: 'The Mac executor builds each backend launch itself.',
+    until: 'Executor',
+  },
+  {
+    path: 'server/executor/mac/adapters.ts',
+    driver_kind: 'codex',
+    reason: 'The Mac executor builds each backend launch itself.',
+    until: 'Executor',
+  },
+  {
+    path: 'server/executor/mac/adapters.ts',
+    driver_kind: 'hermes',
     reason: 'The Mac executor builds each backend launch itself.',
     until: 'Executor',
   },
   {
     path: 'server/executor/mac/catalog/production.ts',
+    driver_kind: 'claude',
+    reason: 'The Mac executor reads each backend catalog itself.',
+    until: 'Executor',
+  },
+  {
+    path: 'server/executor/mac/catalog/production.ts',
+    driver_kind: 'codex',
+    reason: 'The Mac executor reads each backend catalog itself.',
+    until: 'Executor',
+  },
+  {
+    path: 'server/executor/mac/catalog/production.ts',
+    driver_kind: 'hermes',
     reason: 'The Mac executor reads each backend catalog itself.',
     until: 'Executor',
   },

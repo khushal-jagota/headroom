@@ -20,7 +20,7 @@ function scripted_driver(
     driver_kind,
     client: {
       label: key,
-      icon: { file: 'icon.svg', media_type: 'image/svg+xml', monochrome: true },
+      icon: { file: 'icon.svg', monochrome: true },
       accent_color: '#000000',
     },
     manifest: { executable: { name: key } },

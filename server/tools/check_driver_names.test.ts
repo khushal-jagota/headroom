@@ -40,10 +40,23 @@ const imports = (files: readonly SourceFile[]) =>
   );
 
 describe('names', () => {
-  it('splits words on separators and camelCase', () => {
+  it('splits words on separators, camelCase and letter/digit boundaries', () => {
     expect(name_parts('readCodexSnapshot')).toEqual(['read', 'codex', 'snapshot']);
     expect(name_parts('PLAN_CLAUDE_EXECUTABLE')).toEqual(['plan', 'claude', 'executable']);
-    expect(name_parts('HTTPCodex2')).toEqual(['http', 'codex2']);
+    expect(name_parts('HTTPCodex2')).toEqual(['http', 'codex', '2']);
+    expect(name_parts('claude4_card')).toEqual(['claude', '4', 'card']);
+    // An accepted limit: words glued in all capitals stay one part.
+    expect(name_parts('CLAUDECODE')).toEqual(['claudecode']);
+  });
+
+  it('scans tsx, mts and cts sources', () => {
+    expect(
+      names(
+        ['web/src/Chart.tsx', 'server/a.mts', 'server/b.cts', 'web/src/Chart.test.tsx'].map(
+          (path) => ({ path, text: 'const claude4 = 1;' }),
+        ),
+      ),
+    ).toEqual(['web/src/Chart.tsx:1:claude', 'server/a.mts:1:claude', 'server/b.cts:1:claude']);
   });
 
   it('finds names in identifiers, strings, templates and regular expressions, not comments', () => {
@@ -127,19 +140,38 @@ describe('allowances', () => {
   ];
   it('covers a file or a directory prefix for one driver kind', () => {
     const report = check(files, [
-      { path: 'server/conversation/routes.ts', driver_kind: 'codex', reason: 'r', until: 's' },
-      { path: 'server/executor/mac/', driver_kind: 'claude', reason: 'r', until: 's' },
+      {
+        path: 'server/conversation/routes.ts',
+        driver_kind: 'codex',
+        reason: 'r',
+        until: 'Core' as const,
+      },
+      { path: 'server/executor/mac/', driver_kind: 'claude', reason: 'r', until: 'Core' as const },
     ]);
     expect([report.uncovered, report.stale_names]).toEqual([[], []]);
   });
   it('reports a site with no allowance and an allowance with no site', () => {
-    const stale = { path: 'server/executor/mac/', driver_kind: 'codex', reason: 'r', until: 's' };
+    const stale = {
+      path: 'server/executor/mac/',
+      driver_kind: 'codex',
+      reason: 'r',
+      until: 'Core' as const,
+    };
     const report = check(files, [stale]);
     expect(report.uncovered.map((finding) => finding.path)).toEqual([
       'server/conversation/routes.ts',
       'server/executor/mac/a.ts',
     ]);
     expect(report.stale_names).toEqual([stale]);
+  });
+  it('reports an allowance whose until names no stage', () => {
+    const allowance = {
+      path: 'server/conversation/routes.ts',
+      driver_kind: 'codex',
+      reason: 'r',
+      until: 'Later' as unknown as 'Core',
+    };
+    expect(check(files, [allowance]).invalid).toEqual([allowance]);
   });
 });
 
@@ -160,9 +192,51 @@ describe('imports', () => {
     ]);
     // The specifier is an import finding, not also a name finding.
     expect(names([file])).toEqual([]);
-    const allowance = { path: 'server/lifecycle/a.ts', reason: 'r', until: 's' };
-    expect(check([file], [], [allowance]).uncovered).toEqual([]);
-    expect(check([], [], [allowance]).stale_imports).toEqual([allowance]);
+    const allowance = (driver_kind: string) => ({
+      path: 'server/lifecycle/a.ts',
+      driver_kind,
+      reason: 'r',
+      until: 'Core' as const,
+    });
+    expect(check([file], [], [allowance('codex'), allowance('claude')]).uncovered).toEqual([]);
+    // An allowance covers one driver package only.
+    expect(
+      check([file], [], [allowance('codex')]).uncovered.map((finding) => finding.line),
+    ).toEqual([5]);
+    expect(check([], [], [allowance('codex')]).stale_imports).toEqual([allowance('codex')]);
+  });
+
+  it('keeps drivers/core and each package out of the other packages', () => {
+    expect(
+      imports([
+        { path: 'server/drivers/core/a.ts', text: "import { x } from '../codex/runtime/a.ts';" },
+        {
+          path: 'server/drivers/claude/runtime/b.ts',
+          text: "import { y } from '../../codex/runtime/a.ts';\nimport { z } from './c.ts';",
+        },
+      ]),
+    ).toEqual(['1:server/drivers/codex/runtime/a.ts', '1:server/drivers/codex/runtime/a.ts']);
+  });
+
+  it('records require calls, import-equals and computed paths', () => {
+    const text = [
+      "import { createRequire } from 'node:module';",
+      "import a = require('../drivers/codex/runtime/a.ts');",
+      "const b = createRequire(import.meta.url)('../drivers/claude/runtime/b.ts');",
+      'const require = createRequire(import.meta.url);',
+      "const c = require.resolve('../drivers/scripted/runtime/c.ts');",
+      'const d = await import(`../drivers/${kind}/runtime/adapter.ts`);',
+      'const e = await import(config.module_url);',
+    ].join('\n');
+    expect(imports([{ path: 'server/lifecycle/a.ts', text }])).toEqual([
+      '2:server/drivers/codex/runtime/a.ts',
+      '3:server/drivers/claude/runtime/b.ts',
+      '5:server/drivers/scripted/runtime/c.ts',
+      '6:(computed)',
+    ]);
+    // Without createRequire, a function named require is not a module load.
+    const local = 'function require(ok: boolean) {}\nrequire(x);';
+    expect(imports([{ path: 'server/tickets/a.ts', text: local }])).toEqual([]);
   });
 
   it('keeps driver.ts, manifest.ts and client.ts free of runtime value imports', () => {
@@ -172,10 +246,16 @@ describe('imports', () => {
       "import type { CodexChildLaunch } from './runtime/adapter.ts';",
       "import { launch } from './runtime/adapter.ts';",
       "const loaded = await import('./runtime/instance.ts');",
+      "import { type Launch } from './runtime/adapter.ts';",
+      "import { query } from '@anthropic-ai/claude-agent-sdk';",
+      "import type { Options } from '@anthropic-ai/claude-agent-sdk';",
+      'const computed = await import(`./runtime/${name}.ts`);',
     ].join('\n');
     const manifest_text = [
       "import { x } from '../../core/config.ts';",
       "const loaded = await import('./runtime/instance.ts');",
+      "import { readFileSync } from 'node:fs';",
+      'const computed = await import(path);',
     ].join('\n');
     expect(
       imports([
@@ -184,8 +264,13 @@ describe('imports', () => {
       ]),
     ).toEqual([
       '4:server/drivers/codex/runtime/adapter.ts',
+      // `import { type X }` still loads the module.
+      '6:server/drivers/codex/runtime/adapter.ts',
+      '7:@anthropic-ai/claude-agent-sdk',
       '1:server/core/config.ts',
       '2:server/drivers/codex/runtime/instance.ts',
+      '3:node:fs',
+      '4:(computed)',
     ]);
   });
 

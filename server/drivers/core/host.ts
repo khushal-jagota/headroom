@@ -7,7 +7,7 @@ export interface DriverHost {
   readonly database: Database;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly panels_server_url: string;
-  /** The configured Worker process root, before path resolution. */
+  /** The canonical, resolved Worker process root. */
   readonly worker_process_root: string;
   readonly child_processes: OwnedChildProcesses;
   readonly one_shot_children: OwnedOneShotChildren;
