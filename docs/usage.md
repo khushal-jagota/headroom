@@ -19,9 +19,9 @@ The two numbers come from different places and do not mix. Recorded usage comes 
 
 ## Allowance and spend
 
-Opening Limits reads the last observation Headroom saved for Codex and Claude. It calls no provider and scans nothing, and an old observation keeps its timestamp. Refresh is the explicit provider read. It starts no agent turn, and a failed refresh keeps the last good observation. Failed, signed out, and unavailable stay different outcomes, and an unconfirmed sign-in is shown as unknown. Each backend's driver supplies its own allowance reading, and Hermes has none here. A window can carry a scope label, such as one model family, which is kept even if it matches no listed model.
+Opening Limits reads the last observation Headroom saved for Codex and Claude. It calls no provider and scans nothing, and an old observation keeps its timestamp. Refresh is the explicit provider read. It starts no agent turn, and a failed refresh keeps the last good observation. Failed, signed out, and unavailable stay different outcomes, and an unconfirmed sign-in is shown as unknown. Each backend's driver supplies its own allowance reading, and Hermes has none here. Each backend's name and chart colour come from its driver. A window can carry a scope label, such as one model family, which is kept even if it matches no listed model.
 
-Tokens and Cost are totalled from the transcripts of Codex, Claude, and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. Each backend's driver names the parser that reads its transcripts. That path never asks a provider for allowance. Grok Build appears in the scan but is not a conversation backend. See [Conversations](conversations.md).
+Tokens and Cost are totalled from the transcripts of Codex, Claude, and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. Each backend's driver names the parser that reads its transcripts. That path never asks a provider for allowance. Grok Build appears in the scan but is a usage source, not a driver or a conversation backend, so its name and colour are kept with the usage page. See [Conversations](conversations.md).
 
 Tokens and Cost read a summary when the selected window first opens. Refresh reads it again. Background changes do not trigger transcript scans. Provider filters use the loaded summary.
 
@@ -31,7 +31,7 @@ Codex totals also include automatic compactions from matched response records. C
 
 ## Backend setup
 
-Backend cards read the tools installed on this host. Codex can sign in from the screen, while Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
+Backend cards read the tools installed on this host. Settings → VPS backends lists them in the server's order. A backend whose driver can sign in from Panels (today, Codex) offers sign-in there when its account is signed out or a sign-in is under way; a signed-in account shows no sign-in. Sign-in shows a code and link, or, for a driver that needs it, asks for the address the browser ends on and takes it in a paste box. Claude and Hermes keep their own login commands. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
 
 The catalog also lets models be enabled or disabled. A disabled model is refused wherever a Ticket or message would use it. When a model leaves every saved complete list, its switch-off is deleted, because the model is refused as not offered. [Conversations](conversations.md) describes the picker and those refusals.
 
@@ -41,6 +41,6 @@ The Usage label in the shell, at `#/backends`, and the same page inside the Work
 
 ## Code
 
-`server/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`, with sign-in in `web/src/lib/conversation/backendSignIn.ts`.
+`server/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`. Settings and sign-in are `web/src/components/conversation/BackendSettings.svelte` and `BackendSignInBlock.svelte`, with the session in `web/src/lib/conversation/backendSignInSession.ts`.
 
-_Last verified: 2026-11-13._
+_Last verified: 2026-11-17._
