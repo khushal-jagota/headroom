@@ -34,15 +34,27 @@ export function native_file_peer(credential: string, incarnation: string) {
       } else {
         assert.equal(request.method, 'PUT');
         assert.equal(request.headers['content-length'], String(file_peer_bytes.length));
+        assert.equal(request.headers['content-encoding'], undefined);
         const descriptor = request.headers['x-panels-file-upload'];
         assert.equal(typeof descriptor, 'string');
         const upload = decode_bounded(
           Buffer.from(descriptor as string, 'base64url'),
           'FileUploadRequest',
         );
-        assert.equal(upload.child.executor_incarnation, incarnation);
-        assert.equal(upload.manifest.sha256, file_peer_digest);
-        assert.equal(upload.manifest.byte_count, file_peer_bytes.length);
+        assert.deepEqual(upload, {
+          child: {
+            executor_incarnation: incarnation,
+            child_id: 'rehearsal-child',
+            conversation_id: 'rehearsal-files',
+          },
+          manifest: {
+            scope: 'ticket',
+            owner_id: 'rehearsal-ticket',
+            relative_path: 'artifacts/rehearsal.bin',
+            sha256: file_peer_digest,
+            byte_count: file_peer_bytes.length,
+          },
+        });
         const chunks: Buffer[] = [];
         let count = 0;
         for await (const chunk of request) {

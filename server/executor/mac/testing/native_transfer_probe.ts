@@ -23,7 +23,6 @@ const { MacFileTransport } = await load('server/executor/mac/transport/files.ts'
 const files = new FilesService();
 const client = new MacHttpClient(input.origin, 'test-executor', input.identity);
 const transport = new MacFileTransport(client, files);
-const options = { deadline: performance.now() / 1000 + 30 };
 try {
   await client.ensure_credential(input.credential_path);
   const target = join(input.root, 'downloaded.bin');
@@ -62,6 +61,7 @@ try {
     }) + '\n',
   );
 } finally {
+  const options = { deadline: performance.now() / 1000 + 30 };
   const outcomes = await Promise.allSettled([client.stop(options), files.stop(options)]);
   await Promise.all([client.settled(), files.settled()]);
   const failures = outcomes.filter((outcome) => outcome.status === 'rejected');
