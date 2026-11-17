@@ -187,8 +187,9 @@ node server/core/database/tools/generate_seed.ts
 node server/core/database/tools/generate_seed.ts --check
 ```
 
-CI runs `--check`. It refuses a hand edit of the seed or graph, Python migration drift (the baseline graph no longer matches `src/planner/core/migrations/versions`), and a chain that does not start at the baseline head. With no steps the live files equal the baseline byte for byte.
-The baseline is written only by the manual Python tool `tests/compare/direct/unit21_schema_seed.py`. Once a real step exists, the baseline must stay frozen. A new Python migration moves the baseline head when the baseline is regenerated, so the generator refuses the chain. An edit to an existing Python migration is refused only until someone regenerates the baseline: the head stays put, and nothing yet pins the old digest. The Database stage pins it beside its first step.
+CI runs `--check`. It refuses a hand edit of the seed or graph, Python migration drift (the baseline graph no longer matches `src/planner/core/migrations/versions`), and a chain that does not start at the baseline head.
+The chain holds one step, `ts_0001_open_backend_keys`, so the live files now differ from the baseline.
+The baseline is written only by the manual Python tool `tests/compare/direct/unit21_schema_seed.py`, and with a real step on top it must stay frozen. A new Python migration moves the baseline head when the baseline is regenerated, so the generator refuses the chain. An edit to an existing Python migration is refused only until someone regenerates the baseline: the head stays put, and nothing pins the old digest.
 The JSON stores DDL and the exact revision, without seeded data or shared identities.
 
 The first real drift exercise used target `d42fa18dd` and its `memory_notice_turns_are_maintenance` migration.

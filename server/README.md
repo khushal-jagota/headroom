@@ -82,7 +82,7 @@ A step receives the same transaction capability as a state transition. It must n
 
 ## Test selection and current boundaries
 
-Set `PANELS_TEST_SERVER_BACKEND=typescript` to select TypeScript in the existing server fixture. The fixture still creates the database through Python, supplies synthetic homes, and passes its bound listener. The two explicit modules `tests.e2e.rail_server` and `tests.e2e.conversation_signals_server` select `server/test_host.ts`; other explicit test-host modules stay on Python. With no explicit module, the selector uses `server/main.ts`.
+Set `PANELS_TEST_SERVER_BACKEND=typescript` to select TypeScript in the existing server fixture. The fixture then creates a new database from the release seed through `server/installation/database_main.ts`, the fresh-install path, supplies synthetic homes, and passes its bound listener. The two explicit modules `tests.e2e.rail_server` and `tests.e2e.conversation_signals_server` select `server/test_host.ts`; other explicit test-host modules stay on Python. With no explicit module, the selector uses `server/main.ts`.
 
 Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. The installer runs schema steps; startup never does. Real production binding and packaged supervision remain later gates. Embedded `startServer` has unavailable catalog/sign-in providers by default, while an explicit normal-mode embedding still permits generic machine probes. It is not a claim that all machine I/O is disabled.
 
