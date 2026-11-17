@@ -1,6 +1,6 @@
 {
-  "contract_sha256": "d2a695e1479ebbb4a3e00d8f848bca5bee883997e11ebc104534a6fd22d27d68",
+  "contract_sha256": "3e224fd2cf306cfa60828b16aea87cbef62838b2225de6cd558af2ec3667c11c",
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "evidence": "Reviewed by the release agent. This release adds only a Mac executor change on top of the previous release; no HTTP route or view file changed. Native iOS builds pass. No signed-device test."
+  "evidence": "Reviewed by the release agent. No HTTP route or view file changed since the previous review; the server changes are internal. The iPhone app ignores unknown stream events. Native iOS builds pass. No signed-device test."
 }
