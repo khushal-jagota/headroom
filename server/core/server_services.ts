@@ -19,10 +19,7 @@ import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
 import { createCredentialRequestRoutes } from '../credentials/requests/routes.ts';
 import { makeUsageService } from '../conversation/usage/composition.ts';
@@ -264,7 +261,6 @@ export class ServerServices {
         database,
         config,
         now: () => clock.now(),
-        providers: unavailable_backend_providers(),
         one_shot_children,
       });
     this.backend.own(backendServices);
@@ -395,6 +391,7 @@ export class ServerServices {
               settled: () => usage.settled(),
             },
             backend_state: backendServices.backend_state,
+            backend_ids: backendServices.backend_ids,
           }),
         },
         {

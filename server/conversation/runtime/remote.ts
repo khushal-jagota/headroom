@@ -50,6 +50,7 @@ import { ConversationState, own_settlement, same_turn, set_phase } from './state
 import { background_tasks_ended_with_child } from './maintenance.ts';
 import { acquire_after_steers, contention_only_write } from './synchronization.ts';
 import { write_replayed_prompt } from './delivery.ts';
+import { log_backend_failure } from '../backends/failure_summary.ts';
 
 /** A key with no live instance gives undefined at run time, exactly as indexing the old factory table did. */
 export function child_factory_for(
@@ -83,10 +84,10 @@ function admitted_runs(factory: BackendChildFactory): readonly AdoptedRun[] {
   });
 }
 export function retained_open_runs(
-  factories: Readonly<Record<string, BackendChildFactory>>,
+  factories: readonly BackendChildFactory[],
 ): ReadonlyMap<string, OpenRunTurn> {
   const result = new Map<string, OpenRunTurn>();
-  for (const factory of new Set(Object.values(factories)))
+  for (const factory of new Set(factories))
     for (const run of admitted_runs(factory))
       if (!run.stop_requested && !run.retirement_confirmed)
         result.set(run.reference.conversation_id, {
@@ -764,7 +765,7 @@ export async function resume_undelivered_prompt(
           );
         } catch (error) {
           if (host.shutting_down && is_shutdown_business_cancellation(error)) return;
-          console.error('A fresh Mac child did not start again', error);
+          log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
           await interrupt_rewritten(host, state, running);
           return;
         }

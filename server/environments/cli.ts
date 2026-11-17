@@ -14,6 +14,7 @@ import type {
   OperatorPathInputs,
 } from './command_contracts.ts';
 import { provision_environment_skills } from './registry/launch.ts';
+import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 import { EnvironmentValidationError } from './registry/contracts.ts';
 import type { EnvironmentManifest } from './registry/contracts.ts';
 import {
@@ -189,6 +190,10 @@ export async function environment_backup_current(
     return failed(error, warning);
   }
 }
+/** Each driver with a home, by its label: 'A, B, and C'. */
+const PROVISIONED_DRIVER_LABELS = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+  BUILT_IN_MANIFESTS.filter(({ manifest }) => manifest.home).map(({ client }) => client.label),
+);
 export async function environment_provision_skills(
   args: Args['provision-skills'],
   deps: OperatorPathInputs,
@@ -197,7 +202,7 @@ export async function environment_provision_skills(
     const warning = provision_environment_skills(args, deps);
     return warning
       ? { exit_code: 0, stdout: '', stderr: warning + '\n' }
-      : success('provisioned Panels skills for Hermes, Codex, and Claude');
+      : success(`provisioned Panels skills for ${PROVISIONED_DRIVER_LABELS}`);
   } catch (error) {
     if (!domain_error(error)) throw error;
     return failed(error);

@@ -3,6 +3,8 @@ export interface SkillInstallation {
   snapshot: CanonicalSkillSnapshot;
   root: string;
   native_home: string;
+  /** One path component inside native_home: the provider's skills folder. */
+  native_skills_directory: string;
 }
 export type SkillRequest = { id: number; install: SkillInstallation } | { stop: true };
 export type SkillReply =

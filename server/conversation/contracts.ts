@@ -6,15 +6,10 @@ import { join } from 'node:path';
 import { PlannerError } from '../core/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
+import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import type { MessageContent } from './message_content.ts';
 import type { WorkspaceAdmission } from './workspace_admission.ts';
-export const ConversationBackendKey = {
-  hermes: 'hermes',
-  codex: 'codex',
-  claude: 'claude',
-} as const;
-export type ConversationBackendKey =
-  (typeof ConversationBackendKey)[keyof typeof ConversationBackendKey];
 export const ConversationAccess = { full: 'full' } as const;
 export type ConversationAccess = (typeof ConversationAccess)[keyof typeof ConversationAccess];
 export const ComposerCatalogEntryKind = {
@@ -101,7 +96,7 @@ export class ConversationRoleMaterials {
 export class ConversationStartRequest {
   readonly conversation_id: string;
   readonly model: string;
-  readonly backend_key: ConversationBackendKey | null;
+  readonly backend_key: BackendInstanceId | null;
   readonly reasoning_effort: string | null;
   readonly role_materials: ConversationRoleMaterials | null;
   readonly workspace_folder: string | null;
@@ -110,7 +105,7 @@ export class ConversationStartRequest {
   constructor(values: {
     conversation_id: string;
     model: string;
-    backend_key?: ConversationBackendKey | null;
+    backend_key?: BackendInstanceId | null;
     reasoning_effort?: string | null;
     role_materials?: ConversationRoleMaterials | null;
     workspace_folder?: string | null;
@@ -132,7 +127,7 @@ export class ConversationStartRequest {
 }
 export class ResolvedConversationStart {
   readonly conversation_id: string;
-  readonly backend_key: ConversationBackendKey;
+  readonly backend_key: BackendInstanceId;
   readonly model: string;
   readonly reasoning_effort: string | null;
   readonly role_materials: ConversationRoleMaterials | null;
@@ -141,7 +136,7 @@ export class ResolvedConversationStart {
   readonly workspace_path_policy: WorkspacePathPolicy;
   constructor(values: {
     conversation_id: string;
-    backend_key: ConversationBackendKey;
+    backend_key: BackendInstanceId;
     model: string;
     reasoning_effort: string | null;
     role_materials: ConversationRoleMaterials | null;
@@ -251,24 +246,19 @@ export class HeldPrompt {
   }
 }
 
-export const FLOOR_DEFAULT_BACKEND_KEY = ConversationBackendKey.codex;
 export const FLOOR_DEFAULT_WORKSPACE_FOLDER = join(homedir(), 'projects');
 export const FLOOR_DEFAULT_ACCESS = ConversationAccess.full;
-export const BACKEND_KEYS_SUPPORTING_STEER: ReadonlySet<ConversationBackendKey> = new Set(
-  Object.values(ConversationBackendKey),
-);
-export function backend_supports_steer(key: ConversationBackendKey): boolean {
+export const BACKEND_KEYS_SUPPORTING_STEER: ReadonlySet<BackendInstanceId> =
+  new Set<BackendInstanceId>(KNOWN_BACKEND_INSTANCE_IDS);
+export function backend_supports_steer(key: BackendInstanceId): boolean {
   return BACKEND_KEYS_SUPPORTING_STEER.has(key);
 }
-export function require_conversation_backend_key(value: unknown): ConversationBackendKey {
-  if (
-    typeof value === 'string' &&
-    Object.values(ConversationBackendKey).includes(value as ConversationBackendKey)
-  )
-    return value as ConversationBackendKey;
+export function require_conversation_backend_key(value: unknown): BackendInstanceId {
+  const known = KNOWN_BACKEND_INSTANCE_IDS.find((id) => id === value);
+  if (known !== undefined) return known;
   throw new PlannerError('validation', 'unknown agent backend', {
     backend_key: typeof value === 'string' ? value : null,
-    backend_keys: Object.values(ConversationBackendKey),
+    backend_keys: [...KNOWN_BACKEND_INSTANCE_IDS],
   });
 }
 export class ConversationAlreadyStarted extends Error {}

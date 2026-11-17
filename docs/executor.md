@@ -63,7 +63,7 @@ Each machine has one current process incarnation. A restart replaces only that m
 
 Commands wait in the home's durable mailbox until their destination fetches them. A prompt stays pending and its conversation stays busy until the native agent accepts it. Mailbox placement alone does not establish delivery. The executor journals a command before it runs it. A duplicate returns its saved result instead of another execution. Journal tombstones prevent repetition after a home database restore. Commands for one conversation retain their order. Different conversations can progress independently.
 
-When Claude initialization times out on the Mac, the executor keeps the waiting prompt in order and makes a bounded attempt to start a fresh child. It first proves the failed child has stopped. If startup still fails, or cleanup is uncertain, it reports the failure instead of risking a second child. It never retries a prompt that may have reached an agent.
+When a backend's initialization times out on the Mac, the executor keeps the waiting prompt in order and makes a bounded attempt to start a fresh child. It first proves the failed child has stopped. If startup still fails, or cleanup is uncertain, it reports the failure instead of risking a second child. It never retries a prompt that may have reached an agent.
 
 The outbox saves each durable event before delivery. Each conversation sends its numbered items in order. The home commits each item and its receipt together. A duplicate receives the stored receipt. The home checks each sender against its own machine, including message delivery and duplicate receipts.
 
@@ -104,7 +104,9 @@ The signed Mac launcher and the Linux systemd user service start a fixed supervi
 
 Releases ship the TypeScript Mac executor with its own Node runtime. The first installation on the live Mac remains a separate owner action. The [TypeScript installation runbook](../ops/mac-executor/typescript-installation.md) describes that handoff.
 
-The home and executor use protocol 26. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
+Each executor reads the same driver list as the home. Each driver supplies its launch, model list, home folder and skills folder for that machine. A start or model list request for a backend the machine has no driver for is refused with that reason. It never falls back to another backend.
+
+The home and executor use protocol 26. The backend key on the wire can be any driver slug. Each lease lists the driver kinds its machine runs. A machine that lists none, such as the Python Mac, is taken to run hermes, codex, and claude. The home refuses a remote start for a backend its machine does not run before anything reaches the mailbox, and asks a returning machine for model lists only for the backends it runs. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
 
 The stall checker watches outstanding waits. Each machine's presence clock controls waits that depend on that machine. A sleeping machine does not accrue another machine's awake time. Home-only waits use elapsed home time. The separate watchdog can alarm when the server's own checker stops.
 

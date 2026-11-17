@@ -1,4 +1,15 @@
 /** Application/archive format values shared by build and admission. */
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
+
+const DRIVER_RELEASE_FILES = BUILT_IN_MANIFESTS.flatMap(
+  ({ manifest }) => manifest.install?.release_files ?? [],
+);
+const driver_files_under = (prefix: string) =>
+  DRIVER_RELEASE_FILES.filter((path) => path.startsWith(prefix));
+/** Driver files outside agent_backends/ and server/, such as Hermes' Python scripts. */
+export const DRIVER_SOURCE_FILES = DRIVER_RELEASE_FILES.filter(
+  (path) => !path.startsWith('agent_backends/') && !path.startsWith('server/'),
+);
 export const APP_FORMAT = 'panels-app-v1' as const;
 export const APP_ARCHIVE_NAME = 'panels-app.tar.gz';
 export const PUBLICATION_RECEIPT_NAME = 'publication.json';
@@ -16,8 +27,7 @@ export const NODE_RUNTIME_FILES = [
   'server/stalls/watchdog_main.ts',
   'server/stalls/watchdog_main.ts',
   'server/conversation/usage/usageWorker.ts',
-  'src/planner/conversation/backends/hermes_acp_extension.py',
-  'src/planner/conversation/backends/hermes_model_catalog.py',
+  ...DRIVER_SOURCE_FILES,
   'server/environments/release/launcher_main.ts',
   'server/environments/release/archive_unpack_main.ts',
   'server/environments/updates/interruption_capture_main.ts',
@@ -29,12 +39,11 @@ export const NODE_RUNTIME_FILES = [
   'server/node_modules/fastify/package.json',
   'server/node_modules/koffi/package.json',
   'server/node_modules/better-sqlite3/package.json',
-  'server/node_modules/@anthropic-ai/claude-agent-sdk/package.json',
+  ...driver_files_under('server/'),
 ] as const;
 export const SHARED_RUNTIME_FILES = [
   'web/dist/index.html',
-  'agent_backends/node_modules/@anthropic-ai/claude-code/package.json',
-  'agent_backends/node_modules/@openai/codex/package.json',
+  ...driver_files_under('agent_backends/'),
 ] as const;
 
 /** Finite archive budgets. Disk reserve is checked before each spool batch. */

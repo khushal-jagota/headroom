@@ -1,6 +1,6 @@
 /** Native turn identities and provisional activity before correlated admission. */
 import type { TurnToken } from '../../../conversation/backends/contracts.ts';
-import type { CodexLoginGeneration } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { CodexLoginGeneration } from './contracts.ts';
 import type * as P from './protocol.ts';
 import { Deferred } from '../../../core/deferred.ts';
 export class TurnInFlight {

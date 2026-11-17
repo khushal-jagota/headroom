@@ -3,6 +3,7 @@ import { path_is_within } from '../../core/path_containment.ts';
 import { readFile, stat } from 'node:fs/promises';
 import { resolved_path } from '../paths.ts';
 import { EnvironmentValidationError } from './contracts.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import type {
   EnvironmentCredentialPolicy,
   EnvironmentKind,
@@ -12,6 +13,11 @@ import type {
   PathAdmission,
 } from './contracts.ts';
 
+/** Panels' own variables, and each driver's own. Never stored per environment. */
+const RESERVED_PREFIXES = [
+  'PLAN_',
+  ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.reserved_environment_prefixes ?? []),
+];
 export const DEFAULT_ENVIRONMENT_DEFAULTS = Object.freeze({
   live_port: 8767,
   staging_bind_attempts: 10,
@@ -249,7 +255,7 @@ export function validate_environment_key(
 ): void {
   if (!/^[A-Z_][A-Z0-9_]*$/.test(key))
     throw new EnvironmentValidationError(`malformed environment key: ${key}`);
-  if (FORBIDDEN.has(key) || key.startsWith('PLAN_') || key.startsWith('HERMES_'))
+  if (FORBIDDEN.has(key) || RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix)))
     throw new EnvironmentValidationError(`forbidden environment key: ${key}`);
   if (!policy.allowed_keys.has(key))
     throw new EnvironmentValidationError(`unknown environment key: ${key}`);

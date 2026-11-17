@@ -1,0 +1,1162 @@
+{
+  "probes": [
+    {
+      "name": "codex-native-saved-login",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.145.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "synthetic@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          },
+          {
+            "model_id": "gpt-6-luna",
+            "display_name": "Luna",
+            "selected_variant": "luna",
+            "version": [
+              6
+            ],
+            "resolved_model_id": "gpt-6-luna",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": {
+          "install_method": "native",
+          "update_command": "codex update",
+          "latest_version": null,
+          "update_available": false,
+          "detail": "Panels can run this backend's own update command; there is no newer version to report."
+        },
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": [
+        [
+          "/synthetic/bin/codex",
+          "--version"
+        ],
+        [
+          "/synthetic/bin/codex",
+          "login",
+          "status"
+        ]
+      ],
+      "catalog_calls": [
+        {
+          "provider": "codex",
+          "executable": "/synthetic/bin/codex"
+        }
+      ],
+      "registry_lookups": []
+    },
+    {
+      "name": "codex-rejected-unavailable",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.145.0",
+        "identity": {
+          "status": "unauthenticated",
+          "account_label": "synthetic@example.invalid",
+          "detail": "This saved login was rejected the last time codex used it.",
+          "login_command": "codex login"
+        },
+        "available_models": [],
+        "reasoning_effort_options": [],
+        "default_model_id": null,
+        "default_reasoning_effort": null,
+        "update_advisory": {
+          "install_method": "native",
+          "update_command": "codex update",
+          "latest_version": null,
+          "update_available": false,
+          "detail": "Panels can run this backend's own update command; there is no newer version to report."
+        },
+        "diagnoses": [
+          "`codex` is not signed in. Run `codex login` in a terminal.",
+          "Codex is installed but did not answer when asked what it can run, so no models are listed. Check that `codex app-server` starts from a terminal."
+        ],
+        "cached_usage": null
+      },
+      "commands": [
+        [
+          "/synthetic/bin/codex",
+          "--version"
+        ],
+        [
+          "/synthetic/bin/codex",
+          "login",
+          "status"
+        ]
+      ],
+      "catalog_calls": [
+        {
+          "provider": "codex",
+          "executable": "/synthetic/bin/codex"
+        }
+      ],
+      "registry_lookups": []
+    },
+    {
+      "name": "claude-npm-aliases",
+      "card": {
+        "backend_key": "claude",
+        "installed": true,
+        "executable_path": "/synthetic/.local/bin/claude",
+        "version": "2.1.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "synthetic@example.invalid",
+          "detail": "Max plan via oauth",
+          "login_command": "claude auth login"
+        },
+        "available_models": [
+          {
+            "model_id": "claude-opus-5[1m]",
+            "display_name": "Opus 5 (1M)",
+            "selected_variant": "opus[1m]",
+            "version": [
+              5
+            ],
+            "resolved_model_id": "claude-opus-5[1m]",
+            "detail": "opus → claude-opus-5[1m]",
+            "reasoning_effort_options": [
+              "high",
+              "max"
+            ],
+            "enabled": true
+          },
+          {
+            "model_id": "claude-haiku-4-5-20251001",
+            "display_name": "Haiku 4.5",
+            "selected_variant": "haiku",
+            "version": [
+              4,
+              5
+            ],
+            "resolved_model_id": "claude-haiku-4-5-20251001",
+            "detail": "haiku → claude-haiku-4-5-20251001",
+            "reasoning_effort_options": [],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_model_id": "claude-opus-5[1m]",
+        "default_reasoning_effort": null,
+        "update_advisory": {
+          "install_method": "npm_global",
+          "update_command": "npm install --global --prefix /synthetic/.local @anthropic-ai/claude-code@latest",
+          "latest_version": "2.2.0",
+          "update_available": true,
+          "detail": "Version 2.2.0 is available."
+        },
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": [
+        [
+          "/synthetic/.local/bin/claude",
+          "--version"
+        ],
+        [
+          "/synthetic/.local/bin/claude",
+          "auth",
+          "status",
+          "--json"
+        ]
+      ],
+      "catalog_calls": [
+        {
+          "provider": "claude",
+          "executable": "/synthetic/.local/bin/claude"
+        }
+      ],
+      "registry_lookups": [
+        "@anthropic-ai/claude-code"
+      ]
+    },
+    {
+      "name": "claude-manual-unavailable",
+      "card": {
+        "backend_key": "claude",
+        "installed": true,
+        "executable_path": "/opt/homebrew/bin/claude",
+        "version": null,
+        "identity": {
+          "status": "unknown",
+          "account_label": null,
+          "detail": null,
+          "login_command": "claude auth login"
+        },
+        "available_models": [],
+        "reasoning_effort_options": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default_model_id": null,
+        "default_reasoning_effort": null,
+        "update_advisory": {
+          "install_method": "manual_only",
+          "update_command": null,
+          "latest_version": null,
+          "update_available": false,
+          "detail": "Panels only updates `claude` from the configured vps-owned user-local npm prefix; update this installation manually."
+        },
+        "diagnoses": [
+          "`claude --version` did not report a version, so Panels cannot tell which one is installed.",
+          "Panels could not read who `claude` is signed in as.",
+          "Claude is installed but did not answer when asked what it can run, so no models are listed. Check that `claude` starts from a terminal."
+        ],
+        "cached_usage": null
+      },
+      "commands": [
+        [
+          "/opt/homebrew/bin/claude",
+          "--version"
+        ],
+        [
+          "/opt/homebrew/bin/claude",
+          "auth",
+          "status",
+          "--json"
+        ]
+      ],
+      "catalog_calls": [
+        {
+          "provider": "claude",
+          "executable": "/opt/homebrew/bin/claude"
+        }
+      ],
+      "registry_lookups": []
+    },
+    {
+      "name": "hermes-inventory",
+      "card": {
+        "backend_key": "hermes",
+        "installed": true,
+        "executable_path": "/synthetic/hermes/venv/bin/hermes",
+        "version": "1.2.3",
+        "identity": null,
+        "available_models": [
+          {
+            "model_id": "provider:small",
+            "display_name": "Small",
+            "selected_variant": "provider:small",
+            "version": [],
+            "resolved_model_id": "provider:small",
+            "detail": "Configured model",
+            "reasoning_effort_options": null,
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [],
+        "default_model_id": "provider:small",
+        "default_reasoning_effort": null,
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": [
+        [
+          "/synthetic/hermes/venv/bin/hermes",
+          "--version"
+        ]
+      ],
+      "catalog_calls": [
+        {
+          "provider": "hermes",
+          "refresh": true
+        }
+      ],
+      "registry_lookups": []
+    },
+    {
+      "name": "hermes-invalid-inventory",
+      "card": {
+        "backend_key": "hermes",
+        "installed": true,
+        "executable_path": "/synthetic/hermes/venv/bin/hermes",
+        "version": "1.2.3",
+        "identity": null,
+        "available_models": [],
+        "reasoning_effort_options": [],
+        "default_model_id": null,
+        "default_reasoning_effort": null,
+        "update_advisory": null,
+        "diagnoses": [
+          "Hermes' model inventory returned an invalid answer, so no models are listed."
+        ],
+        "cached_usage": null
+      },
+      "commands": [
+        [
+          "/synthetic/hermes/venv/bin/hermes",
+          "--version"
+        ]
+      ],
+      "catalog_calls": [
+        {
+          "provider": "hermes",
+          "refresh": true
+        }
+      ],
+      "registry_lookups": []
+    }
+  ],
+  "codex_login": [
+    {
+      "name": "first probe",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "first@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          },
+          {
+            "model_id": "gpt-6-luna",
+            "display_name": "Luna",
+            "selected_variant": "luna",
+            "version": [
+              6
+            ],
+            "resolved_model_id": "gpt-6-luna",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "kept": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "first@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          },
+          {
+            "model_id": "gpt-6-luna",
+            "display_name": "Luna",
+            "selected_variant": "luna",
+            "version": [
+              6
+            ],
+            "resolved_model_id": "gpt-6-luna",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": 2
+    },
+    {
+      "name": "unchanged login reuses the card",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "first@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          },
+          {
+            "model_id": "gpt-6-luna",
+            "display_name": "Luna",
+            "selected_variant": "luna",
+            "version": [
+              6
+            ],
+            "resolved_model_id": "gpt-6-luna",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "kept": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "first@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          },
+          {
+            "model_id": "gpt-6-luna",
+            "display_name": "Luna",
+            "selected_variant": "luna",
+            "version": [
+              6
+            ],
+            "resolved_model_id": "gpt-6-luna",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": 2
+    },
+    {
+      "name": "changed login re-probes without the kept complete list",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "second@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "kept": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "second@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": 4
+    },
+    {
+      "name": "login moved during the probe blanks that card",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": null,
+        "available_models": [],
+        "reasoning_effort_options": [],
+        "default_model_id": null,
+        "default_reasoning_effort": null,
+        "update_advisory": {
+          "install_method": "manual_only",
+          "update_command": null,
+          "latest_version": null,
+          "update_available": false,
+          "detail": "Panels only updates `codex` from the configured vps-owned user-local npm prefix; update this installation manually."
+        },
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "kept": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "second@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": 6
+    },
+    {
+      "name": "the next read re-probes the moved login",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "third@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "kept": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "third@example.invalid",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": 8
+    },
+    {
+      "name": "signed out re-probes",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "Logged in using ChatGPT",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "kept": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "Logged in using ChatGPT",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": 10
+    },
+    {
+      "name": "signed out stays stale",
+      "card": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "Logged in using ChatGPT",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "kept": {
+        "backend_key": "codex",
+        "installed": true,
+        "executable_path": "/synthetic/bin/codex",
+        "version": "0.150.0",
+        "identity": {
+          "status": "authenticated",
+          "account_label": "Logged in using ChatGPT",
+          "detail": null,
+          "login_command": "codex login"
+        },
+        "available_models": [
+          {
+            "model_id": "gpt-6.1-sol",
+            "display_name": "Sol",
+            "selected_variant": "sol",
+            "version": [
+              6,
+              1
+            ],
+            "resolved_model_id": "gpt-6.1-sol",
+            "detail": null,
+            "reasoning_effort_options": [
+              "medium",
+              "high"
+            ],
+            "enabled": true
+          }
+        ],
+        "reasoning_effort_options": [
+          "medium",
+          "high"
+        ],
+        "default_model_id": "gpt-6.1-sol",
+        "default_reasoning_effort": "medium",
+        "update_advisory": null,
+        "diagnoses": [],
+        "cached_usage": null
+      },
+      "commands": 12
+    }
+  ],
+  "hermes_machine": [
+    {
+      "name": "first read",
+      "cards": [
+        {
+          "backend_key": "hermes",
+          "installed": true,
+          "executable_path": "/synthetic/hermes/venv/bin/hermes",
+          "version": "1.2.3",
+          "identity": null,
+          "available_models": [
+            {
+              "model_id": "provider:small",
+              "display_name": "Small",
+              "selected_variant": "provider:small",
+              "version": [],
+              "resolved_model_id": "provider:small",
+              "detail": "Configured model",
+              "reasoning_effort_options": null,
+              "enabled": true
+            }
+          ],
+          "reasoning_effort_options": [],
+          "default_model_id": "provider:small",
+          "default_reasoning_effort": null,
+          "update_advisory": null,
+          "diagnoses": [],
+          "cached_usage": null
+        },
+        {
+          "backend_key": "codex",
+          "installed": true,
+          "executable_path": "/synthetic/bin/codex",
+          "version": "0.150.0",
+          "identity": {
+            "status": "authenticated",
+            "account_label": "Logged in using ChatGPT",
+            "detail": null,
+            "login_command": "codex login"
+          },
+          "available_models": [
+            {
+              "model_id": "gpt-6.1-sol",
+              "display_name": "Sol",
+              "selected_variant": "sol",
+              "version": [
+                6,
+                1
+              ],
+              "resolved_model_id": "gpt-6.1-sol",
+              "detail": null,
+              "reasoning_effort_options": [
+                "medium",
+                "high"
+              ],
+              "enabled": true
+            },
+            {
+              "model_id": "gpt-6-luna",
+              "display_name": "Luna",
+              "selected_variant": "luna",
+              "version": [
+                6
+              ],
+              "resolved_model_id": "gpt-6-luna",
+              "detail": null,
+              "reasoning_effort_options": [
+                "medium"
+              ],
+              "enabled": true
+            }
+          ],
+          "reasoning_effort_options": [
+            "medium",
+            "high"
+          ],
+          "default_model_id": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "update_advisory": null,
+          "diagnoses": [],
+          "cached_usage": null
+        }
+      ],
+      "commands": [
+        [
+          "/synthetic/hermes/venv/bin/hermes",
+          "--version"
+        ],
+        [
+          "/synthetic/bin/codex",
+          "--version"
+        ],
+        [
+          "/synthetic/bin/codex",
+          "login",
+          "status"
+        ]
+      ]
+    },
+    {
+      "name": "kept read",
+      "cards": [
+        {
+          "backend_key": "hermes",
+          "installed": true,
+          "executable_path": "/synthetic/hermes/venv/bin/hermes",
+          "version": "1.2.3",
+          "identity": null,
+          "available_models": [
+            {
+              "model_id": "provider:small",
+              "display_name": "Small",
+              "selected_variant": "provider:small",
+              "version": [],
+              "resolved_model_id": "provider:small",
+              "detail": "Configured model",
+              "reasoning_effort_options": null,
+              "enabled": true
+            }
+          ],
+          "reasoning_effort_options": [],
+          "default_model_id": "provider:small",
+          "default_reasoning_effort": null,
+          "update_advisory": null,
+          "diagnoses": [],
+          "cached_usage": null
+        },
+        {
+          "backend_key": "codex",
+          "installed": true,
+          "executable_path": "/synthetic/bin/codex",
+          "version": "0.150.0",
+          "identity": {
+            "status": "authenticated",
+            "account_label": "Logged in using ChatGPT",
+            "detail": null,
+            "login_command": "codex login"
+          },
+          "available_models": [
+            {
+              "model_id": "gpt-6.1-sol",
+              "display_name": "Sol",
+              "selected_variant": "sol",
+              "version": [
+                6,
+                1
+              ],
+              "resolved_model_id": "gpt-6.1-sol",
+              "detail": null,
+              "reasoning_effort_options": [
+                "medium",
+                "high"
+              ],
+              "enabled": true
+            },
+            {
+              "model_id": "gpt-6-luna",
+              "display_name": "Luna",
+              "selected_variant": "luna",
+              "version": [
+                6
+              ],
+              "resolved_model_id": "gpt-6-luna",
+              "detail": null,
+              "reasoning_effort_options": [
+                "medium"
+              ],
+              "enabled": true
+            }
+          ],
+          "reasoning_effort_options": [
+            "medium",
+            "high"
+          ],
+          "default_model_id": "gpt-6.1-sol",
+          "default_reasoning_effort": "medium",
+          "update_advisory": null,
+          "diagnoses": [],
+          "cached_usage": null
+        }
+      ],
+      "commands": [
+        [
+          "/synthetic/hermes/venv/bin/hermes",
+          "--version"
+        ],
+        [
+          "/synthetic/bin/codex",
+          "--version"
+        ],
+        [
+          "/synthetic/bin/codex",
+          "login",
+          "status"
+        ],
+        [
+          "/synthetic/bin/codex",
+          "--version"
+        ]
+      ]
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import {
   PromptWriteRefused,
 } from '../backends/contracts.ts';
 import type { BackendChild, BackendSteerOutcome, TurnToken } from '../backends/contracts.ts';
+import { log_backend_failure } from '../backends/failure_summary.ts';
 import {
   backend_supports_steer,
   PromptDeliveryInjected,
@@ -98,10 +99,7 @@ export async function cancel_and_end_running_turn(
       cancel_fact = { ...attempt, status: S.accepted };
     } catch (error) {
       if (host.shutting_down) throw error;
-      console.error(
-        `conversation turn cancel failed conversation_id=${state.record.conversation_id} backend=${state.record.backend_key}`,
-        error,
-      );
+      log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
       await host.discard_child(state, child);
       cancel_fact = { ...attempt, status: S.unknown };
     }
@@ -371,9 +369,22 @@ async function attempt_steer(
         sender_label: message.sender_label,
       }),
     );
+    // A refused steer goes back to the queue unrecorded, so its backend text is logged here.
+    if (outcome instanceof BackendSteerRefused && outcome.refusal_detail !== null)
+      log_backend_failure(
+        state.record.conversation_id,
+        state.record.backend_key,
+        outcome,
+        outcome.refusal_detail,
+      );
   } catch (error) {
+    if (error instanceof PromptWriteRefused || error instanceof PromptWriteFailed)
+      log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
     if (error instanceof PromptWriteRefused)
-      outcome = new BackendSteerRefused({ refusal_reason: R.write_to_backend_failed });
+      outcome = new BackendSteerRefused({
+        refusal_reason: R.write_to_backend_failed,
+        refusal_detail: error.message,
+      });
     else {
       outcome = new BackendSteerUncertain();
       if (!(error instanceof PromptWriteFailed)) adapter_error = error;

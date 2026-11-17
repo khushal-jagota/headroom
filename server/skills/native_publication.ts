@@ -64,6 +64,8 @@ function publish_server_skills(
     ...RETIRED_PANELS_SKILL_NAMES,
     ...[...WORKER_ONLY_SKILL_NAMES].filter((n) => !options.required_skill_names?.includes(n)),
   ]);
+  // Only Panels' own projection home is published here. Driver homes are linked by
+  // account.ts with each manifest's skills folder; the Mac's in its own installation.
   const target = join(home, 'skills');
   if (options.test_home) require_synthetic_destination(options.test_home, target);
   mkdirSync(dirname(target), { recursive: true });
@@ -122,6 +124,8 @@ export type NativePublicationPolicy =
   | {
       kind: 'mac-owned';
       state_root: string;
+      /** The provider's skills folder inside home: one path component. */
+      skills_directory: string;
       source_names: readonly string[];
       directory: NativePublicationDirectory;
     };
@@ -181,7 +185,9 @@ export function prepare_native_skill_publication(
   const owned = (target: string) =>
     path_is_within(
       state,
-      resolve_native_skill_path(isAbsolute(target) ? target : home + '/skills/' + target),
+      resolve_native_skill_path(
+        isAbsolute(target) ? target : home + '/' + policy.skills_directory + '/' + target,
+      ),
     );
   const scan = () => {
     directory.assert_current();

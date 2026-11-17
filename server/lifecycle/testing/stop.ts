@@ -8,10 +8,7 @@ import { Deferred } from '../../core/deferred.ts';
 import { VideoUploadService } from '../../conversation/video_uploads/service.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../configuration.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../../conversation/snapshot/composition.ts';
 
 export async function stop_host_proof(spec: {
   root: string;
@@ -84,7 +81,6 @@ export async function stop_host_proof(spec: {
           database: value.database,
           config: value.config,
           now: () => value.clock.now(),
-          providers: unavailable_backend_providers(),
           one_shot_children: value.one_shot_children,
         });
         if (spec.mode !== 'failure') return runtime;

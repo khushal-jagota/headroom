@@ -1,10 +1,7 @@
+import { parse_backend_instance_id } from '../../core/identity.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, test } from 'vitest';
-import {
-  ConversationAccess,
-  ConversationBackendKey,
-  ResolvedConversationStart,
-} from '../../../conversation/contracts.ts';
+import { ConversationAccess, ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import { HermesAcpLauncher } from './client.ts';
 
 // A real child exit and a buffered reply are separate OS facts. Memory streams
@@ -34,7 +31,7 @@ test('request timeout and cancellation keep the same child until its ordered fin
   const home = process.env.HOME!; // vitest supplies a private temporary home.
   const resolved = new ResolvedConversationStart({
     conversation_id: 'unit16-fast-exit',
-    backend_key: ConversationBackendKey.hermes,
+    backend_key: parse_backend_instance_id('hermes'),
     model: 'synthetic',
     reasoning_effort: null,
     role_materials: null,

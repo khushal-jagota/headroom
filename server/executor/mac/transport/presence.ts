@@ -110,6 +110,8 @@ export interface MacLeaseOptions {
   readonly client: Pick<MacHttpClient, 'lease' | 'workspace_states'>;
   readonly workspace_root: string;
   readonly presence: MacPresence;
+  /** The driver kinds this machine runs, advertised on every lease. */
+  readonly driver_kinds: readonly string[];
   readonly outbox: Pick<OutboxStore, 'pending_count' | 'pending_conversations' | 'oldest_age_ms'>;
   readonly journal: Pick<AsyncCommandJournal, 'poll_cursor' | 'lower_poll_cursor'>;
   readonly runner: {
@@ -161,6 +163,7 @@ export class MacLeaseLoop {
       going_to_sleep: presence.going_to_sleep,
       cleanup_uncertainties: [...runner.cleanup_uncertainties],
       legacy_cleanup_notice: runner.legacy_cleanup_notice,
+      driver_kinds: [...this.options.driver_kinds],
     };
   }
   lease_once(): Promise<boolean> {

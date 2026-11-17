@@ -149,10 +149,10 @@ test('retained-run admission drops explicit rejections and propagates programmin
   );
   const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    expect(retained_open_runs({ codex: factory }).size).toBe(0);
+    expect(retained_open_runs([factory]).size).toBe(0);
     // A malformed internal turn triggers a real property-read TypeError in admission.
     Reflect.set(run, 'turn', undefined);
-    expect(() => retained_open_runs({ codex: factory })).toThrow(TypeError);
+    expect(() => retained_open_runs([factory])).toThrow(TypeError);
   } finally {
     diagnostic.mockRestore();
   }

@@ -24,6 +24,7 @@ import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import {
   AgentMessageDelta,
+  BackendAdapterError,
   ComposerCatalogReported,
   ContextCompacted,
   ModelThinkingHappened,
@@ -35,10 +36,10 @@ import {
   VendorSessionCursorRebound,
 } from './backends/contracts.ts';
 import type { BackendEventSink, BackendEventValue, TurnToken } from './backends/contracts.ts';
+import { log_backend_failure } from './backends/failure_summary.ts';
 import type { BackendChild, ChildReference } from './backends/contracts.ts';
 import type { WireValue } from '../executor/contracts.ts';
 import {
-  ConversationBackendKey,
   AnswerFate,
   HeldPrompt,
   PromptDeliveryInjected,
@@ -215,10 +216,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   readonly lost_task_notices: LostBackgroundTaskNotices;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
-    // Until the closed backend lists open, every built-in key must have a live instance.
-    for (const key of Object.values(ConversationBackendKey))
-      if (options.backend_registry.get(key)?.kind !== 'live')
-        throw new Error(`no backend child factory for ${key}`);
+    for (const entry of options.backend_registry.list())
+      if (entry.kind !== 'live')
+        throw new Error(`no backend child factory for ${entry.instance_id}: ${entry.reason}`);
     if (typeof options.execution_refusal !== 'function')
       throw new Error('Conversation execution admission is required');
     if (typeof options.delivery_model_refusal !== 'function')
@@ -908,6 +908,9 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
         error instanceof PromptWriteFailed ||
         (reservation.prompt_write_attempted && !is_shutdown_business_cancellation(error))
       ) {
+        // An uncertain delivery row has no text, so the log keeps the backend's.
+        if (error instanceof BackendAdapterError)
+          log_backend_failure(state.record.conversation_id, state.record.backend_key, error);
         if (queued && !reservation.prompt_write_attempted)
           await this.settle_automatic_ids(
             state,

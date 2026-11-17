@@ -4,6 +4,7 @@ import { require_conversation_backend_key } from '../conversation/contracts.ts';
 import { validate_launch_defaults } from '../worker_settings/service.ts';
 import type { ReadSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
+import { built_in_driver_of } from '../drivers/built_in_manifests.ts';
 import type {
   ConversationStartOverrides,
   ConversationStartValues,
@@ -14,13 +15,10 @@ export function validate_launch_configuration(
   sql: ReadSql,
   value: ManagerLaunchConfiguration,
 ): void {
-  if (value.employee_backend === 'codex' && value.employee_launch_model === 'sol') {
-    throw new PlannerError(
-      'validation',
-      'The legacy Codex model "sol" cannot run. Choose an explicit Codex model ' +
-        "in this Manager's model settings before you retry.",
-    );
-  }
+  const refusal = built_in_driver_of(value.employee_backend)?.launch_model_refusal?.(
+    value.employee_launch_model,
+  );
+  if (refusal) throw new PlannerError('validation', refusal);
   require_usable_model(sql, value.employee_backend, value.employee_launch_model, 'vps');
 }
 export function manager_reuse_overrides(

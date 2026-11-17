@@ -119,7 +119,7 @@ try {
     native: native_fixture_options({
       paths,
       workspace_home: root,
-      native_skill_home: () => join(root, 'native'),
+      native_skill_home: () => ({ path: join(root, 'native'), skills_directory: 'skills' }),
       snapshot_directory: join(root, 'skills'),
       on_failure: fail,
       factory: () => () => ({

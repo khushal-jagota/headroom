@@ -1,8 +1,10 @@
 /** Machine catalogs travel through the mailbox; SQLite owns their last complete copy. */
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
+import type { BackendInstanceId } from '../drivers/core/identity.ts';
+import { machine_backend_ids, machine_driver_kinds } from './machine_drivers.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { inspect } from 'node:util';
-import { ConversationBackendKey } from '../conversation/contracts.ts';
 import { save_machine_model_list } from '../conversation/backend_state.ts';
 import type { BackendSnapshot, SnapshotOptions } from '../conversation/snapshot/contracts.ts';
 import type { RemoteCatalogSource } from '../conversation/model_resolution/contracts.ts';
@@ -44,7 +46,7 @@ function cancelled(): DOMException {
 /** The database, mailbox, and presence service remain owned by the invocation. */
 export class VpsCatalogRelay implements RemoteCatalogSource {
   readonly machine_id: string;
-  private readonly tasks = new Map<ConversationBackendKey, CatalogRead>();
+  private readonly tasks = new Map<BackendInstanceId, CatalogRead>();
   private readonly operations = new Set<Promise<BackendSnapshot>>();
   private closed = false;
   private shutdown_deadline: number | null = null;
@@ -80,7 +82,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
   private admit(): void {
     if (this.closed) throw new ServerLifecycleError('Executor catalog relay is closed.');
   }
-  retained(backend_key: ConversationBackendKey): BackendSnapshot | null {
+  retained(backend_key: BackendInstanceId): BackendSnapshot | null {
     this.admit();
     const row = this.database.read((sql) =>
       sql.get<{ snapshot_json: string }>(
@@ -94,6 +96,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     const value = decode_json(body, 'BackendSnapshot');
     return {
       ...value,
+      backend_key: parse_backend_instance_id(value.backend_key),
       identity:
         value.identity === null
           ? null
@@ -116,7 +119,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     };
   }
   async snapshot(
-    backend_key: ConversationBackendKey,
+    backend_key: BackendInstanceId,
     options: SnapshotOptions = {},
   ): Promise<BackendSnapshot> {
     this.admit();
@@ -149,7 +152,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
       throw error;
     }
   }
-  private start_read(backend_key: ConversationBackendKey, refresh: boolean): CatalogRead {
+  private start_read(backend_key: BackendInstanceId, refresh: boolean): CatalogRead {
     this.admit();
     const controller = new AbortController();
     const promise = this.read(backend_key, refresh, controller.signal);
@@ -168,7 +171,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     return pending;
   }
   private async read(
-    backend_key: ConversationBackendKey,
+    backend_key: BackendInstanceId,
     refresh: boolean,
     signal: AbortSignal,
   ): Promise<BackendSnapshot> {
@@ -254,7 +257,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     clearTimeout(cleanup.timer);
     this.cleanups.delete(cleanup);
   }
-  private keep(backend_key: ConversationBackendKey, snapshot: BackendSnapshot): BackendSnapshot {
+  private keep(backend_key: BackendInstanceId, snapshot: BackendSnapshot): BackendSnapshot {
     this.admit();
     const previous = this.retained(backend_key);
     if (previous?.models_complete && !snapshot.models_complete)
@@ -269,10 +272,7 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
     this.database.write((tx) => save_machine_model_list(tx, this.machine_id, snapshot));
     return snapshot;
   }
-  private answer(
-    backend_key: ConversationBackendKey,
-    kept: BackendSnapshot | null,
-  ): BackendSnapshot {
+  private answer(backend_key: BackendInstanceId, kept: BackendSnapshot | null): BackendSnapshot {
     return (
       kept ?? {
         backend_key,
@@ -292,7 +292,8 @@ export class VpsCatalogRelay implements RemoteCatalogSource {
   }
   connected(): void {
     if (this.closed) return;
-    for (const backend of Object.values(ConversationBackendKey)) {
+    const driver_kinds = this.database.read((sql) => machine_driver_kinds(sql, this.machine_id));
+    for (const backend of machine_backend_ids(driver_kinds)) {
       this.tasks.get(backend)?.controller.abort(cancelled());
       this.start_read(backend, true);
     }

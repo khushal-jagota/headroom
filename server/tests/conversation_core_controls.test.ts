@@ -216,9 +216,17 @@ test('two promotions of one held id have one winner', async () => {
       (entry) => entry.sender_message_id === id,
     )!;
     await child.configure('steer', {
-      result: { fate, ...(fate === 'refused' ? { refusal_reason: 'backend_cannot_steer' } : {}) },
+      result: {
+        fate,
+        ...(fate === 'refused'
+          ? { refusal_reason: 'backend_cannot_steer', refusal_detail: 'turn is compacting' }
+          : {}),
+      },
     });
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     const promoted = await f.core.promote_held_prompt('core', held.held_prompt_id, 'steer');
+    const logged_lines = logged.mock.calls.map(([line]) => String(line));
+    logged.mockRestore();
     expect(promoted).toBeInstanceOf(
       fate === 'refused'
         ? PromptDeliveryQueued
@@ -244,6 +252,10 @@ test('two promotions of one held id have one winner', async () => {
       expect(
         f.store.read_events_after('core', 0).some((row) => row.kind === 'prompt_delivery_refused'),
       ).toBe(false);
+      // The refusal is not recorded, so the backend's own text reaches the log once.
+      expect(logged_lines).toEqual([
+        expect.stringMatching(/error_class=BackendSteerRefused error="turn is compacting"$/),
+      ]);
       await child.finish();
       await f.core.wait_until_quiescent();
       expect(await f.core.held_prompts('core')).toEqual([]);

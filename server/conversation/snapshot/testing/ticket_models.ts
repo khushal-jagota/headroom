@@ -1,5 +1,6 @@
 /** Mirror the existing Python browser host's explicit synthetic catalog control. */
-import { ConversationBackendKey } from '../../contracts.ts';
+import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../../../drivers/built_in_manifests.ts';
 import type {
   BackendSnapshotServiceContract,
   BackendSnapshot,
@@ -39,9 +40,9 @@ export class TicketModelSnapshots implements BackendSnapshotServiceContract {
     return null;
   }
   async snapshots(): Promise<readonly BackendSnapshot[]> {
-    return Promise.all(Object.values(ConversationBackendKey).map((key) => this.snapshot(key)));
+    return Promise.all(KNOWN_BACKEND_INSTANCE_IDS.map((key) => this.snapshot(key)));
   }
-  async snapshot(backend_key: ConversationBackendKey): Promise<BackendSnapshot> {
+  async snapshot(backend_key: BackendInstanceId): Promise<BackendSnapshot> {
     this.calls++;
     return {
       backend_key,

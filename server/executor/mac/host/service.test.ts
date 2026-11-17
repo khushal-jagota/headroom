@@ -10,7 +10,7 @@ import type { MacHostBindings, MacHostContext, MacInvocation } from './contracts
 import { MacHttpClient } from '../transport/http.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
 import { ExecutorPaths } from '../configuration.ts';
-import { create_mac_adapter_host } from '../adapters.ts';
+import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
 import { request } from '../ipc_client.ts';
 import { decode_json, decode_value, encode_bounded, parse_identity } from '../../protocol.ts';
 import { Deferred } from '../../../core/deferred.ts';
@@ -46,7 +46,8 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
     panels_server_url: 'https://127.0.0.1:9',
     runtime: { child: true, ready_path: null, handoff_path: null },
   };
-  const production = production_bindings(configuration, environment);
+  const drivers = await load_executor_drivers();
+  const production = production_bindings(configuration, environment, drivers);
   const poll_reply = decode_value(
     {
       commands: [
@@ -129,6 +130,7 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
       invocation = owners;
       return create_mac_adapter_host({
         ...owners,
+        drivers,
         panels_server_url: configuration.panels_server_url,
         environment,
         executable_path: () => null,

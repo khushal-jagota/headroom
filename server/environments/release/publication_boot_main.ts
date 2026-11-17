@@ -11,7 +11,7 @@ import { extract_app_archive, remove_owned_tree } from './archive.ts';
 import { validate_app_manifest } from './identity.ts';
 import { validate_app_sha } from './logic/manifest.ts';
 import { require_host_node } from './logic/host.ts';
-import { probe_environment } from './admission_process.ts';
+import { PROBE_HOME_DIRECTORIES, probe_environment } from './admission_process.ts';
 import { assert_release_execution } from './process.ts';
 import { is_object } from '../updates/codec.ts';
 import { replace_existing_json } from '../updates/attempts.ts';
@@ -145,9 +145,7 @@ try {
         '',
         'config',
         'cache',
-        'codex',
-        'claude',
-        'hermes',
+        ...PROBE_HOME_DIRECTORIES,
         'data',
         'logs',
         'backups',

@@ -7,8 +7,8 @@ import {
   CodexUsageTimeout,
   CodexUsageRequestRejected,
   CodexUsageLoginIsDuplicated,
-} from '../../../conversation/backend_usage/contracts.ts';
-import type { CodexUsageSource } from '../../../conversation/backend_usage/contracts.ts';
+} from './allowance_usage.ts';
+import type { CodexUsageSource } from './allowance_usage.ts';
 import { child_environment } from './environment.ts';
 import {
   CLIENT_NAME,

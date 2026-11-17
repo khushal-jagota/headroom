@@ -1,4 +1,5 @@
 /** Private real TypeScript home for the hosted Darwin package rehearsal. */
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -19,10 +20,7 @@ import { issue_original_credential } from '../../../machines/executor_credential
 import { compose_production_backends } from '../../../lifecycle/production_bindings.ts';
 import { registry_of_factories, unread_driver_host } from '../../../drivers/testing/registry.ts';
 import { create_production_conversation_core } from '../../../lifecycle/production.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../../../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../../../conversation/snapshot/composition.ts';
 import type { SqliteProcessConversationSystem } from '../../../conversation/system.ts';
 import {
   ConversationRoleMaterials,
@@ -98,7 +96,6 @@ export async function start_native_server() {
               database: current.database,
               config: current.config,
               now: () => current.clock.now(),
-              providers: unavailable_backend_providers(),
               one_shot_children: current.one_shot_children,
             }),
           stall_sources: () => [],
@@ -180,7 +177,7 @@ export async function start_native_server() {
       await core.start_conversation(
         new ConversationStartRequest({
           conversation_id,
-          backend_key: backend,
+          backend_key: parse_backend_instance_id(backend),
           model,
           reasoning_effort: null,
           role_materials: new ConversationRoleMaterials({

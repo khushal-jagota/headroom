@@ -161,9 +161,10 @@ export class UsageAggregator {
       this.#buckets.set(key, bucket);
     }
 
+    const pricingModel = record.pricing_model ?? record.model;
     const priced = priceUsage(
       this.#options.rates,
-      record.model,
+      pricingModel,
       record.totals,
       record.reportedCostUsd,
       this.#options.priceOverrides,
@@ -174,7 +175,7 @@ export class UsageAggregator {
     bucket.costUsd += priced.costUsd;
     bucket.cacheSavingsUsd += cacheSavingsUsd(
       this.#options.rates,
-      record.model,
+      pricingModel,
       record.totals,
       this.#options.priceOverrides,
     );

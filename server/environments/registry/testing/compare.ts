@@ -233,7 +233,7 @@ export async function registry_probe(request: Request): Promise<unknown> {
       PLAN_DB_PATH: '/forbidden',
       SECRET: 'forbidden',
     },
-    hermes_python: '/synthetic/python',
+    launcher_files: { PLAN_HERMES_PYTHON: '/synthetic/python' },
     runtime_port: 32123,
   });
   const homes = ['hermes', 'codex', 'claude'].map((name) => join(request.output, name));

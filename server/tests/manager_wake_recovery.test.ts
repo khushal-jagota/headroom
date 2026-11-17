@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { ConversationStartAborted } from '../runtime/abort.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import { AutomaticStartAdmission } from '../conversation/start_admission/index.ts';
@@ -225,7 +226,7 @@ test('an interrupted offering stays uncertain until its exact durable prompt exi
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id: 'notice-recovery',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'model',
       reasoning_effort: null,
       role_materials: null,
@@ -330,7 +331,7 @@ test('wake stop records uncertainty immediately and retains a hung send without 
   await system.start_conversation(
     new ConversationStartRequest({
       conversation_id: 'hung-wake',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'gpt-6.1-sol',
       workspace_folder: '/workspace',
     }),
@@ -339,7 +340,7 @@ test('wake stop records uncertainty immediately and retains a hung send without 
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id: 'hung-wake',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'gpt-6.1-sol',
       reasoning_effort: null,
       role_materials: null,
@@ -621,7 +622,7 @@ test('a wake steers into a busy Chief conversation', async () => {
   await system.start_conversation(
     new ConversationStartRequest({
       conversation_id: 'busy-chief',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'gpt-6.1-sol',
       workspace_folder: '/workspace',
     }),
@@ -630,7 +631,7 @@ test('a wake steers into a busy Chief conversation', async () => {
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id: 'busy-chief',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'gpt-6.1-sol',
       reasoning_effort: null,
       role_materials: null,

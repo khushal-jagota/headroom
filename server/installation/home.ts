@@ -36,6 +36,7 @@ import {
   unlink_relative,
 } from '../executor/mac/platform.ts';
 import { account_skill_homes, account_skill_provisioning_conflict } from '../skills/account.ts';
+import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 import { home_install_request, validate_home_host } from './logic/home.ts';
 import {
   HOME_CLEANUP_TIMEOUT_SECONDS,
@@ -436,8 +437,11 @@ export async function install_home(
     for (const name of ['data', 'logs', 'workspaces'])
       await files.ensure_directory(join(root_path, name));
     if (request.isolated_providers)
-      for (const name of ['codex', 'claude', 'hermes'])
-        await files.ensure_directory(join(root_path, 'providers', name));
+      for (const { manifest } of BUILT_IN_MANIFESTS)
+        if (manifest.home)
+          await files.ensure_directory(
+            join(root_path, 'providers', manifest.home.isolated_directory_name),
+          );
     await files.file(
       join(root_path, 'data/config.yaml'),
       JSON.stringify({

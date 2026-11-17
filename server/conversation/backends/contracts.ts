@@ -1,4 +1,10 @@
-/** Backend children report facts. The core owns delivery and queue semantics. */
+/**
+ * Backend children report facts. The core owns delivery and queue semantics.
+ *
+ * Every backend error carries the backend's own error text in `message` and the original
+ * error as the standard `cause`. A failed turn carries that text in `error_summary`. The
+ * core records the text with the refusal or the failed turn, and logs it once.
+ */
 import type {
   AnswerFate,
   ComposerCatalogEntry,
@@ -31,7 +37,7 @@ export interface ChildReference {
 }
 export class BackendAdapterError extends Error {}
 export class BackendSpawnFailed extends BackendAdapterError {}
-export class ClaudeInitializationTimeout extends BackendSpawnFailed {}
+export class BackendInitializationTimeout extends BackendSpawnFailed {}
 export class SessionLoadFailed extends BackendAdapterError {}
 export class PromptWriteRefused extends BackendAdapterError {}
 export class PromptWriteFailed extends BackendAdapterError {}
@@ -42,8 +48,8 @@ export class PermissionAnswerWriteFailed extends BackendAdapterError {}
 export class UserInputAnswerWriteFailed extends BackendAdapterError {}
 export class NeedsRebind extends BackendAdapterError {
   readonly failed_child_recovery: boolean;
-  constructor(message: string, options: { failed_child_recovery?: boolean } = {}) {
-    super(message);
+  constructor(message: string, options: { failed_child_recovery?: boolean; cause?: unknown } = {}) {
+    super(message, 'cause' in options ? { cause: options.cause } : undefined);
     this.failed_child_recovery = options.failed_child_recovery ?? false;
   }
 }
@@ -64,8 +70,14 @@ export class BackendSteerAccepted {
 }
 export class BackendSteerRefused {
   readonly refusal_reason: PromptDeliveryRefusalReason;
-  constructor(values: { refusal_reason: PromptDeliveryRefusalReason }) {
+  /** The backend's own text for this refusal, when it gave one. */
+  readonly refusal_detail: string | null;
+  constructor(values: {
+    refusal_reason: PromptDeliveryRefusalReason;
+    refusal_detail?: string | null;
+  }) {
     this.refusal_reason = values.refusal_reason;
+    this.refusal_detail = values.refusal_detail ?? null;
   }
 }
 export class BackendSteerUncertain {

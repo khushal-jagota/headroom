@@ -1,6 +1,6 @@
 /** Resolve a bounded view row from canonical source and settlement records. */
+import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import { readable_tool_call_detail } from '../../tool_detail.ts';
-import type { ConversationBackendKey } from '../../contracts.ts';
 import type { ConversationEventPayload, PromptEventPayload } from '../../events.ts';
 import type { MessageContent } from '../../message_content.ts';
 import { MessageFile, MessageImage, MessageText } from '../../message_content.ts';
@@ -89,7 +89,7 @@ export interface RowBodyOptions {
   settlement_sequence?: number | null;
   dead_reason?: AskDeadReason | null;
   full_tool_detail?: boolean;
-  backend_key?: ConversationBackendKey;
+  backend_key?: BackendInstanceId;
 }
 export function row_body(
   source: ConversationEventPayload,
@@ -101,7 +101,7 @@ export function row_body(
     settlement_sequence = null,
     dead_reason = null,
     full_tool_detail = false,
-    backend_key = 'hermes',
+    backend_key = 'hermes' as BackendInstanceId,
   } = options;
   switch (source.kind) {
     case 'credential_request':

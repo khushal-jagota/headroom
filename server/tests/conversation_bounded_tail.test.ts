@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { readSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { fixture } from './ticket_fixture.ts';
@@ -26,7 +27,7 @@ test('replay joins live publication without a hole and bounded tails reset safel
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id: id,
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'model',
       reasoning_effort: null,
       role_materials: null,

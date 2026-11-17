@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { expect, test } from 'vitest';
 import { fixture, fixture_path, create, advance } from './ticket_fixture.ts';
@@ -47,7 +48,7 @@ test('a rejected participant rolls the whole append back and retry commits once'
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id: 'atomic',
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'model',
       reasoning_effort: null,
       role_materials: null,
@@ -133,7 +134,7 @@ test('executor refusal after take commits only its receipt and replays without a
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id: id,
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'model',
       reasoning_effort: null,
       role_materials: null,
@@ -257,7 +258,7 @@ test('dispatch memory reads keep a current wake after its claim is released', ()
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id,
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'model',
       reasoning_effort: null,
       role_materials: null,
@@ -303,7 +304,7 @@ test('terminal Ticket discards queued step and decision prompts at admission', (
   store.create_conversation(
     new ResolvedConversationStart({
       conversation_id,
-      backend_key: 'codex',
+      backend_key: parse_backend_instance_id('codex'),
       model: 'model',
       reasoning_effort: null,
       role_materials: null,

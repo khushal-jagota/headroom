@@ -8,8 +8,9 @@ import {
   SubprocessBackendProbeEnvironment,
 } from '../conversation/snapshot/environment.ts';
 import { http_get_usage } from '../conversation/backend_usage/http.ts';
-import { production_backend_providers } from '../conversation/snapshot/production.ts';
-import type { CodexProviderContext } from '../drivers/codex/runtime/providers.ts';
+import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
+import type { DriverHost } from '../drivers/core/host.ts';
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
 const [mode, argument] = process.argv.slice(2);
@@ -42,12 +43,28 @@ if (mode === 'guards') {
   await assert.rejects(door.run(['nonexistent-cross-area'], { timeout_seconds: 1 }), refusal);
   await assert.rejects(door.latest_released_version('synthetic', { timeout_seconds: 1 }), refusal);
   await assert.rejects(http_get_usage('https://synthetic.invalid', {}, 1), refusal);
-  const unusedContext = new Proxy({} as CodexProviderContext, {
-    get() {
-      throw new Error('Test mode must not read production provider context');
-    },
-  });
-  assert.equal(production_backend_providers(false, unusedContext).claude, null);
+  // A host that claims production still gets test instances: no sign-in or usage reads.
+  const host = {
+    test_mode: false,
+    environment: {},
+    database: {},
+    child_processes: {},
+    one_shot_children: {},
+    worker_supervision: {},
+    panels_server_url: 'http://127.0.0.1:1',
+    worker_process_root: '/synthetic',
+    now: () => new Date(0),
+    executable_on_path: (name: string) => name,
+  } as unknown as DriverHost;
+  for (const driver of BUILT_IN_DRIVERS) {
+    const instance = await driver.create(
+      { instance_id: parse_backend_instance_id(driver.driver_kind), config: null },
+      host,
+      new AbortController().signal,
+    );
+    assert.equal(instance.sign_in, undefined);
+    assert.equal(instance.allowance_usage, undefined);
+  }
   assert.throws(
     () => assert_test_database_path('/outside-synthetic-root/database.sqlite'),
     /Tests can only use databases/,

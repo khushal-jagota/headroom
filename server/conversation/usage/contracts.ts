@@ -5,10 +5,13 @@
  */
 import type { BackendStateStore } from '../backend_state.ts';
 import type { StopOptions } from '../../lifecycle/contracts.ts';
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
+import type { TranscriptUsageSource } from '../../drivers/core/usage.ts';
 export type NonNegativeInt = number;
 export type TrimmedNonEmptyString = string;
 export type IsoDateTime = string;
-export type UsageProviderKind = 'claude' | 'codex' | 'grok';
+/** A backend instance id, or a usage source that is not a backend, such as `grok`. */
+export type UsageProviderKind = string;
 export type UsageDay = string & { readonly __brand: 'UsageDay' };
 export type UsageResolution = 'day' | 'hour';
 export type UsageCostSource = 'providerReported' | 'modelPriced' | 'unpriced';
@@ -122,15 +125,23 @@ export interface UsageModelPriceOverride {
 export interface UsageSettings {
   readonly usagePriceOverrides?: Readonly<Record<string, UsageModelPriceOverride>>;
 }
+/** One directory of transcripts, and the parser module that reads it. */
 export interface TranscriptDirectory {
   readonly provider: UsageProviderKind;
   readonly dir: string;
+  /** Restricts the walk to one basename. */
   readonly fileName?: string;
+  readonly kind: TranscriptUsageSource['kind'];
+  /** An absolute file URL whose default export reads `kind` transcripts. */
+  readonly parser_module: string;
 }
-export type TranscriptDirectoryEntry = TranscriptDirectory | readonly [UsageProviderKind, string];
 export type TranscriptDirectories =
-  | readonly TranscriptDirectoryEntry[]
-  | ((settings: UsageSettings) => readonly TranscriptDirectoryEntry[]);
+  readonly TranscriptDirectory[] | ((settings: UsageSettings) => readonly TranscriptDirectory[]);
+/** A backend instance's transcripts, under the instance id. */
+export interface UsageTranscriptSource {
+  readonly provider: string;
+  readonly source: TranscriptUsageSource;
+}
 export interface RatesFetcher {
   (options?: { signal?: AbortSignal }): unknown | Promise<unknown>;
 }
@@ -151,6 +162,8 @@ export interface RecordedUsageService {
 }
 export interface UsageHttpRuntime {
   readonly conversation_runtime_available: boolean;
+  /** The backend instances whose allowance limits the routes report, in card order. */
+  readonly backend_ids: readonly BackendInstanceId[];
   readonly recorded_usage: RecordedUsageService;
   readonly backend_state: BackendStateStore | null;
 }

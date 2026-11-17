@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
 import { snapshot_for_wire } from '../../backend_snapshot.ts';
 /** Own optional reads, canonical worker custody, and actual source cleanup. */
 import { Worker } from 'node:worker_threads';
@@ -26,6 +27,23 @@ import type {
   CatalogReaderDescriptor,
 } from './contracts.ts';
 export type { MacCatalogDependencies } from './contracts.ts';
+/** The answer for a backend this machine does not run: a card that says so. */
+function cannot_run_snapshot(backend_key: string): BackendSnapshot {
+  return {
+    backend_key: parse_backend_instance_id(backend_key),
+    installed: false,
+    executable_path: null,
+    version: null,
+    identity: null,
+    available_models: [],
+    reasoning_effort_options: [],
+    default_model_id: null,
+    default_reasoning_effort: null,
+    update_advisory: null,
+    diagnoses: [`This machine cannot run the ${backend_key} backend.`],
+    models_complete: false,
+  };
+}
 class Result implements CanonicalCatalogResult {
   private readonly service: MacCatalog;
   private readonly descriptor: CatalogResultDescriptor;
@@ -256,16 +274,17 @@ export class MacCatalog {
     let snapshot: BackendSnapshot | null = null;
     try {
       signal.throwIfAborted();
-      if (
-        request.backend_key === 'claude' ||
-        request.backend_key === 'codex' ||
-        request.backend_key === 'hermes'
-      )
-        snapshot = await this.dependencies.snapshots.snapshot(request.backend_key, {
-          refresh: request.refresh,
-          discover_update_advisory: false,
-          signal,
-        });
+      if (!this.dependencies.backend_ids.includes(request.backend_key))
+        snapshot = cannot_run_snapshot(request.backend_key);
+      else
+        snapshot = await this.dependencies.snapshots.snapshot(
+          parse_backend_instance_id(request.backend_key),
+          {
+            refresh: request.refresh,
+            discover_update_advisory: false,
+            signal,
+          },
+        );
     } catch (error) {
       if (this.failure) throw this.failure;
       if (!(

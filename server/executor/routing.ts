@@ -1,4 +1,6 @@
 /** Non-Home Ticket children cross this seam. Recovery never allocates a local child. */
+import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
+import { machine_can_run, machine_driver_kinds } from './machine_drivers.ts';
 import type {
   BackendChild,
   BackendChildFactory,
@@ -42,7 +44,7 @@ export class LocaleBackendChildFactory {
     return this.remote_factory.recover(reference, options);
   }
   create(options: Parameters<BackendChildFactory>[0]): BackendChild {
-    const remote = this.database.read((sql) => {
+    const driver_kinds = this.database.read((sql) => {
       const principal = canonical_principal(sql, options.resolved_start.conversation_id);
       const row =
         principal?.kind === 'ticket'
@@ -50,8 +52,15 @@ export class LocaleBackendChildFactory {
               principal.id,
             ])
           : undefined;
-      return row !== undefined && row.machine_id !== HOME_MACHINE_ID;
+      return row === undefined || row.machine_id === HOME_MACHINE_ID
+        ? null
+        : machine_driver_kinds(sql, row.machine_id);
     });
+    const remote = driver_kinds !== null;
+    if (remote && !machine_can_run(driver_kinds, options.resolved_start.backend_key))
+      throw new BackendSpawnFailed(
+        `The Ticket's machine cannot run the ${options.resolved_start.backend_key} backend`,
+      );
     const child = (remote ? this.remote_factory : this.local_factory)(options);
     return remote ? child : authenticated_local_child(child, this.database);
   }

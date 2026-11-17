@@ -19,9 +19,9 @@ The two numbers come from different places and do not mix. Recorded usage comes 
 
 ## Allowance and spend
 
-Opening Limits reads the last observation Headroom saved for Codex and Claude. It calls no provider and scans nothing, and an old observation keeps its timestamp. Refresh is the explicit provider read. It starts no agent turn, and a failed refresh keeps the last good observation. Failed, signed out, and unavailable stay different outcomes, and an unconfirmed sign-in is shown as unknown. Hermes has no allowance source here.
+Opening Limits reads the last observation Headroom saved for Codex and Claude. It calls no provider and scans nothing, and an old observation keeps its timestamp. Refresh is the explicit provider read. It starts no agent turn, and a failed refresh keeps the last good observation. Failed, signed out, and unavailable stay different outcomes, and an unconfirmed sign-in is shown as unknown. Each backend's driver supplies its own allowance reading, and Hermes has none here. A window can carry a scope label, such as one model family, which is kept even if it matches no listed model.
 
-Tokens and Cost are totalled from the transcripts of Codex, Claude, and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. That path never asks a provider for allowance. Grok Build appears in the scan but is not a conversation backend. See [Conversations](conversations.md).
+Tokens and Cost are totalled from the transcripts of Codex, Claude, and Grok Build on this host, including sessions never started in Headroom, with prices refreshed separately. Each backend's driver names the parser that reads its transcripts. That path never asks a provider for allowance. Grok Build appears in the scan but is not a conversation backend. See [Conversations](conversations.md).
 
 Tokens and Cost read a summary when the selected window first opens. Refresh reads it again. Background changes do not trigger transcript scans. Provider filters use the loaded summary.
 

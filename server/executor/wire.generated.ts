@@ -179,7 +179,7 @@ export type ComposerCatalogEntryKind = 'command' | 'skill' | 'app' | 'plugin';
 export type ComposerCatalogReported = { composer_catalog: ComposerCatalogEntry[] };
 export type ContextCompacted = object;
 export type ConversationAccess = 'full';
-export type ConversationBackendKey = 'hermes' | 'codex' | 'claude';
+export type ConversationBackendKey = string;
 export type ConversationRoleMaterials = {
   identity_environment_variables?: [string, string][];
   role_text: string;
@@ -271,6 +271,7 @@ export type LeaseReply = {
 export type LeaseRequest = {
   admission_stopped: boolean;
   cleanup_uncertainties?: WorkerCleanupUncertainty[];
+  driver_kinds?: ConversationBackendKey[];
   going_to_sleep?: boolean;
   identity: ExecutorIdentity;
   legacy_cleanup_notice?: string | null;

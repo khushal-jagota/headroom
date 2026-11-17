@@ -1,4 +1,5 @@
 /** Test-only controls for the shared scripted process and exact committed record rows. */
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { Area } from '../../core/authority/register.ts';
 import type { TestCompositionContext } from '../../core/start.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
@@ -6,7 +7,6 @@ import { claim_next_batch, record_batch_offering } from '../../manager_wakes/dat
 import { OWNER } from '../../core/contracts.ts';
 import type { Principal } from '../../core/contracts.ts';
 import { BACKEND_KEYS_SUPPORTING_STEER, require_conversation_backend_key } from '../contracts.ts';
-import type { ConversationBackendKey } from '../contracts.ts';
 import {
   MessageFile,
   MessageImage,
@@ -370,7 +370,7 @@ export function scriptedConversationControls(
           '/conversation-steering',
           async (request) => {
             const keys = request.body.backend_keys.map(require_conversation_backend_key);
-            const supported = BACKEND_KEYS_SUPPORTING_STEER as Set<ConversationBackendKey>;
+            const supported = BACKEND_KEYS_SUPPORTING_STEER as Set<BackendInstanceId>;
             supported.clear();
             for (const key of keys) supported.add(key);
             return { configured: true };

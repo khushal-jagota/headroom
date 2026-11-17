@@ -1,9 +1,14 @@
 /** Export-only proof companion. All credentials and HTTP answers come from the driver. */
-import { ClaudeUsageAdapter } from '../claude.ts';
-import { CodexUsageAdapter } from '../codex.ts';
-import { CodexUsageRequestRejected } from '../contracts.ts';
+import {
+  ClaudeUsageAdapter,
+  parse_claude_windows,
+} from '../../../drivers/claude/runtime/allowance_usage.ts';
+import {
+  CodexUsageAdapter,
+  CodexUsageRequestRejected,
+  parse_codex_windows,
+} from '../../../drivers/codex/runtime/allowance_usage.ts';
 import type { BackendUsageResult, BackendUsageWindow } from '../contracts.ts';
-import { parse_claude_windows, parse_codex_windows } from '../logic/windows.ts';
 
 interface UsageCase {
   readonly name: string;

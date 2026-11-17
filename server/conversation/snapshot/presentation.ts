@@ -2,7 +2,7 @@
 import type { BackendSnapshot } from './contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
 import type { BackendUsageWindow } from '../backend_usage/contracts.ts';
-import type { CodexSignIn } from './provider_contracts.ts';
+import type { SignInSession } from '../../drivers/core/sign_in.ts';
 export function datetime_json(value: Date): string {
   const iso = value.toISOString();
   return iso.endsWith('.000Z')
@@ -81,7 +81,7 @@ export function snapshot_json(
           },
   };
 }
-export function sign_in_json(sign_in: CodexSignIn) {
+export function sign_in_json(sign_in: SignInSession) {
   return {
     sign_in: {
       session_id: sign_in.session_id,

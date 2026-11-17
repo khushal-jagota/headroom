@@ -1,11 +1,8 @@
 /** Pure resolution of Worker, Chief, and Manager launch layers. */
+import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import { ConversationRoleMaterials, FLOOR_DEFAULT_ACCESS } from '../../conversation/contracts.ts';
-import type {
-  ConversationAccess,
-  ConversationBackendKey,
-  WorkspacePathPolicy,
-} from '../../conversation/contracts.ts';
+import type { ConversationAccess, WorkspacePathPolicy } from '../../conversation/contracts.ts';
 const ROLE_DIRECTIVE_PREFIX =
   'Start with the `panels` skill. It explains the system and is necessary, then drill through to your identity through the skills layers.';
 export const WORKER_ROLE_TEXT = `${ROLE_DIRECTIVE_PREFIX} You are a ticket worker.`;
@@ -31,12 +28,12 @@ export function manager_role_text(shared_workspace_folder: string): string {
   );
 }
 export interface ConversationStartConfiguration {
-  backend_key: ConversationBackendKey;
+  backend_key: BackendInstanceId;
   model: string;
   reasoning_effort: string | null;
 }
 export interface ConversationStartOverrides {
-  backend_key?: ConversationBackendKey | null;
+  backend_key?: BackendInstanceId | null;
   model?: string | null;
   reasoning_effort?: string | null;
   reasoning_effort_is_set?: boolean;

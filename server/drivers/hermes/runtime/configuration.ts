@@ -41,6 +41,7 @@ export class HermesConfiguration {
   model: string | null = null;
   reasoning_effort: string | null = null;
   wire_broken = false;
+  private wire_failure: { why: string; cause: unknown } | null = null;
   private options: readonly SessionConfigOption[] = [];
   readonly client: HermesAcpClient;
   constructor(client: HermesAcpClient) {
@@ -56,9 +57,24 @@ export class HermesConfiguration {
         : null;
     this.model = typeof value === 'string' && value ? value : null;
   }
+  /** Keep the first reason the wire failed, so a later refusal can say why. */
+  break_wire(cause: unknown): void {
+    this.wire_broken = true;
+    this.wire_failure ??= { why: hermes_error_text(cause), cause };
+  }
   require_wire(): void {
-    if (this.wire_broken || this.client.signal.aborted)
-      throw new PromptWriteFailed("this child's wire has already failed");
+    if (!this.wire_broken && !this.client.signal.aborted) return;
+    const failure =
+      this.wire_failure ??
+      (this.client.signal.aborted && this.client.signal.reason !== undefined
+        ? { why: hermes_error_text(this.client.signal.reason), cause: this.client.signal.reason }
+        : null);
+    throw new PromptWriteFailed(
+      failure === null
+        ? "this child's wire has already failed"
+        : `this child's wire has already failed: ${failure.why}`,
+      failure === null ? undefined : { cause: failure.cause },
+    );
   }
   bound_session(): string {
     if (this.session_id === null) throw new PromptWriteFailed('this child has no bound session');
@@ -68,8 +84,8 @@ export class HermesConfiguration {
     try {
       return await call();
     } catch (error) {
-      this.wire_broken = true;
-      throw new PromptWriteFailed(hermes_error_text(error));
+      this.break_wire(error);
+      throw new PromptWriteFailed(hermes_error_text(error), { cause: error });
     }
   }
   async control_request<T>(method: string, params: unknown, configuration = false): Promise<T> {
@@ -89,13 +105,15 @@ export class HermesConfiguration {
         if (configuration)
           throw new NeedsRebind(
             'the Hermes configuration request timed out before its result was known',
+            { cause: error },
           );
         throw new PromptWriteFailed(
           'the Hermes steer request timed out before its result was known',
+          { cause: error },
         );
       }
-      this.wire_broken = true;
-      throw new PromptWriteFailed(hermes_error_text(error));
+      this.break_wire(error);
+      throw new PromptWriteFailed(hermes_error_text(error), { cause: error });
     } finally {
       clearTimeout(timer);
     }
@@ -110,7 +128,7 @@ export class HermesConfiguration {
     } catch (error) {
       if (!(error instanceof ConfigurationNotApplied) && !(error instanceof NeedsRebind))
         throw error;
-      throw new SessionLoadFailed(error.message);
+      throw new SessionLoadFailed(error.message, { cause: error });
     }
   }
   async apply_values(model: string | null, effort: string | null): Promise<void> {
@@ -127,7 +145,7 @@ export class HermesConfiguration {
       return session;
     } catch (error) {
       if (!(error instanceof PromptWriteFailed)) throw error;
-      throw new ConfigurationNotApplied(error.message);
+      throw new ConfigurationNotApplied(error.message, { cause: error });
     }
   }
   private async config_call<T>(method: string, params: unknown): Promise<T> {
@@ -135,7 +153,7 @@ export class HermesConfiguration {
       return await this.control_request<T>(method, params, true);
     } catch (error) {
       if (!(error instanceof PromptWriteFailed)) throw error;
-      throw new ConfigurationNotApplied(error.message);
+      throw new ConfigurationNotApplied(error.message, { cause: error });
     }
   }
   private async set_option(configId: string, value: string): Promise<void> {
@@ -184,7 +202,7 @@ export class HermesConfiguration {
       }
     } catch (error) {
       if (!(error instanceof ConfigurationNotApplied)) throw error;
-      throw new NeedsRebind(error.message);
+      throw new NeedsRebind(error.message, { cause: error });
     }
   }
 }

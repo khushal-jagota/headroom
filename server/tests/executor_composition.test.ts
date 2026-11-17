@@ -1,3 +1,4 @@
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import {
   drivers_of_factories,
@@ -16,14 +17,13 @@ import { ConversationRoleMaterials, ResolvedConversationStart } from '../convers
 import { SqliteProcessConversationSystem } from '../conversation/system.ts';
 import type { BackendChildFactory } from '../conversation/backends/contracts.ts';
 import { VpsExecutor } from '../executor/vps_transport.ts';
+import { LocaleBackendChildFactory } from '../executor/routing.ts';
+import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import { VpsExecutorRegistry } from '../executor/registry.ts';
 import { MacRemoteChild } from '../executor/vps_remote_child.ts';
 import { ExecutorStore } from '../executor/data/runs.ts';
 import { compose_production_backends } from '../lifecycle/production_bindings.ts';
-import {
-  create_backend_runtime,
-  unavailable_backend_providers,
-} from '../conversation/snapshot/composition.ts';
+import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { write_ticket_conversation_start } from '../tickets/data/index.ts';
 import {
   create_production_conversation_core,
@@ -40,6 +40,7 @@ import { Deferred } from '../core/deferred.ts';
 import { write_bindings } from '../conversation/start_admission/index.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import { decode_value } from '../executor/protocol.ts';
+import { accept_lease_in_transaction } from '../executor/vps_presence_store.ts';
 import { createReadAccess } from '../core/database/index.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 
@@ -66,7 +67,7 @@ function retained_fixture() {
     });
   const start = new ResolvedConversationStart({
     conversation_id: 'kept',
-    backend_key: 'codex',
+    backend_key: parse_backend_instance_id('codex'),
     model: 'model',
     reasoning_effort: null,
     role_materials: materials(ticket.id),
@@ -174,7 +175,6 @@ test('configured restart adopts before reconciliation and Mac locality never sel
           database: current.database,
           config: current.config,
           now: () => current.clock.now(),
-          providers: unavailable_backend_providers(),
         });
         bound = compose_production_backends(
           current,
@@ -468,7 +468,6 @@ test('production constructs its real executor and reconciles that executor inven
             database: current.database,
             config: current.config,
             now: () => current.clock.now(),
-            providers: unavailable_backend_providers(),
           }),
         stall_sources: () => [],
       },
@@ -504,5 +503,98 @@ test('production constructs its real executor and reconciles that executor inven
     await server?.shutdown_settled;
     inventory.mockRestore();
     vi.unstubAllEnvs();
+  }
+});
+
+// Gap: a remote Ticket naming a backend kind its machine cannot run must be refused before any mailbox write.
+test("a remote Ticket start follows its machine's advertised driver kinds, or the legacy set without them", () => {
+  const database = fixture();
+  try {
+    const ticket = create(database, { locale: 'macos' });
+    const materials = new ConversationRoleMaterials({
+      role_text: 'Synthetic Worker',
+      identity_environment_variables: [
+        ['PLAN_ACTOR', 'worker'],
+        ['PLAN_TICKET_ID', ticket.id],
+      ],
+    });
+    new ConversationStore(database, { integer_now: () => 100 }).create_conversation(
+      new ResolvedConversationStart({
+        conversation_id: 'scripted-conversation',
+        backend_key: parse_backend_instance_id('codex'),
+        model: 'model',
+        reasoning_effort: null,
+        role_materials: materials,
+        workspace_folder: '/tmp',
+        access: 'full',
+      }),
+    );
+    database.write((tx) =>
+      write_ticket_conversation_start(tx, ticket.id, {
+        conversation_id: 'scripted-conversation',
+        backend: 'codex',
+        model: 'model',
+        reasoning_effort: null,
+        now: 100,
+      }),
+    );
+    const local = vi.fn(),
+      remote = Object.assign(vi.fn(), { recover: () => null, retained_runs: () => [] });
+    const factory = new LocaleBackendChildFactory(database, local, remote);
+    const start_remote = (backend: string) =>
+      factory.create({
+        resolved_start: new ResolvedConversationStart({
+          conversation_id: 'scripted-conversation',
+          backend_key: parse_backend_instance_id(backend),
+          model: 'model',
+          reasoning_effort: null,
+          role_materials: materials,
+          workspace_folder: '/tmp',
+          access: 'full',
+        }),
+        event_sink: { async report() {} },
+        message_files: {} as never,
+      });
+    const store_lease = (driver_kinds?: string[]) =>
+      database.write((tx) =>
+        accept_lease_in_transaction(
+          tx,
+          {
+            identity: {
+              protocol_version: PROTOCOL_VERSION,
+              application_revision: 'synthetic',
+              spool_format_version: 5,
+              executor_incarnation: incarnation,
+            },
+            process_id: 4242,
+            mac_wall_clock_ms: 0,
+            queue_depth: 0,
+            oldest_item_age_ms: null,
+            waiting_conversations: [],
+            waiting_conversations_truncated: false,
+            working_turns: [],
+            admission_stopped: false,
+            cleanup_uncertainties: [],
+            ...(driver_kinds === undefined ? {} : { driver_kinds }),
+          },
+          0,
+          ticket.machine_id,
+        ),
+      );
+    expect(() => start_remote('scripted')).toThrow(BackendSpawnFailed);
+    store_lease(['hermes']);
+    expect(() => start_remote('codex')).toThrow(BackendSpawnFailed);
+    expect(remote).not.toHaveBeenCalled();
+    expect(local).not.toHaveBeenCalled();
+    store_lease(['hermes', 'codex']);
+    start_remote('codex');
+    expect(remote).toHaveBeenCalledTimes(1);
+    // The Python Mac's lease carries no driver kinds and keeps the legacy set.
+    store_lease();
+    start_remote('claude');
+    expect(remote).toHaveBeenCalledTimes(2);
+    expect(local).not.toHaveBeenCalled();
+  } finally {
+    database.close();
   }
 });

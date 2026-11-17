@@ -1,4 +1,6 @@
 /** Resolve existing native workspaces and replace only the VPS transport identity. */
+import { BUILT_IN_MANIFESTS } from '../../../drivers/built_in_manifests.ts';
+import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { platform } from 'node:os';
@@ -28,9 +30,10 @@ const workspace_resolution = { strict: true, require_directory_traversal: true }
 const removed_environment = [
   'HOME',
   'USERPROFILE',
-  'CODEX_HOME',
-  'HERMES_HOME',
-  'CLAUDE_CONFIG_DIR',
+  // A driver's home is the machine's own, never the start's.
+  ...BUILT_IN_MANIFESTS.flatMap(({ manifest: { home } }) =>
+    home ? [home.environment_name, ...(home.extra_environment_names ?? [])] : [],
+  ),
   EXECUTOR_ROOT_ENV,
   EXECUTOR_CHILD_ID_ENV,
   EXECUTOR_CAPABILITY_ENV,
@@ -164,6 +167,7 @@ export async function localize_start(
   }
   return new ResolvedConversationStart({
     ...resolved,
+    backend_key: parse_backend_instance_id(resolved.backend_key),
     workspace_folder: managed ? artifacts : workspace,
     workspace_path_policy: WorkspacePathPolicy.absolute,
     role_materials: new ConversationRoleMaterials({

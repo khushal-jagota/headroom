@@ -1,29 +1,22 @@
-/** Production alone resolves ambient transcript homes. Test defaults remain synthetic. */
+/** Production reads the transcript homes it is given. Tests read synthetic homes instead. */
 import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import type { Config } from '../../core/config.ts';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
-import { expand_path } from '../../environments/paths.ts';
 import { backend_io_is_test } from '../snapshot/environment.ts';
 import { UsageService } from './UsageService.ts';
-import type { TranscriptDirectories, UsageServiceOptions } from './contracts.ts';
+import type {
+  TranscriptDirectories,
+  TranscriptDirectory,
+  UsageServiceOptions,
+  UsageTranscriptSource,
+} from './contracts.ts';
 export interface UsageCompositionOptions extends Omit<UsageServiceOptions, 'now'> {
   readonly now?: () => Date;
   readonly transcriptDirs?: TranscriptDirectories;
+  /** Each backend instance's transcripts. Absent: no transcripts are read. */
+  readonly transcriptSources?: readonly UsageTranscriptSource[];
   readonly stateDir?: string;
-}
-/** pathlib removes empty and '.' segments, but deliberately retains '..'. */
-export function transcript_home(path: string, child: string): string {
-  const expanded = expand_path(path);
-  const root =
-    expanded.startsWith('//') && !expanded.startsWith('///')
-      ? '//'
-      : expanded.startsWith('/')
-        ? '/'
-        : '';
-  const parts = expanded.split('/').filter((part) => part !== '' && part !== '.');
-  return root + [...parts, child].join('/');
 }
 export function makeUsageService(
   config: Config,
@@ -35,30 +28,14 @@ export function makeUsageService(
   const test = config.test_mode || backend_io_is_test();
   const transcriptDirs =
     options.transcriptDirs ??
-    (test
-      ? [
-          {
-            provider: 'codex' as const,
-            dir: join(parent, 'usage-synthetic-homes', 'codex', 'sessions'),
-          },
-          {
-            provider: 'claude' as const,
-            dir: join(parent, 'usage-synthetic-homes', 'claude', 'projects'),
-          },
-        ]
-      : [
-          {
-            provider: 'codex' as const,
-            dir: transcript_home(process.env.CODEX_HOME || join(homedir(), '.codex'), 'sessions'),
-          },
-          {
-            provider: 'claude' as const,
-            dir: transcript_home(
-              process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'),
-              'projects',
-            ),
-          },
-        ]);
+    (options.transcriptSources ?? []).flatMap(({ provider, source }) =>
+      source.home_directories.map((dir): TranscriptDirectory => ({
+        provider,
+        dir: test ? join(parent, 'usage-synthetic-homes', provider, basename(dir)) : dir,
+        kind: source.kind,
+        parser_module: source.parser_module,
+      })),
+    );
   return new UsageService(stateDir, transcriptDirs, {
     ratesFetcher: options.ratesFetcher ?? (test ? () => null : undefined),
     settingsProvider: options.settingsProvider,

@@ -9,6 +9,7 @@ import {
   require_clean_publication_source,
 } from '../environments/release/publication_identity.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
+import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 import { MINIMUM_SUPPORTED_BUILD } from './policy.ts';
 
 export const REVIEW_PATH = 'server/ios_compatibility/review.json';
@@ -27,8 +28,10 @@ const fixed_paths = [
   'server/goals/cli/guidance.json',
   'server/managers/page_cli/guidance.json',
   'server/executor/wire.schema.json',
-  'src/planner/conversation/backends/hermes_acp_extension.py',
-  'src/planner/conversation/backends/hermes_model_catalog.py',
+  // The driver files the Python Mac runtime reads.
+  ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.install?.release_files ?? []).filter(
+    (path) => path.startsWith('src/planner/'),
+  ),
 ];
 
 function compare_components(left: string, right: string): number {
