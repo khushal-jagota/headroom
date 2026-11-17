@@ -104,6 +104,7 @@ export async function sweep_idle_children(host: SqliteProcessConversationSystem)
         const reservation = await state.lock.run(async () => {
           if (
             state.phase === 'idle' &&
+            state.child !== null &&
             state.held_prompts.length === 0 &&
             automatic_compaction_is_due(host, state)
           ) {
