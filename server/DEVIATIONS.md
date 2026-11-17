@@ -908,3 +908,17 @@ A reply shows in the full conversation only. It raises no unread mark, notificat
 or Manager wake. Replies from before this change are not recovered. The focused test
 in `server/tests/conversation_core_delivery.test.ts` proves the record, the order and
 the unread mark.
+
+## Permanent save errors give up
+
+Python retries every failed conversation save until it succeeds, with backoff to 30 s.
+TypeScript retries only transient errors that way: contention, I/O, a full disk,
+filesystem errors, and a statement that expired after a schema change (`SQLITE_SCHEMA`).
+A permanent error, such as a constraint failure, schema drift (`SQLITE_ERROR`), or a
+JavaScript error inside the write, gives up after three retries.
+Its conversation stops its child, ends the running turn as failed, and refuses new work
+until a restart. A prompt or steer receipt that gives up reports and records the delivery
+as uncertain. `SQLITE_CORRUPT` and `SQLITE_NOTADB` give up at once and refuse every later
+conversation save and admission in the process. The new `vps_save_failed` stall kind
+alarms at the next check. The failed state lives in memory only. The schema and the
+executor protocol do not change.

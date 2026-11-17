@@ -746,6 +746,14 @@ def run(browser, urls):
     expect(decision.locator('[data-review-revision-input]')).to_have_value("Keep this proposed revision")
     expect(decision.locator('[data-accept]')).to_be_visible()
     expect(viewer.locator("[data-conversation-pane]")).to_have_count(0)
+    # Only the composer stands in the dock: no proposal text or approver line takes the
+    # artifact's height, so the artifact keeps most of the view.
+    expect(decision.locator('[data-reviewer-heading]')).to_have_count(0)
+    expect(decision.locator('[data-edit]')).to_have_count(0)
+    for width, height in ((1400, 820), (390, 780)):
+        page.set_viewport_size({"width": width, "height": height})
+        page.wait_for_function("height => document.querySelector('[data-ticket-artifact]').getBoundingClientRect().height > height * 0.5", arg=height)
+    page.set_viewport_size({"width": 1400, "height": 820})
     if screenshots:
         page.wait_for_timeout(1500)  # evidence only: let the route's entry fade finish
         page.screenshot(path=str(Path(screenshots) / "proposal-artifact-desktop.png"))

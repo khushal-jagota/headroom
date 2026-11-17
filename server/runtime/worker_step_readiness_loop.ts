@@ -103,16 +103,13 @@ async function _admitted_start_ready_worker_step(
     return await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
       const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
       let conversation_id = ticket.conversation_id;
-      if (
+      const conversation_is_running =
         conversation_id !== null &&
         (await observe_conversation_operation(
           () => system.is_running(conversation_id!),
           options.signal,
-        ))
-      ) {
-        starts?.finish_unbound(`worker-preparation:${ticket.id}`);
-        return new WorkerStepStartResult({ started: false });
-      }
+        ));
+      if (conversation_is_running) starts?.finish_unbound(`worker-preparation:${ticket.id}`);
       if (
         database.read((sql) =>
           conversation_start.configured_ticket_execution_refusal(database, sql, ticket),
@@ -129,7 +126,7 @@ async function _admitted_start_ready_worker_step(
         )
       )
         return new WorkerStepStartResult({ started: false });
-      if (starts) {
+      if (starts && !conversation_is_running) {
         automatic_identity = `worker-preparation:${ticket.id}`;
         if (
           !starts.try_start({
@@ -170,6 +167,14 @@ async function _admitted_start_ready_worker_step(
           destination: claimed.machine_id,
         });
         automatic_identity = sender_message_id;
+      }
+      if (starts && conversation_is_running) {
+        automatic_identity = sender_message_id;
+        starts.register_queued({
+          identity: sender_message_id,
+          work_class: 'worker',
+          destination: claimed.machine_id,
+        });
       }
       function give_the_claim_back(opener_succeeded = false): void {
         database.write((sql) => {
@@ -226,7 +231,7 @@ async function _admitted_start_ready_worker_step(
             conversation_id: claimed.conversation_id,
             created_conversation_id: conversation_start.new_conversation_id(),
             sender_label: LOOP_SENDER_LABEL,
-            mode: 'steer',
+            mode: 'queue',
             sender_message_id,
             worker_type_registry: options.worker_type_registry,
             retain_definite_start_refusal: !paired_opener,
@@ -401,7 +406,6 @@ export async function tell_a_worker_it_lost_its_memory(
 export class WorkerStepReadinessLoop {
   private readonly controllers = new Map<string, AbortController>();
   private readonly in_flight = new Map<string, Promise<unknown>>();
-  private readonly in_flight_counts = new Map<string, number>();
   private readonly ticket_destinations = new Map<string, string>();
   private last_destination: string | null = null;
   private readonly actual = new Set<Promise<void>>();
@@ -503,8 +507,6 @@ export class WorkerStepReadinessLoop {
             ])?.machine_id,
         );
     if (destination === undefined) return false;
-    const starts = this.options.conversation_system.start_admission;
-    if (starts && (this.in_flight_counts.get(destination) ?? 0) >= starts.limit) return false;
     if (
       !this.options
         .connect_database()
@@ -523,7 +525,6 @@ export class WorkerStepReadinessLoop {
         : start_ready_worker_step(ticket_id, options),
     );
     this.in_flight.set(ticket_id, task);
-    this.in_flight_counts.set(destination, (this.in_flight_counts.get(destination) ?? 0) + 1);
     this.last_destination = destination;
     const actual = task
       .then(
@@ -544,9 +545,6 @@ export class WorkerStepReadinessLoop {
       .finally(() => {
         this.in_flight.delete(ticket_id);
         this.controllers.delete(ticket_id);
-        const count = this.in_flight_counts.get(destination)! - 1;
-        if (count) this.in_flight_counts.set(destination, count);
-        else this.in_flight_counts.delete(destination);
       });
     return true;
   }
