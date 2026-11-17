@@ -10,6 +10,7 @@ import {
   symlinkSync,
   rmSync,
   renameSync,
+  readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -251,6 +252,8 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     expect(lstatSync(join(checkout, '.git')).isDirectory()).toBe(true);
     expect(await command(checkout, ['remote', 'get-url', 'origin'])).toBe(remote);
     expect(await prepare_workspace(path, project, ticket, options)).toBe(checkout);
+    expect(readFileSync(join(path, 'AGENTS.md'), 'utf8')).toContain('## logs/');
+    expect(readFileSync(join(path, 'CLAUDE.md'), 'utf8')).toContain('## logs/');
     const marker = read_workspace_identity(path);
     writeFileSync(join(path, 'artifacts', 'keep.txt'), 'review evidence');
     const states = new Map([[ticket, { ticket_id: ticket, ended_at: 0, deleted: false }]]);
@@ -267,7 +270,7 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
       options,
     );
     expect(expired.removed).toContain(path);
-    expect(existsSync(path)).toBe(false);
+    expect(readdirSync(path)).toEqual(['logs']);
   },
 );
 
@@ -296,6 +299,38 @@ test.skipIf(process.platform !== 'linux')(
     } finally {
       swap.before_open = undefined;
     }
+  },
+);
+
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'the seven-day removal keeps logs in the Ticket folder, even after an interrupted detach',
+  async () => {
+    const path = folder();
+    workspace_identity(admit(path));
+    mkdirSync(join(path, 'logs'));
+    writeFileSync(join(path, 'logs', 'tools.md'), '- 17 Nov. The build failed.\n');
+    writeFileSync(join(path, 'artifact.txt'), 'removed');
+    const target = await prepare_workspace_retirement(
+      path,
+      { ticket_id: ticket, ended_at: 0, deleted: false },
+      options,
+    );
+    if ('reason' in target) throw new Error(target.reason);
+    renameSync(path, target.path);
+    expect(await retry_retired_workspaces(dirname(target.path), options)).toEqual({
+      removed: [target.path],
+      skipped: [],
+    });
+    expect(existsSync(target.path)).toBe(false);
+    expect(readFileSync(join(path, 'logs', 'tools.md'), 'utf8')).toBe(
+      '- 17 Nov. The build failed.\n',
+    );
+    expect(existsSync(join(path, 'artifact.txt'))).toBe(false);
+    const states = new Map([[ticket, { ticket_id: ticket, ended_at: 0, deleted: false }]]);
+    expect(
+      await cleanup_local_workspaces(dirname(path), states, RETENTION_SECONDS, options),
+    ).toEqual({ removed: [], skipped: [{ path, reason: 'only logs remain' }] });
+    expect(existsSync(join(path, 'logs', 'tools.md'))).toBe(true);
   },
 );
 
