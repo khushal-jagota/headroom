@@ -33,9 +33,9 @@ Every Worker follows its own Ticket's workflow guide, which it receives at kicko
 
 ## Code
 
-- `src/planner/managed_skills.py`: rows and published copies. `src/planner/skill_versions.py`: saved history.
-- `src/planner/worker_settings/`: the HTTP writers.
-- `src/planner/skills/`: the seed.
+- `server/skills/`: rows, published copies, and saved history (`data.ts`).
+- `server/worker_settings/`: the HTTP writers.
+- `src/planner/skills/`: the seed, read by `server/skills/data.ts`.
 - `web/src/components/RoleSkillEditor.svelte`: the editor.
 
 _Last verified: 2026-11-09._

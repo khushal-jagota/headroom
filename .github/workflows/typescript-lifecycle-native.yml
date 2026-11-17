@@ -159,7 +159,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Prove existing registry and archive sequences on the Darwin ABI
+      - name: Prove lifecycle and archive sequences on the Darwin ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -230,7 +230,7 @@ jobs:
             fs.writeFileSync(process.env.NATIVE_EVIDENCE + "/platform.json", JSON.stringify({
               platform: process.platform, architecture: process.arch, node: process.version,
               executable: process.execPath, os_release: os.release(),
-              boundary: "Existing registry/archive sequences, Worker identity, home APP custody, preview/metrics ABI, and first-home installation against owned synthetic LaunchAgents. No browser, provider, executor or live installation.",
+              boundary: "Archive sequences, Worker identity, home APP custody, preview/metrics ABI, and first-home installation against owned synthetic LaunchAgents. No browser, provider, executor or live installation.",
               hosted_cost: "OPEN until this job completes; each existing case and job elapsed time are preserved separately."
             }, null, 2) + "\n");
             if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -248,12 +248,6 @@ jobs:
             previews/darwin.native.test.ts skills/account.test.ts \
             ticket_workspaces/filesystem.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
-          # No web build: this registry fixture uses synthetic app roots and no UI assets.
-          python -I -S -B scripts/dev_launcher.py pytest \
-            tests/compare/direct/test_unit21_registry.py::test_unit21_registry_fixture_and_lifecycle_parity \
-            tests/compare/direct/test_unit21_release.py::test_unit21_release_identity_archive_and_frontier \
-            --compare-report-dir "$NATIVE_EVIDENCE/comparison" \
-            --basetemp "$TMPDIR/pytest" --junitxml "$NATIVE_EVIDENCE/results.xml"
           # The first native run measured 268.48s build + 7.59s inspection. Run on every job.
           echo 'Mac producer compatibility fixture: unchanged native producer and production inspector'
           node --input-type=module <<'MAC_COMPATIBILITY'

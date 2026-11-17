@@ -57,7 +57,7 @@ Only the original configured executor can request bootstrap credentials, with no
 
 ## Stop and recovery ownership
 
-An ordinary owner kill waits without a deadline for exact Mac stop proof, as Python does; only that conversation waits. A successful stop result alone does not prove termination. The matching accepted `child_stopped` item or proven process replacement closes exact custody. Rebind waits for that retirement outside the conversation lock before a fresh child takes the same reserved prompt. A safe initial-delivery withdrawal can finish the kill before remote retirement completes.
+An ordinary owner kill waits without a deadline for exact Mac stop proof; only that conversation waits. A successful stop result alone does not prove termination. The matching accepted `child_stopped` item or proven process replacement closes exact custody. Rebind waits for that retirement outside the conversation lock before a fresh child takes the same reserved prompt. A safe initial-delivery withdrawal can finish the kill before remote retirement completes.
 
 Registry `recheck_cleanup(source, ticket_id)` resolves the historical exact assignment and Ticket principal. The mailbox sends inspection to the current incarnation, with the retained source in its arguments. Closed source assignments remain inspectable and grant no start or stop authority. A successful inspection also waits for a recent lease of the current incarnation with no truncated list, queued items for that conversation, or cleanup uncertainty. One deadline covers inspection and drain. Registration of the core cleanup callback awaits P3's custody interface merge.
 
@@ -73,7 +73,7 @@ The launch path preserves ready-marker promotion, failed-trial rollback, and han
 
 ## Shared wire
 
-Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema now describes Python wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
+Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema describes wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
 
 Both runtime identities advertise protocol 26 through `execution_configuration.ts`. Machine credentials, supervision evidence, and workspace messages use that same contract. The presence owner retains an accepted lease when an optional update offer exceeds its response budget.
 
@@ -122,9 +122,9 @@ Hard-link holds defer overwritten-inode cleanup until after the publication writ
 A same-user destination swap after the check inside the writer and before rename is undetected. It can release large data on the event loop.
 Hard crashes can leave `.hold-*`, `.incoming-*`, and `.tmp-*` files. No startup sweeper removes them.
 
-InputFile retains its checked descriptor through a single-consumer stream. It starts at offset zero, emits exactly the hashed count, refuses premature EOF, and never emits an appended suffix. Yielded chunks remain stable across later reads. Python instead hashes a descriptor, returns a path, and later reopens that path in its response. The retained-descriptor contract deliberately closes that substitution race. The input response consumes held chunks and closes the capability on completion or disconnect.
+InputFile retains its checked descriptor through a single-consumer stream. It starts at offset zero, emits exactly the hashed count, refuses premature EOF, and never emits an appended suffix. Yielded chunks remain stable across later reads. Retaining the descriptor closes a path substitution race between hashing and the response. The input response consumes held chunks and closes the capability on completion or disconnect.
 
-Input bytes stay below the standard message store beside the logical database-path parent. The existing message-file lookup admits the ID and resolves contained symlinks. Its result must stay inside the independently anchored conversation root before a NOFOLLOW descriptor walk opens it. A lookup-root swap therefore cannot redefine byte authority. Contained same-conversation leaf links keep Python behavior. Escapes, loops and later symlink substitutions return the existing not-found answer.
+Input bytes stay below the standard message store beside the logical database-path parent. The existing message-file lookup admits the ID and resolves contained symlinks. Its result must stay inside the independently anchored conversation root before a NOFOLLOW descriptor walk opens it. A lookup-root swap therefore cannot redefine byte authority. Contained same-conversation leaf links still resolve. Escapes, loops and later symlink substitutions return the existing not-found answer.
 
 The transfer owner seals new intake at stop and joins admitted transfers through the shared grace period. The supplied request/media signal controls physical stream cancellation at the existing cutoff. Stop adds no grace timer and does not close an unconsumed input immediately.
 
@@ -141,9 +141,9 @@ The earlier staging upload and item-bound publication remain only for an executo
 
 ## VPS command mailbox
 
-`vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at Python's corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
+`vps_mailbox.ts::SqliteCommandMailbox` takes the application's Database and an optional millisecond clock. The existing synchronous write door owns command admission, run custody and result persistence. Polls capture raw rows, then decode commands and prepare settlement text outside the writer. The final writer checks every selected row against that preparation before any effect, reads current expiry facts and applies changes atomically. A changed selection retries preparation. Stored decoding errors surface only at the corresponding row visit and roll the writer back. In-memory waits observe committed rows. A canceled put observer leaves the admitted commit and its wake intact.
 
-Accepted poll and large-replacement latency measurements remain in DEVIATIONS. Gate 3 must compare them with the real table and backlog sizes on a copy of live data before further performance machinery is considered.
+Accepted poll and large-replacement latency measurements are in [DEVIATIONS.md](../DEVIATIONS.md). Compare them with the real table and backlog sizes on a copy of live data before adding performance machinery.
 
 The mailbox uses the core's shared automatic-start admission owner. It restores the exact turn binding before dispatch admission and holds a refused start or prompt. Stop and Cancel can withdraw that waiting turn across poll pages. Unrelated controls can move a waiting conversation suffix behind them, while a delivered row prevents that move. Withdrawn turns release their in-memory reservations after commit. Held polls cap their admission wait at one second, so a released slot needs no new mailbox write.
 
@@ -157,7 +157,7 @@ Callers establish authority before they enter this internal API. The transport a
 
 The command route aborts its poll when the response connection closes. Each held poll owns a removable wake registration. Timeout, abort, listener failure and shutdown release it. Abort reasons use a shared typed cancellation or an AbortError with the original reason as its cause. Waits require finite durations within Node's timer range. Finite negative durations return immediately, and a null result-wait timeout remains unbounded.
 
-### Known Python hazards
+### Known hazards
 
 These behaviors remain for the named follow-up owners.
 

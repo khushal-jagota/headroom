@@ -77,5 +77,5 @@ const fixtures=cases.map(c=>{
  return [lens,{rows:visible,items:conversationThreadItemsForLens(rows,visible,lens),rest:restLineFrom(rows,'owner',taskProgressFrom(rows),{visibleRows:visible,lens},0)}];
  }))};
 });
-writeFileSync(new URL('../tests/fixtures/conversation_views.json', import.meta.url),JSON.stringify(fixtures,null,2)+'\n');
+writeFileSync(new URL('../server/conversation/views/conversation_views.json', import.meta.url),JSON.stringify(fixtures,null,2)+'\n');
 console.log(JSON.stringify(fixtures.map(f=>({name:f.name,focus:f.expected.focus.items.length,full:f.expected.full.items.length}))));

@@ -28,4 +28,4 @@ Review membership groups proposals and unread conversations for each Ticket befo
 
 The server fences snapshots, streams, and response sends with the existing producer authority. Scoped delivery shares admission, retention, and source availability with the navigation runtime. Migration tests use synthetic databases or consistent read-only copies. They never open the live database writable.
 
-The browser uses server shapes directly. `identity.ts` supplies revision comparison, authority identity, and record keys without a second schema validator. Generate shared types with `scripts/generate_navigation_browser_contracts.py`. Run the scoped owner and consumer tests in `web/tests/navigation-views.test.ts` and `web/tests/navigation-application.test.ts`.
+The browser uses server shapes directly. `identity.ts` supplies revision comparison, authority identity, and record keys without a second schema validator. `contracts.ts` is maintained by hand and mirrors the server navigation contracts. Run the scoped owner and consumer tests in `web/tests/navigation-views.test.ts` and `web/tests/navigation-application.test.ts`.
