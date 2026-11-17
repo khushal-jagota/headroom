@@ -26,6 +26,7 @@ export function validate_launch_configuration(
 export function manager_reuse_overrides(
   sql: ReadSql,
   manager_id: string,
+  conversation_id: string,
   values: ConversationStartValues | null,
   overrides: ConversationStartOverrides,
   steer_current_turn: boolean,
@@ -33,11 +34,21 @@ export function manager_reuse_overrides(
   const item = read_manager(sql, manager_id).item;
   if (!item.launch_configuration_is_explicit || values === null || steer_current_turn)
     return overrides;
+  const current = sql.get<{
+    backend_key: string;
+    model: string | null;
+    reasoning_effort: string | null;
+  }>('SELECT backend_key,model,reasoning_effort FROM conversations WHERE conversation_id=?', [
+    conversation_id,
+  ]);
+  if (current === undefined) return overrides;
   return {
-    backend_key: values.backend_key,
-    model: values.model,
-    reasoning_effort: values.reasoning_effort,
-    reasoning_effort_is_set: true,
+    ...overrides,
+    ...(current.backend_key === values.backend_key ? {} : { backend_key: values.backend_key }),
+    ...(current.model === values.model ? {} : { model: values.model }),
+    ...(current.reasoning_effort === values.reasoning_effort
+      ? {}
+      : { reasoning_effort: values.reasoning_effort, reasoning_effort_is_set: true }),
   };
 }
 
