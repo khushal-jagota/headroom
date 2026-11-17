@@ -67,7 +67,8 @@ export function install_slow_task_logging(app: FastifyInstance): void {
   });
   const delay = monitorEventLoopDelay({ resolution: 10 });
   delay.enable();
-  const timer = setInterval(() => {
+  let timer: ReturnType<typeof setTimeout>;
+  const summarize = (): void => {
     const to_ms = (nanoseconds: number) => Math.round(nanoseconds / 1e6);
     journal({
       kind: 'event_loop_minute',
@@ -76,10 +77,13 @@ export function install_slow_task_logging(app: FastifyInstance): void {
       max_ms: to_ms(delay.max),
     });
     delay.reset();
-  }, SUMMARY_INTERVAL_MS);
+    timer = setTimeout(summarize, SUMMARY_INTERVAL_MS);
+    timer.unref();
+  };
+  timer = setTimeout(summarize, SUMMARY_INTERVAL_MS);
   timer.unref();
   app.addHook('onClose', async () => {
-    clearInterval(timer);
+    clearTimeout(timer);
     delay.disable();
   });
 }
