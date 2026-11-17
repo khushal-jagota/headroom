@@ -21,8 +21,9 @@ export const KILLED_FROM = 'a'.repeat(40),
 
 function stopped(root: string, point: string): never {
   writeFileSync(join(root, 'stopped'), point);
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
-  throw new Error('unreachable');
+  // Bounded, so an orphan of a dead test run still ends.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+  throw new Error(`nobody killed the installer at ${point}`);
 }
 /** Each point's chain, the last step's revision its head. */
 export function killed_install_steps(point: string, root = ''): readonly SchemaStep[] {

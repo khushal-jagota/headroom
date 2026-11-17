@@ -3,7 +3,7 @@
  * The database's schema revision decides, because the attempt file cannot say whether
  * the last step committed.
  */
-import { readFileSync, renameSync, statSync } from 'node:fs';
+import { renameSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { application_schema_seed, read_schema_revisions } from '../../core/database/admission.ts';
 import { PYTHON_BASELINE_SEED } from '../../core/database/schema_steps/baseline.ts';
@@ -11,7 +11,7 @@ import { SCHEMA_STEPS, type SchemaStep } from '../../core/database/schema_steps/
 import { restore_database_snapshot } from '../backup/restore.ts';
 import { resolved_path } from '../paths.ts';
 import { release_installer_barrier, with_installer_lock } from '../update_barrier.ts';
-import { attempt_path, missing } from './attempts.ts';
+import { missing } from './attempts.ts';
 import { is_object } from './codec.ts';
 import { PREVIOUS_APP_PREFIX, STAGED_APP_PREFIX } from './configuration.ts';
 import { assert_installer_path } from './installer/configuration.ts';
@@ -60,15 +60,15 @@ interface SwappedAttempt {
 }
 /** An attempt still installing this app, with the swap recorded and no terminal state. */
 function swapped_attempt(data_directory: string, app_sha: string): SwappedAttempt | null {
-  let value: unknown;
+  let value: Record<string, unknown>;
   try {
-    value = JSON.parse(readFileSync(attempt_path(data_directory), 'utf8'));
+    // The installer's own strict reader. Reading needs no attempt id.
+    value = new InstallationRecord({ data_directory, attempt_id: '' }).read();
   } catch (error) {
     if (missing(error)) return null;
     throw error;
   }
   if (
-    !is_object(value) ||
     value.state !== 'installing' ||
     value.to_sha !== app_sha ||
     !is_object(value.steps) ||
@@ -85,9 +85,6 @@ function swapped_attempt(data_directory: string, app_sha: string): SwappedAttemp
     backup: value.backup ?? null,
   };
 }
-function directory(path: string): boolean {
-  return statSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
-}
 
 export interface InterruptedInstallInputs {
   readonly database: string;
@@ -99,7 +96,8 @@ export interface InterruptedInstallInputs {
 /**
  * Runs in the new app before admission, the one place every start of it passes. Holds the
  * installer lock, so it never races a live installer. A rollback repeats safely: the
- * restore comes first, then the two renames, then the terminal record.
+ * restore comes first, then the two renames, then the terminal record. Keeping the new
+ * app settles the attempt as done, as the deadline would.
  */
 export async function recover_interrupted_install(
   inputs: InterruptedInstallInputs,
@@ -124,15 +122,27 @@ export async function recover_interrupted_install(
     }
     const decision = interrupted_install_decision(revisions, inputs.chain ?? APPLICATION_CHAIN);
     if (decision === 'leave') return 'none';
-    if (decision === 'keep_new_app') return 'kept_new_app';
+    const record = new InstallationRecord({ data_directory, attempt_id: attempt.attempt_id });
+    if (decision === 'keep_new_app') {
+      // As settle() would at the deadline: this version is the one installed.
+      record.record(
+        'done',
+        'done',
+        'The installer stopped after the new version was in place; Panels kept it.',
+      );
+      release_installer_barrier(data_directory, attempt.attempt_id);
+      return 'kept_new_app';
+    }
     const previous = join(current_root, PREVIOUS_APP_PREFIX + attempt.from_sha),
       staged = join(current_root, STAGED_APP_PREFIX + attempt.to_sha);
     for (const path of [app, previous, staged]) assert_installer_path(path);
-    if (!directory(previous) || statSync(staged, { throwIfNoEntry: false }) !== undefined)
+    if (
+      statSync(previous, { throwIfNoEntry: false })?.isDirectory() !== true ||
+      statSync(staged, { throwIfNoEntry: false }) !== undefined
+    )
       throw new Error(
         `An interrupted update left the database behind this version, but ${previous} is missing or ${staged} is in the way`,
       );
-    const record = new InstallationRecord({ data_directory, attempt_id: attempt.attempt_id });
     if (attempt.backup !== null) {
       await restore_database_snapshot(attempt.backup, database, { live_stopped: true });
       record.record('rollback_database_restored');

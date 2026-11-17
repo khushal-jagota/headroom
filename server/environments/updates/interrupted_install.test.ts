@@ -124,7 +124,7 @@ it('a kill before the steps commit: the next start puts back the previous app an
       rmSync(killed.root, { recursive: true, force: true });
     }
   }
-});
+}, 30_000);
 
 it('a kill after the steps commit keeps the new app on the stepped database', async () => {
   // The attempt file still reads as mid-install. Only the revision shows the step committed.
@@ -135,11 +135,12 @@ it('a kill after the steps commit keeps the new app on the stepped database', as
     assert.equal(installed_sha(killed.root), TO);
     require_schema_revision(killed.database, killed.head);
     assert(existsSync(join(killed.root, '.app-previous-' + FROM)));
-    assert.equal(record(killed.root).state, 'installing');
+    assert.equal(record(killed.root).state, 'done');
+    assert(!existsSync(join(killed.root, 'data/update-barrier.json')));
   } finally {
     rmSync(killed.root, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 it('a kill before the swap changes nothing', async () => {
   // Today's behaviour: the previous app stays in place on its untouched database.
@@ -157,4 +158,4 @@ it('a kill before the swap changes nothing', async () => {
   } finally {
     rmSync(killed.root, { recursive: true, force: true });
   }
-});
+}, 30_000);

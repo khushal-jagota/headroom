@@ -160,7 +160,8 @@ it('a failing step restores the backup before the previous app starts', async ()
       'stop',
       'schema_steps',
       'stop',
-      ['restore', '/scripted/snapshot', FROM],
+      // Still the new app: a kill before the renames leaves it for its startup recovery.
+      ['restore', '/scripted/snapshot', TO],
       'start',
       ['healthy', FROM],
     ]);
