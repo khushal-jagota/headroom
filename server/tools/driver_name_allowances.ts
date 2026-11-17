@@ -28,31 +28,6 @@ export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [
     until: 'Permanent',
   },
   {
-    path: 'server/executor/machine_drivers.ts',
-    driver_kind: 'claude',
-    reason: 'The fallback driver set for a machine that advertises no drivers (the Python Mac).',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/machine_drivers.ts',
-    driver_kind: 'codex',
-    reason: 'The fallback driver set for a machine that advertises no drivers (the Python Mac).',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/machine_drivers.ts',
-    driver_kind: 'hermes',
-    reason: 'The fallback driver set for a machine that advertises no drivers (the Python Mac).',
-    until: 'Executor',
-  },
-  {
-    path: 'server/executor/vps_remote_child.ts',
-    driver_kind: 'claude',
-    reason:
-      'The protocol-26 Python Mac starts Claude with a fixed model and effort (claude_agent_sdk.py:1578-1588); the VPS refuses before mailbox placement.',
-    until: 'Executor',
-  },
-  {
     path: 'server/tools/smoke/codex_peer.ts',
     driver_kind: 'codex',
     reason: 'The smoke drives a scripted Codex app-server peer.',

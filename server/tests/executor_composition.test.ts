@@ -230,6 +230,32 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     expect(named.updates).toBe(mac_updates.for_machine(named_machine));
     expect(named.updates).not.toBe(endpoint.updates);
     expect(bound.http.machine_catalog(named_machine)).toBe(named.catalog);
+    // The Mac's last lease, from before this home started, lists the drivers it runs.
+    context.database.write((tx) =>
+      accept_lease_in_transaction(
+        tx,
+        {
+          identity: {
+            protocol_version: PROTOCOL_VERSION,
+            application_revision: 'synthetic',
+            spool_format_version: 5,
+            executor_incarnation: incarnation,
+          },
+          process_id: 4242,
+          mac_wall_clock_ms: 0,
+          queue_depth: 0,
+          oldest_item_age_ms: null,
+          waiting_conversations: [],
+          waiting_conversations_truncated: false,
+          working_turns: [],
+          admission_stopped: false,
+          cleanup_uncertainties: [],
+          driver_kinds: ['hermes', 'codex', 'claude'],
+        },
+        0,
+        ORIGINAL_MAC_MACHINE_ID,
+      ),
+    );
     const away_ticket = create(context.database, { locale: 'macos' });
     const away = new ResolvedConversationStart({
       ...start,
@@ -589,10 +615,10 @@ test("a remote Ticket start follows its machine's advertised driver kinds, or th
     store_lease(['hermes', 'codex']);
     start_remote('codex');
     expect(remote).toHaveBeenCalledTimes(1);
-    // The Python Mac's lease carries no driver kinds and keeps the legacy set.
+    // A lease that lists no driver kinds runs no backend.
     store_lease();
-    start_remote('claude');
-    expect(remote).toHaveBeenCalledTimes(2);
+    expect(() => start_remote('claude')).toThrow(BackendSpawnFailed);
+    expect(remote).toHaveBeenCalledTimes(1);
     expect(local).not.toHaveBeenCalled();
   } finally {
     database.close();

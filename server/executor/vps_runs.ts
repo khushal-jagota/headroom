@@ -1,4 +1,3 @@
-import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { canonical_principal } from '../agent_identity/data.ts';
 /** Retained Mac children and restart recovery, with durable assignments and owned waits. */
 import { same_reference } from './child_reference.ts';
@@ -13,7 +12,7 @@ import type {
   RetainedBackendChildFactory,
   RetainedBackendRun,
 } from '../conversation/backends/contracts.ts';
-import { ConversationRoleMaterials, ResolvedConversationStart } from '../conversation/contracts.ts';
+import type { ResolvedConversationStart } from '../conversation/contracts.ts';
 import type { UndeliveredTurnPrompt } from '../conversation/record/contracts.ts';
 import { close_mac_interruption_of_turn } from '../conversation/deploy_interruptions/data.ts';
 import { admit_remote_integer, admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
@@ -61,20 +60,6 @@ const MAILBOX_SETTLEMENTS = new Set<string>([
   CommandSettlementReason.steer_delivery_limit_passed,
   CommandSettlementReason.delivery_withdrawn,
 ]);
-function native_start(
-  value: WireValue<'ResolvedConversationStart'> | null,
-): ResolvedConversationStart | null {
-  return value === null
-    ? null
-    : new ResolvedConversationStart({
-        ...value,
-        backend_key: parse_backend_instance_id(value.backend_key),
-        role_materials:
-          value.role_materials === null
-            ? null
-            : new ConversationRoleMaterials(value.role_materials),
-      });
-}
 function undelivered(
   turn: RetainedBackendRun['turn'],
   prompt: WireValue<'WritePrompt'>,
@@ -185,7 +170,6 @@ export class MacRuns {
     if (this.store.child_assignment(reference) === null) return null;
     const child = this.make_child(reference, {
       event_sink: options.event_sink ?? null,
-      started_on: native_start(this.mailbox.start_of(reference)),
       pending_prompt:
         this.store.retained_runs().find((run) => same_reference(run.reference, reference))
           ?.pending_prompt ?? null,
