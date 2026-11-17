@@ -583,8 +583,8 @@ test('the readiness test route refuses a missing test conversation system', asyn
 });
 
 // Gap: the in-memory instrument writes no durable compaction events. Seed only the
-// record facts that the scanner reads, then prove its real queue boundary twice.
-test('an unanswered compaction sends one queued notice and an uncertain notice prevents another automatic attempt', async () => {
+// record facts that the scanner reads, then prove delivery into the running turn.
+test('an unanswered compaction steers one notice and an uncertain notice prevents another automatic attempt', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
   await start_ready_worker_step(ticket.id, options);
@@ -611,21 +611,32 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
   );
   expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([ticket.id]);
   await loop.drain();
-  expect(await system.held_prompts(id)).toHaveLength(1);
-  expect((await system.held_prompts(id))[0]!.content).toEqual(
-    expect.arrayContaining([
+  expect(await system.held_prompts(id)).toHaveLength(0);
+  expect(system.backend_prompt_writes(id)).toHaveLength(2);
+  expect(system.backend_prompt_writes(id)[1]).toMatchObject({
+    mode: 'steer',
+    content: expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('Your context was compacted') }),
     ]),
-  );
-  loop.tell_every_worker_that_lost_its_memory();
-  await loop.drain();
-  expect(await system.held_prompts(id)).toHaveLength(1);
-  system.complete_running_turn(id);
-  for (const held of await system.held_prompts(id))
-    await system.discard_held_prompt(id, held.held_prompt_id);
+  });
+  // The instrument does not persist delivered events, so seed its receipt for the scanner.
   db.write((tx) =>
     tx.run(
       'INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES (?,3,?,?,?)',
+      [
+        id,
+        'prompt',
+        JSON.stringify({ sender_message_id: 'worker_step_memory_notice_delivered' }),
+        now,
+      ],
+    ),
+  );
+  expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([]);
+  expect(system.backend_prompt_writes(id)).toHaveLength(2);
+  system.complete_running_turn(id);
+  db.write((tx) =>
+    tx.run(
+      'INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES (?,4,?,?,?)',
       [
         id,
         'prompt_delivery_uncertain',

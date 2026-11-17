@@ -36,8 +36,8 @@ Claude and Codex run from owner-maintained CLI installations outside the app. Se
 
 A busy agent is not a refusal. The sender picks how a busy agent meets the message:
 
-- **Steer**, the default when a person sends, injects text into the running turn when the backend allows it.
-- **Queue** holds the message until the agent is free. Worker steps, wakes, and other automation use Queue so they never steer into an unrelated turn.
+- **Steer**, the default for messages from people and Panels system prompts, injects text into the running turn when the backend allows it.
+- **Queue** holds the message until the agent is free.
 - **Send now** ends the running turn and runs this message ahead of anything held.
 
 Messages that cannot join a running turn, such as attachments or a model change, wait in the queue with a visible reason. **Stop** ends the running turn.
