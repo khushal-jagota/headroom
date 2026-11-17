@@ -1,0 +1,6 @@
+{
+  "contract_sha256": "e5b68a0ceeab18d73777ad8831cede81bf2f88054c2456e8ba54cc612e8bfc59",
+  "oldest_supported_build": 1,
+  "decision": "compatible",
+  "evidence": "Decision by Khushal on 17 November 2026, committed by the Chief agent at his request. Direct comparison suite passed on this revision: Python and TypeScript return the same HTTP responses. Native iOS builds pass. No signed-device test against the TypeScript server yet."
+}
