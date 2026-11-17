@@ -1,4 +1,4 @@
-/** A human review must bind the accepted native-facing inventory and build floor. */
+/** A committed review must bind the accepted native-facing inventory and build floor. */
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -76,7 +76,7 @@ export async function contract_digest(root: string): Promise<string> {
   return digest.digest('hex');
 }
 
-/** Read only. Missing inputs or a missing human record cannot authorize publication. */
+/** Read only. Missing inputs or a missing review record cannot authorize publication. */
 export async function check(root: string, review_path = join(root, REVIEW_PATH)): Promise<void> {
   const review = JSON.parse(
     new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(review_path)),
@@ -105,7 +105,7 @@ export interface CommittedIosReview {
   readonly reviewer: { readonly name: string; readonly email: string };
 }
 
-/** Publication reads only the committed human review, never a job-written verdict. */
+/** Publication reads only the committed review, never a verdict that the publication job writes. */
 export async function check_head_review(
   root: string,
   expected_sha: string,
