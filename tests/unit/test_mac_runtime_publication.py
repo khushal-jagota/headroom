@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from scripts import build_mac_runtime
 from scripts.build_mac_runtime import digest_file, runtime_requirements, write_panels_launcher
 from scripts.update_publication import validate_mac_publication
@@ -197,52 +196,6 @@ def test_library_audit_rejects_a_foreign_library_or_newer_deployment_target(
     monkeypatch.setattr(build_mac_runtime, "run", fake_run)
     with pytest.raises(ValueError, match=reason):
         build_mac_runtime.audit_native_dependencies(tmp_path, {})
-
-
-def test_workflow_requires_same_run_native_artifact_before_publication() -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).parents[2] / ".github/workflows/deploy.yml").read_text()
-    )
-    operation = workflow["on"]["workflow_dispatch"]["inputs"]["operation"]
-    assert operation["default"] == "publish"
-    assert operation["options"] == ["publish", "adopt", "mac-build"]
-    jobs = workflow["jobs"]
-    # The isolated build runs even if publication preparation is skipped.
-    assert jobs["prepare"]["if"] == (
-        "${{ inputs.operation != 'mac-build' "
-        "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
-    )
-    assert jobs["suites"]["needs"] == "prepare"
-    assert "if" not in jobs["suites"]
-    assert jobs["publish"]["if"] == (
-        "${{ always() && inputs.operation != 'mac-build' "
-        "&& (inputs.operation != 'adopt' || inputs.rehearsal) }}"
-    )
-    native = jobs["mac-runtime"]
-    assert "needs" not in native
-    assert native["if"] == "${{ inputs.operation != 'adopt' || inputs.rehearsal }}"
-    # This is the documented arm64 label, not the unsupported macos-15-arm64 alias.
-    assert native["runs-on"] == "macos-15"
-    commands = "\n".join(step.get("run", "") for step in native["steps"])
-    assert 'platform.machine() == "arm64"' in commands
-    assert '--revision "$PANELS_REQUESTED_SHA" --run-id "$GITHUB_RUN_ID"' in commands
-    deploy = workflow["jobs"]["publish"]
-    assert "mac-runtime" in deploy["needs"]
-    download = next(
-        step
-        for step in deploy["steps"]
-        if step.get("name") == "Download checked native Mac publication"
-    )
-    assert download["with"]["artifact-ids"] == "${{ needs.mac-runtime.outputs.artifact_id }}"
-    receipt = next(
-        step
-        for step in deploy["steps"]
-        if step.get("name") == "Write immutable publication receipt"
-    )
-    assert (
-        receipt["env"]["PANELS_MAC_ARTIFACT_ID"] == "${{ needs.mac-runtime.outputs.artifact_id }}"
-    )
-    assert receipt["env"]["PANELS_MAC_BUILD_RESULT"] == "${{ needs.mac-runtime.result }}"
 
 
 def test_private_icu_environment_replaces_host_inputs_and_requests_private_install_names(

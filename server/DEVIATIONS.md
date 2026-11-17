@@ -233,9 +233,7 @@ The boundary exceeds realistic worker/page counts and memory/database budgets.
 Explicit refusal keeps operational limits exact without spreading BigInt configuration through number-based runtime APIs.
 Existing positive-value and consistency checks still apply.
 
-The existing [configuration proof](../tests/compare/direct/test_unit21_metrics_config.py),
-`test_unit21_metrics_configuration_and_sidecar_paths`, asserts the TS refusal as a gating result.
-It records Python's different answer as informational evidence. The ten keys share the same admission predicate.
+The ten keys share the same admission predicate.
 Unit 21 Part 2, including the metrics source, is merged into the migration branch.
 
 ## JavaScript source execution limits
@@ -388,9 +386,6 @@ without the credential value. Requests without credential headers retain Python'
 At these three call sites, TypeScript limits the wait for headers and each body read without a total deadline.
 It does not time connect, write, and pool phases separately as HTTPX does.
 Node fetch sets Host from the URL and ignores a caller-supplied Host, which Python HTTPX can retain.
-
-`tests/compare/direct/test_cross_area_http.py` pins same-origin delivery, cross-origin refusal,
-and Python's contrasting header behavior with synthetic loopback servers.
 
 ## Conversation history locale data
 
@@ -755,8 +750,6 @@ The four archive refusals return `UpdateConflict` with `The Mac runtime archive 
 Other accepted limits and framing rules have source review here, without a measured boundary claim.
 Both implementations refuse malformed JSON, with different parser error types and text. This adds no accepted malformed input or claim of equal error bytes.
 
-The direct proof is `tests/compare/direct/test_unit21_mac_updates.py::test_unit21_mac_updates_retained_archive_and_leased_report_sequence`.
-Its `unit21-mac-updates.json` report retains both outcomes and marks the accepted observations explicitly.
 Acceptance requires that the unchanged real Mac producer passes the hosted gate in `.github/workflows/typescript-lifecycle-native.yml`.
 The [first real producer proof](https://github.com/khushal-jagota/headroom/actions/runs/43466927540/job/132028428389) passed on the PR merge tree for head `37333bd6e`.
 Its 597,087,278-byte archive passed unchanged, with both direct children closed. Build plus inspection took 276.07 seconds.
@@ -771,14 +764,6 @@ Python accepts configured paths at update admission but its copied installer har
 TypeScript passes the admitted database to capture and rollback restore. It uses the
 admitted data directory for the attempt record and its lock. Neither path derives from
 the application root.
-
-`tests/compare/direct/test_unit21_installer.py::test_installer_algorithm_and_configured_paths`
-compares four canonical-path scenarios against fresh Python. Its configured-path lifetime
-proves actual capture/restore command arguments, record and lock placement, no canonical
-data directory, and cancellation only after the owned restore witness closes.
-The configured helpers are disclosed Node witnesses, not a real installer rehearsal.
-`test_unit21_interruption_capture.py` separately exercises the actual stopped capture and
-restore entries. Hosted service, copy, health and rollback proofs remain later gates.
 
 ## Mac Unix CLI trust and transport failures — Manager directed
 
@@ -803,8 +788,6 @@ This decision does not change HTTP, executor wire, or database numeric boundarie
 
 The foundation refresh adopts machine UUID rows and the current schema. It does not claim full staging parity.
 Executor routing and credential consumption remain with P2. Machine routes and credential authority follow in foundation PR B.
-The retained comparisons in [the expected-open list](../tests/compare/README.md#expected-open-staging-ports)
-name the packages that replace retired Worker launch and scratch fixtures. These cases do not count as passing parity.
 
 ## Ticket ownership temporary files
 

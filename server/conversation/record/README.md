@@ -10,7 +10,7 @@ The shared admission engine borrows the store's read/write capability and owns n
 connection. Positive acceptance or exact source retirement settles those bindings.
 
 Every synchronous method makes one transaction attempt. The core wraps writes in
-`settle_recording` to retain Python's contention and save retry policy:
+`settle_recording` to apply the contention and save retry policy:
 
 ```ts
 const written = await store.settle_recording(conversation_id, () =>
@@ -65,20 +65,11 @@ TEMP tables on the one writer connection. The projector replays at most 500 even
 per write-door batch and yields between batches. A final transaction catches up
 and installs all five tables. TEMP names do not shadow canonical projection tables.
 
-This differs from Python's private computation on a second connection: each TS
-batch briefly holds the write lock. The single-writer rule remains intact, and
+Each batch briefly holds the write lock. The single-writer rule remains intact, and
 ordinary source writes keep the same projector.
 
-To regenerate the fixture oracle after Python view code changes, run from the
-repository root with this checkout's installed Python dependencies:
-
-```sh
-.venv/bin/python tests/compare/tools/generate_fixture_oracle.py
-```
-
-The comparison workflow also runs the generator with `--check` on both Node jobs.
-It fails if current Python produces different bytes. The oracle is a local fixture proof. The populated six-route comparison in CI
-checks current Python behavior after staging merges.
+`server/conversation/views/fixture_oracle.json` is a hand-kept fixture oracle.
+Update it in the same change as any intended change to view output.
 
 Without a deployment participant, `reconcile_in_transaction` rotates
 `conversation_runtime_epoch` before it reconciles the facts. When Unit 19 supplies

@@ -1,10 +1,9 @@
 /**
  * The wake-up that settles an unanswered send.
  *
- * `live-conversation-unanswered-send-browser.test.mjs` reads what the screen says about a
- * send nobody answered, but it never moves the clock. These drive the clock, and they are
- * the only cover for the scheduling itself: if the wake-up never fires, the row sits at the
- * bottom of the conversation forever, which is the bug this deadline exists to kill.
+ * These tests drive the clock. They are the only cover for the scheduling itself: if the
+ * wake-up never fires, the row sits at the bottom of the conversation forever, which is the
+ * bug this deadline exists to kill.
  *
  * The rest of the outgoing unit tests were cut. They assert return values in a node
  * environment with no DOM. These three are failure behaviour at a seam, so they stay.

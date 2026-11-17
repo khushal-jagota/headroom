@@ -1,11 +1,9 @@
 # Stop authorization for the TS supervisor
 
 The Manager accepted the pure TS stop protocol for managed Linux services on November 12, 2026.
-This satisfies the design acceptance condition. The implementation and its proofs remain separate work.
-The Manager requested this comparison after approval of the four-part implementation split.
-No supervisor implementation accompanies this document.
+The implementation lives in `server/lifecycle/`.
 
-## What the existing check protects
+## What the Python server's check protects
 
 An agent can accidentally match the live server with a broad process-stop command.
 On Linux, Python ignores SIGINT and SIGTERM unless the kernel identifies the verified systemd manager as sender.
@@ -37,7 +35,7 @@ I did not inspect live logs. The number of subsequent refusals is unknown.
 
 A Node addon or helper after signal delivery cannot recover the lost sender identity.
 The native option requires the wrapper to receive signals before Node.
-That extra platform surface conflicts with the migration's simpler Electron and Mac packaging goal.
+That extra platform surface conflicts with the simpler Electron and Mac packaging goal.
 
 ## Accepted design: intent-gated managed stop
 
@@ -77,7 +75,6 @@ A normal `systemctl stop` runs that command before systemd's remaining terminati
 The command must finish only after the supervisor exits.
 APP uses one 30-second grace, a hard trigger at 45 seconds, and an owned-force attempt bounded by original stop plus 55 seconds.
 Packaged policy sets the independent supervisor APP fallback to 60 seconds, the stop client to 80 seconds, and the outer unit phase to 90 seconds.
-The supervisor/client implementation remains in an unmerged release draft. The new unit renderer and actual hosted unit proof remain open.
 These phase limits do not imply a 90-second total systemd stop. APP timers cannot preempt a blocked loop or native call.
 Independent Worker services have no BindsTo/PartOf relation to the APP unit and remain outside its cgroup.
 If APP blocks before its owned-unit force attempt, supervisor/cgroup fallback alone does not prove those Worker services gone.
@@ -88,7 +85,7 @@ The installer still stops its own identified unit through systemd.
 If the supervisor socket or stop command fails, systemd can reach its timeout and SIGKILL fallback.
 Python already permits that fallback after a provenance refusal.
 A startup failure before successful service activation can skip `ExecStop`, so graceful shutdown is not guaranteed there.
-These are explicit failure limits. The hosted-runner proof must exercise them before acceptance of the packaged service.
+These are explicit failure limits.
 
 The foreground Mac server keeps Python's ordinary SIGINT/SIGTERM behavior.
 This proposal adds no change to the Mac executor, its LaunchAgent, or the live Mac installation.
@@ -96,7 +93,7 @@ A future managed Mac-only server needs an explicit authenticated Quit/stop integ
 An unannounced launchd or OS shutdown cannot supply prior intent automatically.
 The Manager must accept that policy before any Mac service adopts this guard.
 
-## Proof required after design acceptance
+## Required proof
 
 - Compare bare-signal refusal, valid intent plus signal, wrong capability, expired intent, and old-incarnation replay on isolated subprocesses.
 - Distinguish a supervisor-only signal from signals to both child and supervisor. Preserve the child-death failure and restart contract.
@@ -111,8 +108,6 @@ The Manager must accept that policy before any Mac service adopts this guard.
 - Prove that neither capability nor capability path reaches the application child or any agent process environment.
 - Prove that the capability path is outside every snapshot and backup root.
 - Start and relocate the packaged supervisor on the Node-only target root. No compiler or Python can be required there.
-
-The conversation core and routes are merged. Their isolated proofs do not replace actual packaged-unit, vendor-provider, and cutover evidence.
 
 ## Source evidence
 

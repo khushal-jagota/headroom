@@ -5,7 +5,8 @@ The host holds the record. The Mac home runs in your graphical login session.
 Logout stops the Mac home. Sleep makes it unreachable. Linux uses a systemd user service.
 Linux setup requires user lingering so that the home and its backup stay available after logout.
 Tailscale supplies remote HTTPS access.
-The source path below remains available. A release home also supports updates and rollback.
+The source path below remains available. It runs the Python server from `src/planner/`, which stays only for the Mac rollback.
+A release home runs the TypeScript server and also supports updates and rollback.
 The home supplies native previews, metrics, maintenance, and stall alarms.
 One Panels instance can own the account skills in one OS account.
 Use a separate OS account for another instance, including an executor with a different record.
