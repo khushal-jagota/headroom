@@ -1,6 +1,6 @@
 {
-  "contract_sha256": "779ee2c4900271eb2da0b2aee7eb7dfcebe33c77f8fb305ad8e5cbd66a1e26fe",
+  "contract_sha256": "152ad84f31aadd9c03e16606fb8d38ba4f499a8030fbc83195e2f0ff418aa6c2",
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "evidence": "Reviewed by the release agent. Six route and view files changed since the previous review. The changes replace the fixed backend key type with the driver registry ids. The ids and their order stay hermes, codex, claude, so request validation and response lists do not change. Two sign-in routes are new (DELETE sign-in and POST return-url). They are additive. Response shapes do not change. No iOS build or signed-device test ran for this review."
+  "evidence": "Reviewed by the release agent from source, against the previous review at 077aeed3. The iOS app's endpoints, SSE streams and X-Panels-iOS-Build header were listed from ios/**/*.swift and compared with the server diff. No route the app calls was removed or renamed, and no status code or response field it decodes changed. Changes it meets are additive: optional failure_detail on prompt_delivery_uncertain, child_disposition on TurnEnded, and supports_steer now derived from backend capabilities (still a boolean, not decoded by the app). New executor-only ticket-file routes and the Python removal do not touch app routes. No iOS build or signed-device test ran for this review."
 }
