@@ -185,8 +185,8 @@ export function release_installer_barrier(data_directory: string, attempt_id: st
   });
 }
 
-/** Retain the kernel lock through actual installer work, including rollback children. */
-export async function with_installer_lifetime<T>(
+/** Hold the installer's kernel lock, or report that a live installer holds it. */
+export async function with_installer_lock<T>(
   data_directory: string,
   attempt_id: string,
   operation: (descriptor: number) => Promise<T>,
@@ -200,13 +200,24 @@ export async function with_installer_lifetime<T>(
     if (errno !== 0) throw lock_error(errno);
     owned = true;
     writeFileSync(descriptor, attempt_id + '\n');
-    try {
-      return { acquired: true, result: await operation(descriptor) };
-    } finally {
-      release_installer_barrier(data_directory, attempt_id);
-    }
+    return { acquired: true, result: await operation(descriptor) };
   } finally {
     if (owned) flock(descriptor, 'unlock');
     closeSync(descriptor);
   }
+}
+
+/** Retain the kernel lock through actual installer work, including rollback children. */
+export function with_installer_lifetime<T>(
+  data_directory: string,
+  attempt_id: string,
+  operation: (descriptor: number) => Promise<T>,
+): Promise<{ acquired: false } | { acquired: true; result: T }> {
+  return with_installer_lock(data_directory, attempt_id, async (descriptor) => {
+    try {
+      return await operation(descriptor);
+    } finally {
+      release_installer_barrier(data_directory, attempt_id);
+    }
+  });
 }

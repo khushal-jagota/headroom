@@ -9,7 +9,10 @@ import {
   openSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
+import BetterSqlite3 from 'better-sqlite3';
+import { PYTHON_BASELINE_SEED } from '../core/database/schema_steps/baseline.ts';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fixture, fixture_path } from './ticket_fixture.ts';
@@ -832,3 +835,40 @@ test('a partial normal startup failure is one-shot while the update observer sta
     await owned.close();
   }
 }, 10000);
+
+test('startup puts back the previous app before admission refuses a database an installer left behind', async () => {
+  // The rule's own proof runs a killed installer. This one proves the real start path asks
+  // before admission: otherwise admission refuses and nothing ever starts.
+  let root = '';
+  await expect(
+    owned_server(undefined, {
+      before_start(owned_root) {
+        root = owned_root;
+        const database = new BetterSqlite3(join(root, 'data/planner.db'));
+        try {
+          database
+            .prepare('UPDATE alembic_version SET version_num = ?')
+            .run(PYTHON_BASELINE_SEED.alembicRevision);
+        } finally {
+          database.close();
+        }
+        mkdirSync(join(root, '.app-previous-' + 'c'.repeat(40)));
+        writeFileSync(
+          join(root, 'data/update-attempt.json'),
+          JSON.stringify({
+            attempt_id: 'killed',
+            state: 'installing',
+            from_sha: 'c'.repeat(40),
+            to_sha: 'a'.repeat(40),
+            backup: null,
+            steps: { app_swapped: '2026-11-17T00:00:00+00:00' },
+          }),
+        );
+      },
+      configure_environment() {
+        throw new Error('the server composed environments on a database it cannot admit');
+      },
+    }),
+  ).rejects.toThrow(/interrupted update was undone/);
+  expect(root).not.toBe('');
+});

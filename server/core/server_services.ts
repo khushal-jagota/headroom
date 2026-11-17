@@ -6,10 +6,11 @@ import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { buildClock } from './clock.ts';
-import type { Config } from './config.ts';
+import { applicationRootFromEnvironment, type Config } from './config.ts';
 import { ChangeSignal } from './changes/index.ts';
 import { createDatabase } from './database/index.ts';
 import { require_application_schema } from './database/admission.ts';
+import { recover_interrupted_install } from '../environments/updates/interrupted_install.ts';
 import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/integrity_notice.ts';
 import { acquireLock } from './locks/index.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
@@ -176,6 +177,15 @@ export class ServerServices {
     const { media_lifetime, one_shot_children, child_processes } = this.lifetime;
     const changes = new ChangeSignal();
     const clock = buildClock(config);
+    const interrupted = await recover_interrupted_install({
+      database: config.db_path,
+      app_root: applicationRootFromEnvironment(),
+      app_sha: config.app_sha,
+    });
+    // The previous app is back in place. Exit, so the service manager starts it.
+    if (interrupted === 'rolled_back')
+      throw new Error('An interrupted update was undone; Panels restarts on the previous version');
+    this.assert_startup_open();
     require_application_schema(config.db_path);
     const database = createDatabase(config.db_path, {
       commitSteps: areas.commitSteps,
