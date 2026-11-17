@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildLifecycle, ceilingOptionsFor } from "../src/lib/lifecycle";
-import { ceilingLabelFor } from "../src/lib/ceilingPresentation";
+import { approvalCeilingChoices, ceilingLabelFor, ceilingPartCopy } from "../src/lib/ceilingPresentation";
 const lifecycle = buildLifecycle({worker_type:"coding",label:"Coding",stages:[
   {id:"needs_success_condition",label:"Success Condition",gating_field:"success_condition",is_terminal:false,ownership_mode:"worker"},
   {id:"needs_plan",label:"Plan",gating_field:"plan",is_terminal:false,ownership_mode:"worker"},
@@ -14,5 +14,19 @@ describe("saved ceiling presentation", () => {
   it("names the no-further sentinel and retains the unchosen placeholder", () => {
     expect(ceilingLabelFor(lifecycle,"none")).toBe("No further");
     expect(ceilingLabelFor(lifecycle,null)).toBe("Choose ceiling");
+  });
+
+  it("shows stages that have gone by as passed and leaves the current stage selectable", () => {
+    expect(approvalCeilingChoices(lifecycle,"needs_plan").map((choice) => [choice.value, choice.passed])).toEqual([
+      ["needs_success_condition", true],
+      ["needs_plan", false],
+      ["done", false]
+    ]);
+  });
+
+  it("reads the reach as until the stage, not as a bare consequence", () => {
+    expect(ceilingPartCopy("Consequences")).toEqual({ label: "Until", detail: "Consequences" });
+    expect(ceilingPartCopy("No further")).toEqual({ label: "Until", detail: "No further" });
+    expect(ceilingPartCopy(null)).toEqual({ label: "Until", detail: "Choose" });
   });
 });

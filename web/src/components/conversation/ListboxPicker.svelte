@@ -1,9 +1,12 @@
 <script lang="ts">
   import { tick, type Snippet } from "svelte";
+  import { nextEnabledIndex, pickerRoom, placePickerPanel, type PickerPlacement } from "../../lib/pickerPlacement";
 
   export type ListboxPickerItem = {
     value: string;
     name: string;
+    /** Shown, but not a choice. The approval picker uses this for stages that have gone by. */
+    disabled?: boolean;
   };
 
   export type ListboxPageWindow = {
@@ -37,6 +40,10 @@
     below = false,
     fitWithin = null,
     align = "left",
+    /** Leave the page's clipping and stacking, and stay inside the viewport. */
+    placeInViewport = false,
+    /** Remounts the list with a short fade when the value changes. */
+    motionKey = undefined,
     anchor = null,
     attributes = {},
     triggerAttributes = {},
@@ -72,6 +79,12 @@
     /** Keep this picker inside its nearest matching scroll area. */
     fitWithin?: string | null;
     align?: "left" | "right";
+    /** Paint the panel in the top layer and keep it inside the viewport. The page clips
+     *  and isolates the document on purpose, so a panel anchored inside it cannot rise
+     *  over the composer or leave the bottom of an artifact. */
+    placeInViewport?: boolean;
+    /** Rebuilds the list with a short fade when this value changes. */
+    motionKey?: string | number;
     /** Optional second entry point for the same picker; keeps one panel and draft. */
     anchor?: HTMLElement | null;
     attributes?: Record<string, string | undefined>;
@@ -98,6 +111,11 @@
 
   const listId = $props.id();
   let open = $state(false);
+  let painted = $state(false);
+  let closing = $state(false);
+  let viewportBox = $state<PickerPlacement | null>(null);
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let settling = false;
   let anchorOffset = $state<{left:number;top:number} | null>(null);
   let anchorPositionReady = $state(true);
   let activeIndex = $state(0);
@@ -134,12 +152,13 @@
   });
 
   function focusList(): void {
-    void tick().then(() => list?.focus(anchor ? {preventScroll:true} : undefined));
+    void tick().then(() => list?.focus(anchor || placeInViewport ? {preventScroll:true} : undefined));
   }
 
   function setActiveValue(value: string | null): void {
-    const index = value === null ? -1 : items.findIndex((item) => item.value === value);
-    activate(itemOffset+Math.max(0, index));
+    const index = value === null ? -1 : items.findIndex((item) => item.value === value && !item.disabled);
+    const fallback = items.findIndex((item) => !item.disabled);
+    activate(itemOffset+Math.max(0, index >= 0 ? index : fallback));
     // A rail switch puts different words in the list. Letters typed at the old one must
     // not join letters typed at the new one, or the match silently finds nothing.
     forgetTypeahead();
@@ -151,11 +170,42 @@
     if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);
   }
 
+  function motionReduced(): boolean {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function cancelCloseTimer(): void {
+    if (closeTimer !== undefined) clearTimeout(closeTimer);
+    closeTimer = undefined;
+  }
+
+  function finishClose(): void {
+    cancelCloseTimer();
+    if (open) return;
+    closing = false;
+    painted = false;
+  }
+
   function close(returnFocus = true): void {
     if (returnFocus) (anchor ?? trigger)?.focus();
-    if (open) onClose?.();
+    const wasOpen = open;
+    if (wasOpen) onClose?.();
     open = false;
     forgetTypeahead();
+    if (!wasOpen && !painted) return;
+    if (!placeInViewport || motionReduced()) {
+      cancelCloseTimer();
+      closing = false;
+      painted = false;
+      return;
+    }
+    if (!painted || closing) return;
+    closing = true;
+    const panel = panelElement;
+    closeTimer = setTimeout(finishClose, 180);
+    panel?.addEventListener("animationend", (event) => {
+      if (event.target === panel) finishClose();
+    }, { once: true });
   }
 
   controller = { open: () => void openPanel(), close, focusList, setActiveValue, get expanded() { return open; }, get controls() { return open ? listId : undefined; } };
@@ -164,6 +214,9 @@
   $effect.pre(() => {
     if (disabled && open && !keepOpenWhenDisabled) {
       open = false;
+      painted = false;
+      closing = false;
+      cancelCloseTimer();
       returnFocusWhenEnabled = true;
       root?.focus();
     }
@@ -194,7 +247,9 @@
   $effect(() => {
     if (!open) return;
     function closeOutside(event: PointerEvent): void {
-      if (event.target instanceof Node && root !== null && !root.contains(event.target)) close(false);
+      const target = event.target;
+      const inside = target instanceof Node && ((root !== null && root.contains(target)) || (panelElement !== null && panelElement.contains(target)));
+      if (!inside) close(false);
     }
     document.addEventListener("pointerdown", closeOutside, true);
     return () => document.removeEventListener("pointerdown", closeOutside, true);
@@ -205,6 +260,35 @@
     active; itemOffset; items.length;
     list?.querySelector<HTMLElement>("[data-listbox-picker-active]")?.scrollIntoView({ block: "nearest" });
   });
+
+  function positionViewportPanel(): void {
+    const entry = anchor ?? trigger;
+    const panel = panelElement;
+    if (!entry || !root || !panel || !list) return;
+    if (typeof panel.showPopover === "function" && !panel.matches(":popover-open")) {
+      try { panel.showPopover(); } catch { /* Not connected yet, or already showing. */ }
+    }
+    const anchorRect = entry.getBoundingClientRect();
+    const container = fitWithin ? entry.closest(fitWithin) ?? root.closest(fitWithin) : null;
+    const page = entry.closest(".ticket-page") ?? root.closest(".ticket-page");
+    const dock = page?.querySelector<HTMLElement>("[data-conversation-layer-host]");
+    const dockRect = dock && dock.getClientRects().length ? dock.getBoundingClientRect() : null;
+    const area = container?.getBoundingClientRect();
+    viewportBox = placePickerPanel({
+      anchor: anchorRect,
+      panel: {
+        width: panel.offsetWidth,
+        height: Math.max(list.scrollHeight + panel.offsetHeight - list.clientHeight, panel.querySelector<HTMLElement>(".picker-rail")?.offsetHeight ?? 0)
+      },
+      boundary: pickerRoom({
+        viewportWidth: document.documentElement.clientWidth,
+        viewportHeight: window.innerHeight,
+        container: area ? { left: area.left, top: area.top, right: area.right, bottom: area.bottom } : null,
+        dockTop: dockRect && anchorRect.bottom <= dockRect.top + 1 ? dockRect.top : null
+      }),
+      prefer: below ? "below" : "above"
+    });
+  }
 
   function fitPanel(): void {
     const boundary = fitWithin ? root?.closest(fitWithin) : null;
@@ -233,7 +317,20 @@
   }
 
   $effect(() => {
-    if (!open || !fitWithin) return;
+    if (!open || !placeInViewport) return;
+    items;
+    const update = () => positionViewportPanel();
+    document.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    void tick().then(update);
+    return () => {
+      document.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  });
+
+  $effect(() => {
+    if (!open || !fitWithin || placeInViewport) return;
     items; // A rail switch changes the natural list height.
     const boundary = root?.closest(fitWithin);
     if (!boundary) return;
@@ -254,13 +351,20 @@
 
   async function openPanel(): Promise<void> {
     if (disabled) return;
+    cancelCloseTimer();
+    closing = false;
+    settling = true;
     onOpen?.();
     await tick();
     const rootRect = root?.getBoundingClientRect();
     const anchorRect = anchor?.getBoundingClientRect();
     anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
     anchorPositionReady = anchorOffset === null && !fitWithin;
-    activate(itemOffset+Math.max(0, items.findIndex((item) => item.value === selectedValue)));
+    const selectedIndex = items.findIndex((item) => item.value === selectedValue && !item.disabled);
+    const fallbackIndex = items.findIndex((item) => !item.disabled);
+    activate(itemOffset+Math.max(0, selectedIndex >= 0 ? selectedIndex : fallbackIndex));
+    viewportBox = null;
+    painted = true;
     open = true;
     panelBounds = null;
     fittedBounds = null;
@@ -284,14 +388,20 @@
       // Publish the bounded position before focus or the active-row scroll effect.
       await tick();
     }
-    fitPanel();
-    await tick();
-    anchorPositionReady = true;
-    list?.focus(anchor ? {preventScroll:true} : undefined);
+    try {
+      if (placeInViewport) positionViewportPanel();
+      else fitPanel();
+      await tick();
+      anchorPositionReady = true;
+      list?.focus(anchor || placeInViewport ? {preventScroll:true} : undefined);
+    } finally {
+      settling = false;
+    }
   }
 
   function choose(value: string): void {
     if (disabled || selectionDisabled) return;
+    if (items.some((item) => item.value === value && item.disabled)) return;
     onChoose(value);
   }
 
@@ -321,7 +431,7 @@
     const start = items.length === 0 ? 0 : (active + 1) % items.length;
     for (let offset = 0; offset < items.length; offset += 1) {
       const index = (start + offset) % items.length;
-      if (items[index]?.name.toLocaleLowerCase().startsWith(typeahead)) {
+      if (!items[index]?.disabled && items[index]?.name.toLocaleLowerCase().startsWith(typeahead)) {
         activeIndex = index;
         return;
       }
@@ -337,6 +447,11 @@
     if (totalItems === 0) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
+      if (!pageWindow) {
+        const local = nextEnabledIndex(items.map((item) => item.disabled === true), localActive, event.key === "ArrowDown" ? 1 : -1);
+        activate(itemOffset + local);
+        return;
+      }
       const step = event.key === "ArrowDown" ? 1 : totalItems - 1;
       activate((active + step) % totalItems);
       return;
@@ -350,13 +465,19 @@
     }
     if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
+      if (!pageWindow) {
+        const flags = items.map((item) => item.disabled === true);
+        const index = event.key === "Home" ? flags.findIndex((item) => !item) : flags.findLastIndex((item) => !item);
+        activate(itemOffset + Math.max(0, index));
+        return;
+      }
       activate(event.key === "Home" ? 0 : totalItems - 1);
       return;
     }
     if (event.key === " " && pageWindow && typeahead) {
       event.preventDefault(); moveToMatch(" "); return;
     }
-    if ((event.key === "Enter" || event.key === " ") && items[localActive] !== undefined) {
+    if ((event.key === "Enter" || event.key === " ") && items[localActive] !== undefined && !items[localActive].disabled) {
       event.preventDefault();
       choose(items[localActive].value);
       return;
@@ -407,6 +528,38 @@
   }
 </script>
 
+{#snippet options()}
+  {#if pageWindow}<div aria-hidden="true" style:height={`${itemOffset*pageWindow.rowHeight}px`}></div>{/if}
+  {#each items as item, index (item.value)}
+    <button
+      type="button"
+      class="listbox-picker-option"
+      class:cursor={index+itemOffset === active && !item.disabled}
+      class:on={item.value === selectedValue}
+      class:passed={item.disabled}
+      id={`${listId}-${index+itemOffset}`}
+      role="option"
+      aria-posinset={pageWindow ? index+itemOffset+1 : undefined}
+      aria-setsize={pageWindow ? totalItems : undefined}
+      style:height={pageWindow ? `${pageWindow.rowHeight}px` : undefined}
+      tabindex="-1"
+      aria-selected={item.value === selectedValue}
+      disabled={selectionDisabled}
+      data-listbox-picker-value={item.value}
+      data-listbox-picker-active={index+itemOffset === active ? "true" : undefined}
+      onmousemove={() => { if (pointerReallyMoved && !item.disabled) activeIndex = index+itemOffset; }}
+      onmousedown={(event) => event.preventDefault()}
+      onclick={() => choose(item.value)}
+      {...optionAttributes?.(item, index+itemOffset === active, item.value === selectedValue)}
+      aria-disabled={item.disabled ? "true" : undefined}
+    >
+      {@render optionContent(item, item.value === selectedValue)}
+      <span class="listbox-picker-tick" aria-hidden="true">{item.disabled ? "Done" : item.value === selectedValue ? "✓" : ""}</span>
+    </button>
+  {/each}
+  {#if pageWindow}<div aria-hidden="true" style:height={`${Math.max(0,totalItems-itemOffset-items.length)*pageWindow.rowHeight}px`}></div>{/if}
+{/snippet}
+
 <div class="listbox-picker" class:scroll-panel={scrollPanel} bind:this={root} tabindex="-1" {...attributes}>
   {#if !hideTrigger}
   <button
@@ -434,7 +587,7 @@
   </button>
   {/if}
 
-  {#if open}
+  {#if painted}
     <div
       class="listbox-picker-panel"
       bind:this={panelElement}
@@ -444,18 +597,31 @@
       class:right={align === "right"}
       class:scroll-panel={scrollPanel}
       class:fitted={fittedBounds !== null}
-      style:position={panelBounds ? "fixed" : undefined}
-      style:max-height={panelBounds || fittedBounds ? `${(panelBounds ?? fittedBounds)!.height}px` : undefined}
-      style:left={fittedBounds ? `${fittedBounds.left}px` : panelBounds ? `${panelBounds.left}px` : anchorOffset ? `${anchorOffset.left}px` : undefined}
-      style:top={fittedBounds ? `${fittedBounds.top}px` : panelBounds ? `${panelBounds.top}px` : anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
-      style:bottom={fittedBounds || panelBounds || anchorOffset ? "auto" : undefined}
+      class:viewport={placeInViewport}
+      class:placed={viewportBox !== null}
+      class:closing
+      popover={placeInViewport ? "manual" : undefined}
+      style:position={viewportBox || panelBounds ? "fixed" : undefined}
+      style:margin={viewportBox ? "0" : undefined}
+      style:inset={viewportBox ? "auto" : undefined}
+      style:max-height={viewportBox ? `${viewportBox.maxHeight}px` : panelBounds || fittedBounds ? `${(panelBounds ?? fittedBounds)!.height}px` : undefined}
+      style:max-width={viewportBox ? `${viewportBox.maxWidth}px` : undefined}
+      style:--picker-max={viewportBox ? `${viewportBox.maxHeight}px` : undefined}
+      style:left={viewportBox ? `${viewportBox.left}px` : fittedBounds ? `${fittedBounds.left}px` : panelBounds ? `${panelBounds.left}px` : anchorOffset ? `${anchorOffset.left}px` : undefined}
+      style:top={viewportBox ? `${viewportBox.top}px` : fittedBounds ? `${fittedBounds.top}px` : panelBounds ? `${panelBounds.top}px` : anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
+      style:bottom={viewportBox || fittedBounds || panelBounds || anchorOffset ? "auto" : undefined}
+      style:--picker-shift={viewportBox?.side === "below" ? "-6px" : "6px"}
+      style:--picker-origin={viewportBox?.side === "above" ? "bottom left" : "top left"}
+      {...panelAttributes}
       aria-busy={panelBusy}
       role="presentation"
       onkeydown={onPanelKeydown}
       onfocusout={(event) => {
-        if (!(event.relatedTarget instanceof Node) || !root?.contains(event.relatedTarget)) close(false);
+        if (settling) return;
+        const next = event.relatedTarget;
+        const inside = next instanceof Node && ((root?.contains(next) ?? false) || (panelElement?.contains(next) ?? false));
+        if (!inside) close(false);
       }}
-      {...panelAttributes}
     >
       {#if beforeList}{@render beforeList()}{/if}
       <div
@@ -471,33 +637,13 @@
         style:max-height={pageWindow ? '288px' : undefined}
         style:overflow-y={pageWindow ? 'auto' : undefined}
       >
-        {#if pageWindow}<div aria-hidden="true" style:height={`${itemOffset*pageWindow.rowHeight}px`}></div>{/if}
-        {#each items as item, index (item.value)}
-          <button
-            type="button"
-            class="listbox-picker-option"
-            class:cursor={index+itemOffset === active}
-            class:on={item.value === selectedValue}
-            id={`${listId}-${index+itemOffset}`}
-            role="option"
-            aria-posinset={pageWindow ? index+itemOffset+1 : undefined}
-            aria-setsize={pageWindow ? totalItems : undefined}
-            style:height={pageWindow ? `${pageWindow.rowHeight}px` : undefined}
-            tabindex="-1"
-            aria-selected={item.value === selectedValue}
-            disabled={selectionDisabled}
-            data-listbox-picker-value={item.value}
-            data-listbox-picker-active={index+itemOffset === active ? "true" : undefined}
-            onmousemove={() => { if (pointerReallyMoved) activeIndex = index+itemOffset; }}
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => choose(item.value)}
-            {...optionAttributes?.(item, index+itemOffset === active, item.value === selectedValue)}
-          >
-            {@render optionContent(item, item.value === selectedValue)}
-            <span class="listbox-picker-tick" aria-hidden="true">{item.value === selectedValue ? "✓" : ""}</span>
-          </button>
-        {/each}
-        {#if pageWindow}<div aria-hidden="true" style:height={`${Math.max(0,totalItems-itemOffset-items.length)*pageWindow.rowHeight}px`}></div>{/if}
+        {#if motionKey !== undefined}
+          {#key motionKey}
+            <div class="listbox-picker-list-motion">{@render options()}</div>
+          {/key}
+        {:else}
+          {@render options()}
+        {/if}
       </div>
       {#if afterList}{@render afterList()}{/if}
     </div>
@@ -559,7 +705,51 @@
   .listbox-picker-option:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
   .listbox-picker-option.cursor { background: var(--surface-recessed); color: var(--text-strong); }
   .listbox-picker-option.on { color: var(--text-strong); }
+  .listbox-picker-option.passed { color: var(--text-faintest); cursor: default; }
+  .listbox-picker-option.passed .listbox-picker-tick { font-family: var(--font-ui); color: var(--text-faintest); }
+  .listbox-picker-option.passed:hover,
+  .listbox-picker-option.passed.cursor { background: transparent; background-image: none; color: var(--text-faintest); }
   .listbox-picker-tick { flex: none; font-family: var(--font-mono); font-size: var(--type-xs); }
+  .listbox-picker-panel.viewport {
+    position: fixed; inset: auto; margin: 0; height: auto; padding: 0; overflow: visible;
+    transform-origin: var(--picker-origin, top left);
+    border: 0; border-radius: var(--radius-md); box-shadow: var(--shadow-float);
+  }
+  .listbox-picker-panel.viewport.right { right: auto; }
+  .viewport > .listbox-picker-list {
+    min-height: 0; max-height: var(--picker-max, none);
+    overflow-y: auto; overscroll-behavior: contain;
+  }
+  .listbox-picker-panel.viewport:not(.placed) { visibility: hidden; }
+  .listbox-picker-panel.viewport.placed { animation: picker-panel-in var(--motion-base) var(--motion-ease); }
+  .listbox-picker-panel.viewport.closing {
+    animation: picker-panel-out var(--motion-base) var(--motion-ease) forwards;
+    pointer-events: none;
+  }
+  .listbox-picker-list-motion { animation: picker-list-in var(--motion-fast) var(--motion-ease); }
+  .viewport .listbox-picker-option,
+  .viewport :global(.picker-rail-row) {
+    transition: background-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  @keyframes picker-panel-in {
+    from { opacity: 0; transform: translateY(var(--picker-shift, 6px)) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes picker-panel-out {
+    from { opacity: 1; transform: none; }
+    to { opacity: 0; transform: translateY(var(--picker-shift, 6px)) scale(0.98); }
+  }
+  @keyframes picker-list-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .listbox-picker-panel.viewport.placed,
+    .listbox-picker-panel.viewport.closing,
+    .listbox-picker-list-motion,
+    .viewport .listbox-picker-option,
+    .viewport :global(.picker-rail-row) { animation: none; transition: none; }
+  }
   .listbox-picker-panel[aria-busy="true"] .listbox-picker-option { cursor: progress; opacity: .55; }
   @media (max-width: 620px) {
     .listbox-picker-panel.rail { width: min(274px, calc(100vw - var(--space-4) * 2)); }

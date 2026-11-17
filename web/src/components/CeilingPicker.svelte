@@ -9,7 +9,7 @@
   import { ceilingOptionsFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import { holderOptionsFor, holderValue, holderFromValue, holderLabelFor } from "../lib/ceilingHolder";
   import { pendingCeilingApproves, type PendingCeilingIntent } from "../lib/pendingCeiling";
-  import { ceilingLabelFor } from "../lib/ceilingPresentation";
+  import { approvalCeilingChoices, ceilingLabelFor, ceilingPartCopy } from "../lib/ceilingPresentation";
   import type { Principal } from "../lib/types";
 
   // The whole ceiling in one control: how far the Ticket may go, and who is asked when
@@ -85,11 +85,14 @@
   let ceilingTouched = $state(false);
   let holderTouched = $state(false);
   let picker = $state<ListboxPickerController>(null!);
-  let ceilingOptions = $derived([
-    ...(!pendingStage ? [{ value:"none", name:"No further" }] : []),
-    ...ceilingOptionsFor(lifecycle, pendingStage ? lifecycle?.stageOrder[0] || pendingStage : newStage || lifecycle?.ceilingRange[0] || "needs_brief")
-      .map((option) => ({ value:option.value, name:option.label }))
-  ]);
+  let activePreview = $state<string | null>(null);
+  let ceilingOptions = $derived(pendingStage
+    ? approvalCeilingChoices(lifecycle, pendingStage).map((option) => ({ value: option.value, name: option.label, disabled: option.passed }))
+    : [
+      { value: "none", name: "No further" },
+      ...ceilingOptionsFor(lifecycle, newStage || lifecycle?.ceilingRange[0] || "needs_brief")
+        .map((option) => ({ value: option.value, name: option.label }))
+    ]);
   let holders = $derived(holderOptionsFor(manager, holder).map((option) => ({
     value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
   })));
@@ -101,6 +104,13 @@
   let holderName = $derived(holderLabel ? holderLabel(holder) : holderLabelFor(manager, holder));
   let draftCeilingName = $derived(ceilingLabelFor(lifecycle,draftCeiling));
   let draftHolderName = $derived(holderLabel ? holderLabel(draftHolder ?? holder) : holderLabelFor(manager,draftHolder ?? holder));
+  let previewCeilingName = $derived(showing === "ceiling" && activePreview
+    ? ceilingOptions.find((option) => option.value === activePreview)?.name ?? draftCeilingName
+    : draftCeilingName);
+  let previewHolderName = $derived(showing === "holder" && activePreview
+    ? holders.find((option) => option.value === activePreview)?.name ?? draftHolderName
+    : draftHolderName);
+  let ceilingCopy = $derived(ceilingPartCopy(previewCeilingName));
   let resolvedTriggerLabel = $derived(triggerLabel ?? (stageLocked
     ? `then ${holderName}`
     : ceiling === "done" ? `Until ${ceilingName}` : `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`));
@@ -163,13 +173,15 @@
   }
 </script>
 
-<div class:document>
+<div class="ceiling" class:document>
 <ListboxPicker
   items={rows}
   {selectedValue}
   label={resolvedTriggerLabel}
-  listLabel={showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}
+  listLabel={showing === "ceiling" ? "How far" : "Who reviews"}
   kind="rail"
+  placeInViewport
+  motionKey={showing}
   hideTrigger={externalTrigger}
   anchor={approvalAnchor}
   {below}
@@ -179,8 +191,9 @@
   panelAttributes={{ "data-ceiling-picker-panel": "" }}
   bind:controller={picker}
   onOpen={reset}
-  onClose={() => { requestedApproval = false; reset(); }}
+  onClose={() => { requestedApproval = false; activePreview = null; reset(); }}
   onChoose={choose}
+  onActiveChange={(value) => { activePreview = value; }}
   optionAttributes={(choice) => ({
     "data-ceiling-picker-choice": choice.value,
     "data-scope-holder": showing === "holder" ? choice.value : undefined
@@ -199,8 +212,8 @@
         on={showing === "ceiling"}
         dim={stageLocked}
         disabled={stageLocked}
-        label="How far"
-        detail={draftCeilingName}
+        label={ceilingCopy.label}
+        detail={ceilingCopy.detail ?? undefined}
         attributes={{
           "data-ceiling-part": "ceiling",
           "aria-pressed": showing === "ceiling" ? "true" : "false",
@@ -211,7 +224,7 @@
       <PickerRailRow
         on={showing === "holder"}
         label="Who reviews"
-        detail={draftHolderName}
+        detail={previewHolderName}
         attributes={{
           "data-ceiling-part": "holder",
           "aria-pressed": showing === "holder" ? "true" : "false"
@@ -219,7 +232,6 @@
         onclick={() => show("holder")}
       />
     </PickerRail>
-    {#if document}<div class="document-list-label">{showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}</div>{/if}
   {/snippet}
   {#snippet optionContent(choice)}
     {#if showing === "holder"}
@@ -237,18 +249,18 @@
   .document :global([data-scope-ceiling]) { display:block; width:fit-content; max-width:calc(100% + 24px); }
   .document :global(.listbox-picker-chevron) { display:inline-block; vertical-align:middle; width:6px; height:6px; margin-left:4px; font-size:0; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:translateY(-2px) rotate(45deg); }
   .document :global([data-scope-ceiling] b) { font-weight:660; color:var(--text-strong); }
-  .document :global(.listbox-picker-panel.rail) { width:404px; max-width:calc(100vw - 48px); grid-template-columns:168px minmax(0,1fr); border:0; border-radius:var(--radius-md); box-shadow:var(--shadow-float); background:var(--surface-2); }
-  .document :global(.listbox-picker-panel.fitted) { grid-template-rows:auto minmax(0,1fr) auto; }
-  .document :global(.picker-rail) { grid-column:1; grid-row:1 / span 3; background:var(--surface-recessed); border:0; padding:var(--space-2); }
-  .document :global(.picker-rail-row) { font-family:var(--font-ui); padding:8px var(--space-2); border-radius:var(--radius-sm); white-space:normal; }
-  .document :global(.picker-rail-row-label) { font-size:var(--type-small); color:var(--text-faintest); }
-  .document :global(.picker-rail-row-detail) { max-width:none; font-size:13px; color:var(--text-default); white-space:normal; overflow:visible; }
-  .document :global(.picker-rail-row.on) { background:var(--surface-2); }
-  .document-list-label { grid-column:2; grid-row:1; padding:14px 16px 4px; font-family:var(--font-ui); font-size:var(--type-small); font-weight:660; line-height:1.6; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faintest); }
-  .document :global(.listbox-picker-list) { grid-column:2; grid-row:2; padding:0 var(--space-2); }
-  .document :global(.listbox-picker-option) { font-family:var(--font-ui); font-size:13px; line-height:1.6; padding:7px var(--space-2); gap:var(--space-2); border-radius:var(--radius-sm); color:var(--text-faint); }
-  .document :global(.listbox-picker-option.on) { font-weight:660; color:var(--text-strong); }
-  .document :global(.listbox-picker-option.cursor) { background:transparent; background-image:var(--interaction-hover); color:var(--text-strong); }
-  @media (max-width:480px) { .document :global(.listbox-picker-panel.rail) { grid-template-columns:40% minmax(0,1fr); } }
+  .ceiling :global(.listbox-picker-panel.rail) { width:404px; max-width:calc(100vw - 16px); grid-template-columns:168px minmax(0,1fr); grid-template-rows:minmax(0,1fr); border:0; border-radius:var(--radius-md); box-shadow:var(--shadow-float); background:var(--surface-2); }
+  .ceiling :global(.picker-rail) { grid-column:1; grid-row:1; align-self:stretch; background:var(--surface-recessed); border:0; padding:var(--space-2); }
+  .ceiling :global(.picker-rail-row) { font-family:var(--font-ui); padding:10px var(--space-2); border-radius:var(--radius-sm); white-space:normal; }
+  .ceiling :global(.picker-rail-row-label) { font-size:var(--type-small); font-weight:var(--weight-small); color:var(--text-faintest); overflow:visible; text-overflow:unset; }
+  .ceiling :global(.picker-rail-row-detail) { max-width:none; margin-top:2px; font-size:13px; line-height:1.35; color:var(--text-default); white-space:normal; overflow:visible; text-overflow:unset; }
+  .ceiling :global(.picker-rail-row.on) { background:var(--surface-2); }
+  .ceiling :global(.listbox-picker-list) { grid-column:2; grid-row:1; min-height:0; overflow-y:auto; padding:var(--space-2); }
+  .ceiling :global(.listbox-picker-option) { font-family:var(--font-ui); font-size:13px; line-height:1.45; padding:7px var(--space-2); gap:var(--space-2); border-radius:var(--radius-sm); color:var(--text-faint); }
+  .ceiling :global(.listbox-picker-option.on) { font-weight:660; color:var(--text-strong); }
+  .ceiling :global(.listbox-picker-option.cursor) { background:transparent; background-image:var(--interaction-hover); color:var(--text-strong); }
+  .ceiling :global(.listbox-picker-option.passed),
+  .ceiling :global(.listbox-picker-option.passed.cursor) { background:transparent; background-image:none; color:var(--text-faintest); font-weight:var(--weight-body); }
+  @media (max-width:480px) { .ceiling :global(.listbox-picker-panel.rail) { grid-template-columns:42% minmax(0,1fr); } }
   .holder-detail { color:var(--text-faintest); font-size:var(--type-xs); overflow-wrap:anywhere; }
 </style>
