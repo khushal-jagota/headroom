@@ -611,6 +611,11 @@ the system accessibility setting.
 UI scenarios in the same host for the keyboard, scroll position, delivery transitions, model
 sheet, voice-draft flow, page opening/closing, queue controls after relaunch,
 offline status geometry, largest-text controls and system sender attribution. The layout/attribution case can run independently of delivery waits.
+It serves no driver list, so the app shows its fallback names and marks. With `--review`,
+`--driver-review` adds `GET /api/drivers`, its icon route and two more backends: one with a
+PNG icon and one with only an SVG icon, which shows initials. Hermes stays a backend the list
+does not name. `--no-steer` makes the conversation say its backend cannot join a running turn,
+so Steer is not offered; the largest-text walk expects Steer, so run it without this flag.
 The detail-page scenario reuses that host and the existing Ticket/Orchestrator
 fixtures to check native push, edge swipe and Back, retained drafts and restored
 page scroll positions. It also checks that the shared Back and ⋯ controls match
