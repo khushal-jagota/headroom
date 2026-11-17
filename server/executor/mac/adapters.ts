@@ -36,6 +36,8 @@ export interface MacAdapterOptions {
   readonly one_shot_children: OwnedOneShotChildren;
   readonly worker_supervision: WorkerSupervisionRuntime;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  /** Defaults to this process's platform; the Linux executor shares this host. */
+  readonly platform?: NodeJS.Platform;
 }
 export interface MacAdapterHost {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -64,7 +66,12 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
   environment.PLAN_HERMES_HOME = hermes_home;
   if (override !== undefined) environment.PLAN_CLAUDE_EXECUTABLE = override;
   environment.CODEX_HOME = expand(settings.codex_home);
-  environment.CLAUDE_CONFIG_DIR = expand(settings.claude_home);
+  // Panels needs the resolved folder for skills, but a set CLAUDE_CONFIG_DIR, even the
+  // default, makes macOS Claude read a suffixed Keychain item instead of the owner's login.
+  const claude_home = expand(settings.claude_home);
+  if ((options.platform ?? process.platform) !== 'darwin' || environment.CLAUDE_CONFIG_DIR)
+    environment.CLAUDE_CONFIG_DIR = claude_home;
+  else delete environment.CLAUDE_CONFIG_DIR;
   const launch_environment = Object.entries(copy_environment(environment));
   const native_launch = <
     T extends { environment_overrides?: readonly (readonly [string, string])[] },
@@ -121,7 +128,7 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
     native_skill_home(backend) {
       if (backend === 'codex') return codex_home(environment);
       if (backend === 'hermes') return hermes_home;
-      return environment.CLAUDE_CONFIG_DIR!;
+      return claude_home;
     },
   };
 }
