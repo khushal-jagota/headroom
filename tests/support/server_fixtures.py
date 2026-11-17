@@ -154,13 +154,15 @@ def _start_server(
     with synthetic_home_environment(homes):
         if os.environ.get("PANELS_TEST_SERVER_BACKEND") == "typescript":
             # A fresh TypeScript install's database: the release seed, which holds the
-            # TypeScript schema steps that Python's Alembic chain does not.
-            subprocess.run(
-                ["node", str(REPO_ROOT / "server/installation/database_main.ts"), str(db_path)],
-                cwd=str(REPO_ROOT),
-                env={**_scrubbed_env(srvdir), **homes, "PLAN_TEST_MODE": "1"},
-                check=True,
-            )
+            # TypeScript schema steps that Python's Alembic chain does not. A restart on
+            # the same runtime root keeps the database it already has.
+            if not db_path.exists():
+                subprocess.run(
+                    ["node", str(REPO_ROOT / "server/installation/database_main.ts"), str(db_path)],
+                    cwd=str(REPO_ROOT),
+                    env={**_scrubbed_env(srvdir), **homes, "PLAN_TEST_MODE": "1"},
+                    check=True,
+                )
         else:
             with closing(connect(str(db_path))) as bootstrap:
                 create_schema(bootstrap)

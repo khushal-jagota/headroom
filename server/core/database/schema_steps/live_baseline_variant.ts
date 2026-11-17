@@ -10,8 +10,8 @@
  * database-live-schema-check.md and database-live-trigger-variant.json. The text is copied
  * exactly. Do not reformat it.
  *
- * To remove: delete this file and its one call in `applySchemaSteps` (core/database/index.ts),
- * plus its test case.
+ * To remove: delete this file, its one call in `applySchemaSteps` (core/database/index.ts), and
+ * the variant's uses in schema_steps.test.ts.
  */
 
 /** Trigger name to the exact live `sqlite_master.sql` text. */
