@@ -826,7 +826,7 @@ its own identity and timestamp.
 Goal-owned messages use the existing shared conversation view.
 
 The `Native iOS` workflow runs the existing Swift host suites and an unsigned iOS
-Simulator build on macOS. A signed device check remains necessary for TestFlight,
+Simulator build on macOS. It runs when a push to `main` changes `ios/` files, and on manual runs, because GitHub-hosted Mac machines are scarce. A signed device check remains necessary for TestFlight,
 Tailscale identity, microphone permissions, and actual APNs delivery.
 
 ## Mac execution release compatibility
