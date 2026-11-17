@@ -77,7 +77,6 @@ async function snapshot_only_refusals(root: string): Promise<unknown> {
     const refused = await operator_commands['provision-skills'].handler(
       {
         database_parent: join(root, 'runtime'),
-        hermes_home: join(home, 'hermes'),
         codex_home: join(home, 'codex'),
         claude_home: outside,
       },
@@ -270,7 +269,6 @@ async function operator_probe(root: string): Promise<unknown> {
   );
   const provision = {
     database_parent: join(root, 'runtime'),
-    hermes_home: join(root, 'test-hermes'),
     codex_home: join(root, 'test-codex'),
     claude_home: join(root, 'test-claude'),
   };
@@ -291,7 +289,7 @@ async function operator_probe(root: string): Promise<unknown> {
   await mkdir(linked_home);
   await symlink(outside, join(linked_home, 'skills'));
   const destination = await operator_commands['provision-skills'].handler(
-    { ...provision, hermes_home: linked_home },
+    { ...provision, codex_home: linked_home },
     provisioning,
   );
   assert(

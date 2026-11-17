@@ -2,7 +2,7 @@
 import type { Database } from '../core/database/contracts.ts';
 import { automatic_ticket_admitted } from './automatic_work.ts';
 import {
-  require_conversation_backend_key,
+  known_conversation_backend_key,
   type PromptDeliveryFate,
   type ConversationSystem,
 } from '../conversation/contracts.ts';
@@ -36,6 +36,8 @@ export async function deliver_ticket_decision_messages(
     return null;
   return start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
     const ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
+    // A backend this build lacks is not admitted here. The readiness check then names it.
+    const backend = known_conversation_backend_key(ticket.employee_backend);
     const admitted = database.read(
       (sql) =>
         !ticket.is_backlogged &&
@@ -43,11 +45,7 @@ export async function deliver_ticket_decision_messages(
         (ticket.machine_id === HOME_MACHINE_ID ||
           locale.mac_is_present(sql, now_ms(), ticket.machine_id)) &&
         (ticket.employee_launch_model === null ||
-          model_is_enabled(
-            sql,
-            require_conversation_backend_key(ticket.employee_backend),
-            ticket.employee_launch_model,
-          )),
+          (backend !== undefined && model_is_enabled(sql, backend, ticket.employee_launch_model))),
     );
     if (!admitted) return null;
     const rows = database.read((sql) =>

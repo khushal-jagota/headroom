@@ -1,5 +1,5 @@
 import { PlannerError } from '../core/contracts.ts';
-import { require_conversation_backend_key } from '../conversation/contracts.ts';
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { RETIRED_WORKER_TYPES } from './contracts.ts';
 import type {
   WorkflowDefinition,
@@ -111,7 +111,8 @@ export function validate_definition(
       worker_type,
       toolset_profile: profile.toolset_profile,
     });
-  require_conversation_backend_key(profile.default_backend);
+  // A saved default may name a backend this build lacks. A Ticket created from it is refused.
+  parse_backend_instance_id(profile.default_backend);
   if (typeof profile.default_model !== 'string' || !profile.default_model.trim())
     throw new PlannerError('validation', 'default_model must be a non-empty string', {
       worker_type,

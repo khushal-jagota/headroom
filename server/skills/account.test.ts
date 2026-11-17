@@ -34,7 +34,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'account-skills-'));
   roots.push(root);
   const parent = join(root, 'data'),
-    homes = ['hermes', 'codex', 'claude'].map((name) => join(root, name));
+    homes = ['codex', 'claude'].map((name) => join(root, name));
   for (const name of ['panels', 'panels-worker', 'panels-worker-personal-task']) {
     mkdirSync(join(parent, 'skills', name), { recursive: true });
     writeFileSync(join(parent, 'skills', name, 'SKILL.md'), name);
@@ -63,7 +63,7 @@ test('account publication preflights all homes, reconciles only owned links, and
   expect(readlinkSync(foreign)).toBe(join(root, 'foreign'));
   expect(lstatSync(link).ino).toBe(inode);
   const result = await environment_provision_skills(
-    { database_parent: parent, hermes_home: homes[0], codex_home: homes[1], claude_home: homes[2] },
+    { database_parent: parent, codex_home: homes[0], claude_home: homes[1] },
     { expand_path: (value) => value, admit_path: (value) => value },
   );
   expect(result).toMatchObject({ exit_code: 0, stdout: '' });
@@ -87,9 +87,8 @@ test('startup honors provider homes and provisioning choice in test mode, and a 
   const { root, parent, homes } = fixture();
   for (const [key, value] of Object.entries({
     HOME: root,
-    PLAN_HERMES_HOME: homes[0],
-    CODEX_HOME: homes[1],
-    CLAUDE_CONFIG_DIR: homes[2],
+    CODEX_HOME: homes[0],
+    CLAUDE_CONFIG_DIR: homes[1],
   }))
     vi.stubEnv(key, value);
   expect(account_skill_homes()).toEqual(
@@ -109,9 +108,9 @@ test('startup honors provider homes and provisioning choice in test mode, and a 
   expect(EXTERNAL_RUNTIME_ENVIRONMENT_KEYS.has('CLAUDE_CONFIG_DIR')).toBe(true);
   config.test_mode = true;
   await publish_worker_skills(config);
-  expect(readlinkSync(join(homes[1], 'skills', 'panels'))).toBe(join(parent, 'skills', 'panels'));
-  rmSync(join(homes[1], 'skills', 'panels'));
-  mkdirSync(join(homes[1], 'skills', 'panels'));
+  expect(readlinkSync(join(homes[0], 'skills', 'panels'))).toBe(join(parent, 'skills', 'panels'));
+  rmSync(join(homes[0], 'skills', 'panels'));
+  mkdirSync(join(homes[0], 'skills', 'panels'));
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   await expect(publish_worker_skills(config)).resolves.toBeUndefined();
   expect(warn).toHaveBeenCalledWith(expect.stringContaining('one instance per OS account'));
@@ -128,9 +127,8 @@ test('startup publication keeps the event loop responsive while a provider lock 
   const { root, parent, homes } = fixture();
   for (const [key, value] of Object.entries({
     HOME: root,
-    PLAN_HERMES_HOME: homes[0],
-    CODEX_HOME: homes[1],
-    CLAUDE_CONFIG_DIR: homes[2],
+    CODEX_HOME: homes[0],
+    CLAUDE_CONFIG_DIR: homes[1],
   }))
     vi.stubEnv(key, value);
   const first = [...homes].sort()[0]!;
@@ -161,11 +159,11 @@ test('startup publication keeps the event loop responsive while a provider lock 
 // Gap: no other test proves a manifest's skills_directory, rather than 'skills', receives the links.
 test('a driver home that names its skills folder gets its skills linked there', () => {
   const { root, parent } = fixture();
-  const [hermes] = BUILT_IN_MANIFESTS;
-  const home = { ...hermes!.manifest.home!, skills_directory: 'agent-skills' };
+  const [driver] = BUILT_IN_MANIFESTS;
+  const home = { ...driver!.manifest.home!, skills_directory: 'agent-skills' };
   const homes = account_skill_homes(
     { HOME: root, [home.environment_name]: join(root, 'scripted') },
-    [{ manifest: { ...hermes!.manifest, home } }],
+    [{ manifest: { ...driver!.manifest, home } }],
   );
   expect(homes).toEqual([{ path: join(root, 'scripted'), skills_directory: 'agent-skills' }]);
   expect(provision_account_skills(parent, homes)).toBeNull();

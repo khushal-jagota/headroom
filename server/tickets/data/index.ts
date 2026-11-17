@@ -1365,7 +1365,6 @@ const structural: Record<string, string> = {
   'a Ticket cannot hold its own ceiling':
     'PlannerError: a Ticket cannot hold its own ceiling (ceiling_holder)',
   'corrupt ticket field state': 'PlannerError: corrupt ticket field state (fields or proposal)',
-  'unknown agent backend': 'PlannerError: unknown agent backend (employee_backend)',
 };
 export function audit_ticket_registry_integrity(
   tx: TransactionSql,
@@ -1389,8 +1388,8 @@ export function audit_ticket_registry_integrity(
   for (const row of rows) {
     let reason: string | null = null;
     try {
-      const t = load_ticket_for_write(tx, row.id, !!o.startup);
-      require_conversation_backend_key(t.employee_backend);
+      // The backend is a launch choice, not structure: a launch refuses one this build lacks.
+      load_ticket_for_write(tx, row.id, !!o.startup);
     } catch (error) {
       if (!o.startup)
         throw new Error(`ticket integrity audit failed: id=${row.id} reason=${String(error)}`);

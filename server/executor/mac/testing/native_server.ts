@@ -85,7 +85,7 @@ export async function start_native_server() {
       bound = compose_production_backends(
         current,
         {
-          registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+          registry: registry_of_factories({ claude: local, codex: local }),
           host: unread_driver_host,
         },
         {

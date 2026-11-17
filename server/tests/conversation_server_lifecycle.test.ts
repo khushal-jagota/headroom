@@ -13,7 +13,6 @@ import { drivers_of_factories } from '../drivers/testing/registry.ts';
 import { run_application_process } from '../lifecycle/application.ts';
 import * as codex_providers from '../drivers/codex/runtime/providers.ts';
 import * as claude_catalog_source from '../drivers/claude/runtime/catalog_source.ts';
-import * as hermes_catalog from '../drivers/hermes/runtime/catalog.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
@@ -70,7 +69,6 @@ function setup() {
     PLAN_CREDENTIAL_KEY_PATH: path + '.credential-key',
     PLAN_EXECUTOR_ID: '',
     PLAN_SERVER_CONTROL_SOCKET: join(root, 'control.sock'),
-    PLAN_HERMES_HOME: join(root, 'hermes'),
     PLAN_APP_ROOT: resolve(import.meta.dirname, '../..'),
     PLAN_FAKE_NOW: '2026-11-11T10:00:00+00:00',
   }))
@@ -100,7 +98,6 @@ test('normal staged server serves the reconciled record through real publication
   const production = [
     vi.spyOn(codex_providers, 'create_codex_providers').mockImplementation(refuse),
     vi.spyOn(claude_catalog_source, 'create_claude_catalog_source').mockImplementation(refuse),
-    vi.spyOn(hermes_catalog, 'HermesModelCatalogOwner').mockImplementation(refuse),
   ];
   const schema = JSON.parse(
     readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
@@ -247,7 +244,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   const registry = new ScriptedBackendRegistry();
   const broken = create(f.database, { title: 'Broken saved Ticket' });
   f.database.write((tx) =>
-    tx.run("UPDATE tickets SET employee_backend='invalid' WHERE id=?", [broken.id]),
+    tx.run("UPDATE tickets SET stage='no-such-stage' WHERE id=?", [broken.id]),
   );
   const wakePoll = vi.spyOn(ManagerWakeLoop.prototype, 'poll_once');
   const wakeStop = vi.spyOn(ManagerWakeLoop.prototype, 'stop');
@@ -418,10 +415,6 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           bindings_seen.push(host);
           return registry.registry.require_live('codex').child_factory;
         },
-        hermes: (host) => {
-          bindings_seen.push(host);
-          return registry.registry.require_live('hermes').child_factory;
-        },
       }),
       driver_host,
       http(binding) {
@@ -498,7 +491,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
         ),
       },
     }),
-  ).rejects.toThrow('Missing production backend factories: codex, hermes');
+  ).rejects.toThrow('Missing production backend factories: codex');
   expect(bindings_seen).toEqual([]);
   let server!: StartedServer;
   await run_application_process(
@@ -543,7 +536,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       context.database.read((sql) => sql.get('SELECT checked_at_ms FROM stall_checker_heartbeat')),
     ).toEqual({ checked_at_ms: tracked_waits.mock.calls.at(-1)![1] });
     expect(new Set(bindings_seen).size).toBe(1);
-    expect(bindings_seen).toHaveLength(4);
+    expect(bindings_seen).toHaveLength(3);
     expect(existsSync(join(upload_root, 'startup-expired'))).toBe(false);
     expect(
       f.database.read((sql) =>
@@ -596,7 +589,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     )!.conversation_id;
     const notice =
       "The Ticket 'Broken saved Ticket' is unusable because its saved record is invalid. " +
-      'Reason: PlannerError: unknown agent backend (employee_backend). Panels remains available. ' +
+      'Reason: PlannerError: stage outside the linear order (stage). Panels remains available. ' +
       'Inspect this Ticket before any repair.';
     await vi.waitFor(async () => {
       const delivered = (await registry.inspect(chief_id)).flatMap((value) => value.delivered_text);

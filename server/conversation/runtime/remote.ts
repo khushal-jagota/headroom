@@ -55,22 +55,25 @@ import { write_replayed_prompt } from './delivery.ts';
 import { log_backend_failure } from '../backends/failure_summary.ts';
 import { take_backend_event_with_receipt } from './backend_events.ts';
 
-/** A key with no live instance gives undefined at run time, exactly as indexing the old factory table did. */
+/** Undefined for a key with no live instance, such as a saved conversation on a removed driver. */
 export function child_factory_for(
   host: SqliteProcessConversationSystem,
   key: string,
-): BackendChildFactory {
+): BackendChildFactory | undefined {
   const entry = host.options.backend_registry.get(key);
-  return (entry?.kind === 'live' ? entry.instance.child_factory : undefined) as BackendChildFactory;
+  return entry?.kind === 'live' ? entry.instance.child_factory : undefined;
 }
-export function retained_factory(factory: BackendChildFactory): RetainedBackendChildFactory | null {
+export function retained_factory(
+  factory: BackendChildFactory | undefined,
+): RetainedBackendChildFactory | null {
+  if (factory === undefined) return null;
   const candidate = factory as Partial<RetainedBackendChildFactory>;
   return typeof candidate.retained_runs === 'function' && typeof candidate.recover === 'function'
     ? (factory as RetainedBackendChildFactory)
     : null;
 }
 type AdoptedRun = Omit<RetainedBackendRun, 'turn'> & { readonly turn: TurnToken };
-function admitted_runs(factory: BackendChildFactory): readonly AdoptedRun[] {
+function admitted_runs(factory: BackendChildFactory | undefined): readonly AdoptedRun[] {
   return (retained_factory(factory)?.retained_runs() ?? []).flatMap((run) => {
     let turn: TurnToken;
     try {

@@ -185,7 +185,7 @@ async function remote_fixture(early_result = false) {
   });
   const f = setup({
     core: {
-      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+      backend_registry: registry_of_factories({ codex: factory, claude: factory }),
     },
   });
   const mailbox = new SqliteCommandMailbox(f.database);

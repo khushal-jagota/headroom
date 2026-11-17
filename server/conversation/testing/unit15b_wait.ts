@@ -46,7 +46,7 @@ export async function run_wait(database_path: string): Promise<unknown> {
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
     message_files: new ConversationMessageFiles(database_path),
-    backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+    backend_registry: registry_of_factories({ codex: factory, claude: factory }),
     unix_time_now: () => 100,
     wait_registry: registry,
   });

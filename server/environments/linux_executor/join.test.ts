@@ -120,7 +120,7 @@ test('namespace preflight preserves foreign state and successful join waits for 
     expect(value.state.health_calls).toBe(2);
     const text = await readFile(value.unit, 'utf8');
     expect(text).not.toContain(value.request.credential);
-    for (const name of ['codex', 'claude', 'hermes']) {
+    for (const name of ['codex', 'claude']) {
       const path = join(value.request.root, 'providers', name);
       expect((await stat(path)).mode & 0o777).toBe(0o700);
       expect(text).toContain(path);

@@ -85,7 +85,7 @@ export function setup(
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+    backend_registry: registry_of_factories({ codex: factory, claude: factory }),
     message_files: new ConversationMessageFiles(join(directory, 'conversation.sqlite')),
     ...options.core,
   });
