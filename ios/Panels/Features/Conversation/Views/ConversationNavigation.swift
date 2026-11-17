@@ -518,7 +518,11 @@ struct ConversationBackendMark: View {
                 Image(name).resizable().scaledToFit()
             case .remote(let url, let template)?:
                 if pictureURL == url, let picture {
-                    Image(uiImage: picture).renderingMode(template ? .template : .original).resizable().scaledToFit()
+                    // The rendering mode rides on the UIImage itself: a segmented Picker turns
+                    // each segment into a UIImage and drops SwiftUI's .renderingMode, which
+                    // would tint a full-colour picture as a template.
+                    Image(uiImage: picture.withRenderingMode(template ? .alwaysTemplate : .alwaysOriginal))
+                        .renderingMode(template ? .template : .original).resizable().scaledToFit()
                 } else if failedURL == url {
                     initials(DriverMark.initials(backend ?? ""))
                 } else { Color.clear }
@@ -569,9 +573,15 @@ struct ConversationModelSheet: View {
         NavigationStack {
             Form {
                 Section("Agent") {
+                    // More than three agents would cut each other's names short in one row,
+                    // so a crowded row shows marks only; each mark still carries its name.
+                    let installed = backends.filter(\.installed)
                     Picker("Agent", selection: $backend) {
-                        ForEach(backends.filter(\.installed)) { entry in
-                            HStack { ConversationBackendMark(backend: entry.id); Text(store.backendLabel(entry.id)) }.tag(entry.id)
+                        ForEach(installed) { entry in
+                            HStack {
+                                ConversationBackendMark(backend: entry.id)
+                                if installed.count <= 3 { Text(store.backendLabel(entry.id)) }
+                            }.tag(entry.id)
                         }
                     }.pickerStyle(.segmented).disabled(model.conversationID != nil)
                 }

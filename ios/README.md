@@ -614,8 +614,14 @@ offline status geometry, largest-text controls and system sender attribution. Th
 It serves no driver list, so the app shows its fallback names and marks. With `--review`,
 `--driver-review` adds `GET /api/drivers`, its icon route and two more backends: one with a
 PNG icon and one with only an SVG icon, which shows initials. Hermes stays a backend the list
-does not name. `--no-steer` makes the conversation say its backend cannot join a running turn,
-so Steer is not offered; the largest-text walk expects Steer, so run it without this flag.
+does not name, and its card lists no efforts, as on a real server. The same flag serves the
+Ticket's backends by POST, makes the Ticket's worker setup editable, and serves Settings
+Workers and the Chief's settings, so the Workspace Chief card and its preview load. Codex's
+model resolves to a dated model the server names "Sol (November)".
+`--hermes-conversation`, with `--driver-review`, runs the conversation on hermes with a stored
+effort the card does not offer. `--no-steer` makes the conversation say its backend cannot
+join a running turn, so Steer is not offered; the largest-text walk expects Steer, so run it
+without this flag.
 The detail-page scenario reuses that host and the existing Ticket/Orchestrator
 fixtures to check native push, edge swipe and Back, retained drafts and restored
 page scroll positions. It also checks that the shared Back and ⋯ controls match
