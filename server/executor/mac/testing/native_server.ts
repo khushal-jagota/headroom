@@ -120,6 +120,29 @@ export async function start_native_server() {
     endpoint,
     credential,
     message_files: files,
+    diagnostics() {
+      return {
+        health: endpoint.health_payload(),
+        conversations: [...core.conversations].map(([id, state]) => ({
+          id,
+          phase: state.phase,
+          running_turn: state.running_turn?.token ?? null,
+          child_present: state.child !== null,
+          retained_child: state.retained_child_reference,
+          events: context.record.store.read_events_after(id, 0),
+        })),
+        durable: context.database.read((sql) =>
+          Object.fromEntries(
+            [
+              'executor_commands',
+              'executor_child_assignments',
+              'mac_inbox_positions',
+              'conversation_lifecycle_facts',
+            ].map((table) => [table, sql.all(`SELECT * FROM ${table} LIMIT 100`)]),
+          ),
+        ),
+      };
+    },
     async wait_for_presence() {
       await wait_until(() => endpoint.presence.is_present(), Boolean);
       const identity = context.database.read((sql) =>
@@ -198,10 +221,21 @@ export async function start_native_server() {
       return { conversation_id, ticket_id: ticket.id, fate };
     },
     async turn_result(conversation_id: string) {
-      const events = await wait_until(
-        () => context.record.store.read_events_after(conversation_id, 0),
-        (values) => values.some((event) => event.payload.kind === 'turn_ended'),
-      );
+      let events;
+      try {
+        events = await wait_until(
+          () => context.record.store.read_events_after(conversation_id, 0),
+          (values) => values.some((event) => event.payload.kind === 'turn_ended'),
+        );
+      } catch (error) {
+        const evidence = process.env.MAC_REHEARSAL_EVIDENCE;
+        if (evidence)
+          await writeFile(
+            join(evidence, 'server-turn-timeout.json'),
+            JSON.stringify(this.diagnostics(), null, 2),
+          );
+        throw error;
+      }
       const answers = events.filter((event) => event.payload.kind === 'agent_message');
       assert.ok(answers.length > 0);
       assert.ok(

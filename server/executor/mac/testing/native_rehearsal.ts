@@ -12,6 +12,7 @@ import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
 import { mac_installation_paths } from '../platform.ts';
+import { native_failure_snapshot } from './native_failure_snapshot.ts';
 import { credential_path, write_credential } from '../../credential_file.ts';
 
 const root = resolve(process.env.MAC_REHEARSAL_ROOT!);
@@ -54,12 +55,26 @@ let server:
 let app: ReturnType<ChildProcesses['spawn']> | undefined;
 let app_closed: Promise<unknown> | undefined;
 let proxy_target = '';
+const traffic = createWriteStream(join(evidence, 'https-requests.jsonl'));
+const traffic_closed = once(traffic, 'finish');
+void traffic_closed.catch(() => {});
 const proxy = createServer(
   {
     key: await readFile(join(root, 'tls/key.pem')),
     cert: await readFile(join(root, 'tls/cert.pem')),
   },
   (incoming, outgoing) => {
+    const request_started = performance.now();
+    outgoing.on('finish', () => {
+      traffic.write(
+        JSON.stringify({
+          method: incoming.method,
+          path: incoming.url?.split('?')[0],
+          status: outgoing.statusCode,
+          seconds: (performance.now() - request_started) / 1000,
+        }) + '\n',
+      );
+    });
     if (!proxy_target) {
       outgoing.writeHead(503).end();
       return;
@@ -240,6 +255,9 @@ try {
   steps.executor_exit = 'passed';
   steps.passed = true;
 } catch (error) {
+  await native_failure_snapshot(paths.state, evidence).catch(async (failure) => {
+    await writeFile(join(evidence, 'snapshot-error.txt'), String(failure));
+  });
   await writeFile(join(evidence, 'failure.txt'), String((error as Error).stack ?? error));
   throw error;
 } finally {
@@ -270,6 +288,12 @@ try {
   try {
     if (proxy.listening)
       await new Promise<void>((yes, no) => proxy.close((error) => (error ? no(error) : yes())));
+  } catch (error) {
+    cleanup_errors.push(error);
+  }
+  traffic.end();
+  try {
+    await traffic_closed;
   } catch (error) {
     cleanup_errors.push(error);
   }
