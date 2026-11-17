@@ -21,7 +21,7 @@ import { ExecutorHttpError } from './errors.ts';
 import { MacTicketFileSync } from './ticket_files.ts';
 import type { TicketFileSyncOptions } from './ticket_files.ts';
 
-const deadline = () => ({ deadline: performance.now() / 1000 + 10 });
+const stop_options = () => ({ deadline: performance.now() / 1000 + 10 });
 const clock = {
   monotonic: () => performance.now() / 1000,
   now_ns: () => BigInt(Date.now()) * 1_000_000n,
@@ -36,7 +36,7 @@ async function fixture(transfer: Partial<TicketFileSyncOptions['transfer']> = {}
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'ticket-file-sync-')));
   const ticket = join(root, 'tickets', 'ticket');
   mkdirSync(join(ticket, 'artifacts'), { recursive: true });
-  const store = await OutboxStore.open(join(root, 'spool'), clock, deadline(), () => {});
+  const store = await OutboxStore.open(join(root, 'spool'), clock, stop_options(), () => {});
   const files = new FilesService();
   const uploads: string[] = [],
     removals: string[] = [],
@@ -58,9 +58,9 @@ async function fixture(transfer: Partial<TicketFileSyncOptions['transfer']> = {}
     warn: (message) => warnings.push(message),
   });
   cleanup.push(async () => {
-    await sync.stop(deadline());
-    await files.stop(deadline());
-    await store.stop(deadline());
+    await sync.stop(stop_options());
+    await files.stop(stop_options());
+    await store.stop(stop_options());
     rmSync(root, { recursive: true, force: true });
   });
   /** A file old enough that its timestamp alone proves it unchanged. */
