@@ -316,6 +316,8 @@ export interface ConversationRecordStore {
     generation: string,
     path: string,
   ): Promise<void>;
+  /** The supervision record a local child of this generation reported, if it reported one. */
+  local_child_supervision_record(conversation_id: string, generation: string): string | null;
   has_recorded_source(conversation_id: string): Promise<boolean>;
   recorded_source_retirement_proven(conversation_id: string): Promise<boolean>;
   check_local_child_started(

@@ -16,6 +16,8 @@ export class WorkerSupervisionRuntime {
   readonly jobs: WorkerJobPrimitives | undefined;
   readonly active_jobs = new Set<string>();
   readonly clock: () => number;
+  /** Record paths a durable owner still names. Without it, no record is pruned. */
+  readonly record_paths_in_use: (() => ReadonlySet<string>) | undefined;
   readonly fresh: FreshProcessObservations;
   readonly observer: SharedProcessObserver;
   readonly #operations = new Set<Promise<unknown>>();
@@ -27,11 +29,13 @@ export class WorkerSupervisionRuntime {
     cgroups?: WorkerCgroupPrimitives;
     jobs?: WorkerJobPrimitives;
     clock?: () => number;
+    record_paths_in_use?: () => ReadonlySet<string>;
   }) {
     this.primitives = options.primitives;
     this.cgroups = options.cgroups;
     this.jobs = options.jobs;
     this.clock = options.clock ?? (() => performance.now() / 1000);
+    this.record_paths_in_use = options.record_paths_in_use;
     this.fresh = new FreshProcessObservations(this.clock);
     this.observer = new SharedProcessObserver((deadline) => this.context(deadline), this.clock);
   }
@@ -40,7 +44,7 @@ export class WorkerSupervisionRuntime {
   }
   async context(deadline: number): Promise<InspectionContext> {
     if (this.#closed && !this.#scope.getStore()?.active)
-      throw new Error('Worker supervision is closed');
+      throw new Error('Process supervision is closed');
     const host = await this.primitives.host_boot(deadline);
     if (!host.host || !host.boot) throw new Error('Worker host and boot identity are unavailable');
     return { primitives: this.primitives, host };
@@ -48,7 +52,7 @@ export class WorkerSupervisionRuntime {
   operation<T>(operation: () => Promise<T>): Promise<T> {
     const parent = this.#scope.getStore();
     if (this.#closed && !parent?.active)
-      return Promise.reject(new Error('Worker supervision is closed'));
+      return Promise.reject(new Error('Process supervision is closed'));
     const token = parent?.active ? parent : { active: true };
     const task = this.#scope.run(token, () => Promise.resolve().then(operation));
     this.#operations.add(task);

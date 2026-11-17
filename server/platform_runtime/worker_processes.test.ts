@@ -3,7 +3,10 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, openSync, fstatSync, writeFileSync, rmSync } from 'node:fs';
 import { mkdir, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { getPriority, tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import { ChildProcesses, child_lifetime } from '../lifecycle/owned_processes.ts';
+import { NICE } from '../worker_supervision/config.ts';
 import { LinuxWorkerProcesses } from './linux/worker_processes.ts';
 import { DarwinWorkerProcesses } from './darwin/worker_processes.ts';
 import type { DarwinWorkerKernel } from './darwin/worker_processes.ts';
@@ -64,6 +67,49 @@ test('Linux proc identities retain exact birth ticks and unreadable entries neve
   await expect(native.is_absent(process_info, 1)).rejects.toThrow('unreadable');
   await expect(native.snapshot(0)).rejects.toThrow('deadline');
 });
+
+test.skipIf(process.platform !== 'linux')(
+  'Linux launch preparation lowers only a Worker priority and always isolates the session',
+  async () => {
+    // The child inherits this process's real nice value, which only rises. The OOM score is
+    // a synthetic file below zero, so it shows the clamp even where the host's score is zero.
+    const script = `import { LinuxWorkerProcesses } from ${JSON.stringify(
+      pathToFileURL(join(import.meta.dirname, 'linux/worker_processes.ts')).href,
+    )};
+import { getPriority } from 'node:os';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const proc_root = mkdtempSync(join(process.argv[2], 'proc-'));
+mkdirSync(join(proc_root, 'self'));
+writeFileSync(join(proc_root, 'self/oom_score_adj'), '-500\\n');
+let session = false;
+new LinuxWorkerProcesses({ proc_root, native: () => ({ prepare_session: () => { session = true; } }) })
+  .prepare_launch({ lower_priority: process.argv[1] === 'true' });
+const oom = Number(readFileSync(join(proc_root, 'self/oom_score_adj'), 'utf8'));
+process.stdout.write(JSON.stringify({ session, nice: getPriority(0), oom }));`;
+    const directory = root();
+    const children = new ChildProcesses();
+    const prepared = async (lower_priority: boolean) => {
+      const child = children.spawn(
+        process.execPath,
+        ['--input-type=module', '-e', script, String(lower_priority), directory],
+        { stdio: ['ignore', 'pipe', 'inherit'] },
+      );
+      let output = '';
+      child.stdout!.on('data', (chunk: Buffer) => (output += chunk.toString('utf8')));
+      await child_lifetime(child).closed;
+      return JSON.parse(output) as { session: boolean; nice: number; oom: number };
+    };
+    try {
+      const nice = getPriority(0);
+      expect(await prepared(false)).toEqual({ session: true, nice, oom: -500 });
+      expect(await prepared(true)).toEqual({ session: true, nice: Math.max(NICE, nice), oom: 0 });
+    } finally {
+      children.seal();
+      await children.settled();
+    }
+  },
+);
 
 test('Linux signals acquire the pidfd before the final birth check and never signal a replacement', () => {
   const path = join(root(), 'descriptor');

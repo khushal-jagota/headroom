@@ -103,22 +103,24 @@ Backup and restore instructions are in [backup-restore.md](backup-restore.md).
 
 ## Worker processes
 
-One supervisor owns Worker processes on the home and on executors. It records process
-identities, lowers CPU priority to nice 10, and bounds shutdown. On Linux, each new
-Worker enters a delegated cgroup v2 child group before backend execution. Stop kills
-that group and requires proof that it is empty. Detached descendants remain in the group. Requests to an existing external daemon
-do not make that daemon or its children Worker descendants. This is not a security sandbox.
+One supervisor owns every local agent process on the home (Workers, the Chief,
+Managers, and generic and smoke-test conversations) and the Worker processes on
+executors. It records process identities and bounds shutdown. Only Workers lower
+their CPU priority to nice 10 and raise their OOM score. On Linux, each new supervised
+process gets its own session and enters a delegated cgroup v2 child group before
+backend execution. Stop kills that group and requires proof that it is empty. Detached descendants remain in the group. Requests to an existing external daemon
+do not make that daemon or its children supervised descendants. This is not a security sandbox.
 The durable record binds cleanup to that group across an application restart.
 
 The live unit and generated Linux executor unit set `Delegate=yes`. The supervisor
 does not enable controllers in `cgroup.subtree_control`. The server stays in the parent
-group, and each Worker occupies a child. The parent must keep an empty
+group, and each supervised process occupies a child. The parent must keep an empty
 `cgroup.subtree_control`: cgroup v2 permits resident processes there because no domain
 controllers are enabled for its children. Existing resource settings apply to the whole
 service subtree. No separate Worker units or resource limits return.
 
 Without delegation, writable cgroup v2, or an empty parent `cgroup.subtree_control`,
-Workers still launch. Cleanup reports the unavailable support and retains its fence.
+every conversation still launches. Cleanup reports the unavailable support and retains its fence.
 A process inventory alone cannot prove that unseen detached descendants ended.
 Old records retain their original evidence and do not acquire a new containment claim.
 
@@ -141,18 +143,18 @@ Expect `ActiveState=active`, `Delegate=yes`, and `KillMode=control-group`. If th
 update already supplies that exact restart, create the drop-in and reload before it.
 Do not restart twice. Do not migrate active Workers between groups. The existing
 service stop covers the entire subtree, including old Workers. After that restart,
-new Workers use delegated groups. Generated executor units receive the same setting
+new supervised processes use delegated groups. Generated executor units receive the same setting
 at installation. Restart them through their ordinary update route. This ticket does
 not apply either change to a live service.
 
-| Home service property | Worker behavior |
+| Home service property | Supervised process behavior |
 |---|---|
-| `CPUWeight=100` | Shared by the home and Workers. Each Worker uses nice 10. |
-| `OOMScoreAdjust=-500` | The home keeps its protection. At spawn, each Worker raises its own score to at least 0. Higher inherited scores stay higher. Tools inherit that score. |
-| `MemoryAccounting=yes`, `MemoryLow=1G` | Apply to the combined home and Worker group. There is no separate memory reservation against Workers. |
+| `CPUWeight=100` | Shared by the home and every supervised process. Each Worker uses nice 10; other conversations keep the home's nice value. |
+| `OOMScoreAdjust=-500` | The home keeps its protection. At spawn, each Worker raises its own score to at least 0. Higher inherited scores stay higher. Tools inherit that score. The Chief, Managers, and other conversations keep the home's score. |
+| `MemoryAccounting=yes`, `MemoryLow=1G` | Apply to the combined home and supervised group. There is no separate memory reservation against Workers. |
 | `OOMPolicy=continue` | Remains the home service policy. Workers have no independent unit policy or memory cap. |
 | `NoNewPrivileges=yes`, `PrivateTmp=yes` | Inherited from the home service. These are not portable per-Worker containment. |
-| Service stop and restart | Apply to the home service and its processes. The supervisor reconciles Worker records after restart. |
+| Service stop and restart | Apply to the home service and its processes. The supervisor reconciles its records after restart. On the home, each new launch deletes finished records that no conversation still names; executors delete none. |
 | Environment and working directory | Each backend preserves its explicit launch inputs and role identity. |
 
 The Linux adapter writes the Worker OOM score before the backend executes. A failed
@@ -160,7 +162,8 @@ write refuses launch. The removed Bash startup hook raised tool shells and their
 children to 1000, above the agent. That tool-first preference no longer exists.
 macOS has no equivalent OOM score, so that primitive does nothing there.
 
-`WorkerScratch` supplies short disk directories independently of supervision. Scratch
+`WorkerScratch` supplies Workers, and only Workers, with short disk directories and
+private tmux and screen socket directories, independently of supervision. Scratch
 survives successive turns and closes only after confirmed process cleanup. Account
 and login probes retain their separate lifetime.
 

@@ -5,7 +5,7 @@ import type { WorkerProcess, WorkerProcessPrimitives } from '../worker_supervisi
 import { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 import * as records from '../worker_supervision/records.ts';
 import type { LocalChildCustodyRow } from './local_child_custody_contracts.ts';
-import { LocalChildCustody } from './child_custody.ts';
+import { LocalChildCustody, SUPERVISED_CHILD_GENERATION_PREFIX } from './child_custody.ts';
 import { BackendCommands } from './snapshot/commands.ts';
 import * as environment from './snapshot/environment.ts';
 import * as control from './worker_unit/control.ts';
@@ -89,6 +89,19 @@ test('pending custody needs a same-machine ended boot and never stops during ins
   ).toBe(false);
   expect(await f.custody.retirement_row_proven(row({ state: 'retired' }))).toBe(true);
   expect(f.native.signal).not.toHaveBeenCalled();
+});
+
+// Risk: a marked row from a driver that records before it spawns blocks its conversation until a
+// reboot, or an unmarked row loses the boot rule. Gap: only unmarked rows were judged.
+test('a marked pending row without a record is proven on the same boot and an unmarked one is not', async () => {
+  const f = fixture();
+  const pending = { state: 'launch_pending', pid: null, birth: null } as const;
+  expect(
+    await f.custody.retirement_row_proven(
+      row({ ...pending, generation: `${SUPERVISED_CHILD_GENERATION_PREFIX}generation` }),
+    ),
+  ).toBe(true);
+  expect(await f.custody.retirement_row_proven(row(pending))).toBe(false);
 });
 
 test('exact Linux custody checks the host and birth before an explicit stop', async () => {

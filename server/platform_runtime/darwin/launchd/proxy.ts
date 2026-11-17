@@ -82,6 +82,7 @@ export async function run_proxy(record_path: string, command: readonly string[])
         ],
         copy_environment(process.env),
         process.cwd(),
+        { lower_priority: record.worker_priority !== false },
       ),
       { mode: 0o600, flag: 'wx' },
     );

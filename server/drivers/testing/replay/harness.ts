@@ -27,10 +27,9 @@ import type { ConversationMessageFiles } from '../../../conversation/message_fil
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
-import { DarwinWorkerProcesses } from '../../../platform_runtime/darwin/worker_processes.ts';
-import { LinuxWorkerProcesses } from '../../../platform_runtime/linux/worker_processes.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
-import { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import { uncontained_worker_supervision } from '../uncontained_supervision.ts';
 import { create_claude_backend_child_factory } from '../../claude/runtime/adapter.ts';
 import {
   codex_app_server_child_launch,
@@ -44,12 +43,6 @@ import type { PeerStatus } from './peer.ts';
 import type { ReplayScenario } from './scenarios.ts';
 import { read_transcript } from './transcript.ts';
 import type { Transcript } from './transcript.ts';
-
-/** Without containment the parent proves cleanup by process absence, so CI needs no cgroup. */
-class UncontainedLinuxWorkerProcesses extends LinuxWorkerProcesses {
-  // The base class types its flag as the literal `true`. Supervision reads it as a boolean.
-  override readonly requires_containment = false as true;
-}
 
 export interface ReplayEvent {
   readonly turn: TurnToken | null;
@@ -90,8 +83,9 @@ export async function run_folders(): Promise<RunFolders> {
     records: join(root, 'records'),
     home: join(root, 'home'),
   };
-  for (const folder of [folders.workspace, folders.records, folders.home])
-    await mkdir(folder, { recursive: true });
+  for (const folder of [folders.workspace, folders.home]) await mkdir(folder, { recursive: true });
+  // Supervision refuses a records root that anyone else can read.
+  await mkdir(folders.records, { mode: 0o700 });
   return folders;
 }
 /** A `#!node` file that sets its environment and imports a module, as native_rehearsal does. */
@@ -113,14 +107,10 @@ export interface ReplayServices {
 export function replay_services(): ReplayServices {
   const child_processes = new ChildProcesses();
   const one_shot_children = new OneShotChildren(child_processes);
-  const primitives =
-    process.platform === 'darwin'
-      ? new DarwinWorkerProcesses({ children: one_shot_children, clock: monotonic_seconds })
-      : new UncontainedLinuxWorkerProcesses({ clock: monotonic_seconds });
   return {
     child_processes,
     one_shot_children,
-    worker_supervision: new WorkerSupervisionRuntime({ primitives, clock: monotonic_seconds }),
+    worker_supervision: uncontained_worker_supervision(one_shot_children),
   };
 }
 /** The real factory of each built-in driver, launching `executable` in place of the vendor's. */

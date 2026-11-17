@@ -1,6 +1,5 @@
 import { parse_backend_instance_id } from '../../core/identity.ts';
-import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
-import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import { BackendPromptAccepted } from '../../../conversation/backends/contracts.ts';
 import {
@@ -14,6 +13,7 @@ import { HermesAcpBackendChild } from './adapter.ts';
 import { HermesAcpLauncher } from './client.ts';
 import type { HermesAcpClient, HermesAcpHandlers } from './client.ts';
 import { Deferred } from '../../../core/deferred.ts';
+import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
 
 afterEach(() => vi.restoreAllMocks());
 test('stop after a successful prompt write cannot turn acceptance into an unwritten refusal', async () => {
@@ -53,9 +53,10 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
     role_materials: null,
   });
   const seen: string[] = [];
+  const child_processes = new ChildProcesses();
   const child = new HermesAcpBackendChild({
-    child_processes: new ChildProcesses(),
-    worker_supervision: {} as WorkerSupervisionRuntime,
+    child_processes,
+    worker_supervision: uncontained_worker_supervision(new OneShotChildren(child_processes)),
     launch: { argv: ['/synthetic'], environment_overrides: [] },
     resolved_start: resolved,
     event_sink: {

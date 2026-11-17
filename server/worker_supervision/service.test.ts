@@ -1,7 +1,7 @@
 /** Synthetic journals and native contracts prove custody without a service manager or cgroup host. */
-import { mkdtemp, mkdir, readFile, rm, chmod, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, chmod, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { Deferred } from '../core/deferred.ts';
 import {
@@ -44,7 +44,7 @@ class Native implements WorkerProcessPrimitives {
   table = new Map<number, WorkerProcess>([[process.pid, process_record(process.pid, 'owner')]]);
   signals: [number, number][] = [];
   fail = false;
-  prepared = 0;
+  prepared: { lower_priority: boolean }[] = [];
   on_signal: ((pid: number, signal: number) => void) | undefined;
   async host_boot() {
     return { host: 'host', boot: 'boot' };
@@ -62,8 +62,8 @@ class Native implements WorkerProcessPrimitives {
     this.on_signal?.(recorded.pid, signum);
     return true;
   }
-  prepare_launch() {
-    this.prepared += 1;
+  prepare_launch(options: { lower_priority: boolean }) {
+    this.prepared.push(options);
   }
 }
 class Cgroups implements WorkerCgroupPrimitives {
@@ -92,7 +92,13 @@ class Cgroups implements WorkerCgroupPrimitives {
     this.removed += 1;
   }
 }
-async function setup(options: { cgroups?: WorkerCgroupPrimitives; clock?: () => number } = {}) {
+async function setup(
+  options: {
+    cgroups?: WorkerCgroupPrimitives;
+    clock?: () => number;
+    record_paths_in_use?: () => ReadonlySet<string>;
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'worker-custody-'));
   directories.push(root);
   const native = new Native();
@@ -114,7 +120,10 @@ async function setup(options: { cgroups?: WorkerCgroupPrimitives; clock?: () => 
     PLAN_CONVERSATION_ID: 'conversation',
     PLAN_WORKER_PROCESS_ROOT: root,
   };
-  return { root, path, record, environment, native, runtime };
+  const worker = { runtime, conversation_id: 'conversation', worker_ticket_id: 'ticket' };
+  // Any other conversation names no Worker Ticket, even when its environment carries one.
+  const agent = (conversation_id: string) => ({ runtime, conversation_id, worker_ticket_id: null });
+  return { root, path, record, environment, native, runtime, worker, agent };
 }
 
 test('journals reject nonprivate files and invalid process evidence before signals', async () => {
@@ -131,19 +140,16 @@ test('journals reject nonprivate files and invalid process evidence before signa
 
 test('revocation blocks bootstrap and pending custody prevents a second launch for the same Ticket', async () => {
   const f = await setup();
-  expect(await WorkerSupervisor.create({}, f.root, { runtime: f.runtime })).toBeNull();
-  await expect(
-    WorkerSupervisor.create({ PLAN_TICKET_ID: 'missing-root' }, f.root, { runtime: f.runtime }),
-  ).rejects.toThrow('root is missing');
-  const worker = (await WorkerSupervisor.create(f.environment, f.root, { runtime: f.runtime }))!;
-  await expect(
-    WorkerSupervisor.create(f.environment, f.root, { runtime: f.runtime }),
-  ).rejects.toThrow('retained Worker process custody');
+  await expect(WorkerSupervisor.create({}, f.root, f.worker)).rejects.toThrow('root is missing');
+  const worker = await WorkerSupervisor.create(f.environment, f.root, f.worker);
+  await expect(WorkerSupervisor.create(f.environment, f.root, f.worker)).rejects.toThrow(
+    'Ticket already has retained Worker process custody',
+  );
   await worker.cancel_unspawned();
   await expect(prepare_launch(worker.path, f.runtime)).rejects.toThrow(
     'revoked before backend execution',
   );
-  expect(f.native.prepared).toBe(0);
+  expect(f.native.prepared).toEqual([]);
   expect(await records.read(worker.path)).toMatchObject({
     state: 'complete',
     launch_revoked: true,
@@ -151,11 +157,67 @@ test('revocation blocks bootstrap and pending custody prevents a second launch f
   });
 });
 
+test('another conversation is keyed by itself, never stops a Worker, and keeps its priority', async () => {
+  const f = await setup();
+  const worker = await WorkerSupervisor.create(f.environment, f.root, f.worker);
+  // Both environments carry the Worker's PLAN_TICKET_ID.
+  const [chief, manager] = await Promise.all([
+    WorkerSupervisor.create(f.environment, f.root, f.agent('chief')),
+    WorkerSupervisor.create(f.environment, f.root, f.agent('manager')),
+  ]);
+  expect(await records.read(chief.path)).toMatchObject({
+    ticket_id: '',
+    conversation_id: 'chief',
+    worker_priority: false,
+  });
+  await expect(WorkerSupervisor.create(f.environment, f.root, f.agent('chief'))).rejects.toThrow(
+    'Conversation already has retained agent process custody',
+  );
+  await prepare_launch(manager.path, f.runtime);
+  expect(f.native.prepared).toEqual([{ lower_priority: false }]);
+  await records.write(chief.path, { ...f.record, ticket_id: '', conversation_id: 'chief' });
+  f.native.table.set(20, process_record(20));
+  f.native.on_signal = (pid) => f.native.table.delete(pid);
+  await WorkerSupervisor.create(f.environment, f.root, f.agent('chief'));
+  expect(f.native.signals).toEqual([[20, 15]]);
+  expect((await records.read(chief.path)).state).toBe('complete');
+  const untouched = await records.read(worker.path);
+  expect(untouched).toMatchObject({ ticket_id: 'ticket', state: 'pending', worker_priority: true });
+  expect(untouched.launch_revoked).toBeUndefined();
+});
+
+test('a launch prunes finished records no custody row names and keeps every other record', async () => {
+  const in_use = new Set<string>();
+  const f = await setup({ record_paths_in_use: () => in_use });
+  const named = (digit: string) => join(f.root, digit.repeat(32) + '.json');
+  const finished: WorkerProcessRecord = {
+    ...f.record,
+    state: 'complete',
+    root: null,
+    processes: [],
+  };
+  await records.write(named('2'), { ...finished, ticket_id: 'older-worker' });
+  await records.locked(named('2'), f.runtime.clock() + 1, async () => {});
+  await records.write(named('3'), { ...finished, ticket_id: '', conversation_id: 'named' });
+  in_use.add(named('3'));
+  // A row can name its record through another spelling of the root, such as a symlink.
+  await records.write(named('4'), { ...finished, ticket_id: '', conversation_id: 'aliased' });
+  const alias = join(f.root, '..', basename(f.root) + '-alias');
+  await symlink(f.root, alias);
+  directories.push(alias);
+  in_use.add(join(alias, '4'.repeat(32) + '.json'));
+  const pending = await WorkerSupervisor.create(f.environment, f.root, f.agent('chief'));
+  const launched = await WorkerSupervisor.create(f.environment, f.root, f.agent('manager'));
+  expect(new Set(await readdir(f.root))).toEqual(
+    new Set([named('3'), named('4'), pending.path, launched.path].map((path) => basename(path))),
+  );
+});
+
 test('bootstrap commits cgroup ownership before join and missing delegation allows execution but retains a cleanup fence', async () => {
   const cgroups = new Cgroups();
   const f = await setup({ cgroups });
   f.native.requires_containment = true;
-  const worker = (await WorkerSupervisor.create(f.environment, f.root, { runtime: f.runtime }))!;
+  const worker = await WorkerSupervisor.create(f.environment, f.root, f.worker);
   cgroups.on_join = async () =>
     expect((await records.read(worker.path)).cgroup).toEqual(cgroups.identity);
   await prepare_launch(worker.path, f.runtime);
@@ -183,11 +245,13 @@ test('bootstrap commits cgroup ownership before join and missing delegation allo
   expect(removal_failure).toHaveBeenCalledTimes(2);
   const other = await setup();
   other.native.requires_containment = true;
-  const uncontained = (await WorkerSupervisor.create(other.environment, other.root, {
-    runtime: other.runtime,
-  }))!;
+  const uncontained = await WorkerSupervisor.create(other.environment, other.root, other.worker);
+  // A record from before the field is a Worker's, so its launch still lowers priority.
+  const { worker_priority, ...older } = await records.read(uncontained.path);
+  expect(worker_priority).toBe(true);
+  await records.write(uncontained.path, older);
   await prepare_launch(uncontained.path, other.runtime);
-  expect(other.native.prepared).toBe(1);
+  expect(other.native.prepared).toEqual([{ lower_priority: true }]);
   other.native.table.clear();
   expect(await inspect_record(uncontained.path, { runtime: other.runtime })).toMatchObject({
     complete: false,
@@ -256,7 +320,7 @@ test('Linux cleanup escalates after transient TERM evidence failure and leaves s
 
 test('failed ownership observation retains prior evidence and never calls the native stopper', async () => {
   const f = await setup();
-  const worker = (await WorkerSupervisor.create(f.environment, f.root, { runtime: f.runtime }))!;
+  const worker = await WorkerSupervisor.create(f.environment, f.root, f.worker);
   await records.write(worker.path, f.record);
   f.native.fail = true;
   const native_stop = vi.fn(async () => {});
@@ -271,7 +335,7 @@ test('failed ownership observation retains prior evidence and never calls the na
 
 test('native transport failure does not skip owned-process escalation and reconciliation isolates bad records', async () => {
   const f = await setup();
-  const worker = (await WorkerSupervisor.create(f.environment, f.root, { runtime: f.runtime }))!;
+  const worker = await WorkerSupervisor.create(f.environment, f.root, f.worker);
   await records.write(worker.path, f.record);
   f.native.table.set(20, process_record(20));
   f.native.on_signal = (pid) => {
@@ -294,11 +358,11 @@ test('native transport failure does not skip owned-process escalation and reconc
     true,
   );
   expect((await records.read(sibling)).boot_ended).toBe(true);
-  const pending = (await WorkerSupervisor.create(
+  const pending = await WorkerSupervisor.create(
     { ...f.environment, PLAN_TICKET_ID: 'pending-native' },
     f.root,
-    { runtime: f.runtime },
-  ))!;
+    { ...f.worker, worker_ticket_id: 'pending-native' },
+  );
   await records.write(pending.path, { ...f.record, ticket_id: 'pending-native' });
   f.native.table.set(20, process_record(20));
   const release = new Deferred<void>();
@@ -336,9 +400,7 @@ test('Worker executable lookup separates explicit Worker paths from bare PATH lo
   await writeFile(join(bin, 'synthetic-worker'), '', { mode: 0o700 });
   await writeFile(join(f.root, 'synthetic-worker'), '', { mode: 0o700 });
   const entry = './' + relative(process.cwd(), bin);
-  const worker = (await WorkerSupervisor.create({ ...f.environment, PATH: entry }, f.root, {
-    runtime: f.runtime,
-  }))!;
+  const worker = await WorkerSupervisor.create({ ...f.environment, PATH: entry }, f.root, f.worker);
   expect(worker.argv(['synthetic-worker', 'argument']).slice(3)).toEqual([
     entry + '/synthetic-worker',
     'argument',

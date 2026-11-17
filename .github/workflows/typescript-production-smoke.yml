@@ -30,6 +30,9 @@ jobs:
       - name: Build and smoke the production server with a private populated fixture
         shell: bash
         run: |
+          # Every local conversation is supervised; proven cleanup needs a delegated cgroup,
+          # and the runner service cgroup is not writable.
+          systemd-run --user --scope --quiet -p Delegate=yes -- \
           env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             SMOKE_PARENT="$RUNNER_TEMP/typescript-production-smoke" \

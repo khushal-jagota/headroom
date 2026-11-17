@@ -40,6 +40,7 @@ import type {
   StopOptions,
 } from '../../../lifecycle/contracts.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
+import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
 import type { LocalChildIdentity } from '../../../conversation/local_child_contracts.ts';
 import { claude_sdk_client } from './query.ts';
 import type {
@@ -218,6 +219,8 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       child_processes: this.child_processes,
       one_shot_children: this.one_shot_children,
       worker_supervision: this.worker_supervision,
+      conversation_id: start.conversation_id,
+      worker_ticket_id: worker_ticket_id(start),
       custody_sink: this.sink,
       cwd: start.workspace_folder,
       pathToClaudeCodeExecutable: this.launch.claude_executable,

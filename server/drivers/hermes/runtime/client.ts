@@ -15,7 +15,7 @@ import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk
 import type { BackendEventSink } from '../../../conversation/backends/contracts.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
-import { local_process_identity } from '../../../worker_supervision/identity.ts';
+import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
 import { WorkerScratch } from '../../../conversation/worker_scratch.ts';
 import type { LocalChildIdentity } from '../../../conversation/local_child_contracts.ts';
 import {
@@ -352,11 +352,11 @@ export class HermesAcpClient {
 /** Launch ownership exists before startup, so shutdown can seal an in-flight spawn. */
 export class HermesAcpLauncher {
   private readonly child_processes: OwnedChildProcesses;
-  private readonly worker_supervision: WorkerSupervisionRuntime | undefined;
+  private readonly worker_supervision: WorkerSupervisionRuntime;
   private readonly custody_sink: BackendEventSink | undefined;
   constructor(
     child_processes: OwnedChildProcesses,
-    worker_supervision?: WorkerSupervisionRuntime,
+    worker_supervision: WorkerSupervisionRuntime,
     custody_sink?: BackendEventSink,
   ) {
     this.child_processes = child_processes;
@@ -401,34 +401,32 @@ export class HermesAcpLauncher {
   ): Promise<HermesAcpClient> {
     try {
       const environment = child_environment(launch, resolved_start);
-      const identity = Object.fromEntries(
-        resolved_start.role_materials?.identity_environment_variables ?? [],
+      // Every launch writes its supervision record before spawn. Only a Worker gets scratch.
+      const ticket_id = worker_ticket_id(resolved_start);
+      const supervisor = await WorkerSupervisor.create(
+        environment,
+        resolved_start.workspace_folder,
+        {
+          runtime: this.worker_supervision,
+          conversation_id: resolved_start.conversation_id,
+          worker_ticket_id: ticket_id,
+        },
       );
-      if (identity.PLAN_TICKET_ID) {
-        if (!this.worker_supervision) throw new Error('Worker supervision is required');
-        this.supervisor = await WorkerSupervisor.create(
-          environment,
-          resolved_start.workspace_folder,
-          {
-            runtime: this.worker_supervision,
-          },
-        );
-        if (this.supervisor !== null) Object.assign(environment, this.supervisor.environment);
+      this.supervisor = supervisor;
+      Object.assign(environment, supervisor.environment);
+      if (ticket_id !== null) {
         this.scratch = await WorkerScratch.create(environment, { processes: this.child_processes });
         Object.assign(environment, this.scratch.environment);
-        if (this.supervisor !== null) {
-          Object.assign(this.supervisor.environment, environment);
-          await this.custody_sink?.record_local_child_supervision?.(this.supervisor.path);
-        }
       }
+      Object.assign(supervisor.environment, environment);
+      await this.custody_sink?.record_local_child_supervision?.(supervisor.path);
       if (this.sealed) throw new Error('this child is being shut down');
-      const argv = this.supervisor?.argv(launch.argv) ?? launch.argv;
-      const owned = await spawn_owned_process(argv, {
+      const owned = await spawn_owned_process(supervisor.argv(launch.argv), {
         child_processes: this.child_processes,
         on_created: (owned) => {
           this.owned = owned;
-          if (owned.child.pid !== undefined && this.supervisor !== null) {
-            this.registration = this.supervisor.spawned(owned.child.pid);
+          if (owned.child.pid !== undefined) {
+            this.registration = supervisor.spawned(owned.child.pid);
             void this.registration.catch(() => {});
           }
         },
@@ -437,16 +435,9 @@ export class HermesAcpLauncher {
       });
       this.owned = owned;
       await this.registration;
-      if (owned.child.pid === undefined && this.supervisor !== null)
-        throw new Error('Worker process PID is unavailable');
-      if (owned.child.pid !== undefined) {
-        if (this.supervisor !== null) {
-          await this.supervisor.started(owned.child.pid);
-          this.identity = await this.supervisor.identity();
-        } else if (this.worker_supervision) {
-          this.identity = await local_process_identity(owned.child.pid, this.worker_supervision);
-        }
-      }
+      if (owned.child.pid === undefined) throw new Error('Hermes process PID is unavailable');
+      await supervisor.started(owned.child.pid);
+      this.identity = await supervisor.identity();
       if (this.custody_sink?.record_local_child_custody) {
         if (this.identity === null) throw new Error('Cannot establish the Hermes process identity');
         await this.custody_sink.record_local_child_custody(this.identity);

@@ -40,6 +40,7 @@ export async function create_codex_instance(
       turns: { supportsActiveSteering: true },
     },
     plan_selection_transition: turn_scoped_selection_transition,
+    supervises_local_launches: true,
     child_factory: create_codex_backend_child_factory(codex_launch(host), {
       child_processes: host.child_processes,
       worker_supervision: host.worker_supervision,
