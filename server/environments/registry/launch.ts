@@ -3,9 +3,12 @@ import { provider_launch_settings } from '../../core/config.ts';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expand_path } from '../paths.ts';
+import { configured_file_path } from '../../drivers/core/paths.ts';
 import { managed_skills_home } from '../../skills/files.ts';
 import { provision_account_skills } from '../../skills/account.ts';
-import type { OperatorPathInputs } from '../command_contracts.ts';
+import { PROVISION_SKILLS_HOME_OPTIONS } from '../command_contracts.ts';
+import type { OperatorArguments, OperatorPathInputs } from '../command_contracts.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import type { EnvironmentRunOptions, ResolvedEnvironmentInstance } from './contracts.ts';
 import { validate_environment_values } from './logic.ts';
 
@@ -27,14 +30,38 @@ export function build_environment_run_env(
     PLAN_LOGS_DIR: instance.logs_dir,
     PLAN_DISPATCHER_LOCK_PATH: instance.dispatcher_lock_path,
     PLAN_SERVER_CONTROL_SOCKET: instance.server_control_socket_path,
-    PLAN_HERMES_PYTHON: options.hermes_python,
+    ...options.launcher_files,
     ...(options.ambient.HOME === undefined
       ? {}
-      : {
-          HOME: options.ambient.HOME,
-          PLAN_HERMES_HOME: options.ambient.HOME + '/.hermes',
-        }),
+      : { HOME: options.ambient.HOME, ...carried_homes(options.ambient.HOME) }),
   };
+}
+/**
+ * The child uses the account's normal homes. A home Panels carries to its provider under
+ * further variables is pinned to its default; a provider that reads its own variable keeps
+ * its own default.
+ */
+function carried_homes(account_home: string): Record<string, string> {
+  const homes: Record<string, string> = {};
+  for (const { manifest } of BUILT_IN_MANIFESTS)
+    if (manifest.home?.extra_environment_names?.length)
+      homes[manifest.home.environment_name] = expand_path(manifest.home.default_path, account_home);
+  return homes;
+}
+/** Each configured file a driver's executable sits beside, expanded against HOME. */
+export function resolve_launcher_files(
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const { manifest } of BUILT_IN_MANIFESTS) {
+    const file = manifest.executable.configured_beside;
+    if (file)
+      files[file.environment_name] = expand_path(
+        configured_file_path(file, environment),
+        environment.HOME,
+      );
+  }
+  return files;
 }
 export function build_test_environment_run_env(
   instance: ResolvedEnvironmentInstance,
@@ -57,21 +84,17 @@ export function resolve_hermes_python(
   );
 }
 export function provision_environment_skills(
-  options: {
-    database_parent: string;
-    hermes_home: string;
-    codex_home: string;
-    claude_home: string;
-  },
+  options: OperatorArguments['provision-skills'],
   paths: OperatorPathInputs,
 ): string | null {
   const parent = paths.admit_path(paths.expand_path(options.database_parent));
   const root = paths.admit_path(managed_skills_home(parent));
-  const homes = [options.hermes_home, options.codex_home, options.claude_home].map((value) => {
-    const home = paths.admit_path(paths.expand_path(value));
+  const homes = PROVISION_SKILLS_HOME_OPTIONS.map(({ destination, home: { skills_directory } }) => {
+    const home = paths.admit_path(paths.expand_path(options[destination]));
+    const skills = skills_directory ?? 'skills';
     // Link replacement can read the previous target before replacing the link.
-    paths.admit_path(join(home, 'skills'));
-    return home;
+    paths.admit_path(join(home, skills));
+    return { path: home, skills_directory: skills };
   });
   let exists = false;
   try {

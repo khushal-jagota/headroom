@@ -2,17 +2,13 @@ import { readFileSync } from 'node:fs';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import { definition_from_json, definition_to_json } from './store.ts';
 import { convert_existing_skill } from './guidance.ts';
+import { DEFAULT_LAUNCH } from '../drivers/built_in.ts';
 export const SHIPPED_WORKER_TYPES_FILE = new URL(
   '../../src/planner/worker_types/shipped_worker_types.json',
   import.meta.url,
 );
 export const CHIEF_EMPLOYEE_ID = 'chief_of_staff';
 export const CHIEF_LABEL = 'Chief of Staff';
-export const DEFAULT_CHIEF_LAUNCH = {
-  employee_backend: 'codex',
-  employee_launch_model: 'gpt-6.1-sol',
-  employee_launch_reasoning_effort: 'medium',
-};
 export function shipped_worker_types(): unknown[] {
   return JSON.parse(readFileSync(SHIPPED_WORKER_TYPES_FILE, 'utf8')) as unknown[];
 }
@@ -39,9 +35,9 @@ export function seed_chief_settings(tx: TransactionSql): void {
     [
       CHIEF_EMPLOYEE_ID,
       CHIEF_LABEL,
-      DEFAULT_CHIEF_LAUNCH.employee_backend,
-      DEFAULT_CHIEF_LAUNCH.employee_launch_model,
-      DEFAULT_CHIEF_LAUNCH.employee_launch_reasoning_effort,
+      DEFAULT_LAUNCH.employee_backend,
+      DEFAULT_LAUNCH.employee_launch_model,
+      DEFAULT_LAUNCH.employee_launch_reasoning_effort,
     ],
   );
 }

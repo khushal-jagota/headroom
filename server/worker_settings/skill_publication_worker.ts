@@ -2,10 +2,11 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { provision_workspace_skills } from '../skills/sources.ts';
 import { provision_account_skills } from '../skills/account.ts';
+import type { AccountSkillHome } from '../skills/account.ts';
 export interface SkillPublicationInput {
   parent: string;
   workspace: string | null;
-  account_homes: string[] | null;
+  account_homes: AccountSkillHome[] | null;
 }
 if (!parentPort) throw new Error('Skill publication requires a worker thread');
 const input = workerData as SkillPublicationInput;

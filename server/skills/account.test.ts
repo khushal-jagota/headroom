@@ -23,6 +23,7 @@ import {
   provision_account_skills,
 } from './account.ts';
 import { environment_provision_skills } from '../environments/cli.ts';
+import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 const roots: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -91,7 +92,9 @@ test('startup honors provider homes and provisioning choice in test mode, and a 
     CLAUDE_CONFIG_DIR: homes[2],
   }))
     vi.stubEnv(key, value);
-  expect(account_skill_homes()).toEqual(homes);
+  expect(account_skill_homes()).toEqual(
+    homes.map((path) => ({ path, skills_directory: 'skills' })),
+  );
   const config = loadConfig(join(root, 'absent.yaml'), {
     PLAN_DB_PATH: join(parent, 'db'),
     PLAN_PROVISION_ACCOUNT_SKILLS: 'true',
@@ -153,4 +156,24 @@ test('startup publication keeps the event loop responsive while a provider lock 
   await pending;
   expect(settled).toBe(true);
   expect(readlinkSync(join(first, 'skills', 'panels'))).toBe(join(parent, 'skills', 'panels'));
+});
+
+// Gap: no other test proves a manifest's skills_directory, rather than 'skills', receives the links.
+test('a driver home that names its skills folder gets its skills linked there', () => {
+  const { root, parent } = fixture();
+  const [hermes] = BUILT_IN_MANIFESTS;
+  const home = { ...hermes!.manifest.home!, skills_directory: 'agent-skills' };
+  const homes = account_skill_homes(
+    { HOME: root, [home.environment_name]: join(root, 'scripted') },
+    [{ manifest: { ...hermes!.manifest, home } }],
+  );
+  expect(homes).toEqual([{ path: join(root, 'scripted'), skills_directory: 'agent-skills' }]);
+  expect(provision_account_skills(parent, homes)).toBeNull();
+  expect(readlinkSync(join(root, 'scripted', 'agent-skills', 'panels'))).toBe(
+    join(parent, 'skills', 'panels'),
+  );
+  expect(readdirSync(join(root, 'scripted')).sort()).toEqual([
+    '.panels-skills.lock',
+    'agent-skills',
+  ]);
 });

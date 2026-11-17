@@ -12,6 +12,9 @@ import {
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { flock } from '../core/locks/flock.ts';
+import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
+import type { BuiltInDriverFacts } from '../drivers/built_in_manifests.ts';
+import { home_path } from '../drivers/core/paths.ts';
 import { managed_skills_home, with_skill_publication_lock } from './files.ts';
 import {
   RETIRED_PANELS_SKILL_NAMES,
@@ -31,18 +34,32 @@ import {
   unlink_relative,
 } from '../executor/mac/platform.ts';
 
+/** A provider home, and the one folder inside it that holds the linked skills. */
+export interface AccountSkillHome {
+  readonly path: string;
+  readonly skills_directory: string;
+}
+/** A bare path is a home that keeps its skills in 'skills'. */
+export type AccountSkillHomeInput = string | AccountSkillHome;
+/** One home per built-in driver that has one, in BUILT_IN_DRIVERS order. */
 export function account_skill_homes(
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
-): string[] {
-  const home = environment.HOME || homedir();
-  return [
-    ['PLAN_HERMES_HOME', '.hermes'],
-    ['CODEX_HOME', '.codex'],
-    ['CLAUDE_CONFIG_DIR', '.claude'],
-  ].map(([key, fallback]) => {
-    const value = environment[key] || join(home, fallback);
-    return value === '~' ? home : value.startsWith('~/') ? join(home, value.slice(2)) : value;
-  });
+  drivers: readonly Pick<BuiltInDriverFacts, 'manifest'>[] = BUILT_IN_MANIFESTS,
+): AccountSkillHome[] {
+  const account_home = environment.HOME || homedir();
+  return drivers.flatMap(({ manifest: { home } }) =>
+    home
+      ? [
+          {
+            path: home_path(home, environment, account_home, {
+              unset: '||',
+              expand_configured: true,
+            }),
+            skills_directory: home.skills_directory ?? 'skills',
+          },
+        ]
+      : [],
+  );
 }
 function stat(path: string) {
   try {
@@ -53,6 +70,20 @@ function stat(path: string) {
   }
 }
 const canonical = (path: string) => resolve_native_skill_path(resolve(path));
+/** Each distinct home once, by canonical path, in path order. */
+function canonical_homes(homes: readonly AccountSkillHomeInput[]): AccountSkillHome[] {
+  const distinct = new Map<string, AccountSkillHome>();
+  for (const home of homes) {
+    const { path, skills_directory } =
+      typeof home === 'string' ? { path: home, skills_directory: 'skills' } : home;
+    const resolved = { path: canonical(path), skills_directory };
+    distinct.set(JSON.stringify(resolved), resolved);
+  }
+  return [...distinct.values()].sort(
+    (a, b) => compare(a.path, b.path) || compare(a.skills_directory, b.skills_directory),
+  );
+}
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 function warning(path: string, owner: string): string {
   return `Panels supports one instance per OS account. Account skill provisioning was skipped: ${path} belongs to ${owner}. Existing provider skills were preserved. The server can start, but this home cannot own its Worker skills. Use a separate OS account for another Panels home.`;
 }
@@ -65,7 +96,7 @@ function unreadable(parent: string, error: unknown): string {
 /** Read-only preflight also serves setup before any persistent provider effects. */
 export function account_skill_provisioning_conflict(
   parent: string,
-  homes: readonly string[],
+  homes: readonly AccountSkillHomeInput[],
   skill_names?: readonly string[],
 ): string | null {
   try {
@@ -78,8 +109,8 @@ export function account_skill_provisioning_conflict(
       ...RETIRED_PANELS_SKILL_NAMES,
       ...WORKER_ONLY_SKILL_NAMES,
     ]);
-    for (const home of [...new Set(homes.map(canonical))].sort()) {
-      const target = join(home, 'skills'),
+    for (const home of canonical_homes(homes)) {
+      const target = join(home.path, home.skills_directory),
         metadata = stat(target);
       if (metadata?.isSymbolicLink()) {
         const owner = canonical(target);
@@ -124,15 +155,16 @@ function owned_link(parent: number, path: string, name: string, expected: string
 /** Provider locks serialize independent Panels homes before the ownership recheck. */
 export function provision_account_skills(
   parent: string,
-  native_homes: readonly string[] = account_skill_homes(),
+  native_homes: readonly AccountSkillHomeInput[] = account_skill_homes(),
 ): string | null {
   const locks: number[] = [];
   try {
-    const homes = [...new Set(native_homes.map(canonical))].sort();
+    const homes = canonical_homes(native_homes);
     return with_skill_publication_lock(parent, (source) => {
       let conflict = account_skill_provisioning_conflict(parent, homes);
       if (conflict) return conflict;
-      for (const home of homes) {
+      // One lock per home directory, even where two skills folders share it.
+      for (const home of new Set(homes.map((home) => home.path))) {
         mkdirSync(home, { recursive: true });
         const path = join(home, '.panels-skills.lock');
         const fd = openSync(
@@ -159,19 +191,22 @@ export function provision_account_skills(
         )
         .map((entry) => entry.name)
         .sort();
-      for (const home of homes) {
+      for (const { path: home, skills_directory } of homes) {
         const home_fd = open_directory_descriptor(home);
         try {
           same_directory(home, home_fd);
-          const target = join(home, 'skills');
-          if (stat(target)?.isSymbolicLink() && !owned_link(home_fd, home, 'skills', source))
+          const target = join(home, skills_directory);
+          if (
+            stat(target)?.isSymbolicLink() &&
+            !owned_link(home_fd, home, skills_directory, source)
+          )
             return warning(target, 'an unowned legacy link');
           try {
-            mkdir_relative(home_fd, 'skills', 0o777);
+            mkdir_relative(home_fd, skills_directory, 0o777);
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
           }
-          const fd = open_relative(home_fd, 'skills', directory_open_flags);
+          const fd = open_relative(home_fd, skills_directory, directory_open_flags);
           try {
             same_directory(target, fd);
             for (const name of read_directory_names(fd)) {
