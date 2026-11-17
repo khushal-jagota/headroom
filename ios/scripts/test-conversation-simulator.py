@@ -412,6 +412,7 @@ def main() -> int:
                 "running_conversations": 0, "out_claims": 0,
                 "review": 0, "unread": 0, "settled": 0,
             },
+            "review_context": [],
         }
         return {
             "event": "snapshot", "wire_version": 3, "projection_version": 7,
