@@ -1,45 +1,43 @@
 /** The selected executable must supply the native features that Panels consumes. */
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import { realpath, stat } from 'node:fs/promises';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 
-export type Backend = 'codex' | 'claude';
 const VERSION_TIMEOUT_SECONDS = 10;
-const requirements = {
-  codex: {
-    name: 'Codex',
-    version: '0.148.0',
-    reason: 'thread-aware app/read',
-    output: /^codex-cli (\S+)$/,
-  },
-  claude: {
-    name: 'Claude',
-    version: '2.1.219',
-    reason: 'queued message cancellation on Stop',
-    output: /^(\S+) \(Claude Code\)$/,
-  },
-} as const;
+
+/** The kind's floor and label from the manifest door, or null when the kind has no floor. */
+function requirement(kind: string) {
+  const driver = BUILT_IN_MANIFESTS.find((candidate) => candidate.driver_kind === kind);
+  const floor = driver?.manifest.cli_floor;
+  return driver === undefined || floor === undefined ? null : { name: driver.client.label, floor };
+}
+function required(kind: string) {
+  const found = requirement(kind);
+  if (found === null) throw new Error(`${kind} has no CLI version floor`);
+  return found;
+}
 
 export class BackendCliIncompatible extends Error {}
 
-function repair(backend: Backend): string {
-  const requirement = requirements[backend];
-  return `Update ${requirement.name} to at least ${requirement.version}. Panels requires ${requirement.reason}.`;
+function repair(backend: string): string {
+  const { name, floor } = required(backend);
+  return `Update ${name} to at least ${floor.minimum_version}. Panels requires ${floor.feature}.`;
 }
 
-function too_old(backend: Backend, executable: string, version: string): BackendCliIncompatible {
+function too_old(backend: string, executable: string, version: string): BackendCliIncompatible {
   return new BackendCliIncompatible(
-    `${requirements[backend].name} ${version} at ${executable} is too old. ${repair(backend)}`,
+    `${required(backend).name} ${version} at ${executable} is too old. ${repair(backend)}`,
   );
 }
 
 export function cli_version_error(
-  backend: Backend,
+  backend: string,
   executable: string,
   kind: 'check' | 'read',
 ): BackendCliIncompatible {
   return new BackendCliIncompatible(
-    `Cannot ${kind} the ${requirements[backend].name} version at ${executable}. ${repair(backend)}`,
+    `Cannot ${kind} the ${required(backend).name} version at ${executable}. ${repair(backend)}`,
   );
 }
 
@@ -83,10 +81,12 @@ function version(
 type CliVerdict = string | null;
 
 /** Compare one reported version with the floor. Undefined means the text is not a version. */
-function floor_verdict(backend: Backend, reported: string): CliVerdict | undefined {
+function floor_verdict(backend: string, reported: string): CliVerdict | undefined {
   const parsed = version(reported);
   if (parsed === null) return undefined;
-  const floor = requirements[backend].version.split('.').map((part) => BigInt(part));
+  const floor = required(backend)
+    .floor.minimum_version.split('.')
+    .map((part) => BigInt(part));
   let comparison = parsed.epoch === 0n ? 0 : 1;
   for (
     let index = 0;
@@ -101,23 +101,24 @@ function floor_verdict(backend: Backend, reported: string): CliVerdict | undefin
 }
 
 function output_verdict(
-  backend: Backend,
+  backend: string,
   executable: string,
   stdout: string,
   exitCode: number | null,
 ): CliVerdict {
-  const reported = requirements[backend].output.exec(stdout.trim());
+  const reported = required(backend).floor.version_pattern.exec(stdout.trim());
   const verdict = reported === null ? undefined : floor_verdict(backend, reported[1]!);
   if (exitCode !== 0 || verdict === undefined) throw cli_version_error(backend, executable, 'read');
   return verdict;
 }
 
 export function validate_cli_version(
-  backend: Backend,
+  backend: string,
   executable: string,
   stdout: string,
   exitCode: number | null,
 ): void {
+  if (requirement(backend) === null) return;
   const verdict = output_verdict(backend, executable, stdout, exitCode);
   if (verdict !== null) throw too_old(backend, executable, verdict);
 }
@@ -129,7 +130,7 @@ export function validate_cli_version(
  */
 const verdicts = new Map<string, CliVerdict>();
 
-async function executable_key(backend: Backend, executable: string): Promise<string | null> {
+async function executable_key(backend: string, executable: string): Promise<string | null> {
   try {
     const path = await realpath(executable);
     const file = await stat(path, { bigint: true });
@@ -145,9 +146,10 @@ async function executable_key(backend: Backend, executable: string): Promise<str
  * verdict that output gives. Unreadable output keeps nothing and throws nothing.
  */
 export async function cli_version_recorder(
-  backend: Backend,
+  backend: string,
   executable: string,
 ): Promise<(stdout: string, exitCode: number | null) => void> {
+  if (requirement(backend) === null) return () => {};
   const key = await executable_key(backend, executable);
   return (stdout, exitCode) => {
     if (key === null) return;
@@ -166,11 +168,11 @@ export async function cli_version_recorder(
  * the floor replaces the kept verdict and throws. A missing or unreadable version passes.
  */
 export async function confirm_reported_cli_version(
-  backend: Backend,
+  backend: string,
   executable: string,
   reported: unknown,
 ): Promise<void> {
-  if (typeof reported !== 'string') return;
+  if (typeof reported !== 'string' || requirement(backend) === null) return;
   const verdict = floor_verdict(backend, reported);
   if (verdict === undefined || verdict === null) return;
   const key = await executable_key(backend, executable);
@@ -180,7 +182,7 @@ export async function confirm_reported_cli_version(
 
 /** A kept verdict for the same executable file answers with only a stat. A miss runs `--version`. */
 export async function ensure_cli_compatible(
-  backend: Backend,
+  backend: string,
   executable: string,
   options: {
     environment?: Readonly<Record<string, string>>;
@@ -189,6 +191,7 @@ export async function ensure_cli_compatible(
     signal?: AbortSignal;
   } = {},
 ): Promise<void> {
+  if (requirement(backend) === null) return;
   options.signal?.throwIfAborted();
   const key = await executable_key(backend, executable);
   const known = key === null ? undefined : verdicts.get(key);

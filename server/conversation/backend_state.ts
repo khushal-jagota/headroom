@@ -1,5 +1,6 @@
 /** Durable decorations of backend cards share the existing database write door. */
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
+import { built_in_driver_of } from '../drivers/built_in_manifests.ts';
 import type { Database, ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import {
@@ -8,7 +9,6 @@ import {
   legacy_machine_id,
 } from '../execution_identity.ts';
 import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
-import { recognize_variant } from './model_resolution/logic/variants.ts';
 import type { BackendSnapshot } from './snapshot/contracts.ts';
 import type {
   BackendUsageResult,
@@ -100,6 +100,7 @@ export function read_cached_backend_usage(
     windows: windows.map((row) => ({
       kind: row.window_kind,
       model_scope: row.model_id || null,
+      scope_label: null,
       used_percent: row.used_percent,
       resets_at: new Date(row.resets_at * 1000),
     })),
@@ -179,14 +180,8 @@ function is_offered(
   model_id: string,
   offered: readonly string[],
 ): boolean {
-  if (offered.includes(model_id)) return true;
-  if (backend_key !== 'claude') return false;
-  const base_of = (model: string) => (model.endsWith('[1m]') ? model.slice(0, -4) : model);
-  const base = base_of(model_id);
-  const listed_bases = new Set(offered.map(base_of));
-  if (listed_bases.has(base)) return true;
-  if (!['opus', 'sonnet', 'haiku', 'fable'].includes(base)) return false;
-  return [...listed_bases].some((listed) => recognize_variant(backend_key, listed)?.name === base);
+  const rule = built_in_driver_of(backend_key)?.models?.is_offered;
+  return rule === undefined ? offered.includes(model_id) : rule(model_id, offered);
 }
 export function model_refusal(
   sql: ReadSql,
@@ -196,7 +191,6 @@ export function model_refusal(
 ): string | null {
   if (!model_is_enabled(sql, backend_key, model_id))
     return `Model "${model_id}" is disabled. Choose an enabled model.`;
-  if (backend_key === 'hermes') return null;
   const offered = offered_model_ids(sql, machine, backend_key);
   if (offered === null || is_offered(backend_key, model_id, offered)) return null;
   const disabled = disabled_models(sql, backend_key);

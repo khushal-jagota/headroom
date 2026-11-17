@@ -8,7 +8,7 @@ import { ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import {
   BackendStreamEnded,
   BackendSpawnFailed,
-  ClaudeInitializationTimeout,
+  BackendInitializationTimeout,
   NeedsRebind,
   PromptWriteFailed,
   SessionLoadFailed,
@@ -162,7 +162,7 @@ it('classifies only the native SDK initialization-timeout discriminator before r
       });
       await expect(child.start(start, { vendor_session_cursor: cursor })).rejects.toBeInstanceOf(
         tagged
-          ? ClaudeInitializationTimeout
+          ? BackendInitializationTimeout
           : cursor === null
             ? BackendSpawnFailed
             : SessionLoadFailed,
