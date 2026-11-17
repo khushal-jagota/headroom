@@ -20,6 +20,8 @@ import {
 import { audit_ticket_registry_integrity } from '../tickets/data/index.ts';
 import { create_manager } from '../managers/data.ts';
 import { create, fixture, fixture_path } from './ticket_fixture.ts';
+import { BUILT_IN_DRIVERS } from '../drivers/built_in.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -31,7 +33,7 @@ const REFUSAL = {
   error: {
     code: 'validation',
     message: 'unknown agent backend',
-    detail: { backend_key: 'hermes', backend_keys: ['codex', 'claude'] },
+    detail: { backend_key: 'hermes', backend_keys: [...KNOWN_BACKEND_INSTANCE_IDS] },
   },
 };
 
@@ -97,6 +99,9 @@ function stored_hermes() {
 // One real server over one fixture, because the reads, the sends and the readiness pass each
 // take a different path to the same key. Measured at about 1.1 s.
 test('a build without Hermes reads every saved Hermes row and refuses only its launches', async () => {
+  // The premise: this build's list, which every check below derives from, lacks the stored key.
+  expect(KNOWN_BACKEND_INSTANCE_IDS).not.toContain('hermes');
+  expect(KNOWN_BACKEND_INSTANCE_IDS.length).toBeGreaterThan(0);
   const f = stored_hermes();
   const root = dirname(f.path);
   for (const [key, value] of Object.entries({
@@ -186,9 +191,13 @@ test('a build without Hermes reads every saved Hermes row and refuses only its l
 
     // Cards and the driver list name only this build's drivers.
     const drivers = await call('GET', '/drivers');
-    expect(drivers.body.drivers.map((item: Body) => item.driver_kind)).toEqual(['codex', 'claude']);
+    expect(drivers.body.drivers.map((item: Body) => item.driver_kind)).toEqual(
+      BUILT_IN_DRIVERS.map((driver) => driver.driver_kind),
+    );
     const cards = await call('GET', '/conversation/backends');
-    expect(cards.body.backends.map((card: Body) => card.backend_key)).toEqual(['codex', 'claude']);
+    expect(cards.body.backends.map((card: Body) => card.backend_key)).toEqual([
+      ...KNOWN_BACKEND_INSTANCE_IDS,
+    ]);
 
     // The saved conversation opens, with its view and event tail, and cannot steer.
     expect(await call('GET', '/conversation/conversations/stored-hermes')).toMatchObject({

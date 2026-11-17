@@ -1,5 +1,8 @@
 /** Observe the real core's save retry through the stalls registry. */
-import { registry_of_factories } from '../../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+} from '../../drivers/testing/registry.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
 import { ProcessWaitRegistry } from '../../stalls/registry.ts';
@@ -46,7 +49,7 @@ export async function run_wait(database_path: string): Promise<unknown> {
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
     message_files: new ConversationMessageFiles(database_path),
-    backend_registry: registry_of_factories({ codex: factory, claude: factory }),
+    backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
     unix_time_now: () => 100,
     wait_registry: registry,
   });

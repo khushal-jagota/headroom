@@ -115,7 +115,8 @@ test('answer admission refuses an exact unsafe turn before the core callback', a
 // Reuse the real core/record fixture without a provider process or artifact transport.
 // Earlier acknowledgement tests cannot prove that mailbox placement stays pending.
 async function remote_fixture(early_result = false) {
-  const { registry_of_factories } = await import('../drivers/testing/registry.ts');
+  const { for_every_built_in_backend, registry_of_factories } =
+    await import('../drivers/testing/registry.ts');
   const { MacRemoteChild } = await import('./vps_remote_child.ts');
   const { Deferred } = await import('../core/deferred.ts');
   const { RetainedBackendRun } = await import('../conversation/backends/contracts.ts');
@@ -185,7 +186,7 @@ async function remote_fixture(early_result = false) {
   });
   const f = setup({
     core: {
-      backend_registry: registry_of_factories({ codex: factory, claude: factory }),
+      backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
     },
   });
   const mailbox = new SqliteCommandMailbox(f.database);

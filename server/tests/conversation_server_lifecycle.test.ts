@@ -9,7 +9,8 @@ import { start_production_server } from '../lifecycle/production.ts';
 import type { ProductionServerDependencies } from '../lifecycle/production.ts';
 import { create_production_backend_bindings } from '../lifecycle/production_bindings.ts';
 import type { DriverHost } from '../drivers/core/host.ts';
-import { drivers_of_factories } from '../drivers/testing/registry.ts';
+import { drivers_of_factories, for_every_built_in_backend } from '../drivers/testing/registry.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import { run_application_process } from '../lifecycle/application.ts';
 import * as codex_providers from '../drivers/codex/runtime/providers.ts';
 import * as claude_catalog_source from '../drivers/claude/runtime/catalog_source.ts';
@@ -405,17 +406,14 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   };
   const dependencies: ProductionServerDependencies = {
     backends: {
-      drivers: drivers_of_factories({
-        claude: (host) => {
+      drivers: drivers_of_factories(
+        for_every_built_in_backend((id) => (host) => {
+          // Every driver gets the one host, before any child, so each may bind it.
           registry.bind_runtime(host.worker_supervision);
           bindings_seen.push(host);
-          return registry.registry.require_live('claude').child_factory;
-        },
-        codex: (host) => {
-          bindings_seen.push(host);
-          return registry.registry.require_live('codex').child_factory;
-        },
-      }),
+          return registry.registry.require_live(id).child_factory;
+        }),
+      ),
       driver_host,
       http(binding) {
         bindings_seen.push(binding.driver_host);
@@ -534,7 +532,8 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       context.database.read((sql) => sql.get('SELECT checked_at_ms FROM stall_checker_heartbeat')),
     ).toEqual({ checked_at_ms: tracked_waits.mock.calls.at(-1)![1] });
     expect(new Set(bindings_seen).size).toBe(1);
-    expect(bindings_seen).toHaveLength(3);
+    // One per driver, and one for the HTTP runtime.
+    expect(bindings_seen).toHaveLength(KNOWN_BACKEND_INSTANCE_IDS.length + 1);
     expect(existsSync(join(upload_root, 'startup-expired'))).toBe(false);
     expect(
       f.database.read((sql) =>

@@ -1,4 +1,8 @@
-import { registry_of_factories, unread_driver_host } from '../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+  unread_driver_host,
+} from '../drivers/testing/registry.ts';
 import { authenticate_launch_token } from '../agent_identity/data.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 /** Gap: persisted Mac presence cannot authorize a VPS-local adapter for a retained
@@ -87,10 +91,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
         database.read((sql) =>
           conversation_execution_refusal(sql, id, local_ticket_execution_refusal),
         ),
-      backend_registry: registry_of_factories({
-        claude: delegate,
-        codex: delegate,
-      }),
+      backend_registry: registry_of_factories(for_every_built_in_backend(() => delegate)),
     },
   });
   database = f.database;
@@ -220,10 +221,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
     bound = compose_production_backends(
       context,
       {
-        registry: registry_of_factories({
-          claude: local_constructor,
-          codex: local_constructor,
-        }),
+        registry: registry_of_factories(for_every_built_in_backend(() => local_constructor)),
         host: unread_driver_host,
       },
       {

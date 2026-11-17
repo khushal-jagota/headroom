@@ -1,5 +1,5 @@
 /** Shared real-record and scripted-process fixture for the conversation core ports. */
-import { registry_of_factories } from '../drivers/testing/registry.ts';
+import { for_every_built_in_backend, registry_of_factories } from '../drivers/testing/registry.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,7 +85,7 @@ export function setup(
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_registry: registry_of_factories({ codex: factory, claude: factory }),
+    backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
     message_files: new ConversationMessageFiles(join(directory, 'conversation.sqlite')),
     ...options.core,
   });

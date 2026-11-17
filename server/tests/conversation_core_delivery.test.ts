@@ -1,4 +1,8 @@
-import { registry_of_factories, scripted_instance_controls } from '../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+  scripted_instance_controls,
+} from '../drivers/testing/registry.ts';
 import type { SelectionTransitionPlan } from '../drivers/core/selection.ts';
 import { AUTOMATIC_COMPACTION_AFTER_SECONDS } from '../conversation/runtime/configuration.ts';
 import { setup } from './conversation_core_fixture.ts';
@@ -552,7 +556,7 @@ test('the CLI floor check refuses a turn before child custody is written', async
     }) as unknown as BackendChild;
   const f = setup({
     core: {
-      backend_registry: registry_of_factories({ codex: factory, claude: factory }),
+      backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
     },
   });
   try {
@@ -577,7 +581,7 @@ test('the CLI floor check refuses a turn before child custody is written', async
 async function refused_resume(factory: BackendChildFactory, sends = 1) {
   const f = setup({
     core: {
-      backend_registry: registry_of_factories({ codex: factory, claude: factory }),
+      backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
     },
   });
   const logged = vi.spyOn(console, 'error').mockImplementation(() => {});

@@ -11,6 +11,7 @@ import type { LinuxExecutorJoinRequest } from './contracts.ts';
 import { LINUX_EXECUTOR_SERVICE_NAME } from './configuration.ts';
 import { install } from './install.ts';
 import { install_linux_executor } from './join.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
 vi.mock('./install.ts', () => ({ install: vi.fn() }));
 vi.mock('../release/process.ts', async (original) => ({
@@ -120,8 +121,10 @@ test('namespace preflight preserves foreign state and successful join waits for 
     expect(value.state.health_calls).toBe(2);
     const text = await readFile(value.unit, 'utf8');
     expect(text).not.toContain(value.request.credential);
-    for (const name of ['codex', 'claude']) {
-      const path = join(value.request.root, 'providers', name);
+    const homes = BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.home ?? []);
+    expect(homes.length).toBeGreaterThan(0);
+    for (const { isolated_directory_name } of homes) {
+      const path = join(value.request.root, 'providers', isolated_directory_name);
       expect((await stat(path)).mode & 0o777).toBe(0o700);
       expect(text).toContain(path);
     }
