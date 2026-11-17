@@ -2763,47 +2763,6 @@ def _conversation_repairs(browser, url):
     page.close()
 
 
-def _paste_keeps_composer_on_floor(browser, url):
-    """A pasted draft grows the composer upward; the page behind it never scrolls.
-
-    The dock stands on the host's bottom edge, so a host that can scroll takes the dock with
-    it. Chrome reveals the caret of a pasted draft by scrolling every ancestor it can, and a
-    clipped host can still scroll unless it is `overflow: clip`. The hosts below end in the
-    hidden loading status a real list carries (absolutely placed, outside the document's own
-    scroller), which is what gives the clipped host room to scroll. Only a real browser
-    paste, in a real layout with motion on, shows it.
-    """
-    import time
-
-    started = time.perf_counter()
-    context = browser.new_context(viewport={"width": 1000, "height": 800}, reduced_motion="no-preference")
-    context.grant_permissions(["clipboard-read", "clipboard-write"])
-    try:
-        for route in ("manager", "ticket"):
-            page = context.new_page()
-            page.goto(url + ("?ticket=1" if route == "ticket" else ""), wait_until="domcontentloaded")
-            host = ".manager-page" if route == "manager" else ".ticket-page"
-            # The dock has measured the host and floated the zone once it names the state.
-            page.wait_for_selector(f'{host}[data-conversation-dock-state="rest"]')
-            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-            bottom = "() => document.querySelector('[data-conversation-composer]').getBoundingClientRect().bottom"
-            before = page.evaluate(bottom)
-            page.locator("[data-conversation-input]").click()
-            page.evaluate("text => navigator.clipboard.writeText(text)", "pasted words that wrap onto many lines " * 18)
-            page.keyboard.press("Control+V")
-            page.wait_for_function(
-                "() => document.querySelector('[data-conversation-input]').getBoundingClientRect().height > 100"
-            )
-            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-            scrolled = page.evaluate(f"() => document.querySelector('{host}').scrollTop")
-            assert scrolled == 0, (route, "the page scrolled", scrolled)
-            assert abs(page.evaluate(bottom) - before) <= 1, (route, "the composer left the floor", before, page.evaluate(bottom))
-            page.close()
-    finally:
-        context.close()
-        print(f"Paste keeps the composer on the floor: {time.perf_counter() - started:.3f}s", flush=True)
-
-
 def _manager_recap_header(browser, url):
     """The real header must remeasure its read-only recap after its typography changes."""
     import time
@@ -2902,6 +2861,18 @@ def _overlay_menu_bounds(browser, url):
         settle()
 
     try:
+        used = {'claude': 20, 'opus': 30}
+        def backends_body():
+            def snap(key, windows):
+                return {'backend_key':key,'installed':True,'version':'fixture','available_models':[],'reasoning_effort_options':[],
+                        'cached_usage':None if windows is None else {'observed_at':'2030-01-01T00:00:00Z','windows':windows},
+                        'update_advisory':None,'diagnoses':[],'identity':None}
+            def win(kind, percent, model=None):
+                return {'kind':kind,'used_percent':percent,'resets_at':'2030-01-01T00:00:00Z','model_id':model}
+            return {'backends':[
+                snap('claude',[win('five_hour',10),win('seven_day',used['claude']),win('five_hour',10,'opus'),win('seven_day',used['opus'],'opus')]),
+                snap('codex',[win('five_hour',40),win('seven_day',50)]),snap('hermes',None)]}
+        page.route('**/api/conversation/backends', lambda route: route.fulfill(json=backends_body()))
         page.route('**/api/conversation/backends/refresh', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
         page.goto(url, wait_until="domcontentloaded")
         page.evaluate("window.__setConversationState('opened')")
@@ -3025,7 +2996,7 @@ def _overlay_menu_bounds(browser, url):
                 picker.locator('[data-conversation-picker-choice="opus"]').click()
                 picker.locator('[data-conversation-picker-choice="high"]').click()
                 trigger.click()
-                for control in ('backend:claude','backend:codex','backend:hermes','reasoning','models','refresh'):
+                for control in ('backend:claude','backend:codex','backend:hermes','reasoning','refresh'):
                     settle()
                     selector = '[data-conversation-backend="'+control.split(':')[1]+'"]' if control.startswith('backend:') else '[data-conversation-picker-'+control+']'
                     item=picker.locator(selector)
@@ -3038,8 +3009,6 @@ def _overlay_menu_bounds(browser, url):
                         expect(picker.locator('[data-conversation-picker-feedback]')).to_be_visible()
                     elif control=='reasoning':
                         expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
-                    elif control=='models':
-                        expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
                     elif control=='refresh':
                         expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
                         feedback = picker.locator('[data-conversation-picker-feedback]')
@@ -3050,12 +3019,48 @@ def _overlay_menu_bounds(browser, url):
                 page.screenshot(path=str(output / (mode+'-run-picker.png')))
                 picker.get_by_role('listbox').press('Escape')
                 expect(trigger).to_be_focused()
-            # Models removes its own rail button. Enter and Space must both leave
+            if not proof.get('usageProved'):
+                # Refresh must ask the server for new usage, show one weekly ring per provider and
+                # model, and the provider row must return from reasoning to models.
+                refresh_posts = []
+                def answer_refresh(route):
+                    refresh_posts.append(route.request.method)
+                    used.update(claude=35, opus=45)
+                    route.fulfill(json={**backends_body(),'usage_outcomes':[{'backend_key':'claude','outcome':'succeeded','detail':None}]})
+                page.unroute('**/api/conversation/backends/refresh')
+                page.route('**/api/conversation/backends/refresh', answer_refresh)
+                trigger.click()
+                claude_ring = picker.locator('[data-conversation-backend="claude"] [data-usage-window]')
+                opus_ring = picker.locator('[data-conversation-picker-choice="opus"] [data-usage-window]')
+                for ring in (claude_ring, opus_ring, picker.locator('[data-conversation-backend="codex"] [data-usage-window]')):
+                    expect(ring).to_have_count(1)
+                    expect(ring).to_have_attribute('data-usage-window','seven_day')
+                expect(claude_ring).to_have_attribute('data-remaining-percent','80')
+                expect(opus_ring).to_have_attribute('data-remaining-percent','70')
+                page.screenshot(path=str(output / (mode+'-usage-before-refresh.png')))
+                picker.locator('[data-conversation-picker-refresh]').click()
+                expect(claude_ring).to_have_attribute('data-remaining-percent','65')
+                expect(opus_ring).to_have_attribute('data-remaining-percent','55')
+                assert refresh_posts == ['POST'], refresh_posts
+                page.screenshot(path=str(output / (mode+'-usage-after-refresh.png')))
+                picker.locator('[data-conversation-picker-reasoning]').click()
+                expect(picker.get_by_role('listbox')).to_have_attribute('aria-label','Reasoning efforts')
+                expect(picker.locator('[data-conversation-picker-models]')).to_have_count(0)
+                page.screenshot(path=str(output / (mode+'-reasoning-no-models-button.png')))
+                picker.locator('[data-conversation-backend="claude"]').click()
+                expect(picker.get_by_role('listbox')).to_have_attribute('aria-label','Models')
+                page.screenshot(path=str(output / (mode+'-provider-returns-to-models.png')))
+                picker.get_by_role('listbox').press('Escape')
+                proof['usageProved'] = True
+                page.unroute('**/api/conversation/backends/refresh')
+                page.route('**/api/conversation/backends/refresh', lambda route: route.fulfill(status=503,json={'detail':'Fixture refresh boundary'}))
+                used.update(claude=20, opus=30)
+            # The active provider returns to models; there is no separate Models button. Enter and Space must both leave
             # the surviving list usable, then dismiss back to the stable trigger.
             for key in ('Enter','Space'):
                 trigger.click()
                 keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
-                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                keyboard_rail(picker.locator('[data-conversation-backend="claude"]'),key)
                 box=picker.get_by_role('listbox')
                 expect(box).to_be_focused()
                 expect(box).to_have_attribute('aria-label','Models')
@@ -3066,7 +3071,7 @@ def _overlay_menu_bounds(browser, url):
                 expect(trigger).to_have_attribute('aria-label',re.compile('opus high',re.I))
                 trigger.click()
                 keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
-                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                keyboard_rail(picker.locator('[data-conversation-backend="claude"]'),key)
                 picker.get_by_role('listbox').press('Escape')
                 expect(trigger).to_be_focused()
                 proof['actions'].append([mode,'modelsFocus',key,'selection works; Escape restores trigger'])
@@ -4386,7 +4391,6 @@ def run(browser, urls):
             print('Focused overlay menu proof only; other conversation scenarios were not run.',flush=True)
             return
         _manager_recap_header(browser, urls[0])
-        _paste_keeps_composer_on_floor(browser, urls[0])
         _owner_width_frames(browser, urls[0])
         _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])

@@ -88,7 +88,7 @@ export interface TrackedSaveRetry {
 /** Structural slice of the stalls unit's registry. The owner injects its clock. */
 export interface SaveWaitRegistry {
   track(
-    kind: 'vps_save_retrying',
+    kind: 'vps_save_retrying' | 'vps_save_failed',
     wait_key: string,
     options: { detail: string; conversation_id?: string | null },
   ): TrackedSaveRetry;

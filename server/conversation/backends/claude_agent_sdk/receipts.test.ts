@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { ClaudeReceipts } from './receipts.ts';
-import { cancellation_uuid_set } from './wire.ts';
 
 afterEach(() => vi.useRealTimers());
 
@@ -36,14 +35,4 @@ it('bounds a folded steer but waits beyond the bound when a queued steer starts 
   expect(finished).toBe(false);
   receipts.observe({ type: 'command_lifecycle', command_uuid: 'queued', state: 'completed' });
   await queued;
-});
-
-it('does not turn malformed queue cancellation members into proof of an empty queue', () => {
-  expect(() => cancellation_uuid_set([9])).toThrow(
-    'claude did not confirm queued command cancellation',
-  );
-  expect(() => cancellation_uuid_set(undefined)).toThrow(
-    'claude did not confirm queued command cancellation',
-  );
-  expect([...cancellation_uuid_set([])]).toEqual([]);
 });

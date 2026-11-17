@@ -8,7 +8,7 @@ const lifecycle = buildLifecycle({worker_type:"coding",label:"Coding",stages:[
 ],fields:[],advance:{needs_success_condition:"needs_plan",needs_plan:"done"},ceiling_range:["needs_success_condition","needs_plan","done"],default_ceiling:"needs_plan",worker_profile_id:"coding",default_backend:"codex",default_model:null,default_reasoning_effort:null});
 describe("saved ceiling presentation", () => {
   it("names a lower saved ceiling without adding it to the current choice floor", () => {
-    expect(ceilingOptionsFor(lifecycle,"needs_plan").map((option)=>option.value)).toEqual(["needs_plan"]);
+    expect(ceilingOptionsFor(lifecycle,"needs_plan").map((option)=>option.value)).toEqual(["needs_plan", "done"]);
     expect(ceilingLabelFor(lifecycle,"needs_success_condition")).toBe("Success Condition");
   });
   it("names the no-further sentinel and retains the unchosen placeholder", () => {

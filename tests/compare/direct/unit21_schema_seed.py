@@ -1,6 +1,8 @@
-"""Generate trusted TypeScript DDL from a private, fully migrated Python database.
+"""Write the frozen Python baseline from a private, fully migrated Python database.
 
-This explicit build helper ships no database image, identity, or domain row.
+A manual tool. `server/core/database/tools/generate_seed.ts` builds the live seed and
+graph from this baseline plus the TypeScript schema steps. It ships no database image,
+identity, or domain row.
 """
 
 from __future__ import annotations
@@ -17,8 +19,8 @@ from planner.core.db import connect, create_schema
 from planner.environments.update_install import migration_graph
 
 ROOT = Path(__file__).resolve().parents[3]
-ARTIFACT = ROOT / "server/core/database/application_schema.json"
-GRAPH_ARTIFACT = ROOT / "server/environments/release/migration_graph.json"
+ARTIFACT = ROOT / "server/core/database/python_baseline/application_schema.json"
+GRAPH_ARTIFACT = ROOT / "server/core/database/python_baseline/migration_graph.json"
 
 
 def build_migration_graph() -> dict[str, Any]:

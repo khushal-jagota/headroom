@@ -132,6 +132,11 @@ export class AutomaticStartAdmission {
       }
     }
   }
+  register_queued(request: StartRequest): void {
+    if (!this.#requests.has(request.identity)) this.#put(reservation(request));
+    this.queue(request.identity);
+    this.#requests.get(request.identity)!.managed = false;
+  }
   try_start(request: StartRequest): boolean {
     const entry = this.#requests.get(request.identity) ?? this.#put(reservation(request));
     return (

@@ -15,10 +15,10 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 - **Live.** The installed release from [Deployment](deployment.md), run by a systemd user service on loopback port 8767 behind the existing Tailscale Serve route. Only the verified service manager can stop it by signal. Workers never stop the server that hosts them. The interactive `panels` command on the host follows the installed app.
 - **Staging.** A foreground server from the source checkout with fake data that persists between runs. It runs only while someone needs it and has no service. `panels environment prepare`, `run`, and `reset` manage it.
-- **Ticket servers.** A Worker's own `panels serve` from its isolated git worktree, with every `PLAN_*` path pointing into that worktree. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
+- **Ticket servers.** A Worker runs its own server from its isolated git worktree with private runtime state. The TypeScript test server uses the private temporary directory described below. Headroom never publishes one through the live app. Work Khushal must see is a file in the live Ticket tree or a [preview](previews.md). The Worker stops its server when active work ends. Panels owns the worktree and its later removal, as [Ticket scratch](#ticket-scratch) describes.
 - **A local checkout.** One source checkout, one Python environment, one loopback server, and one SQLite file under `data/`. It runs the source, not a sealed release. The install steps are in the repository README.
 
-Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the worktree and its `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
+Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the checkout and their private `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
 Development checkouts reuse third-party dependencies from an account-level cache outside the installed release. Dependency inputs and compatible runtimes select each cache entry. Setup creates a local Python environment with an editable installation of that checkout. Each Node package has a local dependency directory with links to cached packages, while mutable tool output stays local. Backend CLIs still resolve current versions. A dependency change builds a new cache entry once.
 
@@ -62,6 +62,31 @@ The user units in `ops/panels-environments/` cover the live service, the deploym
 
 - **Backup.** Takes a verified snapshot of live data with the installed app. See [Backups](backups.md).
 - **Cleanup.** Runs `panels environment cleanup --apply`: rotates oversized Linux logs, truncates live Mac logs in place, removes expired backup temporaries, prunes old verified backups, and runs the [Ticket file clock](#ticket-scratch). It re-proves every target when it runs and never stops a process or removes an environment or the installed app.
+
+## TypeScript test server
+
+Run the test server from the Ticket checkout. Its state must stay in the Worker's private `TMPDIR`, outside the deployment tree. The TypeScript test database check and the Python smoke seed reject deployment paths. The production smoke also needs its `--state-root` outside that tree.
+
+From the checkout's `server/` directory, create a private state directory and a fresh, bootstrapped database. The database command refuses an existing file. Choose an available loopback port before the last command. If another process takes the port, choose another and retry.
+
+```sh
+TEST_SERVER_ROOT=$(mktemp -d "$TMPDIR/panels-server.XXXXXX")
+mkdir -p "$TEST_SERVER_ROOT/home" "$TEST_SERVER_ROOT/workspace" "$TEST_SERVER_ROOT/logs" "$TEST_SERVER_ROOT/backups"
+printf '{}\n' > "$TEST_SERVER_ROOT/config.yaml"
+env -i PATH="$PATH" TMPDIR="$TMPDIR" PLAN_TEST_MODE=1 node installation/database_main.ts "$TEST_SERVER_ROOT/planning.db"
+TEST_SERVER_PORT=18739
+env -i PATH="$PATH" HOME="$TEST_SERVER_ROOT/home" TMPDIR="$TMPDIR" \
+  PLAN_CONFIG_PATH="$TEST_SERVER_ROOT/config.yaml" \
+  PLAN_DB_PATH="$TEST_SERVER_ROOT/planning.db" \
+  PLAN_LOGS_DIR="$TEST_SERVER_ROOT/logs" PLAN_BACKUP_DIR="$TEST_SERVER_ROOT/backups" \
+  PLAN_WORKSPACE_ROOT="$TEST_SERVER_ROOT/workspace" \
+  PLAN_DISPATCHER_LOCK_PATH="$TEST_SERVER_ROOT/dispatcher.lock" \
+  PLAN_SERVER_CONTROL_SOCKET="$TEST_SERVER_ROOT/control.sock" \
+  PLAN_PORT="$TEST_SERVER_PORT" PLAN_DISPATCH_ENABLED=false \
+  PLAN_NOTIFICATIONS_ENABLED=false PLAN_PROVISION_ACCOUNT_SKILLS=false npm run test-server
+```
+
+The command runs the normal server in test mode with an empty environment apart from these values. Stop it when the work ends. The Worker runtime owns the temporary directory and removes it when the backend process ends. The production smoke uses a populated fixture and the production composition; this test server uses a fresh database and the test-mode composition.
 
 ## Ticket scratch
 

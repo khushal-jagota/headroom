@@ -366,6 +366,7 @@ export function conversation_event_payload_from_canonical_json(
       });
     case 'token_usage':
       return new E.TokenUsageEventPayload({
+        context_input_tokens: optionalNumber(stored, 'context_input_tokens', true),
         input_tokens: optionalNumber(stored, 'input_tokens', true),
         output_tokens: optionalNumber(stored, 'output_tokens', true),
         cached_input_tokens: optionalNumber(stored, 'cached_input_tokens', true),
@@ -519,6 +520,7 @@ export function conversation_event_payload_json_object(
       return { model: payload.model, reasoning_effort: payload.reasoning_effort };
     case 'token_usage':
       return {
+        ...minted('context_input_tokens', payload.context_input_tokens),
         ...minted('input_tokens', payload.input_tokens),
         ...minted('output_tokens', payload.output_tokens),
         ...minted('cached_input_tokens', payload.cached_input_tokens),

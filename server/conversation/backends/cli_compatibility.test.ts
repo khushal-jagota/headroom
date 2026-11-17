@@ -1,17 +1,34 @@
 /** The version probe owns and reaps exactly the executable it starts. */
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
-import { ensure_cli_compatible } from './cli_compatibility.ts';
+import {
+  cli_version_recorder,
+  confirm_reported_cli_version,
+  ensure_cli_compatible,
+} from './cli_compatibility.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
+const directories: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   vi.useRealTimers();
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true });
 });
+// Each test keys the module verdict cache by its own executable file.
+function executable(): string {
+  const directory = mkdtempSync(join(tmpdir(), 'cli-compatibility-'));
+  directories.push(directory);
+  const path = join(directory, 'claude');
+  writeFileSync(path, 'synthetic');
+  return path;
+}
 
 function child() {
   const process = Object.assign(new EventEmitter(), {
@@ -36,6 +53,7 @@ it('checks the selected executable with merged overrides and waits for close', a
   void check.then(() => {
     settled = true;
   });
+  await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
   started.stdout.end('2.1.219 (Claude Code)\n');
   await Promise.resolve();
   expect(settled).toBe(false);
@@ -71,6 +89,7 @@ it('kills only its owned timed-out probe and joins its close before rejection', 
   const result = expect(check).rejects.toThrow(
     'Cannot check the Claude version at /synthetic/blocked-cli. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.',
   );
+  await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
   await vi.advanceTimersByTimeAsync(10_000);
   expect(signal_group).toHaveBeenCalledExactlyOnceWith(-started.pid, 'SIGKILL');
   started.signalCode = 'SIGKILL';
@@ -83,4 +102,35 @@ it('kills only its owned timed-out probe and joins its close before rejection', 
   await result;
   children.seal();
   await children.settled();
+});
+
+it('answers from the probe-kept verdict without a spawn until the file changes', async () => {
+  const path = executable();
+  (await cli_version_recorder('claude', path))('2.1.219 (Claude Code)\n', 0);
+  await ensure_cli_compatible('claude', path);
+  expect(spawn).not.toHaveBeenCalled();
+  // An update replaces the file, so its identity no longer matches the kept verdict.
+  utimesSync(path, new Date(0), new Date(0));
+  const started = child();
+  vi.mocked(spawn).mockReturnValue(started as never);
+  const check = ensure_cli_compatible('claude', path);
+  await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+  started.stdout.end('2.1.100 (Claude Code)\n');
+  started.exitCode = 0;
+  started.emit('close', 0);
+  const too_old = `Claude 2.1.100 at ${path} is too old. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.`;
+  await expect(check).rejects.toThrow(too_old);
+  await expect(ensure_cli_compatible('claude', path)).rejects.toThrow(too_old);
+  expect(spawn).toHaveBeenCalledOnce();
+});
+
+it('lets a too-old handshake version replace a kept compatible verdict', async () => {
+  const path = executable();
+  (await cli_version_recorder('claude', path))('2.1.219 (Claude Code)\n', 0);
+  await confirm_reported_cli_version('claude', path, undefined);
+  await confirm_reported_cli_version('claude', path, '2.1.219');
+  const too_old = `Claude 2.1.100 at ${path} is too old. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.`;
+  await expect(confirm_reported_cli_version('claude', path, '2.1.100')).rejects.toThrow(too_old);
+  await expect(ensure_cli_compatible('claude', path)).rejects.toThrow(too_old);
+  expect(spawn).not.toHaveBeenCalled();
 });

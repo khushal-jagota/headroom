@@ -23,7 +23,7 @@ struct ReviewWorkerManifest: Decodable, Sendable {
         return next == "done"
     }
 
-    var approvalBoundaries: [Stage] { stages.filter { ceilingRange.contains($0.id) && $0.id != "done" } }
+    var approvalBoundaries: [Stage] { stages.filter { ceilingRange.contains($0.id) } }
 
     /// The web keeps current and earlier choices as scope edits, not proposal approval.
     func selectionApprovesPending(ceiling: String, waitingStage: String) -> Bool {
@@ -34,7 +34,7 @@ struct ReviewWorkerManifest: Decodable, Sendable {
 
     func approvalStages(after stage: String) -> [Stage] {
         guard let next = advance[stage], let start = stages.firstIndex(where: { $0.id == next }) else { return [] }
-        return Array(stages[start...]).filter { ceilingRange.contains($0.id) && $0.id != "done" }
+        return Array(stages[start...]).filter { ceilingRange.contains($0.id) }
     }
 }
 

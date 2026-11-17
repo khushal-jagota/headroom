@@ -387,6 +387,21 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 
   // Enough command entries to fill the menu, and enough shared letters to narrow it.
+  // Usage the picker draws beside each provider and model. Refresh re-reads these from the page's
+  // /api/conversation/backends route, which the browser case changes between reads.
+  const usageWindow = (kind, used_percent, model_id = null) => ({kind, used_percent, resets_at: "2030-01-01T00:00:00Z", model_id});
+  const usageSnapshot = (key, windows) => ({backend_key: key, installed: true, version: "fixture", available_models: [],
+    reasoning_effort_options: [], cached_usage: windows === null ? null : {observed_at: "2030-01-01T00:00:00Z", windows},
+    update_advisory: null, diagnoses: [], identity: null});
+  let fixtureBackends = $state([
+    usageSnapshot("claude", [usageWindow("five_hour", 10), usageWindow("seven_day", 20),
+      usageWindow("five_hour", 10, "opus"), usageWindow("seven_day", 30, "opus")]),
+    usageSnapshot("codex", [usageWindow("five_hour", 40), usageWindow("seven_day", 50)]),
+    usageSnapshot("hermes", null)
+  ]);
+  async function rereadFixtureBackends() {
+    fixtureBackends = (await (await fetch("/api/conversation/backends")).json()).backends;
+  }
   const composerCatalog = [
     { kind: "command", display_text: "/recap", insertion_text: "/recap ",
       description: "Recap the ticket", argument_hint: null },
@@ -917,6 +932,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         {heldPromptRows}
         {supportsSteer}
         backendKey="claude"
+        backends={fixtureBackends}
+        onRetryModelChoices={rereadFixtureBackends}
         current={{ model: "opus", reasoningEffort: "high" }}
         models={[
           { model_id: "opus", display_name: "Opus", enabled: true, reasoning_effort_options: ["high"] },

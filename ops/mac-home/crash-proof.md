@@ -8,14 +8,17 @@ Do not use the live Mac executor checkout, environment, or service.
 The Mac must have an active graphical login session.
 Do not test sleep, logout, or reboot with this probe.
 
-Create the checkout's independent dependencies with `scripts/dev setup`.
-The setup command needs Python 3.12 or newer, Node.js 22 or newer, and npm.
+Install the checkout's own dependencies with the normal npm and pip commands below.
+They need Python 3.12 or newer, Node.js 22 or newer, and npm.
 For PyICU, install Homebrew `icu4c` and `pkgconf` first, then export these build paths:
 
 ```sh
 export PKG_CONFIG_PATH="$(brew --prefix icu4c)/lib/pkgconfig"
 export PATH="$(brew --prefix icu4c)/bin:$PATH"
-scripts/dev setup
+npm ci --prefix server
+npm ci --prefix web
+npm install --prefix agent_backends --no-save --no-package-lock
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
 ```
 
 Check the source revision and clean status, then run the probe:

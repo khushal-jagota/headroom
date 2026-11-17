@@ -186,6 +186,38 @@ export async function kill(
   }
   if (!restart) await host.drain_held_prompts(state);
 }
+export const SAVE_FAILURE_TURN_SUMMARY =
+  'Panels could not save this conversation, so it ended this turn and stopped the agent. A server restart clears the failure.';
+/** A save gave up: stop the child, then end the running turn as failed. Each save gets one attempt. */
+export async function fail_after_save_failure(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): Promise<void> {
+  // The core owns this ending, so late child events for the turn are not taken in.
+  if (state.running_turn) state.running_turn.ending_is_the_cores = true;
+  // Stop outside the lock, so an unfinished delivery cannot hold the stop back.
+  if (state.child) await host.discard_child(state, state.child);
+  if (host.shutting_down) return;
+  const lease = await host.acquire_after_steers(state);
+  try {
+    const running = state.running_turn;
+    if (!running || running.ended || host.shutting_down) return;
+    const was_running = state.phase === 'running';
+    if (was_running) set_phase(state, 'ending');
+    try {
+      await host.end_turn(state, running, 'failed', SAVE_FAILURE_TURN_SUMMARY);
+    } catch (error) {
+      console.error(
+        `conversation ${state.record.conversation_id} could not record its failed turn`,
+        error,
+      );
+    } finally {
+      if (was_running && !host.shutting_down) settle_phase(state);
+    }
+  } finally {
+    lease.release();
+  }
+}
 async function kill_owned(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
@@ -221,8 +253,6 @@ export async function send_now(
 ): Promise<PromptDeliveryFate> {
   const lease = await host.acquire_settled(state);
   let reservation: ReservedTurn;
-  let held: PromptDeliveryQueued | null = null;
-  let automatic = false;
   try {
     try {
       if (state.restart_retired)
@@ -251,24 +281,14 @@ export async function send_now(
         settle_phase(state);
         return host.hold_prompt(state, message);
       }
-      automatic = await host.automatic_compaction_may_start(state);
-      if (automatic) held = host.hold_prompt(state, message);
-      reservation = await host.reserve_turn(
-        state,
-        automatic,
-        automatic ? [] : [message.sender_message_id],
-      );
-      reservation.mode = automatic ? PromptDeliveryMode.queue : PromptDeliveryMode.send_now;
+      reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
+      reservation.mode = PromptDeliveryMode.send_now;
     } finally {
       lease.release();
     }
   } catch (error) {
     await host.drain_held_prompts(state);
     throw error;
-  }
-  if (automatic) {
-    await host.deliver_automatic_compaction(state, reservation);
-    return held!;
   }
   return host.deliver_and_finalize(state, reservation, [message], false);
 }
@@ -414,19 +434,27 @@ async function record_steer_outcome(
     : refused
       ? refused_row(message, PromptDeliveryMode.steer, outcome.refusal_reason)
       : uncertain_row(message, PromptDeliveryMode.steer);
-  const rows = await host.persist(state, () =>
-    host.options.store.append_events(state.record.conversation_id, [payload], {
-      lifecycle: attempt
-        ? [{ ...attempt, status: accepted ? S.injected : refused ? S.refused : S.unknown }]
-        : [],
-      native_message_admission: { fate },
-      recording_receipt: message.recording_receipt,
-      owner_read_through_sequence:
-        message.sender?.kind === 'owner' && (accepted || message.acknowledge_owner_on_failure)
-          ? message.owner_read_through_sequence
-          : null,
-    }),
-  );
+  let rows: Awaited<ReturnType<typeof host.options.store.append_events>>;
+  try {
+    rows = await host.persist(state, () =>
+      host.options.store.append_events(state.record.conversation_id, [payload], {
+        lifecycle: attempt
+          ? [{ ...attempt, status: accepted ? S.injected : refused ? S.refused : S.unknown }]
+          : [],
+        native_message_admission: { fate },
+        recording_receipt: message.recording_receipt,
+        owner_read_through_sequence:
+          message.sender?.kind === 'owner' && (accepted || message.acknowledge_owner_on_failure)
+            ? message.owner_read_through_sequence
+            : null,
+      }),
+    );
+  } catch (error) {
+    // The agent can have this steer. A save that gave up must not tell the sender it was not sent.
+    if (refused || (error instanceof Error && error.name === 'AbortError')) throw error;
+    console.error(`conversation ${state.record.conversation_id} could not record a steer`, error);
+    return new PromptDeliveryUncertain();
+  }
   host.note_written(state, rows);
   const boundary =
     message.sender?.kind === 'owner' && (accepted || message.acknowledge_owner_on_failure)
@@ -437,8 +465,15 @@ async function record_steer_outcome(
       ...state.record,
       owner_read_through_sequence: Math.max(state.record.owner_read_through_sequence, boundary),
     });
-  if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
-  if (accepted && token !== null) await host.accept_automatic_start(state, token);
+  try {
+    if (accepted || refused) await host.settle_automatic_ids(state, [message.sender_message_id]);
+    if (accepted && token !== null) await host.accept_automatic_start(state, token);
+  } catch (error) {
+    // The outcome is recorded. A later save that gave up must not change what the sender hears.
+    if ((error instanceof Error && error.name === 'AbortError') || !host.save_gave_up(state))
+      throw error;
+    console.error(`conversation ${state.record.conversation_id} could not settle a steer`, error);
+  }
   if (outcome instanceof BackendSteerUncertain && outcome.not_delivered !== null)
     watch_late_steer(host, state, outcome.not_delivered, message, held_before);
   if (accepted || !refused) {
@@ -593,7 +628,15 @@ export async function promote_held_prompt(
       begin_held(state, message);
       state.held_prompts.splice(index, 1);
       host.publish_held_prompts_changed(state);
-      reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
+      try {
+        reservation = await host.reserve_turn(state, false, [message.sender_message_id]);
+      } catch (error) {
+        // The message was not sent. Hold it again, so it is neither lost nor left in delivery.
+        finish_held(state, message);
+        state.held_prompts.splice(index, 0, message);
+        host.publish_held_prompts_changed(state);
+        throw error;
+      }
       reservation.mode = PromptDeliveryMode.send_now;
     } else {
       if (

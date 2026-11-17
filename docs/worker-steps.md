@@ -17,8 +17,6 @@ That narrowness is the design. A Worker can run for a long time, a person can ta
           ▼
  readiness ──no──► skip
           │yes
- conversation busy? ──yes──► skip this pass
-          │no
  one guarded write: take the claim (and the opener fact)
           │
           ▼
@@ -38,21 +36,21 @@ All of these must hold:
 
 The ceiling is not a readiness question. It decides what a finished proposal does, not whether the Worker may start. Manager settlement does not gate a step either.
 
-One more question goes to the conversation itself: is a turn already running? A busy conversation is left alone this pass, so automation never steers into an unrelated turn.
+A busy conversation receives its next step in Queue mode. The claim stays out while the prompt waits for that conversation’s turn to end. The loop keeps one hand-over per Ticket in flight, with no per-machine hand-over limit.
 
 Automatic starts share the existing gate with Manager wakes and recovery notices. Each destination has its own pacing and pending capacity. The home reserves capacity for Chief and Managers. Extra destinations use their full capacity for Workers. A busy or absent destination cannot consume another destination's permits.
 
 Positive agent activity or definite refusal releases a slot. A wire write or a local queue position alone does not prove acceptance. Messages behind a turn or quarantine hold no start slot. A Ticket that waits for restart retirement gives up its queue priority so other ready Tickets can start. At dequeue, a combined prompt takes one slot. Active turns have no limit from this gate. Explicit restart requests bypass automatic launch pacing.
 
-Preparation follows admission order, so its limit cannot hide the next eligible Worker. A deferred preparation loses its place when its Ticket no longer meets readiness or its conversation becomes busy.
+Preparation for an idle conversation follows launch admission order. A busy conversation needs no preparation permit: its queued step passes launch admission at dequeue. A deferred preparation loses its place when its Ticket no longer meets readiness or its conversation becomes busy.
 
 Automatic admission carries the same stable machine ID as the Ticket. A rename never changes a deferred start or claim. An absent executor holds no shared slot. Its pending starts retain their claims and command identities until receipts and ownership evidence settle them. On return, pending starts pass through the gate again. Durable bindings preserve this rule across a home restart. Control commands can pass unfetched deferred work without a new prompt or a change to conversation order.
 
 ## How a step is sent
 
-Decision notes use the same conversation door as separate system messages before ordinary stage openers. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. Undelivered decision feedback must settle or be explicitly retried before another stage opener starts. A late failure for an older decision cannot change a newer proposal’s claim. Its delivery outcome remains recorded for explicit recovery. Panels checks for a later receipt and updates the outcome if one appears; it does not replay an uncertain note automatically. See [Review](review.md).
+Decision notes travel with the next eligible stage opener in one prompt. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. Feedback waits when the next step cannot start, and a done Ticket receives no new step. A late failure for an older decision cannot change a newer proposal’s claim. Its delivery outcome remains recorded for explicit recovery. Panels checks for a later receipt and updates the outcome if one appears; it does not replay an uncertain note automatically. See [Review](review.md).
 
-One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. Queue mode waits for a free turn.
+One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. The step uses Queue mode, so it waits if a turn starts before delivery.
 
 | Delivery fate | What happens to the claim |
 | --- | --- |
@@ -81,10 +79,10 @@ Database work runs on worker threads, so a database wait does not stop the serve
 
 ## Code
 
-- `src/planner/runtime/worker_step_readiness.py`: the readiness decision.
-- `src/planner/runtime/worker_step_readiness_loop.py`: the loop and one step's start.
-- `src/planner/runtime/worker_memory.py`: the memory-loss note.
-- `src/planner/tickets/data.py`: the claim writers.
-- `src/planner/runtime/conversation_start.py`: starting the conversation and sending.
+- `server/runtime/worker_step_readiness.ts`: the readiness decision.
+- `server/runtime/worker_step_readiness_loop.ts`: the loop and one step's start.
+- `server/runtime/worker_memory.ts`: the memory-loss note.
+- `server/tickets/data/`: the claim writers.
+- `server/runtime/conversation_start.ts`: starting the conversation and sending.
 
-_Last verified: 2026-11-15._
+_Last verified: 2026-11-17._

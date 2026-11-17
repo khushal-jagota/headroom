@@ -1,6 +1,10 @@
 /** Exact ordered text that Panels supplies for one explicit worker step. */
 import type { Ticket } from '../../tickets/contracts.ts';
-import { stage_ownership_mode, gating_field } from '../../tickets/logic/machine.ts';
+import {
+  stage_ownership_mode,
+  gating_field,
+  at_or_beyond_ceiling,
+} from '../../tickets/logic/machine.ts';
 import type { WorkflowDefinition } from '../../worker_types/contracts.ts';
 import { render_workflow_guide } from '../../worker_types/guidance.ts';
 export const READ_YOUR_TICKET_COMMAND = 'panels worker my-ticket brief';
@@ -34,11 +38,14 @@ export function compose_worker_step_prompt(
   const field = gating_field(options.worker_type_definition, ticket.stage) ?? 'the next step';
   const ownership = stage_ownership_mode(ticket.stage, options);
   const ownership_wire = ownership ?? 'terminal';
+  const waits_for_review = at_or_beyond_ceiling(ticket.stage, ticket.ceiling, options);
   let instruction =
     field === 'consequences' && ownership !== 'user'
       ? `Work ticket ${ticket.id} — ${ticket.title}. It is at Stage '${ticket.stage}'; ` +
         'complete the authorized Consequences work and submit its verified report. ' +
-        'The ceiling holder reviews the Consequences report. ' +
+        (waits_for_review
+          ? 'The ceiling holder reviews the Consequences report. '
+          : 'The Consequences report settles below the ceiling. ') +
         'Preserve actual blockers and required human work. ' +
         'Do not repeat completed side effects. ' +
         `Stage owner: ${ownership_wire}.`
@@ -48,7 +55,9 @@ export function compose_worker_step_prompt(
           'Ask bounded questions or resume the Stage conversation, and do not file a ' +
           'proposal until the discussion has enough shared understanding. ' +
           (field === 'consequences'
-            ? 'Once the required human work is complete, the Consequences report waits for the ceiling holder to review it. '
+            ? waits_for_review
+              ? 'Once the required human work is complete, the Consequences report waits for the ceiling holder to review it. '
+              : 'Once the required human work is complete, the Consequences report settles below the ceiling. '
             : 'Once filed, the answer settles below the ceiling and waits for approval at or beyond it. ') +
           `Stage owner: ${ownership_wire}.`
         : `Work ticket ${ticket.id} — ${ticket.title}. It is at Stage '${ticket.stage}'; ` +

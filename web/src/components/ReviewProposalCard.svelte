@@ -46,6 +46,7 @@
     footer,
     decisionActions,
     embedded = false,
+    composerOnly = false,
     initialRevisionDraft = "",
     onRevisionDraftChange,
     initialEditedBody,
@@ -53,6 +54,8 @@
   }: {
     identity: NavigationReviewProposalItem;
     embedded?: boolean;
+    /** Show only the note and the decisions, for the artifact view's composer slot. */
+    composerOnly?: boolean;
     initialRevisionDraft?: string;
     initialEditedBody?: string;
     onEditedBodyChange?: (text: string) => void;
@@ -207,12 +210,12 @@
 
 </script>
 
-<!-- The queue's own actions about this item: Skip (when the queue gives it) and Open ticket. -->
+<!-- The queue's own actions about this item: Open ticket and Skip (when the queue gives it). -->
 {#snippet queueActions()}
+  <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
   {#if onSkip}
     <Button variant="ghost" data-skip="" onclick={onSkip}>Skip</Button>
   {/if}
-  <Button variant="ghost" data-open-ticket href={ticketHref}>Open ticket</Button>
 {/snippet}
 
 <SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !healthyDetail) || Boolean(healthyDetail && !manifestMissingWorkerType && isStale(healthyDetail)))} loadingText="Loading approval...">
@@ -276,7 +279,7 @@
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={returnProposal}
-              {revisionEditor} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
+              {revisionEditor} {composerOnly} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
           {/if}

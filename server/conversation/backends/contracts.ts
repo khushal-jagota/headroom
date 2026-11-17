@@ -197,18 +197,21 @@ export class PlanUpdated {
   }
 }
 export class TokenUsageReported {
+  readonly context_input_tokens: number | null;
   readonly input_tokens: number | null;
   readonly output_tokens: number | null;
   readonly cached_input_tokens: number | null;
   readonly cost_usd: number | null;
   constructor(
     values: {
+      context_input_tokens?: number | null;
       input_tokens?: number | null;
       output_tokens?: number | null;
       cached_input_tokens?: number | null;
       cost_usd?: number | null;
     } = {},
   ) {
+    this.context_input_tokens = values.context_input_tokens ?? null;
     this.input_tokens = values.input_tokens === undefined ? null : values.input_tokens;
     this.output_tokens = values.output_tokens === undefined ? null : values.output_tokens;
     this.cached_input_tokens =
@@ -315,6 +318,8 @@ export interface BackendEventSink {
 }
 export interface BackendChild {
   readonly stop_outside_lock: boolean;
+  /** Refuse a CLI below the backend's feature floor before any launch record is written. */
+  confirm_cli_compatible?(): Promise<void>;
   local_child_identity?(): Promise<LocalChildIdentity | null>;
   withdraw_delivery(): Promise<boolean>;
   detach(options?: StopOptions): Promise<void>;

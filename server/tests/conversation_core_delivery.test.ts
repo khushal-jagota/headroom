@@ -22,10 +22,14 @@ import {
 import {
   AgentMessageCompleted,
   AgentMessageDelta,
+  BackendSpawnFailed,
   TurnEnded,
   ToolCallStarted,
 } from '../conversation/backends/contracts.ts';
-import { text_message_content } from '../conversation/message_content.ts';
+import type { BackendChild, BackendChildFactory } from '../conversation/backends/contracts.ts';
+import { message_content_text, text_message_content } from '../conversation/message_content.ts';
+import { AgentMessageEventPayload } from '../conversation/events.ts';
+import { conversation_attention } from '../notifications/attention.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { ScriptedChild } from '../conversation/testing/scripted_child.ts';
 import type { ScriptedBehavior } from '../conversation/testing/scripted_protocol.ts';
@@ -34,7 +38,28 @@ import type { ConversationCoreOptions } from '../conversation/runtime/contracts.
 
 // Inventory #8: the provider reports news while its prompt receipt is still withheld.
 // The real scripted process and real record together prove the provider/core/store boundary.
-test('backend news waits for the accepted prompt receipt and prose stays transient', async () => {
+test('Manager role text appears only on the first prompt in the conversation history', async () => {
+  const f = setup({
+    role_actor: 'manager',
+    behavior: { events: [{ event: { kind: 'TurnEnded', values: { ending: 'completed' } } }] },
+  });
+  await f.start();
+  expect(await f.send('first', 'first')).toBeInstanceOf(PromptDeliveryStarted);
+  await f.core.wait_until_quiescent();
+  expect([PromptDeliveryStarted, PromptDeliveryQueued]).toContain(
+    (await f.send('second', 'second')).constructor,
+  );
+  await f.core.wait_until_quiescent();
+  const child = await f.child;
+  const prompts = (await child.inspect()).calls.filter((call) => call.command === 'write_prompt');
+  expect(prompts).toHaveLength(2);
+  expect(JSON.stringify(prompts[0])).toContain('Role');
+  expect(JSON.stringify(prompts[1])).not.toContain('Role');
+  expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toContain('prompt');
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+});
+
+test('backend news waits for the accepted prompt receipt and each finished reply is recorded once', async () => {
   let revoked = false;
   const signalFailure = new Error('Signal is not current');
   const f = setup({
@@ -45,13 +70,17 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
     },
     behavior: {
       barrier: 'receipt',
+      // Claude can finish a text block, call a tool, and finish another block in one turn.
       events: [
+        { event: { kind: 'AgentMessageDelta', values: { text_delta: 'before' } } },
+        { event: { kind: 'AgentMessageCompleted', values: { text: 'before the tool' } } },
         {
           event: {
             kind: 'ToolCallStarted',
             values: { tool_call_id: 'tool', title: 'Tool', tool_kind: 'read' },
           },
         },
+        { event: { kind: 'AgentMessageCompleted', values: { text: 'after the tool' } } },
         { event: { kind: 'TurnEnded', values: { ending: 'completed' } } },
       ],
     },
@@ -86,11 +115,36 @@ test('backend news waits for the accepted prompt receipt and prose stays transie
   expect(await f.core.sender_message_ids_awaiting_outcome('core')).toEqual(new Set());
   await child.flush_events();
   await f.core.wait_until_quiescent();
-  expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
+  const recorded = f.store.read_events_after('core', 0);
+  expect(recorded.map((row) => row.kind)).toEqual([
     'prompt',
+    'agent_message',
     'tool_call_started',
+    'agent_message',
     'turn_ended',
   ]);
+  expect(
+    recorded.flatMap((row) =>
+      row.payload instanceof AgentMessageEventPayload
+        ? [message_content_text(row.payload.content)]
+        : [],
+    ),
+  ).toEqual(['before the tool', 'after the tool']);
+  // Full reads these rows on reload. Focus leaves the replies out.
+  expect(
+    f.database.read((sql) =>
+      sql.all(
+        "SELECT row_kind,focus_visible FROM conversation_view_rows WHERE conversation_id='core' AND row_kind='agent_message' ORDER BY sequence",
+      ),
+    ),
+  ).toEqual([
+    { row_kind: 'agent_message', focus_visible: 0 },
+    { row_kind: 'agent_message', focus_visible: 0 },
+  ]);
+  // A recorded reply is not addressed to the owner: no unread mark, so no owner notification.
+  expect(
+    f.database.read((sql) => conversation_attention(sql, 'core').get('core')?.unread_message),
+  ).toBe(false);
   expect(
     (await child.inspect()).calls.filter((call) => call.command === 'write_prompt'),
   ).toHaveLength(1);
@@ -459,6 +513,41 @@ test('a failed admission save releases preparation before any provider starts', 
       expect(await f.core.held_prompts('core')).toEqual([]);
       expect(state.phase).toBe('running');
     }
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+// A too-old CLI is refused before the launch record, so no custody needs proving afterwards.
+test('the CLI floor check refuses a turn before child custody is written', async () => {
+  const custody = () =>
+    f.database.read((sql) => sql.all('SELECT state FROM conversation_child_custody'));
+  const observed: unknown[] = [];
+  const start = vi.fn();
+  const factory: BackendChildFactory = () =>
+    ({
+      stop_outside_lock: false,
+      async confirm_cli_compatible() {
+        observed.push(custody());
+        throw new BackendSpawnFailed('Update Codex to at least 0.148.0.');
+      },
+      start,
+    }) as unknown as BackendChild;
+  const f = setup({
+    core: { backend_child_factories: { codex: factory, claude: factory, hermes: factory } },
+  });
+  try {
+    await f.start();
+    const before = custody();
+    expect(before).not.toContainEqual({ state: 'launch_pending' });
+    expect(await f.send()).toEqual(
+      new PromptDeliveryRefused({
+        refusal_reason: PromptDeliveryRefusalReason.backend_did_not_start,
+      }),
+    );
+    expect(observed).toEqual([before]);
+    expect(custody()).toEqual(before);
+    expect(start).not.toHaveBeenCalled();
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }

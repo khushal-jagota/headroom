@@ -34,7 +34,7 @@ TS adds a 250 ms external-file observer; Python has no matching observer at this
 There is no separate advancement timer. Shutdown fences continuations synchronously and joins only until the shared absolute deadline.
 A standalone stop without that deadline uses the existing 30-second grace. Python does not join its daemon prefetch thread.
 Late stage, backup, and installer settlements cannot write records or publish readiness after ownership ends.
-Node releases retain exact schema-frontier admission. Python remains the migration owner.
+Node releases admit a database at their head or earlier on their own schema-step chain. Schema steps in `core/database/schema_steps` run only in the installer, on the stopped database after the swap, with a backup.
 Release creation and extraction can require an explicit OS, architecture, and role.
 Default home admission refuses executor markers. Explicit targets require a matching runtime marker, including Darwin home targets.
 Darwin home metadata uses a version 2 Node contract with an inventory digest and the Mac OS and library boundaries.
@@ -174,22 +174,21 @@ UTC timestamps use `+00:00`, with six fractional digits when nonzero, matching P
 New snapshots include skills and Worker settings. They leave Ticket files outside the snapshot.
 Legacy snapshots still restore their recorded files. A later managed-root failure does not undo the database replacement, as in Python.
 
-The build-time [schema generator](../../tests/compare/direct/unit21_schema_seed.py) records 330 DDL statements and the exact Alembic frontier.
+The build-time [schema generator](../core/database/tools/generate_seed.ts) writes the schema seed and migration graph: the frozen Python baseline in `core/database/python_baseline/` plus the TypeScript schema steps.
 Runtime bootstrap creates fresh identities and uses the existing TS domain writers. Runtime requires no Python interpreter for this operation.
 The staging fixture uses those writers for its fictional projects, Managers, Tickets, notes, and image.
 Its navigation starts at the prepared schema version. Normal server publication performs the runtime upgrade.
-Alembic owns application schema changes until cutover. TS bootstrap creates only new isolated fixture/test databases and never upgrades an existing application database.
+TS bootstrap creates only new isolated fixture/test databases and never upgrades an existing application database.
 
-The schema drift check runs in this branch's workflow. A merge that changes the Python schema fails until the generated file matches.
-Every TS start now requires this exact frontier, so a staging merge with a new migration makes every TS list fail until regeneration.
-From the independent worktree, with the private environment described above, regenerate and check it with:
+Regenerate and check the live seed from the repository root with:
 
 ```sh
-.venv/bin/python tests/compare/direct/unit21_schema_seed.py
-.venv/bin/python tests/compare/direct/unit21_schema_seed.py --check
+node server/core/database/tools/generate_seed.ts
+node server/core/database/tools/generate_seed.ts --check
 ```
 
-The generator creates its own temporary Python database and migrates it through Alembic.
+CI runs `--check`. It refuses a hand edit of the seed or graph, Python migration drift (the baseline graph no longer matches `src/planner/core/migrations/versions`), and a chain that does not start at the baseline head. With no steps the live files equal the baseline byte for byte.
+The baseline is written only by the manual Python tool `tests/compare/direct/unit21_schema_seed.py`. Once a real step exists, the baseline must stay frozen. A new Python migration moves the baseline head when the baseline is regenerated, so the generator refuses the chain. An edit to an existing Python migration is refused only until someone regenerates the baseline: the head stays put, and nothing yet pins the old digest. The Database stage pins it beside its first step.
 The JSON stores DDL and the exact revision, without seeded data or shared identities.
 
 The first real drift exercise used target `d42fa18dd` and its `memory_notice_turns_are_maintenance` migration.

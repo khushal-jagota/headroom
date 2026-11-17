@@ -32,7 +32,7 @@ The owner, Chief, Managers, and Workers talk through Send Message, which deliver
 
 ## How a Manager hears about work
 
-Some events become durable **wakes**, real prompts queued into the responsible Chief or Manager conversation:
+Some events become durable **wakes**, real prompts sent to the responsible Chief or Manager conversation:
 
 - a Ticket proposal parked for that Manager or for Chief;
 - a worker step erroring on an ordinary Manager's child Ticket;

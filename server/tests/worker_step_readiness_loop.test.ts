@@ -11,6 +11,7 @@ import {
   now,
   claim,
   propose,
+  advance,
 } from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
@@ -265,7 +266,7 @@ test.each([
   expect(read(db, ticket.id).worker_step_claim).toBe(expected_claim);
   if (_name === 'backend_did_not_start') expect(read(db, ticket.id).conversation_id).not.toBeNull();
 });
-test('an occupied conversation prevents another claim or opener', async () => {
+test('an occupied conversation queues one claimed step without a preparation permit', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
   await start_ready_worker_step(ticket.id, options);
@@ -285,17 +286,20 @@ test('an occupied conversation prevents another claim or opener', async () => {
     work_class: 'worker',
     destination: HOME_MACHINE_ID,
   });
-  const refusal = vi.fn(() => new PlannerError('validation', 'Execution refused'));
-  configure_conversation_start(db, {
-    db_path: fixture_path(db),
-    workspace_root: dirname(fixture_path(db)),
-    execution_refusal: refusal,
-  });
+  const prepare = vi.spyOn(starts, 'try_start');
+  expect((await start_ready_worker_step(ticket.id, options)).delivery_fate).toBe('queued');
+  expect(prepare).not.toHaveBeenCalled();
+  expect(starts.snapshots()).toEqual([
+    expect.objectContaining({ state: 'queued', permit_identity: null }),
+  ]);
+  expect(read(db, ticket.id).worker_step_claim).toBe('out');
   expect((await start_ready_worker_step(ticket.id, options)).started).toBe(false);
-  expect(starts.snapshots()).toEqual([]);
-  expect(refusal).not.toHaveBeenCalled();
-  expect(read(db, ticket.id).worker_step_claim).toBe('none');
+  expect(await system.held_prompts(taken.conversation_id!)).toHaveLength(1);
   expect(system.backend_prompt_writes(taken.conversation_id!)).toHaveLength(1);
+  system.complete_running_turn(taken.conversation_id!);
+  expect(system.backend_prompt_writes(taken.conversation_id!)).toHaveLength(2);
+  expect(await system.held_prompts(taken.conversation_id!)).toHaveLength(0);
+  expect(read(db, ticket.id).worker_step_claim).toBe('out');
 });
 test('start refusal releases a new link and the claim', async () => {
   const { db, system, options } = setup();
@@ -364,7 +368,9 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
   expect((await system.held_prompts(id))[0]!.content).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        text: 'User sent back the What Changes proposal with this note:\nKeep the note.',
+        text: expect.stringContaining(
+          'User sent back the What Changes proposal with this note:\nKeep the note.',
+        ),
       }),
     ]),
   );
@@ -403,6 +409,37 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
   expect(system.backend_prompt_writes(fresh)[0]!.text).toContain(
     'User sent back the What Changes proposal with this note:\nKeep the note.',
   );
+});
+// Multiple decisions can accumulate before a step is eligible. All must share its
+// actual prompt without violating the unique decision receipt identities.
+test('one step carries every pending decision and a done Ticket gets no wake', async () => {
+  const { db, system, options } = setup();
+  const ticket = create_ticket(db);
+  db.write((tx) =>
+    tx.run(
+      `INSERT INTO ticket_decision_messages (decision_id,ticket_id,action,field,proposal_revision,sender_kind,sender_id,request_json,message,model_text,created_at,sender_message_id)
+     SELECT 'second-note',ticket_id,action,field,proposal_revision,sender_kind,sender_id,request_json,message,'Another decision note',created_at,'second-note-message' FROM ticket_decision_messages WHERE ticket_id=? LIMIT 1`,
+      [ticket.id],
+    ),
+  );
+  const pending = db.read((sql) =>
+    sql.all<{ model_text: string }>(
+      "SELECT model_text FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status='pending' ORDER BY created_at,rowid",
+      [ticket.id],
+    ),
+  );
+  expect(pending.length).toBeGreaterThan(1);
+  await start_ready_worker_step(ticket.id, options);
+  const id = read(db, ticket.id).conversation_id!;
+  const writes = system.backend_prompt_writes(id);
+  expect(writes).toHaveLength(1);
+  for (const row of pending) expect(writes[0]!.text).toContain(row.model_text);
+  expect(db.read((sql) => decisions.has_undelivered(sql, ticket.id))).toBe(false);
+  system.complete_running_turn(id);
+  advance(db, read(db, ticket.id));
+  await start_ready_worker_step(ticket.id, options);
+  expect(system.backend_prompt_writes(id)).toHaveLength(1);
+  expect(db.read(decisions.pending_ticket_ids)).not.toContain(ticket.id);
 });
 test('successful user-stage opener releases its claim and cannot run twice', async () => {
   const { db, system, options } = setup();
@@ -458,9 +495,9 @@ test('automatic preparation transfers the claim identity, refunds refusal, and e
 });
 
 // Existing start cases do not hold asynchronous preparation open across polls.
-// Reuse their in-memory conversations and SQLite source. Machine policy has its
-// own direct proof, so this case isolates destination fairness and preparation caps.
-test('blocked preparations cap each destination and rotate the next pass', async () => {
+// Reuse their in-memory conversations and SQLite source to prove that unrelated
+// Tickets remain eligible without weakening per-Ticket task ownership.
+test('blocked preparations do not cap hand-overs and retain per-Ticket ownership', async () => {
   const { db, system, options } = setup();
   const tickets = Array.from({ length: 4 }, () => create(db));
   for (const ticket of tickets) {
@@ -494,14 +531,19 @@ test('blocked preparations cap each destination and rotate the next pass', async
   });
   const loop = new WorkerStepReadinessLoop(options);
   try {
-    expect(loop.poll_once()).toEqual([tickets[0]!.id, tickets[3]!.id, tickets[1]!.id]);
+    expect(loop.poll_once()).toEqual([
+      tickets[0]!.id,
+      tickets[3]!.id,
+      tickets[1]!.id,
+      tickets[2]!.id,
+    ]);
     await new Promise((resolve) => setImmediate(resolve));
-    expect(running).toHaveBeenCalledTimes(3);
+    expect(running).toHaveBeenCalledTimes(4);
     expect(loop.poll_once()).toEqual([]);
     gate.resolve();
     await loop.drain();
     running.mockRestore();
-    expect(loop.poll_once()[0]).toBe(tickets[3]!.id);
+    expect(loop.poll_once()).toContain(tickets[3]!.id);
     await loop.drain();
   } finally {
     gate.resolve();
@@ -583,8 +625,8 @@ test('the readiness test route refuses a missing test conversation system', asyn
 });
 
 // Gap: the in-memory instrument writes no durable compaction events. Seed only the
-// record facts that the scanner reads, then prove its real queue boundary twice.
-test('an unanswered compaction sends one queued notice and an uncertain notice prevents another automatic attempt', async () => {
+// record facts that the scanner reads, then prove delivery into the running turn.
+test('an unanswered compaction steers one notice and an uncertain notice prevents another automatic attempt', async () => {
   const { db, system, options } = setup();
   const ticket = create(db);
   await start_ready_worker_step(ticket.id, options);
@@ -611,21 +653,32 @@ test('an unanswered compaction sends one queued notice and an uncertain notice p
   );
   expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([ticket.id]);
   await loop.drain();
-  expect(await system.held_prompts(id)).toHaveLength(1);
-  expect((await system.held_prompts(id))[0]!.content).toEqual(
-    expect.arrayContaining([
+  expect(await system.held_prompts(id)).toHaveLength(0);
+  expect(system.backend_prompt_writes(id)).toHaveLength(2);
+  expect(system.backend_prompt_writes(id)[1]).toMatchObject({
+    mode: 'steer',
+    content: expect.arrayContaining([
       expect.objectContaining({ text: expect.stringContaining('Your context was compacted') }),
     ]),
-  );
-  loop.tell_every_worker_that_lost_its_memory();
-  await loop.drain();
-  expect(await system.held_prompts(id)).toHaveLength(1);
-  system.complete_running_turn(id);
-  for (const held of await system.held_prompts(id))
-    await system.discard_held_prompt(id, held.held_prompt_id);
+  });
+  // The instrument does not persist delivered events, so seed its receipt for the scanner.
   db.write((tx) =>
     tx.run(
       'INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES (?,3,?,?,?)',
+      [
+        id,
+        'prompt',
+        JSON.stringify({ sender_message_id: 'worker_step_memory_notice_delivered' }),
+        now,
+      ],
+    ),
+  );
+  expect(loop.tell_every_worker_that_lost_its_memory()).toEqual([]);
+  expect(system.backend_prompt_writes(id)).toHaveLength(2);
+  system.complete_running_turn(id);
+  db.write((tx) =>
+    tx.run(
+      'INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) VALUES (?,4,?,?,?)',
       [
         id,
         'prompt_delivery_uncertain',
@@ -709,7 +762,12 @@ test('dequeued feedback rereads its receipt and late delivery unblocks the first
       expected_proposal_revision: proposed.pending_proposal_revision,
     }),
   );
-  await deliver_ticket_decision_messages(ticket.id, options);
+  db.write((tx) =>
+    tx.run(
+      "UPDATE ticket_decision_messages SET delivery_status='queued',conversation_id=? WHERE decision_id='receipt-race'",
+      [current.conversation_id],
+    ),
+  );
   const receipt = db.read((sql) =>
     sql.get<{ sender_message_id: string; conversation_id: string }>(
       "SELECT sender_message_id,conversation_id FROM ticket_decision_messages WHERE decision_id='receipt-race'",

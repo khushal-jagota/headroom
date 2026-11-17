@@ -14,6 +14,7 @@ import {
 } from '../conversation/contracts.ts';
 import { AgentMessageDelta, TurnEnded } from '../conversation/backends/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
+import { ConversationRoleMaterials, ConversationStartRequest } from '../conversation/contracts.ts';
 import { Deferred } from '../conversation/runtime/state.ts';
 import { save_attempt } from '../conversation/runtime/save_attempt.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
@@ -782,3 +783,171 @@ test('restart holds source proof through unlink and fences the old prompt queue'
   expect(writes).not.toHaveBeenCalled();
   await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
 });
+
+// A permanent save error used to retry forever and hold the conversation. It must give up,
+// end the turn as failed, stop the child, and refuse new work, with an alarm.
+test('a permanent save error gives up, fails the turn, stops the child, and refuses work', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const track = vi.fn(() => ({ set_detail() {}, close() {} }));
+  const f = setup({ core: { wait_registry: { track } } });
+  await f.start();
+  expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
+  const child = await f.child;
+  let attempts = 0;
+  vi.spyOn(f.store, 'commit_backend_event').mockImplementation(() => {
+    attempts += 1;
+    throw Object.assign(new Error('synthetic constraint'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+  });
+  await child.finish();
+  await vi.waitFor(() => expect(f.core.runtime_turn('core')).toBeNull(), { timeout: 10_000 });
+  await f.core.wait_until_quiescent();
+  expect(attempts).toBe(4);
+  const rows = f.store.read_events_after('core', 0);
+  expect(rows.map((row) => row.kind)).toEqual(['prompt', 'turn_ended']);
+  expect(rows[1].payload).toMatchObject({
+    ending: 'failed',
+    error_summary: expect.stringContaining('could not save this conversation'),
+  });
+  // The stopped child has closed its scripted process.
+  await expect(child.inspect()).rejects.toThrow('scripted child is closed');
+  expect(f.core.conversations.get('core')!.child).toBeNull();
+  expect(track).toHaveBeenCalledWith('vps_save_failed', 'core', {
+    detail: 'Save error SQLITE_CONSTRAINT_UNIQUE',
+    conversation_id: 'core',
+  });
+  await expect(f.send('two', 'second')).rejects.toMatchObject({
+    code: 'conversation_save_failed',
+  });
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+}, 15_000);
+
+// At-most-once delivery: the agent received this prompt, but its receipt save gave up. The
+// sender must hear "uncertain", not an error that reads as "not sent", and a restart must
+// not send the prompt again.
+test('a receipt save that gives up reports uncertain and is not resent after a restart', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = setup();
+  await f.start();
+  vi.spyOn(f.store, 'append_delivered_prompt').mockImplementation(() => {
+    throw Object.assign(new Error('synthetic constraint'), { code: 'SQLITE_CONSTRAINT_CHECK' });
+  });
+  expect(await f.send('one')).toBeInstanceOf(PromptDeliveryUncertain);
+  const child = await f.child;
+  await f.core.wait_until_quiescent();
+  expect(f.store.read_events_after('core', 0).map((row) => row.kind)).toEqual([
+    'prompt_delivery_uncertain',
+  ]);
+  // The stopped child's final snapshot holds the one delivery.
+  await expect(child.inspect()).rejects.toThrow('scripted child is closed');
+  expect(child.last_observation?.delivered_text).toEqual(['Role\n\none']);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  const restarted = setup({ restart_of: f.database });
+  // Restart recovery reads this: the prompt stays unknown, so nothing replays it.
+  expect(
+    restarted.store
+      .lifecycle_facts('core')
+      .filter((fact) => fact.kind === 'attempt' && fact.operation === 'prompt')
+      .map((fact) => fact.status),
+  ).toEqual(['unknown']);
+  // The next ordinary send resumes eligible held messages. The uncertain one is not among them.
+  expect(await restarted.core.held_prompts('core')).toEqual([]);
+  expect(await restarted.send('two', 'second')).toBeInstanceOf(PromptDeliveryStarted);
+  const next = await restarted.child;
+  await next.finish();
+  await restarted.core.wait_until_quiescent();
+  expect((await next.inspect()).delivered_text).toEqual(['Role\n\ntwo']);
+  await restarted.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+}, 15_000);
+
+// The same rule for a steer: the agent can hold it, so a save that gave up reports uncertain.
+test('a steer receipt save that gives up reports uncertain', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = setup();
+  await f.start();
+  await f.send();
+  const original = f.store.append_events.bind(f.store);
+  vi.spyOn(f.store, 'append_events').mockImplementation((...args) => {
+    if (args[1].some((payload) => payload.kind === 'prompt' && payload.mode === 'steer'))
+      throw new Error('synthetic error inside the write');
+    return original(...args);
+  });
+  const steering = f.core.send('core', text_message_content('steer'), {
+    sender_label: 'Owner',
+    sender_message_id: 'steered',
+    mode: 'steer',
+  });
+  expect(await steering).toBeInstanceOf(PromptDeliveryUncertain);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+}, 15_000);
+
+// A corrupt database stops new work across the process at once, with one alarm. The database
+// fails while the prompt is being written, so every later save of this delivery refuses: the
+// sender must still hear "uncertain", never "not sent".
+test('an unusable database fails the conversation at once and refuses new work', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const track = vi.fn(() => ({ set_detail() {}, close() {} }));
+  const f = setup({
+    core: { wait_registry: { track } },
+    behavior: { barrier: 'write', error: { name: 'PromptWriteFailed', message: 'synthetic' } },
+  });
+  await f.start();
+  const sending = f.send('one');
+  const child = await f.child;
+  await child.wait_for_barrier('write');
+  const corrupt = Object.assign(new Error('synthetic corruption'), { code: 'SQLITE_CORRUPT' });
+  await f.store
+    .settle_recording('elsewhere', () => {
+      throw corrupt;
+    })
+    .catch(() => {});
+  await child.release('write');
+  expect(await sending).toBeInstanceOf(PromptDeliveryUncertain);
+  expect(track).toHaveBeenCalledWith('vps_save_failed', 'database', {
+    detail: 'Save error SQLITE_CORRUPT',
+    conversation_id: null,
+  });
+  await expect(
+    f.core.start_conversation(
+      new ConversationStartRequest({
+        conversation_id: 'other',
+        model: 'model',
+        workspace_folder: '/workspace',
+        role_materials: new ConversationRoleMaterials({ role_text: 'Role' }),
+      }),
+    ),
+  ).rejects.toMatchObject({ code: 'conversation_save_failed' });
+  await f.core.wait_until_quiescent();
+  expect(f.core.conversations.get('core')!.phase).toBe('idle');
+  // The child process stopped, but the unusable database cannot record that, so shutdown fails.
+  await expect(child.inspect()).rejects.toThrow('scripted child is closed');
+  await expect(
+    f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS }),
+  ).rejects.toThrow('did not shut down cleanly');
+});
+
+// Send now cancels the running turn, then its turn reservation save gives up. The promoted
+// message must be held again, and the phase must settle, or a later stop waits forever.
+test('a reservation save that gives up after a cancel holds the message and still stops', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const f = setup();
+  await f.start();
+  expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
+  expect(await f.send('two', 'second')).toBeInstanceOf(PromptDeliveryQueued);
+  const [held] = await f.core.held_prompts('core');
+  vi.spyOn(f.store, 'reserve_turn').mockImplementation(() => {
+    throw Object.assign(new Error('synthetic constraint'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+  });
+  await expect(
+    f.core.promote_held_prompt('core', held.held_prompt_id, 'send_now'),
+  ).rejects.toMatchObject({ code: 'SQLITE_CONSTRAINT_UNIQUE' });
+  const state = f.core.conversations.get('core')!;
+  expect((await f.core.held_prompts('core')).map((entry) => entry.held_prompt_id)).toEqual([
+    held.held_prompt_id,
+  ]);
+  expect(state.sender_messages_being_delivered.size).toBe(0);
+  // The failed conversation stops its child. A stop then completes instead of waiting forever.
+  await f.core.wait_until_quiescent();
+  await f.core.kill('core');
+  expect(state.phase).toBe('idle');
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+}, 15_000);

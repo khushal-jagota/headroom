@@ -103,16 +103,13 @@ async function _admitted_start_ready_worker_step(
     return await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
       const ticket = database.read((sql) => tickets_data.read_ticket(sql, ticket_id));
       let conversation_id = ticket.conversation_id;
-      if (
+      const conversation_is_running =
         conversation_id !== null &&
         (await observe_conversation_operation(
           () => system.is_running(conversation_id!),
           options.signal,
-        ))
-      ) {
-        starts?.finish_unbound(`worker-preparation:${ticket.id}`);
-        return new WorkerStepStartResult({ started: false });
-      }
+        ));
+      if (conversation_is_running) starts?.finish_unbound(`worker-preparation:${ticket.id}`);
       if (
         database.read((sql) =>
           conversation_start.configured_ticket_execution_refusal(database, sql, ticket),
@@ -129,7 +126,7 @@ async function _admitted_start_ready_worker_step(
         )
       )
         return new WorkerStepStartResult({ started: false });
-      if (starts) {
+      if (starts && !conversation_is_running) {
         automatic_identity = `worker-preparation:${ticket.id}`;
         if (
           !starts.try_start({
@@ -171,6 +168,14 @@ async function _admitted_start_ready_worker_step(
         });
         automatic_identity = sender_message_id;
       }
+      if (starts && conversation_is_running) {
+        automatic_identity = sender_message_id;
+        starts.register_queued({
+          identity: sender_message_id,
+          work_class: 'worker',
+          destination: claimed.machine_id,
+        });
+      }
       function give_the_claim_back(opener_succeeded = false): void {
         database.write((sql) => {
           const released = tickets_data.release_worker_step_claim(sql, ticket_id, {
@@ -188,6 +193,8 @@ async function _admitted_start_ready_worker_step(
         return new WorkerStepStartResult({ started: false });
       }
       let fate: PromptDeliveryFate;
+      let feedback_started = false;
+      const feedback_identity_prefix = `${sender_message_id}|decision|`;
       try {
         const prompt = database.read((sql) => {
           const current_ticket = tickets_data.read_ticket(sql, ticket_id);
@@ -203,7 +210,23 @@ async function _admitted_start_ready_worker_step(
           system,
           database,
           ticket_id,
-          text_message_content(prompt.model_text),
+          async (sending_into) => {
+            const feedback = database.write((sql) => {
+              const rows = sql.all<{ decision_id: string; model_text: string }>(
+                "SELECT decision_id,model_text FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status='pending' ORDER BY created_at,rowid",
+                [ticket_id],
+              );
+              for (const row of rows) {
+                sql.run(
+                  "UPDATE ticket_decision_messages SET delivery_status='sending',conversation_id=?,sender_message_id=? WHERE decision_id=? AND delivery_status='pending'",
+                  [sending_into, feedback_identity_prefix + row.decision_id, row.decision_id],
+                );
+              }
+              return rows.map((row) => row.model_text);
+            });
+            feedback_started = feedback.length > 0;
+            return text_message_content([...feedback, prompt.model_text].join('\n\n'));
+          },
           {
             conversation_id: claimed.conversation_id,
             created_conversation_id: conversation_start.new_conversation_id(),
@@ -220,13 +243,44 @@ async function _admitted_start_ready_worker_step(
         conversation_id = delivered.conversation_id;
         fate = delivered.fate;
         automatic_sent = true;
+        if (feedback_started) {
+          const status =
+            fate instanceof PromptDeliveryStarted || fate instanceof PromptDeliveryInjected
+              ? 'delivered'
+              : fate instanceof PromptDeliveryQueued
+                ? 'queued'
+                : fate instanceof PromptDeliveryRefused
+                  ? 'refused'
+                  : fate instanceof PromptDeliverySuppressed
+                    ? 'discarded'
+                    : 'uncertain';
+          database.write((sql) =>
+            sql.run(
+              "UPDATE ticket_decision_messages SET delivery_status=? WHERE ticket_id=? AND delivery_status='sending' AND substr(sender_message_id,1,?)=?",
+              [status, ticket_id, feedback_identity_prefix.length, feedback_identity_prefix],
+            ),
+          );
+        }
       } catch (error) {
         if (error instanceof ConversationStartAborted) throw error;
         console.error(
           `worker step could not be started (ticket=${ticket_id} conversation=${conversation_id})`,
           error,
         );
-        give_the_claim_back();
+        if (feedback_started) {
+          database.write((sql) => {
+            sql.run(
+              "UPDATE ticket_decision_messages SET delivery_status='uncertain' WHERE ticket_id=? AND delivery_status='sending' AND substr(sender_message_id,1,?)=?",
+              [ticket_id, feedback_identity_prefix.length, feedback_identity_prefix],
+            );
+            tickets_data.mark_worker_step_claim_errored(sql, ticket_id, {
+              expected_claim: taken_claim,
+              expected_claim_revision: taken_claim_revision,
+              now: options.now(),
+              error_reason: 'delivery uncertain',
+            });
+          });
+        } else give_the_claim_back();
         return new WorkerStepStartResult({ started: false });
       }
       if (starts && automatic_identity !== null) {
@@ -323,7 +377,7 @@ export async function tell_a_worker_it_lost_its_memory(
           {
             conversation_id,
             sender_label: LOOP_SENDER_LABEL,
-            mode: 'queue',
+            mode: 'steer',
             sender_message_id: worker_memory.new_memory_notice_message_id(),
             worker_type_registry: options.worker_type_registry,
             now: options.now(),
@@ -352,7 +406,6 @@ export async function tell_a_worker_it_lost_its_memory(
 export class WorkerStepReadinessLoop {
   private readonly controllers = new Map<string, AbortController>();
   private readonly in_flight = new Map<string, Promise<unknown>>();
-  private readonly in_flight_counts = new Map<string, number>();
   private readonly ticket_destinations = new Map<string, string>();
   private last_destination: string | null = null;
   private readonly actual = new Set<Promise<void>>();
@@ -454,8 +507,6 @@ export class WorkerStepReadinessLoop {
             ])?.machine_id,
         );
     if (destination === undefined) return false;
-    const starts = this.options.conversation_system.start_admission;
-    if (starts && (this.in_flight_counts.get(destination) ?? 0) >= starts.limit) return false;
     if (
       !this.options
         .connect_database()
@@ -474,7 +525,6 @@ export class WorkerStepReadinessLoop {
         : start_ready_worker_step(ticket_id, options),
     );
     this.in_flight.set(ticket_id, task);
-    this.in_flight_counts.set(destination, (this.in_flight_counts.get(destination) ?? 0) + 1);
     this.last_destination = destination;
     const actual = task
       .then(
@@ -495,9 +545,6 @@ export class WorkerStepReadinessLoop {
       .finally(() => {
         this.in_flight.delete(ticket_id);
         this.controllers.delete(ticket_id);
-        const count = this.in_flight_counts.get(destination)! - 1;
-        if (count) this.in_flight_counts.set(destination, count);
-        else this.in_flight_counts.delete(destination);
       });
     return true;
   }

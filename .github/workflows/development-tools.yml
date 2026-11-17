@@ -24,8 +24,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Set up checkout dependencies
-        run: scripts/dev setup
+      - name: Install dependencies
+        run: |
+          npm ci --prefix server
+          npm ci --prefix web
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt -e .
       - name: Check frontend tools
         run: |
           scripts/dev npm --prefix web run check
@@ -34,7 +38,5 @@ jobs:
         run: |
           scripts/dev pytest tests/unit/test_instrument.py tests/unit/test_backend_cli_build.py tests/unit/test_test_runtime.py
           scripts/dev mypy scripts/tree_environment.py scripts/dev_launcher.py
-      - name: Check cached setup
-        run: |
-          node server/node_modules/typescript/bin/tsc --noEmit -p scripts/tsconfig.json
-          node --test scripts/dev_setup.test.mts
+      - name: Check script types
+        run: node server/node_modules/typescript/bin/tsc --noEmit -p scripts/tsconfig.json

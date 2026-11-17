@@ -811,7 +811,14 @@ export async function send_to_agent_conversation(
       options.mode === 'steer' &&
       (await observe_conversation_operation(() => system.is_running(in_now!), options.signal));
     runs_under = database.read((sql) =>
-      manager_reuse_overrides(sql, options.required_manager_id!, values, runs_under, steering),
+      manager_reuse_overrides(
+        sql,
+        options.required_manager_id!,
+        in_now!,
+        values,
+        runs_under,
+        steering,
+      ),
     );
   }
   const sending_options = { ...options, runs_under };

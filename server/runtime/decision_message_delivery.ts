@@ -1,17 +1,11 @@
-/** Deliver immutable Ticket decisions through the ordinary conversation door. */
+/** Reconcile decision feedback already offered to a conversation. */
 import type { Database } from '../core/database/contracts.ts';
 import { automatic_ticket_admitted } from './automatic_work.ts';
 import {
   require_conversation_backend_key,
-  PromptDeliveryStarted,
-  PromptDeliveryInjected,
-  PromptDeliveryQueued,
-  PromptDeliveryRefused,
-  PromptDeliverySuppressed,
   type PromptDeliveryFate,
   type ConversationSystem,
 } from '../conversation/contracts.ts';
-import { text_message_content } from '../conversation/message_content.ts';
 import { now_ms } from '../executor/clock.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
@@ -20,7 +14,7 @@ import * as decisions from '../tickets/decision_messages.ts';
 import * as locale from '../tickets/locale_configuration.ts';
 import { model_is_enabled } from '../conversation/backend_state.ts';
 import * as start from './conversation_start.ts';
-import { ConversationStartAborted, observe_conversation_operation } from './abort.ts';
+import { observe_conversation_operation } from './abort.ts';
 
 export async function deliver_ticket_decision_messages(
   ticket_id: string,
@@ -33,7 +27,6 @@ export async function deliver_ticket_decision_messages(
     automatic_tickets_created_after?: number;
   },
 ): Promise<PromptDeliveryFate | null> {
-  let last_fate: PromptDeliveryFate | null = null;
   const database = options.connect_database();
   if (
     !database.read((sql) =>
@@ -42,7 +35,7 @@ export async function deliver_ticket_decision_messages(
   )
     return null;
   return start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
-    let ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
+    const ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
     const admitted = database.read(
       (sql) =>
         !ticket.is_backlogged &&
@@ -64,7 +57,6 @@ export async function deliver_ticket_decision_messages(
         sender_message_id: string;
         conversation_id: string | null;
         delivery_status: string;
-        model_text: string;
       }>(
         "SELECT * FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status != 'delivered' ORDER BY created_at,rowid",
         [ticket_id],
@@ -100,7 +92,7 @@ export async function deliver_ticket_decision_messages(
             () => options.conversation_system.sender_message_ids_awaiting_outcome(target),
             options.signal,
           );
-          if (awaiting.has(row.sender_message_id)) continue;
+          if (awaiting.has(decisions.receipt_sender_message_id(row.sender_message_id))) continue;
         }
         status = database.read((sql) =>
           decisions.recorded_outcome(sql, target, row.sender_message_id),
@@ -122,62 +114,9 @@ export async function deliver_ticket_decision_messages(
         console.error(`decision delivery receipt is uncertain (ticket=${ticket_id})`);
         break;
       }
-      let delivered: Awaited<ReturnType<typeof start.send_to_ticket_conversation>>;
-      try {
-        ticket = database.read((sql) => tickets.read_ticket(sql, ticket_id));
-        delivered = await start.send_to_ticket_conversation(
-          options.conversation_system,
-          database,
-          ticket_id,
-          async (sending_into: string) => {
-            set_status(identity, 'sending', sending_into);
-            return text_message_content(row.model_text);
-          },
-          {
-            conversation_id: ticket.conversation_id,
-            created_conversation_id: start.new_conversation_id(),
-            sender_label: 'system',
-            sender_message_id: row.sender_message_id,
-            worker_type_registry: options.worker_type_registry,
-            retain_definite_start_refusal: true,
-            now: options.now(),
-            signal: options.signal,
-          },
-        );
-      } catch (error) {
-        // Cancellation preserves the durable sending marker for reconciliation.
-        if (error instanceof ConversationStartAborted) throw error;
-        console.error(`decision message could not be sent (ticket=${ticket_id})`, error);
-        const attempt = database.read((sql) =>
-          sql.get<{ delivery_status: string; conversation_id: string | null }>(
-            'SELECT delivery_status,conversation_id FROM ticket_decision_messages WHERE decision_id=?',
-            [identity],
-          ),
-        );
-        if (attempt?.delivery_status === 'sending') {
-          set_status(identity, 'uncertain', attempt.conversation_id);
-          mark_error('uncertain', row.proposal_revision);
-        }
-        break;
-      }
-      last_fate = delivered.fate;
-      status =
-        delivered.fate instanceof PromptDeliveryStarted ||
-        delivered.fate instanceof PromptDeliveryInjected
-          ? 'delivered'
-          : delivered.fate instanceof PromptDeliveryQueued
-            ? 'queued'
-            : delivered.fate instanceof PromptDeliveryRefused
-              ? 'refused'
-              : delivered.fate instanceof PromptDeliverySuppressed
-                ? 'discarded'
-                : 'uncertain';
-      set_status(identity, status, delivered.conversation_id);
-      if (!['delivered', 'queued'].includes(status)) {
-        mark_error(status, row.proposal_revision);
-        break;
-      }
+      // Pending decisions travel with the next step, never in a separate turn.
+      break;
     }
-    return last_fate;
+    return null;
   }, options.signal);
 }

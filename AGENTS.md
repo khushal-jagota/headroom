@@ -6,7 +6,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Stack and system map
 - For TypeScript server work, read [server/STYLE.md](server/STYLE.md) before changes.
-- Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
+- Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and the Python Alembic schema baseline in `src/planner/core/db.py`. Later schema changes are TypeScript schema steps in `server/core/database/schema_steps/`, run by the installer before the server starts.
 - Domain code is grouped by system: `tickets/`, `managers/`, `ideas/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
 - `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `ticket`, `manager`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
 - Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: conversation busy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
@@ -67,18 +67,25 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Set up the worktree's dependencies, environment inputs, generated prerequisites,
   and local runtime state, then verify that its source, dependencies, configuration,
   and state resolve to that worktree.
-- For a new worktree, run:
+- Install only what the task needs, when it needs it, with the normal commands:
 
   ```sh
-  scripts/dev setup
+  npm ci --prefix server
+  npm ci --prefix web
+  npm install --prefix agent_backends --no-save --no-package-lock
+  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -e .
   ```
+
+  An older checkout can have `node_modules` folders that link into
+  `~/.cache/headroom/dependencies`. Run `npm ci` there first, which replaces the links,
+  before any `npm install`. Otherwise npm can write into the shared cache.
 
   Create `.venv` in the worktree with those commands. Never copy, move, or symlink
   one from another worktree: a virtualenv stores absolute paths to the tree it was
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
   virtualenv the same way. After a move, delete `.venv` and build it again.
-- Use the launcher for dependency setup, npm, pytest, and mypy:
+- Use the launcher for npm, pytest, and mypy:
 
   ```sh
   scripts/dev npm --prefix web ci
@@ -91,7 +98,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   ```
 
   `scripts/dev` launches tools without a filesystem safety scan.
-  Setup requires absent `.venv` and Node dependency directories and never deletes them.
   Keep dependencies separate from the installed deployment.
 - `mypy` with this tree's config and `pytest` under `tests/` use one source path
   check. The imported `planner` package must resolve inside this checkout's `src`.
@@ -110,13 +116,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   paths or live server URLs. Keep the explicit non-live `PLAN_SERVER_URL` default:
   unsetting it restores the CLI's live-server fallback. Server fixtures replace it
   with their allocated server URL. Original launch evidence stays with containment checks.
-- `scripts/dev setup` reuses third-party dependencies from a shared development cache.
-  The default cache uses the account home, even when `HOME` is private. Set
-  `PANELS_DEPENDENCY_CACHE` for a separate test cache. Keep a stable cache across Worker setups.
-  Python environments and editable source installations remain local to each checkout.
-  Node dependency roots remain local, with links to cached packages and local tool caches.
-  Use `scripts/dev npm` for dependency changes so it can detach cached links before npm writes.
-  Never use the installed release as a dependency cache.
 - When testing, browsing, computer use, exploration, or other active work needs
   running services, survey current port use, select available ports, start the
   services, and stop them when that active work is finished. If a port is taken during

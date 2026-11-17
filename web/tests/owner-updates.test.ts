@@ -88,6 +88,15 @@ describe("the update card", () => {
     expect(updateCard("available", { ...status, allowed_actions: [] }).action).toBeUndefined();
   });
 
+  it("shows the server's backup detail while updating, and never an earlier state's detail", () => {
+    const backing_up = "Backing up the database first (about 3 min)";
+    expect(updateCard("updating", at("updating", { detail: backing_up })).detail).toBe(backing_up);
+    // A Retry press shows Updating… while the status is still the failed answer.
+    const failed = at("failed", { detail: "The new version did not pass its health check" });
+    expect(updatePresentation({ ...base, status: failed, starting: true }).state).toBe("updating");
+    expect(updateCard("updating", failed).detail).toBeUndefined();
+  });
+
   it("keeps Mac diagnostics in the details, with plain facts for each failure", () => {
     const identity = { protocol_version: 7, application_revision: "3f9a2c1d00", spool_format_version: 5, executor_incarnation: "mac" };
     const refused: MacStatus = { presence: "refused", since_ms: 0, identity: null, last_contact_at_ms: 1000 - 14 * 60_000,

@@ -33,7 +33,7 @@ import { validate_public_cli_entrypoint, write_app_entrypoints } from './entrypo
 import { assert_release_execution, run_release_command } from './process.ts';
 import { probe_environment } from './admission_process.ts';
 import { extract_git_export, remove_owned_tree } from './archive.ts';
-import { read_migration_graph, migration_frontier } from './migrations.ts';
+import { require_generated_schema_frontier } from './migrations.ts';
 import { resolved_path, expand_path } from '../paths.ts';
 import { exists, is_symlink } from '../backup/evidence.ts';
 import { write_installer_file_manifest } from './installer_bundle.ts';
@@ -252,21 +252,7 @@ export async function build_exported_app(
     const source_digest = await digest_app_source(payload);
     let runtime_contract: AppManifest['runtime_contract'] = null;
     if (options.install_dependencies) {
-      const graph = await read_migration_graph(payload);
-      const seed: unknown = JSON.parse(
-        new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-          await readFile(join(payload, 'server/core/database/application_schema.json')),
-        ),
-      );
-      const heads = migration_frontier(graph);
-      if (
-        seed === null ||
-        typeof seed !== 'object' ||
-        !('alembicRevision' in seed) ||
-        heads.size !== 1 ||
-        !heads.has(String(seed.alembicRevision))
-      )
-        throw new AppValidationError('migration graph differs from the generated schema frontier');
+      await require_generated_schema_frontier(payload);
       await install_app_dependencies(payload, join(workspace, 'npm-home'), execution);
       runtime_contract = await complete_node_runtime(payload, execution);
     }

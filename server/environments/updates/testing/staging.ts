@@ -116,10 +116,7 @@ export async function staging_parity(
       frontier = [];
     for (const name of ['~/schema.sqlite', 'different.sqlite']) {
       try {
-        await migration.require_exact_schema_frontier(
-          join(spec.root, name),
-          join(spec.root, 'graph'),
-        );
+        await migration.node_schema_steps_pending(join(spec.root, name), join(spec.root, 'graph'));
         frontier.push(null);
       } catch (error) {
         if (!(error instanceof AppValidationError)) throw error;

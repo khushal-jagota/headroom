@@ -1,31 +1,33 @@
-/** The real SDK owns the protocol. Public streams preserve Python's consumed facts. */
+/** The real SDK owns the protocol and reads stdout. Panels drains its messages once. */
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { copy_environment } from '../../../core/environment.ts';
 import { Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { CLAUDE_AGENT_SDK_VERSION, load_claude_sdk } from '../claude_sdk.ts';
 import type {
+  EffortLevel,
   Query,
   SDKUserMessage,
-  SDKMessage,
   SpawnedProcess,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import { PromptWriteFailed } from '../contracts.ts';
-import { ensure_cli_compatible } from '../cli_compatibility.ts';
+import { confirm_reported_cli_version, ensure_cli_compatible } from '../cli_compatibility.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
 import { local_process_identity } from '../../../worker_supervision/identity.ts';
 import { WorkerScratch } from '../../worker_scratch.ts';
 import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import {
+  CLAUDE_APPLY_REASONING_EFFORT_TIMEOUT_SECONDS,
   CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS,
   CLAUDE_PROCESS_CLOSE_TIMEOUT_SECONDS,
+  CLAUDE_PROCESSED_TOOL_USE_ID_LIMIT,
   CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
 } from './configuration.ts';
 import type { ClaudeSdkClient, ClaudeSdkOptions, ClaudeSdkMessage } from './query_contracts.ts';
 import { ClaudeReceipts } from './receipts.ts';
-import { ObservedStdout, ObservedStderr, Pending, cancellation_uuid_set, object } from './wire.ts';
+import { ObservedStderr, Pending, object, raw_uuid_set } from './wire.ts';
 import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
 import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
 import { observe_shutdown } from '../../shutdown.ts';
@@ -77,79 +79,6 @@ interface PendingWrite {
   uuid: string | undefined;
   completed: Pending<void>;
 }
-interface CancelAttempt {
-  request_id: string | null;
-  response: Pending<Record<string, unknown> | null>;
-}
-
-// SDK 0.3.316 readMessages consumes control/keep-alive/mirror/host-only frames.
-// Count only the native message families consumed by the adapter.
-// The version assertion in query.test.ts forces review when the SDK pin changes.
-const ORDERED_SYSTEM_SUBTYPES = {
-  api_retry: true,
-  background_tasks_changed: true,
-  commands_changed: true,
-  compact_boundary: true,
-  control_request_progress: true,
-  elicitation_complete: true,
-  files_persisted: true,
-  hook_progress: true,
-  hook_response: true,
-  hook_started: true,
-  informational: true,
-  local_command_output: true,
-  memory_recall: true,
-  mirror_error: true,
-  model_refusal_fallback: true,
-  model_refusal_no_fallback: true,
-  notification: true,
-  permission_denied: true,
-  plugin_install: true,
-  session_state_changed: true,
-  status: true,
-  init: true,
-  task_notification: true,
-  task_progress: true,
-  task_started: true,
-  task_updated: true,
-  thinking_tokens: true,
-  worker_shutting_down: true,
-} satisfies Record<Extract<SDKMessage, { type: 'system' }>['subtype'], true>;
-export const CLAUDE_PERMISSION_ORDER = {
-  sdk_version: CLAUDE_AGENT_SDK_VERSION,
-  message_types: [
-    'assistant',
-    'user',
-    'result',
-    'stream_event',
-    'system',
-    'rate_limit_event',
-    'conversation_reset',
-  ],
-  system_subtypes: Object.keys(ORDERED_SYSTEM_SUBTYPES),
-  sdk_skipped_types: [
-    'control_request',
-    'control_response',
-    'control_cancel_request',
-    'keep_alive',
-    'transcript_mirror',
-  ],
-} as const;
-const ORDERED_MESSAGE_TYPES = new Set<string>(CLAUDE_PERMISSION_ORDER.message_types);
-function ordered_message(message: Record<string, unknown>): boolean {
-  return (
-    typeof message.type === 'string' &&
-    ORDERED_MESSAGE_TYPES.has(message.type) &&
-    !(
-      message.type === 'system' &&
-      message.subtype === 'session_state_changed' &&
-      message.sdk_host_only === true
-    ) &&
-    (message.type !== 'system' ||
-      (typeof message.subtype === 'string' &&
-        Object.hasOwn(ORDERED_SYSTEM_SUBTYPES, message.subtype)))
-  );
-}
 function native_exit_failure(cause: unknown): unknown {
   if (!(cause instanceof Error)) return cause;
   const native = cause as Error & { errorClass?: string; exitCode?: number };
@@ -194,15 +123,18 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   private cleanup_started = false;
   private readonly compatibility_controller = new AbortController();
   private stream_failure: Error | null = null;
-  private cancel_attempt: CancelAttempt | null = null;
-  private wire_message_count = 0;
-  private delivered_message_count = 0;
-  private processed_message_count = 0;
-  private permission_fallback_floor = 0;
   private reader_started = false;
-  private readonly permission_targets = new Map<string, number>();
-  private readonly permission_waiters = new Set<{ target: number; ready: Pending<boolean> }>();
-  private readonly raw_result_usage = new Map<string | null, Record<string, unknown>[]>();
+  // SDK messages drained eagerly, waiting for the adapter to take them in.
+  private readonly drained_messages: ClaudeSdkMessage[] = [];
+  private drained_message_ready: Pending<void> | null = null;
+  private drain_ended = false;
+  private drain_failure: { cause: unknown } | null = null;
+  // Tool uses whose assistant message the adapter has taken in.
+  private readonly processed_tool_use_ids = new Set<string>();
+  private readonly permission_waiters = new Set<{
+    tool_use_id: string;
+    ready: Pending<boolean>;
+  }>();
 
   constructor(options: ClaudeSdkOptions) {
     this.options = options;
@@ -260,10 +192,8 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
             this.options.canUseTool === undefined
               ? undefined
               : async (tool, input, permission) => {
-                  const target = this.permission_targets.get(permission.requestId) ?? 0;
-                  this.permission_targets.delete(permission.requestId);
                   if (
-                    !(await this.wait_for_processing(target, permission.signal)) ||
+                    !(await this.wait_for_tool_use(permission.toolUseID, permission.signal)) ||
                     this.cleanup_started ||
                     permission.signal.aborted
                   ) {
@@ -277,9 +207,16 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
           spawnClaudeCodeProcess: (options) => this.start_process(options, environment),
         },
       });
+      this.drain_messages(this.cli);
       // The SDK can invoke its synchronous spawn callback after query() returns.
       const [info] = await Promise.all([this.cli.initializationResult(), this.registered.promise]);
       this.info = object(info) ? info : null;
+      // The running process states its own version, which a wrapper or update can change.
+      await confirm_reported_cli_version(
+        'claude',
+        this.options.pathToClaudeCodeExecutable,
+        this.info?.claude_code_version,
+      );
     } catch (cause) {
       await this.revoke_unspawned();
       await this.disconnect();
@@ -360,7 +297,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     this.stream_closed = stream_closed;
     child.once('close', () => {
       stream_closed.resolve();
-      this.receipts.stream_ended();
+      // Receipts end with the drain. The SDK may still hold the final frames here.
       this.release_permission_waiters(true);
       this.fail_writes(new Error('Cannot write to closed transport'));
     });
@@ -368,29 +305,15 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
       this.stream_failure ??= cause;
       this.fail_writes(cause);
     });
-    const stdout = new ObservedStdout((message) => {
-      this.receipts.observe(message);
-      this.observe_permission_order(message);
-      if (message.type === 'result' && object(message.usage)) {
-        const key = typeof message.uuid === 'string' ? message.uuid : null;
-        const queued = this.raw_result_usage.get(key) ?? [];
-        queued.push({ ...message.usage });
-        this.raw_result_usage.set(key, queued);
-      }
-    });
-    stdout.on('error', (cause) => {
+    child.stdout.on('error', (cause) => {
       this.stream_failure ??= cause;
-      this.receipts.stream_ended();
-      this.release_permission_waiters(true);
     });
-    child.stdout.pipe(stdout);
     const stderr = new ObservedStderr((line) => this.options.stderr?.(line));
     this.stderr = stderr;
     child.stderr.on('data', (chunk: Buffer) => stderr.write(chunk));
     child.stderr.on('end', () => stderr.end());
     child.stderr.on('error', () => stderr.end());
     child.stderr.on('close', () => stderr.end());
-    child.stdout.on('error', (cause) => stdout.destroy(cause));
     const decoder = new StringDecoder('utf8');
     let outgoing = '';
     const stdin = new Writable({
@@ -400,40 +323,18 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
           outgoing += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
           const lines = outgoing.split('\n');
           outgoing = lines.pop() ?? '';
-          for (const line of lines) {
+          // Only Panels' own user frame completes its write.
+          for (const line of this.pending_writes.length ? lines : []) {
             let frame: unknown;
             try {
               frame = JSON.parse(line);
             } catch {
               continue;
             }
-            if (!object(frame)) continue;
-            if (
-              frame.type === 'control_response' &&
-              object(frame.response) &&
-              typeof frame.response.request_id === 'string'
-            ) {
-              this.permission_targets.delete(frame.response.request_id);
-            }
-            if (frame.type === 'user') {
-              const uuid = typeof frame.uuid === 'string' ? frame.uuid : undefined;
-              const index = this.pending_writes.findIndex((pending) => pending.uuid === uuid);
-              if (index >= 0) completed = this.pending_writes.splice(index, 1)[0]!.completed;
-            }
-            if (
-              frame.type === 'control_request' &&
-              object(frame.request) &&
-              frame.request.subtype === 'interrupt' &&
-              frame.request.cancel_queued === true &&
-              typeof frame.request_id === 'string' &&
-              this.cancel_attempt !== null
-            ) {
-              const attempt = this.cancel_attempt;
-              attempt.request_id = frame.request_id;
-              void this.receipts
-                .watch_control(frame.request_id)
-                .then((response) => attempt.response.resolve(response));
-            }
+            if (!object(frame) || frame.type !== 'user') continue;
+            const uuid = typeof frame.uuid === 'string' ? frame.uuid : undefined;
+            const index = this.pending_writes.findIndex((pending) => pending.uuid === uuid);
+            if (index >= 0) completed = this.pending_writes.splice(index, 1)[0]!.completed;
           }
           if (completed !== null) this.active_writes.add(completed);
           child.stdin.write(chunk, encoding, (cause) => {
@@ -462,7 +363,7 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     // Custom SDK spawns must consume stderr themselves. Exit follows stream closure.
     return {
       stdin,
-      stdout,
+      stdout: child.stdout,
       get killed() {
         return owned.killed;
       },
@@ -485,55 +386,64 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     } as SpawnedProcess;
   }
 
-  private observe_permission_order(message: Record<string, unknown>): void {
-    if (message.type === 'control_request') {
-      if (
-        this.options.canUseTool !== undefined &&
-        typeof message.request_id === 'string' &&
-        object(message.request) &&
-        message.request.subtype === 'can_use_tool' &&
-        !this.permission_targets.has(message.request_id)
-      ) {
-        this.permission_targets.set(
-          message.request_id,
-          this.wire_message_count <= this.permission_fallback_floor ? 0 : this.wire_message_count,
-        );
+  /** Read the SDK eagerly so receipts never wait for the adapter's take_in. */
+  private drain_messages(cli: Query): void {
+    void (async () => {
+      try {
+        for await (const message of cli) {
+          if (this.drain_ended) return;
+          if (!object(message) || typeof message.type !== 'string') continue;
+          this.receipts.observe(message);
+          this.drained_messages.push(message as ClaudeSdkMessage);
+          this.wake_reader();
+        }
+      } catch (cause) {
+        this.drain_failure = { cause };
+      } finally {
+        this.end_drain();
       }
+    })();
+  }
+  private end_drain(): void {
+    if (this.drain_ended) return;
+    this.drain_ended = true;
+    this.receipts.stream_ended();
+    this.release_permission_waiters(true);
+    this.wake_reader();
+  }
+  private wake_reader(): void {
+    const ready = this.drained_message_ready;
+    this.drained_message_ready = null;
+    ready?.resolve();
+  }
+  /** Called when the adapter resumes the reader, so it has taken the message in. */
+  private note_processed(message: ClaudeSdkMessage): void {
+    if (message.type === 'result') {
+      this.release_permission_waiters(false);
       return;
     }
-    if (message.type === 'control_cancel_request') {
-      if (typeof message.request_id === 'string')
-        this.permission_targets.delete(message.request_id);
-      return;
-    }
-    if (ordered_message(message)) this.wire_message_count += 1;
-    else if (
-      !(
-        typeof message.type === 'string' &&
-        (CLAUDE_PERMISSION_ORDER.sdk_skipped_types as readonly string[]).includes(message.type)
-      ) &&
-      !(
-        message.type === 'system' &&
-        message.subtype === 'session_state_changed' &&
-        message.sdk_host_only === true
-      )
-    ) {
-      // An extension may not reach the iterator. Do not hold asks behind it.
-      this.permission_fallback_floor = this.wire_message_count;
-      this.release_permission_waiters(false, true);
-    }
+    const content = object(message.message) ? message.message.content : undefined;
+    if (message.type !== 'assistant' || !Array.isArray(content)) return;
+    for (const block of content)
+      if (object(block) && block.type === 'tool_use' && typeof block.id === 'string') {
+        this.processed_tool_use_ids.add(block.id);
+        // Most tool uses never ask. Forget the oldest beyond the bound.
+        if (this.processed_tool_use_ids.size > CLAUDE_PROCESSED_TOOL_USE_ID_LIMIT)
+          this.processed_tool_use_ids.delete(this.processed_tool_use_ids.values().next().value!);
+      }
+    for (const waiter of this.permission_waiters)
+      if (this.processed_tool_use_ids.delete(waiter.tool_use_id)) waiter.ready.resolve(true);
   }
-  private release_permission_waiters(closed = false, fallback = false): void {
-    for (const waiter of this.permission_waiters) {
-      if (closed || fallback || this.processed_message_count >= waiter.target)
-        waiter.ready.resolve(!closed);
-    }
-    if (closed || fallback) this.permission_targets.clear();
+  private release_permission_waiters(closed: boolean): void {
+    for (const waiter of this.permission_waiters) waiter.ready.resolve(!closed);
+    // A result releases current waiters but keeps ids for asks that arrive after it.
+    if (closed) this.processed_tool_use_ids.clear();
   }
-  private async wait_for_processing(target: number, signal: AbortSignal): Promise<boolean> {
+  /** An ask waits until the adapter has taken in the assistant message holding its tool use. */
+  private async wait_for_tool_use(tool_use_id: string, signal: AbortSignal): Promise<boolean> {
     if (this.cleanup_started || signal.aborted) return false;
-    if (!this.reader_started || this.processed_message_count >= target) return true;
-    const waiter = { target, ready: new Pending<boolean>() };
+    if (!this.reader_started || this.processed_tool_use_ids.delete(tool_use_id)) return true;
+    const waiter = { tool_use_id, ready: new Pending<boolean>() };
     const cancelled = () => waiter.ready.resolve(false);
     this.permission_waiters.add(waiter);
     signal.addEventListener('abort', cancelled, { once: true });
@@ -649,45 +559,27 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     if (this.cli === null) throw new Error('Not connected. Call connect() first.');
     this.reader_started = true;
     try {
-      for await (const message of this.cli) {
-        const sequence =
-          object(message) && ordered_message(message) ? ++this.delivered_message_count : null;
+      for (;;) {
+        const message = this.drained_messages.shift();
+        if (message === undefined) {
+          if (this.drain_ended) break;
+          this.drained_message_ready = new Pending();
+          await this.drained_message_ready.promise;
+          continue;
+        }
         try {
-          if (object(message) && typeof message.type === 'string') {
-            if (message.type === 'result') {
-              const key = typeof message.uuid === 'string' ? message.uuid : null;
-              const queued = this.raw_result_usage.get(key);
-              const usage = queued?.shift();
-              if (queued?.length === 0) this.raw_result_usage.delete(key);
-              if (usage !== undefined) {
-                const counts = Object.fromEntries(
-                  ['input_tokens', 'output_tokens', 'cache_read_input_tokens']
-                    .filter((field) => Object.hasOwn(usage, field))
-                    .map((field) => [field, usage[field]]),
-                );
-                yield {
-                  ...message,
-                  usage: { ...(object(message.usage) ? message.usage : {}), ...counts },
-                } as ClaudeSdkMessage;
-                continue;
-              }
-            }
-            yield message as ClaudeSdkMessage;
-          }
+          yield message;
         } finally {
-          // Resumption means the adapter finished take_in for the previous yield.
-          if (sequence !== null) this.processed_message_count = sequence;
-          this.release_permission_waiters(false, object(message) && message.type === 'result');
+          // Resumption means the adapter finished take_in for this message.
+          this.note_processed(message);
         }
       }
+      if (this.drain_failure !== null)
+        throw this.stream_failure ?? native_exit_failure(this.drain_failure.cause);
       if (this.stream_failure !== null) throw this.stream_failure;
-    } catch (cause) {
-      throw this.stream_failure ?? native_exit_failure(cause);
     } finally {
       this.reader_started = false;
       this.release_permission_waiters(true);
-      this.receipts.stream_ended();
-      this.raw_result_usage.clear();
       await this.stop_worker();
     }
   }
@@ -713,31 +605,40 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
   async interrupt_and_cancel_queued(): Promise<
     readonly [ReadonlySet<string>, ReadonlySet<string>]
   > {
-    if (this.cli === null || this.cancel_attempt !== null)
-      throw new PromptWriteFailed('claude did not confirm queued command cancellation');
-    const attempt: CancelAttempt = { request_id: null, response: new Pending() };
-    this.cancel_attempt = attempt;
+    const unconfirmed = () =>
+      new PromptWriteFailed('claude did not confirm queued command cancellation');
+    if (this.cli === null) throw unconfirmed();
+    // Public types omit the option. The SDK sends cancel_queued and returns the receipt.
+    const native = this.cli as unknown as {
+      interrupt(options: { cancelQueued: true }): Promise<unknown>;
+    };
+    let receipt: { completed: true; value: unknown } | { completed: false };
     try {
-      const native = this.cli as unknown as {
-        interrupt(options: { cancelQueued: boolean }): Promise<unknown>;
-      };
-      const result = native.interrupt({ cancelQueued: true });
-      // The SDK filters malformed UUIDs. The raw correlated payload is the proof.
-      const failed = result.then(() => new Promise<never>(() => {}));
-      const response = await observe_promise(
-        Promise.race([attempt.response.promise, failed]),
+      receipt = await observe_promise(
+        native.interrupt({ cancelQueued: true }),
         CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS * 1000,
       );
-      if (!response.completed || response.value === null)
-        throw new PromptWriteFailed('claude did not confirm queued command cancellation');
-      return [
-        cancellation_uuid_set(response.value.cancelled),
-        cancellation_uuid_set(response.value.still_queued),
-      ];
-    } finally {
-      if (attempt.request_id !== null) this.receipts.forget_control(attempt.request_id);
-      if (this.cancel_attempt === attempt) this.cancel_attempt = null;
+    } catch {
+      throw unconfirmed();
     }
+    // Only a receipt naming both lists proves what left the queue.
+    if (
+      !receipt.completed ||
+      !object(receipt.value) ||
+      !Array.isArray(receipt.value.cancelled) ||
+      !Array.isArray(receipt.value.still_queued)
+    )
+      throw unconfirmed();
+    return [raw_uuid_set(receipt.value.cancelled), raw_uuid_set(receipt.value.still_queued)];
+  }
+  async apply_reasoning_effort(level: EffortLevel): Promise<void> {
+    if (this.cli === null || this.cleanup_started)
+      throw new Error('Not connected. Call connect() first.');
+    const applied = await observe_promise(
+      this.cli.applyFlagSettings({ effortLevel: level }),
+      CLAUDE_APPLY_REASONING_EFFORT_TIMEOUT_SECONDS * 1000,
+    );
+    if (!applied.completed) throw new Error('claude did not confirm the reasoning effort change');
   }
   disconnect(options?: StopOptions): Promise<void> {
     if (this.disconnect_task === null) {
@@ -763,8 +664,8 @@ class ObservedClaudeSdkClient implements ClaudeSdkClient {
     await this.stop_worker(options);
     await this.stop_native(options);
     if (this.cli !== null) await this.cli.return(undefined);
+    this.end_drain();
     this.receipts.clear();
-    this.raw_result_usage.clear();
     this.cli = null;
     this.owned_process = null;
     this.stream_closed = null;

@@ -99,7 +99,7 @@
             href={workspaceAddress(principal.kind === "manager"
               ? { kind: "ticket", id: ticket.id, openedFromManagerId: principal.id } : { kind: "ticket", id: ticket.id })}
             data-worker-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} >
-            {#snippet titleMark()}<MachineIdentity locale={ticket.locale} machineId={ticket.machine_id} showName />{/snippet}
+            {#snippet titleMark()}<MachineIdentity locale={ticket.locale} machineId={ticket.machine_id} />{/snippet}
           </WorkerRow>
         </div>
       {/each}

@@ -21,6 +21,7 @@ export const KIND_SENTENCES: Readonly<Record<TrackedWaitKind, string>> = {
   mac_lease_failing: "the Mac's leases are not accepted",
   mac_item_still_saving: 'a Mac event is still saving',
   vps_save_retrying: 'a conversation save keeps failing',
+  vps_save_failed: 'a save failed for good, so Panels stopped this work until a restart',
   mac_cancel_retirement: 'retiring a Mac agent after a failed cancel is stuck',
   vps_replacement_retiring:
     "ending the restarted Mac's interrupted turn and sending its recovery prompt is stuck",

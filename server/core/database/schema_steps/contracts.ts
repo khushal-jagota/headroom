@@ -1,0 +1,60 @@
+/** TypeScript schema steps: an ordered chain on top of the frozen Python baseline. */
+
+/** One statement at a time, through the same statement allowlist as the write door. */
+export interface SchemaTransaction {
+  run(sql: string): void;
+}
+
+export interface SchemaStep {
+  /** The new alembic_version value, e.g. 'ts_0001_open_backend_keys'. */
+  readonly revision: string;
+  /** Must equal the database's alembic_version when this step starts. */
+  readonly previous_revision: string;
+  /** Literal DDL only. Never derived at run time. */
+  apply(transaction: SchemaTransaction): void;
+}
+
+export interface SchemaStepOutcome {
+  readonly from_revision: string;
+  readonly to_revision: string;
+  readonly applied: readonly string[];
+}
+
+/** The release's chain. The first real step ships in the Database stage. */
+export const SCHEMA_STEPS: readonly SchemaStep[] = [];
+
+/** The steps a database at `current` still needs to reach `head`. */
+export function select_schema_steps(
+  steps: readonly SchemaStep[],
+  current: string,
+  head: string,
+): readonly SchemaStep[] {
+  if (steps.length > 0 && steps.at(-1)!.revision !== head)
+    throw new Error(`The schema step chain does not end at ${head}`);
+  if (current === head) return [];
+  const start = steps.findIndex((step) => step.previous_revision === current);
+  if (start < 0)
+    throw new Error(
+      `The database's schema revision ${current} is not on this release's schema step chain`,
+    );
+  return steps.slice(start);
+}
+
+/** Revisions are unique, each step follows the one before, and the chain starts at the baseline. */
+export function validate_schema_step_chain(
+  steps: readonly SchemaStep[],
+  baseline_revision: string,
+): void {
+  const seen = new Set<string>([baseline_revision]);
+  let previous = baseline_revision;
+  for (const step of steps) {
+    if (step.previous_revision !== previous)
+      throw new Error(
+        `Schema step ${step.revision} follows ${step.previous_revision}, not ${previous}`,
+      );
+    if (seen.has(step.revision))
+      throw new Error(`Schema step revision ${step.revision} is not unique`);
+    seen.add(step.revision);
+    previous = step.revision;
+  }
+}

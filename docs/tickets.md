@@ -34,7 +34,7 @@ A proposal waits briefly for a busy database before it changes the record. If th
 
 Only the Ticket's own Worker files proposals. Khushal, Chief, and Managers decide them, and never write them. The proposal resolver is the only writer that makes stage text canonical and moves a stage. Each approval moves one stage.
 
-Approvals name the next ceiling and holder. The Worker performs authorized follow-through in Consequences and submits a verified report. The ceiling holder reviews the report, and acceptance moves the Ticket to Done.
+Approvals name the next ceiling and holder. The Worker performs authorized follow-through in Consequences and submits a verified report. If the ceiling is Done, the report settles automatically and the Ticket reaches Done. Otherwise the ceiling holder reviews the report, and acceptance moves the Ticket to Done.
 
 By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later decision ceiling up front, including Consequences, but never Done.
 

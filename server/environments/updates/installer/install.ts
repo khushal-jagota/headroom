@@ -257,6 +257,8 @@ async function install_locked(
     new_app_moved = true;
     record.record('app_swapped');
     signal.throwIfAborted();
+    await effects.schema_steps(lifetime_lock_fd, typeof attempt.backup === 'string');
+    signal.throwIfAborted();
     await effects.service('start');
     signal.throwIfAborted();
     record.record('service_started');

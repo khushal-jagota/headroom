@@ -175,6 +175,8 @@ export async function run(spec: Spec): Promise<unknown> {
       now += 51 * 60;
       await sweep();
       await capture('memory-does-not-recompact');
+      // Send outside the compaction window: Python still compacts at send time there.
+      now += 10 * 60;
       const owner = await send('more work');
       await finish();
       now += 50 * 60;

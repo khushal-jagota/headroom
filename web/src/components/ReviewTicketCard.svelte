@@ -26,14 +26,14 @@
          choice); the band keeps every page's height, so the title starts on every page's line. -->
     <div class="review-eyebrow review-eyebrow--decisions">
       <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
-        <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
         <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
+        <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
       </div>
     </div>
   {:else}
   <div class="review-ticket-decision-line">
-    <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
     <Button variant="ghost" data-open-ticket href={workspaceAddress({kind:'ticket',id:item.ticket_id})}>Open ticket</Button>
+    <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
   </div>
   {/if}
   <div class="review-ticket-heading"><div class="review-ticket-heading-main">

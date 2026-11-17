@@ -89,6 +89,9 @@ it('keeps actual-test boundaries and stops before rename after a warning abort',
           async capture() {
             return { kind: 'unavailable', detail: 'scripted capture failure' };
           },
+          async schema_steps() {
+            assert.fail('schema steps after warning abort');
+          },
           async restore() {
             assert.fail('restore after warning abort');
           },
@@ -210,6 +213,7 @@ it('releases the barrier before healthy records on success and rollback as Pytho
             async capture() {
               return { kind: 'returned', returncode: 0 };
             },
+            async schema_steps() {},
             async restore() {
               assert.fail('this scenario does not restore a snapshot');
             },

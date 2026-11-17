@@ -9,10 +9,11 @@ import {
 } from '../../../core/http/numeric_json.ts';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  validate_cli_version,
-  cli_version_error,
-  VERSION_TIMEOUT_SECONDS,
+  BackendCliIncompatible,
+  confirm_reported_cli_version,
+  ensure_cli_compatible,
 } from '../cli_compatibility.ts';
+import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import { local_process_identity } from '../../../worker_supervision/identity.ts';
@@ -86,7 +87,8 @@ export class CodexAppServerClient {
   private readonly worker_supervision: WorkerSupervisionRuntime | undefined;
   private request_id = 0;
   private start_task: Promise<void> | null = null;
-  private version_process: OwnedCodexProcess | null = null;
+  private cli_executable: string | null = null;
+  private cli_check: AbortController | null = null;
   private readonly pending = new Map<number, Pending>();
   private wire_broken = false;
   private stopping = false;
@@ -175,12 +177,8 @@ export class CodexAppServerClient {
     try {
       if (options.worker_ticket_id && !this.worker_supervision)
         throw new CodexChildWouldNotStart('Worker supervision is unavailable');
-      await this.check_version(
-        options.argv[0]!,
-        environment,
-        options.working_directory,
-        incarnation,
-      );
+      this.cli_executable = options.argv[0]!;
+      await this.confirm_cli_compatible(options.argv[0]!, environment, options.working_directory);
       assert_current();
       if (options.worker_ticket_id) {
         environment = { ...environment, PLAN_TICKET_ID: options.worker_ticket_id };
@@ -266,71 +264,39 @@ export class CodexAppServerClient {
     if (this.supervisor === supervisor) this.supervisor = null;
     if (this.scratch === scratch) this.scratch = null;
   }
-  private async check_version(
+  /** Check the Codex feature floor. A kept verdict for the same file spawns nothing. */
+  async confirm_cli_compatible(
     executable: string,
-    environment: Record<string, string>,
-    working_directory: string,
-    incarnation: number,
+    environment: Readonly<Record<string, string>>,
+    working_directory?: string,
   ): Promise<void> {
-    let owned: OwnedCodexProcess;
+    const check = new AbortController();
+    this.cli_check = check;
+    const probes = new OneShotChildren(this.child_processes);
+    let failure: { error: unknown } | null = null;
     try {
-      owned = await spawn_codex_process([executable, '--version'], {
-        child_processes: this.child_processes,
-        environment: {
-          ...copy_environment(process.env),
-          ...environment,
-        },
+      await ensure_cli_compatible('codex', executable, {
+        environment,
         working_directory,
-        close_stdin: true,
-        on_created: (process) => {
-          this.version_process = process;
-        },
+        children: probes,
+        signal: check.signal,
       });
-    } catch {
-      const failed = this.version_process;
-      if (failed) {
-        await failed.stop(this.stop_options);
-        if (this.version_process === failed) this.version_process = null;
-      }
-      throw cli_version_error('codex', executable, 'check');
+    } catch (error) {
+      // A stop kills the probe. Report the stop, not an unreadable version.
+      failure = {
+        error: check.signal.aborted
+          ? new CodexChildWouldNotStart('the codex child stopped during startup')
+          : error,
+      };
     }
-    this.version_process = owned;
-    if (this.incarnation !== incarnation || this.stopping) {
-      await owned.stop(this.stop_options);
-      if (this.version_process === owned) this.version_process = null;
-      throw new CodexChildWouldNotStart('the codex child stopped during startup');
-    }
-    const chunks: Buffer[] = [];
-    owned.child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-    owned.child.stderr.resume();
-    const output_done = new Promise<void>((resolve) => owned.child.stdout.once('end', resolve));
+    if (this.cli_check === check) this.cli_check = null;
+    probes.seal();
     try {
-      if (
-        !(
-          await observe_promise(
-            Promise.race([
-              owned.exited,
-              owned.output_failed.then(() => {
-                throw cli_version_error('codex', executable, 'check');
-              }),
-            ]),
-            VERSION_TIMEOUT_SECONDS * 1000,
-          )
-        ).completed
-      )
-        throw cli_version_error('codex', executable, 'check');
-      await observe_promise(output_done, PIPE_DRAIN_SECONDS * 1000);
-      if (owned.output_error !== null) throw cli_version_error('codex', executable, 'check');
-      validate_cli_version(
-        'codex',
-        executable,
-        Buffer.concat(chunks).toString('utf8'),
-        owned.child.exitCode,
-      );
-    } finally {
-      await owned.stop(this.stop_options);
-      if (this.version_process === owned) this.version_process = null;
+      await probes.settled();
+    } catch (error) {
+      failure ??= { error };
     }
+    if (failure !== null) throw failure.error;
   }
   private attach(
     owned: OwnedCodexProcess,
@@ -482,8 +448,7 @@ export class CodexAppServerClient {
     this.incarnation += 1;
     this.break_wire('this child is being shut down');
     const startup = this.start_task;
-    const version = this.version_process;
-    if (version !== null) await version.stop(options);
+    this.cli_check?.abort();
     if (startup !== null) {
       try {
         await startup;
@@ -544,7 +509,25 @@ export class CodexAppServerClient {
       },
       options,
       () => attempted,
-    );
+    ).then(async (result) => {
+      if (method === 'initialize') await this.confirm_reported_version(result);
+      return result;
+    });
+  }
+  /** The `initialize` userAgent names the running version after its first slash. */
+  private async confirm_reported_version(result: unknown): Promise<void> {
+    if (this.cli_executable === null || !object(result) || typeof result.userAgent !== 'string')
+      return;
+    try {
+      await confirm_reported_cli_version(
+        'codex',
+        this.cli_executable,
+        /^[^/]*\/(\S+)/.exec(result.userAgent)?.[1],
+      );
+    } catch (error) {
+      if (error instanceof BackendCliIncompatible) throw new CodexChildWouldNotStart(error.message);
+      throw error;
+    }
   }
   async begin_request(
     method: string,

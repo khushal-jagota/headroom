@@ -53,6 +53,8 @@ jobs:
       - name: Check types
         run: |
           node server/node_modules/typescript/bin/tsc --noEmit -p server/tsconfig.json
+      - name: Check the generated schema seed
+        run: node server/core/database/tools/generate_seed.ts --check
       - name: Check foundation behavior
         run: |
           cd server
@@ -159,7 +161,11 @@ jobs:
             PROOF_EVIDENCE="$proof_evidence" \
             bash --noprofile --norc -euo pipefail <<'ENROLLMENT' 2>&1 | tee "$proof_evidence/job.log"
           cd "$GITHUB_WORKSPACE"
-          scripts/dev setup
+          npm ci --prefix server
+          npm ci --prefix web
+          npm install --prefix agent_backends --no-save --no-package-lock
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt -e .
           .venv/bin/python ../tests/support/hosted_linux_enrollment.py "$GITHUB_WORKSPACE" "$PROOF_EVIDENCE"
           ENROLLMENT
           rm -rf -- "$proof_root"
