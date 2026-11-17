@@ -1,5 +1,5 @@
 /** Synthetic journals and native contracts prove custody without a service manager or cgroup host. */
-import { mkdtemp, mkdir, readFile, readdir, rm, chmod, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, chmod, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -200,10 +200,16 @@ test('a launch prunes finished records no custody row names and keeps every othe
   await records.locked(named('2'), f.runtime.clock() + 1, async () => {});
   await records.write(named('3'), { ...finished, ticket_id: '', conversation_id: 'named' });
   in_use.add(named('3'));
+  // A row can name its record through another spelling of the root, such as a symlink.
+  await records.write(named('4'), { ...finished, ticket_id: '', conversation_id: 'aliased' });
+  const alias = join(f.root, '..', basename(f.root) + '-alias');
+  await symlink(f.root, alias);
+  directories.push(alias);
+  in_use.add(join(alias, '4'.repeat(32) + '.json'));
   const pending = await WorkerSupervisor.create(f.environment, f.root, f.agent('chief'));
   const launched = await WorkerSupervisor.create(f.environment, f.root, f.agent('manager'));
   expect(new Set(await readdir(f.root))).toEqual(
-    new Set([named('3'), pending.path, launched.path].map((path) => basename(path))),
+    new Set([named('3'), named('4'), pending.path, launched.path].map((path) => basename(path))),
   );
 });
 

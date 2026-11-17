@@ -75,10 +75,10 @@ async function setup() {
   const jobs = new Jobs();
   const owner = runtime(jobs);
   const environment = { PLAN_TICKET_ID: 'test-ticket', [RECORD_ROOT_ENV]: root };
-  const supervisor = (await WorkerSupervisor.create(environment, root, {
+  const supervisor = await WorkerSupervisor.create(environment, root, {
     runtime: owner,
     ...worker_launch,
-  }))!;
+  });
   return { root, jobs, owner, environment, supervisor };
 }
 
@@ -101,10 +101,10 @@ test('new Mac custody rejects a duplicate and retires by job label despite unava
   expect(jobs.stopped).toBe(1);
   expect((await records.read(supervisor.path)).launch_revoked).toBe(true);
   expect(owner.active_jobs.size).toBe(0);
-  const natural = (await WorkerSupervisor.create(environment, root, {
+  const natural = await WorkerSupervisor.create(environment, root, {
     runtime: owner,
     ...worker_launch,
-  }))!;
+  });
   const natural_record = await records.read(natural.path);
   natural_record.state = 'running';
   await records.write(natural.path, natural_record);

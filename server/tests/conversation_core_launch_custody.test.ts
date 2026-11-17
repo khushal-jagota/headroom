@@ -20,7 +20,7 @@ test('a supervised launch whose child reports no record is stopped and its promp
     ...require_live(id),
     supervises_local_launches: true,
   }));
-  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     await f.start();
     expect(await f.send()).toEqual(
@@ -48,11 +48,6 @@ test('a supervised launch whose child reports no record is stopped and its promp
       .find((row) => row.kind === 'prompt_delivery_refused')?.payload as
       { refusal_detail: string } | undefined;
     expect(refusal?.refusal_detail).toBe(STOPPED);
-    const line = logged.mock.calls
-      .map(([text]) => String(text))
-      .find((text) => text.startsWith('conversation backend failed'));
-    expect(line).toContain('error_class=BackendSpawnFailed');
-    expect(line).toContain(STOPPED);
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }

@@ -1,7 +1,7 @@
 /** Launch authorization and durable custody wrap the caller's existing native owner. */
 import { accessSync, constants, statSync } from 'node:fs';
 import { lstat, mkdir, readdir } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -48,8 +48,11 @@ async function prune_complete_record(
   runtime: WorkerSupervisionRuntime,
   record_paths_in_use: () => ReadonlySet<string>,
 ): Promise<void> {
+  // Record names are random and unique, so a name stays the same under any spelling of the
+  // root, including a symlinked or relocated data folder. A path string would not.
+  const in_use = () => new Set([...record_paths_in_use()].map((named) => basename(named)));
   try {
-    if (record_paths_in_use().has(path)) return;
+    if (in_use().has(basename(path))) return;
     await records.locked(
       path,
       runtime.clock() + INSPECTION_SECONDS,
@@ -64,7 +67,7 @@ async function prune_complete_record(
         }
         // Ask again under the lock. A driver names its record before it spawns, so a finished
         // record is named already or never will be; the earlier answer can miss a newer launch.
-        if (record.state !== 'complete' || record_paths_in_use().has(path)) return;
+        if (record.state !== 'complete' || in_use().has(basename(path))) return;
         // A finished Mac job's transport directory is named only by its record.
         if (record.launchd_socket_directory)
           await cleanup_transport(record.launchd_socket_directory);
@@ -124,28 +127,30 @@ export class WorkerSupervisor {
       worker_ticket_id === null
         ? {
             holder: 'Conversation',
-            agent: 'agent',
-            Agent: 'Agent',
+            process_kind: 'agent',
+            subject: 'Agent',
+            supervision: 'Conversation supervision',
             foreign: 'Prior custody of this conversation belongs to another machine',
           }
         : {
             holder: 'Ticket',
-            agent: 'Worker',
-            Agent: 'Worker',
+            process_kind: 'Worker',
+            subject: 'Worker',
+            supervision: 'Worker supervision',
             foreign: 'Prior Worker custody belongs to another machine',
           };
     return runtime.operation(async () => {
-      if (runtime.closed) throw new Error('Worker supervision is closed');
+      if (runtime.closed) throw new Error(`${words.supervision} is closed`);
       const configured = environment[RECORD_ROOT_ENV] || process.env[RECORD_ROOT_ENV];
       const db = environment.PLAN_DB_PATH;
-      if (!configured && !db) throw new Error(`${words.Agent} process record root is missing`);
+      if (!configured && !db) throw new Error(`${words.subject} process record root is missing`);
       const root = configured
         ? resolve(expand_home(configured))
         : join(dirname(resolve(expand_home(db!))), 'worker-processes');
       await mkdir(root, { mode: 0o700, recursive: true });
       const info = await lstat(root);
       if (!info.isDirectory() || info.uid !== process.getuid!() || (info.mode & 0o077) !== 0)
-        throw new Error(`${words.Agent} process record root must be private and owned`);
+        throw new Error(`${words.subject} process record root must be private and owned`);
       const context = await runtime.context(runtime.clock() + INSPECTION_SECONDS);
       for (const name of (await readdir(root)).filter((name) => name.endsWith('.json')).sort()) {
         const prior = join(root, name);
@@ -166,14 +171,16 @@ export class WorkerSupervisor {
         }
         if (!same_key(previous)) continue;
         if (previous.launchd && runtime.active_jobs.has(prior))
-          throw new Error(`${words.holder} already has retained ${words.agent} job custody`);
+          throw new Error(`${words.holder} already has retained ${words.process_kind} job custody`);
         const inspected = await inspect_record(prior, { runtime, context });
         if (inspected.complete) continue;
         if (context.host.host !== previous.host) throw new Error(words.foreign);
         if (!previous.launchd && context.host.boot === previous.boot) {
           const table = await context.primitives.snapshot(runtime.clock() + INSPECTION_SECONDS);
           if (previous.owner != null && alive(previous.owner, table))
-            throw new Error(`${words.holder} already has retained ${words.agent} process custody`);
+            throw new Error(
+              `${words.holder} already has retained ${words.process_kind} process custody`,
+            );
         }
         const stopped = await stop_record(prior, { runtime, context });
         if (!stopped.complete) throw new Error(stopped.reason);
@@ -184,8 +191,8 @@ export class WorkerSupervisor {
             process.pid,
           );
       if (!runtime.jobs && !owner)
-        throw new Error(`${words.Agent} supervisor identity is unavailable`);
-      if (runtime.closed) throw new Error('Worker supervision is closed');
+        throw new Error(`${words.subject} supervisor identity is unavailable`);
+      if (runtime.closed) throw new Error(`${words.supervision} is closed`);
       const path = join(root, randomUUID().replaceAll('-', '') + '.json');
       await records.write(path, {
         version: 1,

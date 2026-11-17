@@ -146,22 +146,29 @@ async function ensure_child(
   // that promise is stopped while its handle is still here. A cancelled launch was stopped above.
   if (!child.stop_outside_lock && sink.generation.startsWith(SUPERVISED_CHILD_GENERATION_PREFIX)) {
     let recorded: string | null = null;
+    let failure: unknown = null;
     try {
       recorded = host.options.store.local_child_supervision_record(
         state.record.conversation_id,
         sink.generation,
       );
-    } finally {
-      if (recorded === null) {
-        state.child = child;
-        state.child_is_quarantined = true;
-        await host.discard_child(state, child);
-      }
+    } catch (error) {
+      failure = error;
     }
-    if (recorded === null)
+    if (recorded === null) {
+      state.child = child;
+      state.child_is_quarantined = true;
+      try {
+        await host.discard_child(state, child);
+      } catch (error) {
+        // The refusal stays the reason; a failed stop keeps the child quarantined.
+        failure = failure === null ? error : new AggregateError([failure, error]);
+      }
       throw new BackendSpawnFailed(
         'the agent started without a supervision record, so Panels stopped it',
+        failure === null ? undefined : { cause: failure },
       );
+    }
   }
   state.child = child;
   state.child_selection = {

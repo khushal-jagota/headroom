@@ -178,7 +178,11 @@ export class CodexAppServerClient {
     let scratch: WorkerScratch | null = null;
     try {
       if (options.conversation_id !== undefined && !this.worker_supervision)
-        throw new CodexChildWouldNotStart('Worker supervision is unavailable');
+        throw new CodexChildWouldNotStart(
+          options.worker_ticket_id
+            ? 'Worker supervision is unavailable'
+            : 'Conversation supervision is unavailable',
+        );
       this.cli_executable = options.argv[0]!;
       await this.confirm_cli_compatible(options.argv[0]!, environment, options.working_directory);
       assert_current();

@@ -44,7 +44,7 @@ export class WorkerSupervisionRuntime {
   }
   async context(deadline: number): Promise<InspectionContext> {
     if (this.#closed && !this.#scope.getStore()?.active)
-      throw new Error('Worker supervision is closed');
+      throw new Error('Process supervision is closed');
     const host = await this.primitives.host_boot(deadline);
     if (!host.host || !host.boot) throw new Error('Worker host and boot identity are unavailable');
     return { primitives: this.primitives, host };
@@ -52,7 +52,7 @@ export class WorkerSupervisionRuntime {
   operation<T>(operation: () => Promise<T>): Promise<T> {
     const parent = this.#scope.getStore();
     if (this.#closed && !parent?.active)
-      return Promise.reject(new Error('Worker supervision is closed'));
+      return Promise.reject(new Error('Process supervision is closed'));
     const token = parent?.active ? parent : { active: true };
     const task = this.#scope.run(token, () => Promise.resolve().then(operation));
     this.#operations.add(task);
