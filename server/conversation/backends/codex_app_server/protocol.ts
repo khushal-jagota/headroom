@@ -403,7 +403,8 @@ export const TokenUsage = {
 export type TokenUsage = ReturnType<typeof TokenUsage.read>;
 export const ThreadTokenUsage = {
   read(value: unknown) {
-    return { total: TokenUsage.read(object(value).total) };
+    const item = object(value);
+    return { total: TokenUsage.read(item.total), last: optional(item.last, TokenUsage.read) };
   },
 };
 export type ThreadTokenUsage = ReturnType<typeof ThreadTokenUsage.read>;

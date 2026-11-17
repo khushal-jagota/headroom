@@ -21,7 +21,7 @@ test('idle compaction requires a large recorded count, an unfinished ticket, and
   );
   await f.send();
   const child = f.children[0];
-  await child.emit(new TokenUsageReported({ input_tokens: 29999 }));
+  await child.emit(new TokenUsageReported({ context_input_tokens: 29999 }));
   await child.finish();
   await f.core.wait_until_quiescent();
   now += 50 * 60;
@@ -34,7 +34,7 @@ test('idle compaction requires a large recorded count, an unfinished ticket, and
   const setCount = (count: number | null) =>
     f.database.write((tx) =>
       tx.run(
-        "UPDATE conversation_events SET payload=json_set(payload,'$.input_tokens',?) WHERE conversation_id='core' AND kind='token_usage'",
+        "UPDATE conversation_events SET payload=json_set(payload,'$.context_input_tokens',?) WHERE conversation_id='core' AND kind='token_usage'",
         [count],
       ),
     );
@@ -67,7 +67,7 @@ test('idle sweep does not restart a stopped child for compaction', async () => {
   await f.start();
   await f.send();
   const child = f.children[0];
-  await child.emit(new TokenUsageReported({ input_tokens: 30000 }));
+  await child.emit(new TokenUsageReported({ context_input_tokens: 30000 }));
   await child.finish();
   await f.core.wait_until_quiescent();
   now += 31 * 60;
@@ -80,4 +80,40 @@ test('idle sweep does not restart a stopped child for compaction', async () => {
   expect(
     f.store.read_events_after('core', 0).filter((event) => event.payload.kind === 'prompt'),
   ).toHaveLength(1);
+});
+
+test('old usage and a later turn without a measurement never qualify the sweep', async () => {
+  let now = 100;
+  const f = setup({
+    record: { integer_now: () => now },
+    core: {
+      unix_time_now: () => now,
+      monotonic_now: () => now,
+      idle_child_stop_after_seconds: 10000,
+    },
+  });
+  await f.start();
+  await f.send();
+  const child = f.children[0];
+  await child.emit(new TokenUsageReported({ input_tokens: 100000 }));
+  await child.finish();
+  await f.core.wait_until_quiescent();
+  const due = () =>
+    f.store.conversations_due_for_automatic_compaction({
+      due_at_or_before: now - 3000,
+      activity_after: now - 3600,
+    });
+  now += 3000;
+  expect(due()).toEqual([]);
+  f.database.write((tx) =>
+    tx.run(
+      "UPDATE conversation_events SET payload=json_set(payload,'$.context_input_tokens',40000) WHERE conversation_id='core' AND kind='token_usage'",
+    ),
+  );
+  expect(due()).toEqual(['core']);
+  await f.send('next', 'sender-two');
+  await child.finish();
+  await f.core.wait_until_quiescent();
+  now += 3000;
+  expect(due()).toEqual([]);
 });

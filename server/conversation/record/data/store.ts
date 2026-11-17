@@ -1250,8 +1250,8 @@ export class ConversationStore
             'AND latest_agent_activity_at<=? AND latest_agent_activity_at>? ' +
             'AND latest_agent_activity_sequence>automatic_compaction_attempted_through_sequence ' +
             "AND NOT EXISTS (SELECT 1 FROM tickets WHERE tickets.conversation_id=conversations.conversation_id AND tickets.stage='done') " +
-            "AND (SELECT json_extract(payload,'$.input_tokens') FROM conversation_events " +
-            "WHERE conversation_id=conversations.conversation_id AND kind='token_usage' ORDER BY sequence DESC LIMIT 1)>=? " +
+            "AND (SELECT json_extract(payload,'$.context_input_tokens') FROM conversation_events " +
+            "WHERE conversation_id=conversations.conversation_id AND kind='token_usage' AND sequence > COALESCE((SELECT sequence FROM conversation_events WHERE conversation_id=conversations.conversation_id AND kind='turn_ended' ORDER BY sequence DESC LIMIT 1 OFFSET 1),0) ORDER BY sequence DESC LIMIT 1)>=? " +
             'ORDER BY latest_agent_activity_at,conversation_id',
           [
             options.due_at_or_before,

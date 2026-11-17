@@ -326,17 +326,25 @@ export class ClaudeEvents {
   async usage(turn: TurnInFlight, message: ClaudeSdkMessage): Promise<void> {
     const usage = record(message.usage) ?? {};
     const count = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const legacy_count = (value: unknown): number | null =>
       typeof value === 'boolean'
         ? Number(value)
         : typeof value === 'number' && Number.isInteger(value)
           ? value
           : null;
+    const input = count(usage.input_tokens);
+    const read = count(usage.cache_read_input_tokens);
+    const creation = count(usage.cache_creation_input_tokens);
+    const context =
+      input !== null && read !== null && creation !== null ? input + read + creation : null;
     await this.sink.report(
       turn.token,
       new B.TokenUsageReported({
-        input_tokens: count(usage.input_tokens),
-        output_tokens: count(usage.output_tokens),
-        cached_input_tokens: count(usage.cache_read_input_tokens),
+        context_input_tokens: context !== null && Number.isSafeInteger(context) ? context : null,
+        input_tokens: legacy_count(usage.input_tokens),
+        output_tokens: legacy_count(usage.output_tokens),
+        cached_input_tokens: legacy_count(usage.cache_read_input_tokens),
         cost_usd: (message.total_cost_usd ?? null) as number | null,
       }),
     );
