@@ -2984,7 +2984,7 @@ def _overlay_menu_bounds(browser, url):
                 picker.locator('[data-conversation-picker-choice="opus"]').click()
                 picker.locator('[data-conversation-picker-choice="high"]').click()
                 trigger.click()
-                for control in ('backend:claude','backend:codex','backend:hermes','reasoning','models','refresh'):
+                for control in ('backend:claude','backend:codex','backend:hermes','reasoning','refresh'):
                     settle()
                     selector = '[data-conversation-backend="'+control.split(':')[1]+'"]' if control.startswith('backend:') else '[data-conversation-picker-'+control+']'
                     item=picker.locator(selector)
@@ -2997,8 +2997,6 @@ def _overlay_menu_bounds(browser, url):
                         expect(picker.locator('[data-conversation-picker-feedback]')).to_be_visible()
                     elif control=='reasoning':
                         expect(picker.locator('[data-conversation-picker-choice="high"]')).to_be_visible()
-                    elif control=='models':
-                        expect(picker.locator('[data-conversation-picker-choice="opus"]')).to_be_visible()
                     elif control=='refresh':
                         expect(picker.locator('.model-picker-summary')).to_have_text('Fixture refresh boundary')
                         feedback = picker.locator('[data-conversation-picker-feedback]')
@@ -3009,12 +3007,12 @@ def _overlay_menu_bounds(browser, url):
                 page.screenshot(path=str(output / (mode+'-run-picker.png')))
                 picker.get_by_role('listbox').press('Escape')
                 expect(trigger).to_be_focused()
-            # Models removes its own rail button. Enter and Space must both leave
+            # The active provider returns to models; there is no separate Models button. Enter and Space must both leave
             # the surviving list usable, then dismiss back to the stable trigger.
             for key in ('Enter','Space'):
                 trigger.click()
                 keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
-                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                keyboard_rail(picker.locator('[data-conversation-backend="claude"]'),key)
                 box=picker.get_by_role('listbox')
                 expect(box).to_be_focused()
                 expect(box).to_have_attribute('aria-label','Models')
@@ -3025,7 +3023,7 @@ def _overlay_menu_bounds(browser, url):
                 expect(trigger).to_have_attribute('aria-label',re.compile('opus high',re.I))
                 trigger.click()
                 keyboard_rail(picker.locator('[data-conversation-picker-reasoning]'),key)
-                keyboard_rail(picker.locator('[data-conversation-picker-models]'),key)
+                keyboard_rail(picker.locator('[data-conversation-backend="claude"]'),key)
                 picker.get_by_role('listbox').press('Escape')
                 expect(trigger).to_be_focused()
                 proof['actions'].append([mode,'modelsFocus',key,'selection works; Escape restores trigger'])
