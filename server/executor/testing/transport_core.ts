@@ -31,7 +31,7 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
   let core!: SqliteProcessConversationSystem;
   core = new SqliteProcessConversationSystem({
     store,
-    backend_registry: registry_of_factories({ codex: remote, claude: remote, hermes: remote }),
+    backend_registry: registry_of_factories({ codex: remote, claude: remote }),
     message_files: endpoint.message_files,
     delivery_model_refusal: (backend, model, ticket_id) =>
       new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),

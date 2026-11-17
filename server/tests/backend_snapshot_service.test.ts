@@ -16,9 +16,7 @@ import {
   built_in_driver_of,
 } from '../drivers/built_in_manifests.ts';
 import { Deferred } from '../core/deferred.ts';
-import { BackendStateStore, model_refusal } from '../conversation/backend_state.ts';
-import { hermes_catalog_reader } from '../drivers/hermes/runtime/status_readers.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { BackendStateStore } from '../conversation/backend_state.ts';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
@@ -475,7 +473,6 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
 test('test compositions cannot acquire production catalogs, login, updates, or HTTP usage', async () => {
   const environment = new RecordingBackendProbeEnvironment();
   for (const name of ['codex', 'claude']) environment.executables.set(name, `/synthetic/${name}`);
-  environment.configured_executables.set('hermes', '/synthetic/hermes');
   const host = {
     test_mode: true,
     environment: {},
@@ -570,52 +567,6 @@ test('production usage and registry transports refuse redirects without another 
 });
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
-// Gap: dropping the Hermes skip in model_refusal is safe only if neither the VPS card (Hermes catalog
-// reader) nor the Mac rows (Python Hermes catalog) ever mark the Hermes model list complete.
-test('no card source gives Hermes a complete model list, so no Hermes model is refused as unoffered', async () => {
-  const inventory = {
-    schemaVersion: 1,
-    status: 'runnable',
-    defaultModelId: 'openai:gpt-x',
-    providers: [
-      {
-        id: 'openai',
-        displayName: 'OpenAI',
-        models: [{ id: 'openai:gpt-x', displayName: 'GPT X', detail: 'listed' }],
-      },
-    ],
-  };
-  const read = hermes_catalog_reader(async () => ({
-    exit_code: 0,
-    standard_output: JSON.stringify(inventory),
-    standard_error: '',
-  }));
-  const vps_answer = await read({
-    environment: {} as BackendProbeEnvironment,
-    executable_path: '/synthetic/hermes',
-    version: null,
-    refresh: false,
-  });
-  expect(vps_answer.models).toHaveLength(1);
-  expect(vps_answer.complete).toBe(false);
-
-  const database = fixture();
-  database.write((tx) =>
-    tx.run('INSERT INTO machine_backend_snapshots VALUES (?,?,?)', [
-      ORIGINAL_MAC_MACHINE_ID,
-      'hermes',
-      JSON.stringify({
-        models_complete: false,
-        available_models: [{ model_id: 'openai:gpt-x' }],
-      }),
-    ]),
-  );
-  expect(
-    database.read((sql) =>
-      model_refusal(sql, parse_backend_instance_id('hermes'), 'anthropic:other', 'macos'),
-    ),
-  ).toBeNull();
-});
 import { readFileSync } from 'node:fs';
 import { run as run_recorded_probes } from '../conversation/snapshot/testing/probe_comparison.ts';
 import { snapshot_json } from '../conversation/snapshot/presentation.ts';

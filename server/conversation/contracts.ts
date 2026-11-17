@@ -260,8 +260,13 @@ export function backend_supports_active_steering(
     ? entry.instance.capabilities.turns.supportsActiveSteering
     : KNOWN_BACKEND_INSTANCE_IDS.includes(key);
 }
+/** The built-in backend `value` names, or undefined. A stored key may name one this build lacks. */
+export function known_conversation_backend_key(value: unknown): BackendInstanceId | undefined {
+  return KNOWN_BACKEND_INSTANCE_IDS.find((id) => id === value);
+}
+/** A backend to launch on or to choose. Reads of a stored key do not need one. */
 export function require_conversation_backend_key(value: unknown): BackendInstanceId {
-  const known = KNOWN_BACKEND_INSTANCE_IDS.find((id) => id === value);
+  const known = known_conversation_backend_key(value);
   if (known !== undefined) return known;
   throw new PlannerError('validation', 'unknown agent backend', {
     backend_key: typeof value === 'string' ? value : null,

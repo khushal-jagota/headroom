@@ -48,8 +48,6 @@ function setup() {
     HOME: 'home',
     CODEX_HOME: 'codex',
     CLAUDE_CONFIG_DIR: 'claude',
-    HERMES_HOME: 'hermes',
-    PLAN_HERMES_HOME: 'plan-hermes',
   })) {
     const home = path + '.' + suffix;
     mkdirSync(home);
@@ -439,7 +437,6 @@ test.skipIf(process.platform !== 'linux')(
           backend_registry: registry_of_factories({
             codex: forbidden,
             claude: forbidden,
-            hermes: forbidden,
           }),
         });
         return core;

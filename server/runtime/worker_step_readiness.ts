@@ -4,7 +4,7 @@ import type { Ticket } from '../tickets/contracts.ts';
 import type { WorkflowDefinition } from '../worker_types/contracts.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { stage_definition, stage_ownership_mode, gating_field } from '../tickets/logic/machine.ts';
-import { require_conversation_backend_key } from '../conversation/contracts.ts';
+import { known_conversation_backend_key } from '../conversation/contracts.ts';
 import { now_ms } from '../executor/clock.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import * as locale_configuration from '../tickets/locale_configuration.ts';
@@ -57,11 +57,13 @@ export function worker_step_blocker(
     model = defaults.default_model;
     backend = defaults.default_backend;
   }
+  if (known_conversation_backend_key(backend) === undefined)
+    return `the backend ${backend} is not available in this build`;
   if (model !== null) {
     const row = sql.get<{
       enabled: number;
     }>('SELECT enabled FROM backend_model_enablement WHERE backend_key=? AND model_id=?', [
-      require_conversation_backend_key(backend),
+      backend,
       model,
     ]);
     if (row && !row.enabled) return `the model ${model} is disabled`;

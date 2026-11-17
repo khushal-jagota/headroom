@@ -101,7 +101,7 @@ if (spec.mode === 'machines') {
     const factory = registry.as_factory();
     const core = new SqliteProcessConversationSystem({
       store: new ConversationStore(db),
-      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+      backend_registry: registry_of_factories({ codex: factory, claude: factory }),
       message_files: endpoint.message_files,
       delivery_model_refusal: () => null,
       execution_refusal: () => null,
@@ -668,7 +668,7 @@ const no_child: BackendChildFactory = () => {
 };
 const core = new SqliteProcessConversationSystem({
   store,
-  backend_registry: registry_of_factories({ codex: no_child, claude: no_child, hermes: no_child }),
+  backend_registry: registry_of_factories({ codex: no_child, claude: no_child }),
   message_files: new ConversationMessageFiles(spec.path),
   delivery_model_refusal: () => null,
   execution_refusal: () => null,

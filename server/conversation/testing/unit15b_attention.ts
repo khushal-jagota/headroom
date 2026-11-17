@@ -64,7 +64,7 @@ export async function exercise(spec: {
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+    backend_registry: registry_of_factories({ codex: factory, claude: factory }),
     message_files: new ConversationMessageFiles(spec.database),
     unix_time_now: () => now,
     monotonic_now: () => now,

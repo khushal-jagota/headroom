@@ -1,8 +1,8 @@
 /** How a backend key is named and drawn from the server's driver list.
  *
- * The risk is an unknown backend: before the driver list it fell through to the Hermes
- * picture. Now it must get its own capitalised name and its initials, never a blank or
- * another driver's mark, and a list still loading must hold the place without a guess.
+ * The risk is an unknown backend, such as a saved Hermes key now that Hermes is not built in.
+ * It must get its own capitalised name and its initials, never a blank or another driver's
+ * mark, and a list still loading must hold the place without a guess.
  */
 import { describe, expect, it } from "vitest";
 
@@ -23,16 +23,20 @@ describe("a backend key and the driver list", () => {
     });
   });
 
-  it("draws a full-colour icon as a picture, the way Hermes always drew", () => {
-    expect(backendMark("hermes", DRIVERS)).toEqual({
-      kind: "icon", url: "/api/drivers/hermes/icon?v=aaaaaaaaaaaa", picture: true
+  it("draws a full-colour icon as a picture", () => {
+    const picture = {
+      driver_kind: "picture", label: "Picture", accent_color: "#a78bfa", checks_for_updates: false,
+      icon: { url: "/api/drivers/picture/icon?v=aaaaaaaaaaaa", media_type: "image/png", monochrome: false }
+    } as const;
+    expect(backendMark("picture", [...DRIVERS, picture])).toEqual({
+      kind: "icon", url: "/api/drivers/picture/icon?v=aaaaaaaaaaaa", picture: true
     });
   });
 
   it("gives an unknown key its capitalised name and its initials, not another mark", () => {
-    expect(driverFor("antigravity", DRIVERS)).toBeNull();
-    expect(backendLabel("antigravity", DRIVERS)).toBe("Antigravity");
-    expect(backendMark("antigravity", DRIVERS)).toEqual({ kind: "initials", text: "A" });
+    expect(driverFor("hermes", DRIVERS)).toBeNull();
+    expect(backendLabel("hermes", DRIVERS)).toBe("Hermes");
+    expect(backendMark("hermes", DRIVERS)).toEqual({ kind: "initials", text: "H" });
   });
 
   it("takes the first letter of up to two parts of a hyphenated or underscored key", () => {

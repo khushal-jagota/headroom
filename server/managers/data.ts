@@ -8,7 +8,7 @@ import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import type { Clock } from '../core/clock.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { require_conversation_backend_key } from '../conversation/contracts.ts';
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import type {
   Manager,
   ManagerLaunchConfiguration,
@@ -58,7 +58,7 @@ export function read_manager(sql: ReadSql, id: string): ManagerRead {
     page_revision: row.page_revision,
     launch_configuration_is_explicit: Boolean(row.launch_configuration_is_explicit),
     manager_launch_configuration: {
-      employee_backend: require_conversation_backend_key(row.manager_backend),
+      employee_backend: parse_backend_instance_id(row.manager_backend),
       employee_launch_model: row.manager_model,
       employee_launch_reasoning_effort: row.manager_reasoning_effort,
     },
@@ -106,7 +106,7 @@ export function read_launch_defaults(sql: ReadSql): ManagerLaunchConfiguration {
       'FROM manager_launch_defaults WHERE singleton=1',
   );
   if (!row) throw new PlannerError('validation', 'Manager launch defaults are absent');
-  return { ...row, employee_backend: require_conversation_backend_key(row.employee_backend) };
+  return { ...row, employee_backend: parse_backend_instance_id(row.employee_backend) };
 }
 export function update_launch_defaults(
   tx: TransactionSql,

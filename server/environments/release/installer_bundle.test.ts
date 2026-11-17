@@ -241,8 +241,6 @@ function isolated_node_environment(root: string, loaded: string): NodeJS.Process
     'HOME',
     'CODEX_HOME',
     'CLAUDE_CONFIG_DIR',
-    'HERMES_HOME',
-    'PLAN_HERMES_HOME',
     'PLAN_LOGS_DIR',
     'PLAN_BACKUP_DIR',
     'PLAN_WORKSPACE_ROOT',

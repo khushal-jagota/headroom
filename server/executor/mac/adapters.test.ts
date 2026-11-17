@@ -75,10 +75,10 @@ test('the shared Linux executor host still names the resolved Claude folder', ()
 
 test('a backend this build has no driver for is refused, not launched as another', () => {
   const host = mac_host({});
-  expect(host.drivers.map((driver) => driver.driver_kind)).toEqual(['hermes', 'codex', 'claude']);
-  const start = { backend_key: 'unknown_backend' } as ResolvedConversationStart;
+  expect(host.drivers.map((driver) => driver.driver_kind)).toEqual(['codex', 'claude']);
+  const start = { backend_key: 'hermes' } as ResolvedConversationStart;
   expect(() => host.factory(start)).toThrow(BackendSpawnFailed);
-  expect(() => host.native_skill_home('unknown_backend')).toThrow(
-    'This machine cannot run the unknown_backend backend.',
+  expect(() => host.native_skill_home('hermes')).toThrow(
+    'This machine cannot run the hermes backend.',
   );
 });

@@ -179,7 +179,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         bound = compose_production_backends(
           current,
           {
-            registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+            registry: registry_of_factories({ claude: local, codex: local }),
             host: unread_driver_host,
           },
           {
@@ -282,7 +282,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     const unconfigured = compose_production_backends(
       { ...context, config: { ...context.config, executor_id: null }, executor: null },
       {
-        registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+        registry: registry_of_factories({ claude: local, codex: local }),
         host: unread_driver_host,
       },
       {
@@ -486,7 +486,6 @@ test('production constructs its real executor and reconciles that executor inven
         drivers: drivers_of_factories({
           claude: () => local,
           codex: () => local,
-          hermes: () => local,
         }),
         driver_host: () => unread_driver_host,
         http: (current) =>
@@ -613,6 +612,10 @@ test("a remote Ticket start follows its machine's advertised driver kinds, or th
     expect(remote).not.toHaveBeenCalled();
     expect(local).not.toHaveBeenCalled();
     store_lease(['hermes', 'codex']);
+    // A machine that still advertises a driver this build lacks cannot run it.
+    expect(() => start_remote('hermes')).toThrow(
+      "The Ticket's machine cannot run the hermes backend",
+    );
     start_remote('codex');
     expect(remote).toHaveBeenCalledTimes(1);
     // A lease that lists no driver kinds runs no backend.
