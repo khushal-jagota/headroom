@@ -856,3 +856,16 @@ custody comparison. Focused launch tests check the real request and prompt paths
 The home Worker abort comparison likewise asserts the stored Ticket launch folder
 and the explicit checkout prompt before it normalizes only those two differences.
 The remaining conversation rows and abort custody compare exactly with Python.
+
+## Remembered CLI version verdicts
+
+TypeScript no longer runs `claude --version` or `codex --version` before every Claude or
+Codex start. Python still does. The native server keeps each definite feature-floor verdict
+for the exact executable file: backend, resolved path, device, inode, size, and modification
+and change times. The backend snapshot's version read fills it, and a miss runs one check and keeps its
+result. A failed or unreadable check is not kept. A conversation turn checks before its child
+launch record is written, so a too-old CLI is refused without launch custody.
+The connection still enforces each floor. Claude's initialize reply and Codex's
+`initialize` userAgent report the running version. A version below the floor fails that
+start with the same update message and replaces the kept verdict. A missing or unreadable
+reported version does not fail the start.

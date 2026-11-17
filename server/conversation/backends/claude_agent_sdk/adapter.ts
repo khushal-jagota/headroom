@@ -26,7 +26,7 @@ import {
 } from '../../message_content.ts';
 import type { MessageContent } from '../../message_content.ts';
 import type { ConversationMessageFiles } from '../../message_files.ts';
-import { BackendCliIncompatible } from '../cli_compatibility.ts';
+import { BackendCliIncompatible, ensure_cli_compatible } from '../cli_compatibility.ts';
 import type {
   OwnedChildProcesses,
   OwnedOneShotChildren,
@@ -122,6 +122,18 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     this.client_factory = options.client_factory ?? claude_sdk_client;
     this.events = new ClaudeEvents(this.sink);
     this.asks = new ClaudeAsks(this.sink, () => this.turn);
+  }
+  async confirm_cli_compatible(): Promise<void> {
+    try {
+      await ensure_cli_compatible('claude', this.launch.claude_executable, {
+        environment: Object.fromEntries(this.launch.environment_overrides ?? []),
+        children: this.one_shot_children,
+      });
+    } catch (error) {
+      if (error instanceof BackendCliIncompatible)
+        throw new B.BackendSpawnFailed(error_text(error));
+      throw error;
+    }
   }
   async start(
     resolved_start: ResolvedConversationStart,

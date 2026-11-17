@@ -7,6 +7,7 @@ import { numerical_version, recognize_variant } from '../model_resolution/logic/
 import { update_advisory } from './advisory.ts';
 import { read_claude_identity, read_codex_identity } from './identity.ts';
 import { VERSION_PROBE_TIMEOUT_SECONDS, IDENTITY_PROBE_TIMEOUT_SECONDS } from './configuration.ts';
+import { cli_version_recorder } from '../backends/cli_compatibility.ts';
 export function create_backend_probe(
   readers: Readonly<Record<ConversationBackendKey, CatalogReader>>,
 ): BackendProbe {
@@ -32,9 +33,13 @@ export function create_backend_probe(
         models_complete: false,
       };
     const diagnoses: string[] = [];
+    // The same read keeps the feature-floor verdict that later launches use without a spawn.
+    const record_cli_version =
+      backend_key === 'hermes' ? null : await cli_version_recorder(backend_key, executable_path);
     const outcome = await environment.run([executable_path, '--version'], {
       timeout_seconds: VERSION_PROBE_TIMEOUT_SECONDS,
     });
+    record_cli_version?.(outcome.standard_output, outcome.exit_code);
     const version = parse_version(outcome.standard_output + outcome.standard_error);
     if (version === null)
       diagnoses.push(

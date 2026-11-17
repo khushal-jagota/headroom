@@ -71,6 +71,8 @@ async function ensure_child(
     event_sink: sink,
     message_files: host.options.message_files,
   });
+  if (child.confirm_cli_compatible)
+    await host.native_operation(() => child.confirm_cli_compatible!());
   if (child.stop_outside_lock) {
     const retained = host.retained_run(state);
     if (retained === null) throw new BackendSpawnFailed('Backend did not retain its run identity');

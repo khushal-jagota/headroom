@@ -42,6 +42,7 @@ import {
   CodexWireFailed,
 } from './client.ts';
 import { child_environment } from './environment.ts';
+import { BackendCliIncompatible } from '../cli_compatibility.ts';
 import { codex_home, read_stored_codex_login, RememberedCodexLoginRejection } from './login.ts';
 import { CatalogCoordinator, catalog_snapshot, EMPTY_CATALOG_SNAPSHOT } from './catalog.ts';
 import type { CatalogInvocation, CatalogSnapshot } from './catalog.ts';
@@ -104,6 +105,7 @@ export type CodexClient = Pick<
   | 'standard_error_since'
   | 'settle_standard_error'
 > & {
+  confirm_cli_compatible?: CodexAppServerClient['confirm_cli_compatible'];
   local_child_identity?: () => Promise<LocalChildIdentity | null>;
   settled?: () => Promise<void>;
 };
@@ -231,6 +233,17 @@ export class CodexAppServerBackendChild implements B.BackendChild {
   }
   async local_child_identity(): Promise<LocalChildIdentity | null> {
     return this.client.local_child_identity?.() ?? null;
+  }
+  async confirm_cli_compatible(): Promise<void> {
+    try {
+      await this.client.confirm_cli_compatible?.(
+        this.launch.argv[0]!,
+        Object.fromEntries(this.launch.environment_overrides ?? []),
+      );
+    } catch (error) {
+      if (error instanceof BackendCliIncompatible) throw new B.BackendSpawnFailed(text(error));
+      throw error;
+    }
   }
   async start(
     resolved_start: ResolvedConversationStart,

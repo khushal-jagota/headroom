@@ -1,9 +1,10 @@
 /** The selected executable must supply the native features that Panels consumes. */
+import { realpath, stat } from 'node:fs/promises';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import { OneShotChildren, stop_one_shot_child } from '../../lifecycle/one_shot_children.ts';
 
 export type Backend = 'codex' | 'claude';
-export const VERSION_TIMEOUT_SECONDS = 10;
+const VERSION_TIMEOUT_SECONDS = 10;
 const requirements = {
   codex: {
     name: 'Codex',
@@ -24,6 +25,12 @@ export class BackendCliIncompatible extends Error {}
 function repair(backend: Backend): string {
   const requirement = requirements[backend];
   return `Update ${requirement.name} to at least ${requirement.version}. Panels requires ${requirement.reason}.`;
+}
+
+function too_old(backend: Backend, executable: string, version: string): BackendCliIncompatible {
+  return new BackendCliIncompatible(
+    `${requirements[backend].name} ${version} at ${executable} is too old. ${repair(backend)}`,
+  );
 }
 
 export function cli_version_error(
@@ -72,15 +79,13 @@ function version(
   };
 }
 
-export function validate_cli_version(
-  backend: Backend,
-  executable: string,
-  stdout: string,
-  exitCode: number | null,
-): void {
-  const reported = requirements[backend].output.exec(stdout.trim());
-  const parsed = reported === null ? null : version(reported[1]!);
-  if (exitCode !== 0 || parsed === null) throw cli_version_error(backend, executable, 'read');
+/** A definite floor verdict: null meets the floor, a string is the normalized too-old version. */
+type CliVerdict = string | null;
+
+/** Compare one reported version with the floor. Undefined means the text is not a version. */
+function floor_verdict(backend: Backend, reported: string): CliVerdict | undefined {
+  const parsed = version(reported);
+  if (parsed === null) return undefined;
   const floor = requirements[backend].version.split('.').map((part) => BigInt(part));
   let comparison = parsed.epoch === 0n ? 0 : 1;
   for (
@@ -92,13 +97,88 @@ export function validate_cli_version(
     const right = floor[index] ?? 0n;
     comparison = left < right ? -1 : left > right ? 1 : 0;
   }
-  if (comparison < 0 || (comparison === 0 && parsed.before)) {
-    throw new BackendCliIncompatible(
-      `${requirements[backend].name} ${parsed.normalized} at ${executable} is too old. ${repair(backend)}`,
-    );
+  return comparison < 0 || (comparison === 0 && parsed.before) ? parsed.normalized : null;
+}
+
+function output_verdict(
+  backend: Backend,
+  executable: string,
+  stdout: string,
+  exitCode: number | null,
+): CliVerdict {
+  const reported = requirements[backend].output.exec(stdout.trim());
+  const verdict = reported === null ? undefined : floor_verdict(backend, reported[1]!);
+  if (exitCode !== 0 || verdict === undefined) throw cli_version_error(backend, executable, 'read');
+  return verdict;
+}
+
+export function validate_cli_version(
+  backend: Backend,
+  executable: string,
+  stdout: string,
+  exitCode: number | null,
+): void {
+  const verdict = output_verdict(backend, executable, stdout, exitCode);
+  if (verdict !== null) throw too_old(backend, executable, verdict);
+}
+
+/**
+ * Definite verdicts by backend and executable file. A CLI update replaces the file or moves
+ * its link, so the key changes and the next check reads the new version. Failed or unreadable
+ * checks are never kept.
+ */
+const verdicts = new Map<string, CliVerdict>();
+
+async function executable_key(backend: Backend, executable: string): Promise<string | null> {
+  try {
+    const path = await realpath(executable);
+    const file = await stat(path, { bigint: true });
+    return [backend, path, file.dev, file.ino, file.size, file.mtimeNs, file.ctimeNs].join('\0');
+  } catch {
+    // An unreadable file is a miss. The spawned check reports its usual error.
+    return null;
   }
 }
 
+/**
+ * Identify the executable before its `--version` output is read, then keep the definite
+ * verdict that output gives. Unreadable output keeps nothing and throws nothing.
+ */
+export async function cli_version_recorder(
+  backend: Backend,
+  executable: string,
+): Promise<(stdout: string, exitCode: number | null) => void> {
+  const key = await executable_key(backend, executable);
+  return (stdout, exitCode) => {
+    if (key === null) return;
+    let verdict: CliVerdict;
+    try {
+      verdict = output_verdict(backend, executable, stdout, exitCode);
+    } catch {
+      return;
+    }
+    verdicts.set(key, verdict);
+  };
+}
+
+/**
+ * Enforce the floor on a version the running CLI reported in its handshake. A version below
+ * the floor replaces the kept verdict and throws. A missing or unreadable version passes.
+ */
+export async function confirm_reported_cli_version(
+  backend: Backend,
+  executable: string,
+  reported: unknown,
+): Promise<void> {
+  if (typeof reported !== 'string') return;
+  const verdict = floor_verdict(backend, reported);
+  if (verdict === undefined || verdict === null) return;
+  const key = await executable_key(backend, executable);
+  if (key !== null) verdicts.set(key, verdict);
+  throw too_old(backend, executable, verdict);
+}
+
+/** A kept verdict for the same executable file answers with only a stat. A miss runs `--version`. */
 export async function ensure_cli_compatible(
   backend: Backend,
   executable: string,
@@ -109,6 +189,13 @@ export async function ensure_cli_compatible(
     signal?: AbortSignal;
   } = {},
 ): Promise<void> {
+  options.signal?.throwIfAborted();
+  const key = await executable_key(backend, executable);
+  const known = key === null ? undefined : verdicts.get(key);
+  if (known !== undefined) {
+    if (known !== null) throw too_old(backend, executable, known);
+    return;
+  }
   options.signal?.throwIfAborted();
   const children = options.children ?? new OneShotChildren();
   let release_closed!: () => void;
@@ -165,7 +252,9 @@ export async function ensure_cli_compatible(
         else resolve({ stdout: Buffer.concat(chunks).toString('utf8'), code });
       });
     });
-    validate_cli_version(backend, executable, output.stdout, output.code);
+    const verdict = output_verdict(backend, executable, output.stdout, output.code);
+    if (key !== null) verdicts.set(key, verdict);
+    if (verdict !== null) throw too_old(backend, executable, verdict);
   } finally {
     // Abort cancels the outcome, not actual ownership. Core/APP observes its own deadline.
     await closed;
