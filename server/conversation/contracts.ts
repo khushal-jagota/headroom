@@ -249,13 +249,16 @@ export class HeldPrompt {
 
 export const FLOOR_DEFAULT_WORKSPACE_FOLDER = join(homedir(), 'projects');
 export const FLOOR_DEFAULT_ACCESS = ConversationAccess.full;
-/** False for an id with no live driver instance. */
+/** A live instance decides. Without one on this home (a retained remote child's backend),
+ * every known backend steers, as each does on the side that runs it. */
 export function backend_supports_active_steering(
   registry: DriverRegistry,
   key: BackendInstanceId,
 ): boolean {
   const entry = registry.get(key);
-  return entry?.kind === 'live' && entry.instance.capabilities.turns.supportsActiveSteering;
+  return entry?.kind === 'live'
+    ? entry.instance.capabilities.turns.supportsActiveSteering
+    : KNOWN_BACKEND_INSTANCE_IDS.includes(key);
 }
 export function require_conversation_backend_key(value: unknown): BackendInstanceId {
   const known = KNOWN_BACKEND_INSTANCE_IDS.find((id) => id === value);
