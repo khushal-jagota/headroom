@@ -53,8 +53,8 @@ export class SourceScheduleLoop {
     if (this.stopped) return;
     try {
       this.poll_once();
-    } catch {
-      console.error('measure source poll failed');
+    } catch (error) {
+      console.error('measure source poll failed', error);
     } finally {
       if (!this.stopped) {
         this.timer = setTimeout(() => this.tick(), this.interval);

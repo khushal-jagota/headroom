@@ -223,7 +223,11 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       // Stop order is explicit; every independent stop starts before a drain waits.
       for (const resource of [services.recorded_usage, services.background, services.environments])
         resource.begin(stages, stop);
-      stages.own('environment setup', () => services.environmentsStarting?.catch(() => {}));
+      stages.own('environment setup', () =>
+        services.environmentsStarting?.catch((error: unknown) =>
+          console.error('Environment setup failed before shutdown', error),
+        ),
+      );
       for (const resource of [services.backend, services.executor, services.core, services.video])
         resource.begin(stages, stop);
       const http_actual = request_lifetime.settled();
@@ -251,7 +255,9 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stages.own('Worker supervision', async () => {
         await producer_actual.catch(() => {});
         // The coordinator observes the shared deadline. This stage owns actual cleanup.
-        void services.worker_supervision.close(stop).catch(() => {});
+        void services.worker_supervision
+          .close(stop)
+          .catch((error: unknown) => console.error('Worker supervision close failed', error));
         await services.worker_supervision.shutdown_settled;
       });
       stages.own('native processes and worker units', async () => {

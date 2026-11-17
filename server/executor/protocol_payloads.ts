@@ -41,7 +41,7 @@ export interface CommandResultPayloads {
   };
   steer_accepted: { kind: 'steer_accepted'; composed_content_delivered: boolean };
   steer_uncertain: { kind: 'steer_uncertain'; composed_content_delivered: boolean | null };
-  steer_refused: { kind: 'steer_refused'; refusal_reason: string };
+  steer_refused: { kind: 'steer_refused'; refusal_reason: string; refusal_detail?: string | null };
   answer_application: { answer_application: Wire.AnswerApplication };
   error: { error_type: string; error_message: string };
   settlement: { reason: string };

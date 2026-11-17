@@ -60,7 +60,10 @@ export async function probe_video(
   const output_ended = new Promise<void>((resolve) => {
     child.stdout!.once('end', resolve);
     child.stdout!.once('close', resolve);
-    child.stdout!.once('error', () => resolve());
+    child.stdout!.once('error', (error) => {
+      console.warn('video upload: ffprobe output failed', error);
+      resolve();
+    });
   });
   const stop = () => {
     child.stdout!.destroy();
@@ -100,8 +103,9 @@ export async function probe_video(
     let value: unknown;
     try {
       value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch {
-      throw new VideoUploadError('Video validation failed or timed out.');
+    } catch (error) {
+      console.warn('video upload: ffprobe output is not JSON', error);
+      throw new VideoUploadError('Video validation failed or timed out.', 400, { cause: error });
     }
     if (!object(value)) throw new VideoUploadError('Video validation failed or timed out.');
     const format = value.format === undefined ? {} : value.format;
@@ -163,7 +167,7 @@ export async function probe_video(
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', abort);
     stop();
-    await exited.catch(() => {});
+    await exited.catch((error: unknown) => console.warn('video upload: ffprobe failed', error));
     child.stdout!.destroy();
     children.seal();
     await children.settled();

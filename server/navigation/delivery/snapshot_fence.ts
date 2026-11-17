@@ -2,10 +2,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { CurrentAuthority } from '../../../web/src/lib/navigation/contracts.ts';
 import type { NavigationAuthority } from '../contracts.ts';
+import { log_server_error } from '../../core/http/errors.ts';
 interface Fence {
   authority: NavigationAuthority;
   token: CurrentAuthority;
   invalid: boolean;
+  /** Why the fence became invalid, for the 503 log line. */
+  cause?: unknown;
 }
 export class SnapshotFences {
   private readonly pending = new WeakMap<FastifyRequest, Fence>();
@@ -16,15 +19,19 @@ export class SnapshotFences {
       if (fence) {
         try {
           fence.authority.validate(fence.token);
-        } catch {
+        } catch (error) {
           fence.invalid = true;
+          fence.cause ??= error;
         }
         if (fence.invalid) {
+          const cause = fence.cause ?? 'navigation authority changed during the snapshot';
           if (reply.raw.headersSent) {
+            console.warn('navigation snapshot cancelled', request.method, request.url, cause);
             reply.raw.destroy();
             done(null, null);
             return;
           }
+          log_server_error(request, 503, cause);
           reply.code(503).header('cache-control', 'no-store').type('application/json');
           reply.removeHeader('content-encoding').removeHeader('content-length');
           done(null, JSON.stringify({ detail: 'navigation publication is not ready' }));
@@ -50,11 +57,13 @@ export class SnapshotFences {
     try {
       forget = authority.watch(token, () => {
         fence.invalid = true;
+        fence.cause ??= 'navigation authority changed during the snapshot';
         // Bytes already admitted cannot be withdrawn. Cancel any remaining transfer.
         if (reply.raw.headersSent && !reply.raw.writableFinished) reply.raw.destroy();
       });
-    } catch {
+    } catch (error) {
       fence.invalid = true;
+      fence.cause = error;
     }
     reply.raw.once('finish', release);
     reply.raw.once('close', release);

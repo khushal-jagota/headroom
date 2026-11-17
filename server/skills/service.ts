@@ -71,6 +71,7 @@ export function publish_skill(
       'skill_save_incomplete',
       'The skill was saved, but its file was not published. Read the canonical skill before retry.',
       { ...detail },
+      { cause },
     );
   }
   detail.published = true;
@@ -82,6 +83,7 @@ export function publish_skill(
       'skill_save_incomplete',
       'The skill was saved and published, but version history was not recorded. Read the canonical skill before retry.',
       { ...detail },
+      { cause },
     );
   }
 }

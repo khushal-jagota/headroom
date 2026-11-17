@@ -117,10 +117,11 @@ export class DarwinProcessInspector implements ProcessInspector {
         'Listener cwd or ownership is outside the Ticket preview worktree.',
         410,
       );
-    const cwd = await realpath(raw.subarray(0, end).toString()).catch(() => {
+    const cwd = await realpath(raw.subarray(0, end).toString()).catch((cause: unknown) => {
       throw new PreviewError(
         'Listener cwd or ownership is outside the Ticket preview worktree.',
         410,
+        { cause },
       );
     });
     if (!path_is_within(worktree, cwd))

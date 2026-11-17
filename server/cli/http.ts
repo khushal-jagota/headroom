@@ -56,13 +56,14 @@ export function emit(data: unknown, as_json: boolean, human: string): CommandRes
 export function fail_validation(
   invocation: Invocation,
   message: string,
-  options: { recovery?: string; no_route?: string; detail?: unknown } = {},
+  options: { recovery?: string; no_route?: string; detail?: unknown; cause?: unknown } = {},
 ): never {
   const payload = { error: { code: 'validation', message, detail: options.detail ?? {} } };
   throw new CliFailure(
     invocation.values.as_json
       ? { exit_code: 1, stdout: '', stderr: json(payload) + '\n' }
       : human_error(invocation.command, message, 1, options),
+    { cause: options.cause },
   );
 }
 function fail_response(inv: Invocation, status: number, data: any, text: string): never {
@@ -140,12 +141,21 @@ export function cli_proxy_for(url: URL, env: NodeJS.ProcessEnv): string | null {
 }
 
 class ClientConfigurationError extends Error {}
+/** The error code when there is one, otherwise the message, for user-facing CLI text. */
+export function error_reason(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (typeof code === 'string') return code;
+  return error instanceof Error ? error.message : String(error);
+}
 function certificate_options(env: NodeJS.ProcessEnv): Pick<RequestOptions, 'ca'> {
   if (env.SSL_CERT_FILE) {
     try {
       return { ca: readFileSync(env.SSL_CERT_FILE) };
-    } catch {
-      throw new ClientConfigurationError(`Cannot read SSL_CERT_FILE: ${env.SSL_CERT_FILE}`);
+    } catch (error) {
+      throw new ClientConfigurationError(
+        `Cannot read SSL_CERT_FILE: ${env.SSL_CERT_FILE} (${error_reason(error)})`,
+        { cause: error },
+      );
     }
   }
   if (!env.SSL_CERT_DIR) return {};
@@ -341,8 +351,8 @@ async function request(
     try {
       server_origin = new URL(base).origin;
       url = new URL(base.replace(/\/+$/, '') + path);
-    } catch {
-      throw new ClientConfigurationError(`Invalid Panels server URL: ${base}`);
+    } catch (error) {
+      throw new ClientConfigurationError(`Invalid Panels server URL: ${base}`, { cause: error });
     }
     if (url.origin !== server_origin)
       throw new ClientConfigurationError('API request must stay on the configured Panels server');
@@ -374,7 +384,8 @@ async function request(
       options.transport_limits ?? CLI_TRANSPORT_LIMITS,
     );
   } catch (error) {
-    if (error instanceof ClientConfigurationError) fail_validation(inv, error.message);
+    if (error instanceof ClientConfigurationError)
+      fail_validation(inv, error.message, { cause: error });
     return fail_connection(inv, error);
   }
 }

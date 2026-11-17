@@ -125,6 +125,7 @@ export class DarwinWorkerProcesses implements WorkerProcessPrimitives {
       return current === null || current.birth !== recorded.birth || current.zombie;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EPERM') return this.#birth_absent(recorded);
+      console.warn('Mac Worker process inspection failed', recorded.pid, error);
       return false;
     }
   }
@@ -132,7 +133,8 @@ export class DarwinWorkerProcesses implements WorkerProcessPrimitives {
     try {
       const birth = this.#native.birth(recorded.pid);
       return birth === null || birth !== recorded.birth;
-    } catch {
+    } catch (error) {
+      console.warn('Mac Worker process birth inspection failed', recorded.pid, error);
       return false;
     }
   }

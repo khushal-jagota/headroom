@@ -146,7 +146,7 @@ export async function open_control_server(
         restart();
       }
     })()
-      .catch(() => {})
+      .catch((error: unknown) => console.warn('server control exchange failed', path, error))
       .finally(() => {
         clearTimeout(expiry);
         if (timer) clearTimeout(timer);
@@ -168,7 +168,10 @@ export async function open_control_server(
     });
   } catch (error) {
     server.close();
-    await unlink(path).catch(() => {});
+    await unlink(path).catch((cleanup: unknown) => {
+      if ((cleanup as NodeJS.ErrnoException).code !== 'ENOENT')
+        console.warn('server control socket cleanup failed', path, cleanup);
+    });
     throw error;
   }
   const cancel_pending = () => {

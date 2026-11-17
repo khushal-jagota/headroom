@@ -51,7 +51,9 @@ export async function trim_surrounding_silence(
     kill_group();
   };
   const exited = new Promise<number | null>((resolve) => {
-    child.once('error', () => {
+    child.once('error', (error) => {
+      // The untrimmed audio is used. The log keeps why trimming failed.
+      console.warn('voice transcription: ffmpeg silence trim failed', error);
       failed = true;
       if (child.pid === undefined) {
         resolve(-1);
@@ -64,7 +66,8 @@ export async function trim_surrounding_silence(
   const output_ended = new Promise<void>((resolve) => {
     child.stdout.once('end', resolve);
     child.stdout.once('close', resolve);
-    child.stdout.once('error', () => {
+    child.stdout.once('error', (error) => {
+      console.warn('voice transcription: ffmpeg output failed', error);
       failed = true;
       resolve();
     });
@@ -73,6 +76,7 @@ export async function trim_surrounding_silence(
   options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) stop();
   const timer = setTimeout(() => {
+    console.warn('voice transcription: ffmpeg silence trim timed out');
     failed = true;
     stop();
   }, SILENCE_TRIM_TIMEOUT_SECONDS * 1000);

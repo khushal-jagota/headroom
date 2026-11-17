@@ -111,10 +111,16 @@ async function replace_fixture(
   } finally {
     // Discard the staged predecessor even when replacement and rollback both fail.
     await rm(admit_path?.(temporary) ?? temporary, { recursive: true, force: true }).catch(
-      () => {},
+      (cleanup: unknown) => {
+        console.warn('environment registry could not remove its staged copy', temporary, cleanup);
+      },
     );
     if (backup !== undefined)
-      await rm(admit_path?.(backup) ?? backup, { recursive: true, force: true }).catch(() => {});
+      await rm(admit_path?.(backup) ?? backup, { recursive: true, force: true }).catch(
+        (cleanup: unknown) => {
+          console.warn('environment registry could not remove its backup copy', backup, cleanup);
+        },
+      );
   }
 }
 async function registry(root: string, admit_path?: PathAdmission): Promise<EnvironmentManifest[]> {

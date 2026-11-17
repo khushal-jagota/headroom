@@ -100,8 +100,9 @@ export class CredentialRequestOperations {
             mode: PromptDeliveryMode.steer,
             record_refusal: true,
           });
-        } catch {
+        } catch (error) {
           // A missing response cannot establish that the provider received nothing.
+          console.error('credential request result delivery failed', origin, error);
           return ['uncertain', null];
         }
         if (fate instanceof PromptDeliveryStarted) return ['started', null];

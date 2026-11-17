@@ -10,3 +10,11 @@ export class HttpError extends Error {
 }
 /** A response-depth refusal leaves an already committed write intact. */
 export class ResponseDepthError extends Error {}
+/** Fastify runs with `logger: false`, so every 5xx answer logs its real error and cause here. */
+export function log_server_error(
+  request: { method: string; url: string },
+  status: number,
+  error: unknown,
+): void {
+  console.error(`HTTP ${status}`, request.method, request.url, error);
+}

@@ -122,8 +122,8 @@ export class DarwinWorkerJobs implements WorkerJobPrimitives {
         for (const process of snapshot.processes) {
           try {
             this.#kernel.signal(process, label, signum, deadline);
-          } catch {
-            notice('Mac Worker process sweep could not signal a marked process.');
+          } catch (error) {
+            notice(`Mac Worker process sweep could not signal a marked process: ${String(error)}`);
           }
         }
         if (signum === 15 && snapshot.processes.length)
@@ -131,8 +131,10 @@ export class DarwinWorkerJobs implements WorkerJobPrimitives {
             Math.max(0, Math.min(WORKER_SWEEP_TERM_SECONDS, deadline - this.#clock())) * 1000,
           );
       }
-    } catch {
-      notice('Mac Worker process sweep did not finish. Job absence still permits restart.');
+    } catch (error) {
+      notice(
+        `Mac Worker process sweep did not finish. Job absence still permits restart: ${String(error)}`,
+      );
     }
   }
 }

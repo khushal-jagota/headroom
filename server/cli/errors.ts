@@ -9,8 +9,8 @@ export class MissingResponseValue extends Error {
 
 export class CliFailure extends Error {
   readonly result: CommandResult;
-  constructor(result: CommandResult) {
-    super(result.stderr);
+  constructor(result: CommandResult, options?: { cause?: unknown }) {
+    super(result.stderr, options);
     this.result = result;
   }
 }

@@ -1,6 +1,6 @@
 import { requestOrigin } from './origin.ts';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { HttpError, ResponseDepthError } from './errors.ts';
+import { HttpError, ResponseDepthError, log_server_error } from './errors.ts';
 import { PlannerError } from '../contracts.ts';
 import { unidentifiedWriteRefusal } from '../authority/intake.ts';
 import { jsonFailure } from './json.ts';
@@ -68,6 +68,7 @@ export function installCompatibility(app: FastifyInstance): void {
       jsonSource?: string;
     };
     if (error instanceof ResponseDepthError) {
+      log_server_error(request, 500, error);
       reply
         .code(500)
         .header('content-type', 'text/plain; charset=utf-8')
@@ -75,10 +76,12 @@ export function installCompatibility(app: FastifyInstance): void {
       return;
     }
     if (error instanceof HttpError) {
+      if (error.statusCode >= 500) log_server_error(request, error.statusCode, error);
       reply.code(error.statusCode).send({ detail: error.detail });
       return;
     }
     if (error instanceof PlannerError) {
+      if (error.statusCode >= 500) log_server_error(request, error.statusCode, error);
       reply.code(error.statusCode).send(error.toPayload());
       return;
     }
@@ -122,7 +125,7 @@ export function installCompatibility(app: FastifyInstance): void {
       });
       return;
     }
-    request.log.error(error);
+    log_server_error(request, 500, error);
     reply
       .code(500)
       .header('content-type', 'text/plain; charset=utf-8')

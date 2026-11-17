@@ -50,8 +50,9 @@ export function refused_row(
 export function uncertain_row(
   message: Message,
   mode: PromptDeliveryMode,
+  failure_detail: string | null = null,
 ): PromptDeliveryUncertainEventPayload {
-  return new PromptDeliveryUncertainEventPayload({ ...message, mode });
+  return new PromptDeliveryUncertainEventPayload({ ...message, mode, failure_detail });
 }
 export function discarded_row(message: Message, suppression_reason: string | null = null) {
   return new PromptDiscardedEventPayload({ ...message, suppression_reason });

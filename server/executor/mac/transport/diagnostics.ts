@@ -1,6 +1,7 @@
-/** Python's process-wide, payload-free rate limit for connection failures. */
+/** Process-wide rate limit for connection failures. The key is payload-free; the line carries redacted detail. */
 import { CONNECTION_FAILURE_LOG_INTERVAL_SECONDS } from '../configuration.ts';
 import { ExecutorHttpError, HttpTimeout, failure_name } from './errors.ts';
+import { failure_detail } from '../failure_detail.ts';
 export type ConnectionPhase = 'lease' | 'poll' | 'items' | 'outcomes';
 export type ConnectionFailureCategory =
   'configuration' | 'tls' | 'authentication' | 'timeout' | 'network' | 'connection_or_protocol';
@@ -34,7 +35,7 @@ export class ConnectionDiagnostics {
     }
     this.last.set(key, { at: now, repeats: 0 });
     this.emit(
-      `executor connection failure: ${category} phase=${phase} exception=${name}${last ? ` unlogged_repeats=${last.repeats}` : ''}`,
+      `executor connection failure: ${category} phase=${phase} exception=${name}${last ? ` unlogged_repeats=${last.repeats}` : ''} detail=${JSON.stringify(failure_detail(error))}`,
     );
   }
 }

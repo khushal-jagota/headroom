@@ -20,6 +20,7 @@ import type { DirectoryHandle } from '../files.ts';
 import { error_code, file_error } from '../file_metadata.ts';
 import { acquire_process_lock } from '../platform.ts';
 import { failure_name } from '../failure_name.ts';
+import { failure_detail } from '../failure_detail.ts';
 import { MAX_ITEM_BATCH_ITEMS, MAX_LEASE_WAITING_CONVERSATIONS } from '../configuration.ts';
 import { OutboxResources } from './resources.ts';
 import type { SidecarOpenScope } from './journal_contracts.ts';
@@ -199,7 +200,7 @@ export class OutboxStore {
       try {
         this.on_failure(error);
       } catch (error) {
-        console.warn('Mac spool failure callback failed:', failure_name(error));
+        console.warn('Mac spool failure callback failed:', failure_detail(error));
       }
     }
   }
@@ -268,7 +269,7 @@ export class OutboxStore {
       () => this.operations.delete(task),
       (error) => {
         this.operations.delete(task);
-        console.warn('Mac outbox operation failed:', failure_name(error));
+        console.warn('Mac outbox operation failed:', failure_detail(error));
       },
     );
     return task;

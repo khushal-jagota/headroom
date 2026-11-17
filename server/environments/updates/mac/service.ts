@@ -293,7 +293,8 @@ export class MacUpdateService implements MacUpdateServiceContract {
     try {
       const attempt = parse_attempt(decode_json(source));
       return this.artifact(attempt.release) === null ? null : attempt;
-    } catch {
+    } catch (error) {
+      console.warn('The applied update attempt record is invalid', this.applied_path, error);
       return null;
     } // Source tolerates legacy request/invalid attempt JSON here only.
   }

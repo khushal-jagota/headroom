@@ -45,8 +45,8 @@ export class SourceDispatcher {
       this.timer = undefined;
       try {
         this.poll_once();
-      } catch {
-        console.error('source dispatcher poll failed');
+      } catch (error) {
+        console.error('source dispatcher poll failed', error);
       } finally {
         if (!this.stopped && this.timer === undefined) {
           this.timer = setTimeout(() => this.wake(), 5000);
@@ -106,7 +106,9 @@ export class SourceDispatcher {
           this.wake();
         });
       this.runs.set(run.id, task);
-      void task.catch(() => console.error('source completion refused'));
+      void task.catch((error: unknown) =>
+        console.error('source completion refused', run.id, error),
+      );
     }
     return claimed;
   }
