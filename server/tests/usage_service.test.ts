@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { UsageEngine as UsageService } from '../conversation/usage/UsageEngine.ts';
 import { UsageService as WorkerUsageService } from '../conversation/usage/UsageService.ts';
 import type { UsageSettings, UsageSummaryInput } from '../conversation/usage/contracts.ts';

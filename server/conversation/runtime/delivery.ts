@@ -20,7 +20,8 @@ import type { MessageContent } from '../message_content.ts';
 import type { DeliveryAttempt, DeliveryServices, Message, ReservedTurn } from './contracts.ts';
 import type { ConversationState } from './state.ts';
 import { ROLE_TEXT_PROMPT_SEPARATOR } from './configuration.ts';
-import { Deferred, same_turn } from './state.ts';
+import { Deferred } from '../../core/deferred.ts';
+import { same_turn } from './state.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
   return {
@@ -66,7 +67,7 @@ async function ensure_child(
   });
   const sink = host.make_sink(state);
   state.child_event_sink = sink;
-  const child = host.options.backend_child_factories[resolved.backend_key]({
+  const child = host.options.backend_registry.require_live(resolved.backend_key).child_factory({
     resolved_start: resolved,
     event_sink: sink,
     message_files: host.options.message_files,

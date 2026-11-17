@@ -28,9 +28,10 @@ import { PlannerError } from '../../core/contracts.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 import type { Message, ReservedTurn } from './contracts.ts';
 import { discarded_row, prompt_row, refused_row, uncertain_row } from './messages.ts';
-import { ConversationState, Deferred, same_turn, set_phase } from './state.ts';
+import { Deferred } from '../../core/deferred.ts';
+import { ConversationState, same_turn, set_phase } from './state.ts';
 import type { LockLease } from './synchronization.ts';
-import { kill_initial_delivery, retained_factory } from './remote.ts';
+import { child_factory_for, kill_initial_delivery, retained_factory } from './remote.ts';
 
 function settle_phase(state: ConversationState): void {
   set_phase(state, state.running_turn === null ? 'idle' : 'running');
@@ -232,7 +233,7 @@ async function kill_owned(
     try {
       if (state.child === null && state.retained_child_reference !== null)
         state.child =
-          retained_factory(host.options.backend_child_factories[state.record.backend_key])?.recover(
+          retained_factory(child_factory_for(host, state.record.backend_key))?.recover(
             state.retained_child_reference,
           ) ?? null;
       if (state.running_turn)

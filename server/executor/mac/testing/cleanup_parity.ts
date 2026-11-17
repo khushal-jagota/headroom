@@ -9,7 +9,7 @@ import { MacRunner } from '../runner/index.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { decode_value } from '../../protocol.ts';
 import type { ChildCommand, ChildReference, StartRun } from '../../wire.generated.ts';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import {
   native_fixture_options,
   open_fixture_stores,

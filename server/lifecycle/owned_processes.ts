@@ -13,7 +13,13 @@ import type {
   OwnedWorkerUnit,
   OwnedUnitControl,
   OwnedOneShotChildren,
+  StopOptions,
 } from './contracts.ts';
+import {
+  monotonic_seconds,
+  OWNED_PROCESS_KILL_WAIT_SECONDS,
+  OWNED_PROCESS_STOP_GRACE_SECONDS,
+} from './configuration.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import { CONTROL_TIMEOUT_SECONDS } from '../conversation/worker_unit/configuration.ts';
 import { worker_unit_prefix } from '../core/config.ts';
@@ -371,9 +377,25 @@ export class OwnedProcess {
   get killed(): boolean {
     return this.child.killed || this.signal_sent;
   }
-  stop(options: ProcessStopOptions): Promise<void> {
+  /** Defaults apply to omitted waits. A deadline clamps both waits to the time left. */
+  stop(options: Partial<ProcessStopOptions> & Partial<StopOptions> = {}): Promise<void> {
     if (this.stop_task !== null) return this.stop_task;
-    const task = this.stop_group(options);
+    const remaining =
+      options.deadline === undefined
+        ? Infinity
+        : Math.max(0, options.deadline - monotonic_seconds());
+    const grace_seconds = Math.min(
+      options.grace_seconds ?? OWNED_PROCESS_STOP_GRACE_SECONDS,
+      remaining,
+    );
+    const task = this.stop_group({
+      ...options,
+      grace_seconds,
+      kill_wait_seconds: Math.min(
+        options.kill_wait_seconds ?? OWNED_PROCESS_KILL_WAIT_SECONDS,
+        Math.max(0, remaining - grace_seconds),
+      ),
+    });
     this.stop_task = task;
     void task.catch(() => {
       this.stop_task = null;
@@ -404,4 +426,46 @@ export class OwnedProcess {
     }
     this.child.stdin.destroy();
   }
+}
+
+export class ChildProcessWouldNotStart extends Error {}
+export interface OwnedProcessSpawnOptions {
+  child_processes: OwnedChildProcesses;
+  /** The caller retains startup cleanup before any spawn-event wait. */
+  on_created?: (owned: OwnedProcess) => void;
+  environment: Readonly<Record<string, string>>;
+  working_directory: string;
+  /** A preflight receives EOF without changing the main child's piped stream API. */
+  close_stdin?: boolean;
+}
+/** Each child owns a process group. Exit and pipe closure are independent facts. */
+export async function spawn_owned_process(
+  argv: readonly string[],
+  options: OwnedProcessSpawnOptions,
+): Promise<OwnedProcess> {
+  if (argv.length === 0) throw new ChildProcessWouldNotStart('the command is empty');
+  let child: ChildProcessWithoutNullStreams;
+  try {
+    child = options.child_processes.spawn(argv[0]!, argv.slice(1), {
+      env: { ...options.environment },
+      cwd: options.working_directory,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    });
+  } catch (error) {
+    throw new ChildProcessWouldNotStart(error instanceof Error ? error.message : String(error));
+  }
+  const owned = new OwnedProcess(child);
+  options.on_created?.(owned);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    if (options.close_stdin) child.stdin.end();
+  } catch (error) {
+    if (!options.on_created) await owned.stop();
+    throw new ChildProcessWouldNotStart(error instanceof Error ? error.message : String(error));
+  }
+  return owned;
 }

@@ -1,3 +1,4 @@
+import { registry_of_factories } from '../drivers/testing/registry.ts';
 import { path_is_within } from '../core/path_containment.ts';
 import { filesRoot } from '../files/logic/paths.ts';
 import { register_workspace } from '../ticket_workspaces/data.ts';
@@ -435,7 +436,11 @@ test.skipIf(process.platform !== 'linux')(
           message_files: new ConversationMessageFiles(path),
           delivery_model_refusal: () => null,
           execution_refusal: () => null,
-          backend_child_factories: { codex: forbidden, claude: forbidden, hermes: forbidden },
+          backend_registry: registry_of_factories({
+            codex: forbidden,
+            claude: forbidden,
+            hermes: forbidden,
+          }),
         });
         return core;
       },

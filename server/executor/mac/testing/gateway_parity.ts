@@ -13,7 +13,7 @@ import type { MacRunningChild } from '../runner/contracts.ts';
 import { MacPermissionDenied } from '../runner/contracts.ts';
 import type { GatewayOptions } from '../ipc/contracts.ts';
 import type { IpcOperation, IpcRequest, IpcResponse, JsonObject } from '../../wire.generated.ts';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import { ShutdownDeadlineExceeded } from '../../../lifecycle/contracts.ts';
 const root = process.argv[2];
 const input: any = JSON.parse(readFileSync(join(root, 'input.json'), 'utf8'));

@@ -97,6 +97,11 @@ export interface ServerOptions {
   createConversationCore?: (
     context: ConversationCompositionContext,
   ) => SqliteProcessConversationSystem;
+  /** Async preparation for the synchronous conversation factories, after the record exists. */
+  prepareConversationComposition?: (
+    context: ConversationCompositionContext,
+    signal: AbortSignal,
+  ) => Promise<void>;
   /** Explicit composition switches. No factory means no task or provider adapter. */
   notificationDelivery?: BackgroundServiceFactory;
   stallChecker?: BackgroundServiceFactory;

@@ -130,13 +130,8 @@ import {
   uncertain_row,
 } from './runtime/messages.ts';
 import { field_mutation, save_attempt } from './runtime/save_attempt.ts';
-import {
-  ConversationState,
-  Deferred,
-  own_settlement,
-  same_turn,
-  set_phase,
-} from './runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
+import { ConversationState, own_settlement, same_turn, set_phase } from './runtime/state.ts';
 import { WorkspaceAdmission } from './workspace_admission.ts';
 
 function turn_fact(token: TurnToken, status: LifecycleFact['status']): LifecycleFact {
@@ -220,10 +215,10 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   readonly lost_task_notices: LostBackgroundTaskNotices;
   private background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
   constructor(options: ConversationCoreOptions) {
-    for (const key of Object.values(ConversationBackendKey)) {
-      if (!options.backend_child_factories[key])
+    // Until the closed backend lists open, every built-in key must have a live instance.
+    for (const key of Object.values(ConversationBackendKey))
+      if (options.backend_registry.get(key)?.kind !== 'live')
         throw new Error(`no backend child factory for ${key}`);
-    }
     if (typeof options.execution_refusal !== 'function')
       throw new Error('Conversation execution admission is required');
     if (typeof options.delivery_model_refusal !== 'function')

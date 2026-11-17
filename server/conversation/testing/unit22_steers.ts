@@ -14,7 +14,7 @@ import { BackendSteerUncertain } from '../backends/contracts.ts';
 import { PromptDeliveryUncertainEventPayload } from '../events.ts';
 import { message_content_text, text_message_content } from '../message_content.ts';
 import { ScriptedBackendRegistry } from './scripted_registry.ts';
-import { Deferred } from '../runtime/state.ts';
+import { Deferred } from '../../core/deferred.ts';
 const spec = JSON.parse(readFileSync(0, 'utf8')) as { path: string };
 const database = createDatabase(spec.path),
   trace: unknown[] = [];
@@ -31,7 +31,7 @@ async function cycle() {
   database.write((tx) => store.reconcile_in_transaction(tx, new Map()), { changeSignal: 'silent' });
   core = new SqliteProcessConversationSystem({
     store,
-    backend_child_factories: registry.factories,
+    backend_registry: registry.registry,
     message_files: new ConversationMessageFiles(spec.path),
     delivery_model_refusal: () => null,
     execution_refusal: () => null,

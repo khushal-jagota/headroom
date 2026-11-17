@@ -3,7 +3,7 @@ import { decode_json, encode_bounded } from '../../protocol.ts';
 import { MacLeaseLoop, MacPresence } from '../transport/presence.ts';
 import type { MacLeaseOptions } from '../transport/presence.ts';
 import type { WorkerCleanupUncertainty } from '../../wire.generated.ts';
-import { Deferred } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
 import assert from 'node:assert/strict';
 import { setImmediate as yield_turn } from 'node:timers/promises';
 import type { WorkspaceState } from '../../wire.generated.ts';

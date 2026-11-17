@@ -18,7 +18,7 @@ import {
 } from '../backends/contracts.ts';
 import type { WireValue } from '../../executor/contracts.ts';
 import { text_message_content } from '../message_content.ts';
-import { Deferred } from './state.ts';
+import { Deferred } from '../../core/deferred.ts';
 import { retained_open_runs } from './remote.ts';
 
 // An acknowledgement must wait for receipt and steer settlement, then recheck its exact source.
@@ -347,7 +347,7 @@ test('kill during replay ends its turn and asks before a late successful reply',
     });
     vi.spyOn(child, 'withdraw_delivery').mockResolvedValue(false);
     let retirement_confirmed = false;
-    Object.assign(f.core.options.backend_child_factories.codex, {
+    Object.assign(f.core.options.backend_registry.require_live('codex').child_factory, {
       recover: () => child,
       retained_runs: () => [
         new RetainedBackendRun({
@@ -444,7 +444,7 @@ test('kill during replay ends its turn and asks before a late successful reply',
     f.core.start_admission.bind(['source-only'], source_turn);
     f.core.start_admission.persist_bindings(f.store.start_admission_database, source_turn);
     f.core.start_admission.bind_source(source_turn, child);
-    Object.assign(f.core.options.backend_child_factories.codex, {
+    Object.assign(f.core.options.backend_registry.require_live('codex').child_factory, {
       recover: () => child,
       retained_runs: () => [
         new RetainedBackendRun({

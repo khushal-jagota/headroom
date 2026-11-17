@@ -76,7 +76,7 @@ export async function run(spec: Spec) {
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_child_factories: registry.factories,
+    backend_registry: registry.registry,
     message_files: new ConversationMessageFiles(spec.path),
     unix_time_now: () => 100,
     monotonic_now: () => monotonic,
@@ -246,7 +246,7 @@ export async function run(spec: Spec) {
           database.read((sql) =>
             conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
           ),
-        backend_child_factories: registry.factories,
+        backend_registry: registry.registry,
         message_files: new ConversationMessageFiles(spec.path),
         unix_time_now: () => 100,
         monotonic_now: () => monotonic,

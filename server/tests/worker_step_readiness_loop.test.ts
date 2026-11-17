@@ -39,7 +39,7 @@ import { readinessTestRoutes } from '../runtime/testing.ts';
 import { loadConfig } from '../core/config.ts';
 import { TestClock } from '../core/clock.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import { acquireLock } from '../core/locks/index.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 import { AutomaticStartAdmission, explicit_start } from '../conversation/start_admission/index.ts';

@@ -8,22 +8,8 @@ import type {
 import { wait_for_item } from '../../executor/item_budget.ts';
 import type { ConversationRecord, RunningTurn } from '../record/contracts.ts';
 import type { ConversationPhase, Message, ReservedTurn, SenderAdmission } from './contracts.ts';
+import { Deferred } from '../../core/deferred.ts';
 
-export class Deferred<T> {
-  readonly promise: Promise<T>;
-  #resolve!: (value: T) => void;
-  settled = false;
-  constructor() {
-    this.promise = new Promise<T>((resolve) => {
-      this.#resolve = resolve;
-    });
-  }
-  resolve(value: T): void {
-    if (this.settled) return;
-    this.settled = true;
-    this.#resolve(value);
-  }
-}
 export class FifoLock {
   #locked = false;
   readonly #waiters: (() => void)[] = [];

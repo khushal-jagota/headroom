@@ -1,4 +1,5 @@
 /** Attention provenance through the real area composition and scripted core. */
+import { registry_of_factories } from '../../drivers/testing/registry.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import {
   notification_content_proof,
@@ -63,7 +64,7 @@ export async function exercise(spec: {
       database.read((sql) =>
         conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
       ),
-    backend_child_factories: { codex: factory, claude: factory, hermes: factory },
+    backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
     message_files: new ConversationMessageFiles(spec.database),
     unix_time_now: () => now,
     monotonic_now: () => now,

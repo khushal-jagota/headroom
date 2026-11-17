@@ -8,7 +8,7 @@ import net from 'node:net';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { expect, test, vi } from 'vitest';
-import { Deferred } from '../conversation/runtime/state.ts';
+import { Deferred } from '../core/deferred.ts';
 import WebSocket, { WebSocketServer } from 'ws';
 import { PreviewTransport } from '../previews/transport.ts';
 import type { PreviewService } from '../previews/service.ts';

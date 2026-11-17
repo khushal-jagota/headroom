@@ -15,7 +15,8 @@ import { open_command_journal } from '../storage/journal.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import { read_canonical_body } from '../mailbox/poll.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
-import { Deferred, FifoLock } from '../../../conversation/runtime/state.ts';
+import { Deferred } from '../../../core/deferred.ts';
+import { FifoLock } from '../../../conversation/runtime/state.ts';
 import type { MacRunnerOptions } from '../runner/lifecycle_contracts.ts';
 
 const unexpected_workspace_operation = (): never => {

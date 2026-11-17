@@ -2,7 +2,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { join } from 'node:path';
 import { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
-import { Deferred } from '../../conversation/runtime/state.ts';
+import { Deferred } from '../../core/deferred.ts';
 import { BackendCommands } from '../../conversation/snapshot/commands.ts';
 import * as environment from '../../conversation/snapshot/environment.ts';
 import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';

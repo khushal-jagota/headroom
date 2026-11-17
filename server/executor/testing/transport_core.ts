@@ -1,4 +1,5 @@
 /** Joined executor consumers on the existing fixture-owned listener. */
+import { registry_of_factories } from '../../drivers/testing/registry.ts';
 import assert from 'node:assert/strict';
 import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { setTimeout as pause } from 'node:timers/promises';
@@ -9,7 +10,7 @@ import { deployment_participants } from '../../conversation/deploy_interruptions
 import { SqliteProcessConversationSystem } from '../../conversation/system.ts';
 import { message_content_text, text_message_content } from '../../conversation/message_content.ts';
 import { ConversationLiveTail } from '../../conversation/live_tail.ts';
-import { Deferred } from '../../conversation/runtime/state.ts';
+import { Deferred } from '../../core/deferred.ts';
 import { executor_remote_recovery } from '../../lifecycle/production.ts';
 import { BackendStateStore } from '../../conversation/backend_state.ts';
 import type { VpsExecutor } from '../vps_transport.ts';
@@ -30,7 +31,7 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
   let core!: SqliteProcessConversationSystem;
   core = new SqliteProcessConversationSystem({
     store,
-    backend_child_factories: { codex: remote, claude: remote, hermes: remote },
+    backend_registry: registry_of_factories({ codex: remote, claude: remote, hermes: remote }),
     message_files: endpoint.message_files,
     delivery_model_refusal: (backend, model, ticket_id) =>
       new BackendStateStore(database).delivery_model_refusal(backend, model, ticket_id),

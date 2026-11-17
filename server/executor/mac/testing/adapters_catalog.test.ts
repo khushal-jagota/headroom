@@ -1,14 +1,14 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { load_claude_sdk } from '../../../conversation/backends/claude_sdk.ts';
+import { load_claude_sdk } from '../../../drivers/claude/runtime/sdk.ts';
 import { ensure_cli_compatible } from '../../../conversation/backends/cli_compatibility.ts';
 import {
   ClaudeModelCatalogUnavailable,
   probe_claude_model_catalog,
-} from '../../../conversation/backends/claude_model_catalog.ts';
+} from '../../../drivers/claude/runtime/model_catalog.ts';
 import { ModelCatalogCleanupFailed } from '../../../conversation/backends/catalog_cleanup.ts';
-import { probe_codex_model_catalog } from '../../../conversation/backends/codex_app_server/model_catalog.ts';
+import { probe_codex_model_catalog } from '../../../drivers/codex/runtime/model_catalog.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { create_worker_supervision_runtime } from '../../../worker_supervision/composition.ts';
@@ -21,11 +21,11 @@ import { gate } from './runner_fixture.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
 import type { QueueDependencies } from '../mailbox/contracts.ts';
 import * as probe_environment from '../../../conversation/snapshot/environment.ts';
-import * as codex_catalog from '../../../conversation/backends/codex_app_server/model_catalog.ts';
-import * as claude_catalog from '../../../conversation/backends/claude_model_catalog.ts';
+import * as codex_catalog from '../../../drivers/codex/runtime/model_catalog.ts';
+import * as claude_catalog from '../../../drivers/claude/runtime/model_catalog.ts';
 import { production_backend_providers } from '../../../conversation/snapshot/production.ts';
 import { create_backend_runtime } from '../../../conversation/snapshot/composition.ts';
-import type { CodexProviderContext } from '../../../conversation/backends/codex_app_server/providers.ts';
+import type { CodexProviderContext } from '../../../drivers/codex/runtime/providers.ts';
 
 const { query } = vi.hoisted(() => ({
   query: vi.fn<(typeof import('@anthropic-ai/claude-agent-sdk'))['query']>(),

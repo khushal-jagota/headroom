@@ -1,3 +1,4 @@
+import { registry_of_factories, unread_driver_host } from '../drivers/testing/registry.ts';
 import { authenticate_launch_token } from '../agent_identity/data.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 /** Gap: persisted Mac presence cannot authorize a VPS-local adapter for a retained
@@ -61,7 +62,10 @@ import {
   create_backend_runtime,
   unavailable_backend_providers,
 } from '../conversation/snapshot/composition.ts';
-import { compose_production_backends } from '../lifecycle/production_bindings.ts';
+import {
+  compose_production_backends,
+  type ProductionBackendChildFactory,
+} from '../lifecycle/production_bindings.ts';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 import { LocaleBackendChildFactory } from '../executor/routing.ts';
@@ -73,7 +77,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
   let bound!: ReturnType<typeof compose_production_backends>;
   let database!: Database;
   const delegate: BackendChildFactory = (values) =>
-    bound.factories[values.resolved_start.backend_key](values);
+    bound.registry.require_live(values.resolved_start.backend_key).child_factory(values);
   const f = setup({
     record: {
       admit_recovery,
@@ -86,11 +90,11 @@ test('local composition refuses a retained Mac Ticket before constructing its se
         database.read((sql) =>
           conversation_execution_refusal(sql, id, local_ticket_execution_refusal),
         ),
-      backend_child_factories: {
+      backend_registry: registry_of_factories({
         claude: delegate,
         codex: delegate,
         hermes: delegate,
-      },
+      }),
     },
   });
   database = f.database;
@@ -202,13 +206,23 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       child_processes,
       worker_supervision,
     };
-    bound = compose_production_backends(context, {
-      claude: () => local_constructor,
-      codex: () => local_constructor,
-      hermes: () => local_constructor,
-      http: () => http,
-      stall_sources: () => [],
-    });
+    bound = compose_production_backends(
+      context,
+      {
+        registry: registry_of_factories({
+          claude: local_constructor,
+          codex: local_constructor,
+          hermes: local_constructor,
+        }),
+        host: unread_driver_host,
+      },
+      {
+        drivers: [],
+        driver_host: () => unread_driver_host,
+        http: () => http,
+        stall_sources: () => [],
+      },
+    );
     const snapshot = () =>
       database.read((sql) =>
         Object.fromEntries(
@@ -543,7 +557,8 @@ test('local composition refuses a retained Mac Ticket before constructing its se
         new ResolvedConversationStart({ ...retained, conversation_id: 'non-ticket' }),
       )
       .resolved_start();
-    const wrapped = bound.factories.codex;
+    const wrapped: ProductionBackendChildFactory =
+      bound.registry.require_live('codex').child_factory;
     const wrapped_recover = wrapped.recover,
       retained_runs = wrapped.retained_runs;
     if (typeof wrapped_recover !== 'function' || typeof retained_runs !== 'function')
@@ -554,7 +569,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       child_id: 'synthetic',
     };
     for (const invoke of [
-      () => bound.factories.codex(values),
+      () => bound.registry.require_live('codex').child_factory(values),
       () => wrapped_recover.call(wrapped, mac_reference),
     ]) {
       let invariant: unknown;
@@ -581,9 +596,9 @@ test('local composition refuses a retained Mac Ticket before constructing its se
     };
     expect(wrapped_recover.call(wrapped, reference)).toBeNull();
     expect(recover).toHaveBeenCalledWith(reference, undefined);
-    expect(() => bound.factories.codex({ ...values, resolved_start: standalone })).toThrow(
-      'Synthetic local constructor boundary',
-    );
+    expect(() =>
+      bound.registry.require_live('codex').child_factory({ ...values, resolved_start: standalone }),
+    ).toThrow('Synthetic local constructor boundary');
     expect(local_constructor).toHaveBeenCalledTimes(1);
     // The no-executor production path must authenticate its local native child too.
     database.write((tx) =>
@@ -600,7 +615,9 @@ test('local composition refuses a retained Mac Ticket before constructing its se
           },
         }) as unknown as ReturnType<BackendChildFactory>,
     );
-    const local_child = bound.factories.codex({ ...values, resolved_start: standalone });
+    const local_child = bound.registry
+      .require_live('codex')
+      .child_factory({ ...values, resolved_start: standalone });
     await local_child.start(standalone, { vendor_session_cursor: null });
     const token = new Map(launched!.role_materials!.identity_environment_variables).get(
       'PLAN_LAUNCH_TOKEN',

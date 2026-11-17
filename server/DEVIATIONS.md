@@ -295,7 +295,7 @@ The Manager also accepted these SDK argument facts on November 12, 2026:
 Raw argument arrays remain in the evidence. No generic option parser, sorting, wildcard,
 or unknown argument is accepted by the comparison.
 
-`conversation/backends/claude_sdk_environment.test.ts` pins the two TS values through the real
+`drivers/claude/runtime/sdk_environment.test.ts` pins the two TS values through the real
 pinned SDK and the catalog's public spawn hook. It compares the entire child environment,
 including inherited values and the removal of `CLAUDECODE`. Every process API is blocked before
 SDK import, and the synthetic launch stops at the hook without a process. The same check

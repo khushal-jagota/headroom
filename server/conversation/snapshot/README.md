@@ -70,11 +70,5 @@ access, or the open Hermes binding. Browser checks run in hosted CI.
 
 The comparison host in `server/test_host.ts` supplies unavailable providers and
 a fixed `TicketModelSnapshots` source. Its HTTP comparisons prove route decisions
-and projections, not real provider bindings. `test_unit17_provider_parity` in
-`tests/compare/direct/test_unit17_providers.py` exercises the Codex implementations
-against a scripted app server, including a real `create_codex_providers` composition
-for sign-in shutdown. `test_unit18_model_catalog` in
-`tests/compare/direct/test_unit18_startup.py` compares Claude catalog transformation
-with a fake SDK handshake. `test_unit18_adapter_real_core_parity` in
-`tests/compare/direct/test_unit18_adapter.py` exercises its adapter through a local
-scripted CLI and the real core. None proves an external provider account or network.
+and projections, not real provider bindings. The provider and catalog tests under `server/drivers/` use scripted app servers
+and fake SDK handshakes. None proves an external provider account or network.

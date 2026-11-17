@@ -17,6 +17,7 @@ import { ORIGINAL_MAC_MACHINE_ID } from '../../../execution_identity.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { issue_original_credential } from '../../../machines/executor_credentials.ts';
 import { compose_production_backends } from '../../../lifecycle/production_bindings.ts';
+import { registry_of_factories, unread_driver_host } from '../../../drivers/testing/registry.ts';
 import { create_production_conversation_core } from '../../../lifecycle/production.ts';
 import {
   create_backend_runtime,
@@ -83,20 +84,26 @@ export async function start_native_server() {
       const local = () => {
         throw new Error('Native Mac rehearsal selected a local provider');
       };
-      bound = compose_production_backends(current, {
-        claude: () => local,
-        codex: () => local,
-        hermes: () => local,
-        http: () =>
-          create_backend_runtime({
-            database: current.database,
-            config: current.config,
-            now: () => current.clock.now(),
-            providers: unavailable_backend_providers(),
-            one_shot_children: current.one_shot_children,
-          }),
-        stall_sources: () => [],
-      });
+      bound = compose_production_backends(
+        current,
+        {
+          registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+          host: unread_driver_host,
+        },
+        {
+          drivers: [],
+          driver_host: () => unread_driver_host,
+          http: () =>
+            create_backend_runtime({
+              database: current.database,
+              config: current.config,
+              now: () => current.clock.now(),
+              providers: unavailable_backend_providers(),
+              one_shot_children: current.one_shot_children,
+            }),
+          stall_sources: () => [],
+        },
+      );
       core = create_production_conversation_core(current, bound);
       return core;
     },

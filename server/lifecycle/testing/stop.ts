@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { startServer } from '../../core/start.ts';
 import type { TestCompositionContext } from '../../core/start.ts';
-import { Deferred } from '../../conversation/runtime/state.ts';
+import { Deferred } from '../../core/deferred.ts';
 import { VideoUploadService } from '../../conversation/video_uploads/service.ts';
 import { observe_shutdown } from '../../conversation/shutdown.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../configuration.ts';

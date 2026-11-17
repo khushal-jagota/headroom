@@ -69,7 +69,7 @@ await startServer({
               conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
             ),
           wait_registry: WAITS,
-          backend_child_factories: registry.factories,
+          backend_registry: registry.registry,
           message_files: new ConversationMessageFiles(config.db_path),
           unix_time_now: () => clock.nowUnix(),
           require_runtime_ownership: context.require_runtime_ownership,
