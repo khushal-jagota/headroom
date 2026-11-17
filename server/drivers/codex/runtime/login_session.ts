@@ -7,7 +7,7 @@ import type {
   CodexLoginGeneration,
   CodexLoginRejectionMemory,
   StoredCodexLogin,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+} from './contracts.ts';
 import {
   SignInUnavailable,
   UnknownSignInSession,

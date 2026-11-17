@@ -1,4 +1,3 @@
-import { provider_launch_settings } from '../../core/config.ts';
 /** Existing environment allowlist and explicit skill provisioning. No runtime launcher argv. */
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -73,15 +72,6 @@ export function build_test_environment_run_env(
     PLAN_FAKE_NOW: '2026-07-04T12:00:00+00:00',
     PLAN_TICK_SECONDS: '1',
   };
-}
-export function resolve_hermes_python(
-  value?: string | null,
-  environment: Readonly<NodeJS.ProcessEnv> = process.env,
-): string {
-  return expand_path(
-    value || provider_launch_settings(environment).hermes_python,
-    environment.HOME,
-  );
 }
 export function provision_environment_skills(
   options: OperatorArguments['provision-skills'],

@@ -1,7 +1,7 @@
 /** Hermes' card reader: validate the whole inventory before any of it enters a card. */
 import { is_record as object } from '../../../core/records.ts';
 import type { BackendModel, CatalogReader } from '../../../conversation/snapshot/contracts.ts';
-import type { HermesModelCatalogSource } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { HermesModelCatalogSource } from './contracts.ts';
 import { answer } from '../../../conversation/snapshot/catalogs/readers.ts';
 const text = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() ? value.trim() : null;

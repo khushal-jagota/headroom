@@ -4,7 +4,7 @@ import { copy_environment } from '../../../core/environment.ts';
 import { constants } from 'node:os';
 import type { Readable } from 'node:stream';
 import type { CommandOutcome } from '../../../conversation/snapshot/contracts.ts';
-import type { HermesModelCatalogSource } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { HermesModelCatalogSource } from './contracts.ts';
 import { MODEL_CATALOG_PROBE_TIMEOUT_SECONDS } from '../../../conversation/snapshot/configuration.ts';
 import { BackendAdapterError } from '../../../conversation/backends/contracts.ts';
 import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';

@@ -4,8 +4,8 @@ import type {
   CatalogReader,
   CommandOutcome,
 } from '../../../conversation/snapshot/contracts.ts';
-import type { ClaudeModelCatalogSource } from '../../../conversation/snapshot/provider_contracts.ts';
-import { ClaudeModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { ClaudeModelCatalogSource } from './contracts.ts';
+import { ClaudeModelCatalogUnavailable } from './contracts.ts';
 import { answer, model } from '../../../conversation/snapshot/catalogs/readers.ts';
 import { identity } from '../../../conversation/snapshot/identity.ts';
 const CLAUDE_FALLBACK_REASONING_EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'];

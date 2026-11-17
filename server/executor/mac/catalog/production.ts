@@ -6,7 +6,7 @@ import { create_codex_status } from '../../../drivers/codex/runtime/status.ts';
 import { create_hermes_status } from '../../../drivers/hermes/runtime/status.ts';
 import { SubprocessBackendProbeEnvironment } from '../../../conversation/snapshot/environment.ts';
 import type { BackendProbeEnvironment } from '../../../conversation/snapshot/contracts.ts';
-import { ClaudeModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
+import { ClaudeModelCatalogUnavailable } from '../../../drivers/claude/runtime/contracts.ts';
 import {
   probe_claude_model_catalog,
   ClaudeModelCatalogUnavailable as NativeClaudeUnavailable,

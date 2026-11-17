@@ -608,10 +608,7 @@ import { run as run_recorded_probes } from '../conversation/snapshot/testing/pro
 import { snapshot_json } from '../conversation/snapshot/presentation.ts';
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import type { CommandOutcome } from '../conversation/snapshot/contracts.ts';
-import type {
-  CodexLoginStanding,
-  CodexModelCatalog,
-} from '../conversation/snapshot/provider_contracts.ts';
+import type { CodexLoginStanding, CodexModelCatalog } from '../drivers/codex/runtime/contracts.ts';
 import { create_codex_status } from '../drivers/codex/runtime/status.ts';
 import { create_hermes_status } from '../drivers/hermes/runtime/status.ts';
 

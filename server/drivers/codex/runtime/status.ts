@@ -1,9 +1,6 @@
 /** Codex's card: its recipe, its `login status` answer with the saved login, and its catalog. */
 import { probe_card } from '../../../conversation/snapshot/probe.ts';
-import type {
-  CodexLoginStanding,
-  CodexModelCatalogSource,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+import type { CodexLoginStanding, CodexModelCatalogSource } from './contracts.ts';
 import type { DriverStatus } from '../../core/status.ts';
 import { codex_driver } from '../driver.ts';
 import { codex_manifest } from '../manifest.ts';

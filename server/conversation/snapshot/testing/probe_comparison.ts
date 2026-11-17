@@ -1,15 +1,13 @@
 /** Exercise the real probe with recorded machine answers and local catalog sources. */
 import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
 import type { CommandOutcome } from '../contracts.ts';
+import type { ClaudeModelCatalog } from '../../../drivers/claude/runtime/contracts.ts';
 import type {
-  ClaudeModelCatalog,
   CodexLoginStanding,
   CodexModelCatalog,
-} from '../provider_contracts.ts';
-import {
-  CodexModelCatalogUnavailable,
-  ClaudeModelCatalogUnavailable,
-} from '../provider_contracts.ts';
+} from '../../../drivers/codex/runtime/contracts.ts';
+import { CodexModelCatalogUnavailable } from '../../../drivers/codex/runtime/contracts.ts';
+import { ClaudeModelCatalogUnavailable } from '../../../drivers/claude/runtime/contracts.ts';
 import { built_in_model_version } from '../probe.ts';
 import type { DriverStatus } from '../../../drivers/core/status.ts';
 import { create_claude_status } from '../../../drivers/claude/runtime/status.ts';

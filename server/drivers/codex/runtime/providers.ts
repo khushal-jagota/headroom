@@ -5,7 +5,7 @@ import type {
   CodexLoginRejectionMemory,
   CodexLoginStanding,
   CodexModelCatalogSource,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+} from './contracts.ts';
 import type { BackendUsageAdapter } from '../../../conversation/backend_usage/contracts.ts';
 import type { DriverSignInController } from '../../core/sign_in.ts';
 import { SignInUnavailable } from '../../core/sign_in.ts';
@@ -16,7 +16,7 @@ import {
 } from '../../../conversation/snapshot/environment.ts';
 import { card_executable_path } from '../../../conversation/snapshot/probe.ts';
 import { CodexUsageAdapter } from './allowance_usage.ts';
-import { CodexModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
+import { CodexModelCatalogUnavailable } from './contracts.ts';
 import { codex_manifest } from '../manifest.ts';
 import { read_stored_codex_login } from './login.ts';
 import { CodexSignInService } from './login_session.ts';

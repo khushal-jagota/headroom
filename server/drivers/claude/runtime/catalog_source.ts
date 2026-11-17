@@ -1,7 +1,7 @@
 /** Claude's production model catalog: owned probes, sealed at dispose with a native-close retry. */
 import type { OwnedOneShotChildren, StopOptions } from '../../../lifecycle/contracts.ts';
-import type { ClaudeModelCatalogSource } from '../../../conversation/snapshot/provider_contracts.ts';
-import { ClaudeModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { ClaudeModelCatalogSource } from './contracts.ts';
+import { ClaudeModelCatalogUnavailable } from './contracts.ts';
 import { backend_io_is_test } from '../../../conversation/snapshot/environment.ts';
 import {
   ModelCatalogCleanupFailed,

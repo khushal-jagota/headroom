@@ -8,10 +8,7 @@ export class DurableCodexLoginRejection {
     this.database = database;
     this.now = now;
   }
-  remember(
-    generation:
-      import('../../../conversation/snapshot/provider_contracts.ts').CodexLoginGeneration | null,
-  ): void {
+  remember(generation: import('./contracts.ts').CodexLoginGeneration | null): void {
     if (generation === null) return;
     this.database.write((tx) =>
       tx.run(
@@ -22,10 +19,7 @@ export class DurableCodexLoginRejection {
       ),
     );
   }
-  forget(
-    generation:
-      import('../../../conversation/snapshot/provider_contracts.ts').CodexLoginGeneration | null,
-  ): void {
+  forget(generation: import('./contracts.ts').CodexLoginGeneration | null): void {
     if (generation === null) return;
     this.database.write((tx) =>
       tx.run('DELETE FROM codex_login_rejection WHERE account_id=? AND last_refresh=?', [
@@ -34,10 +28,7 @@ export class DurableCodexLoginRejection {
       ]),
     );
   }
-  applies_to(
-    generation:
-      import('../../../conversation/snapshot/provider_contracts.ts').CodexLoginGeneration | null,
-  ): boolean {
+  applies_to(generation: import('./contracts.ts').CodexLoginGeneration | null): boolean {
     if (generation === null) return false;
     return this.database.read(
       (sql) =>
@@ -53,6 +44,6 @@ export class DurableCodexLoginRejection {
 export function create_durable_codex_login_rejection(
   database: Database,
   now: () => Date = () => new Date(),
-): import('../../../conversation/snapshot/provider_contracts.ts').CodexLoginRejectionMemory {
+): import('./contracts.ts').CodexLoginRejectionMemory {
   return new DurableCodexLoginRejection(database, now);
 }

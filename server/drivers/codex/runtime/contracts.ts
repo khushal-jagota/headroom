@@ -1,5 +1,4 @@
-/** Provider units implement these local service boundaries. */
-import type { CommandOutcome } from './contracts.ts';
+/** Codex's card and login boundaries. */
 export interface CodexModel {
   readonly model_id: string;
   readonly display_name: string;
@@ -16,24 +15,6 @@ export interface CodexModelCatalog {
 }
 export interface CodexModelCatalogSource {
   (codex_executable: string): Promise<CodexModelCatalog>;
-}
-export interface ClaudeModel {
-  readonly model_id: string;
-  readonly display_name: string;
-  readonly resolved_model_id: string;
-  readonly reasoning_effort_options: readonly string[];
-}
-export interface ClaudeModelCatalog {
-  readonly models: readonly ClaudeModel[];
-  readonly reasoning_effort_options: readonly string[];
-  readonly default_model_id: string | null;
-}
-export interface ClaudeModelCatalogSource {
-  (claude_executable: string): Promise<ClaudeModelCatalog>;
-}
-/** Hermes' retained Python inventory script reports its own JSON through this door. */
-export interface HermesModelCatalogSource {
-  (options: { refresh: boolean }): Promise<CommandOutcome>;
 }
 export interface CodexLoginGeneration {
   readonly account_id: string;
@@ -60,4 +41,3 @@ export interface CodexLoginStanding {
   everything_a_card_reads(options: { now: Date }): readonly unknown[];
 }
 export class CodexModelCatalogUnavailable extends Error {}
-export class ClaudeModelCatalogUnavailable extends Error {}

@@ -3,11 +3,8 @@ import { homedir } from 'node:os';
 import { copy_environment } from '../../../core/environment.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
 import { CodexAppServerClient, CodexAppServerError } from './client.ts';
-import { CodexModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
-import type {
-  CodexModelCatalog,
-  CodexModel,
-} from '../../../conversation/snapshot/provider_contracts.ts';
+import { CodexModelCatalogUnavailable } from './contracts.ts';
+import type { CodexModelCatalog, CodexModel } from './contracts.ts';
 import { child_environment } from './environment.ts';
 import { ModelCatalogCleanupFailed } from '../../../conversation/backends/catalog_cleanup.ts';
 import * as P from './protocol.ts';
@@ -17,7 +14,7 @@ import {
   CLIENT_VERSION,
   INITIALIZE_CAPABILITIES,
 } from './adapter_configuration.ts';
-export { CodexModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
+export { CodexModelCatalogUnavailable } from './contracts.ts';
 export const MODEL_CATALOG_TIMEOUT_SECONDS = 30;
 type CatalogClient = Pick<CodexAppServerClient, 'start' | 'stop' | 'request' | 'notify'>;
 export interface ModelCatalogOptions {

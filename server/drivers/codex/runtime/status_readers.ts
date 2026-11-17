@@ -4,11 +4,8 @@ import type {
   CatalogReader,
   CommandOutcome,
 } from '../../../conversation/snapshot/contracts.ts';
-import type {
-  CodexLoginStanding,
-  CodexModelCatalogSource,
-} from '../../../conversation/snapshot/provider_contracts.ts';
-import { CodexModelCatalogUnavailable } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { CodexLoginStanding, CodexModelCatalogSource } from './contracts.ts';
+import { CodexModelCatalogUnavailable } from './contracts.ts';
 import { answer, model } from '../../../conversation/snapshot/catalogs/readers.ts';
 import { identity } from '../../../conversation/snapshot/identity.ts';
 export function read_codex_identity(

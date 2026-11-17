@@ -1,6 +1,6 @@
 /** Hermes' card: its recipe and the inventory its retained Python catalog script reports. */
 import { probe_card } from '../../../conversation/snapshot/probe.ts';
-import type { HermesModelCatalogSource } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { HermesModelCatalogSource } from './contracts.ts';
 import type { DriverStatus } from '../../core/status.ts';
 import { hermes_driver } from '../driver.ts';
 import { hermes_manifest } from '../manifest.ts';

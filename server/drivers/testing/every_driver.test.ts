@@ -1,10 +1,6 @@
 /** Lists that cannot come from a driver still hold every driver. (T3 ManagedPolicy.test.ts pattern) */
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import {
-  NODE_RUNTIME_FILES,
-  SHARED_RUNTIME_FILES,
-} from '../../environments/release/configuration.ts';
 import { shipped_worker_types } from '../../worker_types/shipped.ts';
 import { BUILT_IN_DRIVERS } from '../built_in.ts';
 import { BUILT_IN_MANIFESTS } from '../built_in_manifests.ts';
@@ -16,7 +12,6 @@ interface EveryDriverList {
   /** True, or why the list misses the driver. */
   covers(driver: AnyAgentDriver): true | string;
 }
-const release_files = new Set<string>([...NODE_RUNTIME_FILES, ...SHARED_RUNTIME_FILES]);
 const agent_backend_packages = Object.keys(
   (
     JSON.parse(
@@ -29,11 +24,6 @@ const missing = (items: readonly string[], present: (item: string) => boolean): 
   return absent.length ? `missing ${absent.join(', ')}` : true;
 };
 const EVERY_DRIVER_LISTS: readonly EveryDriverList[] = [
-  {
-    name: 'the release runtime files include the driver files',
-    covers: (driver) =>
-      missing(driver.manifest.install?.release_files ?? [], (file) => release_files.has(file)),
-  },
   {
     name: 'agent_backends/package.json installs the driver packages',
     covers: (driver) =>

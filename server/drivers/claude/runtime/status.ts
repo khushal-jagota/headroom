@@ -1,6 +1,6 @@
 /** Claude's card: its recipe, its `auth status` answer and its local model catalog. */
 import { probe_card } from '../../../conversation/snapshot/probe.ts';
-import type { ClaudeModelCatalogSource } from '../../../conversation/snapshot/provider_contracts.ts';
+import type { ClaudeModelCatalogSource } from './contracts.ts';
 import type { DriverStatus } from '../../core/status.ts';
 import { claude_driver } from '../driver.ts';
 import { claude_manifest } from '../manifest.ts';
