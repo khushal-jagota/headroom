@@ -77,7 +77,7 @@ export async function compose_mac_home_payload(
   const view_contract = 'web/src/lib/conversation/view/contracts.ts';
   await copy(join(exported, view_contract), join(app, view_contract));
   for (const name of MAC_STATIC_FILES) await copy(join(exported, name), join(app, name));
-  await copy(join(exported, 'src/planner/skills'), join(app, 'src/planner/skills'));
+  await copy(join(exported, 'server/skills/seeds'), join(app, 'server/skills/seeds'));
   // The graph binds these raw source bytes. Installation never executes them.
   const migration_sources = 'src/planner/core/migrations/versions';
   await copy(join(exported, migration_sources), join(app, migration_sources));

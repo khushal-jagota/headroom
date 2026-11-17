@@ -4,7 +4,7 @@ import { definition_from_json, definition_to_json } from './store.ts';
 import { convert_existing_skill } from './guidance.ts';
 import { DEFAULT_LAUNCH } from '../drivers/built_in.ts';
 export const SHIPPED_WORKER_TYPES_FILE = new URL(
-  '../../src/planner/worker_types/shipped_worker_types.json',
+  './shipped_worker_types.json',
   import.meta.url,
 );
 export const CHIEF_EMPLOYEE_ID = 'chief_of_staff';

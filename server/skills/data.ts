@@ -6,7 +6,7 @@ import type { ReadSql, TransactionSql, Database } from '../core/database/contrac
 import { PlannerError } from '../core/contracts.ts';
 import { frontmatter_bounds, skill_description } from './logic.ts';
 export const PACKAGED_SKILLS_ROOT = fileURLToPath(
-  new URL('../../src/planner/skills/', import.meta.url),
+  new URL('./seeds/', import.meta.url),
 );
 export function has_skill(sql: ReadSql, name: string): boolean {
   return !!sql.get('SELECT 1 FROM managed_skills WHERE skill_name = ?', [name]);

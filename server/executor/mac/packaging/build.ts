@@ -137,7 +137,7 @@ export async function build_mac_package(options: MacPackageOptions) {
     await mkdir(dirname(join(runtime, path)), { recursive: true });
     await cp(join(source, path), join(runtime, path));
   }
-  await cp(join(source, 'src/planner/skills'), join(runtime, 'src/planner/skills'), {
+  await cp(join(source, 'server/skills/seeds'), join(runtime, 'server/skills/seeds'), {
     recursive: true,
     verbatimSymlinks: true,
   });
@@ -198,7 +198,7 @@ export async function build_mac_package(options: MacPackageOptions) {
   const archive = join(output, MAC_RUNTIME_ARCHIVE_NAME);
   await create_tar(
     { cwd: runtime, file: archive, gzip: { level: ARCHIVE_GZIP_LEVEL }, portable: true },
-    ['bin', 'node', 'server', 'src', 'pyproject.toml', 'mac-runtime.json'],
+    ['bin', 'node', 'server', 'src', 'mac-runtime.json'],
   );
   if ((await stat(archive)).size > MAX_MAC_RUNTIME_ARCHIVE_BYTES)
     throw new Error('Mac runtime exceeds its archive size limit.');

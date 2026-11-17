@@ -345,8 +345,8 @@ it('copies a complete selected closure once and refuses changed source or an app
     for (const name of MAC_HOME_REQUIRED_FILES.filter((name) => name !== INSTALLER_RECIPE_PATH))
       assert(lstatSync(join(payload, name)).isFile(), 'composed payload lacks ' + name);
     for (const name of [
-      'src/planner/skills/panels/SKILL.md',
-      'src/planner/worker_types/shipped_worker_types.json',
+      'server/skills/seeds/panels/SKILL.md',
+      'server/worker_types/shipped_worker_types.json',
       'web/src/lib/conversation/view/contracts.ts',
       'pyproject.toml',
     ])
