@@ -1,15 +1,17 @@
 /** Run the real production entry against one explicitly prepared private fixture. */
 import assert from 'node:assert/strict';
-import { spawn, execFile, execFileSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, open, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { parseArgs, promisify } from 'node:util';
-import { create_environment, create_seed_environment } from './smoke/environment.ts';
+import { parseArgs } from 'node:util';
+import { chromium } from 'playwright';
+import { DEFAULT_BACKEND_PEER_REPLY } from './smoke/codex_peer.ts';
+import { create_environment, reserve_loopback_base } from './smoke/environment.ts';
+import { seed_populated_fixture } from './smoke/seed.ts';
 import { smoke_before_restart, smoke_after_restart } from './smoke/steps.ts';
 import { createReadAccess } from '../core/database/index.ts';
 import { register_test_root } from '../core/test_paths.ts';
@@ -40,18 +42,7 @@ assert.ok(
   typeof revision === 'string' && /^[a-f0-9]{40}$/.test(revision),
   'Invalid application SHA',
 );
-const execute = promisify(execFile);
-const seeded = await execute(
-  join(source, '.venv/bin/python'),
-  ['-m', 'tests.support.production_smoke_seed', '--root', root],
-  {
-    cwd: source,
-    env: await create_seed_environment(root, source),
-    timeout: 120_000,
-    maxBuffer: 1024 * 1024,
-  },
-);
-console.log(seeded.stdout.trim());
+const homes = await seed_populated_fixture(root, source);
 await mkdir(join(root, 'evidence'), { recursive: true });
 const seed = createReadAccess(join(root, 'data/planning.db'));
 try {
@@ -74,16 +65,8 @@ try {
 } finally {
   seed.close();
 }
-const reservation = createServer();
-reservation.listen(0, '127.0.0.1');
-await once(reservation, 'listening');
-const address = reservation.address();
-assert(address && typeof address !== 'string');
-const base = `http://127.0.0.1:${address.port}`;
-await new Promise<void>((resolve, reject) =>
-  reservation.close((error) => (error ? reject(error) : resolve())),
-);
-const environment = await create_environment(root, source, app_root, base, revision);
+const base = await reserve_loopback_base();
+const environment = await create_environment(root, source, app_root, base, revision, homes);
 const steps: string[] = [];
 const step = (message: string) => {
   steps.push(message);
@@ -146,17 +129,6 @@ async function stop() {
   log = undefined;
 }
 async function web() {
-  const { stdout } = await execute(
-    join(source, '.venv/bin/python'),
-    [
-      '-c',
-      'from pathlib import Path; import playwright; print(Path(playwright.__file__).resolve().parent / "driver/package/index.mjs")',
-    ],
-    { env: environment, timeout: 15_000, maxBuffer: 1024 * 1024 },
-  );
-  const driver = stdout.trim();
-  assert.ok(driver, 'The installed Playwright package did not resolve its Node driver');
-  const { chromium } = await import(pathToFileURL(driver).href);
   const browser = await chromium.launch({ headless: true, env: environment });
   try {
     const page = await browser.newPage();
@@ -186,7 +158,7 @@ try {
     step,
     workspace: join(root, 'workspace'),
     model: 'TEST',
-    reply: 'Production smoke reply.',
+    reply: DEFAULT_BACKEND_PEER_REPLY,
   });
   await stop();
   step('Production server stops cleanly');
