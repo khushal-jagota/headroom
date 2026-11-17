@@ -662,3 +662,72 @@ def test_decision_notes_reach_backend_and_full_history(
     for line in ("Second line: check the approved scope.", "Do not omit the final line."):
         expect(page.locator(".chat-system").filter(has_text=line)).to_have_count(1)
     capture_success(page, "decision-notes-full.png")
+
+
+# Every box from the page up to the document gets room to scroll: an element sticking out of
+# it, as anything that escapes a box does in a real browser (a list's hidden loading status, an
+# extension's element after the app). The body gets a block after the app instead.
+_ROOM_ABOVE_THE_PAGE = """() => {
+  for (let box = document.querySelector('.ticket-page'); box; box = box.parentElement) {
+    const room = document.createElement('div');
+    if (box === document.body) {
+      room.style.cssText = 'height:300px';
+      box.append(room);
+      return;
+    }
+    if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+    room.style.cssText = 'position:absolute;left:0;top:100%;width:1px;height:200px';
+    box.append(room);
+  }
+}"""
+
+_COMPOSER_PLACE = """() => {
+  const composer = document.querySelector('[data-conversation-composer]');
+  const scrolled = [];
+  for (let box = composer; box; box = box.parentElement) {
+    if (box.scrollTop) scrolled.push([box.tagName, box.className.toString(), box.scrollTop]);
+  }
+  return { bottom: composer.getBoundingClientRect().bottom, scrolled };
+}"""
+
+
+def test_a_paste_never_lifts_the_composer_off_the_floor(
+    signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """A long paste grows the composer upward. Nothing above it scrolls.
+
+    The composer hangs from the page's bottom edge, so any box above it that scrolls carries
+    it off the floor. Chrome scrolls every scroll container with room to reveal the caret of
+    a pasted draft, `overflow: hidden` included. Only the real app has the real stack of
+    boxes above the page, and only a real paste reveals the caret that way, so a fixture
+    host or a unit test cannot prove it.
+    """
+    server = signal_server
+    ticket_id = _create_ticket_conversation(
+        server, cli, conversation_id="e2e-ticket-paste-floor", title="Paste into the composer",
+    )
+    context = context_factory()
+    context.grant_permissions(["clipboard-read", "clipboard-write"])
+    page = open_page(
+        context, server, f"#/workspace/{ticket_id}",
+        f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+    )
+    page.wait_for_selector('.ticket-page[data-conversation-dock-state="rest"]', timeout=WAIT_MS)
+    page.evaluate(_ROOM_ABOVE_THE_PAGE)
+    page.locator("[data-conversation-input]").click()
+    page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+    before = page.evaluate(_COMPOSER_PLACE)
+    page.evaluate("text => navigator.clipboard.writeText(text)", "pasted words that wrap " * 60)
+    page.keyboard.press("Control+V")
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-input]')"
+        ".getBoundingClientRect().height > 90",
+        timeout=WAIT_MS,
+    )
+    page.wait_for_timeout(500)
+    after = page.evaluate(_COMPOSER_PLACE)
+    assert after["scrolled"] == [], after
+    assert abs(after["bottom"] - before["bottom"]) <= 1, (before, after)
