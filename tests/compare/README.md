@@ -337,7 +337,7 @@ produce every historical row. The following map preserves that distinction:
 
 | Existing oracle fixture | HTTP comparison coverage and explicit limit |
 | --- | --- |
-| `owner-visible-turn-work-and-final-answer` | Owner prompt, tools, two addressed owner messages, closed turn, and collapsed/expanded work. Historical `agent_message` rows cannot be created by the current core, which keeps backend prose in the live tail |
+| `owner-visible-turn-work-and-final-answer` | Owner prompt, tools, two addressed owner messages, closed turn, and collapsed/expanded work. `agent_message` rows are not compared: TypeScript records finished backend prose, and Python keeps it in the live tail |
 | `hidden-prompt-turn-and-owner-steer` | Owner steer, addressed owner messages, and multiple turn boundaries. A hidden non-owner prompt is not produced by the owner-only unassociated send path in this list |
 | `legacy-owner-and-forged-label` | Modern owner provenance is compared. Missing legacy provenance and deliberately forged non-owner labels cannot be minted through current intake |
 | `settlement-and-reconciliation` | Refusal, discard, exact sender-ID retry, and receipt lookup. Uncertain prompt reconciliation needs native delivery evidence and remains outside this HTTP seed |

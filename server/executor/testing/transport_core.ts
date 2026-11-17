@@ -257,11 +257,12 @@ export async function continue_core(database: Database, endpoint: VpsExecutor) {
     const accepted = await submit([completed]);
     assert.deepEqual(await submit([completed]), accepted);
     assert.equal(accepted.receipts[0]!.result.applied, true);
+    // A finished remote reply is recorded once, even when its envelope arrives twice.
     assert.equal(
       rows(
         "SELECT count(*) FROM conversation_events WHERE conversation_id='ordinary' AND kind='agent_message'",
       )[0]![0],
-      0,
+      1,
     );
     await submit([
       stored(ordinary, 'permission_ask_raised', {
