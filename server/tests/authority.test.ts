@@ -7,7 +7,7 @@ import {
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import BetterSqlite3 from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import Fastify from 'fastify';
 import { createDatabase } from '../core/database/index.ts';
@@ -25,12 +25,11 @@ import { PromptDeliveryStarted, type ConversationSystem } from '../conversation/
 test('registered area applies rank admission for owner, Worker, Manager, and Chief', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'panels-authority-')),
     path = join(dir, 'db.sqlite');
-  execFileSync('python3', [
-    '-c',
-    `import sqlite3,sys
-c=sqlite3.connect(sys.argv[1]);c.executescript("CREATE TABLE managers(id TEXT PRIMARY KEY); CREATE TABLE tickets(id TEXT PRIMARY KEY,manager_kind TEXT,manager_id TEXT,conversation_id TEXT); CREATE TABLE agents(agent_key TEXT PRIMARY KEY,conversation_id TEXT); CREATE TABLE agent_launch_tokens(token_hash TEXT PRIMARY KEY,conversation_id TEXT UNIQUE); INSERT INTO managers VALUES ('m'); INSERT INTO managers VALUES ('other'); INSERT INTO tickets VALUES ('t','manager','m','c_worker'); INSERT INTO agents VALUES ('chief_of_staff','c_chief'),('manager_m','c_manager'),('manager_other','c_other');");c.close()`,
-    path,
-  ]);
+  const setup = new BetterSqlite3(path);
+  setup.exec(
+    `CREATE TABLE managers(id TEXT PRIMARY KEY); CREATE TABLE tickets(id TEXT PRIMARY KEY,manager_kind TEXT,manager_id TEXT,conversation_id TEXT); CREATE TABLE agents(agent_key TEXT PRIMARY KEY,conversation_id TEXT); CREATE TABLE agent_launch_tokens(token_hash TEXT PRIMARY KEY,conversation_id TEXT UNIQUE); INSERT INTO managers VALUES ('m'); INSERT INTO managers VALUES ('other'); INSERT INTO tickets VALUES ('t','manager','m','c_worker'); INSERT INTO agents VALUES ('chief_of_staff','c_chief'),('manager_m','c_manager'),('manager_other','c_other');`,
+  );
+  setup.close();
   const db = createDatabase(path),
     app = Fastify();
   installCompatibility(app);

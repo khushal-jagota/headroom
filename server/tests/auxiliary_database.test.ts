@@ -1,8 +1,11 @@
 /** Dedicated schemas, maintenance, and timeout restoration are absent from the
- * existing app-door tests. Use temporary SQLite files and stdlib Python only.
+ * existing app-door tests. Use temporary SQLite files, a direct better-sqlite3
+ * connection, and a writer in a separate Node process only.
  */
 import { afterEach, expect, test } from 'vitest';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import BetterSqlite3 from 'better-sqlite3';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,30 +54,41 @@ function open(
     }),
   );
 }
-function python(filename: string, source: string): string {
-  return execFileSync('python3', ['-c', source, filename], { encoding: 'utf8' }).trim();
+function inspect<T>(filename: string, work: (connection: BetterSqlite3.Database) => T): T {
+  const connection = new BetterSqlite3(filename);
+  try {
+    return work(connection);
+  } finally {
+    connection.close();
+  }
 }
 function observed(filename: string) {
-  return JSON.parse(
-    python(
-      filename,
-      `import sqlite3,sys,json
-with sqlite3.connect(sys.argv[1]) as conn:
- print(json.dumps(dict(version=conn.execute('PRAGMA user_version').fetchone()[0],
-  journal=conn.execute('PRAGMA journal_mode').fetchone()[0],vacuum=conn.execute('PRAGMA auto_vacuum').fetchone()[0],
-  tables=conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())))`,
-    ),
-  );
+  return inspect(filename, (connection) => ({
+    version: connection.pragma('user_version', { simple: true }),
+    journal: connection.pragma('journal_mode', { simple: true }),
+    vacuum: connection.pragma('auto_vacuum', { simple: true }),
+    tables: connection
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .raw()
+      .all(),
+  }));
 }
+const sqlite = createRequire(import.meta.url).resolve('better-sqlite3');
 async function holdWriter(filename: string): Promise<void> {
   const child = spawn(
-    'python3',
+    process.execPath,
     [
-      '-u',
-      '-c',
-      `import sqlite3,sys
-conn=sqlite3.connect(sys.argv[1]);conn.execute('BEGIN IMMEDIATE');print('ready',flush=True)
-sys.stdin.readline();conn.rollback();conn.close()`,
+      '-e',
+      `const Database = require(process.argv[1]);
+const conn = new Database(process.argv[2]);
+conn.exec('BEGIN IMMEDIATE');
+console.log('ready');
+process.stdin.once('data', () => {
+  conn.exec('ROLLBACK');
+  conn.close();
+  process.stdin.destroy();
+});`,
+      sqlite,
       filename,
     ],
     { stdio: ['pipe', 'pipe', 'pipe'] },
@@ -132,11 +146,10 @@ test('auxiliary schema initialization commits atomically and the application fac
 
 test('unknown versions refuse before persistent settings, rows, or file bytes change', () => {
   const filename = path();
-  python(
-    filename,
-    `import sqlite3,sys
-with sqlite3.connect(sys.argv[1]) as conn:
- conn.execute('CREATE TABLE retained(value)');conn.execute("INSERT INTO retained VALUES('keep')");conn.execute('PRAGMA user_version=19')`,
+  inspect(filename, (connection) =>
+    connection.exec(
+      "CREATE TABLE retained(value); INSERT INTO retained VALUES('keep'); PRAGMA user_version=19",
+    ),
   );
   const bytes = readFileSync(filename);
   const before = observed(filename);
@@ -152,10 +165,8 @@ with sqlite3.connect(sys.argv[1]) as conn:
   expect(observed(filename)).toEqual(before);
   expect(readFileSync(filename)).toEqual(bytes);
   expect(
-    python(
-      filename,
-      `import sqlite3,sys
-with sqlite3.connect(sys.argv[1]) as conn: print(conn.execute('SELECT value FROM retained').fetchone()[0])`,
+    inspect(filename, (connection) =>
+      connection.prepare('SELECT value FROM retained').pluck().get(),
     ),
   ).toBe('keep');
 });

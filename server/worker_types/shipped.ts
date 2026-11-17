@@ -3,10 +3,7 @@ import type { TransactionSql } from '../core/database/contracts.ts';
 import { definition_from_json, definition_to_json } from './store.ts';
 import { convert_existing_skill } from './guidance.ts';
 import { DEFAULT_LAUNCH } from '../drivers/built_in.ts';
-export const SHIPPED_WORKER_TYPES_FILE = new URL(
-  '../../src/planner/worker_types/shipped_worker_types.json',
-  import.meta.url,
-);
+export const SHIPPED_WORKER_TYPES_FILE = new URL('./shipped_worker_types.json', import.meta.url);
 export const CHIEF_EMPLOYEE_ID = 'chief_of_staff';
 export const CHIEF_LABEL = 'Chief of Staff';
 export function shipped_worker_types(): unknown[] {

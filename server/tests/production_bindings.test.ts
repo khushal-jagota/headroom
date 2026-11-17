@@ -384,7 +384,6 @@ test('default production startup binds the real installer and environment runtim
     expect(inputs).toMatchObject({
       application_root: realpathSync(application_root),
       node_executable: process.execPath,
-      admitted_legacy_null_sha: null,
     });
     expect(executor).toBeInstanceOf(VpsExecutorRegistry);
     expect(executor!.configured()).toBe(false);

@@ -11,7 +11,7 @@ The required runner signal stops native work through its existing child owners a
 `MailboxRunCancelled` carries the original `StopOptions` object. Cancellation does not create another shutdown budget.
 The catalog owner encodes a complete `CommandResult` off main and retains immutable canonical bytes.
 Each persistence retry opens a fresh reader, so it does not repeat the catalog read or clone numeric trees.
-Admission stopped or catalog read failure preserves Python's null-snapshot result.
+Admission stopped or catalog read failure gives a null snapshot.
 An admitted catalog task includes its eventual result write and canonical-owner close, even if stop starts during the read.
 
 Poll waits on its own cancellable planned-replay waiter before each request.
@@ -26,7 +26,7 @@ Canonical expansion stays in the worker. The existing byte-reader API remains av
 
 Report selection, normalization, root validation, framing, and held-result fairness stay inside the journal worker.
 It fetches `32 + held.size`, excludes held IDs first, and uses held insertion order only if no other candidates remain.
-It preserves Python's byte accounting and always selects a first result, even above 4 MiB.
+It keeps the existing byte accounting and always selects a first result, even above 4 MiB.
 The client refuses that oversized body before HTTP. It never truncates or silently discards it.
 Main receives at most 32 IDs and one canonical body. It sends only submitted-and-settled IDs back.
 Every selection receives one accepted feedback attempt. A database failure in that attempt updates fairness and releases the selection before rejection.
@@ -56,5 +56,5 @@ Separate reader, feedback, and catalog-owner cleanup errors remain failures, inc
 Known result commits survive final stream-close failure. That cleanup fault requests host shutdown and remains in actual ownership evidence.
 The actual aggregate cleanup chain continues after a deadline, so the host can retain journal/database/lock ownership until it ends.
 
-Retry diagnostics contain error class, status/code, and cause class. Rejected reasons use Python's 200-code-point prefix.
+Retry diagnostics contain error class, status/code, and cause class. Rejected reasons keep a 200-code-point prefix.
 The future provider adapters must forward the invocation's process owners. No private production cohort belongs in these ports.

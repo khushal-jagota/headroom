@@ -184,7 +184,6 @@ export function default_production_dependencies(): ProductionServerDependencies 
       dependencies: {
         application_root: applicationRootFromEnvironment(),
         node_executable: process.execPath,
-        admitted_legacy_null_sha: null,
       },
     },
   };

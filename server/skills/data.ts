@@ -5,9 +5,7 @@ import { createHash } from 'node:crypto';
 import type { ReadSql, TransactionSql, Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { frontmatter_bounds, skill_description } from './logic.ts';
-export const PACKAGED_SKILLS_ROOT = fileURLToPath(
-  new URL('../../src/planner/skills/', import.meta.url),
-);
+export const PACKAGED_SKILLS_ROOT = fileURLToPath(new URL('./seeds/', import.meta.url));
 export function has_skill(sql: ReadSql, name: string): boolean {
   return !!sql.get('SELECT 1 FROM managed_skills WHERE skill_name = ?', [name]);
 }

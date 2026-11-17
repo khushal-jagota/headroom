@@ -152,7 +152,7 @@ The pane reads a stored view that is built from the notebook. When the app conne
 
 - `server/conversation/`: the contract (`contracts.ts`), the core (`system.ts`), the notebook store (`record/`), the stored views and their rebuild (`views/data/rebuild.ts`), the live tail, attachments and video uploads, and deploy recovery. Each backend's adapter is a driver under `server/drivers/`.
 - `server/message_delivery/`: Send Message.
-- `src/planner/runtime/conversation_start.py` and `runtime/workspaces.py`: starting a conversation and choosing its folder.
+- `server/runtime/conversation_start.ts`: starting a conversation and choosing its folder.
 - `web/src/components/conversation/` and `web/src/lib/conversation/`: the pane and composer.
 
 _Last verified: 2026-11-16._

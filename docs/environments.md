@@ -36,7 +36,7 @@ Eligible Ticket folders use directory descriptors for safe removal on Linux and 
 
 Disposable tests can disable provisioning explicitly and read the existing instance's skills. Test mode alone does not suppress account provisioning.
 
-A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Updates read legacy identities without a Python probe. Its jobs run only during the graphical login session.
+A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Its jobs run only during the graphical login session.
 
 A failed health trial returns to the previous app and snapshot record. This rollback can discard later record writes and does not prove preservation of active work. Native process evidence supports local previews and metrics. The Mac executor remains separate. Linux checks do not prove Mac behavior.
 
@@ -65,7 +65,7 @@ The user units in `ops/panels-environments/` cover the live service and two dail
 
 ## TypeScript test server
 
-Run the test server from the Ticket checkout. Its state must stay in the Worker's private `TMPDIR`, outside the deployment tree. The TypeScript test database check and the Python smoke seed reject deployment paths. The production smoke also needs its `--state-root` outside that tree.
+Run the test server from the Ticket checkout. Its state must stay in the Worker's private `TMPDIR`, outside the deployment tree. The TypeScript test database check rejects deployment paths. The production smoke also needs its `--state-root` outside that tree.
 
 From the checkout's `server/` directory, create a private state directory and a fresh, bootstrapped database. The database command refuses an existing file. Choose an available loopback port before the last command. If another process takes the port, choose another and retry.
 

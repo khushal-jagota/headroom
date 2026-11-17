@@ -20,7 +20,6 @@ import {
 export function create_installer_operations(inputs: {
   readonly application_root: string;
   readonly node_executable: string;
-  readonly admitted_legacy_null_sha: string | null;
   readonly child_processes: OwnedChildProcesses;
   readonly signal: AbortSignal;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -30,7 +29,7 @@ export function create_installer_operations(inputs: {
   const prepared = new Map<string, readonly string[]>();
   return {
     ...(inputs.darwin_home ? { requires_snapshot: true } : {}),
-    ...create_migration_status(inputs.child_processes),
+    ...create_migration_status(),
     create_backup: create_database_backup,
     prepare(options) {
       inputs.signal.throwIfAborted();
@@ -47,7 +46,6 @@ export function create_installer_operations(inputs: {
         {
           ...options,
           node_executable: inputs.darwin_home?.identity.installer_node ?? inputs.node_executable,
-          admitted_legacy_null_sha: inputs.admitted_legacy_null_sha,
         },
         inputs.signal,
       );

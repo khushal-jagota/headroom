@@ -1,6 +1,6 @@
 /** Real child closure cannot be proved by a mocked process result. */
 import { once } from 'node:events';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { create as create_tar } from 'tar';
@@ -173,11 +173,6 @@ test('builder isolates npm configuration and retains its deadline through final 
         await readFile(new URL('../../../' + name, import.meta.url)),
       );
     }
-    await cp(
-      new URL('../../../src/planner/core/migrations/versions', import.meta.url),
-      join(source, 'src/planner/core/migrations/versions'),
-      { recursive: true },
-    );
     await mkdir(join(source, 'server/etc'));
     await writeFile(join(source, 'server/etc/keep'), 'source-owned directory');
     for (const name of ['server', 'web']) {

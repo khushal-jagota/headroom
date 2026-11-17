@@ -15,6 +15,5 @@ Completion requires retained, dated evidence. `rule_evaluation.ts` finds the fir
 ## Proof locations
 
 - `logic/categories.test.ts` ports the thirteen category rule groups. `logic/completion.test.ts` ports the three selected-checklist groups.
-- The tests in `tests/e2e/test_goals_browser.py` exercise mounted formula refresh and confirmed deletion. The owned-conversation test and both holder tests retain their separate core/source prerequisites.
 
 Proof files describe executable checks, not a claim that a particular revision passed. Ticket evidence records results, execution costs, and remaining integration limits.

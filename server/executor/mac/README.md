@@ -117,13 +117,13 @@ Libc opens and closes own these descriptors. Node retains its normal tracking fo
 Files use no-follow and nonblocking opens, followed by a regular-file check.
 A FIFO therefore cannot block the worker before the file-type refusal.
 Destination creation, removal, and rename use retained parents. Swapped ancestor symlinks cannot redirect those operations.
-An ordinary hardlink source is allowed, as Python allows it. This code does not determine whether another hardlink exists outside the root.
+An ordinary hardlink source is allowed. This code does not determine whether another hardlink exists outside the root.
 Replacement of an ancestor with another real directory is not detected as an identity violation.
 A retained capability continues to name its original inode if that directory moves.
-This preserves Python's symlink defense. It is not a sandbox against arbitrary same-user changes.
+This is a symlink defense. It is not a sandbox against arbitrary same-user changes.
 
 `contained_path` is a preflight check. Later byte operations do not trust its result without descriptor-relative opens.
-`file_version` keeps Python's metadata-only, path-based `lstat` observation.
+`file_version` uses a metadata-only, path-based `lstat` observation.
 Nanosecond file versions use BigInt rather than rounded JavaScript numbers.
 
 The spool lock uses `core/locks/flock.ts` on its retained-parent, no-follow descriptor.
@@ -132,8 +132,8 @@ The exposed executor lock modes are nonblocking exclusive acquisition and unlock
 
 A regular-file flush calls plain libc `fsync`, then strict Darwin `fcntl(F_FULLFSYNC)` with an explicit variadic `int` zero.
 Failure of the second call propagates. The code does not substitute libuv's full-flush fallback policy.
-Post-rename publication calls plain directory `fsync`, as Python does.
-Directory creation retains Python's stricter parent-flush sequence.
+Post-rename publication calls plain directory `fsync`.
+Directory creation uses a stricter parent-flush sequence.
 
 Normal failure cleanup removes each private `.tmp-` entry through its retained directory.
 This file helper does not perform a startup sweep after process death.
@@ -162,6 +162,6 @@ The shared `server/skills/sources.ts` publisher remains outside this platform mo
 Its `openat` declaration is variadic and passes an explicit promoted `int` mode argument.
 
 The TypeScript default state directory is `~/Library/Application Support/Panels/executor-typescript`.
-The Python executor, kept as the Mac's rollback, uses `~/Library/Application Support/Panels/executor`. Explicit configuration refuses the Python root and its descendants, including symlink aliases.
+Explicit configuration refuses the earlier executor root, `~/Library/Application Support/Panels/executor`, and its descendants, including symlink aliases.
 `packaging/build.ts` produces the runtime archive and unsigned app and LaunchAgent assets.
 The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and owner procedure.

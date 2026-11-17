@@ -11,7 +11,6 @@ export interface InstallerRequest {
   readonly health_url: string;
   readonly health_timeout_seconds: number;
   readonly node_executable: string;
-  readonly admitted_legacy_null_sha: string | null;
 }
 export interface InstallerExecution {
   readonly child_processes: OwnedChildProcesses;
