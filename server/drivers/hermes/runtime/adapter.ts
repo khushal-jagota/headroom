@@ -315,8 +315,10 @@ export class HermesAcpBackendChild implements BackendChild {
     try {
       await request.written;
       turn = this.events.begin(token, request.response, automatic_compaction);
-      turn.ending_reporter = this.events.report_ending(turn, () =>
-        this.launcher.standard_error_tail(),
+      turn.ending_reporter = this.events.report_ending(
+        turn,
+        () => this.launcher.standard_error_tail(),
+        () => config.wire_broken || client.signal.aborted,
       );
       void turn.ending_reporter.catch((error) => this.log(error));
     } catch (error) {

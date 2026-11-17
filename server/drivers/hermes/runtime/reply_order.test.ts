@@ -52,7 +52,11 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
       },
     );
     turn = events.begin({ conversation_id: 'synthetic', turn_number: 1 }, request.response, false);
-    turn.ending_reporter = events.report_ending(turn, () => null);
+    turn.ending_reporter = events.report_ending(
+      turn,
+      () => null,
+      () => false,
+    );
     await request.written;
     const written = writes[0]!;
     if (!('id' in written)) throw new Error('Expected SDK request');
