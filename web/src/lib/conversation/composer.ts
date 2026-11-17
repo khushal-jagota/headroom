@@ -22,6 +22,7 @@ import type {
   PromptDeliveryMode
 } from "./wire";
 import type { ConversationBackendKey } from "./wire";
+import type { ProviderOptionDescriptor, SelectProviderOptionDescriptor } from "../usage/contracts/model";
 import type { OutgoingMessage } from "./outgoing";
 import { refusalSentence } from "./transcript";
 import { latestMessageOutcomes } from "./messageOutcome";
@@ -265,20 +266,31 @@ export function preselectedValue(
   return currentValue ?? whatItWouldStartOn ?? null;
 }
 
+/** The model's reasoning-effort option: its select descriptor whose role is "reasoning". */
+export function reasoningDescriptor(
+  model: { option_descriptors?: readonly ProviderOptionDescriptor[] }
+): SelectProviderOptionDescriptor | null {
+  return model.option_descriptors?.find(
+    (descriptor): descriptor is SelectProviderOptionDescriptor =>
+      descriptor.type === "select" && descriptor.role === "reasoning"
+  ) ?? null;
+}
+
 /** The reasoning efforts on offer for the model actually in force.
  *
- * A selected model uses only its own capability metadata. Unknown support does not
+ * A selected model uses only its own reasoning descriptor. Unknown support does not
  * inherit a sibling model's efforts. Without a selected model, backend defaults remain
  * available for the unselected control.
  */
 export function effortOptionsFor(
-  models: readonly { model_id: string; reasoning_effort_options?: string[] | null }[],
+  models: readonly { model_id: string; option_descriptors?: readonly ProviderOptionDescriptor[] }[],
   modelInForce: string | null,
   backendOptions: readonly string[]
-): readonly string[] {
-  if (modelInForce === null) return backendOptions;
+): readonly { value: string; name: string }[] {
+  if (modelInForce === null) return backendOptions.map((effort) => ({ value: effort, name: effort }));
   const model = models.find((candidate) => candidate.model_id === modelInForce);
-  return model?.reasoning_effort_options ?? [];
+  const descriptor = model === undefined ? null : reasoningDescriptor(model);
+  return descriptor?.options.map((option) => ({ value: option.id, name: option.label })) ?? [];
 }
 
 // --- what shape of ask this is -------------------------------------------------------------

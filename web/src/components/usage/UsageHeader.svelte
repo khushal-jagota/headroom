@@ -2,16 +2,15 @@
   import ManagerHeader from "../ManagerHeader.svelte";
   import Button from "../Button.svelte";
   import type { UsageDays } from "../../lib/conversation/recordedUsageWire";
-  import { PROVIDER_LABEL } from "../../lib/usage/usageProviders";
+  import { usageSourceLabel } from "../../lib/usage/usageProviders";
+  import type { DriverPresentation } from "../../lib/drivers/contracts";
   const USAGE_PERIODS = [{ days: 1, label: "24h" }, { days: 7, label: "7d" }, { days: 30, label: "30d" }, { days: 90, label: "90d" }] as const;
-  function providerLabel(value: string): string {
-    return ({ tokens: "Tokens", cost: "Cost", limits: "Limits", config: "Config", ...PROVIDER_LABEL } as Record<string, string>)[value] ?? value;
-  }
+  const TAB_LABEL: Record<string, string> = { tokens: "Tokens", cost: "Cost", limits: "Limits", config: "Config" };
   import type { UsageTab } from "../../lib/usageAddress";
   import type { UtilityHref } from "../../lib/utilityAddress";
-  let { tab, href, days, providerKeys, selectedProviders, busy, onDays, onProviders, onRefresh }: {
+  let { tab, href, days, providerKeys, selectedProviders, busy, drivers, onDays, onProviders, onRefresh }: {
     tab: UsageTab; href: UtilityHref; days: UsageDays; providerKeys: readonly string[];
-    selectedProviders: readonly string[]; busy: boolean;
+    selectedProviders: readonly string[]; busy: boolean; drivers: readonly DriverPresentation[] | undefined;
     onDays: (days: UsageDays) => void;
     onProviders: (providers: string[]) => void; onRefresh: () => void;
   } = $props();
@@ -29,7 +28,7 @@
           <summary>{selectedProviders.length === providerKeys.length ? "All providers" : `${selectedProviders.length} providers`} <span aria-hidden="true">⌄</span></summary>
           <div class="provider-popup">
             {#each providerKeys as provider (provider)}
-              <label><input type="checkbox" checked={selectedProviders.includes(provider)} onchange={event => toggle(provider, event.currentTarget.checked)} />{providerLabel(provider)}</label>
+              <label><input type="checkbox" checked={selectedProviders.includes(provider)} onchange={event => toggle(provider, event.currentTarget.checked)} />{usageSourceLabel(provider, drivers)}</label>
             {/each}
             {#if !providerKeys.length}<span>No providers reported</span>{/if}
           </div>
@@ -41,7 +40,7 @@
   <div class="toolbar">
     <nav class="segmented metrics" aria-label="Usage tabs">
       {#each ["tokens", "cost", "limits", "config"] as value}
-        <a class="segmented-option" href={href([value])} aria-current={tab === value ? "page" : undefined}>{providerLabel(value)}</a>
+        <a class="segmented-option" href={href([value])} aria-current={tab === value ? "page" : undefined}>{TAB_LABEL[value]}</a>
       {/each}
     </nav>
     {#if tab !== "config"}

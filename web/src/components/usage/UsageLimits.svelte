@@ -3,11 +3,12 @@
   // Pool operations and card content follow UsageLimitsPooled.tsx:69–257.
   import { ProviderDriverKind, type ServerProviderUsageLimits } from "../../lib/usage/contracts";
   import { collectLimitPools, formatDuration, formatResetsIn, limitsNotice, remainingPercent, type LimitAccount } from "../../lib/usage/usageLimits";
-  import { PROVIDER_COLOR } from "../../lib/usage/usageProviders";
+  import { usageSourceColor, usageSourceLabel } from "../../lib/usage/usageProviders";
+  import type { DriverPresentation } from "../../lib/drivers/contracts";
   import AllowanceWindows from "./AllowanceWindows.svelte";
   import { backendUsageOutcomeLabel } from "../../lib/conversation/backendRefresh";
   import type { BackendUsageRefreshOutcome } from "../../lib/conversation/wire";
-  let { limits, providers, now, outcomes = [] }: { limits: Readonly<Record<string, ServerProviderUsageLimits>>; providers: readonly string[]; now: number; outcomes?: readonly BackendUsageRefreshOutcome[] } = $props();
+  let { limits, providers, now, outcomes = [], drivers }: { limits: Readonly<Record<string, ServerProviderUsageLimits>>; providers: readonly string[]; now: number; outcomes?: readonly BackendUsageRefreshOutcome[]; drivers: readonly DriverPresentation[] | undefined } = $props();
   let openAccount = $state<string | null>(null);
   const observedFormat = new Intl.DateTimeFormat("en-US", {
     timeZone: "UTC", year: "numeric", month: "short", day: "numeric",
@@ -18,22 +19,22 @@
     return Number.isNaN(instant.getTime()) ? value : observedFormat.format(instant);
   }
   const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
-  const names: Record<string, string> = { codex: "Codex", claude: "Claude", claudeAgent: "Claude" };
+  const name = (key: string): string => usageSourceLabel(key, drivers);
   const entries = $derived(Object.entries(limits).filter(([provider]) => providers.includes(provider)));
   const accounts = $derived(entries.filter(([, value]) => limitsNotice(value) === null).map(([provider, value]): LimitAccount => ({
-    key: provider, driver: ProviderDriverKind.make(provider === "claude" ? "claudeAgent" : provider), displayName: names[provider] ?? provider,
+    key: provider, driver: ProviderDriverKind.make(provider), displayName: name(provider),
     email: undefined, plan: undefined, accentColor: undefined, environments: [], sourceLabel: null, redeem: null, limits: value,
   })));
   const pools = $derived(collectLimitPools(accounts, now));
 </script>
 <div class="limits" data-usage-limits>
   {#each outcomes.filter(outcome => outcome.outcome !== "succeeded") as outcome (outcome.backend_key)}
-    <p class="notice" role="status" data-allowance-outcome={outcome.outcome}>{names[outcome.backend_key] ?? outcome.backend_key}: {backendUsageOutcomeLabel(outcome.outcome)}</p>
+    <p class="notice" role="status" data-allowance-outcome={outcome.outcome}>{name(outcome.backend_key)}: {backendUsageOutcomeLabel(outcome.outcome)}</p>
   {/each}
   {#if pools.length === 0}<p class="notice">No provider on the selected environments reports subscription limits.</p>{/if}
   {#each pools as pool (pool.driver)}
-    {@const color = pool.driver === "claudeAgent" ? PROVIDER_COLOR.claude : PROVIDER_COLOR.codex}
-    <section><div class="provider-heading"><h2>{names[pool.driver] ?? pool.driver}</h2>
+    {@const color = usageSourceColor(pool.driver, drivers)}
+    <section><div class="provider-heading"><h2>{name(pool.driver)}</h2>
       {#each accounts.filter(account => account.driver === pool.driver) as account (account.key)}
         <p class="observed">Observed <time datetime={account.limits.checkedAt}>{observedLabel(account.limits.checkedAt)}</time></p>
       {/each}
@@ -66,8 +67,8 @@
   {/each}
   {#each entries as [provider, value] (provider)}
     {@const notice = limitsNotice(value)}
-    {#if notice}<p class="notice">{names[provider] ?? provider}: {notice}</p>
-      <p class="observed">{names[provider] ?? provider} · Observed <time datetime={value.checkedAt}>{observedLabel(value.checkedAt)}</time></p>
+    {#if notice}<p class="notice">{name(provider)}: {notice}</p>
+      <p class="observed">{name(provider)} · Observed <time datetime={value.checkedAt}>{observedLabel(value.checkedAt)}</time></p>
     {/if}
   {/each}
 </div>

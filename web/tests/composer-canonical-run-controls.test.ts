@@ -15,8 +15,11 @@ it("reopens an uncertain outgoing send with the same exact run intent and old ab
   try {
     const message = mintOutgoingMessage({content:[{piece:"text",text:"exact words"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, pickedBackend:"claude"});
     const old = mintOutgoingMessage({content:[{piece:"text",text:"old words"}], senderLabel:"owner", mode:"queue"});
-    await rememberOutgoingMessages("canonical-retry", [message, old]);
-    const [reopened, historical] = await recallOutgoingMessages("canonical-retry");
+    // A backend the apps do not name keeps its key, so the held prompt does not restart elsewhere.
+    const fourth = mintOutgoingMessage({content:[{piece:"text",text:"fourth driver"}], senderLabel:"owner", mode:"queue", pickedBackend:"scripted-agent"});
+    await rememberOutgoingMessages("canonical-retry", [message, old, fourth]);
+    const [reopened, historical, heldForFourth] = await recallOutgoingMessages("canonical-retry");
+    expect(heldForFourth).toMatchObject({pickedBackend:"scripted-agent"});
     expect(reopened).toMatchObject({pickedModel:"opus",pickedReasoningEffort:null,effortIsSet:true,pickedBackend:"claude",knownFate:"sent_before_this_page"});
     const body = sendBodyFor({message:reopened, current:{model:"sonnet",reasoningEffort:"high"}, picked:{model:reopened.pickedModel ?? null, reasoningEffort:reopened.pickedReasoningEffort ?? null, effortIsSet:reopened.effortIsSet, backendKey:reopened.pickedBackend}, conversationId:null});
     expect(body).toMatchObject({model:"opus",reasoning_effort:null,backend_key:"claude",sender_message_id:message.messageId});

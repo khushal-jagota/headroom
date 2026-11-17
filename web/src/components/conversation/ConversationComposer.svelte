@@ -19,6 +19,8 @@
    * Choosing one inserts its exact text. The message still goes as ordinary text.
    */
   import { onMount, tick } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { queries } from "../../lib/queryCatalogue";
   import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
   import { mintOutgoingMessage, reserveOutgoingMessageImages, reserveOutgoingMessageFiles, releaseOutgoingMessageImages, releaseOutgoingMessageFiles } from "../../lib/conversation/outgoing";
   import { VideoTransfers } from "../../lib/conversation/videoUploads/uploads";
@@ -376,6 +378,7 @@
     return () => window.removeEventListener("keydown", shutTheMenu, true);
   });
 
+  const drivers = createQuery(() => queries.drivers());
   let runControlsInput = $derived<ComposerRunControlsInput>({
     selection: runSelection,
     readError,
@@ -385,6 +388,7 @@
     current,
     models,
     backends,
+    drivers: drivers.data?.drivers,
     effortOptions,
     startsOnModel,
     startsOnReasoningEffort,
