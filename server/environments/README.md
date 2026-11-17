@@ -35,6 +35,7 @@ There is no separate advancement timer. Shutdown fences continuations synchronou
 A standalone stop without that deadline uses the existing 30-second grace. Python does not join its daemon prefetch thread.
 Late stage, backup, and installer settlements cannot write records or publish readiness after ownership ends.
 Node releases admit a database at their head or earlier on their own schema-step chain. Schema steps in `core/database/schema_steps` run only in the installer, on the stopped database after the swap, with a backup.
+An installer that stops after the swap leaves the attempt installing. Before admission, the new app's startup (`updates/interrupted_install.ts`) takes the installer lock and reads the revision: at its head it keeps the new app; earlier on its chain it restores the backup, renames the previous app back, fails the attempt, and exits.
 Release creation and extraction can require an explicit OS, architecture, and role.
 Default home admission refuses executor markers. Explicit targets require a matching runtime marker, including Darwin home targets.
 Darwin home metadata uses a version 2 Node contract with an inventory digest and the Mac OS and library boundaries.

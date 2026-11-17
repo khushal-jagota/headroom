@@ -19,7 +19,7 @@ A snapshot is written to a temporary folder and published only after the databas
 
 Restore runs only while the service is stopped. It validates the whole snapshot before it touches anything, then replaces the database and swaps in each folder the snapshot holds. Each step undoes itself if it fails, but the restore as a whole is not one transaction. It restores only the folders the snapshot lists, so a new snapshot leaves an existing `files/` tree alone.
 
-Deployment's own recovery uses a snapshot only before the new app is proven. After that, nothing rewinds data automatically. Going back by hand after a schema step needs that update's snapshot, because the previous app refuses a database at a different revision. Data written after the step is lost. Any other restore is a deliberate operator act. Prove a snapshot on isolated copies, never on live, and never stop production just to check that a snapshot opens. The steps are in [ops/panels-environments/backup-restore.md](../ops/panels-environments/backup-restore.md).
+Deployment's own recovery, including the next start after an installer was killed mid-install, uses a snapshot only before the new app is proven. After that, nothing rewinds data automatically. Going back by hand after a schema step needs that update's snapshot, because the previous app refuses a database at a different revision. Data written after the step is lost. Any other restore is a deliberate operator act. Prove a snapshot on isolated copies, never on live, and never stop production just to check that a snapshot opens. The steps are in [ops/panels-environments/backup-restore.md](../ops/panels-environments/backup-restore.md).
 
 ## Decisions that shape it
 
