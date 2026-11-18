@@ -11,11 +11,6 @@ interface OrderedMember extends Membership {
 function tuple(row: Membership): Position {
   return [row.rank, row.title_key, row.id_key, row.kind, row.id];
 }
-export function prepareOrdered(tx: TransactionSql): void {
-  tx.run(
-    'CREATE TABLE IF NOT EXISTS navigation_view_ordered (section_key TEXT NOT NULL,profile TEXT NOT NULL,locale TEXT NOT NULL,position INTEGER NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,rank INTEGER NOT NULL,title_key BLOB NOT NULL,id_key BLOB NOT NULL,PRIMARY KEY(section_key,profile,locale,position),UNIQUE(section_key,profile,locale,kind,id))',
-  );
-}
 /** Only a changed membership or comparator operand requires replacement of its group. */
 export function reorderGroup(tx: TransactionSql, group: OrderedGroup): void {
   const rows = tx.all<Membership>(

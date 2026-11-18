@@ -18,7 +18,14 @@
  * conversations dirty (navigation/publication.ts:180-184), and the server writes agent rows
  * only for the Chief and Managers (runtime/conversation_start.ts:745, managers/data.ts:143).
  *
- * Every statement is a literal copied from the baseline seed. Never derive DDL at run time.
+ * The step also takes over `navigation_view_ordered`, which the server used to create at run
+ * time, so every used database holds it and no fresh one does. `IF NOT EXISTS` creates it on
+ * a database without it and leaves an existing table and its rows untouched; SQLite stores the
+ * same text either way (live_baseline_variant.ts). Its rows are a derived cache: the
+ * navigation projection deletes and refills them from navigation_view_memberships.
+ *
+ * Every statement is a literal copied from the baseline seed, or for navigation_view_ordered
+ * from the retired runtime statement. Never derive DDL at run time.
  */
 import { PYTHON_BASELINE_SEED } from './baseline.ts';
 import type { SchemaStep } from './contracts.ts';
@@ -136,6 +143,10 @@ export const open_backend_keys_step: SchemaStep = {
     );
     tx.run('DROP TABLE native_usage_sources');
     tx.run('ALTER TABLE native_usage_sources_new RENAME TO native_usage_sources');
+    // navigation_view_ordered, kept as it is where the server already created it.
+    tx.run(
+      'CREATE TABLE IF NOT EXISTS navigation_view_ordered (section_key TEXT NOT NULL,profile TEXT NOT NULL,locale TEXT NOT NULL,position INTEGER NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,rank INTEGER NOT NULL,title_key BLOB NOT NULL,id_key BLOB NOT NULL,PRIMARY KEY(section_key,profile,locale,position),UNIQUE(section_key,profile,locale,kind,id))',
+    );
     // The seed's signal_source_agents triggers, over either baseline variant.
     tx.run('DROP TRIGGER signal_source_agents_insert');
     tx.run(

@@ -20,7 +20,7 @@ import {
 import { binaryCompare, sortKey } from './ordering.ts';
 import { canonicalReviewAddress, record, reviewMessageItems } from './review.ts';
 export { record } from './review.ts';
-import { prepareOrdered, reorderGroup } from './ordered.ts';
+import { reorderGroup } from './ordered.ts';
 import type { OrderedGroup } from './ordered.ts';
 
 const keyString = (key: Key): string => compact(key);
@@ -517,7 +517,6 @@ export function rebuildProjection(tx: TransactionSql): void {
       ?.schema_version !== SCHEMA_VERSION
   )
     return;
-  prepareOrdered(tx);
   tx.run('DELETE FROM navigation_view_ordered');
   for (const suffix of [
     'meta',
