@@ -108,6 +108,12 @@ function scripted_driver(
     config: NO_DRIVER_CONFIG,
     create: async ({ instance_id }, host) =>
       scripted_instance(instance_id, driver_kind, child_factory(host)),
+    executor: async () => ({
+      child_factory: () => {
+        throw new Error(`Scripted driver '${key}' has no executor child factory`);
+      },
+      catalog: () => ({ status: scripted_status(key) }),
+    }),
   };
 }
 /** Built-in ids first, in BUILT_IN_DRIVERS order, so cards and choice lists keep their order. */

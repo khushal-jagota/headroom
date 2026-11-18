@@ -44,6 +44,9 @@ function scripted_entry(
     create: async () => {
       throw new Error('Created by the test');
     },
+    executor: async () => {
+      throw new Error('Executed by the test');
+    },
   };
   return {
     kind: 'live',

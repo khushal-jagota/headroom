@@ -34,8 +34,8 @@ export interface AgentDriver<Config> {
     host: DriverHost,
     signal: AbortSignal,
   ): Promise<DriverInstance>;
-  /** Loads the half an executor machine runs. Absent: no executor machine runs this driver. */
-  executor?(): Promise<ExecutorDriver>;
+  /** Loads the half an executor machine runs. */
+  executor(): Promise<ExecutorDriver>;
   /** Pure rules over model ids. On the driver, so they hold while an instance is unavailable. */
   readonly models?: DriverModelRules;
   /** Why this driver cannot launch the model, or null. */
