@@ -174,8 +174,8 @@
         onclick={(event) => finalApproval ? void completeScope({ approval:true, holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     </div>
   </div>
-  <!-- Under an artifact the decisions are the page's foot, so the panel fits inside the artifact, above them. -->
-  <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below={!composerOnly} fitWithin={composerOnly ? ".ticket-artifact" : undefined} pendingStage={stage}
+  <!-- The decisions are the page's foot. The panel opens above them, in the viewport. -->
+  <CeilingPicker externalTrigger newStage={stage} {lifecycle} {ceiling} {holder} {manager} below={!composerOnly} pendingStage={stage}
     approvalCeiling={nextCeiling} bind:controller={scopePicker}
     holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
   {#if proposal.field !== "brief" && !canReturn}<p class="return-unavailable" data-return-unavailable>{returnUnavailableReason}</p>{/if}

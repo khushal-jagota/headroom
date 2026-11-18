@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceTargetFor, buildLifecycle, ceilingOptionsFor, finalApprovalFor, preferredScopeCeilingFor, type WorkerTypeManifest } from "../src/lib/lifecycle";
+import { advanceTargetFor, buildLifecycle, ceilingOptionsFor, ceilingPickerChoices, finalApprovalFor, preferredScopeCeilingFor, type WorkerTypeManifest } from "../src/lib/lifecycle";
 
 function manifest(stages: string[], advance: Record<string, string>): WorkerTypeManifest {
   return {
@@ -39,6 +39,29 @@ describe("manifest terminal stages", () => {
   });
 });
 
+
+describe("ceiling picker choices", () => {
+  const coding = buildLifecycle(manifest(
+    ["needs_brief", "needs_what_changes", "needs_implementation", "needs_consequences", "done"],
+    {
+      needs_brief: "needs_what_changes",
+      needs_what_changes: "needs_implementation",
+      needs_implementation: "needs_consequences",
+      needs_consequences: "done"
+    }
+  ));
+
+  it("omits stages the ticket has already left", () => {
+    const approving = ceilingPickerChoices(coding, "needs_implementation", true).map((option) => option.value);
+    const editing = ceilingPickerChoices(coding, "needs_implementation", false).map((option) => option.value);
+    expect(approving).toEqual(["needs_implementation", "needs_consequences", "done"]);
+    expect(editing).toEqual(["none", "needs_implementation", "needs_consequences", "done"]);
+    for (const passed of ["needs_brief", "needs_what_changes"]) {
+      expect(approving).not.toContain(passed);
+      expect(editing).not.toContain(passed);
+    }
+  });
+});
 
 describe("Consequences review", () => {
   it("offers Done as a ceiling and treats Consequences approval as final", () => {

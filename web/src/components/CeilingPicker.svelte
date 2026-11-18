@@ -6,7 +6,7 @@
   } from "./conversation/ListboxPicker.svelte";
   import PickerRail from "./conversation/PickerRail.svelte";
   import PickerRailRow from "./conversation/PickerRailRow.svelte";
-  import { ceilingOptionsFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
+  import { ceilingPickerChoices, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import { holderOptionsFor, holderValue, holderFromValue, holderLabelFor } from "../lib/ceilingHolder";
   import { pendingCeilingApproves, type PendingCeilingIntent } from "../lib/pendingCeiling";
   import { ceilingLabelFor } from "../lib/ceilingPresentation";
@@ -27,7 +27,6 @@
     manager = null,
     stageLocked = false,
     below = false,
-    fitWithin = ".ticket-doc",
     document = false,
     triggerLabel = null,
     holderLabel = null,
@@ -50,10 +49,8 @@
     holder?: Principal | null;
     manager?: { id: string; title: string } | null;
     stageLocked?: boolean;
-    /** Open the panel downward, for a host that sits under the page header. */
+    /** Prefer opening downward. The panel flips when that side does not fit. */
     below?: boolean;
-    /** The area the open panel must fit inside, above or below its trigger. */
-    fitWithin?: string;
     /** Only the halves the user set. A reviewer chosen on its own carries no ceiling. */
     onComplete?: (change: { ceiling?: string; holder: Principal | null; approval?: boolean }) => void;
   } = $props();
@@ -85,11 +82,7 @@
   let ceilingTouched = $state(false);
   let holderTouched = $state(false);
   let picker = $state<ListboxPickerController>(null!);
-  let ceilingOptions = $derived([
-    ...(!pendingStage ? [{ value:"none", name:"No further" }] : []),
-    ...ceilingOptionsFor(lifecycle, pendingStage ? lifecycle?.stageOrder[0] || pendingStage : newStage || lifecycle?.ceilingRange[0] || "needs_brief")
-      .map((option) => ({ value:option.value, name:option.label }))
-  ]);
+  let ceilingOptions = $derived(ceilingPickerChoices(lifecycle, pendingStage || newStage, pendingStage !== null));
   let holders = $derived(holderOptionsFor(manager, holder).map((option) => ({
     value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
   })));
@@ -173,7 +166,7 @@
   hideTrigger={externalTrigger}
   anchor={approvalAnchor}
   {below}
-  {fitWithin}
+  placeInViewport
   attributes={{ "data-ceiling-picker": "" }}
   triggerAttributes={{ "data-scope-ceiling": "" }}
   panelAttributes={{ "data-ceiling-picker-panel": "" }}

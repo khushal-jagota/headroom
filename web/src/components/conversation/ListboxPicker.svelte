@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, type Snippet } from "svelte";
+  import { placePickerPanel } from "../../lib/pickerPlacement";
 
   export type ListboxPickerItem = {
     value: string;
@@ -36,6 +37,7 @@
     hideTrigger = false,
     below = false,
     fitWithin = null,
+    placeInViewport = false,
     align = "left",
     anchor = null,
     attributes = {},
@@ -71,6 +73,8 @@
     below?: boolean;
     /** Keep this picker inside its nearest matching scroll area. */
     fitWithin?: string | null;
+    /** Paint the panel in the top layer and flip it to stay in the viewport. */
+    placeInViewport?: boolean;
     align?: "left" | "right";
     /** Optional second entry point for the same picker; keeps one panel and draft. */
     anchor?: HTMLElement | null;
@@ -106,6 +110,8 @@
   let list = $state<HTMLDivElement | null>(null);
   let panelElement = $state<HTMLDivElement | null>(null);
   let fittedBounds = $state<{left: number; top: number; height: number} | null>(null);
+  let viewportBounds = $state<{left: number; top: number; height: number} | null>(null);
+  let viewportCapped = $state(false);
   let panelBounds = $state<{left: number; top: number; height: number} | null>(null);
   let typeahead = "";
   let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
@@ -201,10 +207,40 @@
   });
 
   $effect(() => {
-    if ((anchor || fitWithin) && !anchorPositionReady) return;
+    if ((anchor || fitWithin || placeInViewport) && !anchorPositionReady) return;
     active; itemOffset; items.length;
     list?.querySelector<HTMLElement>("[data-listbox-picker-active]")?.scrollIntoView({ block: "nearest" });
   });
+
+  function composerTop(entry: HTMLElement): number | null {
+    const page = entry.closest(".ticket-page, .manager-page");
+    const dock = page?.querySelector<HTMLElement>("[data-conversation-layer-host]");
+    if (!dock || dock.getClientRects().length === 0) return null;
+    return dock.getBoundingClientRect().top;
+  }
+
+  function placeViewportPanel(): void {
+    const entry = anchor ?? trigger;
+    if (!entry || !panelElement || !list) return;
+    if (panelElement.popover !== "manual") return;
+    if (!panelElement.matches(":popover-open")) panelElement.showPopover();
+    const button = entry.getBoundingClientRect();
+    if (button.width === 0 && button.height === 0) return;
+    const panel = panelElement.getBoundingClientRect();
+    const rail = panelElement.querySelector<HTMLElement>(".picker-rail");
+    const naturalHeight = Math.max(list.scrollHeight + panel.height - list.clientHeight, rail?.scrollHeight ?? 0);
+    if (naturalHeight <= 0) return;
+    const placed = placePickerPanel({
+      trigger: { top: button.top, bottom: button.bottom, left: button.left },
+      panel: { width: panel.width, height: naturalHeight },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      composerTop: composerTop(entry),
+      preferBelow: below
+    });
+    if (!placed) { close(false); return; }
+    viewportCapped = placed.height + 0.5 < naturalHeight;
+    viewportBounds = { left: placed.left, top: placed.top, height: placed.height };
+  }
 
   function fitPanel(): void {
     const boundary = fitWithin ? root?.closest(fitWithin) : null;
@@ -233,7 +269,31 @@
   }
 
   $effect(() => {
-    if (!open || !fitWithin) return;
+    if (!open || !placeInViewport) return;
+    items; // A rail switch changes the natural list height.
+    const update = () => placeViewportPanel();
+    // Scrolling the panel's own list is not the page moving the trigger.
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && panelElement?.contains(event.target)) return;
+      update();
+    };
+    const entry = anchor ?? trigger;
+    const dock = entry?.closest(".ticket-page, .manager-page")?.querySelector("[data-conversation-layer-host]");
+    const observer = new ResizeObserver(update);
+    if (dock) observer.observe(dock);
+    if (entry) observer.observe(entry);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", onScroll, true);
+    void tick().then(update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  });
+
+  $effect(() => {
+    if (!open || !fitWithin || placeInViewport) return;
     items; // A rail switch changes the natural list height.
     const boundary = root?.closest(fitWithin);
     if (!boundary) return;
@@ -259,12 +319,21 @@
     const rootRect = root?.getBoundingClientRect();
     const anchorRect = anchor?.getBoundingClientRect();
     anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
-    anchorPositionReady = anchorOffset === null && !fitWithin;
+    anchorPositionReady = anchorOffset === null && !fitWithin && !placeInViewport;
     activate(itemOffset+Math.max(0, items.findIndex((item) => item.value === selectedValue)));
     open = true;
     panelBounds = null;
     fittedBounds = null;
+    viewportBounds = null;
+    viewportCapped = false;
     await tick();
+    if (placeInViewport) {
+      placeViewportPanel();
+      anchorPositionReady = true;
+      await tick();
+      list?.focus(anchor ? {preventScroll:true} : undefined);
+      return;
+    }
     if (scrollPanel && panelElement && trigger) {
       const triggerRect = trigger.getBoundingClientRect();
       const panelRect = panelElement.getBoundingClientRect();
@@ -443,12 +512,18 @@
       class:below
       class:right={align === "right"}
       class:scroll-panel={scrollPanel}
-      class:fitted={fittedBounds !== null}
-      style:position={panelBounds ? "fixed" : undefined}
-      style:max-height={panelBounds || fittedBounds ? `${(panelBounds ?? fittedBounds)!.height}px` : undefined}
-      style:left={fittedBounds ? `${fittedBounds.left}px` : panelBounds ? `${panelBounds.left}px` : anchorOffset ? `${anchorOffset.left}px` : undefined}
-      style:top={fittedBounds ? `${fittedBounds.top}px` : panelBounds ? `${panelBounds.top}px` : anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
-      style:bottom={fittedBounds || panelBounds || anchorOffset ? "auto" : undefined}
+      class:viewport={placeInViewport}
+      class:fitted={viewportCapped || fittedBounds !== null}
+      popover={placeInViewport ? "manual" : undefined}
+      style:position={placeInViewport || panelBounds ? "fixed" : undefined}
+      style:margin={placeInViewport ? "0" : undefined}
+      style:padding={placeInViewport ? "0" : undefined}
+      style:right={placeInViewport ? "auto" : undefined}
+      style:max-height={viewportBounds ? (viewportCapped ? `${viewportBounds.height}px` : undefined) : panelBounds || fittedBounds ? `${(panelBounds ?? fittedBounds)!.height}px` : undefined}
+      style:left={viewportBounds ? `${viewportBounds.left}px` : fittedBounds ? `${fittedBounds.left}px` : panelBounds ? `${panelBounds.left}px` : anchorOffset ? `${anchorOffset.left}px` : undefined}
+      style:top={viewportBounds ? `${viewportBounds.top}px` : fittedBounds ? `${fittedBounds.top}px` : panelBounds ? `${panelBounds.top}px` : anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
+      style:bottom={viewportBounds || fittedBounds || panelBounds || anchorOffset ? "auto" : undefined}
+      style:visibility={placeInViewport && !anchorPositionReady ? "hidden" : undefined}
       aria-busy={panelBusy}
       role="presentation"
       onkeydown={onPanelKeydown}
@@ -533,6 +608,10 @@
     position: absolute; z-index: 40; bottom: calc(100% + var(--space-1)); left: 0;
     background: var(--surface-2); border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-lg); overflow: hidden;
+  }
+  /* The top layer's own rules would otherwise center the panel and pad it. */
+  .listbox-picker-panel.viewport {
+    position: fixed; margin: 0; inset: auto; height: auto; color: inherit;
   }
   .listbox-picker-panel.fitted { min-height:0; grid-template-rows:minmax(0,1fr); }
   .fitted :global(.picker-rail) { min-height:0; overflow:hidden; }
