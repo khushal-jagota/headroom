@@ -24,11 +24,34 @@ export function source_error(error: unknown, allowed: readonly string[]): string
   }
   throw error;
 }
+const ended_codes: readonly string[] = ['ENOENT', 'ESRCH'];
+const denied_summary_ms = 3600_000;
+let denied_count = 0;
+let denied_logged_at = Date.now();
 /**
  * Like source_error, for files of a process or cgroup that can end between listing and reading.
  * ENOENT and ESRCH mean it ended: that is normal, so it returns the reason without a log line.
+ * With `denied_is_normal`, EACCES and EPERM are also silent, because another user's process files
+ * are not readable. One summary line with the count is logged at most once an hour.
  */
-export function ended_source_error(error: unknown, allowed: readonly string[]): string {
+export function ended_source_error(
+  error: unknown,
+  allowed: readonly string[],
+  denied_is_normal = false,
+  now: number = Date.now(),
+): string {
   const reason = evidence_reason(error);
-  return reason === 'ENOENT' || reason === 'ESRCH' ? reason : source_error(error, allowed);
+  if (ended_codes.includes(reason)) return reason;
+  if (denied_is_normal && (reason === 'EACCES' || reason === 'EPERM')) {
+    denied_count++;
+    if (now - denied_logged_at >= denied_summary_ms) {
+      console.warn(
+        `VPS metrics: ${denied_count} reads of other users' process files were denied (${reason}); logging at most once an hour`,
+      );
+      denied_count = 0;
+      denied_logged_at = now;
+    }
+    return reason;
+  }
+  return source_error(error, allowed);
 }

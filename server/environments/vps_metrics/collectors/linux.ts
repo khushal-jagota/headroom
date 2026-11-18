@@ -367,7 +367,7 @@ export class LinuxCollector implements Collector {
           if (row === undefined) fail('RangeError');
           uid = integer(field(words(row!), 1));
         } catch (error) {
-          ended_source_error(error, ['EIO', 'TypeError', 'RangeError']);
+          ended_source_error(error, ['EIO', 'TypeError', 'RangeError'], true);
           errors.push(`PID ${JSON.stringify(pid)} uid unavailable`);
         }
         let io: Record<string, number> = {},
@@ -375,7 +375,7 @@ export class LinuxCollector implements Collector {
         try {
           io = pairs(await this.read(join(path, 'io')));
         } catch (error) {
-          io_error = ended_source_error(error, ['EIO', 'TypeError']);
+          io_error = ended_source_error(error, ['EIO', 'TypeError'], true);
         }
         for (const direction of ['read', 'write']) {
           const key = direction + '_bytes';
@@ -398,7 +398,7 @@ export class LinuxCollector implements Collector {
         try {
           [group, kind] = group_for(await this.read(join(path, 'cgroup')));
         } catch (error) {
-          ended_source_error(error, ['EIO']);
+          ended_source_error(error, ['EIO'], true);
           group = kind = 'unassigned';
           errors.push(`PID ${JSON.stringify(pid)} cgroup unavailable`);
         }
@@ -421,7 +421,7 @@ export class LinuxCollector implements Collector {
           metrics,
         });
       } catch (error) {
-        ended_source_error(error, ['EIO', 'TypeError', 'RangeError']);
+        ended_source_error(error, ['EIO', 'TypeError', 'RangeError'], true);
         errors.push(`PID ${name} exited or stat unavailable`);
       }
     }
