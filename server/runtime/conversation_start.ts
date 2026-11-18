@@ -41,6 +41,7 @@ import type {
 import type { MessageContent } from '../conversation/message_content.ts';
 import { resolve_conversation_start_request } from '../conversation/logic/conversation_start_resolution.ts';
 import { ensure_started_conversation_record } from '../conversation/record/data/store.ts';
+import { readProject } from '../projects/data/index.ts';
 import type { Ticket, TicketLocale } from '../tickets/contracts.ts';
 import * as tickets from '../tickets/data/index.ts';
 import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
@@ -180,9 +181,6 @@ async function message_content_for(
 ): Promise<MessageContent> {
   return typeof content === 'function' ? await content(id) : content;
 }
-export function mac_project_workspace_folder(project_id: string): string {
-  return join('/', 'projects', project_id);
-}
 export function workspace_for_project(
   database: Database,
   ticket_locale: TicketLocale,
@@ -193,32 +191,8 @@ export function workspace_for_project(
 ): [string, WorkspacePathPolicy] {
   if (options.explicit != null)
     return [options.explicit, ticket_locale === 'macos' ? 'absolute' : 'home_relative'];
-  if (ticket_locale === 'macos')
-    return [
-      project_id === null ? '/' : mac_project_workspace_folder(project_id),
-      'executor_default',
-    ];
-  if (project_id !== null) {
-    const project = database.read((sql) =>
-      sql.get<{
-        folder_path: string | null;
-      }>('SELECT folder_path FROM projects WHERE id=?', [project_id]),
-    );
-    if (!project) throw new PlannerError('validation', 'invalid project_id', { project_id });
-    if (project.folder_path !== null) {
-      try {
-        if (statSync(project.folder_path).isDirectory())
-          return [realpathSync(project.folder_path), 'home_relative'];
-      } catch (error) {
-        if (!(
-          error instanceof Error &&
-          'code' in error &&
-          ['ENOENT', 'ENOTDIR'].includes(String(error.code))
-        ))
-          throw error;
-      }
-    }
-  }
+  if (ticket_locale === 'macos') return ['/', 'executor_default'];
+  if (project_id !== null) database.read((sql) => readProject(sql, project_id));
   return [default_workspace(database, options), 'home_relative'];
 }
 interface ResolveOptions extends Partial<WorkspaceContext> {
@@ -374,20 +348,19 @@ export async function start_ticket_conversation(
   let identity: WorkspaceIdentity | null = null;
   if (ticket.machine_id === HOME_MACHINE_ID) {
     const ticket_folder = join(filesRoot(context(database).db_path, 'ticket'), ticket.id);
-    const project_folder =
+    const repository =
       ticket.project_id === null
-        ? null
-        : database.read(
-            (sql) =>
-              sql.get<{ folder_path: string | null }>(
-                'SELECT folder_path FROM projects WHERE id=?',
-                [ticket.project_id],
-              )?.folder_path ?? null,
-          );
+        ? { repository_url: null, default_branch: null }
+        : database.read((sql) => {
+            const project = readProject(sql, ticket.project_id!);
+            return {
+              repository_url: project.repository_url,
+              default_branch: project.default_branch,
+            };
+          });
     try {
-      await prepare_workspace(ticket_folder, project_folder, ticket.id, {
+      await prepare_workspace(ticket_folder, ticket.id, repository, {
         signal: options.signal,
-        panels_project: ticket.project_id === 'project_panels',
       });
       values = { ...values, workspace_folder: ticket_folder };
       identity = workspace_identity(ticket_folder);

@@ -32,6 +32,9 @@ import type { WireTypes, ChildCommandArguments, ChildOperation } from './wire.ge
 export type SkillSnapshotSupplier = (
   start: ResolvedConversationStart,
 ) => WireTypes['CanonicalSkillSnapshot'];
+export type WorkspaceRepositorySupplier = (
+  start: ResolvedConversationStart,
+) => WireTypes['WorkspaceRepository'] | null;
 /** A fetched steer with no timely outcome. True later proves that it never reached its turn. */
 export class LateSteer {
   readonly not_delivered: Promise<boolean>;
@@ -96,6 +99,7 @@ export class MacRemoteChild implements BackendChild {
   initial_delivery_cancelled = false;
   private readonly commands: RemoteChildCommands;
   private readonly skill_snapshot_supplier: SkillSnapshotSupplier;
+  private readonly workspace_repository_supplier: WorkspaceRepositorySupplier;
   private delivery_commands: WireTypes['ChildCommand'][] = [];
   private readonly initial_puts = new Set<Promise<boolean>>();
   private readonly delivery_cancellation = new AbortController();
@@ -110,6 +114,7 @@ export class MacRemoteChild implements BackendChild {
       event_sink?: BackendEventSink | null;
       initial_history_complete?: boolean;
       pending_prompt?: WireTypes['ChildCommand'] | null;
+      workspace_repository_supplier?: WorkspaceRepositorySupplier;
     } = {},
   ) {
     this.pending_prompt = options.pending_prompt ?? null;
@@ -117,6 +122,7 @@ export class MacRemoteChild implements BackendChild {
     this.reference = reference;
     this.commands = commands;
     this.skill_snapshot_supplier = skill_snapshot_supplier;
+    this.workspace_repository_supplier = options.workspace_repository_supplier ?? (() => null);
     this.event_sink = options.event_sink ?? null;
     this.initial_history_complete = options.initial_history_complete ?? true;
   }
@@ -178,6 +184,14 @@ export class MacRemoteChild implements BackendChild {
         `Canonical skill snapshot unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    let workspace_repository: WireTypes['WorkspaceRepository'] | null;
+    try {
+      workspace_repository = this.workspace_repository_supplier(start);
+    } catch (error) {
+      throw new backend.BackendSpawnFailed(
+        `Project repository configuration unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     let workspace_home_relative: string | null = null;
     if (start.workspace_path_policy === WorkspacePathPolicy.home_relative) {
       const home = resolve_path_sync(homedir()),
@@ -209,6 +223,7 @@ export class MacRemoteChild implements BackendChild {
       },
       vendor_session_cursor: options.vendor_session_cursor,
       workspace_home_relative,
+      workspace_repository,
     });
     let placed: boolean;
     try {

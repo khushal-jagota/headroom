@@ -93,6 +93,9 @@
     "ts_0001_open_backend_keys": [
       "restore_consequences_review"
     ],
+    "ts_0002_project_repository": [
+      "ts_0001_open_backend_keys"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

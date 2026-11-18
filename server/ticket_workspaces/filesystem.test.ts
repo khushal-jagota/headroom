@@ -113,8 +113,16 @@ test('the synthetic guard rejects outside paths and symlink escapes before produ
 test('identity rejects replacement during retirement and preparation resumes the same artifact-only folder', async () => {
   const path = folder(),
     identity = workspace_identity(admit(path));
-  expect(await prepare_workspace(path, null, ticket, options)).toBe(join(path, 'worktree'));
-  expect(await prepare_workspace(path, null, ticket, options)).toBe(join(path, 'worktree'));
+  expect(await prepare_workspace(path, ticket, null, options)).toBe(join(path, 'worktree'));
+  expect(await prepare_workspace(path, ticket, null, options)).toBe(join(path, 'worktree'));
+  await expect(
+    prepare_workspace(
+      path,
+      ticket,
+      { repository_url: 'https://example.invalid/repo.git' },
+      options,
+    ),
+  ).rejects.toThrow('Ticket workspace repository or path changed');
   renameSync(path, join(root, 'older'));
   mkdirSync(path);
   const replacement = workspace_identity(admit(path));
@@ -210,7 +218,7 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
         preparing: false,
       }),
     );
-    expect(await prepare_workspace(path, primary, ticket, options)).toBe(managed);
+    expect(await prepare_workspace(path, ticket, null, options)).toBe(managed);
     const other = admit(join(root, 'unrelated')),
       locked = admit(join(root, 'locked'));
     await command(primary, ['worktree', 'add', '-b', 'unrelated', other]);
@@ -248,10 +256,22 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     await command(project, ['remote', 'add', 'origin', remote]);
     await command(project, ['push', 'origin', 'main']);
     const path = folder(),
-      checkout = await prepare_workspace(path, project, ticket, options);
+      checkout = await prepare_workspace(
+        path,
+        ticket,
+        { repository_url: remote, default_branch: 'main' },
+        options,
+      );
     expect(lstatSync(join(checkout, '.git')).isDirectory()).toBe(true);
     expect(await command(checkout, ['remote', 'get-url', 'origin'])).toBe(remote);
-    expect(await prepare_workspace(path, project, ticket, options)).toBe(checkout);
+    expect(
+      await prepare_workspace(
+        path,
+        ticket,
+        { repository_url: remote, default_branch: 'main' },
+        options,
+      ),
+    ).toBe(checkout);
     expect(readFileSync(join(path, 'AGENTS.md'), 'utf8')).toContain('## logs/');
     expect(readFileSync(join(path, 'CLAUDE.md'), 'utf8')).toContain('## logs/');
     const marker = read_workspace_identity(path);
@@ -271,6 +291,25 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     );
     expect(expired.removed).toContain(path);
     expect(readdirSync(path)).toEqual(['logs']);
+  },
+);
+
+// Gap: successful clone tests do not prove clone failures refuse without creating an empty worktree.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'a failed clone stops with a clear error and never leaves an empty worktree',
+  async () => {
+    const path = folder();
+    workspace_identity(admit(path));
+    await expect(
+      prepare_workspace(
+        path,
+        ticket,
+        { repository_url: join(root, 'missing.git'), default_branch: 'main' },
+        options,
+      ),
+    ).rejects.toThrow('Cannot clone the Project repository');
+    expect(existsSync(join(path, 'worktree'))).toBe(false);
+    expect(readdirSync(path).filter((name) => name.startsWith('.clone-'))).toEqual([]);
   },
 );
 

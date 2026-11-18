@@ -79,51 +79,55 @@ export async function localize_start(
   options: MacNativeChildrenOptions,
 ): Promise<ResolvedConversationStart> {
   const resolved = input.resolved_start;
-  let workspace: string;
-  try {
-    let home = options.workspace_home;
-    const subfolder =
-      input.workspace_home_relative == null ? null : safe_relative(input.workspace_home_relative);
-    if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default) {
-      home = options.paths.workspace;
-      await create_directory(options, join(home, subfolder ?? ''));
-    }
-    if (subfolder !== null) {
-      home = resolve_path_sync(home, workspace_resolution);
-      workspace = resolve_path_sync(join(home, subfolder), workspace_resolution);
-      within(home, workspace);
-    } else {
-      const path =
-        resolved.workspace_path_policy === WorkspacePathPolicy.executor_default
-          ? options.paths.workspace
-          : resolved.workspace_folder;
-      if (!isAbsolute(path))
-        throw new Error('workspace needs absolute native path or home mapping');
-      workspace = resolve_path_sync(path, workspace_resolution);
-    }
-    if (!(await stat(workspace)).isDirectory())
-      throw new Error('mapped workspace is not a directory');
-    if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default)
-      within(resolve_path_sync(options.paths.root, { strict: true }), workspace);
-  } catch (error) {
-    if (error instanceof ServerLifecycleError) throw error;
-    throw new BackendSpawnFailed(`Mac workspace unavailable: ${workspace_failure(error)}`);
-  }
   const identity = new Map(resolved.role_materials?.identity_environment_variables ?? []);
   const ticket_id = safe_component(identity.get('PLAN_TICKET_ID')!);
   const artifacts = join(options.paths.artifacts, ticket_id);
   const managed = identity.get('PLAN_TICKET_WORKSPACE_MANAGED') === '1';
+  let workspace = artifacts;
+  if (!managed) {
+    try {
+      let home = options.workspace_home;
+      const subfolder =
+        input.workspace_home_relative == null ? null : safe_relative(input.workspace_home_relative);
+      if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default) {
+        home = options.paths.workspace;
+        await create_directory(options, join(home, subfolder ?? ''));
+      }
+      if (subfolder !== null) {
+        home = resolve_path_sync(home, workspace_resolution);
+        workspace = resolve_path_sync(join(home, subfolder), workspace_resolution);
+        within(home, workspace);
+      } else {
+        const path =
+          resolved.workspace_path_policy === WorkspacePathPolicy.executor_default
+            ? options.paths.workspace
+            : resolved.workspace_folder;
+        if (!isAbsolute(path))
+          throw new Error('workspace needs absolute native path or home mapping');
+        workspace = resolve_path_sync(path, workspace_resolution);
+      }
+      if (!(await stat(workspace)).isDirectory())
+        throw new Error('mapped workspace is not a directory');
+      if (resolved.workspace_path_policy === WorkspacePathPolicy.executor_default)
+        within(resolve_path_sync(options.paths.root, { strict: true }), workspace);
+    } catch (error) {
+      if (error instanceof ServerLifecycleError) throw error;
+      throw new BackendSpawnFailed(`Mac workspace unavailable: ${workspace_failure(error)}`);
+    }
+  }
   try {
     await create_directory(options, artifacts);
     if (managed) {
-      const repository =
-        resolved.workspace_path_policy === WorkspacePathPolicy.executor_default &&
-        !input.workspace_home_relative
-          ? null
-          : workspace;
-      workspace = await prepare_workspace(artifacts, repository, ticket_id, {
+      let repository = input.workspace_repository ?? null;
+      if (repository === null) {
+        if (identity.get('PLAN_TICKET_PROJECT_ID'))
+          throw new Error(
+            'Home must supply the Project repository configuration before starting a managed Project workspace',
+          );
+        repository = { repository_url: null, default_branch: null };
+      }
+      workspace = await prepare_workspace(artifacts, ticket_id, repository, {
         git_execution: options.workspace_git,
-        panels_project: identity.get('PLAN_TICKET_PROJECT_ID') === 'project_panels',
       });
     }
   } catch (error) {

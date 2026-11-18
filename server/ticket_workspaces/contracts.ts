@@ -24,8 +24,11 @@ export type WorkspaceRetirementOperation = (
   identity: WorkspaceIdentity,
   operation: () => MaybePromise<RetirementTarget>,
 ) => MaybePromise<RetirementTarget>;
+export interface ProjectRepository {
+  readonly repository_url: string | null;
+  readonly default_branch?: string | null;
+}
 export interface WorkspaceOptions {
-  panels_project?: boolean;
   signal?: AbortSignal;
   admit_path?: (path: string) => string;
   git_execution?: {

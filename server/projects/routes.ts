@@ -16,7 +16,7 @@ import {
   scalarQueries,
 } from '../list_reads/http.ts';
 import { createProject, listProjects, readProject, updateProject } from './data/index.ts';
-import { bodyString, nullableFolderPath } from './logic/index.ts';
+import { bodyString, nullableString } from './logic/index.ts';
 import type { CreateProjectBody, UpdateProjectBody } from './contracts.ts';
 
 export const routes: FastifyPluginAsync<AreaServices> = async (app, services) => {
@@ -67,7 +67,11 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       name: bodyString(raw, 'name'),
       summary: bodyString(raw, 'summary'),
     };
-    if ('folder_path' in raw) body.folder_path = nullableFolderPath(raw.folder_path);
+    if ('folder_path' in raw) body.folder_path = nullableString(raw.folder_path, 'folder_path');
+    if ('repository_url' in raw)
+      body.repository_url = nullableString(raw.repository_url, 'repository_url');
+    if ('default_branch' in raw)
+      body.default_branch = nullableString(raw.default_branch, 'default_branch');
     return services.database.write((tx) => createProject(tx, body, services.clock.nowUnix()));
   });
   app.patch<{ Params: { project_id: string } }>('/projects/:project_id', async (request, reply) => {
@@ -76,7 +80,11 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     const body: UpdateProjectBody = {};
     if ('name' in raw) body.name = bodyString(raw, 'name');
     if ('summary' in raw) body.summary = bodyString(raw, 'summary');
-    if ('folder_path' in raw) body.folder_path = nullableFolderPath(raw.folder_path);
+    if ('folder_path' in raw) body.folder_path = nullableString(raw.folder_path, 'folder_path');
+    if ('repository_url' in raw)
+      body.repository_url = nullableString(raw.repository_url, 'repository_url');
+    if ('default_branch' in raw)
+      body.default_branch = nullableString(raw.default_branch, 'default_branch');
     if (!Object.keys(body).length)
       throw new PlannerError('validation', 'no project fields to update');
     return services.database.write((tx) =>

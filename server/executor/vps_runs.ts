@@ -28,6 +28,8 @@ import { WAITS } from '../stalls/registry.ts';
 import type { CleanupResult } from '../worker_supervision/contracts.ts';
 import { cleanup_result } from '../worker_supervision/inspection.ts';
 import { execution_unavailable_reason } from '../tickets/locale_configuration.ts';
+import { read_ticket } from '../tickets/data/index.ts';
+import { readProject } from '../projects/data/index.ts';
 import { now_ms } from './clock.ts';
 import { native_message_content } from './backend_events.ts';
 import { CommandSettlementReason } from './contracts.ts';
@@ -184,6 +186,21 @@ export class MacRuns {
     const ticket_id = this.require_current_ticket(start);
     return this.database.read((sql) => read_canonical_skill_snapshot(sql, ticket_id));
   };
+  private read_workspace_repository = (
+    start: ResolvedConversationStart,
+  ): WireValue<'WorkspaceRepository'> => {
+    this.admit();
+    const ticket_id = this.require_current_ticket(start);
+    return this.database.read((sql) => {
+      const ticket = read_ticket(sql, ticket_id);
+      if (ticket.project_id === null) return { repository_url: null, default_branch: null };
+      const project = readProject(sql, ticket.project_id);
+      return {
+        repository_url: project.repository_url,
+        default_branch: project.default_branch,
+      };
+    });
+  };
   assign_child(start: ResolvedConversationStart): ChildReference {
     this.admit();
     const record = this.presence.record(),
@@ -218,6 +235,7 @@ export class MacRuns {
   ): MacRemoteChild {
     return new MacRemoteChild(reference, this, this.read_skill_snapshot, {
       initial_history_complete: false,
+      workspace_repository_supplier: this.read_workspace_repository,
       ...options,
     });
   }
