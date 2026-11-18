@@ -2,11 +2,13 @@
 import { isDeepStrictEqual } from 'node:util';
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk/unstable';
 import type {
+  ContentBlock,
   LoadSessionResponse,
   NewSessionResponse,
   PromptResponse,
 } from '@agentclientprotocol/sdk/unstable';
 import {
+  BackendAdapterError,
   BackendPromptAccepted,
   BackendSpawnFailed,
   BackendSteerRefused,
@@ -54,7 +56,7 @@ import {
 import { acp_child_environment } from './environment.ts';
 import { AcpEvents } from './events.ts';
 import type { AcpTurn } from './events.ts';
-import type { AcpFlavor } from './flavor.ts';
+import type { AcpFlavor, AcpLaunch } from './flavor.ts';
 import { AcpMessages } from './messages.ts';
 import {
   AcpSessionConfiguration,
@@ -108,8 +110,14 @@ export class AcpBackendChild implements BackendChild {
       throw new BackendSpawnFailed('executor workspace requires native resolution');
     if (this.stopped) throw new BackendSpawnFailed('this child is being shut down');
     this.resolved_start = resolved_start;
+    let launch: AcpLaunch;
     try {
-      const launch = this.flavor.launch(resolved_start);
+      launch = await this.flavor.launch(resolved_start);
+    } catch (error) {
+      if (error instanceof BackendAdapterError) throw error;
+      throw new BackendSpawnFailed(acp_error_text(error), { cause: error });
+    }
+    try {
       const client = await this.launcher.start(
         {
           argv: launch.argv,
@@ -229,10 +237,13 @@ export class AcpBackendChild implements BackendChild {
       );
     return content;
   }
-  /** A child whose process or wire ended while it was idle cannot take a prompt: rebind now. */
+  /**
+   * A child whose process or wire ended cannot take a prompt, and none of this prompt reached it:
+   * the core starts a fresh child for it.
+   */
   private require_live_child(): void {
     const config = this.configuration;
-    if (this.stopped || config === null || !config.wire_ended || this.events.turn !== null) return;
+    if (this.stopped || config === null || !config.wire_ended) return;
     const failure = config.wire_failure_text();
     throw new NeedsRebind(
       failure.why === null
@@ -261,9 +272,11 @@ export class AcpBackendChild implements BackendChild {
         );
       } catch (error) {
         if (!(error instanceof ComposedMessageDoesNotContainSenderContent)) throw error;
-        throw new PromptWriteFailed(error.message, { cause: error });
+        throw new PromptWriteRefused(error.message, { cause: error });
       }
     }
+    // Composed before the selection changes, so a message that cannot be sent changes nothing.
+    const prompt = await this.messages.prompt_blocks(content);
     const { config } = this.bound();
     const previous = [config.model, config.reasoning_effort] as const;
     try {
@@ -271,28 +284,20 @@ export class AcpBackendChild implements BackendChild {
     } catch (error) {
       // The prompt was not sent: the agent refused the selection first.
       if (!(error instanceof ConfigurationNotApplied)) throw error;
+      this.require_live_child();
+      // A model set before its effort was refused is put back, so the record stays true.
+      await config.restore(previous);
       throw new PromptWriteRefused(error.message, { cause: error });
     }
-    try {
-      await this.write_prompt_to_wire(token, content);
-    } catch (error) {
-      if (
-        error instanceof PromptWriteFailed &&
-        (options.model_change !== null || options.reasoning_effort_change !== null)
-      )
-        await config.restore(previous);
-      throw error;
-    }
+    await this.write_prompt_to_wire(token, prompt);
     return new BackendPromptAccepted({
       composed_content_delivered: !(options.automatic_compaction || native_command),
     });
   }
-  private async write_prompt_to_wire(token: TurnToken, content: MessageContent): Promise<void> {
+  private async write_prompt_to_wire(token: TurnToken, prompt: ContentBlock[]): Promise<void> {
     const { client, config, sessionId } = this.bound();
-    config.require_wire();
-    const prompt = await this.messages.prompt_blocks(content);
-    this.require_running();
-    config.require_wire();
+    this.require_live_child();
+    const outcome_watch = this.events.watch_outcome(sessionId);
     const writing = new Deferred<void>();
     let turn: AcpTurn | null = null;
     const request = client.begin_request<PromptResponse>(
@@ -309,7 +314,7 @@ export class AcpBackendChild implements BackendChild {
     );
     try {
       await request.written;
-      turn = this.events.begin(token, request, sessionId);
+      turn = this.events.begin(token, request, outcome_watch);
       turn.ending_reporter = this.events.report_ending(turn, {
         standard_error_tail: () => this.launcher.standard_error_tail(),
         wire_ended: () => config.wire_ended,
@@ -321,6 +326,8 @@ export class AcpBackendChild implements BackendChild {
       void request.response.catch((failure) => {
         if (!this.stopped) this.log(failure);
       });
+      // The prompt did not reach the wire, so a fresh child can take it.
+      this.require_live_child();
       throw new PromptWriteFailed(`the prompt did not reach the wire: ${acp_error_text(error)}`, {
         cause: error,
       });
@@ -382,7 +389,7 @@ export class AcpBackendChild implements BackendChild {
         cause: error,
       });
     }
-    turn.parked_asks.delete(ask_id);
+    this.events.answered(turn, ask_id);
     return AnswerFate.applied;
   }
   /** No ACP agent of this base raises a structured question, so there is none to answer. */

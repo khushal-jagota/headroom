@@ -14,7 +14,11 @@ import type { ConversationHttpWriteScope } from '../http/writes.ts';
 import { resolve_usage_model_scopes } from '../backend_usage/logic/scopes.ts';
 import type { BackendHttpRuntime, BackendSnapshot } from './contracts.ts';
 import type { DriverSignInController, SignInSession } from '../../drivers/core/sign_in.ts';
-import { SignInUnavailable, UnknownSignInSession } from '../../drivers/core/sign_in.ts';
+import {
+  SignInReturnUrlRefused,
+  SignInUnavailable,
+  UnknownSignInSession,
+} from '../../drivers/core/sign_in.ts';
 import { snapshot_json, sign_in_json } from './presentation.ts';
 import type { CardFacts } from './presentation.ts';
 /** Home cards: this server's own hooks. Another machine's card: its driver only. */
@@ -77,6 +81,7 @@ async function in_force(operation: () => Promise<SignInSession>): Promise<SignIn
   } catch (error) {
     if (error instanceof UnknownSignInSession)
       throw new HttpError(409, 'that sign-in is not the one in force any more');
+    if (error instanceof SignInReturnUrlRefused) throw new HttpError(422, error.message);
     throw error;
   }
 }

@@ -4,22 +4,25 @@ A library, not a driver. `create_acp_child_factory(flavor, dependencies)` suppli
 
 ## The backend child
 
-`AcpBackendChild` launches the flavor's command with the shared environment (`environment.ts`: six inherited variables, the flavor's own values, then the conversation identity; nothing else of the server's environment, credentials included, reaches the agent). It sends `initialize`, then `session/new` or `session/load`, then sets the model and the reasoning effort through the session's config options, by category: `model` first, then `thought_level`, each against the options the previous reply returned. Prompts carry the sender label inside the composed text. A one-piece message that names an advertised command, and the core's `/compact`, go to the agent as typed.
+`AcpBackendChild` launches the flavor's command with the shared environment (`environment.ts`: six inherited variables, the flavor's own values, then the conversation identity; nothing else of the server's environment, credentials included, reaches the agent). It sends `initialize`, then `session/new` or `session/load`, then sets the model and the reasoning effort through the session's config options, by category: `model` first, then `thought_level`, each against the options the previous reply returned. The child takes the session's current model and effort from those options' `currentValue`, so it skips a value the session already has and can put a previous one back. Prompts carry the sender label inside the composed text. A one-piece message that names an advertised command, and the core's `/compact`, go to the agent as typed.
 
 What every child of this base does, whatever its flavor:
 
 - No steer. `ACP_CHILD_CAPABILITIES` says so, and a steer is refused with `backend_cannot_steer`; the message waits for the next prompt.
 - Stop sends `session/cancel` and waits for the prompt's own reply, which ends the turn as interrupted.
-- A child whose agent ended while idle answers the next prompt with `NeedsRebind` (`failed_child_recovery`), so the core starts a fresh child for it.
+- A child whose agent or wire has ended answers a prompt with `NeedsRebind` (`failed_child_recovery`), so the core starts a fresh child for it. That holds when the agent ended while idle and when the prompt's own write failed, since in both cases none of the prompt reached the agent.
+- A prompt that cannot be sent is refused (`PromptWriteRefused`) before anything changes: the message and its files are composed before the model or effort is set. A model that the agent took before it refused the effort is put back first. If that fails, the child asks for a rebind.
+- A turn that the core ended without its reply, such as a cancel the agent never answered, is abandoned when the next prompt is written. Its silence clock stops, so it cannot fail the next turn.
 - A tool call still open when its turn ends is finished then, because Panels never ends a tool call by itself.
 - `usage_update.used` is the context size; the prompt reply's usage is the turn's tokens.
+- Automatic compaction is sent as the agent's own `/compact` and is never confirmed. agy 1.5.10 reports a finished `/compact` only by that prompt's `end_turn`. It sends no text and no session info, and `used` does not drop (real probe, Antigravity driver Ticket research). An `end_turn` alone does not prove a compaction happened.
 
 ## Flavor hooks
 
-`flavor.ts` holds the contract. Each optional hook exists because the Antigravity flavor uses it against agy 1.5.10:
+`flavor.ts` holds the contract. `launch(start)` may be asynchronous, so a flavor can check its agent first: Antigravity checks the agy CLI floor there, from the kept verdict, as Codex and Claude do before each launch. Anything it throws fails the start as `BackendSpawnFailed`. Each optional hook exists because the Antigravity flavor uses it against agy 1.5.10:
 
 - `requires_sign_in(error)`: a signed-out agent does not start (`BackendSpawnFailed`, not a lost session) and a signed-out prompt fails its turn, each with the flavor's sign-in text.
-- `prompt_inactivity_timeout_ms`: a turn whose agent sends nothing for this long fails, and its child is not reused. A turn waiting on a person or on an open tool call is not silent.
+- `prompt_inactivity_timeout_ms`: a turn whose agent sends nothing for this long fails, and its child is not reused. A turn waiting on a person is not silent. A turn waiting on an open tool call, including one that a person has just allowed, is not silent for `OPEN_TOOL_CALL_SILENCE_LIMITS` (8) limits. After that it is silent, because agy can leave a tool call open for good and then hang.
 - `watch_prompt_outcome(session_id)`: taken before the prompt is written and read after an `end_turn`, for an agent that reports some failures only outside the ACP stream.
 
 T3 Code's other hooks were not built, because agy 1.5.10 as Panels launches it does not need them. The reasons are recorded with the Antigravity driver Ticket.

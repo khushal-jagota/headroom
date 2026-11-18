@@ -124,7 +124,7 @@ export type NativePublicationPolicy =
   | {
       kind: 'mac-owned';
       state_root: string;
-      /** The provider's skills folder inside home: one path component. */
+      /** The provider's skills folder inside home: a relative path of one or more components. */
       skills_directory: string;
       source_names: readonly string[];
       directory: NativePublicationDirectory;

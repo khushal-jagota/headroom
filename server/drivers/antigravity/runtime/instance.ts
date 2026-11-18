@@ -18,6 +18,7 @@ import { AntigravityUsageAdapter, http_post_usage } from './allowance_usage.ts';
 import { AntigravityModelCatalog } from './catalog.ts';
 import { APP_DATA_DIRECTORY_NAME } from './configuration.ts';
 import { create_antigravity_flavor } from './flavor.ts';
+import { AntigravitySignIn } from './sign_in.ts';
 import { create_antigravity_status } from './status.ts';
 import { antigravity_transcript_usage } from './transcript_usage.ts';
 
@@ -46,10 +47,13 @@ export async function create_antigravity_instance(
     plan_selection_transition: acp_selection_transition,
     supervises_local_launches: true,
     child_factory: create_acp_child_factory(
-      create_antigravity_flavor({
-        ...launch_options,
-        executable: override ?? host.executable_on_path(antigravity_manifest.executable.name),
-      }),
+      create_antigravity_flavor(
+        {
+          ...launch_options,
+          executable: override ?? host.executable_on_path(antigravity_manifest.executable.name),
+        },
+        host.one_shot_children,
+      ),
       { child_processes: host.child_processes, worker_supervision: host.worker_supervision },
     ),
     transcript_usage: antigravity_transcript_usage(configured_home),
@@ -65,14 +69,25 @@ export async function create_antigravity_instance(
     child_processes: host.child_processes,
     one_shot_children: host.one_shot_children,
   });
+  const sign_in = new AntigravitySignIn(launch_options, {
+    executable: () => override ?? host.executable_on_path(antigravity_manifest.executable.name),
+    child_processes: host.child_processes,
+    one_shot_children: host.one_shot_children,
+    // A throwaway catalog session that starts signed in confirms the sign-in.
+    verify: async (executable) => (await catalog.read(executable)).signed_in,
+    now: () => host.now(),
+  });
   return {
     ...base,
     status: create_antigravity_status({ catalog: (executable) => catalog.read(executable) }),
+    sign_in,
     allowance_usage: new AntigravityUsageAdapter({
       credential_path: join(launch_options.home, APP_DATA_DIRECTORY_NAME, 'acp_token.json'),
       http_post: http_post_usage,
       now: () => new Date(),
     }),
-    dispose: (options) => catalog.shutdown(options),
+    dispose: async (options) => {
+      await Promise.all([catalog.shutdown(options), sign_in.shutdown(options)]);
+    },
   };
 }

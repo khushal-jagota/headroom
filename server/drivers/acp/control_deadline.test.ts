@@ -74,7 +74,8 @@ test('hung ordered persistence bounds configuration without failing other reques
     const startup = expect(
       config.start_values({
         access: 'full',
-        model: 'original',
+        // A model the session does not report as current, so startup must ask for it.
+        model: 'other',
         reasoning_effort: null,
       } as ResolvedConversationStart),
     ).rejects.toBeInstanceOf(SessionLoadFailed);

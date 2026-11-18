@@ -1,8 +1,11 @@
 /** What Antigravity's `agy acp` tells the shared ACP backend child. */
 import { RequestError } from '@agentclientprotocol/sdk/unstable';
 import { ConversationAccess } from '../../../conversation/contracts.ts';
+import { ensure_cli_compatible } from '../../../conversation/backends/cli_compatibility.ts';
+import type { OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
 import type { AcpFlavor, AcpLaunch } from '../../acp/flavor.ts';
+import { antigravity_driver } from '../driver.ts';
 import { APP_DATA_DIRECTORY_NAME, PROMPT_INACTIVITY_TIMEOUT_MS } from './configuration.ts';
 import { watch_antigravity_prompt_outcome } from './turn_outcome.ts';
 
@@ -46,14 +49,23 @@ export function antigravity_requires_sign_in(error: unknown): string | null {
     ? ANTIGRAVITY_SIGN_IN_REQUIRED
     : null;
 }
-export function create_antigravity_flavor(options: AntigravityLaunchOptions): AcpFlavor {
+/** `one_shot_children` runs the `agy --version` floor check when no verdict is kept for the file. */
+export function create_antigravity_flavor(
+  options: AntigravityLaunchOptions,
+  one_shot_children: OwnedOneShotChildren,
+): AcpFlavor {
   const launch = antigravity_acp_launch(options);
   return {
     label: 'Antigravity',
-    launch: (start) =>
-      start.access === ConversationAccess.full
+    async launch(start) {
+      // As Codex and Claude do before each launch. The card's read normally left a verdict.
+      await ensure_cli_compatible(antigravity_driver.driver_kind, options.executable, {
+        children: one_shot_children,
+      });
+      return start.access === ConversationAccess.full
         ? { ...launch, argv: [...launch.argv, '--dangerously-skip-permissions'] }
-        : launch,
+        : launch;
+    },
     requires_sign_in: antigravity_requires_sign_in,
     prompt_inactivity_timeout_ms: PROMPT_INACTIVITY_TIMEOUT_MS,
     watch_prompt_outcome: (session_id) =>

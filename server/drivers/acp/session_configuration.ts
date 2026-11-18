@@ -29,7 +29,10 @@ export function acp_error_text(error: unknown): string {
 export class ConfigurationNotApplied extends Error {}
 export class AcpSessionConfiguration {
   session_id: string | null = null;
-  /** What this child last set. Null: the agent's own choice, never set by Panels. */
+  /**
+   * The session's model and reasoning effort: what the agent last reported, or what this child
+   * last set. Null: the agent advertises no such option.
+   */
   model: string | null = null;
   reasoning_effort: string | null = null;
   wire_broken = false;
@@ -43,7 +46,17 @@ export class AcpSessionConfiguration {
   }
   bind(session_id: string, response: Pick<NewSessionResponse, 'configOptions'>): void {
     this.session_id = session_id;
-    this.options = response.configOptions ?? [];
+    this.adopt(response.configOptions ?? []);
+  }
+  /** Take the agent's options and the values it reports as current. */
+  private adopt(options: readonly SessionConfigOption[]): void {
+    this.options = options;
+    const current = (category: string) => {
+      const option = this.option(category);
+      return option?.type === 'select' ? option.currentValue : null;
+    };
+    this.model = current('model') ?? this.model;
+    this.reasoning_effort = current('thought_level') ?? this.reasoning_effort;
   }
   /** Keep the first reason the wire failed, so a later refusal can say why. */
   break_wire(cause: unknown): void {
@@ -142,7 +155,7 @@ export class AcpSessionConfiguration {
       'session/set_config_option',
       { configId, sessionId, value },
     );
-    if (response?.configOptions?.length) this.options = response.configOptions;
+    if (response?.configOptions?.length) this.adopt(response.configOptions);
   }
   private async apply_model(model: string): Promise<void> {
     if (model === this.model) return;

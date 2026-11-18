@@ -1,11 +1,14 @@
-/** ACP message blocks retain authored order and use the core's managed file service. */
+/**
+ * ACP message blocks retain authored order and use the core's managed file service. A file that
+ * cannot be read refuses the prompt: nothing was sent.
+ */
 import { pathToFileURL } from 'node:url';
 import type { ContentBlock } from '@agentclientprotocol/sdk/unstable';
 import { MessageFile, MessageImage, MessageText } from '../../conversation/message_content.ts';
 import type { MessageContent, MessagePiece } from '../../conversation/message_content.ts';
 import type { ConversationMessageFiles } from '../../conversation/message_files.ts';
 import { MessageFileMissing } from '../../conversation/record/message_files.ts';
-import { PromptWriteFailed } from '../../conversation/backends/contracts.ts';
+import { PromptWriteRefused } from '../../conversation/backends/contracts.ts';
 import { error_text } from '../../conversation/backends/failure_summary.ts';
 
 function file_error(error: unknown): boolean {
@@ -32,7 +35,7 @@ export class AcpMessages {
           });
         } catch (error) {
           if (!file_error(error)) throw error;
-          throw new PromptWriteFailed(
+          throw new PromptWriteRefused(
             `${piece.stored_file_id} could not be read: ${error_text(error)}`,
             { cause: error },
           );
@@ -49,7 +52,7 @@ export class AcpMessages {
           });
         } catch (error) {
           if (!(error instanceof MessageFileMissing)) throw error;
-          throw new PromptWriteFailed(
+          throw new PromptWriteRefused(
             `${piece.stored_file_id} could not be read: ${error_text(error)}`,
             { cause: error },
           );

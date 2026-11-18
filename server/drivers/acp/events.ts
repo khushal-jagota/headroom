@@ -36,6 +36,7 @@ import type { MessagePiece } from '../../conversation/message_content.ts';
 import { normalized_failure_summary } from '../../conversation/backends/failure_summary.ts';
 import { Deferred } from '../../core/deferred.ts';
 import type { AcpRequest } from './client.ts';
+import { OPEN_TOOL_CALL_SILENCE_LIMITS } from './configuration.ts';
 import type { AcpFlavor, AcpPromptOutcomeWatch } from './flavor.ts';
 import type { AcpMessages } from './messages.ts';
 import { acp_error_text } from './session_configuration.ts';
@@ -57,6 +58,8 @@ export interface AcpTurn {
   /** Resolves with the failure text once the agent has been silent too long. */
   readonly silence: Deferred<string>;
   silence_timer: ReturnType<typeof setTimeout> | null;
+  /** Silence limits passed, since the agent was last heard, while only an open tool call held the clock. */
+  limits_held_by_tool_calls: number;
   readonly outcome_watch: AcpPromptOutcomeWatch | null;
 }
 /** How the ending reporter reads and changes the child's state. */
@@ -136,8 +139,9 @@ export class AcpEvents {
       case 'agent_message_chunk':
         await this.message_chunk(turn, update.content, update.messageId ?? null);
         break;
-      case 'tool_call':
-        if (update.status !== 'completed' && update.status !== 'failed')
+      case 'tool_call': {
+        const status = update.status;
+        if (status !== 'completed' && status !== 'failed')
           turn.open_tool_calls.add(update.toolCallId);
         await this.sink.report(
           turn.token,
@@ -148,7 +152,17 @@ export class AcpEvents {
             detail: tool_call_detail(update.content),
           }),
         );
+        // A tool call can arrive already finished, and no update will finish it later.
+        if (status === 'completed' || status === 'failed')
+          await this.sink.report(
+            turn.token,
+            new ToolCallFinished({
+              tool_call_id: update.toolCallId,
+              tool_call_status: ToolCallStatus[status],
+            }),
+          );
         break;
+      }
       case 'tool_call_update': {
         const detail = tool_call_detail(update.content);
         const status = update.status;
@@ -208,6 +222,8 @@ export class AcpEvents {
     const ask_id = `${tool.toolCallId}:${++this.asks_raised}`;
     const answer = new Deferred<RequestPermissionResponse>();
     turn.parked_asks.set(ask_id, { answer, request_id: id });
+    // Once answered, the agent runs the tool it asked about until it reports the tool finished.
+    turn.open_tool_calls.add(tool.toolCallId);
     await this.sink.report(
       turn.token,
       new PermissionAskRaised({
@@ -228,13 +244,25 @@ export class AcpEvents {
     );
     return { answer: answer.promise };
   }
-  begin(token: TurnToken, request: AcpRequest<PromptResponse>, session_id: string): AcpTurn {
-    let outcome_watch: AcpPromptOutcomeWatch | null = null;
+  /** The flavor's outcome watch, taken before the prompt is written. */
+  watch_outcome(session_id: string): AcpPromptOutcomeWatch | null {
     try {
-      outcome_watch = this.flavor.watch_prompt_outcome?.(session_id) ?? null;
+      return this.flavor.watch_prompt_outcome?.(session_id) ?? null;
     } catch (error) {
       this.log(error);
+      return null;
     }
+  }
+  /**
+   * The written prompt's turn. A turn still current here was ended by the core without its reply,
+   * as after an unanswered cancel: it is abandoned, so its clock cannot fail this turn.
+   */
+  begin(
+    token: TurnToken,
+    request: AcpRequest<PromptResponse>,
+    outcome_watch: AcpPromptOutcomeWatch | null,
+  ): AcpTurn {
+    if (this.turn) this.abandon(this.turn);
     const turn: AcpTurn = {
       token,
       request,
@@ -246,27 +274,45 @@ export class AcpEvents {
       open_tool_calls: new Set(),
       silence: new Deferred<string>(),
       silence_timer: null,
+      limits_held_by_tool_calls: 0,
       outcome_watch,
     };
     this.turn = turn;
     this.heard_from_agent(turn);
     return turn;
   }
+  /** A permission answer reached the agent: it is working again. */
+  answered(turn: AcpTurn, ask_id: string): void {
+    turn.parked_asks.delete(ask_id);
+    this.heard_from_agent(turn);
+  }
   /**
-   * Restart the silence clock. A turn waiting on a person, or on a tool the agent still runs,
-   * is not silent.
+   * Restart the silence clock. A turn waiting on a person is not silent. A turn waiting on a tool
+   * the agent still runs is not silent for OPEN_TOOL_CALL_SILENCE_LIMITS limits, because an agent
+   * can leave a tool call open for good and then hang.
    */
   private heard_from_agent(turn: AcpTurn): void {
+    turn.limits_held_by_tool_calls = 0;
+    this.arm_silence(turn);
+  }
+  private arm_silence(turn: AcpTurn): void {
     const limit = this.flavor.prompt_inactivity_timeout_ms;
     if (limit === undefined) return;
     if (turn.silence_timer !== null) clearTimeout(turn.silence_timer);
     turn.silence_timer = setTimeout(() => {
       turn.silence_timer = null;
-      if (turn.parked_asks.size > 0 || turn.open_tool_calls.size > 0) this.heard_from_agent(turn);
-      else
-        turn.silence.resolve(
-          `${this.flavor.label} sent nothing for ${Math.round(limit / 60_000)} minutes, so Panels ended this turn. The next message starts a fresh ${this.flavor.label}.`,
-        );
+      if (turn.parked_asks.size > 0) return this.heard_from_agent(turn);
+      if (
+        turn.open_tool_calls.size > 0 &&
+        turn.limits_held_by_tool_calls < OPEN_TOOL_CALL_SILENCE_LIMITS
+      ) {
+        turn.limits_held_by_tool_calls += 1;
+        return this.arm_silence(turn);
+      }
+      const silent_for = duration_text(limit * (turn.limits_held_by_tool_calls + 1));
+      turn.silence.resolve(
+        `${this.flavor.label} sent nothing for ${silent_for}, so Panels ended this turn. The next message starts a fresh ${this.flavor.label}.`,
+      );
     }, limit);
   }
   /** The failure text a prompt error carries: the flavor's signed-out text, or the agent's. */
@@ -291,8 +337,9 @@ export class AcpEvents {
       // The agent may still be working. Its state is unknown, so this child takes no more prompts.
       silent = true;
       ending = ConversationTurnEnding.failed;
-      error_summary = heard.silence;
-      facts.break_wire(new Error(heard.silence));
+      error_summary = normalized_failure_summary(heard.silence);
+      // Only the current turn speaks for the child. An abandoned turn's clock is already stopped.
+      if (this.turn === turn) facts.break_wire(new Error(heard.silence));
       turn.request.cancel(new Error(heard.silence));
       void turn.prompt.catch(() => {});
     } else if ('error' in heard) {
@@ -370,4 +417,11 @@ export class AcpEvents {
     turn.silence_timer = null;
     this.settle_asks(turn);
   }
+}
+/** "90 seconds", "1 minute", "15 minutes": a limit as a person reads it. */
+function duration_text(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
 }

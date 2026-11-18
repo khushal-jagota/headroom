@@ -6,3 +6,8 @@ export const CANCELLED_TURN_ENDING_TIMEOUT_SECONDS = 15;
 export const ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS = 15;
 export const AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS = 15;
 export const CONTROL_REQUEST_TIMEOUT_SECONDS = 15;
+/**
+ * How many silence limits an open tool call holds a turn's silence clock for, counted from when
+ * the agent was last heard. An agent can leave a tool call open for good and then hang.
+ */
+export const OPEN_TOOL_CALL_SILENCE_LIMITS = 8;

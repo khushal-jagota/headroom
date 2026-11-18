@@ -53,7 +53,7 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
         },
       },
     );
-    turn = events.begin({ conversation_id: 'synthetic', turn_number: 1 }, request, 'synthetic');
+    turn = events.begin({ conversation_id: 'synthetic', turn_number: 1 }, request, null);
     turn.ending_reporter = events.report_ending(turn, {
       standard_error_tail: () => null,
       wire_ended: () => false,

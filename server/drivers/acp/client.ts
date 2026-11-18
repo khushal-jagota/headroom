@@ -544,6 +544,8 @@ export class AcpLauncher {
         });
       void owned.output_failed.then((error) => {
         client.close(error);
+        // Stop closes the client, which cancels stdout, and that reads as an output error.
+        if (this.sealed) return;
         try {
           handlers.log?.(error);
         } catch {

@@ -10,6 +10,8 @@ export const antigravity_driver: AgentDriver<null> = {
   driver_kind: parse_driver_kind('antigravity'),
   client: antigravity_client,
   manifest: antigravity_manifest,
+  // agy reads AGENTS.md (and GEMINI.md) from its workspace.
+  home_instructions_file: 'AGENTS.md',
   config: NO_DRIVER_CONFIG,
   models: antigravity_models,
   async create(input, host) {

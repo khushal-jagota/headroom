@@ -1,4 +1,4 @@
-/** A provider that keeps its skills in another folder of its home gets them there. */
+/** A provider that keeps its skills in another, nested folder of its home gets them there. */
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ test('publication links into the home skills folder the driver names', async () 
   const root = mkdtempSync(join(tmpdir(), 'mac-skills-'));
   roots.push(root);
   const home = join(root, 'provider');
-  mkdirSync(join(home, 'agent_skills'), { recursive: true });
+  mkdirSync(join(home, 'agent', 'skills'), { recursive: true });
   const publisher = new MacSkillsPublisher((error) => {
     throw error;
   });
@@ -28,10 +28,10 @@ test('publication links into the home skills folder the driver names', async () 
         required_skill_names: ['panels', 'panels-worker'],
         sources: [skill('panels'), skill('panels-worker')],
       },
-      { root: join(root, 'state'), native_home: home, native_skills_directory: 'agent_skills' },
+      { root: join(root, 'state'), native_home: home, native_skills_directory: 'agent/skills' },
     );
   } finally {
     await publisher.stop({ deadline: performance.now() / 1000 + 5 });
   }
-  expect(readdirSync(join(home, 'agent_skills')).sort()).toEqual(['panels', 'panels-worker']);
+  expect(readdirSync(join(home, 'agent', 'skills')).sort()).toEqual(['panels', 'panels-worker']);
 });

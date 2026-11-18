@@ -7,6 +7,7 @@ import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes
 import {
   BackendSpawnFailed,
   NeedsRebind,
+  PromptWriteRefused,
   ToolCallFinished,
   TurnEnded,
 } from '../../conversation/backends/contracts.ts';
@@ -21,6 +22,7 @@ import type { ConversationMessageFiles } from '../../conversation/message_files.
 import { uncontained_worker_supervision } from '../testing/uncontained_supervision.ts';
 import { AcpBackendChild } from './child.ts';
 import { AcpClient, AcpLauncher } from './client.ts';
+import { OPEN_TOOL_CALL_SILENCE_LIMITS } from './configuration.ts';
 import type { AcpFlavor } from './flavor.ts';
 
 afterEach(() => {
@@ -53,7 +55,10 @@ const NEW_SESSION = {
  * A scripted ACP peer over in-memory streams. `answer` replies to each request; null holds the
  * reply until the test sends it with `reply`.
  */
-function scripted(flavor_hooks: Partial<AcpFlavor>, answer: (method: string) => Answer) {
+function scripted(
+  flavor_hooks: Partial<AcpFlavor>,
+  answer: (method: string, params: unknown) => Answer,
+) {
   let input!: ReadableStreamDefaultController<AnyMessage>;
   const writes: AnyMessage[] = [];
   const events: BackendEventValue[] = [];
@@ -75,7 +80,7 @@ function scripted(flavor_hooks: Partial<AcpFlavor>, answer: (method: string) => 
           write(message) {
             writes.push(message);
             if (!('method' in message) || !('id' in message)) return;
-            const reply = answer(message.method);
+            const reply = answer(message.method, 'params' in message ? message.params : undefined);
             if (reply !== null)
               queueMicrotask(() => input.enqueue({ jsonrpc: '2.0', id: message.id, ...reply }));
           },
@@ -135,18 +140,36 @@ function scripted(flavor_hooks: Partial<AcpFlavor>, answer: (method: string) => 
         params: { sessionId: SESSION, update },
       });
     },
+    /** The agent asks permission to run the tool call `tool_call_id`. Its ask id is `<id>:<n>`. */
+    ask(tool_call_id: string) {
+      input.enqueue({
+        jsonrpc: '2.0',
+        id: `ask-${tool_call_id}`,
+        method: 'session/request_permission',
+        params: {
+          sessionId: SESSION,
+          toolCall: { toolCallId: tool_call_id, title: `Edit ${tool_call_id}` },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
+        },
+      });
+    },
     /** The agent's process ends: its output closes. */
     end() {
       input.close();
     },
-    prompt(text = 'hello') {
+    prompt(
+      text = 'hello',
+      change: { model_change: string | null; reasoning_effort_change: string | null } = {
+        model_change: null,
+        reasoning_effort_change: null,
+      },
+    ) {
       const content = text_message_content(text);
       return child.write_prompt({ conversation_id: 'scripted', turn_number: 1 }, content, {
         sender_label: 'Owner',
         sender_content: content,
         mode: PromptDeliveryMode.queue,
-        model_change: null,
-        reasoning_effort_change: null,
+        ...change,
       });
     },
   };
@@ -164,6 +187,8 @@ const ordinary = (method: string): Answer =>
               : { configOptions: NEW_SESSION.configOptions },
       };
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+const turn_ended = (peer: ReturnType<typeof scripted>) =>
+  peer.events.some((event) => event instanceof TurnEnded);
 
 // Risk: an agent that ended while idle fails the next prompt instead of being replaced. The core
 // rebinds only on NeedsRebind with failed_child_recovery (as Codex and Claude raise it).
@@ -214,6 +239,45 @@ test('start sets the model, then the effort the new model offers', async () => {
   await peer.child.stop();
 });
 
+// Risk: the agent takes the new model and refuses its effort. The prompt is refused while the
+// child stays on the new model and the record still shows the old one.
+test('a model taken before its effort was refused is put back before the prompt is refused', async () => {
+  const options = (model: string) => [
+    MODEL_OPTION(model, ['plain', 'deep']),
+    EFFORT_OPTION('medium', ['medium']),
+  ];
+  const peer = scripted({}, (method, params) => {
+    if (method === 'session/new')
+      return { result: { sessionId: SESSION, configOptions: options('plain') } };
+    if (method !== 'session/set_config_option') return ordinary(method);
+    const { configId, value } = params as { configId: string; value: string };
+    return configId === 'thought_level'
+      ? { error: { code: -32602, message: `${value} is not offered` } }
+      : { result: { configOptions: options(value) } };
+  });
+  // The session already reports `plain`, so the start sets nothing.
+  await peer.child.start(new ResolvedConversationStart({ ...peer.resolved, model: 'plain' }), {
+    vendor_session_cursor: null,
+  });
+  const refused = await peer
+    .prompt('hello', { model_change: 'deep', reasoning_effort_change: 'xhigh' })
+    .catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(PromptWriteRefused);
+  expect(
+    peer.requests('session/set_config_option').map((message) => {
+      const { configId, value } = (message as { params: { configId: string; value: string } })
+        .params;
+      return [configId, value];
+    }),
+  ).toEqual([
+    ['model', 'deep'],
+    ['thought_level', 'xhigh'],
+    ['model', 'plain'],
+  ]);
+  expect(peer.requests('session/prompt')).toHaveLength(0);
+  await peer.child.stop();
+});
+
 // Hook requires_sign_in. Risk: a signed-out agent reads as a lost session (retried forever) or
 // as an unexplained failure.
 test('a signed-out agent fails its start and its prompt with the flavor sign-in text', async () => {
@@ -239,7 +303,8 @@ test('a signed-out agent fails its start and its prompt with the flavor sign-in 
 });
 
 // Hook watch_prompt_outcome. Risk: an agent that reports its API error as text plus end_turn
-// shows the turn as completed. The watch must be taken before the prompt reaches the agent.
+// shows the turn as completed. The watch must be taken before the prompt reaches the agent, or a
+// fast failure is already in its baseline.
 test('an end_turn the outcome watch reads as failed ends the turn failed and reusable', async () => {
   const order: string[] = [];
   let peer!: ReturnType<typeof scripted>;
@@ -261,33 +326,53 @@ test('an end_turn the outcome watch reads as failed ends the turn failed and reu
     'quota reached',
     'reusable',
   ]);
-  expect(order).toEqual([`watch ${SESSION} after 1 prompts`]);
+  expect(order).toEqual([`watch ${SESSION} after 0 prompts`]);
   await peer.child.stop();
 });
 
-// Hook prompt_inactivity_timeout_ms. Risks: a hung agent holds the conversation forever; a long
-// tool call is killed for silence; the hung child takes the next prompt.
-test('a silent agent fails its turn and its child, but a running tool call is not silence', async () => {
+// Hook prompt_inactivity_timeout_ms. Risks: a hung agent holds the conversation forever; a person
+// answering slowly, or the tool they just allowed, is killed for silence; a tool call the agent
+// never closes turns the limit off; the hung child takes the next prompt.
+test('a silent agent fails its turn and its child; an allowed tool call holds the clock for a bounded time', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const peer = scripted({ prompt_inactivity_timeout_ms: 1000 }, ordinary);
   await peer.child.start(peer.resolved, { vendor_session_cursor: null });
   await peer.prompt();
-  peer.update({
-    sessionUpdate: 'tool_call',
-    toolCallId: 'tool',
-    title: 'sleep 3600',
-    kind: 'execute',
-    status: 'in_progress',
-  });
+  peer.ask('notes');
   await vi.advanceTimersByTimeAsync(5000);
-  expect(peer.events.some((event) => event instanceof TurnEnded)).toBe(false);
-  peer.update({ sessionUpdate: 'tool_call_update', toolCallId: 'tool', status: 'completed' });
+  expect(turn_ended(peer)).toBe(false);
+  expect(await peer.child.answer_permission_ask('notes:1', 'allow')).toBe('applied');
+  // The agent now runs the allowed tool and never reports it finished.
+  await vi.advanceTimersByTimeAsync(OPEN_TOOL_CALL_SILENCE_LIMITS * 1000);
+  expect(turn_ended(peer)).toBe(false);
   await vi.advanceTimersByTimeAsync(1000);
+  expect(turn_ended(peer)).toBe(true);
   const ended = await peer.ended;
   expect([ended.ending, ended.child_disposition]).toEqual(['failed', 'broken']);
-  expect(ended.error_summary).toContain('Scripted sent nothing for');
+  expect(ended.error_summary).toBe(
+    `Scripted sent nothing for ${OPEN_TOOL_CALL_SILENCE_LIMITS + 1} seconds, so Panels ended this turn. The next message starts a fresh Scripted.`,
+  );
   expect(peer.requests('$/cancel_request')).toHaveLength(1);
   await expect(peer.prompt()).rejects.toBeInstanceOf(NeedsRebind);
+  await peer.child.stop();
+});
+
+// Risk: a turn the core ended without its reply (a cancel the agent never answered) keeps its
+// silence clock, which then fails the next turn on the same child and breaks its wire.
+test('a turn ended without its reply cannot fail the next turn on the same child', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const peer = scripted({ prompt_inactivity_timeout_ms: 1000 }, ordinary);
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  await peer.prompt('hangs');
+  await vi.advanceTimersByTimeAsync(500);
+  await peer.prompt('next');
+  // The first turn's limit has passed, the second's has not.
+  await vi.advanceTimersByTimeAsync(700);
+  expect(turn_ended(peer)).toBe(false);
+  peer.reply('session/prompt', { result: { stopReason: 'end_turn' } });
+  const ended = await peer.ended;
+  expect([ended.ending, ended.child_disposition]).toEqual(['completed', 'reusable']);
+  expect(peer.requests('$/cancel_request')).toHaveLength(0);
   await peer.child.stop();
 });
 

@@ -24,8 +24,11 @@ export interface AcpPromptOutcomeWatch {
 export interface AcpFlavor {
   /** The agent's display name, used in the base's own error text. */
   readonly label: string;
-  /** Called once for each child start. */
-  launch(start: ResolvedConversationStart): AcpLaunch;
+  /**
+   * Called once for each child start, before anything is spawned. It may check the agent first,
+   * such as its CLI floor; a throw fails the start with `BackendSpawnFailed`.
+   */
+  launch(start: ResolvedConversationStart): AcpLaunch | Promise<AcpLaunch>;
   /**
    * The signed-out text when this agent error means the agent needs a sign-in, else null. A
    * start that fails this way does not start; a prompt that fails this way fails its turn with
