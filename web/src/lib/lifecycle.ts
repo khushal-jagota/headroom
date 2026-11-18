@@ -153,6 +153,24 @@ export function ceilingOptionsFor(
   }));
 }
 
+/** Rows the ceiling picker renders.
+ *
+ * The list starts at the stage the ticket is in. Earlier stages are left out
+ * of the rows. The current stage stays a choice.
+ * Outside approval, "No further" is the first of those same rows.
+ */
+export function ceilingPickerChoices(
+  lc: Lifecycle | null,
+  currentStage: string | null,
+  approving: boolean
+): Array<{ value: string; name: string }> {
+  const stages = ceilingOptionsFor(
+    lc,
+    currentStage || lc?.ceilingRange[0] || "needs_brief"
+  ).map((option) => ({ value: option.value, name: option.label }));
+  return approving ? stages : [{ value: "none", name: "No further" }, ...stages];
+}
+
 /** The final report advances directly to the terminal stage. */
 export function finalApprovalFor(lc: Lifecycle | null, stage: string): boolean {
   if (!lc) return false;
