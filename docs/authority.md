@@ -14,7 +14,7 @@ Agents use `panels api` when no dedicated command covers a route. This keeps the
 
 On the live host, the owner is the caller Tailscale Serve vouches for. The browser and the iPhone app reach Headroom through Tailscale Serve, which adds Khushal's login header. This owner path is separate from agent credentials.
 
-An unidentified caller stands above nothing. It can read what any caller can read and send a message to Chief. Other writes are refused. The refusal directs an agent to the authenticated CLI API command instead of hand-built headers. Panels supplies a resumed child with its credential. A terminal without identity, the stall watchdog and the background Hermes gateway use unidentified access on the live host.
+An unidentified caller stands above nothing. It can read what any caller can read and send a message to Chief. Other writes are refused. The refusal directs an agent to the authenticated CLI API command instead of hand-built headers. Panels supplies a resumed child with its credential. A terminal without identity and the stall watchdog use unidentified access on the live host.
 
 A server without trusted ingress, such as staging or a local checkout, retains owner access for a call with no identity. An attempted agent call with an invalid credential or old identity headers stays unidentified there too.
 

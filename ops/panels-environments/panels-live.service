@@ -10,7 +10,6 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PLAN_CONFIG_PATH=%h/Deployments/Panels/current/data/config.yaml
 Environment=PLAN_DB_PATH=%h/Deployments/Panels/current/data/planner.db
 Environment=PLAN_DISPATCHER_LOCK_PATH=%h/Deployments/Panels/current/data/dispatcher.lock
-Environment=PLAN_HERMES_HOME=%h/.hermes
 Environment=PLAN_LOGS_DIR=%h/Deployments/Panels/current/logs
 Environment=PLAN_PORT=8767
 Environment=PLAN_SERVER_CONTROL_SOCKET=%h/Deployments/Panels/current/data/server-control.sock
