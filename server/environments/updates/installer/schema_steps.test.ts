@@ -21,10 +21,7 @@ import {
   createReadAccess,
   SEED_STATEMENT_QUERY,
 } from '../../../core/database/index.ts';
-import {
-  application_schema_seed,
-  require_application_schema,
-} from '../../../core/database/admission.ts';
+import { application_schema_seed } from '../../../core/database/admission.ts';
 import {
   BASELINE_SEED,
   TEST_SCHEMA_STEPS,
@@ -170,7 +167,8 @@ it('a failing step restores the backup before the previous app starts', async ()
       'stop',
       'schema_steps',
       'stop',
-      ['restore', '/scripted/snapshot', FROM],
+      // Still the new app: a kill before the renames leaves it for its startup recovery.
+      ['restore', '/scripted/snapshot', TO],
       'start',
       ['healthy', FROM],
     ]);
@@ -280,12 +278,13 @@ it('step applied, health fails, old app runs on the restored database', async ()
           }
           return false;
         }
-        // The previous app's own startup admission, its schema, and no row from after the step.
-        require_application_schema(request.database);
+        // The previous app's revision, its schema, and no row from after the step.
         const reader = createReadAccess(request.database);
         try {
           return reader.read(
             (sql) =>
+              sql.get<{ version_num: string }>('SELECT version_num FROM alembic_version')
+                ?.version_num === BASELINE_SEED.alembicRevision &&
               JSON.stringify(
                 sql.all<{ sql: string }>(SEED_STATEMENT_QUERY).map((row) => row.sql),
               ) === JSON.stringify(BASELINE_SEED.statements) &&

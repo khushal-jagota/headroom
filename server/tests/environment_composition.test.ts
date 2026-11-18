@@ -1,4 +1,4 @@
-import { registry_of_factories } from '../drivers/testing/registry.ts';
+import { for_every_built_in_backend, registry_of_factories } from '../drivers/testing/registry.ts';
 import { path_is_within } from '../core/path_containment.ts';
 import { filesRoot } from '../files/logic/paths.ts';
 import { register_workspace } from '../ticket_workspaces/data.ts';
@@ -48,8 +48,6 @@ function setup() {
     HOME: 'home',
     CODEX_HOME: 'codex',
     CLAUDE_CONFIG_DIR: 'claude',
-    HERMES_HOME: 'hermes',
-    PLAN_HERMES_HOME: 'plan-hermes',
   })) {
     const home = path + '.' + suffix;
     mkdirSync(home);
@@ -436,11 +434,7 @@ test.skipIf(process.platform !== 'linux')(
           message_files: new ConversationMessageFiles(path),
           delivery_model_refusal: () => null,
           execution_refusal: () => null,
-          backend_registry: registry_of_factories({
-            codex: forbidden,
-            claude: forbidden,
-            hermes: forbidden,
-          }),
+          backend_registry: registry_of_factories(for_every_built_in_backend(() => forbidden)),
         });
         return core;
       },

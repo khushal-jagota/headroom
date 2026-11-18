@@ -108,7 +108,6 @@ describe('names', () => {
           'server/conversation/testing/a.ts',
           'server/test_host.ts',
           'server/drivers/built_in.ts',
-          'server/drivers/built_in_manifests.ts',
           'src/planner/a.ts',
           'web/tests/a.ts',
         ].map((path) => ({ path, text })),

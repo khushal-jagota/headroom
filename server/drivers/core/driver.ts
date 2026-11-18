@@ -4,6 +4,7 @@ import type { BackendUsageAdapter } from '../../conversation/backend_usage/contr
 import type { StopOptions } from '../../lifecycle/contracts.ts';
 import type { BackendCapabilities } from './capabilities.ts';
 import type { DriverClientDefinition } from './client.ts';
+import type { ExecutorDriver } from './executor.ts';
 import type { DriverHost } from './host.ts';
 import type { BackendInstanceId, DriverKind } from './identity.ts';
 import type { DriverManifest } from './manifest.ts';
@@ -33,6 +34,8 @@ export interface AgentDriver<Config> {
     host: DriverHost,
     signal: AbortSignal,
   ): Promise<DriverInstance>;
+  /** Loads the half an executor machine runs. Absent: no executor machine runs this driver. */
+  executor?(): Promise<ExecutorDriver>;
   /** Pure rules over model ids. On the driver, so they hold while an instance is unavailable. */
   readonly models?: DriverModelRules;
   /** Why this driver cannot launch the model, or null. */
@@ -47,6 +50,8 @@ export interface DriverModelRules {
   version(model_id: string): readonly number[];
   /** Whether a requested model is among the offered ones. Absent: exact match. */
   is_offered?(requested: string, offered: readonly string[]): boolean;
+  /** A readable name for a model id its catalog does not label well, or null. Absent: none. */
+  readable_name?(model_id: string): string | null;
 }
 /** Each driver decodes its own config, so a list of drivers erases it. */
 export type AnyAgentDriver = AgentDriver<any>;
@@ -60,6 +65,8 @@ export interface DriverInstance {
   readonly allowance_usage?: BackendUsageAdapter;
   readonly transcript_usage?: TranscriptUsageSource;
   readonly sign_in?: DriverSignInController;
+  /** Every local child reports a supervision record before `start()` resolves. */
+  readonly supervises_local_launches?: boolean;
   /** How a running child takes a new model or effort. Must not use `this`: callers spread instances. */
   plan_selection_transition(input: SelectionTransitionInput): SelectionTransitionPlan;
   /** Must not rely on `this`: callers may spread an instance. May be called again. */

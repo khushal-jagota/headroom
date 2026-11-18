@@ -100,7 +100,6 @@ export class MacRemoteChild implements BackendChild {
   private readonly initial_puts = new Set<Promise<boolean>>();
   private readonly delivery_cancellation = new AbortController();
   private readonly pending_prompt: WireTypes['ChildCommand'] | null;
-  private claude_started_on: readonly [string, string | null] | null = null;
   private stop_task: Promise<void> | null = null;
   private stop_settlement: Promise<void> = Promise.resolve();
   constructor(
@@ -110,7 +109,6 @@ export class MacRemoteChild implements BackendChild {
     options: {
       event_sink?: BackendEventSink | null;
       initial_history_complete?: boolean;
-      started_on?: ResolvedConversationStart | null;
       pending_prompt?: WireTypes['ChildCommand'] | null;
     } = {},
   ) {
@@ -121,11 +119,6 @@ export class MacRemoteChild implements BackendChild {
     this.skill_snapshot_supplier = skill_snapshot_supplier;
     this.event_sink = options.event_sink ?? null;
     this.initial_history_complete = options.initial_history_complete ?? true;
-    if (options.started_on != null) this.note_start(options.started_on);
-  }
-  private note_start(start: ResolvedConversationStart): void {
-    if (start.backend_key === 'claude')
-      this.claude_started_on = [start.model, start.reasoning_effort];
   }
   async detach(options?: StopOptions): Promise<void> {
     this.delivery_cancellation.abort(
@@ -225,24 +218,12 @@ export class MacRemoteChild implements BackendChild {
       throw error;
     }
     if (!placed) throw new backend.BackendSpawnFailed(REPLACED_MESSAGE);
-    this.note_start(start);
   }
   async write_prompt(
     turn: TurnToken,
     content: MessageContent,
     options: Parameters<BackendChild['write_prompt']>[2],
   ): Promise<backend.BackendPromptAccepted> {
-    if (this.claude_started_on !== null) {
-      const [model, effort] = this.claude_started_on;
-      if (
-        (options.model_change !== null && options.model_change !== model) ||
-        ((options.reasoning_effort_change !== null || options.reasoning_effort_is_set === true) &&
-          options.reasoning_effort_change !== effort)
-      )
-        throw new backend.NeedsRebind(
-          'claude takes its model and reasoning effort when the child starts',
-        );
-    }
     const command = this.command(
       {
         kind: 'write_prompt',

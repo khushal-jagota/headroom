@@ -43,6 +43,7 @@ export async function create_claude_instance(
     driver_kind: claude_driver.driver_kind,
     capabilities: CLAUDE_CAPABILITIES,
     plan_selection_transition: claude_selection_transition,
+    supervises_local_launches: true,
     child_factory: create_claude_backend_child_factory(claude_launch(host), {
       child_processes: host.child_processes,
       one_shot_children: host.one_shot_children,

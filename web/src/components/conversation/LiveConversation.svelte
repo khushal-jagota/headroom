@@ -57,6 +57,7 @@
     reserveOutgoingMessageImages,
     reserveRecalledOutgoingMessages,
     tellWhenAWaitRunsOut,
+    theServerRefusedTheSend,
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
@@ -717,7 +718,7 @@
       // cannot return its words to the composer or undo that committed destination.
       if (committedMessageIds.has(message.messageId)) return true;
       errorNote = sentenceFor(error);
-      if (theServerTurnedItAway(error)) {
+      if (theServerRefusedTheSend(error)) {
         await stopDrawing(message.messageId);
         return false;
       }
@@ -725,16 +726,6 @@
       errorNote = null; // The retained bubble now states this unanswered transport outcome.
       return true;
     }
-  }
-
-  /** Whether the server answered, and answered by rejecting the request itself.
-   *
-   * That is the only failure that says this text got nowhere. A request that never reached
-   * the server, and one the server fell over part-way through, both leave the question
-   * open — the send may have landed, and its row may be on its way.
-   */
-  function theServerTurnedItAway(error: unknown): boolean {
-    return error instanceof ConversationWireError && error.status >= 400 && error.status < 500;
   }
 
   async function holdOnTo(

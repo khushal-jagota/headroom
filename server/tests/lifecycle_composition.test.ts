@@ -1,7 +1,7 @@
 /** Gap: individual loop tests do not prove shared ownership, startup order, or
  * late-transport fencing at lifecycle shutdown. Reuse the Ticket DB and locks.
  */
-import { registry_of_factories } from '../drivers/testing/registry.ts';
+import { for_every_built_in_backend, registry_of_factories } from '../drivers/testing/registry.ts';
 import { afterEach, expect, test, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { Socket } from 'node:net';
@@ -822,11 +822,7 @@ test('startServer reconciles before core construction and a route collision star
                 conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
               ),
             message_files: new ConversationMessageFiles(path),
-            backend_registry: registry_of_factories({
-              codex: noProvider,
-              claude: noProvider,
-              hermes: noProvider,
-            }),
+            backend_registry: registry_of_factories(for_every_built_in_backend(() => noProvider)),
           });
         },
         createEnvironments: create_test_environment_runtime,
@@ -896,11 +892,7 @@ test('startServer closes both services after a background start failure while re
               context.database.read((sql) =>
                 conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),
               ),
-            backend_registry: registry_of_factories({
-              codex: no_provider,
-              claude: no_provider,
-              hermes: no_provider,
-            }),
+            backend_registry: registry_of_factories(for_every_built_in_backend(() => no_provider)),
           });
         },
         notificationDelivery: (context) => ({

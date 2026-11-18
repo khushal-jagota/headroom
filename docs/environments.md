@@ -2,7 +2,7 @@
 
 An environment is one running Headroom server with its own state: a database, files, logs, locks, and a loopback port. Headroom has three kinds on the VPS: live, staging, and Ticket servers. A local checkout on any machine is the same shape. This page says which servers exist, what separates them, and who runs what on the host.
 
-All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Hermes, Codex, and Claude homes. Headroom does not copy them into role accounts.
+All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Codex, Claude and Antigravity homes. Headroom does not copy them into role accounts.
 
 ```text
 ~/Deployments/Panels/current/{app,data,logs}   live: the installed release, no Git
@@ -42,7 +42,7 @@ A failed health trial returns to the previous app and snapshot record. This roll
 
 Mac home publication requires a hosted Apple Silicon build and proof of the sealed archive. The proof admits its native dependencies, starts the real home, checks readiness, and confirms a clean stop. Publication binds the uploaded archive and proof to the same source revision and workflow attempt. The home archive contains the server, provider packages, web assets, and installation recipe. The host supplies Node. The Mac executor archive has a separate identity and cannot substitute for it.
 
-Worker supervision is one subsystem for home and executor processes. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. Linux Workers share the home service resource domain, but the adapter removes its protected OOM score before the backend starts. Delegated cgroup v2 child groups keep each Linux Worker and its descendants inside a separate cleanup boundary. Unsupported hosts retain a cleanup fence. Separate Worker units and slices do not apply.
+Process supervision covers every local conversation on the home, Chief, Manager and generic conversations as well as Workers, and the Workers on executors. It uses exact identities and durable custody for bounded shutdown and scoped cleanup proof. Unknown cleanup retains a fence. On Linux, delegated cgroup v2 child groups keep each supervised process and its descendants inside a separate cleanup boundary; hosts without delegation retain a cleanup fence. Everything shares the home service resource domain, and only Workers lower their priority and give up the protected OOM score before the backend starts. Separate Worker units and slices do not apply. [Conversations](conversations.md#worker-processes) owns the details.
 
 The contracts and OS adapters live in `platform_runtime/`. Domain policy stays in lifecycle, preview, conversation, and environment code.
 
@@ -52,7 +52,7 @@ Defaults live in `config.yaml`. Every value there can be overridden by the match
 
 A server can also be given a default workspace folder for new agent conversations. It links the managed skills into that folder and refuses to start rather than overwrite anything already there. How a conversation picks its folder is in [Conversations](conversations.md).
 
-Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs.
+Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs; Antigravity runs the host's own `agy`.
 
 Live and staging launches rebuild the process environment from a fixed allowlist instead of inheriting the caller's. Each backend driver's manifest contributes its own variables, home folder, and skills folder to that list. Live passes only named settings and provider keys from its service environment. Staging keeps the user's home, locale, terminal, and path, drops stray `PLAN_*` values, adds validated credentials from its own file, and sets the paths it owns. Credentials are never written into a manifest or printed.
 
@@ -96,7 +96,7 @@ New Panels Ticket checkouts are independent partial clones of GitHub's current s
 
 On macOS, managed Ticket Workers receive an Xcode configuration that enables a shared compilation cache beneath the executor root. The cache survives Ticket removal. Each checkout keeps its own DerivedData and build products, so concurrent builds share cached compilation results without sharing writable build directories. The configuration preserves the native account's existing Xcode configuration. Hosted Xcode 26.6 checks prove reuse of SDK compilation results across checkouts. Project-source cache keys still contain private build paths, so this does not prove project-source reuse or Wren's Xcode 27.1 build times.
 
-Codex, Claude, and Hermes use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
+Codex and Claude use real disk scratch at `~/.pw/<ticket-id>-<six hex characters>` on Linux and macOS. This short path leaves room for Unix sockets. `TMPDIR`, `TMP`, and `TEMP` point there, and the launcher removes it when the backend process ends, including failed startup. A fresh backend folder replaces other scratch folders for the same Ticket. Retirement removes the scratch recorded before that workspace detached, so a later retry preserves fresh backend scratch.
 
 Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current. Scratch preparation and removal run on awaited worker threads. A cancelled start waits for preparation and removes its exact new directory before it releases ownership.
 

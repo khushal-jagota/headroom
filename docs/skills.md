@@ -5,7 +5,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 ## What it is made of
 
 - **The skill row.** Shared role text lives in the database. Structured preset guidance generates specialist skill rows.
-- **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every agent home, as each backend driver declares it, links to those copies, and a server with an explicit workspace links it there too.
+- **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every agent home, as each backend driver declares it, links to those copies (Antigravity's in `~/.gemini/config/skills`), and a server with an explicit workspace links it there too.
 - **The seed.** The skill tree packaged with the code fills a database that has no skills yet. Nothing reads it after that.
 - **Skill history.** The editor keeps saved versions in the database. Worker steps do not record skill versions.
 - **Supporting files.** A skill folder can hold other files beside `SKILL.md`. They live only on disk: no row holds them, the skills backup copies them, and republication leaves them alone.
@@ -28,7 +28,7 @@ Every Worker follows its own Ticket's workflow guide, which it receives at kicko
 ## Decisions that shape it
 
 - Shared role rows and structured preset guidance are their respective sources. Specialist skills are generated output. Editing the packaged tree changes the next fresh install.
-- One copy for all three backends, so the same kind of agent gets the same words on Hermes, Codex, and Claude.
+- One copy for every backend, so the same kind of agent gets the same words on Codex, Claude and Antigravity.
 - Agents that need a skill changed hand the text up. Only the owner and the Chief write skills.
 
 ## Code
@@ -38,4 +38,4 @@ Every Worker follows its own Ticket's workflow guide, which it receives at kicko
 - `server/skills/seeds/`: the seed, read by `server/skills/data.ts`.
 - `web/src/components/RoleSkillEditor.svelte`: the editor.
 
-_Last verified: 2026-11-09._
+_Last verified: 2026-11-18._

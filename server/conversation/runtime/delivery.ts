@@ -1,4 +1,4 @@
-import { ticket_id_of } from '../../executor/routing.ts';
+import { worker_ticket_id } from '../../worker_supervision/logic/worker_launch.ts';
 import { is_memory_notice_sender_message_id } from '../../runtime/worker_memory.ts';
 /** A local prompt crosses the provider boundary once, then settles only its record. */
 import {
@@ -47,6 +47,7 @@ import { uncertain_row, refused_row, prompt_row } from './messages.ts';
 import { field_mutation } from './save_attempt.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { wait_for_item } from '../../executor/item_budget.ts';
+import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../child_custody.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
@@ -93,9 +94,14 @@ async function ensure_child(
     model: target.model!,
     reasoning_effort: target.reasoning_effort,
   });
-  const sink = host.make_sink(state);
+  const instance = host.options.backend_registry.require_live(resolved.backend_key);
+  // The factory may still return a remote child. A remote child writes no custody row, so its
+  // marked generation is never judged.
+  const sink = host.make_sink(state, {
+    supervised_launch: instance.supervises_local_launches === true,
+  });
   state.child_event_sink = sink;
-  const child = host.options.backend_registry.require_live(resolved.backend_key).child_factory({
+  const child = instance.child_factory({
     resolved_start: resolved,
     event_sink: sink,
     message_files: host.options.message_files,
@@ -135,6 +141,34 @@ async function ensure_child(
   if (host.shutting_down || state.reserved_turn !== reservation) {
     if (!host.shutting_down || !child.stop_outside_lock) await host.discard_child(state, child);
     throw new DeliveryCancelled();
+  }
+  // A marked row without a record reads as never spawned after a restart, so a child that broke
+  // that promise is stopped while its handle is still here. A cancelled launch was stopped above.
+  if (!child.stop_outside_lock && sink.generation.startsWith(SUPERVISED_CHILD_GENERATION_PREFIX)) {
+    let recorded: string | null = null;
+    let failure: unknown = null;
+    try {
+      recorded = host.options.store.local_child_supervision_record(
+        state.record.conversation_id,
+        sink.generation,
+      );
+    } catch (error) {
+      failure = error;
+    }
+    if (recorded === null) {
+      state.child = child;
+      state.child_is_quarantined = true;
+      try {
+        await host.discard_child(state, child);
+      } catch (error) {
+        // The refusal stays the reason; a failed stop keeps the child quarantined.
+        failure = failure === null ? error : new AggregateError([failure, error]);
+      }
+      throw new BackendSpawnFailed(
+        'the agent started without a supervision record, so Panels stopped it',
+        failure === null ? undefined : { cause: failure },
+      );
+    }
   }
   state.child = child;
   state.child_selection = {
@@ -176,7 +210,7 @@ export async function deliver_prompt(
       : host.options.delivery_model_refusal(
           state.record.backend_key,
           requested,
-          ticket_id_of(state.record.resolved_start()),
+          worker_ticket_id(state.record.resolved_start()),
         );
   if (refusal !== null) {
     return result({
@@ -392,7 +426,7 @@ export async function deliver_prompt(
       throw new NeedsRebind('exact desired default or alias target requires a fresh child');
     }
     // A local child implies a live instance. A remote child's backend may have none on this
-    // home; the remote child refuses a selection it cannot carry before placing the prompt.
+    // home; then the machine's adapter refuses a selection its child cannot carry.
     const entry = host.options.backend_registry.get(state.record.backend_key);
     if (had_child && entry?.kind === 'live') {
       const instance = entry.instance;

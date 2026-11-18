@@ -27,6 +27,9 @@ jobs:
       - name: Build and smoke the production server with a private populated fixture
         shell: bash
         run: |
+          # Every local conversation is supervised; proven cleanup needs a delegated cgroup,
+          # and the runner service cgroup is not writable.
+          systemd-run --user --scope --quiet -p Delegate=yes -- \
           env -i PATH="$PATH" LANG=C.UTF-8 LC_ALL=C.UTF-8 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             SMOKE_PARENT="$RUNNER_TEMP/typescript-production-smoke" \
@@ -34,8 +37,6 @@ jobs:
             HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home" \
             CODEX_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.codex" \
             CLAUDE_CONFIG_DIR="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.claude" \
-            HERMES_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.hermes" \
-            PLAN_HERMES_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.hermes" \
             XDG_CONFIG_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/config" \
             XDG_CACHE_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/home/.cache" \
             XDG_DATA_HOME="$RUNNER_TEMP/typescript-production-smoke/bootstrap/data" \
@@ -59,7 +60,7 @@ jobs:
             PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false \
             bash --noprofile --norc -euo pipefail <<'SMOKE'
           umask 077
-          mkdir -p "$HOME"/{.codex,.claude,.hermes,.cache,.npm} \
+          mkdir -p "$HOME"/{.codex,.claude,.cache,.npm} \
             "$SMOKE_PARENT/bootstrap"/{app,config,data,state,run,workspace,logs,backups}
           exec > >(tee "$SMOKE_PARENT/job.log") 2>&1
           printf '{}\n' > "$PLAN_CONFIG_PATH"

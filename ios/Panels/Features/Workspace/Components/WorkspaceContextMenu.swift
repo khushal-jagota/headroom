@@ -154,15 +154,8 @@ private struct WorkspacePreview: View {
         guard let configuration else { return "" }
         let backend = backends.first { $0.backendKey == configuration.backendKey }
         let model = configuration.model ?? startValues?.model ?? backend?.defaultModelId ?? ""
-        let selected = backend?.availableModels.first { $0.modelId == model }
-        let resolved = selected?.resolvedModelId
-        let label: String
-        if let resolved, resolved != selected?.selectedVariant {
-            let concrete = backend?.availableModels.first { $0.modelId == resolved }?.displayName
-            if let concrete, concrete != resolved, concrete.lowercased() != selected?.selectedVariant?.lowercased() { label = concrete }
-            else { label = readableModel(resolved) }
-        } else { label = selected?.displayName ?? resolved ?? model }
-        let effort = configuration.backendKey == "hermes" ? "" : configuration.reasoningEffort ?? startValues?.reasoningEffort ?? ""
+        let label = backend?.modelName(model) ?? model
+        let effort = backend?.offersReasoning == false ? "" : configuration.reasoningEffort ?? startValues?.reasoningEffort ?? ""
         return [label, effort].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
@@ -303,19 +296,5 @@ private struct WorkspacePreview: View {
         if ticket.awaitingAgentApproval { return "Awaiting an agent's approval at \(label)." }
         if ticket.conversationSignal?.working == true { return "Currently doing \(label)." }
         return "At \(label)."
-    }
-    private func readableModel(_ identifier: String) -> String {
-        let large = identifier.hasSuffix("[1m]")
-        let value = large ? String(identifier.dropLast(4)) : identifier
-        let parts = value.split(separator: "-").map(String.init)
-        if parts.first == "claude", parts.count > 1 {
-            let version = parts.dropFirst(2).filter { !($0.count == 8 && $0.allSatisfy(\.isNumber)) }
-            if version.allSatisfy({ $0.allSatisfy(\.isNumber) }) {
-                return parts[1].capitalized + (version.isEmpty ? "" : " " + version.joined(separator: ".")) + (large ? " (1M)" : "")
-            }
-        }
-        if value.hasPrefix("gpt-") { return "GPT " + parts.dropFirst().map { $0.prefix(1).uppercased() + String($0.dropFirst()) }.joined(separator: " ") }
-        if ["opus", "sonnet", "haiku"].contains(value.lowercased()) { return value.capitalized + (large ? " (1M)" : "") }
-        return identifier
     }
 }

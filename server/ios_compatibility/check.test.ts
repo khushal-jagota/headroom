@@ -26,8 +26,6 @@ test('publication accepts the committed reviewer and refuses a job-edited review
       'server/goals/cli/guidance.json',
       'server/managers/page_cli/guidance.json',
       'server/executor/wire.schema.json',
-      'src/planner/conversation/backends/hermes_acp_extension.py',
-      'src/planner/conversation/backends/hermes_model_catalog.py',
     ]) {
       await mkdir(dirname(join(root, name)), { recursive: true });
       await writeFile(join(root, name), '{}\n');

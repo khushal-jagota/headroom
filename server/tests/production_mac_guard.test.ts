@@ -1,4 +1,8 @@
-import { registry_of_factories, unread_driver_host } from '../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+  unread_driver_host,
+} from '../drivers/testing/registry.ts';
 import { authenticate_launch_token } from '../agent_identity/data.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 /** Gap: persisted Mac presence cannot authorize a VPS-local adapter for a retained
@@ -87,11 +91,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
         database.read((sql) =>
           conversation_execution_refusal(sql, id, local_ticket_execution_refusal),
         ),
-      backend_registry: registry_of_factories({
-        claude: delegate,
-        codex: delegate,
-        hermes: delegate,
-      }),
+      backend_registry: registry_of_factories(for_every_built_in_backend(() => delegate)),
     },
   });
   database = f.database;
@@ -136,6 +136,13 @@ test('local composition refuses a retained Mac Ticket before constructing its se
   try {
     await f.start();
     const ticket = create(f.database, { locale: 'macos' });
+    const identity = {
+      protocol_version: PROTOCOL_VERSION,
+      spool_format_version: SPOOL_FORMAT_VERSION,
+      application_revision: 'synthetic-mac',
+      executor_incarnation: 'retained-mac',
+      connection_generation: 1,
+    };
     f.database.write((sql) => {
       const schema = JSON.parse(
         readFileSync(new URL('../core/database/application_schema.json', import.meta.url), 'utf8'),
@@ -150,18 +157,27 @@ test('local composition refuses a retained Mac Ticket before constructing its se
       }
       sql.run(
         `INSERT INTO mac_executor_presence
-        (machine_id,executor_incarnation,identity_json,last_lease_at_ms) VALUES(?,?,?,?)`,
+        (machine_id,executor_incarnation,identity_json,last_lease_at_ms,lease_json)
+        VALUES(?,?,?,?,?)`,
         [
           ORIGINAL_MAC_MACHINE_ID,
           'retained-mac',
-          JSON.stringify({
-            protocol_version: PROTOCOL_VERSION,
-            spool_format_version: SPOOL_FORMAT_VERSION,
-            application_revision: 'synthetic-mac',
-            executor_incarnation: 'retained-mac',
-            connection_generation: 1,
-          }),
+          JSON.stringify(identity),
           Date.now(),
+          // The Mac's last lease lists the drivers it runs.
+          JSON.stringify({
+            identity,
+            process_id: 4242,
+            mac_wall_clock_ms: 0,
+            queue_depth: 0,
+            oldest_item_age_ms: null,
+            waiting_conversations: [],
+            waiting_conversations_truncated: false,
+            working_turns: [],
+            admission_stopped: false,
+            cleanup_uncertainties: [],
+            driver_kinds: ['codex', 'claude'],
+          }),
         ],
       );
       write_ticket_conversation_start(sql, ticket.id, {
@@ -205,11 +221,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
     bound = compose_production_backends(
       context,
       {
-        registry: registry_of_factories({
-          claude: local_constructor,
-          codex: local_constructor,
-          hermes: local_constructor,
-        }),
+        registry: registry_of_factories(for_every_built_in_backend(() => local_constructor)),
         host: unread_driver_host,
       },
       {

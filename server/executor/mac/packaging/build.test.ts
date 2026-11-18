@@ -91,7 +91,6 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
         'server/executor/mac/entrypoint.ts',
         'server/executor/wire.generated.ts',
         'server/executor/wire.schema.json',
-        'src/planner/conversation/backends/hermes_acp_extension.py',
         'server/worker_types/shipped_worker_types.json',
       ]),
     );

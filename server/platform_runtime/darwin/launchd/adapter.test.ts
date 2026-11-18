@@ -27,6 +27,7 @@ describe('Mac Worker launchd custody', () => {
           GOOD: 'allowed\t\n\r<&',
         },
         '/',
+        { lower_priority: true },
       );
       expect(plist).not.toContain('LESS_TERMCAP_mb');
       expect(plist).not.toContain('INVALID');
@@ -79,10 +80,14 @@ describe('Mac Worker launchd custody', () => {
     expect(jobs.identity(process.cwd(), 'b'.repeat(32))).not.toEqual(first);
     expect(jobs.identity('/', 'a'.repeat(32))).not.toEqual(first);
     expect(() => service_target({ ...job, label: 'com.apple.example' })).toThrow('Invalid');
-    expect(job_plist(first.label, ['/test'], {}, '/')).toContain(
-      `<key>Nice</key><integer>${NICE}</integer>`,
+    const nice = `<key>Nice</key><integer>${NICE}</integer>`;
+    expect(job_plist(first.label, ['/test'], {}, '/', { lower_priority: true })).toContain(nice);
+    expect(job_plist(first.label, ['/test'], {}, '/', { lower_priority: false })).not.toContain(
+      'Nice',
     );
-    const plist = job_plist(first.label, ['/test'], { PANELS_WORKER_JOB: 'inherited-spoof' }, '/');
+    const plist = job_plist(first.label, ['/test'], { PANELS_WORKER_JOB: 'inherited-spoof' }, '/', {
+      lower_priority: true,
+    });
     expect(plist).toContain(`<key>PANELS_WORKER_JOB</key><string>${first.label}</string>`);
     expect(plist).not.toContain('inherited-spoof');
   });

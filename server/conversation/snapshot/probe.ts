@@ -1,10 +1,5 @@
 /** One card probe for every driver: its recipe, executable rule, identity and catalog readers. */
-import type {
-  BackendIdentity,
-  BackendProbeEnvironment,
-  CatalogReader,
-  CommandOutcome,
-} from './contracts.ts';
+import type { BackendIdentity, CatalogReader, CommandOutcome } from './contracts.ts';
 import type { DriverModelRules } from '../../drivers/core/driver.ts';
 import type { DriverManifest } from '../../drivers/core/manifest.ts';
 import type { BackendSnapshotDraft, StatusProbeContext } from '../../drivers/core/status.ts';
@@ -20,18 +15,9 @@ export interface CardProbeParts {
   /** Its executable rule and status recipe. */
   readonly manifest: DriverManifest;
   readonly models?: DriverModelRules;
-  /** Reads the answer to the recipe's identity command. Null: the driver has no identity. */
+  /** Reads the answer to the recipe's identity command. Null: no command; the catalog may tell. */
   readonly read_identity: ((outcome: CommandOutcome) => BackendIdentity) | null;
   readonly read_catalog: CatalogReader;
-}
-/** The executable a card reports: beside its configured file when the manifest says so, else PATH. */
-export function card_executable_path(
-  executable: DriverManifest['executable'],
-  environment: BackendProbeEnvironment,
-): string | null {
-  return executable.configured_beside === undefined
-    ? environment.executable_path(executable.name)
-    : environment.configured_executable_path(executable.name);
 }
 /** The first non-empty numerical version any built-in driver reads from the model id. */
 export function built_in_model_version(model_id: string): readonly number[] {
@@ -47,7 +33,7 @@ export async function probe_card(
 ): Promise<BackendSnapshotDraft> {
   const { environment } = context;
   const recipe = parts.manifest.status_recipe;
-  const executable_path = card_executable_path(parts.manifest.executable, environment);
+  const executable_path = environment.executable_path(parts.manifest.executable.name);
   if (executable_path === null)
     return {
       installed: false,
@@ -81,6 +67,16 @@ export async function probe_card(
     });
     identity = { ...parts.read_identity(answer), login_command: recipe.login_command };
   }
+  context.signal?.throwIfAborted();
+  const catalog = await parts.read_catalog({
+    environment,
+    executable_path,
+    version,
+    refresh: context.refresh,
+  });
+  if (identity === null && catalog.identity !== null)
+    identity = { ...catalog.identity, login_command: recipe.login_command };
+  // One wording for every driver, whichever read found the identity.
   if (identity?.status === 'unauthenticated')
     diagnoses.push(
       `\`${recipe.executable_name}\` is not signed in.` +
@@ -90,13 +86,6 @@ export async function probe_card(
     diagnoses.push(
       identity.detail || `Panels could not read who \`${recipe.executable_name}\` is signed in as.`,
     );
-  context.signal?.throwIfAborted();
-  const catalog = await parts.read_catalog({
-    environment,
-    executable_path,
-    version,
-    refresh: context.refresh,
-  });
   diagnoses.push(...catalog.diagnoses);
   const advisory = context.discover_update_advisory
     ? await update_advisory(recipe, executable_path, version, environment)

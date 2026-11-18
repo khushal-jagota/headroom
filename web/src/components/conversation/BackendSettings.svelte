@@ -1,21 +1,45 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
   import Button from "../Button.svelte";
+  import BackendSignInBlock from "./BackendSignInBlock.svelte";
   import { loadBackendPageSnapshots } from "../../lib/conversation/backendRefresh";
+  import { backendCanBeSignedIn } from "../../lib/conversation/backendSignIn";
+  import { BackendSignInSession, type SignInPageState } from "../../lib/conversation/backendSignInSession";
+  import { backendLabel } from "../../lib/drivers/presentation";
+  import { queries } from "../../lib/queryCatalogue";
   import {
+    cancelBackendSignIn,
+    readBackendSignIn,
+    startBackendSignIn,
+    submitBackendSignInReturnUrl,
     updateBackend,
     type BackendSnapshot,
     type BackendUpdateResult,
     type ConversationBackendKey
   } from "../../lib/conversation/wire";
 
-  const backends = [{ key: "claude", label: "Claude" }, { key: "codex", label: "Codex" }] as const;
+  const drivers = createQuery(() => queries.drivers());
   let snapshots = $state<BackendSnapshot[]>([]);
+  /** Backends Panels updates, in the server's order, then any other it can sign in. */
+  const backends = $derived.by(() => {
+    const keys = (drivers.data?.drivers ?? [])
+      .filter(driver => driver.checks_for_updates)
+      .map(driver => driver.driver_kind);
+    for (const snapshot of snapshots) {
+      if (snapshot.can_sign_in && !keys.includes(snapshot.backend_key)) keys.push(snapshot.backend_key);
+    }
+    return keys.map(key => ({ key, label: backendLabel(key, drivers.data?.drivers) }));
+  });
   let refreshing = $state(false);
   let refreshError = $state<string | null>(null);
   let updating = $state<Partial<Record<ConversationBackendKey, boolean>>>({});
   let results = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
   const anyUpdating = $derived(Object.values(updating).some(Boolean));
+  const AT_REST: SignInPageState = { signIn: null, busy: false, error: null };
+  /** One sign-in session per backend that can be signed in. */
+  const signInSessions = new Map<ConversationBackendKey, BackendSignInSession>();
+  let signInStates = $state<Partial<Record<ConversationBackendKey, SignInPageState>>>({});
 
   async function refresh() {
     refreshing = true;
@@ -48,7 +72,36 @@
     }
   }
 
-  onMount(() => { void refresh(); });
+  /** Entering finds a sign-in already in force on the server and resumes watching it. */
+  function signInSession(key: ConversationBackendKey): BackendSignInSession {
+    let session = signInSessions.get(key);
+    if (session === undefined) {
+      session = new BackendSignInSession({
+        start: startBackendSignIn,
+        read: readBackendSignIn,
+        cancel: cancelBackendSignIn,
+        submitReturnUrl: submitBackendSignInReturnUrl,
+        reloadCards: () => refresh(),
+        setTimer: (run, ms) => setTimeout(run, ms),
+        clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)
+      }, next => { signInStates[key] = next; });
+      signInSessions.set(key, session);
+      void session.enter(key);
+    }
+    return session;
+  }
+
+  $effect(() => {
+    for (const snapshot of snapshots) {
+      if (backendCanBeSignedIn(snapshot)) signInSession(snapshot.backend_key);
+    }
+  });
+
+  onMount(() => {
+    void refresh();
+    // Leaving stops watching without cancelling a sign-in on the server.
+    return () => { for (const session of signInSessions.values()) session.leave(); };
+  });
 </script>
 
 <section class="backend-settings" aria-label="VPS backends" data-backend-settings>
@@ -79,6 +132,12 @@
       {/if}
       {#if !refreshing && snapshot?.installed && !snapshot.update_advisory?.update_command}
         <p class="detail">{snapshot.update_advisory?.detail ?? "This installation needs a manual update."}</p>
+      {/if}
+      {#if snapshot}
+        <BackendSignInBlock label={backend.label} {snapshot} state={signInStates[backend.key] ?? AT_REST}
+          onStart={() => void signInSession(backend.key).start(backend.key)}
+          onCancel={() => void signInSession(backend.key).cancel(backend.key)}
+          onSubmit={returnUrl => void signInSession(backend.key).submitReturnUrl(backend.key, returnUrl)} />
       {/if}
       {#if result}
         <p class:error={result.outcome === "failed"} class="result" role={result.outcome === "failed" ? "alert" : "status"}>{result.detail}</p>

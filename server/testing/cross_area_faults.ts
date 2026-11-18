@@ -37,7 +37,6 @@ if (mode === 'guards') {
     SubprocessBackendProbeEnvironment.prototype,
   ) as SubprocessBackendProbeEnvironment;
   assert.throws(() => door.executable_path('nonexistent-cross-area'), refusal);
-  assert.throws(() => door.configured_executable_path('hermes'), refusal);
   assert.throws(() => door.real_path('/synthetic'), refusal);
   assert.throws(() => door.prefix_is_owned_and_writable('/synthetic'), refusal);
   await assert.rejects(door.run(['nonexistent-cross-area'], { timeout_seconds: 1 }), refusal);

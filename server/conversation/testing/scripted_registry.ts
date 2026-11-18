@@ -1,5 +1,6 @@
 /** One shared scripted process per child, including its actual retired wire observations. */
 import {
+  for_every_built_in_backend,
   registry_of_factories,
   scripted_instance_controls,
 } from '../../drivers/testing/registry.ts';
@@ -57,7 +58,7 @@ export class ScriptedBackendRegistry {
       }
       return child;
     };
-    this.registry = registry_of_factories({ codex: factory, claude: factory, hermes: factory });
+    this.registry = registry_of_factories(for_every_built_in_backend(() => factory));
   }
 
   /** Only these backends steer from now on, including in conversations already running. */

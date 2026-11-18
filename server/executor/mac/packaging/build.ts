@@ -196,9 +196,11 @@ export async function build_mac_package(options: MacPackageOptions) {
     join(output, 'INSTALLATION.md'),
   );
   const archive = join(output, MAC_RUNTIME_ARCHIVE_NAME);
+  // Every top-level entry of the assembled runtime: a driver's release files
+  // may add one beside server/, and with none there is no src/ to archive.
   await create_tar(
     { cwd: runtime, file: archive, gzip: { level: ARCHIVE_GZIP_LEVEL }, portable: true },
-    ['bin', 'node', 'server', 'src', 'mac-runtime.json'],
+    (await readdir(runtime)).sort(),
   );
   if ((await stat(archive)).size > MAX_MAC_RUNTIME_ARCHIVE_BYTES)
     throw new Error('Mac runtime exceeds its archive size limit.');

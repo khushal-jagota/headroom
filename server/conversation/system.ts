@@ -372,8 +372,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   drain_held_prompts(state: ConversationState): Promise<void> {
     return send.drain_held_prompts(this, state);
   }
-  make_sink(state: ConversationState): CoreBackendEventSink {
-    return backend_events.make_sink(this, state);
+  make_sink(
+    state: ConversationState,
+    options?: { supervised_launch?: boolean },
+  ): CoreBackendEventSink {
+    return backend_events.make_sink(this, state, options);
   }
   record_local_child_preparation(
     state: ConversationState,

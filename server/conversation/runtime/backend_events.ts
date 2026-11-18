@@ -37,6 +37,7 @@ import {
 } from './configuration.ts';
 import { tell_agent_about_lost_background_tasks } from './maintenance.ts';
 import { randomUUID } from 'node:crypto';
+import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../child_custody.ts';
 import type { ConversationLiveTailFrame } from '../events.ts';
 import { AgentMessageDeltaFrame, ToolCallProgressFrame, ModelThinkingFrame } from '../events.ts';
 
@@ -379,8 +380,11 @@ function retire_broken_local_child(
 export function make_sink(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
+  options: { supervised_launch?: boolean } = {},
 ): CoreBackendEventSink {
-  const generation = randomUUID().replaceAll('-', '');
+  const generation =
+    (options.supervised_launch === true ? SUPERVISED_CHILD_GENERATION_PREFIX : '') +
+    randomUUID().replaceAll('-', '');
   const sink: CoreBackendEventSink = {
     generation,
     record_local_child_supervision: (path) =>

@@ -10,11 +10,13 @@ import type {
 } from '../conversation/snapshot/contracts.ts';
 import type { BackendInstanceId } from '../drivers/core/identity.ts';
 import type { StatusProbeContext } from '../drivers/core/status.ts';
-import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
+import {
+  BUILT_IN_MANIFESTS,
+  KNOWN_BACKEND_INSTANCE_IDS,
+  built_in_driver_of,
+} from '../drivers/built_in_manifests.ts';
 import { Deferred } from '../core/deferred.ts';
-import { BackendStateStore, model_refusal } from '../conversation/backend_state.ts';
-import { hermes_catalog_reader } from '../drivers/hermes/runtime/status_readers.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { BackendStateStore } from '../conversation/backend_state.ts';
 import { fixture, fixture_path } from './ticket_fixture.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
@@ -67,6 +69,9 @@ test('backend and voice HTTP work share admission and remain owned until both se
             backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
             sign_in: () => null,
             machine_catalog: () => null,
+            drivers: BUILT_IN_MANIFESTS,
+            driver_of: () => null,
+            reports_allowance_usage: () => false,
           },
           { available: true, writes },
         ),
@@ -171,6 +176,9 @@ test('all eight backend routes require the conversation runtime before validated
               backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
               sign_in: () => null,
               machine_catalog: () => null,
+              drivers: BUILT_IN_MANIFESTS,
+              driver_of: () => null,
+              reports_allowance_usage: () => false,
             },
             { available: false, writes },
           ),
@@ -258,7 +266,6 @@ function machine(): BackendProbeEnvironment & {
     calls,
     result: { exit_code: 0, standard_output: 'Recorded update', standard_error: '' },
     executable_path: () => '/synthetic/codex',
-    configured_executable_path: () => null,
     real_path: (path: string) => path,
     user_local_npm_prefix: () => '/synthetic',
     prefix_is_owned_and_writable: () => true,
@@ -442,6 +449,9 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
               backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
               sign_in: () => null,
               machine_catalog: () => null,
+              drivers: BUILT_IN_MANIFESTS,
+              driver_of: () => null,
+              reports_allowance_usage: () => false,
             },
             { available: true, writes },
           ),
@@ -461,8 +471,8 @@ test('catalog failure cancels and joins the outstanding allowance read', async (
 // Distinct gap: a mistaken production composition must fail before process or network I/O.
 test('test compositions cannot acquire production catalogs, login, updates, or HTTP usage', async () => {
   const environment = new RecordingBackendProbeEnvironment();
-  for (const name of ['codex', 'claude']) environment.executables.set(name, `/synthetic/${name}`);
-  environment.configured_executables.set('hermes', '/synthetic/hermes');
+  for (const { manifest } of BUILT_IN_DRIVERS)
+    environment.executables.set(manifest.executable.name, `/synthetic/${manifest.executable.name}`);
   const host = {
     test_mode: true,
     environment: {},
@@ -557,60 +567,20 @@ test('production usage and registry transports refuse redirects without another 
 });
 import { OneShotChildren } from '../lifecycle/one_shot_children.ts';
 
-// Gap: dropping the Hermes skip in model_refusal is safe only if neither the VPS card (Hermes catalog
-// reader) nor the Mac rows (Python Hermes catalog) ever mark the Hermes model list complete.
-test('no card source gives Hermes a complete model list, so no Hermes model is refused as unoffered', async () => {
-  const inventory = {
-    schemaVersion: 1,
-    status: 'runnable',
-    defaultModelId: 'openai:gpt-x',
-    providers: [
-      {
-        id: 'openai',
-        displayName: 'OpenAI',
-        models: [{ id: 'openai:gpt-x', displayName: 'GPT X', detail: 'listed' }],
-      },
-    ],
-  };
-  const read = hermes_catalog_reader(async () => ({
-    exit_code: 0,
-    standard_output: JSON.stringify(inventory),
-    standard_error: '',
-  }));
-  const vps_answer = await read({
-    environment: {} as BackendProbeEnvironment,
-    executable_path: '/synthetic/hermes',
-    version: null,
-    refresh: false,
-  });
-  expect(vps_answer.models).toHaveLength(1);
-  expect(vps_answer.complete).toBe(false);
-
-  const database = fixture();
-  database.write((tx) =>
-    tx.run('INSERT INTO machine_backend_snapshots VALUES (?,?,?)', [
-      ORIGINAL_MAC_MACHINE_ID,
-      'hermes',
-      JSON.stringify({
-        models_complete: false,
-        available_models: [{ model_id: 'openai:gpt-x' }],
-      }),
-    ]),
-  );
-  expect(
-    database.read((sql) =>
-      model_refusal(sql, parse_backend_instance_id('hermes'), 'anthropic:other', 'macos'),
-    ),
-  ).toBeNull();
-});
 import { readFileSync } from 'node:fs';
 import { run as run_recorded_probes } from '../conversation/snapshot/testing/probe_comparison.ts';
 import { snapshot_json } from '../conversation/snapshot/presentation.ts';
+/** A home card with its built-in driver's rules and no sign-in or allowance usage. */
+const card_json = (card: BackendSnapshot) =>
+  snapshot_json(card, null, {
+    driver: built_in_driver_of(card.backend_key) ?? null,
+    can_sign_in: false,
+    reports_allowance_usage: false,
+  });
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import type { CommandOutcome } from '../conversation/snapshot/contracts.ts';
 import type { CodexLoginStanding, CodexModelCatalog } from '../drivers/codex/runtime/contracts.ts';
 import { create_codex_status } from '../drivers/codex/runtime/status.ts';
-import { create_hermes_status } from '../drivers/hermes/runtime/status.ts';
 
 const recorded = (standard_output: string, exit_code = 0): CommandOutcome => ({
   exit_code,
@@ -643,18 +613,6 @@ const recorded_codex_catalog = (complete: boolean): CodexModelCatalog => ({
   default_reasoning_effort: 'medium',
   complete,
 });
-const recorded_hermes_inventory = {
-  schemaVersion: 1,
-  status: 'runnable',
-  defaultModelId: 'provider:small',
-  providers: [
-    {
-      id: 'provider',
-      displayName: 'Provider',
-      models: [{ id: 'provider:small', displayName: 'Small', detail: 'Configured model' }],
-    },
-  ],
-};
 /** The probe_comparison machines, as the Python comparison describes them. */
 function recorded_probe_cases() {
   const codex = {
@@ -691,16 +649,6 @@ function recorded_probe_cases() {
     latest: '2.2.0',
     login: null,
   };
-  const hermes = {
-    backend: parse_backend_instance_id('hermes'),
-    executable: '/synthetic/hermes/venv/bin/hermes',
-    real_path: '/synthetic/hermes/venv/bin/hermes',
-    version: recorded('hermes 1.2.3'),
-    identity: null,
-    writable: false,
-    latest: null,
-    login: null,
-  };
   return [
     { ...codex, name: 'codex-native-saved-login', codex_catalog: recorded_codex_catalog(true) },
     { ...codex, name: 'codex-rejected-unavailable', login: { ...codex.login, rejected: true } },
@@ -735,17 +683,6 @@ function recorded_probe_cases() {
       version: recorded('unrecognized version'),
       identity: recorded('invalid JSON'),
     },
-    { ...hermes, name: 'hermes-inventory', hermes_catalog: recorded_hermes_inventory },
-    {
-      ...hermes,
-      name: 'hermes-invalid-inventory',
-      hermes_catalog: {
-        schemaVersion: 1,
-        status: 'runnable',
-        defaultModelId: 'missing',
-        providers: [],
-      },
-    },
   ];
 }
 function recorded_login(account_label: string, last_refresh: string): CodexLoginStanding {
@@ -777,13 +714,6 @@ function recorded_card_service(options: {
     machine_catalog: options.machine_catalog,
     sources: [
       {
-        instance_id: parse_backend_instance_id('hermes'),
-        executable_name: 'hermes',
-        status: create_hermes_status({
-          catalog: async () => recorded(JSON.stringify(recorded_hermes_inventory)),
-        }),
-      },
-      {
         instance_id: parse_backend_instance_id('codex'),
         executable_name: 'codex',
         status: create_codex_status({
@@ -797,7 +727,6 @@ function recorded_card_service(options: {
 function recorded_machine(): RecordingBackendProbeEnvironment {
   const environment = new RecordingBackendProbeEnvironment();
   environment.executables.set('codex', '/synthetic/bin/codex');
-  environment.configured_executables.set('hermes', '/synthetic/hermes/venv/bin/hermes');
   environment.outcomes.set(
     JSON.stringify(['/synthetic/bin/codex', '--version']),
     recorded('codex-cli 0.150.0'),
@@ -805,10 +734,6 @@ function recorded_machine(): RecordingBackendProbeEnvironment {
   environment.outcomes.set(
     JSON.stringify(['/synthetic/bin/codex', 'login', 'status']),
     recorded('Logged in using ChatGPT\n'),
-  );
-  environment.outcomes.set(
-    JSON.stringify(['/synthetic/hermes/venv/bin/hermes', '--version']),
-    recorded('hermes 1.2.3'),
   );
   return environment;
 }
@@ -832,8 +757,8 @@ async function codex_login_sequence() {
     const card = await service.snapshot(codex, { refresh });
     steps.push({
       name,
-      card: snapshot_json(card),
-      kept: snapshot_json(service.retained(codex)!),
+      card: card_json(card),
+      kept: card_json(service.retained(codex)!),
       commands: environment.commands.length,
     });
     return card;
@@ -853,7 +778,7 @@ async function codex_login_sequence() {
   await step('signed out stays stale');
   return steps;
 }
-async function hermes_machine_sequence() {
+async function codex_machine_sequence() {
   const environment = recorded_machine();
   const service = recorded_card_service({
     environment,
@@ -863,28 +788,26 @@ async function hermes_machine_sequence() {
   });
   const steps: unknown[] = [];
   for (const name of ['first read', 'kept read']) {
-    const cards = [];
-    for (const key of ['hermes', 'codex'])
-      cards.push(snapshot_json(await service.snapshot(parse_backend_instance_id(key))));
+    const cards = [card_json(await service.snapshot(parse_backend_instance_id('codex')))];
     steps.push({ name, cards, commands: environment.commands.map((argv) => [...argv]) });
   }
   return steps;
 }
 // Gap: no test records the exact card JSON, so a rebuilt card pipeline could change a card,
-// the Codex login staleness rules or the Hermes machine reuse without any test failing.
+// the Codex login staleness rules or the machine catalog reads without any test failing.
 test('backend card JSON stays the same for every recorded machine and login sequence', async () => {
   const probes = await run_recorded_probes(recorded_probe_cases());
   const actual = JSON.parse(
     JSON.stringify({
       probes: probes.cards.map((value) => ({
         name: value.name,
-        card: snapshot_json(value.card),
+        card: card_json(value.card),
         commands: value.commands,
         catalog_calls: value.catalog_calls,
         registry_lookups: value.registry_lookups,
       })),
       codex_login: await codex_login_sequence(),
-      hermes_machine: await hermes_machine_sequence(),
+      codex_machine: await codex_machine_sequence(),
     }),
   );
   expect(actual).toEqual(

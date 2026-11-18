@@ -126,15 +126,17 @@ async function roll_back(
       signal.throwIfAborted();
       record.record('rollback_service_stopped');
     }
-    if (new_app_moved) move(app, staged, signal);
-    if (previous_moved) move(previous, app, signal);
-    record.record('rollback_app_restored');
+    // Data before apps: a kill between them leaves the new app in place, which its
+    // next start settles before admission (interrupted_install.ts).
     if (restore_data) {
       signal.throwIfAborted();
       await effects.restore(backup, lifetime_lock_fd);
       signal.throwIfAborted();
       record.record('rollback_database_restored');
     }
+    if (new_app_moved) move(app, staged, signal);
+    if (previous_moved) move(previous, app, signal);
+    record.record('rollback_app_restored');
     signal.throwIfAborted();
     await effects.service('start');
     signal.throwIfAborted();

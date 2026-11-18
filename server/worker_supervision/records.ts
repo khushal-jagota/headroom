@@ -102,7 +102,14 @@ export async function read(path: string): Promise<WorkerProcessRecord> {
   for (const key of ['conversation_id', 'source_child_id', 'source_incarnation'])
     if (record[key] != null && typeof record[key] !== 'string')
       throw new Error(`Invalid Worker record ${key}`);
-  for (const key of ['isolated', 'launch_revoked', 'boot_ended', 'launch_failed', 'cgroup_joined'])
+  for (const key of [
+    'isolated',
+    'launch_revoked',
+    'boot_ended',
+    'launch_failed',
+    'cgroup_joined',
+    'worker_priority',
+  ])
     if (record[key] !== undefined && typeof record[key] !== 'boolean')
       throw new Error(`Invalid Worker record ${key}`);
   return {
@@ -153,6 +160,16 @@ export async function write(path: string, record: WorkerProcessRecord): Promise<
   }
 }
 
+const lock_path = (path: string): string => path.slice(0, -5) + '.lock';
+
+/** Removes a record and its lock. The caller holds the record lock. */
+export async function remove(path: string): Promise<void> {
+  for (const file of [path, lock_path(path)])
+    await unlink(file).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+}
+
 export async function locked<T>(
   path: string,
   deadline: number,
@@ -164,7 +181,7 @@ export async function locked<T>(
 ): Promise<T> {
   const clock = options.clock ?? (() => performance.now() / 1000);
   const file = await open(
-    path.slice(0, -5) + '.lock',
+    lock_path(path),
     constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW,
     0o600,
   );

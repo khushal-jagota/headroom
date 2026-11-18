@@ -18,7 +18,11 @@ import { ORIGINAL_MAC_MACHINE_ID } from '../../../execution_identity.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { issue_original_credential } from '../../../machines/executor_credentials.ts';
 import { compose_production_backends } from '../../../lifecycle/production_bindings.ts';
-import { registry_of_factories, unread_driver_host } from '../../../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+  unread_driver_host,
+} from '../../../drivers/testing/registry.ts';
 import { create_production_conversation_core } from '../../../lifecycle/production.ts';
 import { create_backend_runtime } from '../../../conversation/snapshot/composition.ts';
 import type { SqliteProcessConversationSystem } from '../../../conversation/system.ts';
@@ -85,7 +89,7 @@ export async function start_native_server() {
       bound = compose_production_backends(
         current,
         {
-          registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+          registry: registry_of_factories(for_every_built_in_backend(() => local)),
           host: unread_driver_host,
         },
         {

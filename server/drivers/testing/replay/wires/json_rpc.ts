@@ -1,4 +1,4 @@
-/** Codex app-server and ACP lines: one JSON-RPC message per line, ids chosen by the sender. */
+/** Codex app-server lines: one JSON-RPC message per line, ids chosen by the sender. */
 import { is_record } from '../../../../core/records.ts';
 import type { ReplayWireRules } from '../transcript.ts';
 
@@ -7,7 +7,6 @@ function request_id(frame: unknown): string | number | null {
   if (!is_record(frame) || typeof frame.method !== 'string') return null;
   return typeof frame.id === 'string' || typeof frame.id === 'number' ? frame.id : null;
 }
-/** Codex (`codex_app_server`) and Hermes (`acp`) differ only in the `jsonrpc` member. */
 export const JSON_RPC_WIRE: ReplayWireRules = {
   launch_placeholders: () => ({}),
   request_method: (frame) =>

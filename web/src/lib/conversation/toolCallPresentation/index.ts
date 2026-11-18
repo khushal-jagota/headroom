@@ -212,7 +212,7 @@ function spokenDetail(
 }
 
 function withoutTheKindItStated(text: string, toolKind: string): string {
-  // Hermes often writes both halves itself: "read: /path" or "search: pattern". Once
+  // An agent may write both halves itself: "read: /path" or "search: pattern". Once
   // the visible title says the kind, the repeated prefix adds nothing to the summary.
   const stated = /^([\p{L}_]+)\s*:\s*(\S[\s\S]*)$/u.exec(text);
   if (!stated) return text;

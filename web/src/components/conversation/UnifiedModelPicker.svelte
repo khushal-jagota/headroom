@@ -11,6 +11,7 @@
     refreshBackendSnapshots
   } from "../../lib/conversation/backendRefresh";
   import { type BackendModel, type BackendSnapshot, type ConversationBackendKey } from "../../lib/conversation/wire";
+  import { backendLabel } from "../../lib/drivers/presentation";
   import BackendMark from "./BackendMark.svelte";
   import ListboxPicker, {
     type ListboxPickerController,
@@ -82,10 +83,10 @@
   });
   let currentEffort = $derived(displayed.reasoningEffort);
   let activeBackendKey = $derived(displayed.backendKey);
-  let activeBackendName = $derived(activeBackendKey ? activeBackendKey[0].toUpperCase() + activeBackendKey.slice(1) : "");
-  let effortRows = $derived(activeBackendKey === "hermes" ? [] :
-    effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
-      .map((effort) => ({ value: effort, name: effort })));
+  let activeBackendName = $derived(view.backendName);
+  let effortRows = $derived(view.offersReasoning
+    ? effortOptionsFor(models, pendingModel ?? displayed.model ?? "", backendEffortOptions)
+    : []);
   let rows = $derived((showing === "models" ? view.models : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? displayed.model : currentEffort ?? "");
   let triggerFace = $derived(view.face);
@@ -101,8 +102,13 @@
     return snapshotFor(key)?.identity?.status !== "unauthenticated";
   }
 
+  /** A refresh outcome names its backend as the rail does. */
+  function backendNameFor(key: ConversationBackendKey): string {
+    return view.backends.find((backend) => backend.key === key)?.name ?? backendLabel(key, undefined);
+  }
+
   function hasModelUsage(modelId: string): boolean {
-    const snapshot = snapshotFor(view.backendKey ?? "claude");
+    const snapshot = view.backendKey === null ? null : snapshotFor(view.backendKey);
     if (snapshot?.identity?.status === "unauthenticated") return false;
     return snapshot?.cached_usage?.windows.some(
       (window) => window.model_id === modelId
@@ -118,7 +124,7 @@
   function take(choice: ModelPickerChoice): void {
     if (disabled) return;
     if (showing === "models") {
-      const efforts = activeBackendKey === "hermes" ? [] : effortOptionsFor(models, choice.value, backendEffortOptions);
+      const efforts = view.offersReasoning ? effortOptionsFor(models, choice.value, backendEffortOptions) : [];
       if (!efforts.length) {
         finish(choice.value, null);
         return;
@@ -168,7 +174,7 @@
       if (result.snapshots !== null && !onRetry) snapshots = result.snapshots;
       feedback = result.error ?? (result.outcomes
         .filter(outcome => outcome.outcome !== "succeeded")
-        .map(outcome => `${outcome.backend_key}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
+        .map(outcome => `${backendNameFor(outcome.backend_key)}: ${backendUsageOutcomeLabel(outcome.outcome)}`)
         .join(" · ") || null);
       if (onRetry) await onRetry();
     } catch (error) {
@@ -208,7 +214,7 @@
   }}
 >
   {#snippet triggerContent(open)}
-    {#if activeBackendKey}<BackendMark backend={activeBackendKey} toned={tonedMark} />{/if}
+    {#if view.backendMark}<BackendMark mark={view.backendMark} toned={tonedMark} />{/if}
     {#if triggerFace}<span class="model-picker-face">{view.modelFace}{#if view.effortFace}{" "}<span class="model-picker-effort">{view.effortFace}</span>{/if}</span>{/if}
   {/snippet}
   {#snippet beforeList()}
@@ -228,7 +234,7 @@
           }}
           onclick={() => chooseBackend(backend.key, backend.unavailableReason)}
         >
-          {#snippet icon()}<BackendMark backend={backend.key} />{/snippet}
+          {#snippet icon()}<BackendMark mark={backend.mark} />{/snippet}
           {#snippet trailing()}
             {#if showUsage && showsBackendUsage(backend.key)}
               <UsageRings windows={snapshotFor(backend.key)?.cached_usage?.windows ?? []} compact />
@@ -271,9 +277,9 @@
   {/snippet}
   {#snippet optionContent(choice, selected)}
     <span class="model-picker-choice-name">{choice.name}</span>
-    {#if showUsage && showing === "models" && hasModelUsage(choice.value)}
+    {#if showUsage && showing === "models" && view.backendKey !== null && hasModelUsage(choice.value)}
       <UsageRings
-        windows={snapshotFor(view.backendKey ?? "claude")?.cached_usage?.windows ?? []}
+        windows={snapshotFor(view.backendKey)?.cached_usage?.windows ?? []}
         modelId={choice.value}
         label={`Usage allowances for ${choice.name}`}
         compact

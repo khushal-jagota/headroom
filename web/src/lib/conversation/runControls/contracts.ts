@@ -5,6 +5,7 @@ import type {
   ConversationBackendKey,
 } from "../wire";
 import type { ModelPickerView } from "../modelPicker";
+import type { DriverPresentation } from "../../drivers/contracts";
 
 export type ComposerRunSelection = Readonly<{
   pickedBackend: ConversationBackendKey | null;
@@ -22,6 +23,8 @@ export type ComposerRunControlsInput = Readonly<{
   current: RunValues;
   models: readonly BackendModel[];
   backends: readonly BackendSnapshot[];
+  /** The server's driver list; undefined while it loads. */
+  drivers: readonly DriverPresentation[] | undefined;
   effortOptions: readonly string[];
   startsOnModel: string | null;
   startsOnReasoningEffort: string | null;

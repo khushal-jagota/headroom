@@ -1,4 +1,5 @@
 import type { BackendScopeRequest } from "./modelResolutionWire";
+import type { ProviderOptionDescriptor } from "../usage/contracts/model";
 export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
 
 import { mutationHeaders } from "../releaseMonitor";
@@ -21,14 +22,8 @@ export const CONVERSATION_BASE = "/api/conversation";
 export const COMMITTED_EVENT_STREAM_NAME = "conversation-event";
 export const LIVE_FRAME_STREAM_NAME = "conversation-frame";
 
-export type ConversationBackendKey = "hermes" | "codex" | "claude";
-
-/** The production catalog, in the order the server lists it. */
-export const CONVERSATION_BACKEND_KEYS: readonly ConversationBackendKey[] = [
-  "hermes",
-  "codex",
-  "claude"
-];
+/** A backend instance id. The server's driver list says which ones it runs. */
+export type ConversationBackendKey = string;
 
 export type PromptDeliveryMode = "queue" | "send_now" | "steer";
 
@@ -403,6 +398,11 @@ export type BackendModel = {
   detail?: string | null;
   /** Per-model metadata. Null or absent means unknown; an empty list is known empty. */
   reasoning_effort_options?: string[] | null;
+  /** The model's options; reasoning effort is the select descriptor whose role is
+   *  "reasoning". The server always sends it: [] when the model offers none. */
+  option_descriptors?: ProviderOptionDescriptor[];
+  /** A readable name for resolved_model_id, or null when the server has none to give. */
+  resolved_display_name?: string | null;
 };
 
 export type BackendUpdateAdvisory = {
@@ -429,6 +429,10 @@ export type BackendSnapshot = {
   cached_usage: BackendCachedUsage | null;
   update_advisory: BackendUpdateAdvisory | null;
   diagnoses: string[];
+  /** Panels can sign this backend in. The server always sends it. */
+  can_sign_in?: boolean;
+  /** This backend reports allowance usage. The server always sends it. */
+  reports_allowance_usage?: boolean;
 };
 
 export type BackendUpdateResult = {
@@ -762,12 +766,17 @@ export function updateBackend(
   });
 }
 
-export type BackendSignInState = "pending" | "confirmed" | "unconfirmed" | "ended";
+export type BackendSignInState =
+  | "pending"
+  | "awaiting_return_url"
+  | "confirmed"
+  | "unconfirmed"
+  | "ended";
 
 export type BackendSignIn = {
   session_id: string;
   state: BackendSignInState;
-  /** Present only while pending. A finished sign-in has no use for the code. */
+  /** Present only while in progress. A finished sign-in has no use for the code. */
   verification_url: string | null;
   user_code: string | null;
   started_at: string;
@@ -800,6 +809,19 @@ export function cancelBackendSignIn(
   return request<{ sign_in: BackendSignIn }>(
     `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}`,
     { method: "DELETE" }
+  );
+}
+
+/** Hand a sign-in waiting for its browser return address the address the browser ended on.
+ *  The server refuses a session that is not the one in force. */
+export function submitBackendSignInReturnUrl(
+  backendKey: ConversationBackendKey,
+  sessionId: string,
+  returnUrl: string
+): Promise<{ sign_in: BackendSignIn }> {
+  return request<{ sign_in: BackendSignIn }>(
+    `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}/return-url`,
+    postJson({ return_url: returnUrl })
   );
 }
 

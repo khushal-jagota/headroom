@@ -69,7 +69,6 @@ The output contains these artifacts:
 | `INSTALLATION.md` | This handoff document. |
 
 The wire schema remains embedded in `wire.generated.ts`.
-The two plain Hermes scripts remain provider assets. The installed Hermes environment supplies their interpreter.
 The package also includes static skills, Worker seed data, CLI metadata, and the shell startup asset.
 
 ## Install from the owner's native session
@@ -307,7 +306,7 @@ Missing symbols or failed calls must refuse the operation. A path-based fallback
 | Native app and LaunchAgent                                         | Signed requester attribution, startup/restart, exact Unix socket path/mode, consent, and permission retention                                                            |
 | Root aliases                                                       | Refusal of the earlier `executor` root and descendants through symlinks and native case-insensitive aliases                                                                |
 | Process ownership                                                  | Darwin PID/start-time observations, priority, descendants, direct-child exit, and no leftover owned child                                                                |
-| Provider homes and shared skills                                   | Fresh Claude/Codex/Hermes sessions, selected model/effort, canonical bytes, and owner-approved link restoration                                                          |
+| Provider homes and shared skills                                   | Fresh sessions on each built-in backend, selected model/effort, canonical bytes, and owner-approved link restoration                                                     |
 | Sleep, files, and updates                                          | Sleep/wake order and receipts, both file directions, failed-readiness rollback, and zero-work quiescence                                                                 |
 
 Physical power-loss durability and permission persistence remain native evidence limits.
@@ -342,7 +341,7 @@ The owner must choose that policy before concurrent real use. Never snapshot or 
 
 ## Adapter and catalog handover
 
-The Mac host reuses the Claude, Codex, and Hermes factories with the invocation's shared `child_processes` and `one_shot_children` owners.
+The Mac host reuses each built-in driver's child factory with the invocation's shared `child_processes` and `one_shot_children` owners.
 Canonical skills publish before factory creation. The trusted host supplies the real account paths under the restrictions above.
 
 Each Codex native-start factory receives an explicit fresh `RememberedCodexLoginRejection`.

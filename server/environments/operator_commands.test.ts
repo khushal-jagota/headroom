@@ -56,8 +56,6 @@ async function private_fixture() {
     HOME: join(root, 'home'),
     CODEX_HOME: join(root, 'home/codex'),
     CLAUDE_CONFIG_DIR: join(root, 'home/claude'),
-    HERMES_HOME: join(root, 'home/hermes'),
-    PLAN_HERMES_HOME: join(root, 'home/hermes'),
     PLAN_TEST_MODE: '1',
     PLAN_SERVER_URL: 'http://127.0.0.1:0',
     PLAN_CONFIG_PATH: join(root, 'config.yaml'),

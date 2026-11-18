@@ -52,40 +52,65 @@ import {
 } from '../updates/logic/runtime_contract.ts';
 import type { InstallerRequest } from '../updates/installer/contracts.ts';
 import { run_release_command } from './process.ts';
+import { BUILT_IN_DRIVERS } from '../../drivers/built_in.ts';
 import {
   INSTALLER_KOFFI_OPTIONAL_ROOT,
   INSTALLER_PACKAGE_ROOTS,
 } from './installer_bundle_configuration.ts';
 
-it('keeps the frozen payload complete for static installer and trusted admission imports', () => {
-  const checkout = fileURLToPath(new URL('../../../', import.meta.url));
-  const require = createRequire(join(checkout, 'server/package.json'));
-  const linux = new Set<string>(INSTALLER_SOURCE_FILES),
-    darwin = new Set<string>(DARWIN_HOME_INSTALLER_SOURCE_FILES),
-    seen = new Set<string>();
-  let frozen = linux,
-    packages = new Set<string>([...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]);
+const CHECKOUT = fileURLToPath(new URL('../../../', import.meta.url));
+/**
+ * The driver.ts files BUILT_IN_DRIVERS names. Their deferred import() may load a runtime outside
+ * the frozen set: the installer reads only drivers' static fields, and check_driver_names.ts holds
+ * driver.ts to static imports of core, manifest, client, models and tool_detail.
+ */
+const BUILT_IN_DRIVER_FILES: ReadonlySet<string> = new Set(
+  BUILT_IN_DRIVERS.map((driver) => {
+    const name = `server/drivers/${driver.driver_kind}/driver.ts`;
+    assert(existsSync(join(CHECKOUT, name)), 'a built-in driver has no driver.ts: ' + name);
+    return name;
+  }),
+);
+interface ClosureWalk {
+  readonly linux: ReadonlySet<string>;
+  readonly darwin: ReadonlySet<string>;
+  readonly platform: 'linux' | 'darwin';
+  readonly packages: ReadonlySet<string>;
+  readonly entries: readonly string[];
+  /** Source text in place of a file's bytes, for the rule's own negative cases. */
+  readonly sources?: ReadonlyMap<string, string>;
+}
+const parsed = new Map<string, ts.SourceFile>();
+/** Every closure file the entries reach. Throws on an import the frozen set cannot satisfy. */
+function walk_installer_closure(options: ClosureWalk): Set<string> {
+  const require = createRequire(join(CHECKOUT, 'server/package.json'));
+  const { linux, darwin, packages } = options;
+  const frozen = options.platform === 'linux' ? linux : darwin;
+  const seen = new Set<string>();
   function visit(name: string): void {
     if (seen.has(name)) return;
     seen.add(name);
-    const absolute = resolve(checkout, name);
-    inside(checkout, absolute);
-    const source = ts.createSourceFile(
-      name,
-      readFileSync(absolute, 'utf8'),
-      ts.ScriptTarget.Latest,
-      true,
-    );
+    const absolute = resolve(CHECKOUT, name);
+    inside(CHECKOUT, absolute);
+    const text = options.sources?.get(name) ?? readFileSync(absolute, 'utf8');
+    const key = name + '\0' + text;
+    let source = parsed.get(key);
+    if (source === undefined) {
+      source = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true);
+      parsed.set(key, source);
+    }
     const deferred_requires = new Set<string>();
-    function dependency(specifier: string, deferred = false): void {
+    function dependency(specifier: string, deferred = false, dynamic_import = false): void {
       if (isBuiltin(specifier)) return;
       if (specifier.startsWith('.')) {
         const path = resolve(dirname(absolute), specifier);
-        inside(checkout, path);
-        const dependency_name = relative(checkout, path).split(sep).join('/');
+        inside(CHECKOUT, path);
+        const dependency_name = relative(CHECKOUT, path).split(sep).join('/');
         const darwin_only = darwin.has(dependency_name) && !linux.has(dependency_name);
         assert(
-          frozen.has(dependency_name) || (deferred && darwin_only),
+          frozen.has(dependency_name) ||
+            (deferred && darwin_only) ||
+            (dynamic_import && BUILT_IN_DRIVER_FILES.has(name)),
           'unknown platform import: ' + dependency_name,
         );
         assert(
@@ -101,7 +126,7 @@ it('keeps the frozen payload complete for static installer and trusted admission
         const selected = 'server/node_modules/' + package_name;
         assert(packages.has(selected), 'new bare package escapes copied closure: ' + specifier);
         inside(
-          fs.realpathSync(join(checkout, selected)),
+          fs.realpathSync(join(CHECKOUT, selected)),
           fs.realpathSync(require.resolve(specifier)),
         );
       }
@@ -145,7 +170,7 @@ it('keeps the frozen payload complete for static installer and trusted admission
         node.arguments[0] &&
         ts.isStringLiteralLike(node.arguments[0])
       ) {
-        dependency(node.arguments[0].text, true);
+        dependency(node.arguments[0].text, true, true);
       } else if (
         ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
@@ -170,8 +195,8 @@ it('keeps the frozen payload complete for static installer and trusted admission
         ) {
           const path = fileURLToPath(new URL(node.arguments[0].text, pathToFileURL(absolute)));
           if (['.ts', '.json'].includes(extname(path))) {
-            inside(checkout, path);
-            visit(relative(checkout, path).split(sep).join('/'));
+            inside(CHECKOUT, path);
+            visit(relative(CHECKOUT, path).split(sep).join('/'));
           }
         }
       }
@@ -179,21 +204,213 @@ it('keeps the frozen payload complete for static installer and trusted admission
     }
     walk(source);
   }
-  for (const platform of ['linux', 'darwin']) {
-    frozen = platform === 'linux' ? linux : darwin;
-    packages = new Set<string>(
-      platform === 'linux'
-        ? [...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]
-        : [...DARWIN_HOME_INSTALLER_PACKAGE_ROOTS, DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT],
-    );
-    seen.clear();
-    visit(INSTALLER_ENTRY);
-    visit('server/environments/release/admission.ts');
-    if (platform === 'darwin') visit('server/environments/updates/darwin/launch.ts');
+  for (const entry of options.entries) visit(entry);
+  return seen;
+}
+const LINUX_PACKAGES = new Set<string>([...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]);
+
+/** Only the frozen Linux installer source files and their package roots, copied under `root`. */
+function copy_linux_installer_closure(root: string): void {
+  for (const path of INSTALLER_SOURCE_FILES) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    cpSync(join(CHECKOUT, path), join(root, path));
+  }
+  for (const path of LINUX_PACKAGES) {
+    if (!existsSync(join(CHECKOUT, path))) {
+      assert.equal(path, INSTALLER_KOFFI_OPTIONAL_ROOT);
+      continue;
+    }
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    cpSync(join(CHECKOUT, path), join(root, path), { recursive: true, verbatimSymlinks: true });
+  }
+}
+/** A child environment whose homes, state paths and temporary files all sit under `root`. */
+function isolated_node_environment(root: string, loaded: string): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    PATH: '/usr/bin:/bin',
+    LANG: 'C.UTF-8',
+    PLAN_TEST_MODE: '1',
+    VITEST: 'true',
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_SERVER_URL: 'http://127.0.0.1:0',
+    TMPDIR: root,
+    TMP: root,
+    TEMP: root,
+  };
+  for (const name of [
+    'HOME',
+    'CODEX_HOME',
+    'CLAUDE_CONFIG_DIR',
+    'PLAN_LOGS_DIR',
+    'PLAN_BACKUP_DIR',
+    'PLAN_WORKSPACE_ROOT',
+    'PLAN_TICKET_SCRATCH_ROOT',
+  ]) {
+    environment[name] = join(root, 'homes', name);
+    mkdirSync(environment[name]!, { recursive: true });
+  }
+  for (const name of [
+    'PLAN_CONFIG_PATH',
+    'PLAN_DB_PATH',
+    'PLAN_TICKET_SCRATCH_DATABASE',
+    'PLAN_DISPATCHER_LOCK_PATH',
+    'PLAN_SERVER_CONTROL_SOCKET',
+    'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
+    'PLAN_CREDENTIAL_KEY_PATH',
+  ])
+    environment[name] = join(root, name);
+  environment.PLAN_APP_ROOT = loaded;
+  writeFileSync(environment.PLAN_CONFIG_PATH!, '{}\n');
+  return environment;
+}
+
+it('keeps the frozen payload complete for static installer and trusted admission imports', () => {
+  const linux = new Set<string>(INSTALLER_SOURCE_FILES),
+    darwin = new Set<string>(DARWIN_HOME_INSTALLER_SOURCE_FILES);
+  for (const platform of ['linux', 'darwin'] as const) {
+    const frozen = platform === 'linux' ? linux : darwin;
+    const seen = walk_installer_closure({
+      linux,
+      darwin,
+      platform,
+      packages:
+        platform === 'linux'
+          ? LINUX_PACKAGES
+          : new Set<string>([
+              ...DARWIN_HOME_INSTALLER_PACKAGE_ROOTS,
+              DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT,
+            ]),
+      entries: [
+        INSTALLER_ENTRY,
+        'server/environments/release/admission.ts',
+        ...(platform === 'darwin' ? ['server/environments/updates/darwin/launch.ts'] : []),
+      ],
+    });
     assert(seen.has('server/core/path_containment.ts'));
     assert.deepEqual([...seen].filter((name) => !frozen.has(name)).sort(), []);
   }
 });
+
+// Gap: the one relaxation of the closure rule must not spread. Every closure file, and a
+// driver.ts that BUILT_IN_DRIVERS does not name, still fails on a deferred import that leaves it.
+it('lets a deferred import leave the frozen set only from a driver.ts BUILT_IN_DRIVERS names', () => {
+  const drivers = [...BUILT_IN_DRIVER_FILES, 'server/drivers/core/driver.ts'];
+  const linux = new Set<string>([...INSTALLER_SOURCE_FILES, ...drivers]),
+    darwin = new Set<string>([...DARWIN_HOME_INSTALLER_SOURCE_FILES, ...drivers]);
+  const outside = "\nexport const later = () => import('./outside_the_frozen_set.ts');\n";
+  const stray = 'server/drivers/not_built_in/driver.ts';
+  assert(!existsSync(join(CHECKOUT, stray)));
+  const covered: Record<string, string[]> = {};
+  for (const platform of ['linux', 'darwin'] as const) {
+    const walk = (
+      sources?: ReadonlyMap<string, string>,
+      extra: readonly string[] = [],
+      entries?: readonly string[],
+    ) =>
+      walk_installer_closure({
+        linux: platform === 'linux' ? new Set([...linux, ...extra]) : linux,
+        darwin: platform === 'darwin' ? new Set([...darwin, ...extra]) : darwin,
+        platform,
+        packages:
+          platform === 'linux'
+            ? LINUX_PACKAGES
+            : new Set<string>([
+                ...DARWIN_HOME_INSTALLER_PACKAGE_ROOTS,
+                DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT,
+              ]),
+        // Every listed source file, so a file reached only through types is checked too.
+        entries:
+          entries ??
+          [...(platform === 'linux' ? linux : darwin), ...extra].filter((name) =>
+            name.endsWith('.ts'),
+          ),
+        sources,
+      });
+    const closure = [...walk()].filter((name) => name.endsWith('.ts'));
+    assert.deepEqual(
+      [...(platform === 'linux' ? linux : darwin)].filter(
+        (name) => name.endsWith('.ts') && !closure.includes(name),
+      ),
+      [],
+    );
+    for (const name of closure) {
+      // The rule depends only on the importing file, so the walk starts at that file.
+      const leaving = () =>
+        walk(new Map([[name, readFileSync(join(CHECKOUT, name), 'utf8') + outside]]), [], [name]);
+      if (BUILT_IN_DRIVER_FILES.has(name)) leaving();
+      else
+        assert.throws(
+          leaving,
+          /unknown platform import: .*outside_the_frozen_set\.ts/,
+          platform + ' ' + name,
+        );
+    }
+    covered[platform] = closure;
+    assert.throws(
+      () =>
+        walk(new Map([[stray, "export const create = () => import('./runtime/instance.ts');\n"]]), [
+          stray,
+        ]),
+      /unknown platform import: server\/drivers\/not_built_in\/runtime\/instance\.ts/,
+    );
+  }
+  console.log(
+    JSON.stringify({
+      closure_files_checked: { linux: covered.linux!.length, darwin: covered.darwin!.length },
+    }),
+  );
+});
+
+// Gap: the closure walk lets a driver.ts defer its runtime, and it cannot see when a deferred
+// import runs. This loads the installer and admission from the frozen files alone and reads every
+// built-in driver's static fields, so an import that fires at load or during that read fails.
+it('loads the installer from the frozen files alone and reads every built-in manifest', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'panels-installer-load-'));
+  const owner = new ChildProcesses(),
+    controller = new AbortController();
+  try {
+    const loaded = join(root, 'frozen');
+    copy_linux_installer_closure(loaded);
+    const read_every_field =
+      "import{pathToFileURL}from'node:url';const[admission,entry,manifests]=process.argv.slice(1);process.argv=[process.execPath];await import(pathToFileURL(admission).href);await import(pathToFileURL(entry).href);const{BUILT_IN_MANIFESTS}=await import(pathToFileURL(manifests).href);const seen=new Set(),pending=[];const read=(value)=>{if(value===null||!['object','function'].includes(typeof value)||seen.has(value))return;seen.add(value);if(typeof value.then==='function')pending.push(value);for(const key of Reflect.ownKeys(value))read(Reflect.get(value,key));};read(BUILT_IN_MANIFESTS);await Promise.all(pending);await new Promise((settle)=>setTimeout(settle,50));process.stdout.write(JSON.stringify(BUILT_IN_MANIFESTS.map(({driver_kind,manifest})=>({driver_kind,manifest}))));";
+    const result = await run_release_command(
+      [
+        process.execPath,
+        '--input-type=module',
+        '-e',
+        read_every_field,
+        join(loaded, 'server/environments/release/admission.ts'),
+        join(loaded, INSTALLER_ENTRY),
+        join(loaded, 'server/drivers/built_in_manifests.ts'),
+      ],
+      {
+        timeout_seconds: null,
+        environment: isolated_node_environment(root, loaded),
+        allow_nonzero: true,
+      },
+      {
+        child_processes: owner,
+        signal: controller.signal,
+        deadline: performance.now() / 1000 + 10,
+      },
+    );
+    assert.equal(result.stderr, '');
+    assert.equal(result.code, 0);
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      JSON.parse(
+        JSON.stringify(
+          BUILT_IN_DRIVERS.map(({ driver_kind, manifest }) => ({ driver_kind, manifest })),
+        ),
+      ),
+    );
+  } finally {
+    owner.seal();
+    controller.abort();
+    await owner.settled();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 15000);
 
 it('copies a complete selected closure once and refuses changed source or an application-owned Node', async () => {
   // Existing installer parity never copies packages, native provider edges, links, or licenses.
@@ -564,62 +781,12 @@ it('copies a complete selected closure once and refuses changed source or an app
     // No inventory or native-admission result is fabricated for this import-only tree.
     const import_source = join(root, 'import-source'),
       loaded = join(root, 'import-copy');
-    for (const path of INSTALLER_SOURCE_FILES) {
-      mkdirSync(dirname(join(import_source, path)), { recursive: true });
-      cpSync(join(checkout, path), join(import_source, path));
-    }
-    for (const path of [...INSTALLER_PACKAGE_ROOTS, INSTALLER_KOFFI_OPTIONAL_ROOT]) {
-      if (!existsSync(join(checkout, path))) {
-        assert.equal(path, INSTALLER_KOFFI_OPTIONAL_ROOT);
-        continue;
-      }
-      mkdirSync(dirname(join(import_source, path)), { recursive: true });
-      cpSync(join(checkout, path), join(import_source, path), {
-        recursive: true,
-        verbatimSymlinks: true,
-      });
-    }
+    copy_linux_installer_closure(import_source);
     cpSync(import_source, loaded, { recursive: true, verbatimSymlinks: true });
     renameSync(import_source, join(root, 'retired-import-source'));
     const invalid_request = join(root, 'invalid-request.json');
     writeFileSync(invalid_request, '{}');
-    const environment: NodeJS.ProcessEnv = {
-      PATH: '/usr/bin:/bin',
-      LANG: 'C.UTF-8',
-      PLAN_TEST_MODE: '1',
-      VITEST: 'true',
-      PLAN_DISPATCH_ENABLED: 'false',
-      PLAN_SERVER_URL: 'http://127.0.0.1:0',
-      TMPDIR: root,
-      TMP: root,
-      TEMP: root,
-    };
-    for (const name of [
-      'HOME',
-      'CODEX_HOME',
-      'CLAUDE_CONFIG_DIR',
-      'HERMES_HOME',
-      'PLAN_HERMES_HOME',
-      'PLAN_LOGS_DIR',
-      'PLAN_BACKUP_DIR',
-      'PLAN_WORKSPACE_ROOT',
-      'PLAN_TICKET_SCRATCH_ROOT',
-    ]) {
-      environment[name] = join(root, 'homes', name);
-      mkdirSync(environment[name]!, { recursive: true });
-    }
-    for (const name of [
-      'PLAN_CONFIG_PATH',
-      'PLAN_DB_PATH',
-      'PLAN_TICKET_SCRATCH_DATABASE',
-      'PLAN_DISPATCHER_LOCK_PATH',
-      'PLAN_SERVER_CONTROL_SOCKET',
-      'PLAN_SERVER_LIFECYCLE_LEASE_PATH',
-      'PLAN_CREDENTIAL_KEY_PATH',
-    ])
-      environment[name] = join(root, name);
-    environment.PLAN_APP_ROOT = loaded;
-    writeFileSync(environment.PLAN_CONFIG_PATH!, '{}\n');
+    const environment = isolated_node_environment(root, loaded);
     const spawn = owner.spawn.bind(owner);
     let spawns = 0,
       closes = 0;

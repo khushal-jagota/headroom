@@ -1,5 +1,6 @@
 /** Panels-owned backend cards. Provider protocols stay behind adapters. */
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
+import type { BuiltInDriverFacts } from '../../drivers/built_in_manifests.ts';
 import type { JsonNumber } from '../../core/http/numeric_json.ts';
 import type { Database } from '../../core/database/contracts.ts';
 import type { BackendStateStore } from '../backend_state.ts';
@@ -61,7 +62,6 @@ export interface CommandOutcome {
 export interface BackendProbeEnvironment {
   shutdown?(): Promise<void>;
   executable_path(executable_name: string): string | null;
-  configured_executable_path(executable_name: string): string | null;
   real_path(path: string): string;
   user_local_npm_prefix(): string;
   prefix_is_owned_and_writable(prefix: string): boolean;
@@ -105,7 +105,15 @@ export interface BackendHttpRuntime {
   /** The backend's sign-in, or null when Panels cannot sign it in. */
   sign_in(backend_key: string): DriverSignInController | null;
   readonly machine_catalog: (machine_id: string) => RemoteCatalogSource | null;
+  /** The drivers this build carries, in registry order. GET /api/drivers lists them. */
+  readonly drivers: readonly CardDriver[];
+  /** The driver behind an instance id: its registry entry's driver, else null. */
+  driver_of(backend_key: string): CardDriver | null;
+  /** The instance has an allowance_usage hook. */
+  reports_allowance_usage(backend_key: string): boolean;
 }
+/** The static half of a driver that cards and the driver list read. */
+export type CardDriver = BuiltInDriverFacts;
 /** One backend card: the instance it describes and the driver status that probes it. */
 export interface BackendCardSource {
   readonly instance_id: BackendInstanceId;
@@ -128,6 +136,12 @@ export interface CatalogAnswer {
   readonly default_reasoning_effort: string | null;
   readonly diagnoses: readonly string[];
   readonly complete: boolean;
+  /**
+   * Who the catalog read found signed in, for a driver with no identity command; the card
+   * uses it when the recipe reads no identity, and words its sign-in diagnosis as for any
+   * driver. Null: the catalog read does not tell.
+   */
+  readonly identity: BackendIdentity | null;
 }
 export type CatalogReader = (options: {
   readonly environment: BackendProbeEnvironment;

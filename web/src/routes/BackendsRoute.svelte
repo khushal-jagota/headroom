@@ -11,7 +11,7 @@
   import type { UsageTab } from "../lib/usageAddress";
   import { nestedHref, prefixHref, type UtilityHref } from "../lib/utilityAddress";
   import { queries } from "../lib/queryCatalogue";
-  import { readUsageLimits, type UsageDays, type UsageProvider } from "../lib/conversation/recordedUsageWire";
+  import { readUsageLimits, type UsageDays } from "../lib/conversation/recordedUsageWire";
   import { refreshBackendSnapshots } from "../lib/conversation/backendRefresh";
   import type { BackendUsageRefreshOutcome } from "../lib/conversation/wire";
   import { refreshUsage } from "../lib/usage/usage";
@@ -21,6 +21,10 @@
     tab?: UsageTab; roleKind?: ConfigSelection["roleKind"]; roleId?: string; href?: UtilityHref;
   } = $props();
   const queryClient = useQueryClient();
+  const driversQuery = createQuery(() => queries.drivers());
+  // Usage names, colours and stacking come from the driver list, so the usage body waits
+  // for it. A failed list falls back to each key's own name and the neutral colour.
+  const drivers = $derived(driversQuery.data?.drivers ?? (driversQuery.isError ? [] : undefined));
   let days = $state<UsageDays>(1);
   let windowSelection = $state(makeWindow(1, new Date(), "hour"));
   let providerSelection = $state<string[] | null>(null);
@@ -32,7 +36,6 @@
   const allowance = $derived(limits.data ?? lastLimits);
   const providerKeys = $derived(tab === "limits" ? Object.keys(allowance) : [...new Set(summary?.sources.map(source => source.fingerprint.provider) ?? [])]);
   const selectedProviders = $derived(providerSelection === null ? providerKeys : providerKeys.filter(provider => providerSelection?.includes(provider)));
-  const recordedProviders = $derived(selectedProviders.filter((provider): provider is UsageProvider => provider === "codex" || provider === "claude" || provider === "grok"));
   let refreshing = $state(false);
   let refreshOutcomes = $state<BackendUsageRefreshOutcome[]>([]);
   let refreshError = $state<string | null>(null);
@@ -67,7 +70,7 @@
   onMount(() => { const timer = setInterval(() => now = Date.now(), 60_000); return () => clearInterval(timer); });
 </script>
 <section class="backends-page" data-screen="backends">
-  <UsageHeader {tab} {href} {days} {providerKeys} {selectedProviders} busy={refreshing || recorded.isFetching || limits.isFetching}
+  <UsageHeader {tab} {href} {days} {providerKeys} {selectedProviders} busy={refreshing || recorded.isFetching || limits.isFetching} {drivers}
     onDays={selectWindow} onProviders={value => providerSelection = value} onRefresh={() => void refresh()} />
   {#if tab === "config"}
     {#key `${roleKind}/${roleId ?? ""}`}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />{/key}
@@ -75,13 +78,13 @@
     {#if refreshError}<p class="error" role="alert">{refreshError}</p>{/if}
     {#if tab === "limits"}
       {#if limits.error}<p class="error" role="alert">Could not refresh limits. Showing the last known values.</p>{/if}
-      <SkeletonRegion shape="rows" loading={limits.isPending && !Object.keys(allowance).length && !limits.error} loadingText="Reading subscription limits…">
-        <UsageLimits limits={allowance} providers={selectedProviders} outcomes={refreshOutcomes} {now} />
+      <SkeletonRegion shape="rows" loading={drivers === undefined || (limits.isPending && !Object.keys(allowance).length && !limits.error)} loadingText="Reading subscription limits…">
+        {#if drivers !== undefined}<UsageLimits limits={allowance} providers={selectedProviders} outcomes={refreshOutcomes} {now} {drivers} />{/if}
       </SkeletonRegion>
     {:else}
       {#if recorded.error}<p class="error" role="alert">Usage unavailable{summary ? " · showing saved totals" : ""}</p>{/if}
-      <SkeletonRegion shape="rows" loading={recorded.isPending && !summary && !recorded.error} loadingText="Scanning provider transcripts…">
-        {#if summary}<RecordedUsage {summary} input={windowSelection} providers={recordedProviders} metric={tab} />{/if}
+      <SkeletonRegion shape="rows" loading={drivers === undefined || (recorded.isPending && !summary && !recorded.error)} loadingText="Scanning provider transcripts…">
+        {#if summary && drivers !== undefined}<RecordedUsage {summary} input={windowSelection} providers={selectedProviders} metric={tab} {drivers} />{/if}
       </SkeletonRegion>
     {/if}
   {/if}

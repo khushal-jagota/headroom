@@ -82,6 +82,8 @@ export function job_plist(
   argv: readonly string[],
   environment: Readonly<Record<string, string>>,
   cwd: string,
+  /** Only a Worker's job runs at the lowered priority. */
+  options: { lower_priority: boolean },
 ): string {
   const string = (value: string) => `<string>${escape_xml(value)}</string>`;
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key>${string(label)}<key>ProgramArguments</key><array>${argv.map(string).join('')}</array><key>WorkingDirectory</key>${string(cwd)}<key>EnvironmentVariables</key><dict>${Object.entries(
@@ -99,5 +101,7 @@ export function job_plist(
     .map(([key, value]) => `<key>${escape_xml(key)}</key>${string(value)}`)
     .join(
       '',
-    )}</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><false/><key>Nice</key><integer>${NICE}</integer><key>ExitTimeOut</key><integer>${TERM_SECONDS}</integer></dict></plist>\n`;
+    )}</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><false/>${
+    options.lower_priority ? `<key>Nice</key><integer>${NICE}</integer>` : ''
+  }<key>ExitTimeOut</key><integer>${TERM_SECONDS}</integer></dict></plist>\n`;
 }

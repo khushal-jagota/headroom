@@ -195,7 +195,7 @@ struct TicketView: View {
     @ViewBuilder private func workerSetup(_ presentation: TicketPresentation) -> some View {
         if !presentation.terminal, presentation.ticket.employeeConfigurationEditable {
             Button { configurationOpen = true } label: {
-                Text([presentation.ticket.employeeBackend.capitalized, presentation.ticket.employeeLaunchModel, presentation.ticket.employeeLaunchReasoningEffort?.capitalized].compactMap { $0 }.joined(separator: " · "))
+                Text([store.backendLabel(presentation.ticket.employeeBackend), presentation.ticket.employeeLaunchModel, presentation.ticket.employeeLaunchReasoningEffort?.capitalized].compactMap { $0 }.joined(separator: " · "))
                     .font(PanelsTheme.TypeScale.small).frame(minHeight: 44)
             }.buttonStyle(.plain)
         }
