@@ -221,14 +221,14 @@ test('a machine saves and removes files for its own Ticket only', async () => {
   };
   const served = (ticket_id: string) =>
     join(dirname(path), 'files/tickets', ticket_id, 'artifacts/report.txt');
-  try {
-    const lease = await app.inject({
+  const lease = (protocol_version: number, later: object = {}) =>
+    app.inject({
       method: 'POST',
       url: '/api/executor/lease',
       remoteAddress: '127.0.0.1',
       headers,
       payload: {
-        identity,
+        identity: { ...identity, protocol_version, ...later },
         process_id: 1,
         mac_wall_clock_ms: Date.now(),
         queue_depth: 0,
@@ -238,9 +238,11 @@ test('a machine saves and removes files for its own Ticket only', async () => {
         working_turns: [],
         admission_stopped: false,
         cleanup_uncertainties: [],
+        ...later,
       },
     });
-    expect(lease.statusCode).toBe(200);
+  try {
+    expect((await lease(PROTOCOL_VERSION)).statusCode).toBe(200);
     expect((await request('PUT', own.id, 'artifacts/report.txt')).statusCode).toBe(204);
     expect(readFileSync(served(own.id))).toEqual(bytes);
     const refused = await request('PUT', foreign.id, 'artifacts/report.txt');
@@ -250,6 +252,15 @@ test('a machine saves and removes files for its own Ticket only', async () => {
     expect((await request('DELETE', foreign.id, 'artifacts/report.txt')).statusCode).toBe(403);
     expect((await request('DELETE', own.id, 'artifacts/report.txt')).statusCode).toBe(204);
     expect(existsSync(served(own.id))).toBe(false);
+    // An adjacent release keeps its lease and its requests, with fields this release ignores.
+    for (const adjacent of [PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1]) {
+      expect((await lease(adjacent, { later_field: true })).statusCode).toBe(200);
+      headers['X-Panels-Executor-Protocol'] = String(adjacent);
+      expect((await request('PUT', own.id, 'artifacts/report.txt')).statusCode).toBe(204);
+    }
+    expect((await lease(PROTOCOL_VERSION + 2)).json().error.code).toBe('executor_version_refused');
+    headers['X-Panels-Executor-Protocol'] = String(PROTOCOL_VERSION + 2);
+    expect((await request('PUT', own.id, 'artifacts/report.txt')).statusCode).toBe(409);
   } finally {
     await registry.stop({ deadline: performance.now() / 1000 + 5 });
     await registry.settled();

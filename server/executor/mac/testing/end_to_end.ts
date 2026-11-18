@@ -560,15 +560,6 @@ try {
         write({ id: command.id, result: await publish_refusals() });
         continue;
       }
-      if (command.operation === 'prepare_update') {
-        const prepared = await service.runner.prepare_update(
-          'now',
-          randomUUID(),
-          new AbortController().signal,
-        );
-        write({ id: command.id, result: { prepared, ...(await state()) } });
-        continue;
-      }
       if (command.operation === 'claude_finish_turn') claude_cleanup!.finish_turn();
       else if (command.operation === 'claude_hold_cleanup') claude_cleanup!.hold_cleanup();
       else if (command.operation === 'claude_release_cleanup') claude_cleanup!.release_cleanup();

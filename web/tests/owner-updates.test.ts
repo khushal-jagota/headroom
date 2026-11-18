@@ -8,7 +8,7 @@ import { updateCard, updateDetails, updatePresentation, type UpdatePresentationI
 import type { UpdateStatus } from "../src/lib/updates/contracts";
 import type { MacStatus } from "../src/lib/ticketMachines";
 
-const attempt = { attempt_id: "a1", from_sha: "1".repeat(40), to_sha: "2".repeat(40), mode: "now" as const,
+const attempt = { attempt_id: "a1", from_sha: "1".repeat(40), to_sha: "2".repeat(40),
   state: "failed" as const, detail: null, deadline_at: null };
 const status: UpdateStatus = { state: "available", allowed_actions: ["update"], activity: "unknown",
   available: { app_sha: "2".repeat(40) }, attempt: null, app_sha: "1".repeat(40), detail: null, deadline_at: null, mac_details: null };
@@ -24,20 +24,20 @@ describe("the update card resolver", () => {
   it("shows each server state on a connected page", () => {
     expect(updatePresentation({ ...base, status: at("up_to_date") })).toEqual({ state: null, dimmed: false });
     expect(updatePresentation({ ...base, status: undefined })).toEqual({ state: null, dimmed: false });
-    for (const state of ["available", "waiting", "updating", "failed", "mac_failed", "mac_unreachable"] as const) {
+    for (const state of ["available", "updating", "failed", "mac_failed", "mac_unreachable"] as const) {
       expect(updatePresentation({ ...base, status: at(state) })).toEqual({ state, dimmed: false });
     }
   });
 
   it("shows Updating… at once after a press, before the server answers", () => {
-    for (const state of ["available", "waiting", "failed", "mac_failed", "mac_unreachable"] as const) {
+    for (const state of ["available", "failed", "mac_failed", "mac_unreachable"] as const) {
       expect(updatePresentation({ ...base, status: at(state), starting: true }).state).toBe("updating");
     }
   });
 
   it("offers Refresh once the server is no longer updating and the running version moved", () => {
     // A page left behind cannot write. It refreshes first, then shows a Mac failure the server keeps.
-    for (const state of ["up_to_date", "available", "waiting", "mac_failed", "mac_unreachable"] as const) {
+    for (const state of ["up_to_date", "available", "mac_failed", "mac_unreachable"] as const) {
       expect(updatePresentation({ ...base, status: at(state), pageIsBehind: true }).state).toBe("complete");
     }
     // Panels rolled back, so its failure is the news.
@@ -64,7 +64,6 @@ describe("the update card", () => {
     const mac = at("mac_failed", { attempt, allowed_actions: ["retry_mac"] });
     const cards = {
       available: updateCard("available", status),
-      waiting: updateCard("waiting", at("waiting")),
       updating: updateCard("updating", at("updating")),
       complete: updateCard("complete", status),
       failed: updateCard("failed", failed),
@@ -75,7 +74,6 @@ describe("the update card", () => {
     expect(Object.fromEntries(Object.entries(cards).map(([state, card]) =>
       [state, [card.word, card.action?.label ?? null, card.action?.does ?? null, card.info ?? null, Boolean(card.track)]]))).toEqual({
       available: ["Update available", "Update", "offer", null, false],
-      waiting: ["Update waits for work to finish", "View", "waiting", null, false],
       updating: ["Updating…", null, null, null, true],
       complete: ["Update complete", "Refresh", "refresh", null, false],
       failed: ["Update didn't install", "Try again", "retry", "failed", false],
@@ -86,15 +84,6 @@ describe("the update card", () => {
     // A failure the server will not retry keeps its details, without a dead button.
     expect(updateCard("failed", { ...failed, allowed_actions: [] })).toMatchObject({ action: undefined, info: "failed" });
     expect(updateCard("available", { ...status, allowed_actions: [] }).action).toBeUndefined();
-  });
-
-  it("shows the server's backup detail while updating, and never an earlier state's detail", () => {
-    const backing_up = "Backing up the database first (about 3 min)";
-    expect(updateCard("updating", at("updating", { detail: backing_up })).detail).toBe(backing_up);
-    // A Retry press shows Updating… while the status is still the failed answer.
-    const failed = at("failed", { detail: "The new version did not pass its health check" });
-    expect(updatePresentation({ ...base, status: failed, starting: true }).state).toBe("updating");
-    expect(updateCard("updating", failed).detail).toBeUndefined();
   });
 
   it("keeps Mac diagnostics in the details, with plain facts for each failure", () => {
@@ -117,15 +106,13 @@ describe("the update card", () => {
       ["Last contact", "just now"], ["Protocol", "Mac 7"], ["Outbox format", "Mac 5"]]);
   });
 
-  it("puts the approved offer text and activity note in the dialog", () => {
-    const body = render(UpdateActions, { props: { status: { ...status, activity: "busy", detail: "Update now stops this work: Release proof, Inbox cleanup." }, now: 0 } }).body;
+  it("names the work an update interrupts, with one Update action and no way to wait", () => {
+    const detail = "The update interrupts this work, and Panels resumes it afterwards: Release proof, Inbox cleanup.";
+    const body = render(UpdateActions, { props: { status: { ...status, activity: "busy", detail }, now: 0 } }).body;
     expect(body).toContain("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.");
-    expect(body).toContain("Update now stops this work:");
-    expect(body).toContain("Release proof");
-    expect(body).toContain("Inbox cleanup");
-    expect(body).toContain("When work finishes");
-    expect(body).toContain("Update now");
-    expect(render(UpdateActions, { props: { status: { ...status, activity: "idle" }, now: 0 } }).body).not.toContain("When work finishes");
+    expect(body).toContain("Release proof, Inbox cleanup");
+    expect(body).toContain(">Update</button>");
+    expect(body).not.toContain("When work finishes");
   });
 });
 
@@ -134,17 +121,11 @@ describe("owner update actions", () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response("{}"));
     vi.stubGlobal("fetch", fetch);
     const withAttempt = { ...status, attempt };
-    await performUpdateAction(status, { action: "install", mode: "now" });
-    await performUpdateAction(status, { action: "install", mode: "idle" });
-    await performUpdateAction(withAttempt, { action: "cancel" });
-    await performUpdateAction(withAttempt, { action: "now" });
+    await performUpdateAction(status, { action: "install" });
     await performUpdateAction(withAttempt, { action: "retry" });
     await performUpdateAction(withAttempt, { action: "retry_mac" });
     expect(fetch.mock.calls.map(([path, init]) => [path, init?.body ? JSON.parse(String(init.body)) : null])).toEqual([
-      ["/api/updates/install", { app_sha: "2".repeat(40), mode: "now", confirm_activity: true }],
-      ["/api/updates/install", { app_sha: "2".repeat(40), mode: "idle", confirm_activity: false }],
-      ["/api/updates/attempts/a1/cancel", null],
-      ["/api/updates/attempts/a1/now", { confirm_activity: true }],
+      ["/api/updates/install", { app_sha: "2".repeat(40) }],
       ["/api/updates/attempts/a1/retry", null],
       ["/api/updates/attempts/a1/retry-mac", null],
     ]);
@@ -154,10 +135,10 @@ describe("owner update actions", () => {
   it("holds Updating… until the server's answer moves, and drops it on a refusal", async () => {
     let answer!: (response: Response) => void;
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { answer = resolve; })));
-    const pressed = performUpdateAction(status, { action: "install", mode: "now" });
+    const pressed = performUpdateAction(status, { action: "install" });
     expect(get(updateStarting)).not.toBeNull();
     // A second press while the first is in flight sends nothing.
-    await performUpdateAction(status, { action: "install", mode: "now" });
+    await performUpdateAction(status, { action: "install" });
     answer(new Response("{}"));
     await pressed;
     // The attempt can land just after the route answers. The old answer keeps the press.
@@ -166,7 +147,7 @@ describe("owner update actions", () => {
     settleUpdateStarting(at("updating", { attempt }));
     expect(get(updateStarting)).toBeNull();
 
-    const refused = performUpdateAction(status, { action: "install", mode: "now" });
+    const refused = performUpdateAction(status, { action: "install" });
     answer(new Response(JSON.stringify({ detail: "The selected release is no longer ready." }), { status: 409 }));
     await expect(refused).rejects.toThrow("The selected release is no longer ready.");
     expect(get(updateStarting)).toBeNull();

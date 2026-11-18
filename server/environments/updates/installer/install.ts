@@ -253,6 +253,13 @@ async function install_locked(
       io.stderr(`Interruption capture unavailable: ${capture.detail}\n`);
     signal.throwIfAborted();
     record.record('interruptions_captured');
+    if (attempt.snapshot_required === true) {
+      await effects.snapshot(from_sha, lifetime_lock_fd);
+      signal.throwIfAborted();
+      attempt.backup = record.read().backup;
+      if (typeof attempt.backup !== 'string')
+        throw new InstallFailed('The database snapshot was not recorded');
+    }
     move(app, previous, signal);
     previous_moved = true;
     move(staged, app, signal);

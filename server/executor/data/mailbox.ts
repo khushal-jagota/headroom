@@ -903,8 +903,8 @@ function result_refusal(
   if (row.executor_incarnation !== incarnation) return 'command_of_another_executor_process';
   if (row.state === 'withdrawn' || row.state === 'expired') return `command_${row.state}`;
   const child = row.command.child_command;
-  if (child == null)
-    return value.model_list == null || value.child_outcome != null ? 'malformed_result' : null;
+  // An executor that could not read its model list answers with an empty result.
+  if (child == null) return value.child_outcome != null ? 'malformed_result' : null;
   const outcome = value.child_outcome;
   return outcome == null ||
     value.model_list != null ||

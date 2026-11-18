@@ -96,14 +96,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     import('./backends/contracts.ts').BackendChild,
     ConversationState
   >();
-  update_generation: symbol | null = null;
-  update_admission_owned = false;
-  update_metadata: ReadonlyMap<string, readonly [string, string]> | null = null;
-  update_retirement: Promise<void> | null = null;
-  update_retirement_generation: symbol | null = null;
-  update_retirement_pending = false;
-  update_stop_failed = false;
-  acknowledged_event_failures = new Map<string, number>();
   idle_janitor: IdleChildJanitor | null = null;
   readonly lost_task_notices: LostBackgroundTaskNotices;
   background_tasks_left_by_previous_process: ReadonlyMap<string, readonly string[]>;
@@ -680,14 +672,11 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     return queries.workspace_activity(this);
   }
-  update_waiting_work(): readonly string[] {
-    return update_preparation.update_waiting_work(this);
+  update_interrupted_work(): readonly string[] {
+    return update_preparation.update_interrupted_work(this);
   }
-  prepare_update(mode: 'idle' | 'now', signal?: AbortSignal): Promise<boolean> {
-    return update_preparation.prepare_update(this, mode, signal);
-  }
-  cancel_update(): boolean {
-    return update_preparation.cancel_update(this);
+  reopen_after_update(): void {
+    update_preparation.reopen_after_update(this);
   }
   readonly retire_local_workspace = (
     ticket_id: string,

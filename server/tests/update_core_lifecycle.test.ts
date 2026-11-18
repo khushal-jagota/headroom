@@ -251,9 +251,6 @@ async function owned_server(
           },
           installer: {
             node_schema_steps_pending: () => false,
-            create_backup: async () => {
-              throw new Error('no actual backup');
-            },
             prepare: () => ['scripted-installer'],
             launch: async () => {
               throw new Error('no actual installer');
@@ -326,28 +323,26 @@ async function owned_server(
   }
 }
 
-test('real core completion admits an idle update, refuses HTTP writes without mutation, and reopens after launch failure', async () => {
+test('a press installs at once while work runs, refuses HTTP writes behind the trial marker, and reopens after launch failure', async () => {
   let update_instance: UpdateService | undefined;
   const start_updates = UpdateService.prototype.start;
   vi.spyOn(UpdateService.prototype, 'start').mockImplementation(function (this: UpdateService) {
     update_instance = this;
     return start_updates.call(this);
   });
-  const backup = deferred<string>(),
-    backup_entered = deferred<void>();
   const launch = deferred<void>(),
     launch_entered = deferred<void>();
   const owned = await owned_server({
     node_schema_steps_pending: () => true,
-    create_backup: () => {
-      backup_entered.resolve();
-      return backup.promise;
-    },
     launch: () => {
       launch_entered.resolve();
       return launch.promise;
     },
   });
+  const attempt = () =>
+    JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8'));
+  const seconds_left = (deadline_at: string) =>
+    Number(instant(deadline_at).epochMicroseconds) / 1_000_000 - Date.now() / 1000;
   try {
     const sent = await owned.send('native work before update');
     expect(sent.status).toBe(200);
@@ -383,126 +378,53 @@ test('real core completion admits an idle update, refuses HTTP writes without mu
       health: null,
       status: null,
     });
-    const install = await owned.post('/api/updates/install', {
-      app_sha: 'b'.repeat(40),
-      mode: 'idle',
-    });
+    // The card names the running work, and the press carries no confirmation.
+    expect((await owned.status()).detail).toContain('Panels resumes it afterwards');
+    const install = await owned.post('/api/updates/install', { app_sha: 'b'.repeat(40) });
     expect(install.status).toBe(200);
-    expect((await owned.status()).attempt.state).toBe('waiting');
-    expect(owned.context.core!.workspace_admission.closed).toBe(false);
-    await child.finish();
-    await reached(backup_entered.promise, 'idle readiness admission', () => ({
-      activity: owned.context.core!.workspace_activity(),
-      active: owned.context.core!.workspace_admission.active,
-      closed: owned.context.core!.workspace_admission.closed,
-      attempt: JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8')),
-    }));
-    expect(owned.context.core!.runtime_turn(delivery.conversation_id)).toBeNull();
-    expect((await owned.status()).attempt.state).toBe('installing');
-    expect(owned.context.core!.workspace_admission.closed).toBe(true);
-    const refused = async (text: string) => {
-      const before = canonical_rows(owned.context.database);
-      expect((await owned.post('/api/projects', { name: text, summary: 'proof' })).status).toBe(
-        503,
-      );
-      expect((await owned.send(text)).status).toBe(503);
-      expect(canonical_rows(owned.context.database)).toEqual(before);
-      const read = await fetch(owned.server.address + '/api/projects?detail=full');
-      expect(read.status).toBe(200);
-    };
-    await refused('refused while preparing');
-    backup.resolve(join(owned.root, 'backups/scripted-snapshot'));
-    await reached(launch_entered.promise, 'installer launch after backup');
-    expect((await owned.status()).attempt.state).toBe('installing');
-    await refused('refused while installing');
+    await reached(launch_entered.promise, 'installer launch while work runs', attempt);
+    // The turn still runs. The update did not stop it or wait for it.
+    expect(owned.context.core!.runtime_turn(delivery.conversation_id)).not.toBeNull();
+    const launched = attempt();
+    expect(launched).toMatchObject({ state: 'installing', backup: null, snapshot_required: true });
+    // The installer snapshots after the stop, so its deadline covers the copy, the
+    // steps and a rollback restore. The fixture database gets the 120 s floor per copy.
+    expect(seconds_left(launched.deadline_at)).toBeGreaterThan(900 + 120 + 900 + 120 - 30);
+    expect(seconds_left(launched.deadline_at)).toBeLessThanOrEqual(900 + 120 + 900 + 120);
+    expect((await owned.status()).state).toBe('updating');
+    const before = canonical_rows(owned.context.database);
+    expect(
+      (await owned.post('/api/projects', { name: 'refused while installing', summary: 'proof' }))
+        .status,
+    ).toBe(503);
+    expect(canonical_rows(owned.context.database)).toEqual(before);
+    expect((await fetch(owned.server.address + '/api/projects?detail=full')).status).toBe(200);
     launch.reject(new Error('scripted installer did not start'));
     await vi.waitFor(async () => expect((await owned.status()).attempt.state).toBe('failed'));
-    expect(owned.context.core!.workspace_admission.closed).toBe(false);
-    expect(owned.context.core!.workspace_activity()).toBe('idle');
+    expect(attempt().steps.failure_reported).toBeTypeOf('string');
     const created = await owned.post('/api/projects', {
       name: 'work after failed update',
       summary: 'proof',
     });
     expect(created.status).toBe(200);
+    await child.finish();
     const resumed = await owned.send('native work after failed update');
     expect(resumed.status).toBe(200);
     const resumed_delivery = await resumed.json();
     expect(resumed_delivery.fate).toBe('started');
     await owned.registry.child(resumed_delivery.conversation_id).finish();
   } finally {
-    backup.resolve(join(owned.root, 'backups/scripted-snapshot'));
     launch.reject(new Error('test cleanup'));
     await owned.close();
   }
 }, 20_000);
 
-test('ancestor database: the backup is taken after the deadline is written, and the deadline includes the backup allowance', async () => {
-  // settle() and the Updating card read deadline_at. A backup under the old deadline
-  // could expire mid-copy. The fixture database is small, so each copy gets the 120 s floor.
-  const backup = deferred<string>(),
-    backup_entered = deferred<void>();
-  const launch = deferred<void>(),
-    launch_entered = deferred<void>();
-  const owned = await owned_server({
-    node_schema_steps_pending: () => true,
-    create_backup: () => {
-      backup_entered.resolve();
-      return backup.promise;
-    },
-    launch: () => {
-      launch_entered.resolve();
-      return launch.promise;
-    },
-  });
-  const attempt = () =>
-    JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8'));
-  const seconds_left = (deadline_at: string) =>
-    Number(instant(deadline_at).epochMicroseconds) / 1_000_000 - Date.now() / 1000;
-  const snapshot = join(owned.root, 'backups/scripted-snapshot');
-  try {
-    // The same idle admission as the first proof: the update starts when this work finishes.
-    const sent = await owned.send('native work before a stepped update');
-    expect(sent.status).toBe(200);
-    const child = owned.registry.child((await sent.json()).conversation_id);
-    await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
-    const install = await owned.post('/api/updates/install', {
-      app_sha: 'b'.repeat(40),
-      mode: 'idle',
-    });
-    expect(install.status).toBe(200);
-    await child.finish();
-    await reached(backup_entered.promise, 'backup of an ancestor database', attempt);
-    const during = attempt();
-    expect(during).toMatchObject({ state: 'installing', backup: null });
-    expect(seconds_left(during.deadline_at)).toBeGreaterThan(900 + 120 + 900 + 120 - 30);
-    expect(seconds_left(during.deadline_at)).toBeLessThanOrEqual(900 + 120 + 900 + 120);
-    expect(await owned.status()).toMatchObject({
-      state: 'updating',
-      detail: 'Backing up the database first (about 2 min)',
-    });
-    backup.resolve(snapshot);
-    await reached(launch_entered.promise, 'installer launch after the backup', attempt);
-    const launched = attempt();
-    expect(launched).toMatchObject({ state: 'installing', backup: snapshot, detail: null });
-    // The backup is done. The steps and a rollback restore still count.
-    expect(seconds_left(launched.deadline_at)).toBeGreaterThan(900 + 900 + 120 - 30);
-    expect(seconds_left(launched.deadline_at)).toBeLessThanOrEqual(900 + 900 + 120);
-    launch.reject(new Error('scripted installer did not start'));
-    await vi.waitFor(async () => expect((await owned.status()).attempt.state).toBe('failed'));
-  } finally {
-    backup.resolve(snapshot);
-    launch.reject(new Error('test cleanup'));
-    await owned.close();
-  }
-}, 20_000);
-
-test('forced update waits for an admitted provider and ordinary shutdown retains ownership beyond grace', async () => {
+test('ordinary shutdown retains ownership beyond grace while a provider return is held', async () => {
   const loops_stop = vi.spyOn(BackgroundLoops.prototype, 'stop');
   const metrics_stop = vi.spyOn(MetricsRuntime.prototype, 'stop');
   const updates_stop = vi.spyOn(UpdateService.prototype, 'stop');
-  const launch = vi.fn(async () => {});
   let closing: Promise<void> | undefined;
-  const owned = await owned_server({ launch });
+  const owned = await owned_server();
   const receipt = deferred<void>(),
     receipt_entered = deferred<void>();
   let child: ScriptedChild | undefined;
@@ -533,30 +455,6 @@ test('forced update waits for an admitted provider and ordinary shutdown retains
     await reached(receipt_entered.promise, 'held provider method return');
     expect(owned.context.core!.workspace_activity()).toBe('busy');
     expect(owned.context.core!.workspace_admission.active).toBe(true);
-    await vi.waitFor(async () => expect((await owned.status()).state).toBe('available'));
-    const forced = await owned.post('/api/updates/install', {
-      app_sha: 'b'.repeat(40),
-      mode: 'now',
-      confirm_activity: true,
-    });
-    expect(forced.status).toBe(200);
-    const attempt = (await forced.json()).attempt;
-    expect(attempt.mode).toBe('now');
-    await vi.waitFor(() =>
-      expect(owned.context.core!.workspace_admission.starts_closed).toBe(true),
-    );
-    expect((await owned.status()).attempt.state).toBe('waiting');
-    expect(launch).not.toHaveBeenCalled();
-    expect(
-      JSON.parse(readFileSync(join(owned.root, 'data/update-attempt.json'), 'utf8'))
-        .confirm_activity,
-    ).toBe(true);
-
-    expect(owned.context.core!.workspace_admission.closed).toBe(false);
-    expect(
-      (await owned.post('/api/updates/attempts/' + attempt.attempt_id + '/cancel', {})).status,
-    ).toBe(200);
-    expect(owned.context.core!.workspace_admission.starts_closed).toBe(false);
     // Database capabilities are frozen. Observe the actual store/publication doors
     // without replacing their SQL, settlement, or native cleanup behavior.
     const store = owned.context.record.store;
@@ -742,6 +640,7 @@ test('admitted startup notices finish and a stale observer cannot reopen a repla
       detail: null,
       deadline_at: null,
       backup: null,
+      snapshot_required: false,
       steps: {},
       mac_attempt_id: null,
       extra: {},

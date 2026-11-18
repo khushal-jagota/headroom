@@ -97,7 +97,11 @@ Each executor uses the shared Worker supervisor. It records exact process owners
 
 ## Updates and health
 
-A machine update closes its admission, confirms exact child retirement, and saves pending output before replacement. Its replacement retains journal and outbox custody until the home accepts replay.
+Extra machines never hold the home update. The home asks them nothing before it installs, and their Workers keep running.
+
+Each machine updates itself once the home runs the new release. It downloads the runtime while its Workers still run, and a newer target replaces a download in progress. The replacement is an ordinary executor restart: shutdown stops each Worker within a fixed limit by its launchd job or cgroup. It never waits for proof that a Worker ended, for outbox delivery, or for the home to answer. If shutdown fails or outlasts its hard limit, the runtime exits anyway and the next runtime stops what remains. The replacement is a new process incarnation with the same journal and outbox, so the home recovers interrupted turns as after any executor restart.
+
+A runtime that fails to download or to confirm its connection stays failed for that request, and the previous runtime keeps working.
 
 The signed Mac launcher and the Linux systemd user service start a fixed supervisor that selects a versioned runtime. The data folder retains journals, outboxes, credentials, files, and logs across updates. Update offers and progress belong to the requesting destination. Each executor reports its platform with authenticated requests. Update offers select an archive for that platform and the executor role. Content-addressed archives can share storage without sharing update authority. Linux archive downloads start only for registered Linux machines. Their failures do not block home or Mac updates. The home remembers rejected archive bytes for its process lifetime. The home retains two Linux archives.
 
@@ -106,7 +110,7 @@ Releases ship the TypeScript Mac executor with its own Node runtime. Its first i
 
 Each executor reads the same driver list as the home. Each driver supplies its launch, model list, home folder and skills folder for that machine. A start or model list request for a backend the machine has no driver for is refused with that reason. It never falls back to another backend.
 
-The home and executor use protocol 26. A turn ending may say whether its child can take another prompt; a Mac that leaves this out means the child is reusable. The backend key on the wire can be any driver slug. Each lease lists the driver kinds its machine runs. A machine that lists none runs no backend. The home refuses a remote start for a backend its machine does not run before anything reaches the mailbox, and asks a returning machine for model lists only for the backends it runs. An incompatible executor receives refusal. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/typescript-installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
+The home and executor use protocol 26. The home also accepts the protocol one version below and one above, which is what an adjacent release can speak. Each side ignores message fields it does not know. A turn ending may say whether its child can take another prompt; a Mac that leaves this out means the child is reusable. The backend key on the wire can be any driver slug. Each lease lists the driver kinds its machine runs. A machine that lists none runs no backend. The home refuses a remote start for a backend its machine does not run before anything reaches the mailbox, and asks a returning machine for model lists only for the backends it runs. An executor further away receives refusal with its update offer. Before the original credential handover, its existing authority still permits its recovery update. After handover, updates require its credential too. See the [Mac installation runbook](../ops/mac-executor/typescript-installation.md) or [Linux installation runbook](../ops/linux-executor/installation.md).
 
 The stall checker watches outstanding waits. Each machine's presence clock controls waits that depend on that machine. A sleeping machine does not accrue another machine's awake time. Home-only waits use elapsed home time. The separate watchdog can alarm when the server's own checker stops.
 
@@ -131,4 +135,4 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 - `server/environments/linux_executor/`: Linux executor archive, installation, systemd user service, and private enrollment entry.
 - `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
 
-_Last verified: 2026-11-14._
+_Last verified: 2026-11-18._

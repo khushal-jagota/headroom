@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { it } from 'vitest';
-import { backup_detail, install_deadline_seconds } from './install_deadline.ts';
+import { install_deadline_seconds } from './install_deadline.ts';
 
 it('the install deadline counts the backup, the steps and a rollback restore', () => {
   // settle() and the Updating card read this deadline. Pure arithmetic.
@@ -22,6 +22,4 @@ it('the install deadline counts the backup, the steps and a rollback restore', (
     install_deadline_seconds({ backup: false, steps: true, database_bytes: 1_000 }),
     900 + 900 + 120,
   );
-  assert.equal(backup_detail(live), 'Backing up the database first (about 3 min)');
-  assert.equal(backup_detail(1_000), 'Backing up the database first (about 2 min)');
 });

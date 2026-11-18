@@ -111,7 +111,6 @@ export class MacRunner implements MacRunnerContract {
       commands: () => commands,
       retirement,
       outbox: options.outbox,
-      new_update_id: options.new_update_id,
       permanently_stopped: () => lifetime.permanently_stopped,
     });
     lifetime = new MacRunnerLifetime({
@@ -327,9 +326,6 @@ export class MacRunner implements MacRunnerContract {
   }
   finish_planned_replay(): void {
     this.maintenance.finish_planned_replay();
-  }
-  prepare_update(mode: 'now' | 'idle', request_id: string, signal: AbortSignal): Promise<boolean> {
-    return this.maintenance.prepare_update(mode, request_id, signal);
   }
   seal(): void {
     this.lifetime.seal();
