@@ -96,9 +96,13 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
   ) {
     throw makePlannerError(parsed.error as JsonObject, response.status);
   }
-  throw new PlannerFetchError(`HTTP ${response.status}`, "http_error", {
-    status: response.status
-  });
+  // A route that answers with a `detail` sentence meant that sentence as its whole message.
+  const detail = parsed && typeof parsed === "object" && "detail" in parsed ? parsed.detail : undefined;
+  throw new PlannerFetchError(
+    typeof detail === "string" && detail !== "" ? detail : `HTTP ${response.status}`,
+    "http_error",
+    { status: response.status }
+  );
 }
 
 export async function fetchText(path: string): Promise<string> {
