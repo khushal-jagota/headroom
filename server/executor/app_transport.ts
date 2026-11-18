@@ -180,6 +180,8 @@ function decode<K extends WireRootName>(bytes: Uint8Array, root: K, limit: numbe
     return decode_bounded(bytes, root, { limit });
   } catch (error) {
     if (!(error instanceof ExecutorValidationError)) throw error;
+    // The executor's own log was the only record of this refusal. The home keeps it too.
+    console.warn(`Refused a malformed ${root} from an executor: ${error.message}`);
     throw new PlannerError('validation', `malformed executor request: ${error.message}`);
   }
 }

@@ -1,4 +1,7 @@
 /** Synthetic evidence never opens a process handle or contacts a service manager. */
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../lifecycle/contracts.ts';
 import type { WorkerProcess, WorkerProcessPrimitives } from '../worker_supervision/contracts.ts';
@@ -247,4 +250,66 @@ test('legacy Linux Ticket custody needs an ended boot after its root disappears'
   vi.mocked(f.native.host_boot).mockResolvedValue({ host: 'linux:machine', boot: 'next-boot' });
   expect(await f.custody.retirement_row_proven(row(), undefined, true)).toBe(true);
   expect(f.native.signal).not.toHaveBeenCalled();
+});
+
+// Risk: after an update's restart, a Worker that a failed stop left "not proven" stays
+// fenced although its processes ended with the service. Startup and the cleanup recheck
+// both read this proof. No other test takes a not_proven record with group custody to a
+// proven row. Real record file, synthetic process table and process group.
+test('a Worker left not proven is proven after a restart once its process group is gone', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'custody-restart-'));
+  const path = join(root, '1'.repeat(32) + '.json');
+  const cgroup = { path: '/synthetic/panels-worker', inode: 1n, root_device: 2n, root_inode: 3n };
+  const root_process = {
+    pid: identity.pid,
+    birth: identity.birth,
+    parent: 1,
+    group: 2,
+    session: 3,
+  };
+  try {
+    await records.write(path, {
+      version: 1,
+      ticket_id: 'ticket',
+      host: 'linux:machine',
+      boot: 'boot',
+      root: { ...root_process, zombie: false },
+      processes: [{ ...root_process, zombie: false }],
+      state: 'not_proven',
+      reason: 'Worker stop deadline expired',
+      isolated: true,
+      cgroup,
+      cgroup_joined: true,
+    });
+    const source = row({ supervision_record: path });
+    const restart = (alive: boolean) => {
+      const f = fixture();
+      if (!alive) f.replace(null);
+      Object.assign(f.native, { requires_containment: true });
+      const runtime = new WorkerSupervisionRuntime({
+        primitives: f.native,
+        cgroups: {
+          create: async () => cgroup,
+          join: async () => {},
+          kill: async () => {},
+          empty: async () => !alive,
+          remove: async () => {},
+        },
+      });
+      runtimes.push(runtime);
+      return new LocalChildCustody({
+        runtime,
+        child_processes: f.owner,
+        one_shot_children: {} as OwnedOneShotChildren,
+      });
+    };
+    // The same server process, with the Worker still alive: the fence holds.
+    expect(await restart(true).retirement_row_proven(source, undefined, true)).toBe(false);
+    expect((await records.read(path)).state).toBe('not_proven');
+    // After the service stop the group is gone, and the next start proves it from fresh evidence.
+    expect(await restart(false).retirement_row_proven(source, undefined, true)).toBe(true);
+    expect((await records.read(path)).state).toBe('complete');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
