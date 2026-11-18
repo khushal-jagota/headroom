@@ -85,7 +85,6 @@ function classify_installed_runtime(input) {
   const payload = read_json('runtime/contract.json');
   version(payload);
   if (!equal(contract, payload)) fail('manifest runtime contract differs from payload');
-  for (const name of ['server/environments/release/launcher_main.ts', 'server/lifecycle/foreground_main.ts', 'server/lifecycle/managed_main.ts', 'server/lifecycle/application.ts', 'server/lifecycle/stop_main.ts', 'server/stalls/watchdog_main.ts', 'server/environments/updates/interruption_capture_main.ts', 'server/environments/updates/restore_main.ts', 'runtime/installer-files.json', 'server/environments/updates/installer/main.ts']) regular(name);
   return 'node-v2';
 }
 try {

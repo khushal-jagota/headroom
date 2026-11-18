@@ -38,19 +38,6 @@ test('installed classifier checks exact identity and runtime version before iner
   try {
     for (const name of ['bin/panels', 'bin/panels-launcher'])
       await file(name, '#!/bin/sh\nexit 93\n', 0o755);
-    for (const name of [
-      'server/environments/release/launcher_main.ts',
-      'server/lifecycle/foreground_main.ts',
-      'server/lifecycle/managed_main.ts',
-      'server/lifecycle/application.ts',
-      'server/lifecycle/stop_main.ts',
-      'server/stalls/watchdog_main.ts',
-      'server/environments/updates/interruption_capture_main.ts',
-      'server/environments/updates/restore_main.ts',
-      'runtime/installer-files.json',
-      'server/environments/updates/installer/main.ts',
-    ])
-      await file(name, 'throw Error("Candidate code must never run");\n');
     await identity();
     await file('runtime/contract.json', '{"version":2}');
     expect(await classify()).toEqual({ code: 0, stdout: 'node-v2\n', stderr: '' });
