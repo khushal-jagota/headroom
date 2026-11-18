@@ -5,11 +5,7 @@ import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { inspect_environment_instance } from './materialize.ts';
 import { parse_environment_file, validate_repository_roots } from './logic.ts';
-import {
-  build_environment_run_env,
-  build_test_environment_run_env,
-  resolve_launcher_files,
-} from './launch.ts';
+import { build_environment_run_env, build_test_environment_run_env } from './launch.ts';
 import { EnvironmentValidationError } from './contracts.ts';
 import { OperatorInterrupted } from '../command_contracts.ts';
 import type {
@@ -112,7 +108,6 @@ export async function prepare_environment_run(
       {
         credentials,
         ambient: environment,
-        launcher_files: resolve_launcher_files(environment),
         runtime_port: port,
       },
     );

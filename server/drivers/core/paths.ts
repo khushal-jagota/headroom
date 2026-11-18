@@ -1,14 +1,10 @@
 /** Paths a manifest names through the environment. Each caller keeps its own existing rule. */
 import { join } from 'node:path';
-import type { ConfiguredFile, DriverManifest } from './manifest.ts';
+import type { DriverManifest } from './manifest.ts';
 
 export type DriverHome = NonNullable<DriverManifest['home']>;
 type Environment = Readonly<Record<string, string | undefined>>;
 
-/** The configured value, or the default when it is unset or empty. A leading '~' stays. */
-export function configured_file_path(file: ConfiguredFile, environment: Environment): string {
-  return environment[file.environment_name] || file.default_path;
-}
 export interface HomePathRule {
   /** '||': an empty value counts as unset. '??': only an absent value does. */
   readonly unset: '||' | '??';

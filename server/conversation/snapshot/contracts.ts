@@ -62,7 +62,6 @@ export interface CommandOutcome {
 export interface BackendProbeEnvironment {
   shutdown?(): Promise<void>;
   executable_path(executable_name: string): string | null;
-  configured_executable_path(executable_name: string): string | null;
   real_path(path: string): string;
   user_local_npm_prefix(): string;
   prefix_is_owned_and_writable(prefix: string): boolean;

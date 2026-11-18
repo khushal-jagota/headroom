@@ -14,7 +14,6 @@ import {
   SubprocessBackendProbeEnvironment,
   backend_io_is_test,
 } from '../../../conversation/snapshot/environment.ts';
-import { card_executable_path } from '../../../conversation/snapshot/probe.ts';
 import { CodexUsageAdapter } from './allowance_usage.ts';
 import { CodexModelCatalogUnavailable } from './contracts.ts';
 import { codex_manifest } from '../manifest.ts';
@@ -78,7 +77,7 @@ export function create_codex_providers(context: CodexProviderContext): CodexProv
       if (backend_io_is_test())
         throw new SignInUnavailable('Production sign-in is unavailable in tests.');
       // The card's own executable rule.
-      const executable = card_executable_path(codex_manifest.executable, environment);
+      const executable = environment.executable_path(codex_manifest.executable.name);
       return executable === null ? null : [executable, 'app-server'];
     },
     remembered_login_rejection: rejection,

@@ -1,10 +1,5 @@
 /** One card probe for every driver: its recipe, executable rule, identity and catalog readers. */
-import type {
-  BackendIdentity,
-  BackendProbeEnvironment,
-  CatalogReader,
-  CommandOutcome,
-} from './contracts.ts';
+import type { BackendIdentity, CatalogReader, CommandOutcome } from './contracts.ts';
 import type { DriverModelRules } from '../../drivers/core/driver.ts';
 import type { DriverManifest } from '../../drivers/core/manifest.ts';
 import type { BackendSnapshotDraft, StatusProbeContext } from '../../drivers/core/status.ts';
@@ -24,15 +19,6 @@ export interface CardProbeParts {
   readonly read_identity: ((outcome: CommandOutcome) => BackendIdentity) | null;
   readonly read_catalog: CatalogReader;
 }
-/** The executable a card reports: beside its configured file when the manifest says so, else PATH. */
-export function card_executable_path(
-  executable: DriverManifest['executable'],
-  environment: BackendProbeEnvironment,
-): string | null {
-  return executable.configured_beside === undefined
-    ? environment.executable_path(executable.name)
-    : environment.configured_executable_path(executable.name);
-}
 /** The first non-empty numerical version any built-in driver reads from the model id. */
 export function built_in_model_version(model_id: string): readonly number[] {
   for (const driver of BUILT_IN_MANIFESTS) {
@@ -47,7 +33,7 @@ export async function probe_card(
 ): Promise<BackendSnapshotDraft> {
   const { environment } = context;
   const recipe = parts.manifest.status_recipe;
-  const executable_path = card_executable_path(parts.manifest.executable, environment);
+  const executable_path = environment.executable_path(parts.manifest.executable.name);
   if (executable_path === null)
     return {
       installed: false,

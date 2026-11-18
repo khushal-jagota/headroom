@@ -9,7 +9,6 @@ import type { ExecutorDriver, ExecutorDriverHost } from '../../drivers/core/exec
 import { default_instance_id_for_driver } from '../../drivers/core/identity.ts';
 import type { BackendInstanceId, DriverKind } from '../../drivers/core/identity.ts';
 import type { DriverManifest } from '../../drivers/core/manifest.ts';
-import { configured_file_path } from '../../drivers/core/paths.ts';
 import type { OwnedChildProcesses, OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { AccountSkillHome } from '../../skills/account.ts';
 import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
@@ -76,22 +75,15 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
   const environment: NodeJS.ProcessEnv = { ...(options.environment ?? process.env) };
   const expand = (path: string) => expand_executor_path(path, environment);
   const macos = (options.platform ?? process.platform) === 'darwin';
-  // An executable beside a configured file is not looked up on PATH.
   const executables = new Map(
-    options.drivers
-      .filter(({ manifest }) => manifest.executable.configured_beside === undefined)
-      .map(({ manifest: { executable } }) => [
-        executable.name,
-        options.executable_path(executable.name),
-      ]),
+    options.drivers.map(({ manifest: { executable } }) => [
+      executable.name,
+      options.executable_path(executable.name),
+    ]),
   );
   // Resolve every driver's paths before any launch copies the environment.
   const resolved = options.drivers.map(({ manifest }) => {
     const { executable, home } = manifest;
-    if (executable.configured_beside !== undefined)
-      environment[executable.configured_beside.environment_name] = expand(
-        configured_file_path(executable.configured_beside, environment),
-      );
     const override = executable_override(executable, environment, expand);
     if (override !== undefined) environment[executable.override_environment_name!] = override;
     let home_path: string | null = null;

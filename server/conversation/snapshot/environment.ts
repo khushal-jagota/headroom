@@ -5,12 +5,11 @@ import type { OwnedOneShotChildren } from '../../lifecycle/contracts.ts';
 import type { BackendCommandOptions } from './commands.ts';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, delimiter } from 'node:path';
+import { isAbsolute, join, resolve, delimiter } from 'node:path';
 import type { BackendProbeEnvironment, CommandOutcome } from './contracts.ts';
 import { testModeFromEnvironment } from '../../core/config.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 import type { DriverManifest } from '../../drivers/core/manifest.ts';
-import { configured_file_path } from '../../drivers/core/paths.ts';
 export function backend_io_is_test(): boolean {
   return (
     testModeFromEnvironment() ||
@@ -103,14 +102,6 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
           );
     if (override !== undefined) return file(override) ? override : null;
     return this.on_path(name);
-  }
-  configured_executable_path(name: string): string | null {
-    require_production_io();
-    const beside = built_in_executable(name)?.configured_beside;
-    if (beside === undefined) return null;
-    const configured = expand(configured_file_path(beside, this.environment), this.environment);
-    const executable = join(dirname(configured), name);
-    return file(executable) ? executable : null;
   }
   real_path(path: string): string {
     require_production_io();
