@@ -15,6 +15,7 @@ import {
 import { application_schema_seed } from './admission.ts';
 import { SCHEMA_STEPS } from './schema_steps/contracts.ts';
 import {
+  LIVE_NAVIGATION_VIEW_ORDERED_TABLE,
   LIVE_SIGNAL_SOURCE_AGENTS_TRIGGERS,
   live_baseline_variant,
 } from './schema_steps/live_baseline_variant.ts';
@@ -209,6 +210,21 @@ function foreign_key_violations(path: string): unknown[] {
     connection.close();
   }
 }
+/** The statement the server ran at startup before step 1 took the table over. */
+const RUNTIME_NAVIGATION_VIEW_ORDERED = LIVE_NAVIGATION_VIEW_ORDERED_TABLE.replace(
+  'CREATE TABLE ',
+  'CREATE TABLE IF NOT EXISTS ',
+);
+const ORDERED_ROW =
+  "INSERT INTO navigation_view_ordered VALUES ('section', 'profile', 'en', 0, 'ticket', 't1', 1, x'01', x'02')";
+function ordered_rows(path: string) {
+  const reader = createReadAccess(path);
+  try {
+    return reader.read((sql) => sql.all('SELECT * FROM navigation_view_ordered'));
+  } finally {
+    reader.close();
+  }
+}
 const digest = (path: string) =>
   [path, path + '-wal'].map((file) =>
     createHash('sha256')
@@ -216,13 +232,20 @@ const digest = (path: string) =>
       .digest('hex'),
   );
 
-it('step 1 brings a baseline database, or its live trigger variant, to the exact seed with its rows', () => {
+it('step 1 brings a baseline database, with either trigger text and with or without the navigation table, to the exact seed with its rows', () => {
   // A wrong rebuild loses rows, breaks a reference or leaves the seed and the stepped schema
-  // apart, and every update would roll back. Real SQLite, the release chain and seed.
+  // apart, and every update would roll back. Every used database holds the navigation table
+  // the server created at run time. Real SQLite, the release chain and seed.
   const live_variant = live_baseline_variant(BASELINE_SEED.statements);
   assert(live_variant !== null);
-  for (const seed of [BASELINE_SEED, { ...BASELINE_SEED, statements: live_variant }]) {
-    const path = baseline_database(seed);
+  for (const [statements, navigation_table] of [
+    [BASELINE_SEED.statements, false],
+    [BASELINE_SEED.statements, true],
+    [live_variant, false],
+    [live_variant, true],
+  ] as const) {
+    const path = baseline_database({ ...BASELINE_SEED, statements });
+    if (navigation_table) write(path, [RUNTIME_NAVIGATION_VIEW_ORDERED, ORDERED_ROW]);
     write(path, [
       "INSERT INTO projects (id, name, created_at, updated_at) VALUES ('project', 'Project', 0, 0)",
       ...keyed_rows('codex'),
@@ -245,13 +268,15 @@ it('step 1 brings a baseline database, or its live trigger variant, to the exact
       statements: application_schema_seed.statements,
     });
     assert.deepEqual(rows(path), before);
+    // Step 1 keeps an existing navigation table and its rows, and creates an empty one otherwise.
+    assert.equal(ordered_rows(path).length, navigation_table ? 1 : 0);
     assert.deepEqual(foreign_key_violations(path), []);
     // Every formerly checked column now stores a new backend key.
     write(path, keyed_rows('acme'));
   }
 });
 
-it('step 1 refuses before writing on any baseline difference but the one live variant', () => {
+it('step 1 refuses before writing on any baseline difference but the recorded live ones', () => {
   // The variant acceptance must not widen into accepting drift. Real SQLite.
   const live_variant = live_baseline_variant(BASELINE_SEED.statements)!;
   const [insert_trigger] = Object.values(LIVE_SIGNAL_SOURCE_AGENTS_TRIGGERS);
@@ -261,7 +286,12 @@ it('step 1 refuses before writing on any baseline difference but the one live va
       : statement,
   );
   const [first, ...rest] = live_variant;
-  for (const statements of [partial, [first!.replace('(', '(  '), ...rest]]) {
+  for (const statements of [
+    partial,
+    [first!.replace('(', '(  '), ...rest],
+    // The navigation table is accepted only with its exact stored text.
+    [...live_variant, LIVE_NAVIGATION_VIEW_ORDERED_TABLE.replace(',UNIQUE', ', UNIQUE')],
+  ]) {
     const path = baseline_database({ ...BASELINE_SEED, statements });
     const before = digest(path);
     assert.throws(
