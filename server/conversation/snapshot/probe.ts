@@ -81,6 +81,16 @@ export async function probe_card(
     });
     identity = { ...parts.read_identity(answer), login_command: recipe.login_command };
   }
+  context.signal?.throwIfAborted();
+  const catalog = await parts.read_catalog({
+    environment,
+    executable_path,
+    version,
+    refresh: context.refresh,
+  });
+  if (identity === null && catalog.identity !== null)
+    identity = { ...catalog.identity, login_command: recipe.login_command };
+  // One wording for every driver, whichever read found the identity.
   if (identity?.status === 'unauthenticated')
     diagnoses.push(
       `\`${recipe.executable_name}\` is not signed in.` +
@@ -90,16 +100,7 @@ export async function probe_card(
     diagnoses.push(
       identity.detail || `Panels could not read who \`${recipe.executable_name}\` is signed in as.`,
     );
-  context.signal?.throwIfAborted();
-  const catalog = await parts.read_catalog({
-    environment,
-    executable_path,
-    version,
-    refresh: context.refresh,
-  });
   diagnoses.push(...catalog.diagnoses);
-  if (identity === null && catalog.identity !== null)
-    identity = { ...catalog.identity, login_command: recipe.login_command };
   const advisory = context.discover_update_advisory
     ? await update_advisory(recipe, executable_path, version, environment)
     : null;

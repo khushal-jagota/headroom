@@ -139,8 +139,8 @@ export interface CatalogAnswer {
   readonly complete: boolean;
   /**
    * Who the catalog read found signed in, for a driver with no identity command; the card
-   * uses it when the recipe reads no identity. Its diagnoses are already in `diagnoses`.
-   * Null: the catalog read does not tell.
+   * uses it when the recipe reads no identity, and words its sign-in diagnosis as for any
+   * driver. Null: the catalog read does not tell.
    */
   readonly identity: BackendIdentity | null;
 }

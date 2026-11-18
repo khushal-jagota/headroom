@@ -8,7 +8,6 @@ import { answer, model } from '../../../conversation/snapshot/catalogs/readers.t
 import { identity } from '../../../conversation/snapshot/identity.ts';
 import { BackendCliIncompatible } from '../../../conversation/backends/cli_compatibility.ts';
 import type { AntigravityCatalogSource } from './contracts.ts';
-import { ANTIGRAVITY_SIGN_IN_REQUIRED } from './flavor.ts';
 
 type SelectOption = Extract<SessionConfigOption, { type: 'select' }>;
 export interface AntigravityCatalog {
@@ -83,11 +82,7 @@ export function antigravity_catalog_reader(source: AntigravityCatalogSource | nu
       });
     }
     // agy has no identity command: a session opening is the sign-in answer.
-    if (!read.signed_in)
-      return answer({
-        identity: identity('unauthenticated'),
-        diagnoses: [ANTIGRAVITY_SIGN_IN_REQUIRED],
-      });
+    if (!read.signed_in) return answer({ identity: identity('unauthenticated') });
     const signed_in = identity('authenticated');
     const catalog = antigravity_catalog(read.initial, read.after_selecting);
     if (catalog === null)
