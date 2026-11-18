@@ -1,9 +1,9 @@
 name: Native iOS
+# The jobs need GitHub-hosted Mac machines, which are scarce. Run them once per
+# change, when it reaches main, and on manual runs.
 on:
   push:
-    branches: ['**']
-    paths: ['ios/**', '.github/workflows/ios.yml']
-  pull_request:
+    branches: [main]
     paths: ['ios/**', '.github/workflows/ios.yml']
   workflow_dispatch:
 permissions:

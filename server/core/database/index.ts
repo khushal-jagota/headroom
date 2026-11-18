@@ -23,6 +23,10 @@ import type {
   DatabaseCloseHandle,
 } from './contracts.ts';
 import { select_schema_steps } from './schema_steps/contracts.ts';
+import {
+  LIVE_NAVIGATION_VIEW_ORDERED_TABLE,
+  live_baseline_variant,
+} from './schema_steps/live_baseline_variant.ts';
 import type { SchemaStep, SchemaStepOutcome, SchemaTransaction } from './schema_steps/contracts.ts';
 export type * from './contracts.ts';
 
@@ -475,16 +479,20 @@ export function applySchemaSteps(
     const pending = select_schema_steps(steps, from_revision, options.head_revision);
     if (pending.length === 0) return { from_revision, to_revision: from_revision, applied: [] };
     // Steps are written against the baseline's exact text. A live database that Alembic
-    // built step by step must match it, or the final seed check could never pass.
-    if (
-      options.baseline !== null &&
-      from_revision === options.baseline.alembicRevision &&
-      !sameStatements(
-        connection.prepare(SEED_STATEMENT_QUERY).pluck().all() as string[],
-        options.baseline.statements,
+    // built step by step must match it, or its recorded trigger variant, with or without the
+    // navigation table the server created at run time, or the final seed check could never
+    // pass. Table names are unique, so the filter removes at most that one statement.
+    if (options.baseline !== null && from_revision === options.baseline.alembicRevision) {
+      const actual = (connection.prepare(SEED_STATEMENT_QUERY).pluck().all() as string[]).filter(
+        (statement) => statement !== LIVE_NAVIGATION_VIEW_ORDERED_TABLE,
+      );
+      const variant = live_baseline_variant(options.baseline.statements);
+      if (
+        !sameStatements(actual, options.baseline.statements) &&
+        (variant === null || !sameStatements(actual, variant))
       )
-    )
-      throw new Error('The database schema text differs from the baseline, so no step ran');
+        throw new Error('The database schema text differs from the baseline, so no step ran');
+    }
     if (options.refuse_pending)
       throw new Error(
         `The database needs ${pending.length} schema step(s), but no backup was taken, so none ran`,

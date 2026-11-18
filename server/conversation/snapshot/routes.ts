@@ -12,10 +12,26 @@ import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { Fields, body_fields, object } from '../http/intake.ts';
 import type { ConversationHttpWriteScope } from '../http/writes.ts';
 import { resolve_usage_model_scopes } from '../backend_usage/logic/scopes.ts';
-import type { BackendHttpRuntime } from './contracts.ts';
+import type { BackendHttpRuntime, BackendSnapshot } from './contracts.ts';
 import type { DriverSignInController, SignInSession } from '../../drivers/core/sign_in.ts';
-import { SignInUnavailable, UnknownSignInSession } from '../../drivers/core/sign_in.ts';
+import {
+  SignInReturnUrlRefused,
+  SignInUnavailable,
+  UnknownSignInSession,
+} from '../../drivers/core/sign_in.ts';
 import { snapshot_json, sign_in_json } from './presentation.ts';
+import type { CardFacts } from './presentation.ts';
+/** Home cards: this server's own hooks. Another machine's card: its driver only. */
+function card_facts(runtime: BackendHttpRuntime, key: string, home = true): CardFacts {
+  return {
+    driver: runtime.driver_of(key),
+    can_sign_in: home && runtime.sign_in(key) !== null,
+    reports_allowance_usage: home && runtime.reports_allowance_usage(key),
+  };
+}
+function home_card(runtime: BackendHttpRuntime, snapshot: BackendSnapshot) {
+  return snapshot_json(snapshot, runtime.backend_state, card_facts(runtime, snapshot.backend_key));
+}
 function backend(runtime: BackendHttpRuntime, raw: unknown): BackendInstanceId {
   const fields = new Fields(raw, ['path']);
   const result = fields.choice('backend_key', runtime.backend_ids);
@@ -65,6 +81,7 @@ async function in_force(operation: () => Promise<SignInSession>): Promise<SignIn
   } catch (error) {
     if (error instanceof UnknownSignInSession)
       throw new HttpError(409, 'that sign-in is not the one in force any more');
+    if (error instanceof SignInReturnUrlRefused) throw new HttpError(422, error.message);
     throw error;
   }
 }
@@ -115,7 +132,7 @@ export function createBackendRoutes(
         signal: signal_of(request),
       });
       return {
-        backends: snapshots.map((snapshot) => snapshot_json(snapshot, runtime.backend_state)),
+        backends: snapshots.map((snapshot) => home_card(runtime, snapshot)),
       };
     });
     app.post('/backends', async (request, reply) => {
@@ -143,7 +160,13 @@ export function createBackendRoutes(
         ),
       );
       return {
-        backends: snapshots.map((snapshot) => snapshot_json(snapshot, runtime.backend_state)),
+        backends: snapshots.map((snapshot) =>
+          snapshot_json(
+            snapshot,
+            runtime.backend_state,
+            card_facts(runtime, snapshot.backend_key, ticket.machine_id === HOME_MACHINE_ID),
+          ),
+        ),
       };
     });
     app.post('/backends/refresh', async (request) => {
@@ -173,7 +196,7 @@ export function createBackendRoutes(
         }
       }
       return {
-        backends: snapshots.map((snapshot) => snapshot_json(snapshot, runtime.backend_state)),
+        backends: snapshots.map((snapshot) => home_card(runtime, snapshot)),
         usage_outcomes: resolved.map((result) => ({
           backend_key: result.backend_key,
           outcome: result.outcome,
@@ -226,7 +249,12 @@ export function createBackendRoutes(
       return pending === null ? { sign_in: null } : sign_in_json(pending);
     });
     app.delete('/backends/:backend_key/sign-in', async (request) => {
-      await sign_in_service(runtime, request.params, 'sign_out').sign_out!();
+      try {
+        await sign_in_service(runtime, request.params, 'sign_out').sign_out!();
+      } catch (error) {
+        if (error instanceof SignInUnavailable) throw new HttpError(503, error.message);
+        throw error;
+      }
       return { sign_in: null };
     });
     app.delete<{ Params: { backend_key: string; session_id: string } }>(

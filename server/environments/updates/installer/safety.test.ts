@@ -36,6 +36,7 @@ it('keeps actual-test boundaries and stops before rename after a warning abort',
     current_root: root,
     database: join(root, 'custom.sqlite'),
     data_directory: join(root, 'records'),
+    backup_directory: join(root, 'records'),
     attempt_id: 'safety',
     node_executable: process.execPath,
     service_unit: 'never-start.service',
@@ -88,6 +89,9 @@ it('keeps actual-test boundaries and stops before rename after a warning abort',
           async capture() {
             return { kind: 'unavailable', detail: 'scripted capture failure' };
           },
+          async snapshot() {
+            throw new Error('this attempt requires no snapshot');
+          },
           async schema_steps() {
             assert.fail('schema steps after warning abort');
           },
@@ -129,6 +133,7 @@ it('refuses non-loopback health URLs despite a supplied normal-mode environment'
     current_root: root,
     database: join(root, 'database.sqlite'),
     data_directory: root,
+    backup_directory: root,
     attempt_id: 'health-guard',
     node_executable: process.execPath,
     service_unit: 'never-start.service',
@@ -199,6 +204,7 @@ it('releases the barrier before healthy records on success and rollback', async 
             current_root: current,
             database: join(data, 'database.sqlite'),
             data_directory: data,
+            backup_directory: data,
             attempt_id: 'terminal',
             node_executable: process.execPath,
             service_unit: 'never-start.service',
@@ -209,6 +215,9 @@ it('releases the barrier before healthy records on success and rollback', async 
             async service() {},
             async capture() {
               return { kind: 'returned', returncode: 0 };
+            },
+            async snapshot() {
+              throw new Error('this attempt requires no snapshot');
             },
             async schema_steps() {},
             async restore() {

@@ -17,9 +17,6 @@ import { acquireRuntimeOwnership } from '../core/locks/index.ts';
 import { create_durable_codex_login_rejection } from '../drivers/codex/runtime/login_rejection.ts';
 import * as claude from '../drivers/claude/runtime/adapter.ts';
 import * as codex from '../drivers/codex/runtime/adapter.ts';
-import * as hermes from '../drivers/hermes/runtime/adapter.ts';
-import * as hermes_catalog from '../drivers/hermes/runtime/catalog.ts';
-import { HermesModelCatalogOwner } from '../drivers/hermes/runtime/catalog.ts';
 import { create_driver_registry, default_instance_configs } from '../drivers/core/registry.ts';
 import { ModelCatalogCleanupFailed } from '../conversation/backends/catalog_cleanup.ts';
 import * as snapshot from '../conversation/snapshot/composition.ts';
@@ -53,15 +50,11 @@ function private_production_environment(
     bin = join(root, 'private-agent-bin');
   mkdirSync(bin, { recursive: true });
   const claude_path = join(root, 'external-claude');
-  const hermes_source = join(root, 'hermes-source');
-  const hermes_python = join(hermes_source, 'venv/bin/python');
-  for (const home of ['home', 'codex', 'claude', 'hermes'])
-    mkdirSync(join(root, home), { recursive: true });
+  for (const home of ['home', 'codex', 'claude']) mkdirSync(join(root, home), { recursive: true });
   for (const [key, value] of Object.entries({
     HOME: join(root, 'home'),
     CODEX_HOME: join(root, 'codex'),
     CLAUDE_CONFIG_DIR: join(root, 'claude'),
-    HERMES_HOME: join(root, 'hermes'),
     PLAN_DB_PATH: path,
     PLAN_CONFIG_PATH: join(root, 'absent-config.yaml'),
     PLAN_WORKSPACE_ROOT: root,
@@ -76,8 +69,6 @@ function private_production_environment(
     PLAN_CREDENTIAL_KEY_PATH: join(root, 'credential.key'),
     PLAN_SERVER_CONTROL_SOCKET: join(root, 'control.sock'),
     PLAN_SERVER_LIFECYCLE_LEASE_PATH: join(root, 'lifecycle.lock'),
-    PLAN_HERMES_HOME: join(root, 'hermes'),
-    PLAN_HERMES_PYTHON: hermes_python,
     PLAN_CLAUDE_EXECUTABLE: claude_path,
     PATH: bin,
     PLAN_APP_ROOT: app_root,
@@ -91,14 +82,13 @@ function private_production_environment(
     tx.run('INSERT INTO chief_page(singleton) VALUES(1)');
     tx.run("INSERT INTO conversation_runtime_epoch VALUES(1,'old-runtime')");
   });
-  return { path, root, claude_path, hermes_source, hermes_python };
+  return { path, root, claude_path };
 }
 
-test('configured real bindings share owners and durable memory while Hermes cleanup retains server ownership', async () => {
+test('configured real bindings share owners and durable memory while backend cleanup retains server ownership', async () => {
   const began = performance.now(),
     database = fixture();
-  const { path, root, claude_path, hermes_source, hermes_python } =
-    private_production_environment(database);
+  const { path, root, claude_path } = private_production_environment(database);
   // Launch custody comes from the composed config, even without either ambient variable.
   writeFileSync(join(root, 'absent-config.yaml'), JSON.stringify({ db_path: path }));
   vi.stubEnv('PLAN_DB_PATH', undefined);
@@ -142,13 +132,9 @@ test('configured real bindings share owners and durable memory while Hermes clea
   const constructors = [
     vi.spyOn(claude, 'create_claude_backend_child_factory'),
     vi.spyOn(codex, 'create_codex_backend_child_factory'),
-    vi.spyOn(hermes, 'create_hermes_backend_child_factory'),
   ] as const;
   const http_runtime = vi.spyOn(snapshot, 'create_backend_runtime');
-  const catalog_launch = vi.spyOn(hermes_catalog, 'hermes_model_catalog_launch');
-  let release!: (error?: Error) => void,
-    entered!: () => void,
-    hold = false;
+  let release!: (error?: Error) => void, entered!: () => void;
   const gate = new Promise<void>((yes, no) => {
     release = (error) => (error ? no(error) : yes());
   });
@@ -156,15 +142,6 @@ test('configured real bindings share owners and durable memory while Hermes clea
   const stopping = new Promise<void>((yes) => {
     entered = yes;
   });
-  const original_shutdown = HermesModelCatalogOwner.prototype.shutdown;
-  const catalog_stop = vi
-    .spyOn(HermesModelCatalogOwner.prototype, 'shutdown')
-    .mockImplementation(function (this: HermesModelCatalogOwner) {
-      const actual = original_shutdown.call(this);
-      if (!hold) return actual;
-      entered();
-      return actual.then(() => gate);
-    });
   let context!: ConversationCompositionContext, server: StartedServer | undefined;
   let owned_http!: BackendHttpRuntime;
   let real!: ProductionBackendBindings, prepared!: PreparedProductionBackends;
@@ -210,10 +187,9 @@ test('configured real bindings share owners and durable memory while Hermes clea
         return owned_http;
       },
     });
-    expect(constructors.map((spy) => spy.mock.calls.length)).toEqual([1, 1, 1]);
+    expect(constructors.map((spy) => spy.mock.calls.length)).toEqual([1, 1]);
     const claude_call = constructors[0].mock.calls[0]!,
       codex_call = constructors[1].mock.calls[0]!;
-    const hermes_call = constructors[2].mock.calls[0]!;
     const worker_process_root = join(dirname(realpathSync(path)), 'worker-processes');
     expect(process.env.PLAN_DB_PATH).toBeUndefined();
     expect(process.env.PLAN_WORKER_PROCESS_ROOT).toBeUndefined();
@@ -224,14 +200,10 @@ test('configured real bindings share owners and durable memory while Hermes clea
       'http://127.0.0.1:0',
       worker_process_root,
     ]);
-    for (const call of [claude_call, codex_call, hermes_call])
+    for (const call of [claude_call, codex_call])
       expect(Object.fromEntries(call[0].environment_overrides ?? []).PLAN_WORKER_PROCESS_ROOT).toBe(
         worker_process_root,
       );
-    expect(catalog_launch).toHaveBeenCalledTimes(1);
-    expect(
-      Object.fromEntries(catalog_launch.mock.results[0]!.value.environment_overrides),
-    ).not.toHaveProperty('PLAN_WORKER_PROCESS_ROOT');
     expect(claude_call).toEqual([
       {
         claude_executable: claude_path,
@@ -246,17 +218,8 @@ test('configured real bindings share owners and durable memory while Hermes clea
         worker_supervision: context.worker_supervision,
       },
     ]);
-    expect([codex_call[1].child_processes, hermes_call[1].child_processes]).toEqual([
-      context.child_processes,
-      context.child_processes,
-    ]);
+    expect(codex_call[1].child_processes).toBe(context.child_processes);
     expect(codex_call[0].argv).toEqual(['codex', 'app-server']);
-    expect(hermes_call[0].argv[0]).toBe(hermes_python);
-    expect(Object.fromEntries(hermes_call[0].environment_overrides)).toMatchObject({
-      HERMES_HOME: join(root, 'hermes'),
-      HERMES_PYTHON_SRC_ROOT: hermes_source,
-      PLAN_SERVER_URL: 'http://127.0.0.1:0',
-    });
     const memory = codex_call[1].remembered_login_rejection;
     const other = create_durable_codex_login_rejection(context.database, () => context.clock.now());
     const generation = { account_id: 'synthetic', last_refresh: '2026-11-13T00:00:00Z' };
@@ -265,9 +228,9 @@ test('configured real bindings share owners and durable memory while Hermes clea
     other.forget(generation);
     expect(memory.applies_to(generation)).toBe(false);
     expect(http_runtime.mock.results[0]!.value).toBe(owned_http);
-    const retained = prepared.registry.require_live('hermes').status;
+    const retained = prepared.registry.require_live('codex').status;
     const recorded = new RecordingBackendProbeEnvironment();
-    recorded.configured_executables.set('hermes', '/synthetic/hermes');
+    recorded.executables.set('codex', '/synthetic/codex');
     await expect(
       without_runner_until('1', () =>
         retained.probe({
@@ -278,8 +241,8 @@ test('configured real bindings share owners and durable memory while Hermes clea
           model_version: () => [],
         }),
       ),
-    ).rejects.toThrow('Production backend I/O is unavailable in tests. Inject recording adapters.');
-    const failure = new Error('Retained Hermes cleanup failed');
+    ).rejects.toThrow('Production login reads are unavailable in tests.');
+    const failure = new Error('Retained Codex cleanup failed');
     const prior_failure = new Error('Initial catalog cleanup failed');
     const retry_cleanup = vi.fn(async () => {});
     const retry_failure = new ModelCatalogCleanupFailed(undefined, [prior_failure], retry_cleanup);
@@ -304,15 +267,14 @@ test('configured real bindings share owners and durable memory while Hermes clea
     expect(raw_settled).toBe(false);
     expect(retry_cleanup).not.toHaveBeenCalled();
     expect(codex_dispose).toHaveBeenCalledExactlyOnceWith(firstStop);
-    expect(catalog_stop).toHaveBeenCalledTimes(1);
     expect(() => acquireRuntimeOwnership(path)).toThrow('ConversationRuntimeAlreadyOwned');
     codex_dispose.mockClear();
-    catalog_stop.mockClear();
     codex_dispose.mockImplementationOnce(async (options) => {
       await retry_failure.retry_cleanup();
       await original_codex_dispose(options);
+      entered();
+      await gate;
     });
-    hold = true;
     const closing = server.close(stop);
     void closing.catch(() => {});
     let settled = false;
@@ -324,7 +286,7 @@ test('configured real bindings share owners and durable memory while Hermes clea
     await Promise.race([
       stopping,
       closing.then(() => {
-        throw new Error('Catalog stop was skipped');
+        throw new Error('Codex dispose was skipped');
       }),
     ]);
     await new Promise<void>((yes) => setImmediate(yes));
@@ -334,7 +296,6 @@ test('configured real bindings share owners and durable memory while Hermes clea
     release(failure);
     await expect(owned_http.settled()).rejects.toMatchObject({ errors: [prior_failure, failure] });
     await expect(closing).rejects.toThrow('Shutdown failed after settlement');
-    expect(catalog_stop).toHaveBeenCalledTimes(1);
     expect(codex_dispose).toHaveBeenCalledExactlyOnceWith(stop);
     expect(retry_cleanup).toHaveBeenCalledTimes(1);
     expect(retry_failure.pending).toBe(false);

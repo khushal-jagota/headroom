@@ -3,10 +3,12 @@
   import { type UsageSummary, type UsageSummaryInput, type UsageProviderKind } from "../../lib/usage/contracts";
   import { calculateUsageTotals } from "../../lib/usage/usageTotals";
   import { enumerateDays, enumerateHourStarts, formatUsd, formatTokens, formatPercent, formatCount, formatDayShort, formatHourShort, formatDateTimeShort } from "../../lib/usage/usageFormat";
-  import { PROVIDER_LABEL, PROVIDER_COLOR } from "../../lib/usage/usageProviders";
+  import { usageSourceColor, usageSourceLabel } from "../../lib/usage/usageProviders";
+  import type { DriverPresentation } from "../../lib/drivers/contracts";
   import UsageChart from "./UsageChart.svelte";
-  let { summary, input, providers, metric }: {
+  let { summary, input, providers, metric, drivers }: {
     summary: UsageSummary; input: UsageSummaryInput; providers: readonly UsageProviderKind[]; metric: "tokens" | "cost";
+    drivers: readonly DriverPresentation[] | undefined;
   } = $props();
   const selected = $derived({ ...summary,
     buckets: summary.buckets.filter(bucket => providers.includes(bucket.provider)),
@@ -33,11 +35,11 @@
       <strong data-usage-total>{metric === "cost" ? `${formatUsd(totals.costUsd)}*` : formatTokens(totals.totalTokens)}</strong>
       <span>{metric === "cost" ? "* if billed at full API rate" : `Across ${formatCount(totals.sessions)} sessions`}</span>
     </div>
-    {#if hasActivity}<UsageChart {days} {daily} {metric} timeZone={input.timeZone} />
+    {#if hasActivity}<UsageChart {days} {daily} {metric} timeZone={input.timeZone} {drivers} />
     {:else}<p class="empty-chart">No activity in this window.</p>{/if}
     <div class="legend-line">
       <span>{isPast24Hours ? formatHourShort(days[0] ?? "", input.timeZone) : formatDayShort(input.sinceDay)}</span>
-      <div class="legend">{#each totals.providers as provider (provider.provider)}<span><i style:background={PROVIDER_COLOR[provider.provider]}></i>{PROVIDER_LABEL[provider.provider]}</span>{/each}</div>
+      <div class="legend">{#each totals.providers as provider (provider.provider)}<span><i style:background={usageSourceColor(provider.provider, drivers)}></i>{usageSourceLabel(provider.provider, drivers)}</span>{/each}</div>
       <span>{isPast24Hours ? formatHourShort(days[days.length - 1] ?? "", input.timeZone) : formatDayShort(input.untilDay)}</span>
     </div>
   </section>
@@ -46,8 +48,8 @@
       {#each ordered as provider (provider.provider)}
         {@const share = metric === "cost" ? provider.costShare : provider.tokenShare}
         <article class="provider-row">
-          <div class="row"><span><i style:background={PROVIDER_COLOR[provider.provider]}></i>{PROVIDER_LABEL[provider.provider]}</span><strong>{metric === "cost" ? formatUsd(provider.costUsd) : formatTokens(provider.totalTokens)}</strong></div>
-          <div class="bar"><div style:width={`${share * 100}%`} style:background={PROVIDER_COLOR[provider.provider]}></div></div>
+          <div class="row"><span><i style:background={usageSourceColor(provider.provider, drivers)}></i>{usageSourceLabel(provider.provider, drivers)}</span><strong>{metric === "cost" ? formatUsd(provider.costUsd) : formatTokens(provider.totalTokens)}</strong></div>
+          <div class="bar"><div style:width={`${share * 100}%`} style:background={usageSourceColor(provider.provider, drivers)}></div></div>
           <p>{metric === "cost" ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens` : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}</p>
         </article>
       {/each}
@@ -63,13 +65,13 @@
   </div></section>
   {#if totals.models.length}<section class="card"><h2>By model</h2>
     {#each totals.models as model (`${model.provider}:${model.model}`)}
-      <article class="model-row"><i style:background={PROVIDER_COLOR[model.provider]}></i><div><span>{model.model}</span><small>{formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens</small></div><strong>{formatUsd(model.costUsd)}</strong></article>
+      <article class="model-row"><i style:background={usageSourceColor(model.provider, drivers)}></i><div><span>{model.model}</span><small>{formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens</small></div><strong>{formatUsd(model.costUsd)}</strong></article>
     {/each}
   </section>{/if}
   <details class="sources"><summary>Sources · {summary.scanDurationMs} ms</summary>
     <p>Observed {formatDateTimeShort(summary.readAt, input.timeZone)}</p>
     {#each summary.sources as source (`${source.fingerprint.provider}:${source.fingerprint.resolvedHomePath}`)}
-      <p>{PROVIDER_LABEL[source.fingerprint.provider]} · {source.status} · {source.scannedFiles} files · {source.distinctSessions} sessions{source.message ? ` · ${source.message}` : ""}</p>
+      <p>{usageSourceLabel(source.fingerprint.provider, drivers)} · {source.status} · {source.scannedFiles} files · {source.distinctSessions} sessions{source.message ? ` · ${source.message}` : ""}</p>
     {/each}
     <p>Model prices: {summary.pricing.status} · {summary.pricing.knownModels} models{summary.pricing.fetchedAt ? ` · ${formatDateTimeShort(summary.pricing.fetchedAt, input.timeZone)}` : ""}</p>
   </details>

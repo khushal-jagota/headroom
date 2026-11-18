@@ -4,13 +4,13 @@ import type { UpdateStatus } from "../contracts";
 
 /** What the one update card shows. `null` is no card. */
 export type UpdateCardState =
-  | "available" | "waiting" | "updating" | "complete"
+  | "available" | "updating" | "complete"
   | "failed" | "mac_failed" | "mac_unreachable" | "unreachable";
 export type UpdateFailureState = "failed" | "mac_failed" | "mac_unreachable";
 export type UpdatePresentation = { state: UpdateCardState | null; dimmed: boolean };
 
 /** What the card's action button does. */
-export type UpdateCardAction = "offer" | "waiting" | "refresh" | "retry" | "retry_mac" | "reconnect";
+export type UpdateCardAction = "offer" | "refresh" | "retry" | "retry_mac" | "reconnect";
 export type UpdateCard = {
   word: string;
   tone: "changing" | "settled" | "wrong" | "done";
@@ -57,13 +57,8 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
     case "available":
       return { word: "Update available", tone: "settled",
         action: allows("update") && status?.available ? { label: "Update", does: "offer" } : undefined };
-    case "waiting":
-      return { word: "Update waits for work to finish", tone: "changing", sentence: true, action: { label: "View", does: "waiting" } };
     case "updating":
-      // While the database backs up, the server says how long that takes. A press shows
-      // Updating… over the previous answer, whose detail belongs to that earlier state.
-      return { word: "Updating…", tone: "changing", track: true,
-        ...(status?.state === "updating" && status.detail ? { detail: status.detail } : {}) };
+      return { word: "Updating…", tone: "changing", track: true };
     case "complete":
       return { word: "Update complete", tone: "done", action: { label: "Refresh", does: "refresh" } };
     case "failed":

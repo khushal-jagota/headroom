@@ -32,7 +32,7 @@
   let reviewCount = $derived(displayed ? navigation.presentationFor(displayed).globalCounts?.review ?? navigation.presentationFor(displayed).review.items.length : 0);
 
   const updates = createQuery(() => ({ ...queries.updates(),
-    refetchInterval: (query) => $connectionStatus !== "connected" || $updateStarting !== null || ["waiting", "updating"].includes(query.state.data?.body.state ?? "")
+    refetchInterval: (query) => $connectionStatus !== "connected" || $updateStarting !== null || query.state.data?.body.state === "updating"
       ? UPDATE_RECOVERY_POLL_MS : false,
     refetchIntervalInBackground: true, retry: false
   }));

@@ -113,9 +113,8 @@ test.skipIf(!admitted)(
       const supervisor = await WorkerSupervisor.create(
         { ...environment, PLAN_TICKET_ID: ticket_id, PLAN_NATIVE_UNMARKED: unmarked ? '1' : '0' },
         root,
-        { runtime },
+        { runtime, conversation_id: environment.PLAN_CONVERSATION_ID, worker_ticket_id: ticket_id },
       );
-      if (!supervisor) throw new Error('Synthetic Worker requires supervision');
       supervisors.push(supervisor);
       const argv = supervisor.argv([process.execPath, provider]);
       const proxy = processes.spawn(argv[0]!, argv.slice(1), {
@@ -235,7 +234,8 @@ import {create_worker_supervision_runtime} from ${JSON.stringify(composition_mod
 import {WorkerSupervisor} from ${JSON.stringify(supervision_module)};
 const children=new ChildProcesses(), probes=new OneShotChildren(children);
 const runtime=create_worker_supervision_runtime({one_shot_children:probes});
-const supervisor=await WorkerSupervisor.create(JSON.parse(process.argv[2]),process.argv[3],{runtime});
+const environment=JSON.parse(process.argv[2]);
+const supervisor=await WorkerSupervisor.create(environment,process.argv[3],{runtime,conversation_id:environment.PLAN_CONVERSATION_ID,worker_ticket_id:environment.PLAN_TICKET_ID});
 const argv=supervisor.argv([process.execPath,process.argv[4]]);
 const child=children.spawn(argv[0],argv.slice(1),{env:supervisor.environment,cwd:process.argv[3],stdio:['pipe','pipe','pipe'],detached:true});
 let output='';

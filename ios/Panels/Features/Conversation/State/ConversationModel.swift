@@ -359,6 +359,8 @@ import UniformTypeIdentifiers
     var preparingPhoto: Bool { !preparingPhotos.isEmpty || preparingDraftPhotos || preparingOutgoingID != nil }
     private var preparedAttachments: [ConversationSend.Piece] = []
     var deliveryMode = "steer"
+    /// The conversation's backend can join a running turn, as the server last said.
+    var supportsSteer = true
     var attachments: [ConversationSend.Piece] = [] {
         didSet {
             composerRevision += 1
@@ -557,6 +559,9 @@ import UniformTypeIdentifiers
         }
         runningModel = configuration.model
         runningEffort = configuration.reasoningEffort
+        supportsSteer = configuration.supportsSteer
+        // Steer is not offered for this backend, so the choice it would keep becomes Queue.
+        if !supportsSteer && deliveryMode == "steer" { deliveryMode = "queue" }
         let received = Set(items.compactMap(\.senderMessageId))
         for held in configuration.heldPrompts {
             let id = held.senderMessageId ?? held.heldPromptId

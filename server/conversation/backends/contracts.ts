@@ -18,7 +18,7 @@
  *    not check this field.
  * 5. An ask is answerable only through the child that raised it.
  * 6. `ToolCallStarted.tool_kind` is one of `TOOL_KINDS`. The raw tool name stays in `title`.
- *    Readers accept any string, because stored rows and Python Mac rows keep old values.
+ *    Readers accept any string, because stored rows keep old values.
  */
 import type {
   AnswerFate,

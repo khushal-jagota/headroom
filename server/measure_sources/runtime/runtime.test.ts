@@ -130,7 +130,6 @@ test('good child sees frozen data and the exact environment allowlist; parent re
     ...allowed,
     PLAN_DB_PATH: join(root, 'forbidden.sqlite'),
     CODEX_HOME: root,
-    HERMES_HOME: root,
     CLAUDE_CONFIG_DIR: root,
     UNLISTED_SOURCE_VARIABLE: 'forbidden',
   }))

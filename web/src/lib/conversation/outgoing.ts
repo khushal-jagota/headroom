@@ -5,7 +5,8 @@
  * outcomes stay visible without claiming that the agent accepted the message.
  */
 
-import type { ConversationEvent, PromptDeliveryMode, SentMessagePiece } from "./wire";
+import { ConversationWireError, type ConversationEvent, type PromptDeliveryMode, type SentMessagePiece } from "./wire";
+import { PlannerFetchError } from "../api";
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 import {
   MAX_CONVERSATION_MESSAGE_FILE_BYTES,
@@ -158,6 +159,21 @@ const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
 /** What a message on its way says about itself, or nothing when there is nothing to say. */
 export function outgoingMessageNote(message: OutgoingMessage): string | null {
   return KNOWN_FATE_NOTES[message.knownFate] ?? null;
+}
+
+/** Whether a failed send was the server answering, and answering by refusing the request.
+ *
+ * That is the only failure that says this text got nowhere. A request that never reached
+ * the server, and one the server fell over part-way through, both leave the question
+ * open — the send may have landed, and its row may be on its way. The conversation wire
+ * and the owner send routes (Ticket, Manager, Chief) fail through different error types;
+ * both carry the status the server answered with, and neither carries one when no answer
+ * came.
+ */
+export function theServerRefusedTheSend(error: unknown): boolean {
+  if (!(error instanceof ConversationWireError) && !(error instanceof PlannerFetchError)) return false;
+  const status = error.status;
+  return status !== undefined && status >= 400 && status < 500;
 }
 
 /** Give a message its identity and its instant, before anything is sent.
@@ -796,7 +812,8 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     knownFate: knownFate as OutgoingMessageKnownFate,
     ...(pickedModel === null ? {} : { pickedModel }),
     ...(typeof held.effortIsSet === "boolean" ? {effortIsSet: held.effortIsSet} : {}),
-    ...(held.pickedBackend === "claude" || held.pickedBackend === "codex" || held.pickedBackend === "hermes" ? {pickedBackend: held.pickedBackend} : {}),
+    // Any backend the server runs may be held here; the server judges the key on send.
+    ...(typeof held.pickedBackend === "string" && held.pickedBackend !== "" ? {pickedBackend: held.pickedBackend} : {}),
     ...(pickedReasoningEffort === null && held.effortIsSet !== true ? {} : { pickedReasoningEffort })
   };
 }

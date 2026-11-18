@@ -17,6 +17,7 @@
   import ReviewFinalState from "../components/ReviewFinalState.svelte";
   import { reviewMessageHref } from "../lib/review/messages";
   import {reviewHistoryKey,reviewReturnLabel,sameReviewHistory} from "../lib/review/return";
+  import {shownReviewItem} from "../lib/review/shown";
   import type {ReviewHistoryKey} from "../lib/navigation/contracts";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
@@ -78,6 +79,14 @@
   // Keep a painted conversation through delivery uncertainty and its exit. Owner
   // state and canonical address still govern admission, even for a retained draft.
   let heldCard = $state<ReviewItem|null>(null);
+  // The card on screen. Chosen when the previous card leaves, then kept by id.
+  // A refresh that inserts older work leaves this card in place.
+  let pinnedKey=$state<string|null>(null);
+  function advancePast(item:ReviewItem):void {
+    const key=itemKey(item);
+    const next=items.find(candidate=>itemKey(candidate)!==key && !skipped[itemKey(candidate)]);
+    pinnedKey=next ? itemKey(next) : null;
+  }
   function messageEligible(message:import('../lib/types').ReviewMessageItem):boolean {
     if(!displayed)return false;
     const presentation=navigation.presentationFor(displayed);
@@ -114,7 +123,8 @@
         }
       }
     }
-    return items.find(item=>!skipped[itemKey(item)]) ?? null;
+    const waiting=items.filter(item=>!skipped[itemKey(item)]);
+    return shownReviewItem(waiting,pinnedKey,itemKey).item;
   });
   let messageBusy = $derived(currentItem?.review_item_type==='message' ? Boolean(busyConversations[currentItem.conversation_id]) : Boolean(currentItem?.messages.some(message=>busyConversations[message.conversation_id])));
   // Only a completed last window is terminal. An exhausted intermediate window
@@ -127,10 +137,13 @@
   });
   $effect(()=>{
     if (!reviewReady || finalLatched) return;
-    if(!heldCard && currentItem && (currentItem.review_item_type==='message' || currentItem.messages.length))heldCard=currentItem;
+    if(!heldCard && currentItem && (currentItem.review_item_type==='message' ? messageEligible(currentItem) : currentItem.messages.some(messageEligible)))heldCard=currentItem;
     else if(heldCard?.review_item_type==='ticket' && currentItem?.review_item_type==='ticket' && heldCard.ticket_id===currentItem.ticket_id
       && currentItem.messages.some(message=>!heldCard || heldCard.review_item_type!=='ticket' || !heldCard.messages.some(held=>held.conversation_id===message.conversation_id && held.address_id===message.address_id)))heldCard=currentItem;
     if(heldCard && !(heldCard.review_item_type==='message' ? messageEligible(heldCard) : heldCard.messages.some(messageEligible)))heldCard=null;
+    const shown=currentItem;
+    const key=shown ? itemKey(shown) : null;
+    if(key!==pinnedKey)pinnedKey=key;
   });
 
   $effect(()=>{
@@ -147,6 +160,7 @@
     reviewAnchor = null;
     skipped = {};
     heldCard = null;
+    pinnedKey = null;
     try {
       // Let the reset window demand reach the owner before requesting a fresh view.
       // Keep the composer mounted until that read succeeds, even for an empty result.
@@ -167,6 +181,7 @@
 
   function skip(item: ReviewItem): void {
     if(messageBusy)return;
+    advancePast(item);
     const key=reviewHistoryKey(item);
     if(!skippedHistory.some(previous=>previous.kind===key.kind && previous.id===key.id))skippedHistory=[...skippedHistory,key];
     skipped = { ...skipped, [itemKey(item)]: true };
@@ -183,6 +198,10 @@
   function messageResolved(conversationId:string):void {
     // While an artifact is open only its bar can resolve a message: that reply finishes with it.
     if (heldFile) artifact.close();
+    const item=currentItem;
+    const leaves=item?.review_item_type==='message' ? item.conversation_id===conversationId
+      : item?.review_item_type==='ticket' && !item.proposal && item.messages.every(message=>message.conversation_id===conversationId);
+    if(item && leaves)advancePast(item);
     if(heldCard?.review_item_type==='message' && heldCard.conversation_id===conversationId)heldCard=null;
     else if(heldCard?.review_item_type==='ticket') {
       const messages=heldCard.messages.filter(message=>message.conversation_id!==conversationId);
@@ -199,6 +218,8 @@
   function proposalResolved(identity: string): void {
     // A decision made under the artifact finishes with it, even when the card stays for its messages.
     if (heldFile) artifact.close();
+    const item=currentItem;
+    if(item?.review_item_type==='ticket' && item.proposal && reviewProposalIdentity(item.proposal)===identity && item.messages.length===0)advancePast(item);
     decidedProposals = { ...decidedProposals, [identity]: true };
     void navigation.owner.recover().catch(() => undefined);
   }

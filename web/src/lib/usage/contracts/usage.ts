@@ -1,8 +1,8 @@
 /** Mechanical type projection of T3 75e4ceb9. See T3-LICENSE and frontend-translation.md. */
 import type { NonNegativeInt, TrimmedNonEmptyString } from "./index";
 
-// usage.ts:35
-export type UsageProviderKind = "claude" | "codex" | "grok";
+// usage.ts:35. A driver kind or a non-driver usage source; the server names them.
+export type UsageProviderKind = string;
 
 // usage.ts:46
 export type UsageDay = string & { readonly __brand: "UsageDay" };

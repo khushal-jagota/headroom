@@ -64,7 +64,7 @@ const definition: WorkerTypeDefinition = {
     default_model: 'probe-model',
     default_reasoning_effort: 'probe-high',
     toolset_profile: 'default',
-    default_backend: 'hermes',
+    default_backend: 'codex',
   },
 };
 

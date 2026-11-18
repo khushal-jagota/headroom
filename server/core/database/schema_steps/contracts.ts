@@ -1,4 +1,5 @@
 /** TypeScript schema steps: an ordered chain on top of the frozen Python baseline. */
+import { open_backend_keys_step } from './ts_0001_open_backend_keys.ts';
 
 /** One statement at a time, through the same statement allowlist as the write door. */
 export interface SchemaTransaction {
@@ -20,8 +21,8 @@ export interface SchemaStepOutcome {
   readonly applied: readonly string[];
 }
 
-/** The release's chain. The first real step ships in the Database stage. */
-export const SCHEMA_STEPS: readonly SchemaStep[] = [];
+/** The release's chain, oldest first. */
+export const SCHEMA_STEPS: readonly SchemaStep[] = [open_backend_keys_step];
 
 /** The steps a database at `current` still needs to reach `head`. */
 export function select_schema_steps(

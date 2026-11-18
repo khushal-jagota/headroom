@@ -2,12 +2,18 @@
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Options, SpawnedProcess, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
+import { WorkerSupervisor as RealWorkerSupervisor } from '../../../worker_supervision/service.ts';
+import * as records from '../../../worker_supervision/records.ts';
+import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import type { BackendEventSink } from '../../../conversation/backends/contracts.ts';
 import { WorkerScratch } from '../../../conversation/worker_scratch.ts';
@@ -32,19 +38,35 @@ vi.mock('../../../conversation/backends/cli_compatibility.ts', async (original) 
 }));
 vi.mock('../../../worker_supervision/index.ts', () => ({ WorkerSupervisor: { create: vi.fn() } }));
 vi.mock('../../../conversation/worker_scratch.ts', () => ({ WorkerScratch: { create: vi.fn() } }));
+// Every launch is supervised. Tests of transport mechanics take a synthetic supervisor.
+beforeEach(() => {
+  vi.mocked(WorkerSupervisor.create).mockImplementation(
+    async () => worker_supervision_fixture().supervisor as never,
+  );
+});
 afterEach(() => {
   vi.resetAllMocks();
   vi.useRealTimers();
 });
+const { runtime: synthetic_runtime } = worker_supervision_fixture();
+interface Launch {
+  readonly worker_supervision?: WorkerSupervisionRuntime;
+  readonly conversation_id?: string;
+  readonly worker_ticket_id?: string | null;
+  readonly executable?: string;
+  readonly args?: string[];
+}
 
 function setup(
   environment: Record<string, string> = {},
   can_use_tool?: Options['canUseTool'],
   custody_sink?: BackendEventSink,
+  launch: Launch = {},
 ) {
   const writes: ((cause?: Error | null) => void)[] = [];
   const received: string[] = [];
   const child = Object.assign(new EventEmitter(), {
+    pid: 4321,
     stdin: new Writable({
       write(chunk, _encoding, callback) {
         received.push(chunk.toString());
@@ -70,6 +92,7 @@ function setup(
     environment,
     can_use_tool,
     custody_sink,
+    launch,
   );
   return { ...configured, writes, received };
 }
@@ -86,6 +109,7 @@ function setup_client<T extends object>(
   environment: Record<string, string> = {},
   can_use_tool?: Options['canUseTool'],
   custody_sink?: BackendEventSink,
+  launch: Launch = {},
 ) {
   vi.mocked(spawn).mockReturnValue(child as never);
   let spawned: SpawnedProcess;
@@ -113,8 +137,8 @@ function setup_client<T extends object>(
   }));
   query.mockImplementation(({ prompt, options }) => {
     spawned = options!.spawnClaudeCodeProcess!({
-      command: '/synthetic/claude',
-      args: [],
+      command: options!.pathToClaudeCodeExecutable!,
+      args: launch.args ?? [],
       env: { SDK_ONLY_ADDITION: 'forbidden' },
       signal: new AbortController().signal,
     });
@@ -152,9 +176,11 @@ function setup_client<T extends object>(
   const client = claude_sdk_client({
     child_processes,
     one_shot_children: new OneShotChildren(child_processes),
-    pathToClaudeCodeExecutable: '/synthetic/claude',
+    pathToClaudeCodeExecutable: launch.executable ?? '/synthetic/claude',
     env: environment,
-    worker_supervision: environment.PLAN_TICKET_ID ? ({} as WorkerSupervisionRuntime) : undefined,
+    worker_supervision: launch.worker_supervision ?? synthetic_runtime,
+    conversation_id: launch.conversation_id ?? 'synthetic-conversation',
+    worker_ticket_id: launch.worker_ticket_id ?? null,
     canUseTool: can_use_tool,
     custody_sink,
   });
@@ -173,8 +199,7 @@ function setup_client<T extends object>(
   };
 }
 
-it('waits for actual stdin completion and does not inherit a Worker containment identity', async () => {
-  vi.stubEnv('PLAN_TICKET_ID', 'inherited-worker');
+it('waits for actual stdin completion', async () => {
   const { client, child, writes, pumping } = setup();
   try {
     await client.connect();
@@ -188,10 +213,9 @@ it('waits for actual stdin completion and does not inherit a Worker containment 
     expect(writes).toHaveLength(1);
     writes.shift()!();
     await delivery;
-    expect(WorkerSupervisor.create).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledExactlyOnceWith(
-      '/synthetic/claude',
-      [],
+      '/synthetic/bootstrap',
+      ['/synthetic/claude'],
       expect.objectContaining({
         env: expect.not.objectContaining({ SDK_ONLY_ADDITION: 'forbidden' }),
         detached: process.platform !== 'win32',
@@ -201,6 +225,63 @@ it('waits for actual stdin completion and does not inherit a Worker containment 
     await pumping();
     expect(child.kill).not.toHaveBeenCalled();
   } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+// Risk: a non-Worker launch escapes custody or takes the Worker settings. A real record and a
+// real supervised child prove what the Chief's custody row will name.
+it('supervises a Chief launch by its conversation, never by an inherited Ticket', async () => {
+  vi.stubEnv('PLAN_TICKET_ID', 'inherited-worker');
+  vi.mocked(WorkerSupervisor.create).mockImplementationOnce((...input) =>
+    RealWorkerSupervisor.create(...input),
+  );
+  const native = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+  const folder = await mkdtemp(join(tmpdir(), 'claude-chief-'));
+  const runtime = uncontained_worker_supervision(new OneShotChildren(new ChildProcesses()));
+  const order: string[] = [];
+  let record_path = '';
+  const { client, pumping } = setup_client(
+    {},
+    () => {},
+    { PLAN_ACTOR: 'chief', PLAN_WORKER_PROCESS_ROOT: join(folder, 'records') },
+    undefined,
+    {
+      report: async () => {},
+      record_local_child_supervision: async (path) => {
+        order.push('record');
+        record_path = path;
+        expect(await records.read(path)).toMatchObject({
+          ticket_id: '',
+          conversation_id: 'chief-conversation',
+          worker_priority: false,
+        });
+      },
+      record_local_child_custody: async (identity) => {
+        order.push('custody');
+        expect(identity.supervision_record).toBe(record_path);
+      },
+    },
+    {
+      worker_supervision: runtime,
+      conversation_id: 'chief-conversation',
+      executable: process.execPath,
+      args: ['-e', 'process.stdin.resume()'],
+    },
+  );
+  vi.mocked(spawn).mockImplementation(((...input: Parameters<typeof native.spawn>) => {
+    if (record_path && input[1]?.includes(record_path)) order.push('spawn');
+    return native.spawn(...input);
+  }) as typeof spawn);
+  try {
+    await client.connect();
+    expect(order).toEqual(['record', 'spawn', 'custody']);
+    expect(WorkerScratch.create).not.toHaveBeenCalled();
+  } finally {
+    await client.disconnect();
+    await pumping();
+    await runtime.close();
+    await rm(folder, { recursive: true, force: true });
     vi.unstubAllEnvs();
   }
 });
@@ -342,8 +423,8 @@ it('joins supervision stop when EOF and disconnect overlap and retains scratch u
       },
       record_local_child_custody: record_custody,
     },
+    { worker_ticket_id: 'synthetic-worker' },
   );
-  Object.assign(child, { pid: 4321 });
   let connected = false;
   const connecting = client.connect().then(() => {
     connected = true;
@@ -594,14 +675,19 @@ it('revokes an unspawned Worker when its supervision reporter fails and closes s
   vi.mocked(WorkerScratch.create).mockResolvedValueOnce(scratch as never);
   const reporting = Promise.withResolvers<void>();
   const finish_report = Promise.withResolvers<void>();
-  const { client } = setup({ PLAN_TICKET_ID: 'synthetic-worker' }, undefined, {
-    report: async () => {},
-    record_local_child_supervision: async () => {
-      reporting.resolve();
-      await finish_report.promise;
-      throw new Error('custody write failed');
+  const { client } = setup(
+    { PLAN_TICKET_ID: 'synthetic-worker' },
+    undefined,
+    {
+      report: async () => {},
+      record_local_child_supervision: async () => {
+        reporting.resolve();
+        await finish_report.promise;
+        throw new Error('custody write failed');
+      },
     },
-  });
+    { worker_ticket_id: 'synthetic-worker' },
+  );
   const connecting = expect(client.connect()).rejects.toThrow('custody write failed');
   await reporting.promise;
   let closed = false;

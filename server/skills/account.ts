@@ -26,9 +26,11 @@ import {
   native_path_bytes,
   directory_open_flags,
   mkdir_relative,
+  open_directory_components,
   open_directory_descriptor,
   open_relative,
   read_directory_names,
+  relative_directory_components,
   readlink_relative,
   symlink_relative,
   unlink_relative,
@@ -37,6 +39,7 @@ import {
 /** A provider home, and the one folder inside it that holds the linked skills. */
 export interface AccountSkillHome {
   readonly path: string;
+  /** Relative to the home, one or more components. */
   readonly skills_directory: string;
 }
 /** A bare path is a home that keeps its skills in 'skills'. */
@@ -70,12 +73,13 @@ function stat(path: string) {
   }
 }
 const canonical = (path: string) => resolve_native_skill_path(resolve(path));
-/** Each distinct home once, by canonical path, in path order. */
+/** Each distinct home once, by canonical path, in path order. Refuses an unsafe skills folder. */
 function canonical_homes(homes: readonly AccountSkillHomeInput[]): AccountSkillHome[] {
   const distinct = new Map<string, AccountSkillHome>();
   for (const home of homes) {
     const { path, skills_directory } =
       typeof home === 'string' ? { path: home, skills_directory: 'skills' } : home;
+    relative_directory_components(skills_directory);
     const resolved = { path: canonical(path), skills_directory };
     distinct.set(JSON.stringify(resolved), resolved);
   }
@@ -110,6 +114,12 @@ export function account_skill_provisioning_conflict(
       ...WORKER_ONLY_SKILL_NAMES,
     ]);
     for (const home of canonical_homes(homes)) {
+      // A nested skills folder's parents are never followed through a link.
+      const parents = relative_directory_components(home.skills_directory).slice(0, -1);
+      for (let depth = 1; depth <= parents.length; depth++) {
+        const parent_folder = join(home.path, ...parents.slice(0, depth));
+        if (stat(parent_folder)?.isSymbolicLink()) return warning(parent_folder, 'a linked folder');
+      }
       const target = join(home.path, home.skills_directory),
         metadata = stat(target);
       if (metadata?.isSymbolicLink()) {
@@ -192,21 +202,24 @@ export function provision_account_skills(
         .map((entry) => entry.name)
         .sort();
       for (const { path: home, skills_directory } of homes) {
+        // A nested skills folder's parents are made and opened without following a link.
+        const parents = relative_directory_components(skills_directory),
+          folder = parents.pop()!;
         const home_fd = open_directory_descriptor(home);
+        let parent_fd = home_fd;
         try {
           same_directory(home, home_fd);
-          const target = join(home, skills_directory);
-          if (
-            stat(target)?.isSymbolicLink() &&
-            !owned_link(home_fd, home, skills_directory, source)
-          )
+          if (parents.length) parent_fd = open_directory_components(home_fd, parents, 0o777);
+          const parent_path = join(home, ...parents),
+            target = join(parent_path, folder);
+          if (stat(target)?.isSymbolicLink() && !owned_link(parent_fd, parent_path, folder, source))
             return warning(target, 'an unowned legacy link');
           try {
-            mkdir_relative(home_fd, skills_directory, 0o777);
+            mkdir_relative(parent_fd, folder, 0o777);
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
           }
-          const fd = open_relative(home_fd, skills_directory, directory_open_flags);
+          const fd = open_relative(parent_fd, folder, directory_open_flags);
           try {
             same_directory(target, fd);
             for (const name of read_directory_names(fd)) {
@@ -240,7 +253,11 @@ export function provision_account_skills(
             close_native_descriptor(fd);
           }
         } finally {
-          close_native_descriptor(home_fd);
+          try {
+            if (parent_fd !== home_fd) close_native_descriptor(parent_fd);
+          } finally {
+            close_native_descriptor(home_fd);
+          }
         }
       }
       return null;

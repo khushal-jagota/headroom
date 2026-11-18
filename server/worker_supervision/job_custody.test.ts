@@ -68,13 +68,17 @@ function runtime(jobs: Jobs) {
   runtimes.push(value);
   return value;
 }
+const worker_launch = { conversation_id: 'conversation', worker_ticket_id: 'test-ticket' };
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), 'job-custody-'));
   roots.push(root);
   const jobs = new Jobs();
   const owner = runtime(jobs);
   const environment = { PLAN_TICKET_ID: 'test-ticket', [RECORD_ROOT_ENV]: root };
-  const supervisor = (await WorkerSupervisor.create(environment, root, { runtime: owner }))!;
+  const supervisor = await WorkerSupervisor.create(environment, root, {
+    runtime: owner,
+    ...worker_launch,
+  });
   return { root, jobs, owner, environment, supervisor };
 }
 
@@ -85,9 +89,9 @@ test('new Mac custody rejects a duplicate and retires by job label despite unava
     root: null,
     processes: [],
   });
-  await expect(WorkerSupervisor.create(environment, root, { runtime: owner })).rejects.toThrow(
-    'retained Worker job',
-  );
+  await expect(
+    WorkerSupervisor.create(environment, root, { runtime: owner, ...worker_launch }),
+  ).rejects.toThrow('retained Worker job');
   jobs.state = 'running';
   const record = await records.read(supervisor.path);
   record.state = 'running';
@@ -97,7 +101,10 @@ test('new Mac custody rejects a duplicate and retires by job label despite unava
   expect(jobs.stopped).toBe(1);
   expect((await records.read(supervisor.path)).launch_revoked).toBe(true);
   expect(owner.active_jobs.size).toBe(0);
-  const natural = (await WorkerSupervisor.create(environment, root, { runtime: owner }))!;
+  const natural = await WorkerSupervisor.create(environment, root, {
+    runtime: owner,
+    ...worker_launch,
+  });
   const natural_record = await records.read(natural.path);
   natural_record.state = 'running';
   await records.write(natural.path, natural_record);

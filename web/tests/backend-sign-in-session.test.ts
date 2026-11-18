@@ -48,6 +48,10 @@ class Bench {
   cancelAnswer: { sign_in: BackendSignIn } | Error = {
     sign_in: signIn({ state: "ended", user_code: null, verification_url: null })
   };
+  submitAnswer: { sign_in: BackendSignIn } | Error = {
+    sign_in: signIn({ state: "confirmed", verification_url: null, user_code: null, account_label: "owner@example.com" })
+  };
+  submissions: Array<{ sessionId: string; returnUrl: string }> = [];
   reads = 0;
   starts = 0;
   cancels = 0;
@@ -75,6 +79,11 @@ class Bench {
         this.cancels += 1;
         if (this.cancelAnswer instanceof Error) throw this.cancelAnswer;
         return this.cancelAnswer;
+      },
+      submitReturnUrl: async (_backendKey, sessionId, returnUrl) => {
+        this.submissions.push({ sessionId, returnUrl });
+        if (this.submitAnswer instanceof Error) throw this.submitAnswer;
+        return this.submitAnswer;
       },
       reloadCards: async () => {
         this.cardReloads += 1;
@@ -429,5 +438,83 @@ describe("leaving while work is in flight", () => {
 
     expect(bench.session.current().signIn?.user_code).toBe("BACK-AGAIN");
     expect(bench.armedTimers()).toBe(1);
+  });
+});
+
+describe("a sign-in waiting for the browser's return address", () => {
+  const waiting = (overrides: Partial<BackendSignIn> = {}) =>
+    signIn({ state: "awaiting_return_url", user_code: null, ...overrides });
+  const returnUrl = "http://localhost:1455/auth/callback?code=abc&state=xyz";
+
+  it("keeps asking while it waits for the paste", async () => {
+    // Polling stopping here would leave the page blind to a sign-in that settles anyway.
+    const bench = new Bench();
+    bench.readings = [{ sign_in: waiting() }, { sign_in: waiting() }];
+
+    await bench.session.enter("scripted-agent");
+    expect(bench.armedTimers()).toBe(1);
+    await bench.fireTimer();
+
+    expect(bench.session.current().signIn?.state).toBe("awaiting_return_url");
+    expect(bench.armedTimers()).toBe(1);
+  });
+
+  it("posts the address to the session in force and adopts the reply", async () => {
+    const bench = new Bench();
+    bench.readings = [{ sign_in: waiting({ session_id: "s7" }) }];
+
+    await bench.session.enter("scripted-agent");
+    await bench.session.submitReturnUrl("scripted-agent", returnUrl);
+
+    expect(bench.submissions).toEqual([{ sessionId: "s7", returnUrl }]);
+    expect(bench.session.current().signIn?.state).toBe("confirmed");
+    expect(bench.session.current().busy).toBe(false);
+    expect(bench.armedTimers()).toBe(0);
+    expect(bench.cardReloads).toBe(1);
+  });
+
+  it("keeps the waiting state and shows the server's sentence when the submit is refused", async () => {
+    const bench = new Bench();
+    bench.readings = [{ sign_in: waiting() }];
+    bench.submitAnswer = new Error("that sign-in is not the one in force any more");
+
+    await bench.session.enter("scripted-agent");
+    await bench.session.submitReturnUrl("scripted-agent", returnUrl);
+
+    expect(bench.session.current().signIn?.state).toBe("awaiting_return_url");
+    expect(bench.session.current().error).toBe("that sign-in is not the one in force any more");
+    expect(bench.session.current().busy).toBe(false);
+    expect(bench.armedTimers()).toBe(1);
+  });
+
+  it("drops a submit reply that arrives after the page has gone", async () => {
+    const bench = new Bench();
+    bench.readings = [{ sign_in: waiting() }];
+    const slow = deferred<{ sign_in: BackendSignIn }>();
+    const ports = bench.session as unknown as { ports: SignInPorts };
+    ports.ports = { ...ports.ports, submitReturnUrl: async () => slow.promise };
+
+    await bench.session.enter("scripted-agent");
+    const submitting = bench.session.submitReturnUrl("scripted-agent", returnUrl);
+    bench.session.leave();
+    const announcementsAtLeave = bench.states.length;
+
+    slow.settle({ sign_in: signIn({ state: "confirmed" }) });
+    await submitting;
+
+    expect(bench.states.length).toBe(announcementsAtLeave);
+    expect(bench.session.current().signIn?.state).toBe("awaiting_return_url");
+    expect(bench.cardReloads).toBe(0);
+    expect(bench.armedTimers()).toBe(0);
+  });
+
+  it("submits nothing unless a sign-in is waiting for an address", async () => {
+    const bench = new Bench();
+    bench.readings = [{ sign_in: signIn() }];
+
+    await bench.session.enter("scripted-agent");
+    await bench.session.submitReturnUrl("scripted-agent", returnUrl);
+
+    expect(bench.submissions).toEqual([]);
   });
 });

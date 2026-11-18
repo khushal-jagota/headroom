@@ -13,6 +13,7 @@ import { BackendSpawnFailed } from '../../backends/contracts.ts';
 import { AUTOMATIC_COMPACTION_MINIMUM_INPUT_TOKENS } from '../../runtime/configuration.ts';
 import { read_unresolved_turns } from '../../deploy_interruptions/capture.ts';
 import * as custody from './child_custody.ts';
+import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../../child_custody.ts';
 import * as supervision_records from '../../../worker_supervision/records.ts';
 import {
   release_worker_step_claim,
@@ -586,6 +587,12 @@ export class ConversationStore
       })(),
     );
   }
+  local_child_supervision_record(conversation_id: string, generation: string): string | null {
+    return this.database.read((sql) => {
+      const row = custody.read(sql, conversation_id);
+      return row?.generation === generation ? row.supervision_record : null;
+    });
+  }
   async has_recorded_source(conversation_id: string): Promise<boolean> {
     return this.database.read((sql) => custody.read(sql, conversation_id) !== undefined);
   }
@@ -616,11 +623,16 @@ export class ConversationStore
     );
   }
   async recorded_source_block_reason(conversation_id: string): Promise<string> {
-    const pending_without_identity = this.database.read((sql) => {
+    // A marked pending row without a record never spawned, so no reboot is needed for it.
+    const needs_reboot = this.database.read((sql) => {
       const row = custody.read(sql, conversation_id);
-      return row?.state === 'launch_pending' && row.supervision_record === null;
+      return (
+        row?.state === 'launch_pending' &&
+        row.supervision_record === null &&
+        !row.generation.startsWith(SUPERVISED_CHILD_GENERATION_PREFIX)
+      );
     });
-    return pending_without_identity
+    return needs_reboot
       ? "The home stopped before it saved the agent's process identity. Your conversation is safe: a second agent cannot start. Reboot this same host, reopen Headroom, select Stop, then send your message again. A restart of Headroom alone does not clear this block."
       : 'The home stopped during agent startup. A second agent cannot start. Select Stop to end the previous agent before another can start. If Stop fails, the previous process still needs cleanup.';
   }

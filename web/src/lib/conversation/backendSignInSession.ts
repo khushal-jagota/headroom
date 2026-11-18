@@ -1,4 +1,4 @@
-/** The Backends page's side of a sign-in: entering, watching, cancelling, leaving.
+/** The Backends page's side of a sign-in: entering, watching, submitting, cancelling, leaving.
  *
  * This is deliberately not in the component. All of it is ordering, and ordering in markup
  * is ordering nothing can test: a page that forgets to resume a pending sign-in, or leaves
@@ -39,6 +39,11 @@ export type SignInPorts = {
   cancel(
     backendKey: ConversationBackendKey,
     sessionId: string
+  ): Promise<{ sign_in: BackendSignIn }>;
+  submitReturnUrl(
+    backendKey: ConversationBackendKey,
+    sessionId: string,
+    returnUrl: string
   ): Promise<{ sign_in: BackendSignIn }>;
   /** Re-read the backend cards, because a settled sign-in changes what identity says. */
   reloadCards(): Promise<void>;
@@ -155,6 +160,39 @@ export class BackendSignInSession {
       this.generation += 1;
       this.put({ busy: false, error: sentenceFor(problem) });
       await this.enter(backendKey);
+    }
+    if (!this.active) return;
+    await this.ports.reloadCards();
+  }
+
+  /** Hand the waiting sign-in the address the browser ended on.
+   *
+   * It goes to the session this page holds, which the server checks is the one in force.
+   * A refusal keeps what the page shows, says why, and goes on watching.
+   */
+  async submitReturnUrl(backendKey: ConversationBackendKey, returnUrl: string): Promise<void> {
+    const waiting = this.state.signIn;
+    if (waiting === null || waiting.state !== "awaiting_return_url" || this.state.busy) return;
+    this.active = true;
+    this.generation += 1;
+    this.stopWatching();
+    this.put({ busy: true, error: null });
+    const began = this.generation;
+    try {
+      const answer = await this.ports.submitReturnUrl(backendKey, waiting.session_id, returnUrl);
+      if (!this.isCurrent(began)) return;
+      this.generation += 1;
+      this.put({ signIn: answer.sign_in, busy: false });
+      if (signInIsPending(answer.sign_in)) {
+        this.watch(backendKey);
+        return;
+      }
+    } catch (problem) {
+      if (!this.isCurrent(began)) return;
+      this.generation += 1;
+      this.put({ busy: false, error: sentenceFor(problem) });
+      this.watch(backendKey);
+      return;
     }
     if (!this.active) return;
     await this.ports.reloadCards();

@@ -112,6 +112,7 @@ export function resolveComposerRunControls(
     readError: input.readError,
     picker: resolveModelPicker({
       backendKey: shownBackend(input),
+      drivers: input.drivers,
       model: shownModel || null,
       reasoningEffort: shownEffort || null,
       backends: input.backends,

@@ -2,6 +2,8 @@
 import { dirname, join } from 'node:path';
 import { executor_platform } from '../machines/executor_credentials.ts';
 import { UpdateBarrier } from './update_barrier.ts';
+import { notify_update_failure } from './updates/failure_notice.ts';
+import type { UpdateAttempt } from './updates/contracts.ts';
 import type { Config } from '../core/config.ts';
 import { HOST } from '../core/config.ts';
 import { observe_shutdown } from '../conversation/shutdown.ts';
@@ -129,7 +131,7 @@ export async function createEnvironmentRuntime(
     changes,
     current_root,
     database,
-    backup_directory: expand_path(config.backup_dir),
+    backup_directory: await resolved_path(config.backup_dir),
     current_app_sha: config.app_sha,
     health_url: `http://${HOST}:${config.port}/api/health`,
     service_unit: operations.service_unit ?? '',
@@ -137,6 +139,15 @@ export async function createEnvironmentRuntime(
     installer: operations.installer,
     mac: mac.operations,
     update_barrier,
+    // A test-mode server must never instantiate a provider transport.
+    ...(config.test_mode
+      ? {}
+      : {
+          notify_failure: (attempt: UpdateAttempt) =>
+            void notify_update_failure(context.database, config, attempt).catch((error: unknown) =>
+              console.error('The update failure push did not send', error),
+            ),
+        }),
   });
   const deployment = () =>
     deployment_status(attempts.read(), config.app_sha, {

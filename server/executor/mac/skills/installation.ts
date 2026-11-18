@@ -16,6 +16,7 @@ import { prepare_native_skill_publication } from '../../../skills/native_publica
 import {
   close_native_descriptor,
   flock_descriptor,
+  open_directory_components,
   open_directory_descriptor,
   open_relative,
   mkdir_relative,
@@ -25,6 +26,7 @@ import {
   directory_open_flags,
   read_directory_names,
   readlink_relative,
+  relative_directory_components,
   symlink_relative,
   sync_file_descriptor,
   sync_directory_descriptor,
@@ -250,7 +252,9 @@ export async function install_native_skill_snapshot(
       invalid(`configured native provider home resolves elsewhere: ${native_home}`);
     home_fd = retain(open_directory_descriptor(home));
     try {
-      target_fd = open_directory_at(home_fd, native_skills_directory);
+      target_fd = retain(
+        open_directory_components(home_fd, relative_directory_components(native_skills_directory)),
+      );
     } catch (error) {
       invalid(
         `native provider skills entry must be an existing real directory: ${join(home, native_skills_directory)} (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`,

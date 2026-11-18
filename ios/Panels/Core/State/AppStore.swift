@@ -22,6 +22,11 @@ import Observation
     private var chiefResource: ResourceHandle<ChiefDetail> { resources.handle(ChiefResources.settings) }
     private var deploymentResource: ResourceHandle<DeploymentStatus> { resources.handle(ChiefResources.deployment) }
     private var healthResource: ResourceHandle<ExecutorHealth> { resources.handle(ChiefResources.executorHealth) }
+    private var driversResource: ResourceHandle<DriverCatalog> { resources.handle(DriverResources.catalog) }
+    /// The server's driver list; nil until it arrives, or when the server has none.
+    var drivers: DriverCatalog? { driversResource.value }
+    /// A backend's label from the driver list, else its key capitalised.
+    func backendLabel(_ key: String) -> String { DriverCatalog.label(key, in: drivers) }
     var chief: ChiefDetail? { chiefResource.value }
     var chiefSignal: ConversationSignal?
     var review: ReviewResponse?
@@ -292,13 +297,13 @@ import Observation
         runGeneration += 1
         let generation = runGeneration
         running = true
-        let chief = chiefResource, deployment = deploymentResource, health = healthResource
-        chief.acquire(); deployment.acquire(); health.acquire()
+        let chief = chiefResource, deployment = deploymentResource, health = healthResource, drivers = driversResource
+        chief.acquire(); deployment.acquire(); health.acquire(); drivers.acquire()
         resources.start()
         if hasRun { connectionSession += 1 }
         hasRun = true
         defer {
-            chief.release(); deployment.release(); health.release()
+            chief.release(); deployment.release(); health.release(); drivers.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
                 resources.stop(); running = false; viewConsumer = nil; streamRequest = nil

@@ -232,7 +232,6 @@ if(rows.length===1){fs.writeFileSync(join(root,'updates/pending.json'),JSON.stri
         files,
         runner: {
           planned_update_replay: false,
-          prepare_update: async () => true,
           finish_planned_replay() {},
           resume_after_cancelled_update() {},
         },

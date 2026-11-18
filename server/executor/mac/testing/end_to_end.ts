@@ -38,6 +38,7 @@ import type { TurnToken } from '../../../conversation/backends/contracts.ts';
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
 import { RECORD_ROOT_ENV } from '../../../worker_supervision/config.ts';
+import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
 import type { AcceptanceReceipt, QueuedEnvelope } from '../../wire.generated.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { create_claude_backend_child_factory } from '../../../drivers/claude/runtime/adapter.ts';
@@ -118,6 +119,8 @@ const bindings: MacHostBindings = {
       // through the invocation's real owner before the scripted start can succeed.
       const receipt = await WorkerSupervisor.create(environment, resolved.workspace_folder, {
         runtime: owners.worker_supervision,
+        conversation_id: resolved.conversation_id,
+        worker_ticket_id: worker_ticket_id(resolved),
       });
       assert.ok(receipt);
       await receipt.cancel_unspawned();
@@ -555,15 +558,6 @@ try {
       }
       if (command.operation === 'publish_refusal_sequence') {
         write({ id: command.id, result: await publish_refusals() });
-        continue;
-      }
-      if (command.operation === 'prepare_update') {
-        const prepared = await service.runner.prepare_update(
-          'now',
-          randomUUID(),
-          new AbortController().signal,
-        );
-        write({ id: command.id, result: { prepared, ...(await state()) } });
         continue;
       }
       if (command.operation === 'claude_finish_turn') claude_cleanup!.finish_turn();

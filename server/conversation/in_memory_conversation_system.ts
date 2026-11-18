@@ -185,7 +185,6 @@ function changedMessage(): never {
 export class InMemoryConversationSystem implements ConversationSystem {
   private readonly _conversations = new Map<string, ConversationState>();
   readonly workspace_admission = new WorkspaceAdmission();
-  private update_generation: symbol | null = null;
   /** Without a registry, every backend steers, as every built-in does. */
   private readonly backend_registry: DriverRegistry | undefined;
   constructor(backend_registry?: DriverRegistry) {
@@ -203,34 +202,7 @@ export class InMemoryConversationSystem implements ConversationSystem {
       return 'busy';
     return 'idle';
   }
-  async prepare_update(mode: 'idle' | 'now', signal?: AbortSignal): Promise<boolean> {
-    if (this.update_generation === null) {
-      if (!this.workspace_admission.close_starts())
-        throw new Error('Another operation owns workspace admission.');
-      this.update_generation = Symbol('update');
-    }
-    const generation = this.update_generation;
-    if (
-      this.workspace_admission.active ||
-      (mode === 'idle' && this.workspace_activity() !== 'idle')
-    )
-      return false;
-    if (mode === 'now') {
-      for (const identity of this._conversations.keys()) {
-        if (this.update_generation !== generation) return false;
-        await this.kill(identity);
-      }
-    }
-    if (signal?.aborted || this.update_generation !== generation) return false;
-    return (
-      this.workspace_admission.closed ||
-      this.workspace_admission.claim(() => {}, {
-        idle: () => this.workspace_activity() === 'idle',
-        require_idle: true,
-      })
-    );
-  }
-  update_waiting_work(): readonly string[] {
+  update_interrupted_work(): readonly string[] {
     return [
       ...new Set(
         [...this._conversations.values()]
@@ -239,10 +211,8 @@ export class InMemoryConversationSystem implements ConversationSystem {
       ),
     ];
   }
-  cancel_update(): boolean {
-    this.update_generation = null;
+  reopen_after_update(): void {
     this.workspace_admission.reopen();
-    return true;
   }
   async run_with_workspace_admission(
     operation: () => void,

@@ -16,6 +16,10 @@ Darwin ABI and native durability still require the later Mac check.
 
 `MacUpdateController` consumes the latest lease offer without delay to the lease loop.
 Each apply and prefetch owns a dedicated update HTTP session with only the executor-ID header.
-A prepared update reuses a prefetched runtime, records pending selection and handoff, then requests supervisor exit.
-Trial admission waits for the leased current report and supervisor selection. Cancellation resumes safe prepared work.
+A target does nothing here until the home activates it. Workers keep running through the download.
+A newer target replaces a download in progress, and a newer release replaces a prefetch in progress.
+Activation reuses a prefetched runtime, records the pending selection and a handoff that names a new incarnation, then requests supervisor exit.
+That exit is an ordinary host stop, so the home recovers interrupted turns as after any executor restart.
+`host/entry.ts` keeps the update exit code when cleanup fails and forces the exit after `SHUTDOWN_HARD_SECONDS`.
+Trial admission waits for the leased current report and supervisor selection.
 The host supplies explicit runtime settings and stops the controller before its separate files worker.

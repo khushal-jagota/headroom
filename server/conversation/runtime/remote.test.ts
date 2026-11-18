@@ -20,6 +20,10 @@ import type { WireValue } from '../../executor/contracts.ts';
 import { text_message_content } from '../message_content.ts';
 import { Deferred } from '../../core/deferred.ts';
 import { retained_open_runs } from './remote.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+} from '../../drivers/testing/registry.ts';
 import { PromptDeliveryInjected, PromptDeliveryStarted } from '../contracts.ts';
 
 // An acknowledgement must wait for receipt and steer settlement, then recheck its exact source.
@@ -156,6 +160,53 @@ test('retained-run admission drops explicit rejections and propagates programmin
     expect(() => retained_open_runs([factory])).toThrow(TypeError);
   } finally {
     diagnostic.mockRestore();
+  }
+});
+
+// Risk: the Mac still holds a current run for a conversation saved on a driver this build
+// lacks (Hermes), and the core, built at startup, throws while adopting it. Gap: every other
+// retained-run test adopts a run whose conversation is on a live backend.
+test('a retained run on a backend this build lacks is left unrecovered, not a startup crash', async () => {
+  const first = setup();
+  first.database.write((tx) =>
+    tx.run(
+      `INSERT INTO conversations (conversation_id,backend_key,model,workspace_folder,access,created_at)
+        VALUES('stored-hermes','hermes','model','/synthetic','full',0)`,
+    ),
+  );
+  const recover = vi.fn(() => null);
+  const remote = Object.assign(
+    () => {
+      throw new Error('No child starts in adoption');
+    },
+    {
+      recover,
+      retained_runs: () => [
+        new RetainedBackendRun({
+          reference: {
+            conversation_id: 'stored-hermes',
+            executor_incarnation: 'mac',
+            child_id: 'c',
+          },
+          turn: { conversation_id: 'stored-hermes', turn_number: 1 },
+          delivery_uncertain: false,
+          retirement_confirmed: false,
+          incarnation_current: true,
+        }),
+      ],
+    },
+  );
+  const f = setup({
+    restart_of: first.database,
+    core: { backend_registry: registry_of_factories(for_every_built_in_backend(() => remote)) },
+  });
+  try {
+    const state = f.core.conversations.get('stored-hermes')!;
+    expect(state.child).toBeNull();
+    expect(recover).not.toHaveBeenCalled();
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+    await first.core.shutdown({ deadline: performance.now() / 1000 + 5 });
   }
 });
 

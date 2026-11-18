@@ -26,7 +26,7 @@ struct TicketWorkerSetup: View {
                 TicketMachineLabel(locale: ticket.locale)
                 if backends.isEmpty && error == nil { RingSpinner("Loading models…") }
                 Picker("Backend", selection: $backend) {
-                    ForEach(backends) { item in Text(item.id.capitalized).tag(item.id).disabled(!item.installed) }
+                    ForEach(backends) { item in Text(store.backendLabel(item.id)).tag(item.id).disabled(!item.installed) }
                 }
                 Picker("Model", selection: $model) {
                     Text("Backend default").tag("")

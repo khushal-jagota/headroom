@@ -23,8 +23,3 @@ export function install_deadline_seconds(input: {
     (input.steps ? SCHEMA_STEP_TIMEOUT_SECONDS + copy : 0)
   );
 }
-
-/** The owner's pause message while the update backs up the database. */
-export function backup_detail(database_bytes: number): string {
-  return `Backing up the database first (about ${Math.ceil(database_copy_seconds(database_bytes) / 60)} min)`;
-}

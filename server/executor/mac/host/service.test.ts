@@ -29,15 +29,8 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
     HOME: join(root, 'home'),
     CODEX_HOME: join(root, 'codex'),
     CLAUDE_CONFIG_DIR: join(root, 'claude'),
-    HERMES_HOME: join(root, 'hermes'),
-    PLAN_HERMES_HOME: join(root, 'hermes'),
   };
-  for (const home of [
-    environment.HOME,
-    environment.CODEX_HOME,
-    environment.CLAUDE_CONFIG_DIR,
-    environment.HERMES_HOME,
-  ])
+  for (const home of [environment.HOME, environment.CODEX_HOME, environment.CLAUDE_CONFIG_DIR])
     await mkdir(join(home, 'skills'), { recursive: true });
   const configuration = {
     paths: new ExecutorPaths(join(root, 'state')),
@@ -145,7 +138,6 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
         on_failure,
         environment: {
           executable_path: () => '/synthetic/codex',
-          configured_executable_path: () => null,
           real_path: (path) => path,
           user_local_npm_prefix: () => join(root, 'npm'),
           prefix_is_owned_and_writable: () => false,

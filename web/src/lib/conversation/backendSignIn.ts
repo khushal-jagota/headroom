@@ -3,9 +3,9 @@
  * Two decisions live here rather than in the card's markup, because both of them are
  * easy to get subtly wrong and neither is about layout.
  *
- * The first is **whether to offer it at all**. Only codex can be signed in from Panels, so
- * every other backend keeps the command-line text it has always had. Offering a button
- * that cannot work would be worse than offering nothing.
+ * The first is **whether to offer it at all**. A backend whose driver can sign in from
+ * Panels says so on its card; every other backend keeps the command-line text it has always
+ * had. Offering a button that cannot work would be worse than offering nothing.
  *
  * The second is **when to warn**. A sign-in writes a new credential, and a turn already
  * running may have to be retried. That is worth saying — but only to somebody who has
@@ -16,12 +16,10 @@
 
 import type { BackendSignIn, BackendSnapshot } from "./wire";
 
-/** The one backend Panels can sign in. Everything else keeps the command-line text. */
-export const SIGN_IN_CAPABLE_BACKEND = "codex";
-
+/** Whether Panels can sign this backend in. Everything else keeps the command-line text. */
 export function backendCanBeSignedIn(snapshot: BackendSnapshot): boolean {
   return (
-    snapshot.backend_key === SIGN_IN_CAPABLE_BACKEND &&
+    snapshot.can_sign_in === true &&
     snapshot.installed &&
     snapshot.identity !== null
   );
@@ -88,19 +86,23 @@ export function signInCaveat(
   return null;
 }
 
-/** Whether a sign-in is still running, and so whether the page should keep watching it. */
+/** Whether a sign-in is still running, and so whether the page should keep watching it.
+ *
+ * Waiting for the browser's return address is still running: the page keeps asking, so it
+ * sees the sign-in settle or end however the address arrives.
+ */
 export function signInIsPending(signIn: BackendSignIn | null): boolean {
-  return signIn !== null && signIn.state === "pending";
+  return signIn !== null && (signIn.state === "pending" || signIn.state === "awaiting_return_url");
 }
 
 /**
  * The sentence a settled sign-in is reported with.
  *
- * `unconfirmed` is the one worth reading twice: codex reported success and Panels could
- * not see a usable new credential. It is neither signed in nor failed, and it says so.
+ * `unconfirmed` is the one worth reading twice: the backend reported success and Panels
+ * could not see a usable new credential. It is neither signed in nor failed, and it says so.
  */
-export function signInOutcome(signIn: BackendSignIn | null): string | null {
-  if (signIn === null || signIn.state === "pending") return null;
+export function signInOutcome(signIn: BackendSignIn | null, label: string): string | null {
+  if (signIn === null || signInIsPending(signIn)) return null;
   if (signIn.state === "confirmed") {
     return signIn.account_label === null
       ? "Signed in."
@@ -109,7 +111,7 @@ export function signInOutcome(signIn: BackendSignIn | null): string | null {
   if (signIn.state === "unconfirmed") {
     return (
       signIn.detail ??
-      "Codex reported a sign-in and Panels could not confirm a usable credential."
+      `${label} reported a sign-in and Panels could not confirm a usable credential.`
     );
   }
   return signIn.detail ?? "The sign-in ended.";

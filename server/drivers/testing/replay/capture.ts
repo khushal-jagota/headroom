@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A development tee that records a replay transcript. It never runs in a test.
+ * A development tee that records a replay transcript. The tee never runs in a test.
  *
  *   node drivers/testing/replay/capture.ts --scenario two_turns --driver-kind claude \
  *     --model haiku --provenance scripted_peer --source "…" --output <file.ndjson> \
@@ -31,13 +31,14 @@ const TEE_TARGET_ENVIRONMENT = 'REPLAY_CAPTURE_TARGET_ENVIRONMENT';
 const WIRES: Readonly<Record<string, ReplayWire>> = {
   claude: 'claude_stream_json',
   codex: 'codex_app_server',
-  hermes: 'acp',
 };
 
-type TeeRecord =
+export type TeeRecord =
   | { readonly kind: 'launch'; readonly argv: readonly string[] }
   | { readonly kind: 'version'; readonly line: string }
   | { readonly kind: 'outbound' | 'inbound'; readonly frame: unknown }
+  /** The driver began stopping the target: its stdin ended or a stop signal arrived. */
+  | { readonly kind: 'stop' }
   | { readonly kind: 'exit'; readonly code: number | null; readonly signal: string | null };
 
 /** The tee itself: one target process with both directions of its stdio logged. */
@@ -69,13 +70,25 @@ function tee(log: string): void {
     if (line.trim() !== '') record({ kind: 'outbound', frame: JSON.parse(line) });
     target.stdin.write(`${line}\n`);
   });
-  process.stdin.once('end', () => target.stdin.end());
+  let stopping = false;
+  const stop_begins = () => {
+    if (stopping) return;
+    stopping = true;
+    record({ kind: 'stop' });
+  };
+  process.stdin.once('end', () => {
+    stop_begins();
+    target.stdin.end();
+  });
   lines(target.stdout, (line) => {
     if (line.trim() !== '') record({ kind: 'inbound', frame: JSON.parse(line) });
     process.stdout.write(`${line}\n`);
   });
   for (const signal of ['SIGTERM', 'SIGINT'] as const)
-    process.on(signal, () => target.kill(signal));
+    process.on(signal, () => {
+      stop_begins();
+      target.kill(signal);
+    });
   target.once('close', (code, signal) => {
     record({ kind: 'exit', code, signal });
     process.exit(code ?? 1);
@@ -135,6 +148,8 @@ export function normalized_transcript(
   const seen = new Set<unknown>();
   const numbered = new Map<string | number, string>();
   const entries: ReplayEntry[] = [];
+  // An exit once the driver began its own stop is that stop, not a crash to replay.
+  let stopping = false;
   for (const record of records) {
     if (record.kind === 'outbound') {
       for (const value of rules.generated_values(record.frame))
@@ -151,7 +166,9 @@ export function normalized_transcript(
         frame: replace_values(record.frame, numbered, fixed, true),
       });
       leaf_values(record.frame, seen);
-    } else if (record.kind === 'exit' && record.signal === null && record.code !== 0) {
+    } else if (record.kind === 'stop') {
+      stopping = true;
+    } else if (record.kind === 'exit' && !stopping && record.signal === null && record.code !== 0) {
       entries.push({ type: 'runtime_exit', exit_code: record.code ?? 1 });
     }
   }

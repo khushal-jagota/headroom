@@ -5,8 +5,7 @@ import {
   observe_conversation_operation,
 } from '../../../runtime/abort.ts';
 import { ServerLifecycleError } from '../../../lifecycle/contracts.ts';
-import type { ChildCommand, Quiescence, WorkingTurn } from '../../wire.generated.ts';
-import type { MacRunningChild } from './contracts.ts';
+import type { Quiescence, WorkingTurn } from '../../wire.generated.ts';
 import type {
   MacMaintenanceContract,
   MacMaintenanceDependencies,
@@ -24,7 +23,6 @@ export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOpe
   private readonly dependencies: MacMaintenanceDependencies;
   private readonly operations = new Set<Promise<unknown>>();
   private readonly failures = new Set<unknown>();
-  private readonly update_commands = new Map<string, ChildCommand[]>();
   private finishing: Promise<readonly unknown[]> | undefined;
   private replaying = false;
   private replay_gate: Promise<void> = Promise.resolve();
@@ -173,90 +171,6 @@ export class MacMaintenance implements MacMaintenanceContract, MacMaintenanceOpe
     this.assert_open();
     this.replaying = false;
     this.release_replay?.();
-  }
-  prepare_update(mode: 'now' | 'idle', request_id: string, signal: AbortSignal): Promise<boolean> {
-    assert_active(signal);
-    this.assert_open();
-    const children = this.dependencies.native_children.retained_children();
-    if (
-      mode === 'idle' &&
-      (this.busy(this.counts()) || children.some((child) => child.background_task_ids.size !== 0))
-    )
-      return Promise.resolve(false);
-    this.dependencies.state.seal_admission();
-    const actual = this.own(() => this.prepare_children(children, request_id, signal));
-    return this.observe_operation(actual, signal);
-  }
-  private async prepare_children(
-    children: readonly MacRunningChild[],
-    request_id: string,
-    signal: AbortSignal,
-  ): Promise<boolean> {
-    assert_active(signal);
-    for (const record of this.dependencies.commands().records())
-      this.dependencies.commands().withdraw(record.command.command_id);
-    // A provider can hold child.lock until this exact process stops.
-    const stops = await Promise.allSettled(
-      children.map((child) =>
-        Promise.resolve().then(() => {
-          if (signal.aborted) return;
-          this.dependencies.state.begin_retirement(child.reference.child_id);
-          this.dependencies.native_children.begin_retirement(child.reference);
-          return this.dependencies.native_children.stop_native(child.reference);
-        }),
-      ),
-    );
-    const failed_stops = stops.filter((result) => result.status === 'rejected');
-    if (failed_stops.length)
-      throw new AggregateError(
-        failed_stops.map((result) => result.reason),
-        'Update native stops failed.',
-      );
-    assert_active(signal);
-    const commands = this.dependencies.commands();
-    const joined = await Promise.allSettled(
-      commands.records().flatMap((record) => (record.task === null ? [] : [record.task])),
-    );
-    const failed_commands = joined.filter((result) => result.status === 'rejected');
-    if (failed_commands.length)
-      throw new AggregateError(
-        failed_commands.map((result) => result.reason),
-        'Update command joins failed.',
-      );
-    assert_active(signal);
-    await commands.settled_replays();
-    for (const child of children) {
-      assert_active(signal);
-      await this.dependencies.sources.finish(child.reference);
-    }
-    assert_active(signal);
-    await commands.settle_known();
-    assert_active(signal);
-    if (
-      this.dependencies.sources.failed() ||
-      commands.records().some((record) => record.outcome !== null && !record.settled)
-    )
-      throw new Error('update cannot abandon required local output');
-    let pending = this.update_commands.get(request_id);
-    if (!pending) this.update_commands.set(request_id, (pending = []));
-    for (const child of children) {
-      assert_active(signal);
-      let command = pending.find((value) => same_reference(value.child, child.reference));
-      if (!command) {
-        command = {
-          command_id: 'update_stop_' + this.dependencies.new_update_id(),
-          child: child.reference,
-          operation: 'stop',
-          turn: null,
-          arguments: { kind: 'stop' },
-        };
-        pending.push(command);
-      }
-      const result = await this.dependencies.retirement.stop_and_publish(command, commands);
-      if (result.disposition !== 'succeeded') return false;
-    }
-    this.update_commands.delete(request_id);
-    return true;
   }
   finish_operations(options: StopOptions): Promise<readonly unknown[]> {
     this.dependencies.retirement.begin_shutdown(options);

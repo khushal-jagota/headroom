@@ -78,8 +78,6 @@ export interface MaterializationOperations {
 export interface EnvironmentRunOptions {
   readonly credentials: Readonly<Record<string, string>>;
   readonly ambient: Readonly<Record<string, string | undefined>>;
-  /** Each driver's configured executable-side file, keyed by its environment variable name. */
-  readonly launcher_files: Readonly<Record<string, string>>;
   readonly runtime_port: number;
 }
 export class EnvironmentValidationError extends Error {

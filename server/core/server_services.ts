@@ -6,10 +6,11 @@ import type { FastifyInstance, FastifyListenOptions } from 'fastify';
 import { createAreasRuntime } from '../areas.ts';
 import { createApp } from '../app.ts';
 import { buildClock } from './clock.ts';
-import type { Config } from './config.ts';
+import { applicationRootFromEnvironment, type Config } from './config.ts';
 import { ChangeSignal } from './changes/index.ts';
 import { createDatabase } from './database/index.ts';
 import { require_application_schema } from './database/admission.ts';
+import { recover_interrupted_install } from '../environments/updates/interrupted_install.ts';
 import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/integrity_notice.ts';
 import { acquireLock } from './locks/index.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
@@ -18,6 +19,7 @@ import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
+import { createDriverRoutes } from '../drivers/http/routes.ts';
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import { create_backend_runtime } from '../conversation/snapshot/composition.ts';
 import { CredentialRequestOperations } from '../credentials/requests/service.ts';
@@ -135,6 +137,22 @@ export class ServerServices {
     this.update_barrier = new UpdateBarrier(join(dirname(config.db_path), 'update-barrier.json'));
     this.worker_supervision = create_worker_supervision_runtime({
       one_shot_children: lifetime.one_shot_children,
+      // An unopened database throws here, and supervision then prunes nothing.
+      record_paths_in_use: () => {
+        if (!this.database)
+          throw new Error(
+            'The database is not open, so the supervision records in use are unknown',
+          );
+        return new Set(
+          this.database
+            .read((sql) =>
+              sql.all<{ supervision_record: string }>(
+                "SELECT supervision_record FROM conversation_child_custody WHERE state != 'retired' AND supervision_record IS NOT NULL",
+              ),
+            )
+            .map((row) => row.supervision_record),
+        );
+      },
     });
   }
 
@@ -160,6 +178,15 @@ export class ServerServices {
     const { media_lifetime, one_shot_children, child_processes } = this.lifetime;
     const changes = new ChangeSignal();
     const clock = buildClock(config);
+    const interrupted = await recover_interrupted_install({
+      database: config.db_path,
+      app_root: applicationRootFromEnvironment(),
+      app_sha: config.app_sha,
+    });
+    // The previous app is back in place. Exit, so the service manager starts it.
+    if (interrupted === 'rolled_back')
+      throw new Error('An interrupted update was undone; Panels restarts on the previous version');
+    this.assert_startup_open();
     require_application_schema(config.db_path);
     const database = createDatabase(config.db_path, {
       commitSteps: areas.commitSteps,
@@ -403,6 +430,7 @@ export class ServerServices {
           routes: createVoiceRoutes({ signal: media_lifetime.signal, writes: conversationWrites }),
         },
         ...(environments?.areas ?? []),
+        { prefix: '/api', routes: createDriverRoutes(backendServices) },
         {
           prefix: '/api/conversation',
           routes: createBackendRoutes(backendServices, {

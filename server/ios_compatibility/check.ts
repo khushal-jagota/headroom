@@ -28,7 +28,7 @@ const fixed_paths = [
   'server/goals/cli/guidance.json',
   'server/managers/page_cli/guidance.json',
   'server/executor/wire.schema.json',
-  // The driver files the Python Mac runtime reads.
+  // Any driver's Python scripts, which every release ships.
   ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.install?.release_files ?? []).filter(
     (path) => path.startsWith('src/planner/'),
   ),

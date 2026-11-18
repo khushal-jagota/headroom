@@ -2,12 +2,10 @@ import { get, writable } from "svelte/store";
 import { PlannerFetchError } from "../api";
 import { queryClient } from "../queryClient";
 import { UPDATE_STARTING_LIMIT_MS } from "./config";
-import type { InstallUpdateBody, UpdateMode, UpdateNowBody, UpdateStatus } from "./contracts";
+import type { InstallUpdateBody, UpdateStatus } from "./contracts";
 
 /** One owner press, mapped to its contract route. */
-export type UpdateActionRequest =
-  | { action: "install"; mode: UpdateMode }
-  | { action: "cancel" | "now" | "retry" | "retry_mac" };
+export type UpdateActionRequest = { action: "install" | "retry" | "retry_mac" };
 
 /** The server answer a press that starts an update was made against, until the answer moves.
  * Both card mounts read it, so the card shows Updating… at once. An attempt can be
@@ -23,18 +21,14 @@ export function settleUpdateStarting(status: UpdateStatus | undefined): void {
 }
 
 /** The route and body for an action, from the server answer the owner acted on. */
-export function updateActionRoute(status: UpdateStatus, request: UpdateActionRequest): { path: string; body?: InstallUpdateBody | UpdateNowBody } {
+export function updateActionRoute(status: UpdateStatus, request: UpdateActionRequest): { path: string; body?: InstallUpdateBody } {
   if (request.action === "install") {
     if (!status.available) throw new Error("This update is no longer available.");
-    // The dialog's activity note is the confirmation for Update now.
-    return { path: "/api/updates/install",
-      body: { app_sha: status.available.app_sha, mode: request.mode, confirm_activity: request.mode === "now" } };
+    return { path: "/api/updates/install", body: { app_sha: status.available.app_sha } };
   }
   if (!status.attempt) throw new Error("This update changed. Close this dialog and try again.");
   const attempt = `/api/updates/attempts/${encodeURIComponent(status.attempt.attempt_id)}`;
   switch (request.action) {
-    case "cancel": return { path: `${attempt}/cancel` };
-    case "now": return { path: `${attempt}/now`, body: { confirm_activity: true } };
     case "retry": return { path: `${attempt}/retry` };
     case "retry_mac": return { path: `${attempt}/retry-mac` };
   }
@@ -52,13 +46,10 @@ let pressInFlight = false;
 export async function performUpdateAction(status: UpdateStatus, request: UpdateActionRequest): Promise<void> {
   if (pressInFlight) return;
   const { path, body } = updateActionRoute(status, request);
-  const starts = request.action !== "cancel" && !(request.action === "install" && request.mode === "idle");
   const pressedAgainst = answerKey(status);
   pressInFlight = true;
-  if (starts) {
-    updateStarting.set(pressedAgainst);
-    setTimeout(() => { if (get(updateStarting) === pressedAgainst) updateStarting.set(null); }, UPDATE_STARTING_LIMIT_MS);
-  }
+  updateStarting.set(pressedAgainst);
+  setTimeout(() => { if (get(updateStarting) === pressedAgainst) updateStarting.set(null); }, UPDATE_STARTING_LIMIT_MS);
   try {
     let response: Response;
     try {
@@ -74,7 +65,7 @@ export async function performUpdateAction(status: UpdateStatus, request: UpdateA
       throw new Error(typeof message === "string" ? message : `HTTP ${response.status}`);
     }
   } catch (error) {
-    if (starts) updateStarting.set(null);
+    updateStarting.set(null);
     throw error;
   } finally {
     pressInFlight = false;

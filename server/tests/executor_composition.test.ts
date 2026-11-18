@@ -2,6 +2,7 @@ import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import {
   drivers_of_factories,
+  for_every_built_in_backend,
   registry_of_factories,
   unread_driver_host,
 } from '../drivers/testing/registry.ts';
@@ -179,7 +180,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         bound = compose_production_backends(
           current,
           {
-            registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+            registry: registry_of_factories(for_every_built_in_backend(() => local)),
             host: unread_driver_host,
           },
           {
@@ -230,6 +231,32 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     expect(named.updates).toBe(mac_updates.for_machine(named_machine));
     expect(named.updates).not.toBe(endpoint.updates);
     expect(bound.http.machine_catalog(named_machine)).toBe(named.catalog);
+    // The Mac's last lease, from before this home started, lists the drivers it runs.
+    context.database.write((tx) =>
+      accept_lease_in_transaction(
+        tx,
+        {
+          identity: {
+            protocol_version: PROTOCOL_VERSION,
+            application_revision: 'synthetic',
+            spool_format_version: 5,
+            executor_incarnation: incarnation,
+          },
+          process_id: 4242,
+          mac_wall_clock_ms: 0,
+          queue_depth: 0,
+          oldest_item_age_ms: null,
+          waiting_conversations: [],
+          waiting_conversations_truncated: false,
+          working_turns: [],
+          admission_stopped: false,
+          cleanup_uncertainties: [],
+          driver_kinds: ['codex', 'claude'],
+        },
+        0,
+        ORIGINAL_MAC_MACHINE_ID,
+      ),
+    );
     const away_ticket = create(context.database, { locale: 'macos' });
     const away = new ResolvedConversationStart({
       ...start,
@@ -256,7 +283,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     const unconfigured = compose_production_backends(
       { ...context, config: { ...context.config, executor_id: null }, executor: null },
       {
-        registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+        registry: registry_of_factories(for_every_built_in_backend(() => local)),
         host: unread_driver_host,
       },
       {
@@ -457,11 +484,7 @@ test('production constructs its real executor and reconciles that executor inven
   try {
     server = await start_production_server({
       backends: {
-        drivers: drivers_of_factories({
-          claude: () => local,
-          codex: () => local,
-          hermes: () => local,
-        }),
+        drivers: drivers_of_factories(for_every_built_in_backend(() => () => local)),
         driver_host: () => unread_driver_host,
         http: (current) =>
           create_backend_runtime({
@@ -586,12 +609,16 @@ test("a remote Ticket start follows its machine's advertised driver kinds, or th
     expect(remote).not.toHaveBeenCalled();
     expect(local).not.toHaveBeenCalled();
     store_lease(['hermes', 'codex']);
+    // A machine that still advertises a driver this build lacks cannot run it.
+    expect(() => start_remote('hermes')).toThrow(
+      "The Ticket's machine cannot run the hermes backend",
+    );
     start_remote('codex');
     expect(remote).toHaveBeenCalledTimes(1);
-    // The Python Mac's lease carries no driver kinds and keeps the legacy set.
+    // A lease that lists no driver kinds runs no backend.
     store_lease();
-    start_remote('claude');
-    expect(remote).toHaveBeenCalledTimes(2);
+    expect(() => start_remote('claude')).toThrow(BackendSpawnFailed);
+    expect(remote).toHaveBeenCalledTimes(1);
     expect(local).not.toHaveBeenCalled();
   } finally {
     database.close();

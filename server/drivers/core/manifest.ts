@@ -1,12 +1,6 @@
 /** Server-side static data about a driver. Readable without loading the driver's runtime. */
 import type { ProbeRecipe } from './status.ts';
 
-/** A path some environment variable may name instead of its default. */
-export interface ConfiguredFile {
-  readonly environment_name: string;
-  /** May start with '~/'. */
-  readonly default_path: string;
-}
 /** One native tool a release admission runs to prove the tool starts on this system. */
 export interface AdmissionCommand {
   readonly systems: readonly ('darwin' | 'linux')[];
@@ -25,8 +19,6 @@ export interface DriverManifest {
     readonly override_environment_name?: string;
     /** An override naming this path under PLAN_APP_ROOT is ignored: a retired bundled copy. */
     readonly ignored_override_path?: string;
-    /** The executable sits beside this configured file, not on PATH. */
-    readonly configured_beside?: ConfiguredFile;
   };
   /** The provider state home. */
   readonly home?: {
@@ -39,7 +31,7 @@ export interface DriverManifest {
     readonly isolated_directory_name: string;
     /** The CLI option that names this home. A CLI contract: never renamed. */
     readonly cli_option: string;
-    /** One path component inside the home. Default 'skills'. */
+    /** A relative path inside the home, one or more components. Default 'skills'. */
     readonly skills_directory?: string;
     /**
      * A macOS executor leaves the variable unset when the owner left it unset: any set value,

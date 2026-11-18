@@ -14,7 +14,7 @@ import { is_record } from '../../../core/records.ts';
 import { CLAUDE_STREAM_JSON_WIRE } from './wires/claude_stream_json.ts';
 import { JSON_RPC_WIRE } from './wires/json_rpc.ts';
 
-export const REPLAY_WIRES = ['claude_stream_json', 'codex_app_server', 'acp'] as const;
+export const REPLAY_WIRES = ['claude_stream_json', 'codex_app_server'] as const;
 export type ReplayWire = (typeof REPLAY_WIRES)[number];
 export const TRANSCRIPT_PROVENANCES = [
   'scripted_peer',

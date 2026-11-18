@@ -150,8 +150,8 @@ export class DarwinWorkerProcesses implements WorkerProcessPrimitives {
       return (error as NodeJS.ErrnoException).code === 'ESRCH';
     }
   }
-  prepare_launch(): void {
+  prepare_launch(options: { lower_priority: boolean }): void {
     this.#native.prepare_session();
-    setPriority(0, Math.max(NICE, getPriority(0)));
+    if (options.lower_priority) setPriority(0, Math.max(NICE, getPriority(0)));
   }
 }

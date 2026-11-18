@@ -1,5 +1,9 @@
 /** Retained joins through the existing server lifecycle over copied source state. */
-import { registry_of_factories, unread_driver_host } from '../../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+  unread_driver_host,
+} from '../../drivers/testing/registry.ts';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Database } from '../../core/database/contracts.ts';
@@ -66,7 +70,7 @@ async function cycle() {
       bound = compose_production_backends(
         current,
         {
-          registry: registry_of_factories({ claude: local, codex: local, hermes: local }),
+          registry: registry_of_factories(for_every_built_in_backend(() => local)),
           host: unread_driver_host,
         },
         {

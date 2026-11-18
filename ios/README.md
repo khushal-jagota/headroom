@@ -403,7 +403,7 @@ presentation and API extension are confined to `Features/More/Feedback`.
 
 ## Usage, VPS and Settings
 
-Usage reads cached Codex and Claude allowances, plus recorded local CLI token and
+Usage reads cached allowances for the backends the server says report them, plus recorded local CLI token and
 cost totals for today, 7, 30 or 90 days. Provider filters apply to the totals and
 chart. Missing values stay unavailable and partial source reads show their issues.
 Pull-to-refresh and the toolbar refresh button request fresh provider allowances
@@ -552,14 +552,16 @@ opens a card with the input above the controls. At accessibility text sizes the
 model and delivery choices stack above the action row, and icon sizes stay within
 their tap targets. Labels can grow with the text size. The bottom uses the
 system safe area plus one point, matching the 35-point reference on the target
-phone. The model sheet reads the backend catalog and applies the selected model
+phone. Backend names and marks come from the server's driver list. The three built-in
+backends keep their bundled marks; another backend shows its PNG icon, or its initials.
+The model sheet reads the backend catalog and applies the selected model
 and reasoning to the next message. A message names a model or reasoning only when
 the pick differs from what the conversation runs on. The server holds a message
 that names a model until a new turn, so an unchanged pick would turn every steer
 into a wait. The selection follows the conversation until the owner picks another
 value. An existing conversation keeps its backend.
 The plus menu accepts files, library pictures, camera photos and a slash command. Steer, Queue and Send now
-use the existing delivery modes. Stop interrupts the running turn. The separate
+use the existing delivery modes; Steer is offered only when the conversation's backend can join a running turn. Stop interrupts the running turn. The separate
 microphone remains available while working or editing a draft.
 
 Messages appear immediately with Sending, Queued or an explicit failure.
@@ -609,6 +611,17 @@ the system accessibility setting.
 UI scenarios in the same host for the keyboard, scroll position, delivery transitions, model
 sheet, voice-draft flow, page opening/closing, queue controls after relaunch,
 offline status geometry, largest-text controls and system sender attribution. The layout/attribution case can run independently of delivery waits.
+It serves no driver list, so the app shows its fallback names and marks. With `--review`,
+`--driver-review` adds `GET /api/drivers`, its icon route and two more backends: one with a
+PNG icon and one with only an SVG icon, which shows initials. Hermes stays a backend the list
+does not name, and its card lists no efforts, as on a real server. The same flag serves the
+Ticket's backends by POST, makes the Ticket's worker setup editable, and serves Settings
+Workers and the Chief's settings, so the Workspace Chief card and its preview load. Codex's
+model resolves to a dated model the server names "Sol (November)".
+`--hermes-conversation`, with `--driver-review`, runs the conversation on hermes with a stored
+effort the card does not offer. `--no-steer` makes the conversation say its backend cannot
+join a running turn, so Steer is not offered; the largest-text walk expects Steer, so run it
+without this flag.
 The detail-page scenario reuses that host and the existing Ticket/Orchestrator
 fixtures to check native push, edge swipe and Back, retained drafts and restored
 page scroll positions. It also checks that the shared Back and ⋯ controls match
@@ -826,7 +839,7 @@ its own identity and timestamp.
 Goal-owned messages use the existing shared conversation view.
 
 The `Native iOS` workflow runs the existing Swift host suites and an unsigned iOS
-Simulator build on macOS. A signed device check remains necessary for TestFlight,
+Simulator build on macOS. It runs when a push to `main` changes `ios/` files, and on manual runs, because GitHub-hosted Mac machines are scarce. A signed device check remains necessary for TestFlight,
 Tailscale identity, microphone permissions, and actual APNs delivery.
 
 ## Mac execution release compatibility

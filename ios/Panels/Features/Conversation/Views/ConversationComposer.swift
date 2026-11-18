@@ -191,13 +191,13 @@ struct ConversationComposer: View {
     @ViewBuilder private var configurationControls: some View {
         Button { textEntry?.endEditing(); modelSheet = true } label: {
             HStack(spacing: 4) {
-                ConversationBackendMark(backend: model.backendKey ?? "codex")
+                ConversationBackendMark(backend: DriverCatalog.composerBackend(model.backendKey, in: store.drivers))
                 Text(model.selectedModel?.components(separatedBy: "/").last ?? "Model").lineLimit(1)
             }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).padding(.vertical, 4)
                 .frame(minHeight: 30).overlay(Capsule().stroke(PanelsTheme.border))
         }.accessibilityLabel("Choose model")
         Menu {
-            Button("Steer") { model.deliveryMode = "steer"; Haptics.selection() }
+            if model.supportsSteer { Button("Steer") { model.deliveryMode = "steer"; Haptics.selection() } }
             Button("Queue") { model.deliveryMode = "queue"; Haptics.selection() }
             Button("Send now") { model.deliveryMode = "send_now"; Haptics.selection() }
         } label: {

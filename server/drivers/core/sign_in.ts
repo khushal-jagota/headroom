@@ -16,10 +16,15 @@ export interface DriverSignInController {
   start(): Promise<SignInSession>;
   /** Throws UnknownSignInSession when the session is not the one in force. */
   cancel(session_id: string): Promise<SignInSession>;
-  /** For a session in 'awaiting_return_url'. Throws UnknownSignInSession like cancel. */
+  /**
+   * For a session in 'awaiting_return_url'. Throws UnknownSignInSession like cancel, and
+   * SignInReturnUrlRefused for an address it cannot take; the session stays in force.
+   */
   submit_return_url?(session_id: string, return_url: string): Promise<SignInSession>;
   sign_out?(): Promise<void>;
 }
-/** The backend cannot start a sign-in now. */
+/** The backend cannot start a sign-in, or sign out, now. */
 export class SignInUnavailable extends Error {}
 export class UnknownSignInSession extends Error {}
+/** The pasted return address is not one this sign-in can take. Its message says why. */
+export class SignInReturnUrlRefused extends Error {}

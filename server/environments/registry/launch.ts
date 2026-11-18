@@ -2,7 +2,6 @@
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { expand_path } from '../paths.ts';
-import { configured_file_path } from '../../drivers/core/paths.ts';
 import { managed_skills_home } from '../../skills/files.ts';
 import { provision_account_skills } from '../../skills/account.ts';
 import { PROVISION_SKILLS_HOME_OPTIONS } from '../command_contracts.ts';
@@ -29,7 +28,6 @@ export function build_environment_run_env(
     PLAN_LOGS_DIR: instance.logs_dir,
     PLAN_DISPATCHER_LOCK_PATH: instance.dispatcher_lock_path,
     PLAN_SERVER_CONTROL_SOCKET: instance.server_control_socket_path,
-    ...options.launcher_files,
     ...(options.ambient.HOME === undefined
       ? {}
       : { HOME: options.ambient.HOME, ...carried_homes(options.ambient.HOME) }),
@@ -46,21 +44,6 @@ function carried_homes(account_home: string): Record<string, string> {
     if (manifest.home?.environment_name.startsWith('PLAN_'))
       homes[manifest.home.environment_name] = expand_path(manifest.home.default_path, account_home);
   return homes;
-}
-/** Each configured file a driver's executable sits beside, expanded against HOME. */
-export function resolve_launcher_files(
-  environment: Readonly<NodeJS.ProcessEnv> = process.env,
-): Record<string, string> {
-  const files: Record<string, string> = {};
-  for (const { manifest } of BUILT_IN_MANIFESTS) {
-    const file = manifest.executable.configured_beside;
-    if (file)
-      files[file.environment_name] = expand_path(
-        configured_file_path(file, environment),
-        environment.HOME,
-      );
-  }
-  return files;
 }
 export function build_test_environment_run_env(
   instance: ResolvedEnvironmentInstance,

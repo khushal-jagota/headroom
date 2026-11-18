@@ -1,5 +1,4 @@
 import { parse_backend_instance_id } from '../../core/identity.ts';
-import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 /** A terminal reader failure must not prevent cleanup of its exact injected client. */
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
@@ -18,6 +17,7 @@ import { text_message_content } from '../../../conversation/message_content.ts';
 import { ClaudeAgentSdkBackendChild } from './adapter.ts';
 import type { ClaudeSdkClient, ClaudeSdkMessage } from './query_contracts.ts';
 import { Deferred } from '../../../core/deferred.ts';
+import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
 import { CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS } from './configuration.ts';
 
 it('clears a failed reader and disconnects once across repeated stop calls', async () => {
@@ -53,10 +53,11 @@ it('clears a failed reader and disconnects once across repeated stop calls', asy
     access: 'full',
   });
   const child_processes = new ChildProcesses();
+  const one_shot_children = new OneShotChildren(child_processes);
   const child = new ClaudeAgentSdkBackendChild({
     child_processes,
-    worker_supervision: {} as WorkerSupervisionRuntime,
-    one_shot_children: new OneShotChildren(child_processes),
+    worker_supervision: uncontained_worker_supervision(one_shot_children),
+    one_shot_children,
     launch: { claude_executable: '/synthetic/claude' },
     resolved_start: start,
     client_factory: () => client,
@@ -147,10 +148,11 @@ it('classifies only the native SDK initialization-timeout discriminator before r
         settled: async () => {},
       };
       const child_processes = new ChildProcesses();
+      const one_shot_children = new OneShotChildren(child_processes);
       const child = new ClaudeAgentSdkBackendChild({
         child_processes,
-        one_shot_children: new OneShotChildren(child_processes),
-        worker_supervision: {} as WorkerSupervisionRuntime,
+        one_shot_children,
+        worker_supervision: uncontained_worker_supervision(one_shot_children),
         launch: { claude_executable: '/synthetic/claude' },
         resolved_start: start,
         client_factory: () => client,
@@ -228,10 +230,11 @@ async function live_child(
   const turn_endings: TurnEnded[] = [];
   const stream_ended = new Deferred<void>();
   const child_processes = new ChildProcesses();
+  const one_shot_children = new OneShotChildren(child_processes);
   const child = new ClaudeAgentSdkBackendChild({
     child_processes,
-    one_shot_children: new OneShotChildren(child_processes),
-    worker_supervision: {} as WorkerSupervisionRuntime,
+    one_shot_children,
+    worker_supervision: uncontained_worker_supervision(one_shot_children),
     launch: { claude_executable: '/synthetic/claude' },
     resolved_start: start,
     client_factory: () => client,

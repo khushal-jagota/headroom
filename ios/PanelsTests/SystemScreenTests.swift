@@ -59,6 +59,18 @@ final class SystemScreenTests: XCTestCase {
         let local = try await client.conversationBackends(owner: .chief)
         XCTAssertEqual(remote.backends.first?.defaultModelId, "mac-model")
         XCTAssertEqual(local.backends.first?.defaultModelId, "vps-model")
+        // Risk: the new card fields break decoding, a backend with no effort shows one, or
+        // the phone's own guess beats the server's model name. The remote card is the old shape.
+        XCTAssertNil(remote.backends.first?.reportsAllowanceUsage)
+        XCTAssertEqual(local.backends.map(\.reportsAllowanceUsage), [false, true])
+        let plain = try XCTUnwrap(local.backends.first), reasoning = try XCTUnwrap(local.backends.last)
+        XCTAssertFalse(plain.offersReasoning, "No card or model effort list: no effort")
+        XCTAssertTrue(reasoning.offersReasoning)
+        XCTAssertEqual(reasoning.modelName("alias"), "Family 4.7", "The server's name beats the raw resolved id")
+        XCTAssertEqual(reasoning.modelName("unlisted"), "unlisted")
+        XCTAssertEqual(plain.modelName("plain-model"), "Plain")
+        let older = try APIClient.decoder().decode(TicketBackendCatalog.self, from: Data(currentBackendsJSON.replacingOccurrences(of: #","resolved_display_name":"Family 4.7""#, with: "").utf8))
+        XCTAssertEqual(older.backends.last?.modelName("alias"), "family-4-7-20260101", "Without the server's name, the resolved id")
         let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-26T00:30:00Z"))
         let usage = try await client.usage(days: 7, now: now, timeZone: TimeZone(identifier: "Europe/London")!)
         XCTAssertEqual(usage.days, 7)
@@ -66,6 +78,33 @@ final class SystemScreenTests: XCTestCase {
         XCTAssertEqual(usage.periods.last?.label, "2026-10-26")
         XCTAssertEqual(usage.periods.count, 7)
         XCTAssertEqual(usage.periods.first?.totalTokens, 0)
+    }
+    // Risk: an unknown backend draws nothing, a bundled full-colour mark is replaced or
+    // tinted by the server's icon, or an SVG the phone cannot draw leaves a blank.
+    func testDriverMarksPreferBundledThenPNGThenInitials() throws {
+        let server = URL(string: "https://panels.invalid")!
+        let catalog = try APIClient.decoder().decode(DriverCatalog.self, from: Data(driverCatalogJSON.utf8))
+        let bundled: (String) -> Bool = { $0 == "conversation-picture" }
+        func mark(_ key: String, _ catalog: DriverCatalog?) -> DriverMark { DriverMark.resolve(key: key, catalog: catalog, bundled: bundled, server: server) }
+        XCTAssertEqual(mark("picture", catalog), .bundled("conversation-picture"), "A bundled mark comes before the server's icon")
+        XCTAssertEqual(mark("picture", nil), .bundled("conversation-picture"))
+        XCTAssertEqual(mark("glyph", catalog), .remote(URL(string: "https://panels.invalid/api/drivers/glyph/icon?v=0123456789ab")!, template: true))
+        XCTAssertEqual(mark("photo", catalog), .remote(URL(string: "https://panels.invalid/api/drivers/photo/icon?v=ba9876543210")!, template: false))
+        XCTAssertEqual(mark("vector", catalog), .initials("V"), "An SVG-only icon gives initials")
+        XCTAssertEqual(mark("elsewhere", catalog), .initials("E"), "An icon off this server is not fetched")
+        XCTAssertEqual(mark("open-code", catalog), .initials("OC"), "An unknown key gives initials")
+        XCTAssertEqual(mark("glyph", nil), .initials("G"))
+        XCTAssertEqual(DriverCatalog.label("glyph", in: catalog), "Glyph Agent")
+        XCTAssertEqual(DriverCatalog.label("glyph", in: nil), "Glyph", "The label falls back to the capitalised key")
+        XCTAssertEqual(DriverCatalog.label("unknown", in: catalog), "Unknown")
+        XCTAssertEqual(DriverCatalog.composerBackend(nil, in: catalog), "picture")
+        XCTAssertEqual(DriverCatalog.composerBackend("glyph", in: catalog), "glyph")
+        XCTAssertNil(DriverCatalog.composerBackend(nil, in: nil), "With neither, the composer mark stays clear")
+        let minimal = try APIClient.decoder().decode(DriverCatalog.self, from: Data(#"{"drivers":[]}"#.utf8))
+        XCTAssertNil(minimal.defaultBackendInstanceId)
+        // Usage lists the backends the server says report allowance usage, in card order.
+        let usage = try APIClient.decoder().decode(UsageBackends.self, from: Data(#"{"backends":[{"backend_key":"plain","installed":true,"version":null,"cached_usage":null,"diagnoses":[],"reports_allowance_usage":false},{"backend_key":"second","installed":true,"version":null,"cached_usage":null,"diagnoses":[],"reports_allowance_usage":true},{"backend_key":"first","installed":false,"version":null,"cached_usage":null,"diagnoses":[],"reports_allowance_usage":true}]}"#.utf8))
+        XCTAssertEqual(usage.reporting.map(\.backendKey), ["second", "first"])
     }
     func testMacActivityRequiresReadyIdentityAndNeverClearsUnread() throws {
         let signal = ConversationSignal(working: true, messageForOwner: true)
@@ -104,7 +143,9 @@ final class SystemScreenTests: XCTestCase {
         let client = APIClient(baseURL: URL(string: "https://usage.invalid")!, session: URLSession(configuration: config))
         let result = try await client.refreshUsageBackends()
         XCTAssertEqual(result.backends.first?.cachedUsage?.observedAt, "2026-10-22T19:21:07Z")
-        XCTAssertEqual(result.failure, "Claude read failed; previous limits retained.")
+        XCTAssertEqual(result.failure(nil), "Claude read failed; previous limits retained.")
+        // An older server does not say which backends report usage; a recorded allowance counts.
+        XCTAssertEqual(UsageBackends(backends: result.backends).reporting.map(\.backendKey), ["codex"])
         try await client.refreshRecordedUsage()
     }
     func testCapacityReadingsDoNotConfusePerCoreCPUOrMissingMemoryWithZero() {
@@ -183,6 +224,9 @@ private final class UsageRefreshStub: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
+// Current backend cards: sign-in and usage flags, option descriptors and the server's model name.
+private let currentBackendsJSON = #"{"backends":[{"backend_key":"plain","installed":true,"can_sign_in":false,"reports_allowance_usage":false,"available_models":[{"model_id":"plain-model","display_name":"Plain","enabled":true,"reasoning_effort_options":null,"option_descriptors":[],"resolved_display_name":null}],"reasoning_effort_options":[],"default_model_id":"vps-model"},{"backend_key":"reasoning","installed":true,"can_sign_in":true,"reports_allowance_usage":true,"available_models":[{"model_id":"alias","display_name":"Alias","resolved_model_id":"family-4-7-20260101","selected_variant":"alias","enabled":true,"reasoning_effort_options":["low","high"],"option_descriptors":[{"type":"select","id":"reasoning_effort","label":"Reasoning","role":"reasoning","options":[{"id":"low","label":"low"},{"id":"high","label":"high"}]}],"resolved_display_name":"Family 4.7"}],"reasoning_effort_options":["low","high"],"default_model_id":"alias","default_reasoning_effort":"high"}]}"#
+
 // Current server-shaped data; retains unpriced and partial-source evidence.
 private let currentUsageJSON = #"{"contractVersion":5,"readAt":"2026-10-26T00:30:00Z","timeZone":"Europe/London","sinceDay":"2026-10-20","untilDay":"2026-10-26","buckets":[{"day":"2026-10-26","provider":"codex","model":"test","totals":{"uncachedInputTokens":10,"cachedInputTokens":20,"cacheCreationTokens":5,"outputTokens":10,"reasoningTokens":4},"costUsd":1.5,"costSource":"modelPriced","records":2,"unpricedRecords":1}],"sources":[{"fingerprint":{"hostId":"vps","provider":"codex","resolvedHomePath":"/example","volumeId":"one"},"status":"partial","message":"Read in progress"}],"pricing":{"status":"cached","source":"rates","fetchedAt":null},"scanDurationMs":1}"#
 
@@ -204,8 +248,7 @@ private final class MachineContractStub: URLProtocol, @unchecked Sendable {
                 let value = try? JSONSerialization.jsonObject(with: data) as? [String: String]
                 XCTAssertEqual(value, ["ticket_id": "t_mac"])
             } else { XCTAssertEqual(request.httpMethod, "GET") }
-            let model = remote ? "mac-model" : "vps-model"
-            body = "{\"backends\":[{\"backend_key\":\"codex\",\"installed\":true,\"available_models\":[],\"reasoning_effort_options\":[],\"default_model_id\":\"\(model)\"}]}"
+            body = remote ? #"{"backends":[{"backend_key":"codex","installed":true,"available_models":[],"reasoning_effort_options":[],"default_model_id":"mac-model"}]}"# : currentBackendsJSON
         case "/api/conversation/usage/summary":
             XCTAssertEqual(request.httpMethod, "GET")
             let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
@@ -263,3 +306,5 @@ private final class NotificationPreferenceStub: URLProtocol, @unchecked Sendable
     }
     override func stopLoading() {}
 }
+
+private let driverCatalogJSON = ##"{"drivers":[{"driver_kind":"picture","label":"Picture","icon":{"url":"/api/drivers/picture/icon?v=000000000000","media_type":"image/png","monochrome":false},"accent_color":"#123456","checks_for_updates":false},{"driver_kind":"glyph","label":"Glyph Agent","icon":{"url":"/api/drivers/glyph/icon?v=0123456789ab","media_type":"image/png","monochrome":true},"accent_color":"#abcdef","checks_for_updates":true},{"driver_kind":"photo","label":"Photo","icon":{"url":"/api/drivers/photo/icon?v=ba9876543210","media_type":"image/png","monochrome":false},"accent_color":"#000000","checks_for_updates":false},{"driver_kind":"vector","label":"Vector","icon":{"url":"/api/drivers/vector/icon?v=111111111111","media_type":"image/svg+xml","monochrome":true},"accent_color":"#ffffff","checks_for_updates":true},{"driver_kind":"elsewhere","label":"Elsewhere","icon":{"url":"//other.invalid/icon.png","media_type":"image/png","monochrome":true},"accent_color":"#ffffff","checks_for_updates":false}],"default_backend_instance_id":"picture"}"##

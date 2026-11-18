@@ -126,15 +126,17 @@ async function roll_back(
       signal.throwIfAborted();
       record.record('rollback_service_stopped');
     }
-    if (new_app_moved) move(app, staged, signal);
-    if (previous_moved) move(previous, app, signal);
-    record.record('rollback_app_restored');
+    // Data before apps: a kill between them leaves the new app in place, which its
+    // next start settles before admission (interrupted_install.ts).
     if (restore_data) {
       signal.throwIfAborted();
       await effects.restore(backup, lifetime_lock_fd);
       signal.throwIfAborted();
       record.record('rollback_database_restored');
     }
+    if (new_app_moved) move(app, staged, signal);
+    if (previous_moved) move(previous, app, signal);
+    record.record('rollback_app_restored');
     signal.throwIfAborted();
     await effects.service('start');
     signal.throwIfAborted();
@@ -251,6 +253,13 @@ async function install_locked(
       io.stderr(`Interruption capture unavailable: ${capture.detail}\n`);
     signal.throwIfAborted();
     record.record('interruptions_captured');
+    if (attempt.snapshot_required === true) {
+      await effects.snapshot(from_sha, lifetime_lock_fd);
+      signal.throwIfAborted();
+      attempt.backup = record.read().backup;
+      if (typeof attempt.backup !== 'string')
+        throw new InstallFailed('The database snapshot was not recorded');
+    }
     move(app, previous, signal);
     previous_moved = true;
     move(staged, app, signal);

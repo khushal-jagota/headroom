@@ -76,12 +76,11 @@ jobs:
           set -euo pipefail
           umask 077
           native_root="$RUNNER_TEMP/first-home-native"
-          mkdir -p "$native_root"/{home/codex,home/claude,home/hermes,tmp,evidence}
+          mkdir -p "$native_root"/{home/codex,home/claude,tmp,evidence}
           env -i PATH="$PATH" LANG=C.UTF-8 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             HOME="$native_root/home" TMPDIR="$native_root/tmp" \
             CODEX_HOME="$native_root/home/codex" CLAUDE_CONFIG_DIR="$native_root/home/claude" \
-            PLAN_HERMES_HOME="$native_root/home/hermes" HERMES_HOME="$native_root/home/hermes" \
             XDG_RUNTIME_DIR="/run/user/$(id -u)" \
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" \
             PLAN_SERVER_URL=http://127.0.0.1:1 PLAN_TEST_MODE=1 \

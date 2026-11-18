@@ -71,18 +71,13 @@ export function resolve(
   const idle: UpdateExperience =
     available !== null ? ['available', ['update'], null, null] : ['up_to_date', [], null, null];
   if (attempt === null) return idle;
-  if (attempt.state === 'waiting')
-    return attempt.mode === 'idle' || attempt.detail
-      ? ['waiting', ['cancel', 'update_now'], attempt.detail, attempt.deadline_at]
-      : ['updating', [], null, attempt.deadline_at];
-  // An installing attempt carries a detail only while its backup runs.
-  if (attempt.state === 'preparing' || attempt.state === 'installing')
-    return [
-      'updating',
-      [],
-      attempt.state === 'installing' ? attempt.detail : null,
-      attempt.deadline_at,
-    ];
+  // A waiting attempt is a record from an earlier release. Startup ends it.
+  if (
+    attempt.state === 'waiting' ||
+    attempt.state === 'preparing' ||
+    attempt.state === 'installing'
+  )
+    return ['updating', [], null, attempt.deadline_at];
   if (attempt.state === 'failed') {
     if (available === null) return ['failed', [], attempt.detail, null];
     if (available.manifest.app_sha !== attempt.to_sha) return idle;

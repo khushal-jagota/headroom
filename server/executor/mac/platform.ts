@@ -72,6 +72,16 @@ export function require_relative_component(name: string): void {
   if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0'))
     throw new ExecutorValidationError('unsafe directory component');
 }
+/**
+ * A relative directory path's components. Refuses a backslash and an empty, '.' or '..' component,
+ * so an absolute path fails on its empty first component.
+ */
+export function relative_directory_components(path: string): string[] {
+  if (path.includes('\\')) throw new ExecutorValidationError('unsafe relative directory path');
+  const components = path.split('/');
+  for (const name of components) require_relative_component(name);
+  return components;
+}
 
 /** Linux represents undecodable filename bytes as their reversible low-surrogate escapes. */
 export function decode_native_path(bytes: Buffer): string {
@@ -340,6 +350,36 @@ export function flock_descriptor(
 export const directory_open_flags =
   constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 
+/**
+ * Opens each component under parent in turn, never through a link. With create_mode, first makes
+ * a missing component. Every descriptor it opened is closed except the returned one.
+ */
+export function open_directory_components(
+  parent: number,
+  components: readonly string[],
+  create_mode?: number,
+): number {
+  if (!components.length) throw new ExecutorValidationError('unsafe relative directory path');
+  let descriptor = parent;
+  try {
+    for (const name of components) {
+      if (create_mode !== undefined)
+        try {
+          mkdir_relative(descriptor, name, create_mode);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        }
+      const child = open_relative(descriptor, name, directory_open_flags);
+      const previous = descriptor;
+      descriptor = child;
+      if (previous !== parent) close_native_descriptor(previous);
+    }
+    return descriptor;
+  } catch (error) {
+    if (descriptor !== parent) close_native_descriptor(descriptor);
+    throw error;
+  }
+}
 /** Shared retained-inode walk. Creation/full flush remains worker-only. */
 export function open_directory_descriptor(
   path: string,

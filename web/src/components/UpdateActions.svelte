@@ -3,13 +3,13 @@
   import type { UpdateStatus } from "../lib/updates/contracts";
   import { updateDetails, type UpdateFailureState } from "../lib/updates/logic/presentation";
 
-  type DialogKind = "offer" | "waiting" | UpdateFailureState;
+  type DialogKind = "offer" | UpdateFailureState;
   let { status, now }: { status: UpdateStatus; now: number } = $props();
   let dialog = $state<HTMLDialogElement | null>(null);
   let kind = $state<DialogKind>("offer");
   let error = $state<string | null>(null);
   const id = $props.id();
-  const details = $derived(kind === "offer" || kind === "waiting" ? null : updateDetails(kind, status, now));
+  const details = $derived(kind === "offer" ? null : updateDetails(kind, status, now));
   const allows = (action: UpdateStatus["allowed_actions"][number]) => status.allowed_actions.includes(action);
   const canRetry = $derived(kind === "failed" ? allows("retry") : allows("retry_mac"));
 
@@ -40,12 +40,9 @@
     {#if kind === "offer"}
       <h2 id={id}>Update Panels</h2>
       <p>A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.</p>
-      {#if status.activity !== "idle" || status.detail}
-        <div class="note"><span class="status-mark" aria-hidden="true"></span><span>{status.detail ?? (status.activity === "busy" ? "Work is running. Updating now interrupts it." : "Panels cannot tell if work is running. Updating now can interrupt it.")}</span></div>
+      {#if status.detail}
+        <div class="note"><span class="status-mark" aria-hidden="true"></span><span>{status.detail}</span></div>
       {/if}
-    {:else if kind === "waiting"}
-      <h2 id={id}>Update waits for work to finish</h2>
-      <p>{status.detail ?? "Panels updates as soon as running work finishes."}</p>
     {:else if details}
       <h2 id={id}>{details.title}</h2>
       <dl class="facts">
@@ -57,13 +54,8 @@
       {#if kind === "offer"}
         <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Not now</button>
         {#if allows("update") && status.available}
-          {#if status.activity !== "idle"}<button type="button" class="pill pill--ghost" onclick={() => perform({ action: "install", mode: "idle" })}>When work finishes</button>{/if}
-          <button type="button" class="pill pill--primary" onclick={() => perform({ action: "install", mode: "now" })}>Update now</button>
+          <button type="button" class="pill pill--primary" onclick={() => perform({ action: "install" })}>Update</button>
         {/if}
-      {:else if kind === "waiting"}
-        {#if allows("cancel")}<button type="button" class="pill pill--ghost" onclick={() => perform({ action: "cancel" })}>Cancel update</button>{/if}
-        <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Close</button>
-        {#if allows("update_now")}<button type="button" class="pill pill--primary" onclick={() => perform({ action: "now" })}>Update now</button>{/if}
       {:else}
         <button type="button" class="pill pill--ghost" onclick={() => dialog?.close()}>Close</button>
         {#if canRetry && status.attempt}<button type="button" class="pill pill--primary" onclick={() => perform({ action: kind === "failed" ? "retry" : "retry_mac" })}>Try again</button>{/if}

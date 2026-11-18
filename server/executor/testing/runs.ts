@@ -1,6 +1,9 @@
 /** Source-paired run custody and restart recovery without a host or native child. */
 import { parse_backend_instance_id } from '../../drivers/core/identity.ts';
-import { registry_of_factories } from '../../drivers/testing/registry.ts';
+import {
+  for_every_built_in_backend,
+  registry_of_factories,
+} from '../../drivers/testing/registry.ts';
 import { readFileSync } from 'node:fs';
 import { CLEANUP_SCOPE } from '../../worker_supervision/inspection.ts';
 import { createDatabase } from '../../core/database/index.ts';
@@ -101,7 +104,7 @@ if (spec.mode === 'machines') {
     const factory = registry.as_factory();
     const core = new SqliteProcessConversationSystem({
       store: new ConversationStore(db),
-      backend_registry: registry_of_factories({ codex: factory, claude: factory, hermes: factory }),
+      backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
       message_files: endpoint.message_files,
       delivery_model_refusal: () => null,
       execution_refusal: () => null,
@@ -668,7 +671,7 @@ const no_child: BackendChildFactory = () => {
 };
 const core = new SqliteProcessConversationSystem({
   store,
-  backend_registry: registry_of_factories({ codex: no_child, claude: no_child, hermes: no_child }),
+  backend_registry: registry_of_factories(for_every_built_in_backend(() => no_child)),
   message_files: new ConversationMessageFiles(spec.path),
   delivery_model_refusal: () => null,
   execution_refusal: () => null,
