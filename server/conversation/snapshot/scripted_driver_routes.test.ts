@@ -15,7 +15,11 @@ import { parse_backend_instance_id, parse_driver_kind } from '../../drivers/core
 import { driver_registry_from_entries } from '../../drivers/core/registry.ts';
 import type { RegistryEntry } from '../../drivers/core/registry.ts';
 import type { DriverSignInController, SignInSession } from '../../drivers/core/sign_in.ts';
-import { UnknownSignInSession } from '../../drivers/core/sign_in.ts';
+import {
+  SignInReturnUrlRefused,
+  SignInUnavailable,
+  UnknownSignInSession,
+} from '../../drivers/core/sign_in.ts';
 import { scripted_manifest, scripted_status } from '../../drivers/testing/registry.ts';
 import type { BackendUsageAdapter } from '../backend_usage/contracts.ts';
 import { turn_scoped_selection_transition } from '../../drivers/core/selection.ts';
@@ -65,9 +69,12 @@ function scripted_entry(
 // Gap: every other backend route test reaches only the built-in ids and the Codex sign-in, so a
 // route or card list that still names drivers would pass them. This drives a scripted kind,
 // through the cards, the sign-in routes and the driver list the apps draw marks and labels from.
+// It also proves the sign-in error statuses: a refused return address is 422, and a sign-out
+// that cannot reach the account is 503.
 test('a scripted driver gets its card, sign-in routes, driver list entry, icon and allowance window', async () => {
   const calls: string[] = [];
   let session: SignInSession | null = null;
+  let sign_out_reachable = false;
   const sign_in: DriverSignInController = {
     read: () => session,
     async start() {
@@ -91,11 +98,14 @@ test('a scripted driver gets its card, sign-in routes, driver list entry, icon a
     async submit_return_url(session_id, return_url) {
       calls.push(`return:${session_id}:${return_url}`);
       if (session?.session_id !== session_id) throw new UnknownSignInSession(session_id);
+      if (return_url.includes('refused'))
+        throw new SignInReturnUrlRefused('That is not the address the sign-in returns to.');
       session = { ...session, state: 'confirmed', account_label: 'scripted@example.invalid' };
       return session;
     },
     async sign_out() {
       calls.push('sign_out');
+      if (!sign_out_reachable) throw new SignInUnavailable('The scripted account is unreachable.');
       session = null;
     },
   };
@@ -227,6 +237,14 @@ test('a scripted driver gets its card, sign-in routes, driver list entry, icon a
       (await call('POST', '/scripted/sign-in/other-session/return-url', { return_url: 'x' }))
         .status,
     ).toBe(409);
+    expect(
+      await call('POST', '/scripted/sign-in/scripted-session/return-url', {
+        return_url: 'https://return.invalid/refused',
+      }),
+    ).toEqual({
+      status: 422,
+      body: { detail: 'That is not the address the sign-in returns to.' },
+    });
     const returned = await call('POST', '/scripted/sign-in/scripted-session/return-url', {
       return_url: 'https://return.invalid/?code=1',
     });
@@ -235,6 +253,11 @@ test('a scripted driver gets its card, sign-in routes, driver list entry, icon a
       body: { sign_in: { state: 'confirmed', account_label: 'scripted@example.invalid' } },
     });
     expect(await call('DELETE', '/scripted/sign-in')).toEqual({
+      status: 503,
+      body: { detail: 'The scripted account is unreachable.' },
+    });
+    sign_out_reachable = true;
+    expect(await call('DELETE', '/scripted/sign-in')).toEqual({
       status: 200,
       body: { sign_in: null },
     });
@@ -242,7 +265,9 @@ test('a scripted driver gets its card, sign-in routes, driver list entry, icon a
       'start',
       'cancel:other-session',
       'return:other-session:x',
+      'return:scripted-session:https://return.invalid/refused',
       'return:scripted-session:https://return.invalid/?code=1',
+      'sign_out',
       'sign_out',
     ]);
     const refused = { status: 404, body: { detail: 'claude cannot be signed in from Panels' } };
