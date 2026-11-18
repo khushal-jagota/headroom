@@ -6,6 +6,8 @@ export default defineConfig({
   resolve: { alias: usageAliases },
   plugins: [svelte()],
   test: {
+    // Outside CI, two workers: an uncapped run on the shared VPS starts hundreds of processes.
+    maxWorkers: process.env.CI ? undefined : 2,
     environment: "node",
     include: ["tests/**/*.test.ts", "src/lib/usage/*.test.ts"],
     clearMocks: true,
