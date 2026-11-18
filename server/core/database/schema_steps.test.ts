@@ -257,6 +257,8 @@ it('step 1 brings a baseline database, with either trigger text and with or with
       assert.throws(() => write(path, [statement]), /CHECK constraint failed/);
     const before = rows(path);
     assert(before.every((table) => table.length === 1));
+    const ordered_before = navigation_table ? ordered_rows(path) : [];
+    assert.equal(ordered_before.length, navigation_table ? 1 : 0);
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
@@ -269,7 +271,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
     });
     assert.deepEqual(rows(path), before);
     // Step 1 keeps an existing navigation table and its rows, and creates an empty one otherwise.
-    assert.equal(ordered_rows(path).length, navigation_table ? 1 : 0);
+    assert.deepEqual(ordered_rows(path), ordered_before);
     assert.deepEqual(foreign_key_violations(path), []);
     // Every formerly checked column now stores a new backend key.
     write(path, keyed_rows('acme'));

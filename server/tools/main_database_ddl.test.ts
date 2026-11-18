@@ -38,7 +38,7 @@ const DDL_EXCEPTIONS: readonly { readonly path: string; readonly reason: string 
 /** A literal that starts a statement, such as `CREATE ${kind}INDEX`, or holds one anywhere. */
 const DDL_START = /^\s*(?:CREATE|ALTER|DROP)\s/;
 const DDL_ANYWHERE =
-  /\b(?:CREATE|ALTER|DROP)\s+(?:(?:TEMP|TEMPORARY|UNIQUE|VIRTUAL)\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\b/;
+  /\b(?:CREATE|ALTER|DROP)\s+(?:(?:TEMP|TEMPORARY|UNIQUE|VIRTUAL)\s+)?(?:TABLE|INDEX|TRIGGER|VIEW)\b/i;
 
 function production_source(path: string): boolean {
   return (
@@ -112,8 +112,9 @@ it('the scan reads strings and templates, not comments or prose', () => {
     'const probe = `${setup}; db.exec("CREATE TABLE proof(value INTEGER)")`;',
     "const words = ['CREATE', 'ALTER', 'DROP'];",
     "const note = 'Create a ticket, then drop it.';",
+    "db.exec('create index x on t(a)');",
   ].join('\n');
   expect(ddl_findings('server/example.ts', text).map((finding) => finding.line)).toEqual([
-    2, 3, 5, 6,
+    2, 3, 5, 6, 9,
   ]);
 });
