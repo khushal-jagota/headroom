@@ -1,6 +1,6 @@
 /** Backend-only route proof reuses the ordinary app through injection, without a listener. */
 import { parse_backend_instance_id } from '../../../drivers/core/identity.ts';
-import type { BackendInstanceId } from '../../../drivers/core/identity.ts';
+import { KNOWN_BACKEND_INSTANCE_IDS } from '../../../drivers/built_in_manifests.ts';
 import { createApp } from '../../../app.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { TestClock } from '../../../core/clock.ts';
@@ -53,10 +53,7 @@ interface Spec {
 function model_admission_evidence(database: Database, cards: readonly BackendSnapshot[]) {
   return database.write((tx) => {
     const initial = Object.fromEntries(
-      ['hermes', 'codex', 'claude'].map((key) => [
-        key,
-        offered_model_ids(tx, 'vps', key as BackendInstanceId),
-      ]),
+      KNOWN_BACKEND_INSTANCE_IDS.map((key) => [key, offered_model_ids(tx, 'vps', key)]),
     );
     for (const model of ['retired-model', 'mac-only'])
       tx.run("INSERT INTO backend_model_enablement VALUES ('codex',?,0)", [model]);

@@ -4,10 +4,7 @@ import { join } from 'node:path';
 
 export function clean_test_environment(): () => void {
   for (const name of Object.keys(process.env)) {
-    if (
-      name.startsWith('PLAN_') ||
-      ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'HERMES_HOME'].includes(name)
-    ) {
+    if (name.startsWith('PLAN_') || ['CODEX_HOME', 'CLAUDE_CONFIG_DIR'].includes(name)) {
       delete process.env[name];
     }
   }

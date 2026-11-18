@@ -10,7 +10,7 @@ let home: string;
 let database: BetterSqlite3.Database;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'agy-turn-outcome-'));
-  const conversations = join(home, 'antigravity-acp', 'conversations');
+  const conversations = join(home, 'antigravity-cli', 'conversations');
   mkdirSync(conversations, { recursive: true });
   database = new BetterSqlite3(join(conversations, `${SESSION}.db`));
   // agy 1.5.10's own steps table, as found on the VPS.

@@ -104,20 +104,20 @@ describe('registry build', () => {
   it('builds one default instance per driver, one after another, in list order', async () => {
     const events: string[] = [];
     const drivers = [
-      scripted_driver('hermes', {}, events),
+      scripted_driver('antigravity', {}, events),
       scripted_driver('codex', {}, events),
       scripted_driver('optional', { has_default_instance: false }, events),
       scripted_driver('claude', {}, events),
     ];
     expect([...default_instance_configs(drivers)]).toEqual([
-      ['hermes', { driver: 'hermes' }],
+      ['antigravity', { driver: 'antigravity' }],
       ['codex', { driver: 'codex' }],
       ['claude', { driver: 'claude' }],
     ]);
     const registry = await build(drivers);
     expect(events).toEqual([
-      'create hermes',
-      'created hermes',
+      'create antigravity',
+      'created antigravity',
       'create codex',
       'created codex',
       'create claude',
@@ -125,8 +125,8 @@ describe('registry build', () => {
     ]);
     expect(
       registry.list().map((entry) => entry.kind === 'live' && entry.instance.instance_id),
-    ).toEqual(['hermes', 'codex', 'claude']);
-    expect([...registry.drivers.keys()]).toEqual(['hermes', 'codex', 'optional', 'claude']);
+    ).toEqual(['antigravity', 'codex', 'claude']);
+    expect([...registry.drivers.keys()]).toEqual(['antigravity', 'codex', 'optional', 'claude']);
     expect(registry.require_live('codex').child_factory).toBe(factory);
   });
 
@@ -196,9 +196,9 @@ describe('registry build', () => {
 
   it('refuses a missing or unavailable id with the unknown backend error and no fallback', async () => {
     const registry = await build([
-      scripted_driver('hermes', {
+      scripted_driver('antigravity', {
         create: async () => {
-          throw new Error('no python');
+          throw new Error('no agy');
         },
       }),
       scripted_driver('codex'),
@@ -210,10 +210,10 @@ describe('registry build', () => {
       'unknown agent backend',
       { backend_key: 'nothing', backend_keys: ['codex'] },
     ]);
-    expect(refusal(() => registry.require_live('hermes')).detail).toEqual({
-      backend_key: 'hermes',
+    expect(refusal(() => registry.require_live('antigravity')).detail).toEqual({
+      backend_key: 'antigravity',
       backend_keys: ['codex'],
-      reason: "Backend 'hermes' could not start: no python",
+      reason: "Backend 'antigravity' could not start: no agy",
     });
   });
 
@@ -221,7 +221,7 @@ describe('registry build', () => {
     const events: string[] = [];
     const failing = scripted_driver('codex', {}, events);
     const registry = await build([
-      scripted_driver('hermes', {}, events),
+      scripted_driver('antigravity', {}, events),
       {
         ...failing,
         async create(input, driver_host, signal) {
@@ -242,7 +242,7 @@ describe('registry build', () => {
     await expect(registry.dispose()).rejects.toMatchObject({
       errors: [new Error('codex would not stop')],
     });
-    expect(events).toEqual(['dispose hermes', 'dispose codex', 'dispose claude']);
+    expect(events).toEqual(['dispose antigravity', 'dispose codex', 'dispose claude']);
   });
 
   // Gap: Codex's cleanup waits on Claude's catalog retry, so a serial dispose would hang.
@@ -273,7 +273,9 @@ describe('registry build', () => {
   });
 
   it('takes a fourth driver from the list alone', async () => {
-    const drivers = ['hermes', 'codex', 'claude', 'scripted'].map((kind) => scripted_driver(kind));
+    const drivers = ['antigravity', 'codex', 'claude', 'scripted'].map((kind) =>
+      scripted_driver(kind),
+    );
     const registry = await build(drivers);
     expect(registry.list().map((entry) => entry.kind)).toEqual(['live', 'live', 'live', 'live']);
     expect(registry.require_live('scripted').driver_kind).toBe('scripted');

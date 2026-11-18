@@ -1,4 +1,7 @@
-/** Credential reads and explicitly injected HTTP functions are the only external doors. */
+/**
+ * Antigravity's 5-hour and weekly windows, read with the agy CLI's own login. The login file, the
+ * injected HTTP function and the injected login renewal are the only external doors.
+ */
 // Translated from T3 Code (MIT), apps/server/src/provider/antigravityUsageLimits.ts, commit b79d277c.
 import { readFileSync } from 'node:fs';
 import { parse_backend_instance_id } from '../../core/identity.ts';
@@ -13,14 +16,15 @@ import { backend_io_is_test } from '../../../conversation/snapshot/environment.t
 import { is_record as object } from '../../../core/records.ts';
 import { parse_datetime } from '../../../conversation/backend_usage/logic/windows.ts';
 
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DAILY_HOST = 'https://daily-cloudcode-pa.googleapis.com';
 const PROD_HOST = 'https://cloudcode-pa.googleapis.com';
 // Personal sign-in is metered on the daily host first. Panels signs in personally only.
 const QUOTA_HOSTS = [DAILY_HOST, PROD_HOST];
 const ANTIGRAVITY_USAGE_TIMEOUT_SECONDS = 20;
+/** An access token this close to its expiry is renewed first. */
 const TOKEN_REUSE_MARGIN_MS = 60_000;
-const SIGN_IN_MESSAGE = 'Antigravity is not signed in. Sign in to Antigravity from Panels.';
+const SIGN_IN_MESSAGE = 'Antigravity is signed out. Sign in to Antigravity again.';
+const UNREACHABLE_MESSAGE = 'Antigravity usage could not be reached. Try again.';
 
 export interface UsageHttpPost {
   (
@@ -55,54 +59,56 @@ export const http_post_usage: UsageHttpPost = async (
   return { status_code: response.status, body: parsed };
 };
 
-interface AntigravityCredential {
-  readonly client_id: string;
-  readonly client_secret: string;
-  readonly refresh_token: string;
-  readonly project_id: string | null;
+/** The CLI login's access token and when it expires. agy keeps the refresh to itself. */
+export interface AntigravityCliLogin {
+  readonly access_token: string;
+  readonly expires_at: Date;
 }
 
-export function read_antigravity_credential(path: string): AntigravityCredential | null {
+/** `<home>/antigravity-cli/antigravity-oauth-token`, or null when it is missing or unreadable. */
+export function read_antigravity_cli_login(path: string): AntigravityCliLogin | null {
   let document: unknown;
   try {
     document = JSON.parse(readFileSync(path, 'utf8'));
   } catch {
     return null;
   }
-  if (!object(document)) return null;
-  const { client_id, client_secret, refresh_token, project_id } = document;
-  if (
-    typeof client_id !== 'string' ||
-    !client_id ||
-    typeof client_secret !== 'string' ||
-    !client_secret ||
-    typeof refresh_token !== 'string' ||
-    !refresh_token
-  )
-    return null;
-  return {
-    client_id,
-    client_secret,
-    refresh_token,
-    project_id: typeof project_id === 'string' && project_id ? project_id : null,
-  };
+  if (!object(document) || !object(document.token)) return null;
+  const { access_token, expiry } = document.token;
+  const expires_at = parse_datetime(expiry);
+  if (typeof access_token !== 'string' || !access_token || expires_at === null) return null;
+  return { access_token, expires_at };
 }
 
+/** Node's platform and architecture as Go names them, as agy's own client reports them. */
+const GO_PLATFORM: Readonly<Record<string, string>> = { win32: 'windows' };
+const GO_ARCHITECTURE: Readonly<Record<string, string>> = { x64: 'amd64', ia32: '386' };
+/**
+ * T3's client name. Without a user agent the quota summary answers 403, and with agy 1.5.10's own
+ * it returns only the Claude and GPT buckets (verified on the VPS, 18 November 2026).
+ */
 function antigravity_user_agent(): string {
-  return `antigravity/hub/2.24.0 (aidev_client; os_type=${process.platform}; arch=${process.arch}; cl=963137146)`;
+  const os_type = GO_PLATFORM[process.platform] ?? process.platform;
+  const arch = GO_ARCHITECTURE[process.arch] ?? process.arch;
+  return `antigravity/hub/2.24.0 (aidev_client; os_type=${os_type}; arch=${arch})`;
 }
 
-class SignInRequired extends Error {}
+export interface AntigravityUsageOptions {
+  /** The CLI login file. */
+  readonly login_path: string;
+  readonly http_post: UsageHttpPost;
+  /**
+   * Makes agy renew its own login, as a throwaway session does. Throws when agy cannot be run.
+   * Panels cannot renew the token itself: the login holds no client credentials.
+   */
+  readonly refresh_login: (signal?: AbortSignal) => Promise<void>;
+  readonly now: () => Date;
+}
 
 export class AntigravityUsageAdapter implements BackendUsageAdapter {
-  private readonly credential_path: string;
-  private readonly http_post: UsageHttpPost;
-  private readonly now: () => Date;
-  private cached_token: { key: string; access_token: string; expires_at_ms: number } | null = null;
-  constructor(options: { credential_path: string; http_post: UsageHttpPost; now: () => Date }) {
-    this.credential_path = options.credential_path;
-    this.http_post = options.http_post;
-    this.now = options.now;
+  private readonly options: AntigravityUsageOptions;
+  constructor(options: AntigravityUsageOptions) {
+    this.options = options;
   }
   async refresh(options: { signal?: AbortSignal } = {}): Promise<BackendUsageResult> {
     options.signal?.throwIfAborted();
@@ -116,33 +122,36 @@ export class AntigravityUsageAdapter implements BackendUsageAdapter {
       observed_at: null,
       windows: [],
     });
-    const credential = read_antigravity_credential(this.credential_path);
-    if (credential === null) {
-      this.cached_token = null;
-      return result('unauthenticated', SIGN_IN_MESSAGE);
+    const usable = (login: AntigravityCliLogin | null): login is AntigravityCliLogin =>
+      login !== null &&
+      login.expires_at.getTime() > this.options.now().getTime() + TOKEN_REUSE_MARGIN_MS;
+    let login = read_antigravity_cli_login(this.options.login_path);
+    if (login === null) return result('unauthenticated', SIGN_IN_MESSAGE);
+    if (!usable(login)) {
+      try {
+        await this.options.refresh_login(options.signal);
+      } catch {
+        options.signal?.throwIfAborted();
+        return result('failed', UNREACHABLE_MESSAGE);
+      }
+      login = read_antigravity_cli_login(this.options.login_path);
+      if (!usable(login)) return result('unauthenticated', SIGN_IN_MESSAGE);
     }
-    let access_token: string;
-    try {
-      access_token = await this.access_token(credential, options);
-    } catch (error) {
-      options.signal?.throwIfAborted();
-      if (error instanceof SignInRequired) return result('unauthenticated', error.message);
-      return result('failed', 'Antigravity usage could not be reached. Try again.');
-    }
+    const access_token = login.access_token;
     let reached = false;
     let signed_out = false;
     const query = async (operation: string, parse: (body: unknown) => Keyed[]) => {
       const readings = await Promise.all(
         QUOTA_HOSTS.map(async (host) => {
           try {
-            const response = await this.http_post(
+            const response = await this.options.http_post(
               `${host}/v1internal:${operation}`,
               {
                 authorization: `Bearer ${access_token}`,
                 'content-type': 'application/json',
                 'user-agent': antigravity_user_agent(),
               },
-              JSON.stringify(credential.project_id ? { project: credential.project_id } : {}),
+              '{}',
               ANTIGRAVITY_USAGE_TIMEOUT_SECONDS,
               options,
             );
@@ -169,63 +178,12 @@ export class AntigravityUsageAdapter implements BackendUsageAdapter {
         backend_key: parse_backend_instance_id('antigravity'),
         outcome: 'succeeded',
         detail: null,
-        observed_at: this.now(),
+        observed_at: this.options.now(),
         windows,
       };
-    if (signed_out && !reached) {
-      this.cached_token = null;
-      return result('unauthenticated', SIGN_IN_MESSAGE);
-    }
-    if (!reached) return result('failed', 'Antigravity usage could not be reached. Try again.');
+    if (signed_out && !reached) return result('unauthenticated', SIGN_IN_MESSAGE);
+    if (!reached) return result('failed', UNREACHABLE_MESSAGE);
     return result('unavailable', 'Antigravity did not return usable quota information.');
-  }
-
-  private async access_token(
-    credential: AntigravityCredential,
-    options: { signal?: AbortSignal },
-  ): Promise<string> {
-    const key = `${credential.client_id}\0${credential.refresh_token}`;
-    const now_ms = this.now().getTime();
-    const cached = this.cached_token;
-    if (
-      cached !== null &&
-      cached.key === key &&
-      cached.expires_at_ms > now_ms + TOKEN_REUSE_MARGIN_MS
-    )
-      return cached.access_token;
-    this.cached_token = null;
-    const response = await this.http_post(
-      TOKEN_URL,
-      { 'content-type': 'application/x-www-form-urlencoded' },
-      new URLSearchParams({
-        client_id: credential.client_id,
-        client_secret: credential.client_secret,
-        refresh_token: credential.refresh_token,
-        grant_type: 'refresh_token',
-      }).toString(),
-      ANTIGRAVITY_USAGE_TIMEOUT_SECONDS,
-      options,
-    );
-    const body = object(response.body) ? response.body : {};
-    if (
-      response.status_code === 401 ||
-      (response.status_code === 400 && body.error === 'invalid_grant')
-    )
-      throw new SignInRequired(
-        'Antigravity sign-in has expired. Sign in to Antigravity from Panels.',
-      );
-    const { access_token, expires_in } = body;
-    if (
-      response.status_code < 200 ||
-      response.status_code >= 300 ||
-      typeof access_token !== 'string' ||
-      !access_token ||
-      typeof expires_in !== 'number' ||
-      !(expires_in > 0)
-    )
-      throw new Error('token refresh failed');
-    this.cached_token = { key, access_token, expires_at_ms: now_ms + expires_in * 1000 };
-    return access_token;
   }
 }
 
@@ -237,6 +195,20 @@ function used_percent_of(quota: Record<string, unknown>): number | null {
 
 type Keyed = [string, BackendUsageWindow];
 
+/**
+ * A group's display name without its trailing "models": "Gemini Models" is Gemini, "Claude and
+ * GPT models" is Claude and GPT, and "Gemini 4 Argon" stays as it is.
+ */
+function scope_label_of_group(display_name: unknown): string | null {
+  if (typeof display_name !== 'string') return null;
+  return display_name.trim().replace(/\s+models$/i, '') || null;
+}
+/** A bucket outside any named group, by its id: `gemini-5h` is Gemini, `3p-weekly` is Claude and GPT. */
+function family_of_bucket(bucket_id: string): string {
+  if (bucket_id.startsWith('3p-')) return 'Claude and GPT';
+  if (bucket_id.startsWith('gemini-')) return 'Gemini';
+  return bucket_id;
+}
 /** `retrieveUserQuotaSummary` buckets, keyed by bucket id. */
 function parse_summary_windows(body: unknown): Keyed[] {
   if (!object(body)) return [];
@@ -244,10 +216,7 @@ function parse_summary_windows(body: unknown): Keyed[] {
   if (Array.isArray(body.groups))
     for (const group of body.groups)
       if (object(group) && Array.isArray(group.buckets))
-        groups.push({
-          name: typeof group.displayName === 'string' ? group.displayName.trim() || null : null,
-          buckets: group.buckets,
-        });
+        groups.push({ name: scope_label_of_group(group.displayName), buckets: group.buckets });
   if (!groups.some((group) => group.buckets.length) && Array.isArray(body.buckets))
     groups.splice(0, groups.length, { name: null, buckets: body.buckets });
   const windows: Keyed[] = [];
@@ -261,16 +230,7 @@ function parse_summary_windows(body: unknown): Keyed[] {
       const used_percent = used_percent_of(bucket);
       const resets_at = parse_datetime(bucket.resetTime);
       if (kind === null || used_percent === null || resets_at === null) continue;
-      // Argon and Carbon are metered separately from the default Gemini buckets.
-      const scope_label = bucket_id.startsWith('gemini-argon-')
-        ? (group.name ?? 'Gemini Argon')
-        : bucket_id.startsWith('gemini-carbon-')
-          ? (group.name ?? 'Gemini Carbon')
-          : bucket_id.startsWith('gemini-')
-            ? 'Gemini'
-            : bucket_id.startsWith('3p-')
-              ? 'Claude and GPT'
-              : (group.name ?? bucket_id);
+      const scope_label = group.name ?? family_of_bucket(bucket_id);
       windows.push([bucket_id, { kind, used_percent, resets_at, model_scope: null, scope_label }]);
     }
   return windows;

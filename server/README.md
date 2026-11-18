@@ -6,7 +6,7 @@ This package is the Panels backend. The live VPS server and the Mac executor run
 
 Accepted design decisions and their reasons live in [DEVIATIONS.md](DEVIATIONS.md).
 
-`ios_compatibility/check.ts` hashes the accepted production TypeScript inventory, eight fixed JSON inputs and two retained Hermes Python sources. It includes raw comments and sorts paths component by component. The checker and HTTP middleware share `ios_compatibility/policy.ts` for the native build floor. The agent doing a release writes and commits `ios_compatibility/review.json` after it checks iOS compatibility. Its `contract_sha256` must match the current contract, so any change to these inputs needs a new review. With `server/node_modules` installed, print the current value with `node -e "import('./server/ios_compatibility/check.ts').then(async (m) => console.log(await m.contract_digest('.')))"` from the repository root. Missing fixed inputs, including the generated migration graph, fail the check. The main-only publication workflow reads that review from HEAD in a clean tree and records its commit author. Signed-device evidence remains a separate requirement.
+`ios_compatibility/check.ts` hashes the accepted production TypeScript inventory, eight fixed JSON inputs and any Python script a built-in driver ships (none today). It includes raw comments and sorts paths component by component. The checker and HTTP middleware share `ios_compatibility/policy.ts` for the native build floor. The agent doing a release writes and commits `ios_compatibility/review.json` after it checks iOS compatibility. Its `contract_sha256` must match the current contract, so any change to these inputs needs a new review. With `server/node_modules` installed, print the current value with `node -e "import('./server/ios_compatibility/check.ts').then(async (m) => console.log(await m.contract_digest('.')))"` from the repository root. Missing fixed inputs, including the generated migration graph, fail the check. The main-only publication workflow reads that review from HEAD in a clean tree and records its commit author. Signed-device evidence remains a separate requirement.
 The source CLI at `server/cli/main.ts` connects all seventeen operator commands.
 `environment app-build` uses the release builder. `environment run` replaces its process
 with the prepared repository's CLI and retains its reserved listener. `serve` uses the
@@ -85,7 +85,7 @@ The ten browser checks in `tests/e2e/*.spec.ts` run against this server. `typesc
 
 Registered areas supply their domain routes and projections. The conversation test host supplies a scripted backend through the real core. The installer runs schema steps; startup never does. Embedded `startServer` has unavailable catalog/sign-in providers by default, while an explicit normal-mode embedding still permits generic machine probes. It is not a claim that all machine I/O is disabled.
 
-`worker_supervision` supplies durable custody records, bounded cleanup, and the pre-execution bootstrap. Codex, Claude, and Hermes share the invocation's runtime and process owners. Explicit Worker starts use P4's scratch helper and report supervision before spawn, then exact identity before startup succeeds. Cleanup retains scratch until retirement is proven. Linux uses pidfds and delegated cgroup identities. New macOS Workers use individual launchd jobs with durable domain and label identities. Historical Mac PID records retain exact birth checks. Journals preserve device and inode integers exactly. Durable conversation custody remains a later binding. [Conversations](../docs/conversations.md#worker-processes) describes the complete Worker behavior.
+`worker_supervision` supplies durable custody records, bounded cleanup, and the pre-execution bootstrap. Codex, Claude, and Antigravity share the invocation's runtime and process owners. Explicit Worker starts use P4's scratch helper and report supervision before spawn, then exact identity before startup succeeds. Cleanup retains scratch until retirement is proven. Linux uses pidfds and delegated cgroup identities. New macOS Workers use individual launchd jobs with durable domain and label identities. Historical Mac PID records retain exact birth checks. Journals preserve device and inode integers exactly. Durable conversation custody remains a later binding. [Conversations](../docs/conversations.md#worker-processes) describes the complete Worker behavior.
 
 ## Known follow-ups
 
@@ -147,7 +147,7 @@ The scripted test host can open and continue conversations through these routes.
 
 The SDK public spawn hook retains the exact child. Worker starts also use the shared supervision runtime and scratch owner. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands wait for write completion. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
 
-The Claude spawn hook and the Codex and Hermes adapters use `lifecycle/owned_processes.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
+The Claude spawn hook, the Codex adapter and the ACP launcher use `lifecycle/owned_processes.ts` for process custody, signals, and bounded termination. SDK exit callbacks still follow stream closure. Cleanup observes direct-child exit first, then a separate bounded output drain. Each Claude shutdown phase retains its five-second limit.
 
 The adapter's scripted tests do not establish real-provider coverage of all 19 backend events.
 
@@ -214,7 +214,7 @@ The optional `beforePublication(database)` hook performs test-host projection bo
 It does not replace the producer authority. `testAreas` receives the shared core, record, publication, clock, and database.
 `startServer` returns its listener address and an idempotent close operation for isolated lifecycle tests.
 
-Vitest removes all `PLAN_*`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `HERMES_HOME` variables before test files load.
+Vitest removes all `PLAN_*`, `CODEX_HOME`, and `CLAUDE_CONFIG_DIR` variables before test files load.
 Each test file starts with a fresh temporary `HOME`, which tests can override explicitly.
 Vitest and `PLAN_TEST_MODE=1` hosts can only open databases inside the OS temp folder or an explicitly registered test root.
 
@@ -286,20 +286,13 @@ reads, and joins them before the database closes. Both snapshot environment and 
 cleanup run even if either fails. Exact-second sign-in timestamps omit the fractional
 part. Nonzero microseconds retain six digits.
 
-## Hermes ACP transport
+## ACP transport
 
 `drivers/acp/` is the shared ACP layer: the ordered ACP transport and launcher, and the ACP
-backend child that Antigravity runs on. `drivers/hermes/runtime/` supplies the Hermes backend:
-its own backend child and launch values over that transport. Process ownership comes from `lifecycle/owned_processes.ts`.
-`create_hermes_backend_child_factory` is exported from `drivers/hermes/runtime/adapter.ts`.
-`HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `drivers/hermes/runtime/catalog.ts` run
-the Python inventory script, `src/planner/conversation/backends/hermes_model_catalog.py`.
-The launch runs the Python ACP extension, `hermes_acp_extension.py`, from the same folder.
-The lifecycle owner retains the catalog owner and calls `shutdown()` when the server stops.
-It observes that shutdown with the shared deadline and includes it in the backend
-`settled()` barrier. The Hermes child environment has no automatic `BASH_ENV` override.
+backend child that Antigravity runs on as its one flavor. Process ownership comes from
+`lifecycle/owned_processes.ts`. `drivers/acp/README.md` covers the child and its flavor hooks.
 
-The adapter pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1
+The connection pins `@agentclientprotocol/sdk` to `2.6.0` and uses its ACP v1
 `/unstable` entrypoint to retain prompt usage fields. The public `ClientApp` dispatches
 handlers concurrently, so the adapter uses the SDK's lower-level `Connection` and
 generated validators behind an admission gate. Notifications and request admission

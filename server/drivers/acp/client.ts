@@ -59,6 +59,11 @@ export interface AcpHandlers {
 }
 export interface AcpRequest<T> {
   readonly written: Promise<void>;
+  /**
+   * Whether the request's own stream write began. A request whose `written` rejects after its
+   * write began may already be in the agent's input.
+   */
+  write_started(): boolean;
   readonly response: Promise<T>;
   cancel(reason?: unknown): void;
 }
@@ -74,6 +79,7 @@ interface WriteReceipt {
   request: boolean;
   pending: Deferred<void>;
   effect: ResponseEffect;
+  write_started: boolean;
 }
 interface ResponseEffect {
   readonly pending: Deferred<void>;
@@ -150,6 +156,7 @@ export class AcpClient {
                 this.response_effects.set(message.id, receipt.effect);
               }
             }
+            if (receipt) receipt.write_started = true;
             await writer.write(message);
             if (receipt) {
               this.receipts.delete(receipt);
@@ -256,7 +263,15 @@ export class AcpClient {
   ): AcpRequest<T> {
     const written = new Deferred<void>();
     const effect: ResponseEffect = { pending: new Deferred<void>(), completed: false };
-    const receipt = { method, params, request: true, pending: written, effect };
+    const receipt: WriteReceipt = {
+      method,
+      params,
+      request: true,
+      pending: written,
+      effect,
+      write_started: false,
+    };
+    const write_started = () => receipt.write_started;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cancel = (reason?: unknown) => controller.abort(reason);
@@ -307,12 +322,12 @@ export class AcpClient {
           effect.pending.resolve();
           if (effect.id !== undefined) this.response_effects.delete(effect.id);
         });
-      return { written: written.promise, response, cancel };
+      return { written: written.promise, write_started, response, cancel };
     } catch (error) {
       written.reject(error);
       const response = Promise.reject<T>(error);
       void response.catch(() => {});
-      return { written: written.promise, response, cancel };
+      return { written: written.promise, write_started, response, cancel };
     }
   }
   request<T>(method: string, params: unknown, options?: AcpRequestOptions): Promise<T> {

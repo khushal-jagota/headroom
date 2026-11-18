@@ -3,6 +3,7 @@ import type {
   AvailableCommand,
   ContentBlock,
   JsonRpcId,
+  PermissionOption,
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -44,6 +45,8 @@ import { acp_error_text } from './session_configuration.ts';
 export interface ParkedPermissionAsk {
   readonly answer: Deferred<RequestPermissionResponse>;
   readonly request_id: JsonRpcId;
+  readonly tool_call_id: string;
+  readonly options: readonly PermissionOption[];
 }
 export interface AcpTurn {
   readonly token: TurnToken;
@@ -141,8 +144,10 @@ export class AcpEvents {
         break;
       case 'tool_call': {
         const status = update.status;
-        if (status !== 'completed' && status !== 'failed')
-          turn.open_tool_calls.add(update.toolCallId);
+        // An ask already allowed may have opened it.
+        if (status === 'completed' || status === 'failed')
+          turn.open_tool_calls.delete(update.toolCallId);
+        else turn.open_tool_calls.add(update.toolCallId);
         await this.sink.report(
           turn.token,
           new ToolCallStarted({
@@ -221,9 +226,12 @@ export class AcpEvents {
     const tool = params.toolCall;
     const ask_id = `${tool.toolCallId}:${++this.asks_raised}`;
     const answer = new Deferred<RequestPermissionResponse>();
-    turn.parked_asks.set(ask_id, { answer, request_id: id });
-    // Once answered, the agent runs the tool it asked about until it reports the tool finished.
-    turn.open_tool_calls.add(tool.toolCallId);
+    turn.parked_asks.set(ask_id, {
+      answer,
+      request_id: id,
+      tool_call_id: tool.toolCallId,
+      options: params.options,
+    });
     await this.sink.report(
       turn.token,
       new PermissionAskRaised({
@@ -254,15 +262,27 @@ export class AcpEvents {
     }
   }
   /**
-   * The written prompt's turn. A turn still current here was ended by the core without its reply,
-   * as after an unanswered cancel: it is abandoned, so its clock cannot fail this turn.
+   * Called before the next prompt is written. A turn still current then was ended by the core
+   * without its reply, as after an unanswered cancel. It is abandoned, so its clock cannot fail
+   * the next turn, and its open tool calls are finished as failed, since none will finish later.
    */
+  async abandon_current(): Promise<void> {
+    const turn = this.turn;
+    if (!turn) return;
+    this.turn = null;
+    this.abandon(turn);
+    try {
+      await this.finish_open_tool_calls(turn, ToolCallStatus.failed);
+    } catch (error) {
+      this.log(error);
+    }
+  }
+  /** The written prompt's turn. */
   begin(
     token: TurnToken,
     request: AcpRequest<PromptResponse>,
     outcome_watch: AcpPromptOutcomeWatch | null,
   ): AcpTurn {
-    if (this.turn) this.abandon(this.turn);
     const turn: AcpTurn = {
       token,
       request,
@@ -281,9 +301,18 @@ export class AcpEvents {
     this.heard_from_agent(turn);
     return turn;
   }
-  /** A permission answer reached the agent: it is working again. */
-  answered(turn: AcpTurn, ask_id: string): void {
+  /**
+   * A permission answer reached the agent: it is working again. An allowed tool runs until the
+   * agent reports it finished; a refused one never starts.
+   */
+  answered(turn: AcpTurn, ask_id: string, option_id: string): void {
+    const parked = turn.parked_asks.get(ask_id);
     turn.parked_asks.delete(ask_id);
+    // The turn may have ended while the answer was on its way.
+    if (this.turn !== turn) return;
+    const kind = parked?.options.find((option) => option.optionId === option_id)?.kind;
+    if (parked && (kind === 'allow_once' || kind === 'allow_always'))
+      turn.open_tool_calls.add(parked.tool_call_id);
     this.heard_from_agent(turn);
   }
   /**
@@ -346,6 +375,8 @@ export class AcpEvents {
       ending = ConversationTurnEnding.failed;
       error_summary = normalized_failure_summary(this.failure_text(heard.error));
     } else response = heard.response;
+    // An abandoned turn's ending is no longer the core's: it reports nothing more.
+    if (this.turn !== turn) return;
     if (response) {
       if (response.stopReason === 'cancelled') ending = ConversationTurnEnding.interrupted;
       const usage = response.usage;
@@ -375,18 +406,12 @@ export class AcpEvents {
     if (this.turn !== turn) return;
     this.turn = null;
     await this.flush(turn);
-    for (const tool_call_id of turn.open_tool_calls)
-      await this.sink.report(
-        turn.token,
-        new ToolCallFinished({
-          tool_call_id,
-          tool_call_status:
-            ending === ConversationTurnEnding.completed
-              ? ToolCallStatus.completed
-              : ToolCallStatus.failed,
-        }),
-      );
-    turn.open_tool_calls.clear();
+    await this.finish_open_tool_calls(
+      turn,
+      ending === ConversationTurnEnding.completed
+        ? ToolCallStatus.completed
+        : ToolCallStatus.failed,
+    );
     this.settle_asks(turn);
     await this.sink.report(
       turn.token,
@@ -398,6 +423,16 @@ export class AcpEvents {
         child_disposition: silent || facts.wire_ended() ? 'broken' : 'reusable',
       }),
     );
+  }
+  /** Panels never ends a tool call by itself, so one still open when its turn ends is ended here. */
+  private async finish_open_tool_calls(turn: AcpTurn, status: ToolCallStatus): Promise<void> {
+    const open = [...turn.open_tool_calls];
+    turn.open_tool_calls.clear();
+    for (const tool_call_id of open)
+      await this.sink.report(
+        turn.token,
+        new ToolCallFinished({ tool_call_id, tool_call_status: status }),
+      );
   }
   private async flush(turn: AcpTurn): Promise<void> {
     if (!turn.pieces.length) return;

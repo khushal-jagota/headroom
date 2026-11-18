@@ -16,7 +16,7 @@ import { antigravity_driver } from '../driver.ts';
 import { antigravity_manifest } from '../manifest.ts';
 import { AntigravityUsageAdapter, http_post_usage } from './allowance_usage.ts';
 import { AntigravityModelCatalog } from './catalog.ts';
-import { APP_DATA_DIRECTORY_NAME } from './configuration.ts';
+import { AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME } from './configuration.ts';
 import { create_antigravity_flavor } from './flavor.ts';
 import { AntigravitySignIn } from './sign_in.ts';
 import { create_antigravity_status } from './status.ts';
@@ -69,8 +69,10 @@ export async function create_antigravity_instance(
     child_processes: host.child_processes,
     one_shot_children: host.one_shot_children,
   });
+  const executable = () =>
+    override ?? host.executable_on_path(antigravity_manifest.executable.name);
   const sign_in = new AntigravitySignIn(launch_options, {
-    executable: () => override ?? host.executable_on_path(antigravity_manifest.executable.name),
+    executable,
     child_processes: host.child_processes,
     one_shot_children: host.one_shot_children,
     // A throwaway catalog session that starts signed in confirms the sign-in.
@@ -82,8 +84,12 @@ export async function create_antigravity_instance(
     status: create_antigravity_status({ catalog: (executable) => catalog.read(executable) }),
     sign_in,
     allowance_usage: new AntigravityUsageAdapter({
-      credential_path: join(launch_options.home, APP_DATA_DIRECTORY_NAME, 'acp_token.json'),
+      login_path: join(launch_options.home, AGY_APP_DATA_DIRECTORY_NAME, CLI_LOGIN_FILE_NAME),
       http_post: http_post_usage,
+      // A throwaway session makes agy renew its expired access token.
+      refresh_login: async (signal) => {
+        await catalog.read(executable(), signal);
+      },
       now: () => new Date(),
     }),
     dispose: async (options) => {

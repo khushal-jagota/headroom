@@ -6,7 +6,7 @@ import type { OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
 import type { AcpFlavor, AcpLaunch } from '../../acp/flavor.ts';
 import { antigravity_driver } from '../driver.ts';
-import { APP_DATA_DIRECTORY_NAME, PROMPT_INACTIVITY_TIMEOUT_MS } from './configuration.ts';
+import { PROMPT_INACTIVITY_TIMEOUT_MS } from './configuration.ts';
 import { watch_antigravity_prompt_outcome } from './turn_outcome.ts';
 
 export const ANTIGRAVITY_SIGN_IN_REQUIRED =
@@ -21,22 +21,15 @@ export interface AntigravityLaunchOptions {
   readonly worker_process_root: string;
   readonly panels_server_url: string;
 }
-/** The launch every `agy acp` Panels starts shares: conversations and the model catalog alike. */
+/**
+ * The launch every `agy acp` Panels starts shares: conversations, the model catalog, sign-in and
+ * sign-out alike. It uses agy's default app data directory, so it runs on the CLI's own login.
+ */
 export function antigravity_acp_launch(options: AntigravityLaunchOptions): AcpLaunch {
   return {
-    argv: [
-      options.executable,
-      'acp',
-      '--gemini-dir',
-      options.home,
-      '--app-data-dir',
-      APP_DATA_DIRECTORY_NAME,
-      '--disable-telemetry',
-    ],
+    argv: [options.executable, 'acp', '--gemini-dir', options.home, '--disable-telemetry'],
     environment_overrides: [
       ['GEMINI_HOME', options.home],
-      // Panels' sign-in token is a file under the app data directory, not the system keyring.
-      ['AGY_ACP_FORCE_FILE_STORAGE', '1'],
       // No browser can open here.
       ['BROWSER', 'false'],
       ['PLAN_SERVER_URL', options.panels_server_url],

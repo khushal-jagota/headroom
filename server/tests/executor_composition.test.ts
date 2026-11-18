@@ -251,7 +251,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
           working_turns: [],
           admission_stopped: false,
           cleanup_uncertainties: [],
-          driver_kinds: ['hermes', 'codex', 'claude'],
+          driver_kinds: ['codex', 'claude'],
         },
         0,
         ORIGINAL_MAC_MACHINE_ID,

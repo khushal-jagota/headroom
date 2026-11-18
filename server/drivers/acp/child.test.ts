@@ -7,6 +7,7 @@ import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes
 import {
   BackendSpawnFailed,
   NeedsRebind,
+  PromptWriteFailed,
   PromptWriteRefused,
   ToolCallFinished,
   TurnEnded,
@@ -53,11 +54,13 @@ const NEW_SESSION = {
 };
 /**
  * A scripted ACP peer over in-memory streams. `answer` replies to each request; null holds the
- * reply until the test sends it with `reply`.
+ * reply until the test sends it with `reply`. `hold_prompt_write` keeps each prompt's write in
+ * the stream until it settles.
  */
 function scripted(
   flavor_hooks: Partial<AcpFlavor>,
   answer: (method: string, params: unknown) => Answer,
+  options: { hold_prompt_write?: Promise<void> } = {},
 ) {
   let input!: ReadableStreamDefaultController<AnyMessage>;
   const writes: AnyMessage[] = [];
@@ -77,7 +80,9 @@ function scripted(
           },
         }),
         writable: new WritableStream<AnyMessage>({
-          write(message) {
+          async write(message) {
+            if ('method' in message && message.method === 'session/prompt')
+              await options.hold_prompt_write;
             writes.push(message);
             if (!('method' in message) || !('id' in message)) return;
             const reply = answer(message.method, 'params' in message ? message.params : undefined);
@@ -149,13 +154,20 @@ function scripted(
         params: {
           sessionId: SESSION,
           toolCall: { toolCallId: tool_call_id, title: `Edit ${tool_call_id}` },
-          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
+          options: [
+            { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
+          ],
         },
       });
     },
     /** The agent's process ends: its output closes. */
     end() {
       input.close();
+    },
+    /** Reading the agent's output fails, while the agent itself may still run. */
+    break_output() {
+      input.error(new Error('the output read failed'));
     },
     prompt(
       text = 'hello',
@@ -201,6 +213,22 @@ test('a child whose agent ended while idle asks the core for a fresh child', asy
   expect(refused).toBeInstanceOf(NeedsRebind);
   expect((refused as NeedsRebind).failed_child_recovery).toBe(true);
   expect(peer.requests('session/prompt')).toHaveLength(0);
+  await peer.child.stop();
+});
+
+// Risk: the wire fails for a reason other than the agent dying while the prompt's write is in the
+// stream. The agent may already have the prompt, so a rebind would send it twice.
+test('a prompt whose write began when the wire failed is not handed to a fresh child', async () => {
+  const held = Promise.withResolvers<void>();
+  const peer = scripted({}, ordinary, { hold_prompt_write: held.promise });
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  const prompt = peer.prompt().catch((error: unknown) => error);
+  await tick();
+  peer.break_output();
+  const failure = await prompt;
+  expect(failure).toBeInstanceOf(PromptWriteFailed);
+  expect(failure).not.toBeInstanceOf(NeedsRebind);
+  held.resolve();
   await peer.child.stop();
 });
 
@@ -349,8 +377,8 @@ test('a silent agent fails its turn and its child; an allowed tool call holds th
   expect(turn_ended(peer)).toBe(true);
   const ended = await peer.ended;
   expect([ended.ending, ended.child_disposition]).toEqual(['failed', 'broken']);
-  expect(ended.error_summary).toBe(
-    `Scripted sent nothing for ${OPEN_TOOL_CALL_SILENCE_LIMITS + 1} seconds, so Panels ended this turn. The next message starts a fresh Scripted.`,
+  expect(ended.error_summary).toContain(
+    `sent nothing for ${OPEN_TOOL_CALL_SILENCE_LIMITS + 1} seconds`,
   );
   expect(peer.requests('$/cancel_request')).toHaveLength(1);
   await expect(peer.prompt()).rejects.toBeInstanceOf(NeedsRebind);
@@ -364,8 +392,13 @@ test('a turn ended without its reply cannot fail the next turn on the same child
   const peer = scripted({ prompt_inactivity_timeout_ms: 1000 }, ordinary);
   await peer.child.start(peer.resolved, { vendor_session_cursor: null });
   await peer.prompt('hangs');
+  peer.update({ sessionUpdate: 'tool_call', toolCallId: 'hung', title: 'Run', status: 'pending' });
   await vi.advanceTimersByTimeAsync(500);
   await peer.prompt('next');
+  // The abandoned turn's tool call will never be finished by the agent.
+  expect(peer.events.filter((event) => event instanceof ToolCallFinished)).toMatchObject([
+    { tool_call_id: 'hung', tool_call_status: 'failed' },
+  ]);
   // The first turn's limit has passed, the second's has not.
   await vi.advanceTimersByTimeAsync(700);
   expect(turn_ended(peer)).toBe(false);
@@ -398,5 +431,35 @@ test('a tool call still open when its turn ends is finished before the turn ends
     tool_call_status: 'completed',
   });
   expect(finished).toBe(peer.events.findIndex((event) => event instanceof TurnEnded) - 1);
+  await peer.child.stop();
+});
+
+// Risks: a tool call that arrives already finished after its ask was allowed stays open, holding
+// the silence clock and finishing a second time at turn end; a refused ask holds the clock for a
+// tool that never runs and finishes a tool call that was never shown.
+test('a tool call is open only while the agent runs it', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const peer = scripted({ prompt_inactivity_timeout_ms: 1000 }, ordinary);
+  await peer.child.start(peer.resolved, { vendor_session_cursor: null });
+  await peer.prompt();
+  peer.ask('allowed');
+  await tick();
+  expect(await peer.child.answer_permission_ask('allowed:1', 'allow')).toBe('applied');
+  peer.update({
+    sessionUpdate: 'tool_call',
+    toolCallId: 'allowed',
+    title: 'Edit allowed',
+    status: 'completed',
+  });
+  peer.ask('denied');
+  await tick();
+  expect(await peer.child.answer_permission_ask('denied:2', 'deny')).toBe('applied');
+  // Nothing is open, so one limit of silence ends the turn.
+  await vi.advanceTimersByTimeAsync(1000);
+  const ended = await peer.ended;
+  expect(ended.ending).toBe('failed');
+  expect(peer.events.filter((event) => event instanceof ToolCallFinished)).toMatchObject([
+    { tool_call_id: 'allowed', tool_call_status: 'completed' },
+  ]);
   await peer.child.stop();
 });

@@ -2,7 +2,7 @@
 
 An environment is one running Headroom server with its own state: a database, files, logs, locks, and a loopback port. Headroom has three kinds on the VPS: live, staging, and Ticket servers. A local checkout on any machine is the same shape. This page says which servers exist, what separates them, and who runs what on the host.
 
-All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Codex and Claude homes. Headroom does not copy them into role accounts.
+All of them run as one Unix user, the existing `vps` account. They are separated by directories and by the environment they are launched with, not by Linux accounts. Provider logins stay in that user's real Codex, Claude and Antigravity homes. Headroom does not copy them into role accounts.
 
 ```text
 ~/Deployments/Panels/current/{app,data,logs}   live: the installed release, no Git
@@ -52,7 +52,7 @@ Defaults live in `config.yaml`. Every value there can be overridden by the match
 
 A server can also be given a default workspace folder for new agent conversations. It links the managed skills into that folder and refuses to start rather than overwrite anything already there. How a conversation picks its folder is in [Conversations](conversations.md).
 
-Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs.
+Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs; Antigravity runs the host's own `agy`.
 
 Live and staging launches rebuild the process environment from a fixed allowlist instead of inheriting the caller's. Each backend driver's manifest contributes its own variables, home folder, and skills folder to that list. Live passes only named settings and provider keys from its service environment. Staging keeps the user's home, locale, terminal, and path, drops stray `PLAN_*` values, adds validated credentials from its own file, and sets the paths it owns. Credentials are never written into a manifest or printed.
 

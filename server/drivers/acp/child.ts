@@ -197,11 +197,12 @@ export class AcpBackendChild implements BackendChild {
   private require_running(): void {
     if (this.stopped) throw new PromptWriteFailed('this child is being shut down');
   }
+  /** Nothing is written when this refuses. */
   private bound(): { client: AcpClient; config: AcpSessionConfiguration; sessionId: string } {
-    this.require_running();
-    if (!this.client || !this.configuration)
-      throw new PromptWriteFailed('this child has no bound session');
-    const sessionId = this.configuration.bound_session();
+    if (this.stopped) throw new PromptWriteRefused('this child is being shut down');
+    const sessionId = this.configuration?.session_id ?? null;
+    if (!this.client || !this.configuration || sessionId === null)
+      throw new PromptWriteRefused('this child has no bound session');
     return { client: this.client, config: this.configuration, sessionId };
   }
   private is_catalog_command(content: MessageContent): boolean {
@@ -297,6 +298,7 @@ export class AcpBackendChild implements BackendChild {
   private async write_prompt_to_wire(token: TurnToken, prompt: ContentBlock[]): Promise<void> {
     const { client, config, sessionId } = this.bound();
     this.require_live_child();
+    await this.events.abandon_current();
     const outcome_watch = this.events.watch_outcome(sessionId);
     const writing = new Deferred<void>();
     let turn: AcpTurn | null = null;
@@ -326,8 +328,9 @@ export class AcpBackendChild implements BackendChild {
       void request.response.catch((failure) => {
         if (!this.stopped) this.log(failure);
       });
-      // The prompt did not reach the wire, so a fresh child can take it.
-      this.require_live_child();
+      // A prompt refused before its write began did not reach the agent, so a fresh child can
+      // take it. One whose write began may be in a live agent's input, and is not sent again.
+      if (!request.write_started()) this.require_live_child();
       throw new PromptWriteFailed(`the prompt did not reach the wire: ${acp_error_text(error)}`, {
         cause: error,
       });
@@ -376,7 +379,8 @@ export class AcpBackendChild implements BackendChild {
       bound.config.require_wire();
       client = bound.client;
     } catch (error) {
-      if (!(error instanceof PromptWriteFailed)) throw error;
+      if (!(error instanceof PromptWriteFailed) && !(error instanceof PromptWriteRefused))
+        throw error;
       throw new PermissionAnswerWriteFailed(`${ask_id}: ${error.message}`, { cause: error });
     }
     const reached_wire = client.response_written(parked.request_id);
@@ -389,7 +393,7 @@ export class AcpBackendChild implements BackendChild {
         cause: error,
       });
     }
-    this.events.answered(turn, ask_id);
+    this.events.answered(turn, ask_id, option_id);
     return AnswerFate.applied;
   }
   /** No ACP agent of this base raises a structured question, so there is none to answer. */

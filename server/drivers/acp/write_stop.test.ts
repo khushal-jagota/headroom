@@ -55,7 +55,7 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
   const stop = vi.spyOn(AcpLauncher.prototype, 'stop').mockResolvedValue();
   const resolved = new ResolvedConversationStart({
     conversation_id: 'synthetic',
-    backend_key: parse_backend_instance_id('hermes'),
+    backend_key: parse_backend_instance_id('antigravity'),
     model: 'synthetic',
     workspace_folder: '/synthetic',
     access: ConversationAccess.full,

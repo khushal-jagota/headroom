@@ -16,7 +16,9 @@ const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 if (process.argv[2] === '--version') { console.log('1.5.10'); process.exit(0); }
 const home = process.argv[process.argv.indexOf('--gemini-dir') + 1];
-const state = join(home, process.argv[process.argv.indexOf('--app-data-dir') + 1]);
+// The launch leaves agy on its default app data directory.
+if (process.argv.includes('--app-data-dir')) process.exit(2);
+const state = join(home, 'antigravity-cli');
 const recorded = JSON.parse(readFileSync(join(home, 'session_new.json'), 'utf8'));
 const levels = (model) => model === 'gemini-4-hydrogen' ? ['low', 'medium', 'high', 'xhigh']
   : model === 'gpt-oss-120b-medium' ? null : ['low', 'medium', 'high'];
@@ -71,8 +73,8 @@ test('the catalog reads each model from a throwaway session it then removes', as
     .find((option) => option.category === 'thought_level');
   expect(hydrogen?.type === 'select' && hydrogen.options).toHaveLength(4);
   const session = 'd054a0e0-e154-41e0-8aa7-38cef63181da';
-  expect(existsSync(join(home, 'antigravity-acp', 'conversations', `${session}.db`))).toBe(false);
-  expect(existsSync(join(home, 'antigravity-acp', 'brain', session))).toBe(false);
+  expect(existsSync(join(home, 'antigravity-cli', 'conversations', `${session}.db`))).toBe(false);
+  expect(existsSync(join(home, 'antigravity-cli', 'brain', session))).toBe(false);
   expect(existsSync(readFileSync(join(home, 'session_cwd'), 'utf8'))).toBe(false);
 
   writeFileSync(join(home, 'signed_out'), '');

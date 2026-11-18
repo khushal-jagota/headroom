@@ -36,7 +36,7 @@ test('request timeout and cancellation keep the same child until its ordered fin
   const home = process.env.HOME!; // vitest supplies a private temporary home.
   const resolved = new ResolvedConversationStart({
     conversation_id: 'unit16-fast-exit',
-    backend_key: parse_backend_instance_id('hermes'),
+    backend_key: parse_backend_instance_id('antigravity'),
     model: 'synthetic',
     reasoning_effort: null,
     role_materials: null,

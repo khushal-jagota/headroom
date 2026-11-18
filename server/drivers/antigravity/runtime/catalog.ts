@@ -1,6 +1,7 @@
 /**
  * The card's model list comes from a throwaway `agy acp` session, started in a private directory
  * and stopped once it has answered. The session's files and the directory are removed after.
+ * Opening the session also makes agy renew the CLI login when its access token has expired.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -49,13 +50,14 @@ export class AntigravityModelCatalog {
     this.child_processes = dependencies.child_processes;
     this.one_shot_children = dependencies.one_shot_children;
   }
-  async read(executable: string): Promise<AntigravityCatalogRead> {
+  async read(executable: string, signal?: AbortSignal): Promise<AntigravityCatalogRead> {
     this.shutting_down.signal.throwIfAborted();
     const read = this.run(
       executable,
       AbortSignal.any([
         this.shutting_down.signal,
         AbortSignal.timeout(MODEL_CATALOG_PROBE_TIMEOUT_SECONDS * 1000),
+        ...(signal ? [signal] : []),
       ]),
     );
     this.reads.add(read);

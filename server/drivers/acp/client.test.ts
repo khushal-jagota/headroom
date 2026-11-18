@@ -47,6 +47,9 @@ function wire(handlers: ConstructorParameters<typeof AcpClient>[1]) {
     fail() {
       fail_write = true;
     },
+    break_input(error: Error) {
+      input.error(error);
+    },
     send(message: unknown, split = false) {
       const bytes = new TextEncoder().encode(JSON.stringify(message) + '\n');
       if (split) input.enqueue(bytes.slice(0, 9));
@@ -354,4 +357,22 @@ test('closing a wire releases admission while its sink stays slow', async () => 
   await client.stop();
   expect(client.signal.aborted).toBe(true);
   gate.resolve();
+});
+
+// Risk: a wire failure reads as "nothing was written" for a request already in the agent's input,
+// so the caller sends it again on a fresh child.
+test('a wire failure tells a request whose write began from one still waiting to be written', async () => {
+  const peer = wire(no_handlers);
+  const held = deferred<void>();
+  peer.hold_each_write(held.promise);
+  const first = peer.client.begin_request('session/prompt', { sessionId: 's', prompt: [] });
+  const second = peer.client.begin_request('session/prompt', { sessionId: 's', prompt: [] });
+  for (const request of [first, second]) void request.response.catch(() => {});
+  await tick();
+  expect(peer.writes).toHaveLength(1);
+  peer.break_input(new Error('synthetic read failure'));
+  await expect(first.written).rejects.toThrow();
+  await expect(second.written).rejects.toThrow();
+  expect([first.write_started(), second.write_started()]).toEqual([true, false]);
+  held.resolve();
 });

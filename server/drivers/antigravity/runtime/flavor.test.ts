@@ -8,6 +8,7 @@ import { OneShotChildren } from '../../../lifecycle/owned_processes.ts';
 import { ConversationAccess, ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import { parse_backend_instance_id } from '../../core/identity.ts';
 import { acp_child_environment } from '../../acp/environment.ts';
+import { antigravity_manifest } from '../manifest.ts';
 import { ANTIGRAVITY_SIGN_IN_REQUIRED, create_antigravity_flavor } from './flavor.ts';
 
 const scratch = mkdtempSync(join(tmpdir(), 'antigravity-flavor-'));
@@ -29,7 +30,16 @@ const flavor_for = (executable: string) =>
     },
     new OneShotChildren(),
   );
-const executable = agy_reporting('1.5.10');
+/** The registered floor, and the release just below it. */
+const FLOOR = antigravity_manifest.cli_floor!.minimum_version;
+function release_below(version: string): string {
+  const parts = version.split('.').map(Number);
+  const last = parts.findLastIndex((part) => part > 0);
+  return parts
+    .map((part, index) => (index < last ? part : index === last ? part - 1 : 99))
+    .join('.');
+}
+const executable = agy_reporting(FLOOR);
 const flavor = flavor_for(executable);
 const start = new ResolvedConversationStart({
   conversation_id: 'conversation-1',
@@ -41,18 +51,16 @@ const start = new ResolvedConversationStart({
   access: ConversationAccess.full,
 });
 
-// Risk: a full-access conversation stalls on permission asks, agy writes its token to a keyring
-// or another state directory, or a Google credential from the server's environment signs agy
-// in as someone else.
-test('a full-access launch skips permissions, keeps its own state, and inherits no credential', async () => {
+// Risk: a full-access conversation stalls on permission asks, agy runs on a state directory other
+// than the CLI's own login, or a Google credential from the server's environment signs agy in as
+// someone else.
+test('a full-access launch skips permissions, uses the CLI login, and inherits no credential', async () => {
   const launch = await flavor.launch(start);
   expect(launch.argv).toEqual([
     executable,
     'acp',
     '--gemini-dir',
     '/home/owner/.gemini',
-    '--app-data-dir',
-    'antigravity-acp',
     '--disable-telemetry',
     '--dangerously-skip-permissions',
   ]);
@@ -66,9 +74,9 @@ test('a full-access launch skips permissions, keeps its own state, and inherits 
   });
   expect(environment).toMatchObject({
     GEMINI_HOME: '/home/owner/.gemini',
-    AGY_ACP_FORCE_FILE_STORAGE: '1',
     BROWSER: 'false',
   });
+  expect(environment).not.toHaveProperty('AGY_ACP_FORCE_FILE_STORAGE');
   expect(Object.keys(environment).filter((name) => /GEMINI_API|GOOGLE/.test(name))).toEqual([]);
 });
 
@@ -83,7 +91,7 @@ test('only ACP auth_required means agy needs a sign-in', () => {
 
 // Risk: a conversation starts on an agy older than the floor, because only the card checked it.
 test('a launch refuses an agy older than the CLI floor', async () => {
-  await expect(flavor_for(agy_reporting('1.4.9')).launch(start)).rejects.toBeInstanceOf(
-    BackendCliIncompatible,
-  );
+  await expect(
+    flavor_for(agy_reporting(release_below(FLOOR))).launch(start),
+  ).rejects.toBeInstanceOf(BackendCliIncompatible);
 });

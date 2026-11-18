@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
@@ -9,17 +17,20 @@ import { UnknownSignInSession } from '../../core/sign_in.ts';
 import { AntigravitySignIn } from './sign_in.ts';
 
 /**
- * A stand-in for `agy` 1.5.10. `acp --login` prints its Google link as the real one does, reads
- * the return address from stdin, and saves a token for the right code. `acp` answers ACP
- * `initialize` with logout support, and records a `logout`.
+ * A stand-in for `agy` 1.5.10 on its default app data directory, where the CLI keeps its login.
+ * `acp --login` prints its Google link as the real one does, reads the return address from stdin,
+ * and saves the login for the right code. `acp` answers ACP `initialize` with logout support, and
+ * removes the login on `logout`.
  */
 const FAKE_AGY = `#!/usr/bin/env node
-const { mkdirSync, writeFileSync } = require('node:fs');
+const { mkdirSync, rmSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 if (process.argv[2] === '--version') { console.log('1.5.10'); process.exit(0); }
 const home = process.argv[process.argv.indexOf('--gemini-dir') + 1];
-const state = join(home, process.argv[process.argv.indexOf('--app-data-dir') + 1]);
+// Panels leaves agy on its default app data directory, so it acts on the CLI login.
+if (process.argv.includes('--app-data-dir')) process.exit(2);
+const state = join(home, 'antigravity-cli');
 const lines = createInterface({ input: process.stdin });
 if (process.argv.includes('--login')) {
   writeFileSync(join(home, 'login.pid'), String(process.pid));
@@ -35,7 +46,7 @@ if (process.argv.includes('--login')) {
       process.exit(1);
     }
     mkdirSync(state, { recursive: true });
-    writeFileSync(join(state, 'acp_token.json'), '{}');
+    writeFileSync(join(state, 'antigravity-oauth-token'), '{}');
     process.exit(0);
   });
 } else {
@@ -45,7 +56,7 @@ if (process.argv.includes('--login')) {
     if (method === 'initialize')
       send({ id, result: { protocolVersion: 1, agentCapabilities: { auth: { logout: {} } } } });
     else if (method === 'logout') {
-      writeFileSync(join(home, 'logged_out'), '');
+      rmSync(join(state, 'antigravity-oauth-token'), { force: true });
       send({ id, result: {} });
     }
   });
@@ -56,7 +67,7 @@ let home: string;
 let agy: string;
 let sign_in: AntigravitySignIn;
 const children = new ChildProcesses();
-const token = () => join(home, 'antigravity-acp', 'acp_token.json');
+const login = () => join(home, 'antigravity-cli', 'antigravity-oauth-token');
 const login_is_running = () => {
   try {
     process.kill(Number(readFileSync(join(home, 'login.pid'), 'utf8')), 0);
@@ -76,7 +87,7 @@ beforeEach(() => {
       executable: () => agy,
       child_processes: children,
       one_shot_children: new OneShotChildren(children),
-      verify: async () => existsSync(token()),
+      verify: async () => existsSync(login()),
     },
   );
 });
@@ -108,7 +119,7 @@ test('a pasted return address is checked, handed to agy, and confirms the sign-i
     `${RETURN}?state=fake-state&code=good-code&scope=openid`,
   );
   expect(confirmed).toMatchObject({ state: 'confirmed', verification_url: null });
-  expect(existsSync(token())).toBe(true);
+  expect(existsSync(login())).toBe(true);
   expect(login_is_running()).toBe(false);
 });
 
@@ -121,8 +132,11 @@ test('cancel stops agy and ends the sign-in', async () => {
   expect(login_is_running()).toBe(false);
 });
 
-// Risk: sign-out never reaches agy, so Panels' token stays saved.
-test('sign-out sends ACP logout to a short-lived agy', async () => {
+// Risk: sign-out never reaches agy, or reaches an agy on another state directory, so the CLI
+// login stays saved.
+test('sign-out removes the CLI login through ACP logout to a short-lived agy', async () => {
+  mkdirSync(join(home, 'antigravity-cli'));
+  writeFileSync(login(), '{}');
   await sign_in.sign_out();
-  expect(existsSync(join(home, 'logged_out'))).toBe(true);
+  expect(existsSync(login())).toBe(false);
 });

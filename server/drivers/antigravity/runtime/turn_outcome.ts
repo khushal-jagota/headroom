@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import type { AcpPromptOutcomeWatch } from '../../acp/flavor.ts';
 import {
-  APP_DATA_DIRECTORY_NAME,
+  AGY_APP_DATA_DIRECTORY_NAME,
   ERROR_STEP_PAYLOAD_READ_LIMIT_BYTES,
   SESSION_DATABASE_BUSY_TIMEOUT_MS,
 } from './configuration.ts';
@@ -73,7 +73,7 @@ export function watch_antigravity_prompt_outcome(
   session_id: string,
 ): AcpPromptOutcomeWatch {
   if (!SESSION_ID.test(session_id)) return { failure: async () => null };
-  const path = join(home, APP_DATA_DIRECTORY_NAME, 'conversations', `${session_id}.db`);
+  const path = join(home, AGY_APP_DATA_DIRECTORY_NAME, 'conversations', `${session_id}.db`);
   let baseline: number | null;
   try {
     // A prompt that creates the database adds every step in it.

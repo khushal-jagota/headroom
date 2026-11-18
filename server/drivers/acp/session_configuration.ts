@@ -148,14 +148,19 @@ export class AcpSessionConfiguration {
       throw new ConfigurationNotApplied(error.message, { cause: error });
     }
   }
-  /** The agent answers with every option again: a new model can bring other effort values. */
-  private async set_option(configId: string, value: string): Promise<void> {
+  /**
+   * The agent answers with every option again: a new model can bring other effort values. The
+   * value the agent then reports for this option, or null when its reply leaves it out.
+   */
+  private async set_option(configId: string, value: string): Promise<string | null> {
     const sessionId = this.config_session();
     const response = await this.configuration_request<SetSessionConfigOptionResponse>(
       'session/set_config_option',
       { configId, sessionId, value },
     );
     if (response?.configOptions?.length) this.adopt(response.configOptions);
+    const reported = response?.configOptions?.find((option) => option.id === configId);
+    return reported?.type === 'select' ? reported.currentValue : null;
   }
   private async apply_model(model: string): Promise<void> {
     if (model === this.model) return;
@@ -164,17 +169,16 @@ export class AcpSessionConfiguration {
       throw new ConfigurationNotApplied(
         `this session advertises no model option, so it cannot be put on ${JSON.stringify(model)}`,
       );
-    await this.set_option(option.id, model);
-    this.model = model;
+    this.model = (await this.set_option(option.id, model)) ?? model;
   }
   private async apply_effort(effort: string): Promise<void> {
+    if (effort === this.reasoning_effort) return;
     const option = this.option('thought_level');
     if (!option)
       throw new ConfigurationNotApplied(
         `this session advertises no reasoning-effort option, so it cannot be put on ${JSON.stringify(effort)}`,
       );
-    await this.set_option(option.id, effort);
-    this.reasoning_effort = effort;
+    this.reasoning_effort = (await this.set_option(option.id, effort)) ?? effort;
   }
   async restore(previously: readonly [string | null, string | null]): Promise<void> {
     const [model, effort] = previously;

@@ -1,11 +1,13 @@
 /**
- * Signing Panels' own agy in with a personal Google account from any device, and signing it out.
+ * Signing the agy CLI's own login in again with a personal Google account from any device, and
+ * signing it out. Panels and the CLI share that one login.
  *
  * agy 1.5.10 refuses ACP `authenticate` on a machine with no graphical display. Its terminal
  * sign-in, `agy acp --login`, prints a Google link whose return address is agy's hosted page
  * https://antigravity.google/oauth-callback, then reads that page's address from stdin. Panels
  * shows the link, takes the address the browser ended on, checks that it belongs to this sign-in
- * and hands it to agy. agy exchanges it, saves its token in its app data directory and exits.
+ * and hands it to agy. agy exchanges it, saves its login in its default app data directory and
+ * exits.
  * A throwaway session then confirms the sign-in. The address carries a one-time code: Panels
  * never logs, stores or returns it.
  */
@@ -245,7 +247,7 @@ export interface AntigravitySignInDependencies {
   executable(): string;
   child_processes: OwnedChildProcesses;
   one_shot_children: OwnedOneShotChildren;
-  /** Whether a throwaway session in this home starts signed in. */
+  /** Whether a throwaway session on the CLI login starts signed in. */
   verify(executable: string): Promise<boolean>;
   now?: () => Date;
   bounds?: Partial<AntigravitySignInBounds>;

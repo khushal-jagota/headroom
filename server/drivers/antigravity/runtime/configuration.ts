@@ -1,7 +1,12 @@
-/** Antigravity's tunables and the state directory Panels gives its own agy. */
+/** Antigravity's tunables and where agy keeps its state. */
 
-/** `--app-data-dir` inside the home. The CLI's own login and history stay in `antigravity-cli`. */
-export const APP_DATA_DIRECTORY_NAME = 'antigravity-acp';
+/**
+ * agy's default `--app-data-dir` inside the home, which Panels leaves as it is: Panels shares the
+ * CLI's own login, conversations and brain.
+ */
+export const AGY_APP_DATA_DIRECTORY_NAME = 'antigravity-cli';
+/** The CLI login inside the app data directory. On Linux agy keeps it in this file. */
+export const CLI_LOGIN_FILE_NAME = 'antigravity-oauth-token';
 /** agy can hang without an error. A turn that hears nothing for this long fails. */
 export const PROMPT_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
 /** The error text leads an error step's payload; a Go stack trace follows it. */
