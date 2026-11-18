@@ -16,7 +16,6 @@ import {
   ATTEMPT_OBSERVER_SECONDS,
   MAC_UPDATE_REPORT_SECONDS,
   STAGED_APP_PREFIX,
-  SUPPORTED_UPDATE_SCHEMA_FLOOR,
   UPDATE_AVAILABILITY_REFRESH_SECONDS,
   UPDATE_HEALTH_TIMEOUT_SECONDS,
 } from './configuration.ts';
@@ -81,8 +80,6 @@ export async function installed_update_root(
 export function validate_release(release: PublishedUpdate): void {
   if (release.manifest.runtime_contract === null)
     throw new UpdateConflict('This publication lacks a runtime contract. Republish the app.');
-  if (release.schema_floor !== SUPPORTED_UPDATE_SCHEMA_FLOOR)
-    throw new UpdateConflict('This publication requires an unsupported schema floor.');
   // Publication retention is a real-world boundary, independent of a service test clock.
   let expired = false;
   try {
