@@ -41,16 +41,19 @@ import {
 import type { MessageContent } from '../../../conversation/message_content.ts';
 import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
 import { observe_promise } from '../../../core/promise_observer.ts';
+import { child_environment } from './launch.ts';
 import type { AcpChildLaunch } from './launch.ts';
 import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import type { LocalChildIdentity } from '../../../conversation/local_child_contracts.ts';
-import { HermesAcpLauncher } from './client.ts';
+import { AcpLauncher } from '../../acp/client.ts';
 import type { OwnedChildProcesses } from '../../../lifecycle/contracts.ts';
-import type { HermesAcpClient } from './client.ts';
+import type { AcpClient } from '../../acp/client.ts';
 import {
   AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS,
   CANCELLED_TURN_ENDING_TIMEOUT_SECONDS,
+} from '../../acp/configuration.ts';
+import {
   ConfigurationNotApplied,
   HermesConfiguration,
   hermes_error_text,
@@ -58,7 +61,7 @@ import {
 import { Deferred } from '../../../core/deferred.ts';
 import { HermesEvents } from './events.ts';
 import type { HermesTurn } from './events.ts';
-import { HermesMessages } from './messages.ts';
+import { AcpMessages } from '../../acp/messages.ts';
 
 type PromptOptions = Parameters<BackendChild['write_prompt']>[2];
 type SteerOptions = Parameters<BackendChild['steer']>[2];
@@ -70,10 +73,10 @@ export class HermesAcpBackendChild implements BackendChild {
   private readonly launch: AcpChildLaunch;
   private resolved_start: ResolvedConversationStart;
   private readonly sink: BackendEventSink;
-  private readonly launcher: HermesAcpLauncher;
-  private readonly messages: HermesMessages;
+  private readonly launcher: AcpLauncher;
+  private readonly messages: AcpMessages;
   private readonly events: HermesEvents;
-  private client: HermesAcpClient | null = null;
+  private client: AcpClient | null = null;
   private configuration: HermesConfiguration | null = null;
   private stopped = false;
   constructor(options: {
@@ -84,18 +87,14 @@ export class HermesAcpBackendChild implements BackendChild {
     event_sink: BackendEventSink;
     message_files: ConversationMessageFiles;
   }) {
-    this.launcher = new HermesAcpLauncher(
-      options.child_processes,
-      options.worker_supervision,
-      options.event_sink,
-    );
+    this.launcher = new AcpLauncher(options.child_processes, options.worker_supervision, {
+      label: 'Hermes',
+      custody_sink: options.event_sink,
+    });
     this.launch = options.launch;
     this.resolved_start = options.resolved_start;
     this.sink = options.event_sink;
-    this.messages = new HermesMessages(
-      options.message_files,
-      options.resolved_start.conversation_id,
-    );
+    this.messages = new AcpMessages(options.message_files, options.resolved_start.conversation_id);
     this.events = new HermesEvents(this.sink, this.messages);
   }
   async start(
@@ -107,7 +106,11 @@ export class HermesAcpBackendChild implements BackendChild {
     if (this.stopped) throw new BackendSpawnFailed('this child is being shut down');
     this.resolved_start = resolved_start;
     try {
-      const client = await this.launcher.start(this.launch, resolved_start, {
+      const spawn = {
+        argv: this.launch.argv,
+        environment: child_environment(this.launch, resolved_start),
+      };
+      const client = await this.launcher.start(spawn, resolved_start, {
         session_update: async (params) => {
           await this.events.session_update(params);
         },
@@ -194,7 +197,7 @@ export class HermesAcpBackendChild implements BackendChild {
   private require_running(): void {
     if (this.stopped) throw new PromptWriteFailed('this child is being shut down');
   }
-  private bound(): { client: HermesAcpClient; config: HermesConfiguration; sessionId: string } {
+  private bound(): { client: AcpClient; config: HermesConfiguration; sessionId: string } {
     this.require_running();
     if (!this.client || !this.configuration)
       throw new PromptWriteFailed('this child has no bound session');
@@ -429,7 +432,7 @@ export class HermesAcpBackendChild implements BackendChild {
     const parked = turn?.parked_asks.get(ask_id);
     if (!turn || !parked || parked.answer.settled || parked.request_id === null)
       throw new PermissionAnswerWriteFailed(ask_id);
-    let client: HermesAcpClient;
+    let client: AcpClient;
     try {
       const bound = this.bound();
       bound.config.require_wire();

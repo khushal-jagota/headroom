@@ -1,11 +1,11 @@
 import { expect, test } from 'vitest';
 import type { AnyMessage, PromptResponse } from '@agentclientprotocol/sdk/unstable';
-import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
-import { HermesAcpClient } from './client.ts';
-import { Deferred } from '../../../core/deferred.ts';
-import { HermesEvents } from './events.ts';
-import type { HermesTurn } from './events.ts';
-import { HermesMessages } from './messages.ts';
+import type { ConversationMessageFiles } from '../../conversation/message_files.ts';
+import { AcpClient } from './client.ts';
+import { Deferred } from '../../core/deferred.ts';
+import { AcpEvents } from './events.ts';
+import type { AcpTurn } from './events.ts';
+import { AcpMessages } from './messages.ts';
 
 test('a later notification cannot overtake asynchronous prompt-reply effects', async () => {
   let input!: ReadableStreamDefaultController<AnyMessage>;
@@ -13,7 +13,7 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
   const usage_started = new Deferred<void>();
   const release_usage = new Deferred<void>();
   const observed: string[] = [];
-  const events = new HermesEvents(
+  const events = new AcpEvents(
     {
       async report(_turn, event) {
         if (event.constructor.name === 'TokenUsageReported') {
@@ -23,9 +23,11 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
         observed.push(event.constructor.name);
       },
     },
-    new HermesMessages({} as ConversationMessageFiles, 'synthetic'),
+    new AcpMessages({} as ConversationMessageFiles, 'synthetic'),
+    { label: 'Synthetic', launch: () => ({ argv: [], environment_overrides: [] }) },
+    () => {},
   );
-  const client = new HermesAcpClient(
+  const client = new AcpClient(
     {
       readable: new ReadableStream<AnyMessage>({
         start(controller) {
@@ -40,7 +42,7 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
     },
     { session_update: (params) => events.session_update(params) },
   );
-  let turn!: HermesTurn;
+  let turn!: AcpTurn;
   try {
     const request = client.begin_request<PromptResponse>(
       'session/prompt',
@@ -51,12 +53,12 @@ test('a later notification cannot overtake asynchronous prompt-reply effects', a
         },
       },
     );
-    turn = events.begin({ conversation_id: 'synthetic', turn_number: 1 }, request.response, false);
-    turn.ending_reporter = events.report_ending(
-      turn,
-      () => null,
-      () => false,
-    );
+    turn = events.begin({ conversation_id: 'synthetic', turn_number: 1 }, request, 'synthetic');
+    turn.ending_reporter = events.report_ending(turn, {
+      standard_error_tail: () => null,
+      wire_ended: () => false,
+      break_wire: () => {},
+    });
     await request.written;
     const written = writes[0]!;
     if (!('id' in written)) throw new Error('Expected SDK request');

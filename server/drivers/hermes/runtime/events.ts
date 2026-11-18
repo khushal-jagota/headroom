@@ -36,7 +36,7 @@ import { joined_runs_of_text, MessageText } from '../../../conversation/message_
 import type { MessageContent, MessagePiece } from '../../../conversation/message_content.ts';
 import { normalized_failure_summary } from '../../../conversation/backends/failure_summary.ts';
 import { hermes_error_text } from './configuration.ts';
-import type { HermesMessages } from './messages.ts';
+import type { AcpMessages } from '../../acp/messages.ts';
 import { Deferred } from '../../../core/deferred.ts';
 
 export interface ParkedPermissionAsk {
@@ -91,8 +91,8 @@ export class HermesEvents {
   readonly first_commands = new Deferred<void>();
   private asks_raised = 0;
   private readonly sink: BackendEventSink;
-  private readonly messages: HermesMessages;
-  constructor(sink: BackendEventSink, messages: HermesMessages) {
+  private readonly messages: AcpMessages;
+  constructor(sink: BackendEventSink, messages: AcpMessages) {
     this.sink = sink;
     this.messages = messages;
   }

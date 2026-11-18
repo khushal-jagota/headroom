@@ -1,22 +1,18 @@
 import { expect, test, vi } from 'vitest';
 import type { AnyMessage } from '@agentclientprotocol/sdk/unstable';
-import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import {
-  NeedsRebind,
-  PromptWriteFailed,
-  SessionLoadFailed,
-} from '../../../conversation/backends/contracts.ts';
-import { HermesAcpClient } from './client.ts';
-import { HermesConfiguration } from './configuration.ts';
-import { Deferred } from '../../../core/deferred.ts';
+import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
+import { NeedsRebind, SessionLoadFailed } from '../../conversation/backends/contracts.ts';
+import { AcpClient } from './client.ts';
+import { AcpSessionConfiguration } from './session_configuration.ts';
+import { Deferred } from '../../core/deferred.ts';
 
-test('hung ordered persistence bounds controls without failing other requests or the wire', async () => {
+test('hung ordered persistence bounds configuration without failing other requests or the wire', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   let input!: ReadableStreamDefaultController<AnyMessage>;
   const writes: AnyMessage[] = [];
   const entered = new Deferred<void>();
   const persisted = new Deferred<void>();
-  const client = new HermesAcpClient(
+  const client = new AcpClient(
     {
       readable: new ReadableStream<AnyMessage>({
         start(controller) {
@@ -36,8 +32,19 @@ test('hung ordered persistence bounds controls without failing other requests or
       },
     },
   );
-  const config = new HermesConfiguration(client);
-  config.bind('synthetic', { _meta: { panels: { currentModelId: 'original' } } });
+  const config = new AcpSessionConfiguration(client, 'Synthetic');
+  config.bind('synthetic', {
+    configOptions: [
+      {
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        type: 'select',
+        currentValue: 'original',
+        options: [],
+      },
+    ],
+  });
   try {
     input.enqueue({
       jsonrpc: '2.0',
@@ -51,9 +58,6 @@ test('hung ordered persistence bounds controls without failing other requests or
       },
     });
     await entered.promise;
-    const steer = expect(config.control_request('_panels/steer', {})).rejects.toBeInstanceOf(
-      PromptWriteFailed,
-    );
     const change = expect(config.apply_values('other', null)).rejects.toBeInstanceOf(NeedsRebind);
     const unaffected = client.begin_request('unaffected', {});
     await unaffected.written;
@@ -61,12 +65,12 @@ test('hung ordered persistence bounds controls without failing other requests or
       if ('id' in frame && 'method' in frame)
         input.enqueue({ jsonrpc: '2.0', id: frame.id, result: { value: 'alive' } });
     await vi.advanceTimersByTimeAsync(15000);
-    await Promise.all([steer, change]);
+    await change;
     expect(client.signal.aborted).toBe(false);
     expect(config.wire_broken).toBe(false);
     expect(
       writes.filter((frame) => 'method' in frame && frame.method === '$/cancel_request'),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     const startup = expect(
       config.start_values({
         access: 'full',

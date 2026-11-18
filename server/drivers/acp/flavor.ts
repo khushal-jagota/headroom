@@ -1,0 +1,39 @@
+/** What one ACP agent tells the shared ACP backend child. A Panels-sized subset of T3's flavor. */
+import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
+import type { BackendCapabilities } from '../core/capabilities.ts';
+
+/**
+ * What every child of the shared ACP base can do. It sets the model and reasoning effort through
+ * session config options in a running session, and it has no steer: a steer is refused with
+ * `backend_cannot_steer` and the message waits for the next prompt.
+ */
+export const ACP_CHILD_CAPABILITIES: BackendCapabilities = {
+  sessions: { supportsModelSwitchInSession: true },
+  turns: { supportsActiveSteering: false },
+};
+/** The agent's command and its own environment values. The base adds the shared rest. */
+export interface AcpLaunch {
+  readonly argv: readonly string[];
+  readonly environment_overrides: readonly (readonly [string, string])[];
+}
+/** Taken before a prompt is written. Read once the agent has answered that prompt `end_turn`. */
+export interface AcpPromptOutcomeWatch {
+  /** The failure the agent reported only outside the ACP stream, or null. */
+  failure(): Promise<string | null>;
+}
+export interface AcpFlavor {
+  /** The agent's display name, used in the base's own error text. */
+  readonly label: string;
+  /** Called once for each child start. */
+  launch(start: ResolvedConversationStart): AcpLaunch;
+  /**
+   * The signed-out text when this agent error means the agent needs a sign-in, else null. A
+   * start that fails this way does not start; a prompt that fails this way fails its turn with
+   * this text.
+   */
+  requires_sign_in?(error: unknown): string | null;
+  /** A turn whose agent sends nothing for this long fails, and its child is not reused. */
+  readonly prompt_inactivity_timeout_ms?: number;
+  /** Corrects a turn that the agent ended `end_turn` from a source outside the ACP stream. */
+  watch_prompt_outcome?(session_id: string): AcpPromptOutcomeWatch;
+}

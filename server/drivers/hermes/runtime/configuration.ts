@@ -1,13 +1,4 @@
-/** Bounds and SDK contract retained from Python's Hermes ACP adapter. */
-export const ACP_SDK_VERSION = '2.6.0';
-export const CHILD_OUTPUT_LINE_LIMIT_BYTES = 50 * 1024 * 1024;
-export const STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS = 8192;
-export const CANCELLED_TURN_ENDING_TIMEOUT_SECONDS = 15;
-export const ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS = 15;
-export const AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS = 15;
-export const CONTROL_REQUEST_TIMEOUT_SECONDS = 15;
-
-import { RequestError } from '@agentclientprotocol/sdk/unstable';
+/** Hermes' session configuration: its model and effort values and its wire state. */
 import type {
   LoadSessionResponse,
   SessionConfigOption,
@@ -20,20 +11,12 @@ import {
   PromptWriteFailed,
   SessionLoadFailed,
 } from '../../../conversation/backends/contracts.ts';
-import { error_text } from '../../../conversation/backends/failure_summary.ts';
-import type { HermesAcpClient } from './client.ts';
+import type { AcpClient } from '../../acp/client.ts';
+import { CONTROL_REQUEST_TIMEOUT_SECONDS } from '../../acp/configuration.ts';
+import { acp_error_text } from '../../acp/session_configuration.ts';
 
-export function hermes_error_text(error: unknown): string {
-  // The Python ACP connection raises ConnectionError with this exact text at EOF.
-  // Preserve a provider's stated RequestError text, even when it matches the SDK.
-  if (
-    !(error instanceof RequestError) &&
-    error instanceof Error &&
-    (error.message === 'ACP connection closed' || error.message === 'the backend process ended')
-  )
-    return 'Connection closed';
-  return error_text(error);
-}
+/** Hermes reads errors as every ACP agent does. */
+export const hermes_error_text = acp_error_text;
 export class ConfigurationNotApplied extends Error {}
 /** Python's carried model/effort values, including its logical broken-wire state. */
 export class HermesConfiguration {
@@ -43,8 +26,8 @@ export class HermesConfiguration {
   wire_broken = false;
   private wire_failure: { why: string; cause: unknown } | null = null;
   private options: readonly SessionConfigOption[] = [];
-  readonly client: HermesAcpClient;
-  constructor(client: HermesAcpClient) {
+  readonly client: AcpClient;
+  constructor(client: AcpClient) {
     this.client = client;
   }
   bind(session_id: string, response: LoadSessionResponse): void {

@@ -288,8 +288,9 @@ part. Nonzero microseconds retain six digits.
 
 ## Hermes ACP transport
 
-`drivers/hermes/runtime/` supplies the Hermes backend:
-the backend child, launch values, and ordered ACP transport. Process ownership comes from `lifecycle/owned_processes.ts`.
+`drivers/acp/` is the shared ACP layer: the ordered ACP transport and launcher, and the ACP
+backend child that Antigravity runs on. `drivers/hermes/runtime/` supplies the Hermes backend:
+its own backend child and launch values over that transport. Process ownership comes from `lifecycle/owned_processes.ts`.
 `create_hermes_backend_child_factory` is exported from `drivers/hermes/runtime/adapter.ts`.
 `HermesModelCatalogOwner` and `hermes_model_catalog_launch` in `drivers/hermes/runtime/catalog.ts` run
 the Python inventory script, `src/planner/conversation/backends/hermes_model_catalog.py`.
@@ -311,7 +312,7 @@ The package exports no subpath for `Connection` or the generated validators.
 Runtime imports resolve their files from the pinned package entrypoint. Relative
 `node_modules` imports supply those same official types without a duplicate protocol
 interface. Pin checks cover the consumed internal symbols. Any SDK upgrade requires
-a new review of `drivers/hermes/runtime/client.ts` before approval.
+a new review of `drivers/acp/client.ts` before approval.
 
 `executor/vps_presence.ts` supplies the lease cache and work-route incarnation fence.
 Its constructor receives the invocation database, mailbox, and change signal.

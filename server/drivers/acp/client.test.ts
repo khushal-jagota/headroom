@@ -4,7 +4,7 @@ import type { AnyMessage } from '@agentclientprotocol/sdk/unstable';
 
 const before_import = { ...process.env };
 const sdk = await import('@agentclientprotocol/sdk/unstable');
-const { HermesAcpClient } = await import('./client.ts');
+const { AcpClient } = await import('./client.ts');
 const after_import = { ...process.env };
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function deferred<T>() {
@@ -16,7 +16,7 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function wire(handlers: ConstructorParameters<typeof HermesAcpClient>[1]) {
+function wire(handlers: ConstructorParameters<typeof AcpClient>[1]) {
   let input!: ReadableStreamDefaultController<Uint8Array>;
   let fail_write = false;
   let write_gate: Promise<void> | null = null;
@@ -34,7 +34,7 @@ function wire(handlers: ConstructorParameters<typeof HermesAcpClient>[1]) {
       await (write_gates.shift() ?? write_gate);
     },
   });
-  const client = new HermesAcpClient(sdk.ndJsonStream(output, source), handlers);
+  const client = new AcpClient(sdk.ndJsonStream(output, source), handlers);
   return {
     client,
     writes,
@@ -84,7 +84,7 @@ test('official ACP SDK pin, consumed internals, and imports preserve the parent 
     ),
   ) as { version: string };
   const manifest = JSON.parse(
-    readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
   ) as {
     dependencies: Record<string, string>;
   };

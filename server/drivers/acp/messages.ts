@@ -1,17 +1,17 @@
 /** ACP message blocks retain authored order and use the core's managed file service. */
 import { pathToFileURL } from 'node:url';
 import type { ContentBlock } from '@agentclientprotocol/sdk/unstable';
-import { MessageFile, MessageImage, MessageText } from '../../../conversation/message_content.ts';
-import type { MessageContent, MessagePiece } from '../../../conversation/message_content.ts';
-import type { ConversationMessageFiles } from '../../../conversation/message_files.ts';
-import { MessageFileMissing } from '../../../conversation/record/message_files.ts';
-import { PromptWriteFailed } from '../../../conversation/backends/contracts.ts';
-import { error_text } from '../../../conversation/backends/failure_summary.ts';
+import { MessageFile, MessageImage, MessageText } from '../../conversation/message_content.ts';
+import type { MessageContent, MessagePiece } from '../../conversation/message_content.ts';
+import type { ConversationMessageFiles } from '../../conversation/message_files.ts';
+import { MessageFileMissing } from '../../conversation/record/message_files.ts';
+import { PromptWriteFailed } from '../../conversation/backends/contracts.ts';
+import { error_text } from '../../conversation/backends/failure_summary.ts';
 
 function file_error(error: unknown): boolean {
   return error instanceof MessageFileMissing || (error instanceof Error && 'code' in error);
 }
-export class HermesMessages {
+export class AcpMessages {
   private readonly files: ConversationMessageFiles;
   private readonly conversation_id: string;
   constructor(files: ConversationMessageFiles, conversation_id: string) {

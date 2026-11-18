@@ -1,17 +1,12 @@
-import {
-  LAUNCH_TOKEN_ENVIRONMENT_NAME,
-  UNIDENTIFIED_LAUNCH_TOKEN,
-} from '../../../agent_identity/contracts.ts';
 /** Hermes inherits ACP's allowlist, explicit launch values, then conversation identity. */
 import { fileURLToPath } from 'node:url';
 import { posix } from 'node:path';
 import { ConversationAccess } from '../../../conversation/contracts.ts';
 import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
+import { acp_child_environment } from '../../acp/environment.ts';
+import type { AcpLaunch } from '../../acp/flavor.ts';
 
-export interface AcpChildLaunch {
-  readonly argv: readonly string[];
-  readonly environment_overrides: readonly (readonly [string, string])[];
-}
+export type AcpChildLaunch = AcpLaunch;
 /** Interpreter parents ignore '.' components but retain '..' for filesystem resolution. */
 export function hermes_source_root(path: string): string {
   const parents: string[] = [];
@@ -51,30 +46,16 @@ export function hermes_acp_child_launch(options: {
     ],
   };
 }
-export const INHERITED_ENVIRONMENT_NAMES = [
-  'HOME',
-  'LOGNAME',
-  'PATH',
-  'SHELL',
-  'TERM',
-  'USER',
-] as const;
 export function child_environment(
   launch: AcpChildLaunch,
   resolved_start: Pick<ResolvedConversationStart, 'access' | 'role_materials'>,
   inherited: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Record<string, string> {
-  const environment: Record<string, string> = {};
-  for (const name of INHERITED_ENVIRONMENT_NAMES) {
-    const value = inherited[name];
-    if (value !== undefined) environment[name] = value;
-  }
-  Object.assign(environment, Object.fromEntries(launch.environment_overrides));
-  if (resolved_start.access === ConversationAccess.full) environment.HERMES_YOLO_MODE = '1';
-  environment[LAUNCH_TOKEN_ENVIRONMENT_NAME] = UNIDENTIFIED_LAUNCH_TOKEN;
-  Object.assign(
-    environment,
-    Object.fromEntries(resolved_start.role_materials?.identity_environment_variables ?? []),
+  const full_access: readonly (readonly [string, string])[] =
+    resolved_start.access === ConversationAccess.full ? [['HERMES_YOLO_MODE', '1']] : [];
+  return acp_child_environment(
+    [...launch.environment_overrides, ...full_access],
+    resolved_start,
+    inherited,
   );
-  return environment;
 }

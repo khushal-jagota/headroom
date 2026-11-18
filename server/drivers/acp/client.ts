@@ -10,35 +10,30 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
 } from '@agentclientprotocol/sdk/unstable';
-import type * as Rpc from '../../../node_modules/@agentclientprotocol/sdk/dist/core/jsonrpc.js';
-import type * as Validators from '../../../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js';
-import type { BackendEventSink } from '../../../conversation/backends/contracts.ts';
-import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
-import type { WorkerSupervisionRuntime } from '../../../worker_supervision/runtime.ts';
-import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
-import { WorkerScratch } from '../../../conversation/worker_scratch.ts';
-import type { LocalChildIdentity } from '../../../conversation/local_child_contracts.ts';
-import {
-  BackendAdapterError,
-  BackendSpawnFailed,
-} from '../../../conversation/backends/contracts.ts';
-import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
-import { STOP_SECONDS } from '../../../worker_supervision/config.ts';
-import { monotonic_seconds } from '../../../lifecycle/configuration.ts';
-import { observe_shutdown } from '../../../conversation/shutdown.ts';
-import { observe_promise } from '../../../core/promise_observer.ts';
-import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
-import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import { child_environment } from './launch.ts';
+import type * as Rpc from '../../node_modules/@agentclientprotocol/sdk/dist/core/jsonrpc.js';
+import type * as Validators from '../../node_modules/@agentclientprotocol/sdk/dist/v1/unstable/schema/zod.gen.js';
+import type { BackendEventSink } from '../../conversation/backends/contracts.ts';
+import { WorkerSupervisor } from '../../worker_supervision/index.ts';
+import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
+import { worker_ticket_id } from '../../worker_supervision/logic/worker_launch.ts';
+import { WorkerScratch } from '../../conversation/worker_scratch.ts';
+import type { LocalChildIdentity } from '../../conversation/local_child_contracts.ts';
+import { BackendAdapterError, BackendSpawnFailed } from '../../conversation/backends/contracts.ts';
+import { spawn_owned_process } from '../../lifecycle/owned_processes.ts';
+import { STOP_SECONDS } from '../../worker_supervision/config.ts';
+import { monotonic_seconds } from '../../lifecycle/configuration.ts';
+import { observe_shutdown } from '../../conversation/shutdown.ts';
+import { observe_promise } from '../../core/promise_observer.ts';
+import type { OwnedProcess } from '../../lifecycle/owned_processes.ts';
+import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
 import { require_strict_session_notification } from './strict_updates.ts';
-import type { AcpChildLaunch } from './launch.ts';
-import type { OwnedChildProcesses, StopOptions } from '../../../lifecycle/contracts.ts';
+import type { OwnedChildProcesses, StopOptions } from '../../lifecycle/contracts.ts';
 import {
   CHILD_OUTPUT_LINE_LIMIT_BYTES,
   STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS,
   ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS,
 } from './configuration.ts';
-import { Deferred } from '../../../core/deferred.ts';
+import { Deferred } from '../../core/deferred.ts';
 
 // 2.6.0's public ClientApp starts handlers without awaiting them, and replies bypass
 // its handlers. Use the official lower-level middleware and schemas from this exact
@@ -53,7 +48,7 @@ const validators = (await import(
   new URL('./schema/zod.gen.js', sdk_root).href
 )) as typeof Validators;
 
-export interface HermesAcpHandlers {
+export interface AcpHandlers {
   session_update?(params: SessionNotification): Promise<void>;
   /** Admission completes after the ask reaches the core. The answer stays parked. */
   request_permission?(
@@ -86,7 +81,7 @@ interface ResponseEffect {
   id?: JsonRpcId;
 }
 
-export class HermesAcpClient {
+export class AcpClient {
   readonly closed: Promise<void>;
   private readonly connection: Rpc.Connection;
   private readonly receipts = new Set<WriteReceipt>();
@@ -96,8 +91,8 @@ export class HermesAcpClient {
   private failure: unknown = null;
   private gate: Deferred<void> | null = null;
   private stopped = false;
-  private readonly handlers: HermesAcpHandlers;
-  constructor(stream: Stream, handlers: HermesAcpHandlers = {}) {
+  private readonly handlers: AcpHandlers;
+  constructor(stream: Stream, handlers: AcpHandlers = {}) {
     this.handlers = handlers;
     const reader = stream.readable.getReader();
     const writer = stream.writable.getWriter();
@@ -349,19 +344,31 @@ export class HermesAcpClient {
   }
 }
 
+/** What the launcher runs. The environment is complete apart from supervision and scratch. */
+export interface AcpSpawn {
+  readonly argv: readonly string[];
+  readonly environment: Readonly<Record<string, string>>;
+}
+export interface AcpLauncherOptions {
+  /** The agent's display name, used in this launcher's own error text. */
+  readonly label: string;
+  readonly custody_sink?: BackendEventSink;
+}
 /** Launch ownership exists before startup, so shutdown can seal an in-flight spawn. */
-export class HermesAcpLauncher {
+export class AcpLauncher {
   private readonly child_processes: OwnedChildProcesses;
   private readonly worker_supervision: WorkerSupervisionRuntime;
   private readonly custody_sink: BackendEventSink | undefined;
+  private readonly label: string;
   constructor(
     child_processes: OwnedChildProcesses,
     worker_supervision: WorkerSupervisionRuntime,
-    custody_sink?: BackendEventSink,
+    options: AcpLauncherOptions,
   ) {
     this.child_processes = child_processes;
     this.worker_supervision = worker_supervision;
-    this.custody_sink = custody_sink;
+    this.custody_sink = options.custody_sink;
+    this.label = options.label;
   }
   private supervisor: WorkerSupervisor | null = null;
   private scratch: WorkerScratch | null = null;
@@ -371,8 +378,8 @@ export class HermesAcpLauncher {
   private supervision_settlement: Promise<void> = Promise.resolve();
   private sealed = false;
   private owned: OwnedProcess | null = null;
-  private client: HermesAcpClient | null = null;
-  private starting: Promise<HermesAcpClient> | null = null;
+  private client: AcpClient | null = null;
+  private starting: Promise<AcpClient> | null = null;
   private stopping: Promise<void> | null = null;
   private stop_options: StopOptions | undefined;
   private readonly error_lines: string[] = [];
@@ -381,13 +388,13 @@ export class HermesAcpLauncher {
   private error_line_bytes = 0;
   private stderr_reader_failure: unknown = null;
   private stderr_failure_reported = false;
-  private cleanup_log: HermesAcpHandlers['log'];
+  private cleanup_log: AcpHandlers['log'];
   private cleanup_failure_reported = false;
   start(
-    launch: AcpChildLaunch,
+    launch: AcpSpawn,
     resolved_start: ResolvedConversationStart,
-    handlers: HermesAcpHandlers = {},
-  ): Promise<HermesAcpClient> {
+    handlers: AcpHandlers = {},
+  ): Promise<AcpClient> {
     if (this.sealed) return Promise.reject(new BackendSpawnFailed('this child is being shut down'));
     if (this.starting) return this.starting;
     this.cleanup_log = handlers.log;
@@ -395,12 +402,12 @@ export class HermesAcpLauncher {
     return this.starting;
   }
   private async spawn(
-    launch: AcpChildLaunch,
+    launch: AcpSpawn,
     resolved_start: ResolvedConversationStart,
-    handlers: HermesAcpHandlers,
-  ): Promise<HermesAcpClient> {
+    handlers: AcpHandlers,
+  ): Promise<AcpClient> {
     try {
-      const environment = child_environment(launch, resolved_start);
+      const environment = { ...launch.environment };
       // Every launch writes its supervision record before spawn. Only a Worker gets scratch.
       const ticket_id = worker_ticket_id(resolved_start);
       const supervisor = await WorkerSupervisor.create(
@@ -435,11 +442,13 @@ export class HermesAcpLauncher {
       });
       this.owned = owned;
       await this.registration;
-      if (owned.child.pid === undefined) throw new Error('Hermes process PID is unavailable');
+      if (owned.child.pid === undefined)
+        throw new Error(`${this.label} process PID is unavailable`);
       await supervisor.started(owned.child.pid);
       this.identity = await supervisor.identity();
       if (this.custody_sink?.record_local_child_custody) {
-        if (this.identity === null) throw new Error('Cannot establish the Hermes process identity');
+        if (this.identity === null)
+          throw new Error(`Cannot establish the ${this.label} process identity`);
         await this.custody_sink.record_local_child_custody(this.identity);
       }
       if (this.sealed) throw new Error('this child is being shut down');
@@ -514,7 +523,7 @@ export class HermesAcpLauncher {
           }),
       });
       const input = Readable.toWeb(owned.child.stdout) as ReadableStream<Uint8Array>;
-      const client = new HermesAcpClient(
+      const client = new AcpClient(
         ndJsonStream(output, input, { maxMessageBytes: CHILD_OUTPUT_LINE_LIMIT_BYTES }),
         handlers,
       );
@@ -595,7 +604,7 @@ export class HermesAcpLauncher {
     }
     return options === undefined
       ? this.stopping
-      : observe_shutdown(this.stopping, options, 'Hermes cleanup remains unconfirmed');
+      : observe_shutdown(this.stopping, options, `${this.label} cleanup remains unconfirmed`);
   }
   private async finish_stop(options?: StopOptions): Promise<void> {
     this.client?.close();
@@ -640,7 +649,9 @@ export class HermesAcpLauncher {
       await this.scratch?.close();
       this.scratch = null;
     } catch (error) {
-      const failure = new BackendAdapterError('the Hermes process did not stop', { cause: error });
+      const failure = new BackendAdapterError(`the ${this.label} process did not stop`, {
+        cause: error,
+      });
       if (!this.cleanup_failure_reported) {
         this.cleanup_failure_reported = true;
         try {

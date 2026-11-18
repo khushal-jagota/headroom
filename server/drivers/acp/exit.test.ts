@@ -1,17 +1,18 @@
-import { parse_backend_instance_id } from '../../core/identity.ts';
+import { parse_backend_instance_id } from '../core/identity.ts';
 import { join } from 'node:path';
-import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
+import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
 import { expect, test } from 'vitest';
-import { ConversationAccess, ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import { HermesAcpLauncher } from './client.ts';
-import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
+import { ConversationAccess, ResolvedConversationStart } from '../../conversation/contracts.ts';
+import { AcpLauncher } from './client.ts';
+import { acp_child_environment } from './environment.ts';
+import { uncontained_worker_supervision } from '../testing/uncontained_supervision.ts';
 
 // A real child exit and a buffered reply are separate OS facts. Memory streams
 // cannot prove that the launcher preserves the latter after the former.
 test('request timeout and cancellation keep the same child until its ordered final exit', async () => {
   const child_processes = new ChildProcesses();
   const runtime = uncontained_worker_supervision(new OneShotChildren(child_processes));
-  const launcher = new HermesAcpLauncher(child_processes, runtime);
+  const launcher = new AcpLauncher(child_processes, runtime, { label: 'Synthetic' });
   const order: string[] = [];
   const program = `
     const readline = require('node:readline');
@@ -46,7 +47,10 @@ test('request timeout and cancellation keep the same child until its ordered fin
     const client = await launcher.start(
       {
         argv: [process.execPath, '-e', program],
-        environment_overrides: [['PLAN_WORKER_PROCESS_ROOT', join(home, 'worker-processes')]],
+        environment: acp_child_environment(
+          [['PLAN_WORKER_PROCESS_ROOT', join(home, 'worker-processes')]],
+          resolved,
+        ),
       },
       resolved,
       {

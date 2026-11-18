@@ -1,26 +1,27 @@
-import { ChildProcesses, OneShotChildren } from '../../../lifecycle/owned_processes.ts';
+import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { ConversationAccess } from '../../../conversation/contracts.ts';
-import type { ResolvedConversationStart } from '../../../conversation/contracts.ts';
-import { spawn_owned_process } from '../../../lifecycle/owned_processes.ts';
-import type { OwnedProcess } from '../../../lifecycle/owned_processes.ts';
-import { WorkerSupervisor } from '../../../worker_supervision/index.ts';
-import { WorkerSupervisor as RealWorkerSupervisor } from '../../../worker_supervision/service.ts';
-import * as records from '../../../worker_supervision/records.ts';
-import { uncontained_worker_supervision } from '../../testing/uncontained_supervision.ts';
-import { worker_supervision_fixture } from '../../../conversation/backends/testing/worker_supervision_fixture.ts';
-import { WorkerScratch } from '../../../conversation/worker_scratch.ts';
-import { HermesAcpLauncher } from './client.ts';
+import { ConversationAccess } from '../../conversation/contracts.ts';
+import type { ResolvedConversationStart } from '../../conversation/contracts.ts';
+import { spawn_owned_process } from '../../lifecycle/owned_processes.ts';
+import type { OwnedProcess } from '../../lifecycle/owned_processes.ts';
+import { WorkerSupervisor } from '../../worker_supervision/index.ts';
+import { WorkerSupervisor as RealWorkerSupervisor } from '../../worker_supervision/service.ts';
+import * as records from '../../worker_supervision/records.ts';
+import { uncontained_worker_supervision } from '../testing/uncontained_supervision.ts';
+import { worker_supervision_fixture } from '../../conversation/backends/testing/worker_supervision_fixture.ts';
+import { WorkerScratch } from '../../conversation/worker_scratch.ts';
+import { AcpLauncher } from './client.ts';
+import { acp_child_environment } from './environment.ts';
 
-vi.mock('../../../worker_supervision/index.ts', () => ({ WorkerSupervisor: { create: vi.fn() } }));
-vi.mock('../../../conversation/worker_scratch.ts', () => ({ WorkerScratch: { create: vi.fn() } }));
-vi.mock('../../../lifecycle/owned_processes.ts', async (original) => ({
-  ...(await original<typeof import('../../../lifecycle/owned_processes.ts')>()),
+vi.mock('../../worker_supervision/index.ts', () => ({ WorkerSupervisor: { create: vi.fn() } }));
+vi.mock('../../conversation/worker_scratch.ts', () => ({ WorkerScratch: { create: vi.fn() } }));
+vi.mock('../../lifecycle/owned_processes.ts', async (original) => ({
+  ...(await original<typeof import('../../lifecycle/owned_processes.ts')>()),
   spawn_owned_process: vi.fn(),
 }));
 vi.mock('./configuration.ts', async (original) => ({
@@ -67,8 +68,9 @@ const resolved = {
 } as ResolvedConversationStart;
 const launch = {
   argv: ['/synthetic/python', '/synthetic/extension.py'],
-  environment_overrides: [],
+  environment: {},
 };
+const label = 'Synthetic';
 
 test('shutdown during spawn joins that child and permanently seals later starts', async () => {
   const owned = fake();
@@ -76,7 +78,7 @@ test('shutdown during spawn joins that child and permanently seals later starts'
   vi.mocked(spawn_owned_process).mockImplementationOnce(
     () => new Promise((resolve) => spawning.resolve(resolve)),
   );
-  const launcher = new HermesAcpLauncher(new ChildProcesses(), synthetic_runtime);
+  const launcher = new AcpLauncher(new ChildProcesses(), synthetic_runtime, { label });
   const errors: unknown[] = [];
   owned.stop.mockRejectedValueOnce(new Error('synthetic cleanup failure'));
   const started = launcher.start(launch, resolved, { log: (error) => errors.push(error) });
@@ -97,7 +99,7 @@ test('stdin error settles a write whose callback never returns', async () => {
   const owned = fake();
   vi.mocked(spawn_owned_process).mockResolvedValueOnce(owned as unknown as OwnedProcess);
   vi.spyOn(owned.child.stdin, 'write').mockImplementation(() => true);
-  const launcher = new HermesAcpLauncher(new ChildProcesses(), synthetic_runtime);
+  const launcher = new AcpLauncher(new ChildProcesses(), synthetic_runtime, { label });
   try {
     const client = await launcher.start(launch, resolved);
     const request = client.begin_request('pending-write', {});
@@ -130,14 +132,17 @@ test('an uncertain Worker stop retains scratch and retries custody cleanup while
     return owned as unknown as OwnedProcess;
   });
   const errors: unknown[] = [];
-  const launcher = new HermesAcpLauncher(new ChildProcesses(), runtime, {
-    report: async () => {},
-    record_local_child_supervision: async () => {
-      order.push('record');
-    },
-    record_local_child_custody: async (value) => {
-      expect(value).toEqual(identity);
-      order.push('custody');
+  const launcher = new AcpLauncher(new ChildProcesses(), runtime, {
+    label,
+    custody_sink: {
+      report: async () => {},
+      record_local_child_supervision: async () => {
+        order.push('record');
+      },
+      record_local_child_custody: async (value) => {
+        expect(value).toEqual(identity);
+        order.push('custody');
+      },
     },
   });
   await launcher.start(
@@ -157,7 +162,7 @@ test('an uncertain Worker stop retains scratch and retries custody cleanup while
   expect(order).toEqual(['record', 'spawned', 'started', 'custody']);
   expect(await launcher.local_child_identity()).toEqual(identity);
   const deadline = performance.now() / 1000 + 2;
-  await expect(launcher.stop({ deadline })).rejects.toThrow('the Hermes process did not stop');
+  await expect(launcher.stop({ deadline })).rejects.toThrow('the Synthetic process did not stop');
   expect(supervisor.stop.mock.calls[0][1]).toEqual({ deadline });
   expect(scratch.close).not.toHaveBeenCalled();
   expect(owned.stop).not.toHaveBeenCalled();
@@ -183,7 +188,7 @@ test('a failed stderr reader retains complete lines and logs once while cleanup 
   const owned = fake();
   vi.mocked(spawn_owned_process).mockResolvedValueOnce(owned as unknown as OwnedProcess);
   const errors: unknown[] = [];
-  const launcher = new HermesAcpLauncher(new ChildProcesses(), synthetic_runtime);
+  const launcher = new AcpLauncher(new ChildProcesses(), synthetic_runtime, { label });
   const client = await launcher.start(launch, resolved, { log: (error) => errors.push(error) });
   owned.child.stderr.write('ok\n');
   owned.child.stderr.write('123456789');
@@ -198,12 +203,12 @@ test('a failed stderr reader retains complete lines and logs once while cleanup 
 // Risk: a non-Worker launch escapes custody or takes the Worker settings. A real record and a
 // real supervised child prove what the Chief's custody row will name.
 test('a Chief launch carrying a Ticket is supervised by its conversation, without Worker settings', async () => {
-  const folder = await mkdtemp(join(tmpdir(), 'hermes-chief-'));
+  const folder = await mkdtemp(join(tmpdir(), 'acp-chief-'));
   const child_processes = new ChildProcesses();
   const runtime = uncontained_worker_supervision(new OneShotChildren(child_processes));
   const real_spawn = (
-    await vi.importActual<typeof import('../../../lifecycle/owned_processes.ts')>(
-      '../../../lifecycle/owned_processes.ts',
+    await vi.importActual<typeof import('../../lifecycle/owned_processes.ts')>(
+      '../../lifecycle/owned_processes.ts',
     )
   ).spawn_owned_process;
   const order: string[] = [];
@@ -215,40 +220,47 @@ test('a Chief launch carrying a Ticket is supervised by its conversation, withou
     return real_spawn(...input);
   });
   let record_path = '';
-  const launcher = new HermesAcpLauncher(child_processes, runtime, {
-    report: async () => {},
-    record_local_child_supervision: async (path) => {
-      order.push('record');
-      record_path = path;
-      expect(await records.read(path)).toMatchObject({
-        ticket_id: '',
-        conversation_id: 'chief-conversation',
-        worker_priority: false,
-      });
-    },
-    record_local_child_custody: async (identity) => {
-      order.push('custody');
-      expect(identity.supervision_record).toBe(record_path);
+  const launcher = new AcpLauncher(child_processes, runtime, {
+    label,
+    custody_sink: {
+      report: async () => {},
+      record_local_child_supervision: async (path) => {
+        order.push('record');
+        record_path = path;
+        expect(await records.read(path)).toMatchObject({
+          ticket_id: '',
+          conversation_id: 'chief-conversation',
+          worker_priority: false,
+        });
+      },
+      record_local_child_custody: async (identity) => {
+        order.push('custody');
+        expect(identity.supervision_record).toBe(record_path);
+      },
     },
   });
+  const chief = {
+    ...resolved,
+    conversation_id: 'chief-conversation',
+    workspace_folder: folder,
+    role_materials: {
+      role_text: 'Synthetic Chief',
+      identity_environment_variables: [
+        ['PLAN_ACTOR', 'chief'],
+        ['PLAN_TICKET_ID', 't_belongs_to_a_worker'],
+      ],
+    },
+  } as ResolvedConversationStart;
   try {
     await launcher.start(
       {
         argv: [process.execPath, '-e', 'process.stdin.resume()'],
-        environment_overrides: [['PLAN_WORKER_PROCESS_ROOT', join(folder, 'records')]],
+        environment: acp_child_environment(
+          [['PLAN_WORKER_PROCESS_ROOT', join(folder, 'records')]],
+          chief,
+        ),
       },
-      {
-        ...resolved,
-        conversation_id: 'chief-conversation',
-        workspace_folder: folder,
-        role_materials: {
-          role_text: 'Synthetic Chief',
-          identity_environment_variables: [
-            ['PLAN_ACTOR', 'chief'],
-            ['PLAN_TICKET_ID', 't_belongs_to_a_worker'],
-          ],
-        },
-      } as ResolvedConversationStart,
+      chief,
     );
     expect(order).toEqual(['record', 'spawn', 'custody']);
     expect(WorkerScratch.create).not.toHaveBeenCalled();
