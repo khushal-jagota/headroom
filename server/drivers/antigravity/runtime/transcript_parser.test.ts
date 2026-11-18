@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { lookupRate, parseRateTable } from '../../../conversation/usage/usagePricing.ts';
 import parser, { antigravity_rate_model } from './transcript_parser.ts';
 
 const varint = (value: number): number[] => {
@@ -84,10 +85,58 @@ describe('antigravity transcript parser', () => {
   });
 
   it('names a model by id and strips the effort and Argon variant suffixes for pricing', () => {
-    expect(antigravity_rate_model('gemini-3.8-flash-high')).toBe('gemini-3.8-flash');
-    expect(antigravity_rate_model('gemini-4-argon')).toBe('gemini-4-argon');
-    expect(antigravity_rate_model('gemini-4-argon-trial')).toBe('gemini-4-argon');
-    expect(antigravity_rate_model('gemini-4-argon-g')).toBe('gemini-4-argon');
+    expect(antigravity_rate_model('gemini-3.8-flash-high')).toBe('gemini/gemini-3.8-flash');
+    expect(antigravity_rate_model('gemini-4-argon')).toBe('gemini/gemini-4-argon');
+    expect(antigravity_rate_model('gemini-4-argon-trial')).toBe('gemini/gemini-4-argon');
+    expect(antigravity_rate_model('gemini-4-argon-g')).toBe('gemini/gemini-4-argon');
+  });
+
+  // Risk: a model agy offers prices as unpriced, or at a reseller's rate. The entries are copied
+  // verbatim from LiteLLM's table of 18 Nov 2026, including the resellers that make the bare
+  // Argon and gpt-oss names ambiguous, so the table drops those aliases as the real one does.
+  it('prices every model agy 1.5.10 offers at Google’s or Anthropic’s own rate', () => {
+    const table = parseRateTable(
+      JSON.parse(
+        readFileSync(new URL('./testing/litellm_entries_2026-11-18.json', import.meta.url), 'utf8'),
+      ),
+    );
+    const offered = (
+      JSON.parse(
+        readFileSync(new URL('./testing/agy_1.5.10_session_new.json', import.meta.url), 'utf8'),
+      ) as { models: { availableModels: { modelId: string }[] } }
+    ).models.availableModels.map((entry) => entry.modelId);
+    // Input and output, in USD per token: e-6 is per million.
+    const rate_of = (model: string) => {
+      const rate = lookupRate(table, antigravity_rate_model(model));
+      return rate && [rate.inputCostPerToken, rate.outputCostPerToken];
+    };
+    const opus = [4e-6, 20e-6];
+    const sonnet = [2e-6, 10e-6];
+    const flash = [0.75e-6, 3.75e-6];
+    const hydrogen = [1.5e-6, 7.5e-6];
+    const argon = [2e-6, 10e-6];
+    expect(Object.fromEntries(offered.map((model) => [model, rate_of(model)]))).toEqual({
+      'gemini-4-argon-medium': argon,
+      'gemini-4-argon-high': argon,
+      'gemini-4-argon-low': argon,
+      'gemini-4-hydrogen-high': hydrogen,
+      'gemini-4-hydrogen-xhigh': hydrogen,
+      'gemini-4-hydrogen-medium': hydrogen,
+      'gemini-4-hydrogen-low': hydrogen,
+      // An internal routing model with no public price.
+      'gemini-pro-orchestrator-g1-pro': null,
+      'gemini-3.8-flash-high': flash,
+      'gemini-3.8-flash-medium': flash,
+      'gemini-3.8-flash-low': flash,
+      'claude-opus-5-5-low': opus,
+      'claude-opus-5-5-medium': opus,
+      'claude-opus-5-5-high': opus,
+      'claude-sonnet-5-5-low': sonnet,
+      'claude-sonnet-5-5-medium': sonnet,
+      'claude-sonnet-5-5-high': sonnet,
+      // Antigravity's hosting price is not published, and resellers' prices disagree.
+      'gpt-oss-120b-medium': null,
+    });
   });
 
   it('yields nothing for a file that is not a readable database', async () => {

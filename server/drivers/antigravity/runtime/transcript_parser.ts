@@ -128,12 +128,23 @@ const GEMINI_3_FLASH_ROUTE = /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/;
 const GEMINI_4_ARGON_VARIANT = /^gemini-4-argon-(?:trial|g)$/;
 
 /** Effort and routing variants share the base model's price. */
-export function antigravity_rate_model(model: string): string {
-  const base = model.replace(/-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/, '');
+function base_model(model: string): string {
+  const base = model.replace(
+    /-(?:extra-low|low|medium|high|xhigh|tiered|control|thinking|agent)$/,
+    '',
+  );
   if (GEMINI_3_FLASH_ROUTE.test(model)) return 'gemini-3.5-flash';
   if (model === 'gemini-3.7-flash-safety-le') return 'gemini-3.7-flash';
   if (GEMINI_4_ARGON_VARIANT.test(model)) return 'gemini-4-argon';
   return base === 'gemini-3-flash' ? 'gemini-3-flash-preview' : base;
+}
+/**
+ * The rate-table name. A Gemini model is priced as Google's own `gemini/` entry: resellers list
+ * some at other prices, which leaves the bare name unpriced.
+ */
+export function antigravity_rate_model(model: string): string {
+  const base = base_model(model);
+  return /^gemini-\d/.test(base) ? `gemini/${base}` : base;
 }
 
 /** "Claude 4.5 Sonnet" becomes "claude-sonnet-4-5"; other names are lowercased and hyphenated. */
