@@ -9,6 +9,7 @@ import {
   lstatSync,
   closeSync,
   openSync,
+  realpathSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -183,6 +184,9 @@ test('a driver home that names a nested skills folder gets its skills linked the
   mkdirSync(join(root, 'elsewhere'));
   mkdirSync(linked.path);
   symlinkSync(join(root, 'elsewhere'), join(linked.path, 'agent'));
-  expect(provision_account_skills(parent, [linked])).toContain('one instance per OS account');
+  // The linked folder is named as such, not as an unreadable entry.
+  expect(provision_account_skills(parent, [linked])).toBe(
+    `Panels supports one instance per OS account. Account skill provisioning was skipped: ${join(realpathSync(linked.path), 'agent')} belongs to a linked folder. Existing provider skills were preserved. The server can start, but this home cannot own its Worker skills. Use a separate OS account for another Panels home.`,
+  );
   expect(readdirSync(join(root, 'elsewhere'))).toEqual([]);
 });

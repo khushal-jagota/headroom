@@ -114,6 +114,12 @@ export function account_skill_provisioning_conflict(
       ...WORKER_ONLY_SKILL_NAMES,
     ]);
     for (const home of canonical_homes(homes)) {
+      // A nested skills folder's parents are never followed through a link.
+      const parents = relative_directory_components(home.skills_directory).slice(0, -1);
+      for (let depth = 1; depth <= parents.length; depth++) {
+        const parent_folder = join(home.path, ...parents.slice(0, depth));
+        if (stat(parent_folder)?.isSymbolicLink()) return warning(parent_folder, 'a linked folder');
+      }
       const target = join(home.path, home.skills_directory),
         metadata = stat(target);
       if (metadata?.isSymbolicLink()) {
