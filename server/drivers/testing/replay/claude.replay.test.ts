@@ -40,7 +40,14 @@ const CLAUDE: DriverExpectations = {
   steer: {
     turn_endings: ['completed'],
     child_dispositions: ['reusable'],
-    event_classes: [...OPENING, 'AgentMessageCompleted', 'TokenUsageReported', 'TurnEnded'],
+    event_classes: [
+      ...OPENING,
+      'ModelThinkingHappened',
+      'AgentMessageDelta',
+      'AgentMessageCompleted',
+      'TokenUsageReported',
+      'TurnEnded',
+    ],
   },
   failed_turn_child_alive: {
     turn_endings: ['failed', 'completed'],
