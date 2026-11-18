@@ -24,3 +24,11 @@ export function source_error(error: unknown, allowed: readonly string[]): string
   }
   throw error;
 }
+/**
+ * Like source_error, for files of a process or cgroup that can end between listing and reading.
+ * ENOENT and ESRCH mean it ended: that is normal, so it returns the reason without a log line.
+ */
+export function ended_source_error(error: unknown, allowed: readonly string[]): string {
+  const reason = evidence_reason(error);
+  return reason === 'ENOENT' || reason === 'ESRCH' ? reason : source_error(error, allowed);
+}

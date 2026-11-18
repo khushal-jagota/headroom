@@ -13,7 +13,7 @@ import { float, number } from '../codec.ts';
 import { JsonNumber } from '../../../core/http/numeric_json.ts';
 import { counter_rate, host_cpu_percent } from '../logic/rates.ts';
 import type { CollectorDependencies, CollectorPaths } from './contracts.ts';
-import { evidence_error, source_error } from './errors.ts';
+import { ended_source_error, evidence_error, source_error } from './errors.ts';
 
 type Metrics = Record<string, Measurement>;
 function lines(value: string): string[] {
@@ -112,11 +112,13 @@ export class LinuxCollector implements Collector {
     unit: string,
     metrics: Metrics,
     parser: (text: string) => number = nonnegative,
+    ended = false,
   ): Promise<void> {
     try {
       metrics[key] = measure(parser(await this.read(path)), unit);
     } catch (error) {
-      metrics[key] = measure(null, unit, source_error(error, ['EIO', 'TypeError', 'RangeError']));
+      const check = ended ? ended_source_error : source_error;
+      metrics[key] = measure(null, unit, check(error, ['EIO', 'TypeError', 'RangeError']));
     }
   }
   private rate(key: string, value: number, unit: string, scale = 1): Measurement {
@@ -129,7 +131,12 @@ export class LinuxCollector implements Collector {
       { same_identity: this.same_boot, unit, scale },
     );
   }
-  private async pressure(root: string, prefix: string, metrics: Metrics): Promise<void> {
+  private async pressure(
+    root: string,
+    prefix: string,
+    metrics: Metrics,
+    ended = false,
+  ): Promise<void> {
     for (const resource of ['cpu', 'memory', 'io']) {
       for (const kind of ['some', 'full'])
         for (const period of ['avg10', 'avg60', 'avg300'])
@@ -143,7 +150,7 @@ export class LinuxCollector implements Collector {
       try {
         text = await this.read(path);
       } catch (error) {
-        const reason = source_error(error, ['EIO']);
+        const reason = (ended ? ended_source_error : source_error)(error, ['EIO']);
         for (const kind of ['some', 'full'])
           for (const period of ['avg10', 'avg60', 'avg300'])
             metrics[`${prefix}${resource}.${kind}.${period}`] = measure(null, 'percent', reason);
@@ -360,7 +367,7 @@ export class LinuxCollector implements Collector {
           if (row === undefined) fail('RangeError');
           uid = integer(field(words(row!), 1));
         } catch (error) {
-          source_error(error, ['EIO', 'TypeError', 'RangeError']);
+          ended_source_error(error, ['EIO', 'TypeError', 'RangeError']);
           errors.push(`PID ${JSON.stringify(pid)} uid unavailable`);
         }
         let io: Record<string, number> = {},
@@ -368,7 +375,7 @@ export class LinuxCollector implements Collector {
         try {
           io = pairs(await this.read(join(path, 'io')));
         } catch (error) {
-          io_error = source_error(error, ['EIO', 'TypeError']);
+          io_error = ended_source_error(error, ['EIO', 'TypeError']);
         }
         for (const direction of ['read', 'write']) {
           const key = direction + '_bytes';
@@ -391,7 +398,7 @@ export class LinuxCollector implements Collector {
         try {
           [group, kind] = group_for(await this.read(join(path, 'cgroup')));
         } catch (error) {
-          source_error(error, ['EIO']);
+          ended_source_error(error, ['EIO']);
           group = kind = 'unassigned';
           errors.push(`PID ${JSON.stringify(pid)} cgroup unavailable`);
         }
@@ -414,7 +421,7 @@ export class LinuxCollector implements Collector {
           metrics,
         });
       } catch (error) {
-        source_error(error, ['EIO', 'TypeError', 'RangeError']);
+        ended_source_error(error, ['EIO', 'TypeError', 'RangeError']);
         errors.push(`PID ${name} exited or stat unavailable`);
       }
     }
@@ -498,11 +505,18 @@ export class LinuxCollector implements Collector {
           metrics.cpu_percent = measure(
             null,
             'percent_one_core',
-            source_error(error, ['EIO', 'TypeError', 'RangeError']),
+            ended_source_error(error, ['EIO', 'TypeError', 'RangeError']),
           );
         }
-        await this.value(join(path, 'memory.current'), 'memory_bytes', 'bytes_cgroup', metrics);
-        await this.pressure(path, 'pressure.', metrics);
+        await this.value(
+          join(path, 'memory.current'),
+          'memory_bytes',
+          'bytes_cgroup',
+          metrics,
+          nonnegative,
+          true,
+        );
+        await this.pressure(path, 'pressure.', metrics, true);
         try {
           const totals: Record<string, number> = { rbytes: 0, wbytes: 0 };
           for (const row of lines(await this.read(join(path, 'io.stat')))) {
@@ -527,7 +541,7 @@ export class LinuxCollector implements Collector {
               'bytes_per_second',
             );
         } catch (error) {
-          const reason = source_error(error, ['EIO', 'TypeError', 'RangeError']);
+          const reason = ended_source_error(error, ['EIO', 'TypeError', 'RangeError']);
           for (const direction of ['read', 'write'])
             metrics[direction + '_bytes_per_second'] = measure(null, 'bytes_per_second', reason);
         }
