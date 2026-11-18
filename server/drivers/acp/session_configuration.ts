@@ -180,6 +180,12 @@ export class AcpSessionConfiguration {
       );
     this.reasoning_effort = (await this.set_option(option.id, effort)) ?? effort;
   }
+  /**
+   * Puts the session back on the values it had before a refused selection. When that fails the
+   * session no longer matches its record, so the wire is marked failed: this child takes no other
+   * prompt, and the next one starts a fresh child. A rebind now would start that fresh child on
+   * the very selection the agent just refused.
+   */
   async restore(previously: readonly [string | null, string | null]): Promise<void> {
     const [model, effort] = previously;
     try {
@@ -198,8 +204,13 @@ export class AcpSessionConfiguration {
         await this.apply_effort(effort);
       }
     } catch (error) {
-      if (!(error instanceof ConfigurationNotApplied)) throw error;
-      throw new NeedsRebind(error.message, { cause: error });
+      if (!(error instanceof ConfigurationNotApplied) && !(error instanceof NeedsRebind))
+        throw error;
+      this.break_wire(
+        new Error(`the session could not be put back on its previous selection: ${error.message}`, {
+          cause: error,
+        }),
+      );
     }
   }
 }

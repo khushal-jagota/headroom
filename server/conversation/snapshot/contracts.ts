@@ -137,6 +137,12 @@ export interface CatalogAnswer {
   readonly default_reasoning_effort: string | null;
   readonly diagnoses: readonly string[];
   readonly complete: boolean;
+  /**
+   * Who the catalog read found signed in, for a driver with no identity command; the card
+   * uses it when the recipe reads no identity. Its diagnoses are already in `diagnoses`.
+   * Null: the catalog read does not tell.
+   */
+  readonly identity: BackendIdentity | null;
 }
 export type CatalogReader = (options: {
   readonly environment: BackendProbeEnvironment;

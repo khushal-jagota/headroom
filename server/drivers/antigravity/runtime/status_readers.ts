@@ -5,6 +5,7 @@ import type {
 } from '@agentclientprotocol/sdk/unstable';
 import type { BackendModel, CatalogReader } from '../../../conversation/snapshot/contracts.ts';
 import { answer, model } from '../../../conversation/snapshot/catalogs/readers.ts';
+import { identity } from '../../../conversation/snapshot/identity.ts';
 import { BackendCliIncompatible } from '../../../conversation/backends/cli_compatibility.ts';
 import type { AntigravityCatalogSource } from './contracts.ts';
 import { ANTIGRAVITY_SIGN_IN_REQUIRED } from './flavor.ts';
@@ -73,6 +74,7 @@ export function antigravity_catalog_reader(source: AntigravityCatalogSource | nu
       read = await source(request.executable_path);
     } catch (error) {
       return answer({
+        identity: identity('unknown'),
         diagnoses: [
           error instanceof BackendCliIncompatible
             ? error.message
@@ -80,12 +82,19 @@ export function antigravity_catalog_reader(source: AntigravityCatalogSource | nu
         ],
       });
     }
-    if (!read.signed_in) return answer({ diagnoses: [ANTIGRAVITY_SIGN_IN_REQUIRED] });
+    // agy has no identity command: a session opening is the sign-in answer.
+    if (!read.signed_in)
+      return answer({
+        identity: identity('unauthenticated'),
+        diagnoses: [ANTIGRAVITY_SIGN_IN_REQUIRED],
+      });
+    const signed_in = identity('authenticated');
     const catalog = antigravity_catalog(read.initial, read.after_selecting);
     if (catalog === null)
       return answer({
+        identity: signed_in,
         diagnoses: ['Antigravity offered no model choice, so no models are listed.'],
       });
-    return answer(catalog);
+    return answer({ ...catalog, identity: signed_in });
   };
 }

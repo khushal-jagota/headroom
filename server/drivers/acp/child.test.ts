@@ -306,6 +306,40 @@ test('a model taken before its effort was refused is put back before the prompt 
   await peer.child.stop();
 });
 
+// Risk: the model cannot be put back either. A rebind would start a fresh agent on the refused
+// selection, whose start then fails as a lost session and hides the agent's refusal.
+test('a refused effort whose model cannot be put back refuses with the agent’s text and retires the child', async () => {
+  const options = (model: string) => [
+    MODEL_OPTION(model, ['plain', 'deep']),
+    EFFORT_OPTION('medium', ['medium']),
+  ];
+  const peer = scripted({}, (method, params) => {
+    if (method === 'session/new')
+      return { result: { sessionId: SESSION, configOptions: options('plain') } };
+    if (method !== 'session/set_config_option') return ordinary(method);
+    const { configId, value } = params as { configId: string; value: string };
+    if (configId === 'thought_level')
+      return { error: { code: -32602, message: `${value} is not offered` } };
+    return value === 'deep'
+      ? { result: { configOptions: options(value) } }
+      : { error: { code: -32602, message: 'the model cannot change now' } };
+  });
+  await peer.child.start(new ResolvedConversationStart({ ...peer.resolved, model: 'plain' }), {
+    vendor_session_cursor: null,
+  });
+  const refused = await peer
+    .prompt('hello', { model_change: 'deep', reasoning_effort_change: 'xhigh' })
+    .catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(PromptWriteRefused);
+  expect((refused as Error).message).toBe('xhigh is not offered');
+  // The child no longer matches its record, so the next prompt goes to a fresh child.
+  const next = await peer.prompt().catch((error: unknown) => error);
+  expect(next).toBeInstanceOf(NeedsRebind);
+  expect((next as NeedsRebind).failed_child_recovery).toBe(true);
+  expect(peer.requests('session/prompt')).toHaveLength(0);
+  await peer.child.stop();
+});
+
 // Hook requires_sign_in. Risk: a signed-out agent reads as a lost session (retried forever) or
 // as an unexplained failure.
 test('a signed-out agent fails its start and its prompt with the flavor sign-in text', async () => {

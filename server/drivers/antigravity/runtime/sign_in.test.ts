@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { SignInReturnUrlRefused } from '../../core/sign_in.ts';
+import { SignInReturnUrlRefused, SignInUnavailable } from '../../core/sign_in.ts';
 import { OneShotChildren } from '../../../lifecycle/one_shot_children.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { UnknownSignInSession } from '../../core/sign_in.ts';
@@ -133,10 +133,22 @@ test('cancel stops agy and ends the sign-in', async () => {
 });
 
 // Risk: sign-out never reaches agy, or reaches an agy on another state directory, so the CLI
-// login stays saved.
+// login stays saved; or the card keeps showing the confirmed sign-in it removed; or a failed
+// logout escapes as an unmapped error rather than the route's 503.
 test('sign-out removes the CLI login through ACP logout to a short-lived agy', async () => {
-  mkdirSync(join(home, 'antigravity-cli'));
-  writeFileSync(login(), '{}');
+  const started = await sign_in.start();
+  await sign_in.submit_return_url(started.session_id, `${RETURN}?state=fake-state&code=good-code`);
+  expect(sign_in.read()?.state).toBe('confirmed');
   await sign_in.sign_out();
   expect(existsSync(login())).toBe(false);
+  expect(sign_in.read()).toBeNull();
+
+  mkdirSync(join(home, 'antigravity-cli'), { recursive: true });
+  writeFileSync(login(), '{}');
+  writeFileSync(
+    agy,
+    FAKE_AGY.replace('agentCapabilities: { auth: { logout: {} } }', 'agentCapabilities: {}'),
+  );
+  await expect(sign_in.sign_out()).rejects.toBeInstanceOf(SignInUnavailable);
+  expect(existsSync(login())).toBe(true);
 });

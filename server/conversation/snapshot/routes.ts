@@ -249,7 +249,12 @@ export function createBackendRoutes(
       return pending === null ? { sign_in: null } : sign_in_json(pending);
     });
     app.delete('/backends/:backend_key/sign-in', async (request) => {
-      await sign_in_service(runtime, request.params, 'sign_out').sign_out!();
+      try {
+        await sign_in_service(runtime, request.params, 'sign_out').sign_out!();
+      } catch (error) {
+        if (error instanceof SignInUnavailable) throw new HttpError(503, error.message);
+        throw error;
+      }
       return { sign_in: null };
     });
     app.delete<{ Params: { backend_key: string; session_id: string } }>(

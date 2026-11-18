@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import type { NewSessionResponse, SessionConfigOption } from '@agentclientprotocol/sdk/unstable';
 import { expect, test } from 'vitest';
+import { RecordingBackendProbeEnvironment } from '../../../conversation/snapshot/recording_environment.ts';
+import type { AntigravityCatalogRead } from './contracts.ts';
+import { create_antigravity_status } from './status.ts';
 import { antigravity_catalog } from './status_readers.ts';
 
 /** agy 1.5.10's own `session/new` result, recorded on the VPS. */
@@ -60,4 +63,30 @@ test('each model offers the thinking levels agy reports for it, and the card def
   const partial = antigravity_catalog(initial, after_selecting)!;
   expect(partial.models[4]!.reasoning_effort_options).toBeNull();
   expect(partial.complete).toBe(false);
+});
+
+// Risk: agy has no identity command, so a card without a catalog-derived identity never offers
+// the sign-in the web gates on `identity.status === 'unauthenticated'`.
+test('the card’s sign-in state comes from whether agy opened a catalog session', async () => {
+  const environment = new RecordingBackendProbeEnvironment();
+  environment.executables.set('agy', '/synthetic/agy');
+  const card_identity = async (read: () => Promise<AntigravityCatalogRead>) => {
+    const card = await create_antigravity_status({ catalog: read }).probe({
+      environment,
+      refresh: true,
+      discover_update_advisory: false,
+      now: new Date(0),
+      model_version: () => [],
+    });
+    return card.identity?.status;
+  };
+  expect(await card_identity(async () => ({ signed_in: false }))).toBe('unauthenticated');
+  expect(
+    await card_identity(async () => ({ signed_in: true, initial, after_selecting: new Map() })),
+  ).toBe('authenticated');
+  expect(
+    await card_identity(async () => {
+      throw new Error('agy did not answer');
+    }),
+  ).toBe('unknown');
 });

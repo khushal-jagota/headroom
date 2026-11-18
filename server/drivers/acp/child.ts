@@ -286,7 +286,8 @@ export class AcpBackendChild implements BackendChild {
       // The prompt was not sent: the agent refused the selection first.
       if (!(error instanceof ConfigurationNotApplied)) throw error;
       this.require_live_child();
-      // A model set before its effort was refused is put back, so the record stays true.
+      // A model set before its effort was refused is put back, so the record stays true. One
+      // that cannot be put back retires this child; the agent's refusal is still the answer.
       await config.restore(previous);
       throw new PromptWriteRefused(error.message, { cause: error });
     }
@@ -329,8 +330,14 @@ export class AcpBackendChild implements BackendChild {
         if (!this.stopped) this.log(failure);
       });
       // A prompt refused before its write began did not reach the agent, so a fresh child can
-      // take it. One whose write began may be in a live agent's input, and is not sent again.
-      if (!request.write_started()) this.require_live_child();
+      // take it, or a stopped one refuses it. One whose write began may be in a live agent's
+      // input, and is not sent again.
+      if (!request.write_started()) {
+        this.require_live_child();
+        throw new PromptWriteRefused(`the prompt was not written: ${acp_error_text(error)}`, {
+          cause: error,
+        });
+      }
       throw new PromptWriteFailed(`the prompt did not reach the wire: ${acp_error_text(error)}`, {
         cause: error,
       });

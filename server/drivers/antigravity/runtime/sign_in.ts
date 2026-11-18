@@ -346,7 +346,13 @@ export class AntigravitySignIn implements DriverSignInController {
     return this.with_lock(async () => {
       if (this.session?.state === 'awaiting_return_url')
         await this.settle(this.session, 'ended', 'The sign-in was cancelled by sign-out.');
-      await this.log_out();
+      try {
+        await this.log_out();
+      } catch (error) {
+        throw new SignInUnavailable(`Panels could not sign agy out: ${reason(error)}`);
+      }
+      // A confirmed sign-in no longer describes the CLI login.
+      this.session = null;
     });
   }
   /** Ends the sign-in in force and stops its agy, within the shutdown deadline. */

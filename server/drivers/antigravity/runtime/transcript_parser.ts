@@ -124,12 +124,15 @@ const MODEL_IDS: Readonly<Record<number, string>> = {
 };
 
 const GEMINI_3_FLASH_ROUTE = /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/;
+/** agy records Argon turns as `gemini-4-argon-trial` and `gemini-4-argon-g`. */
+const GEMINI_4_ARGON_VARIANT = /^gemini-4-argon-(?:trial|g)$/;
 
 /** Effort and routing variants share the base model's price. */
 export function antigravity_rate_model(model: string): string {
   const base = model.replace(/-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/, '');
   if (GEMINI_3_FLASH_ROUTE.test(model)) return 'gemini-3.5-flash';
   if (model === 'gemini-3.7-flash-safety-le') return 'gemini-3.7-flash';
+  if (GEMINI_4_ARGON_VARIANT.test(model)) return 'gemini-4-argon';
   return base === 'gemini-3-flash' ? 'gemini-3-flash-preview' : base;
 }
 

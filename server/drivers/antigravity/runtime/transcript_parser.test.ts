@@ -83,9 +83,11 @@ describe('antigravity transcript parser', () => {
     ]);
   });
 
-  it('names a model by id and strips the effort suffix for pricing', () => {
+  it('names a model by id and strips the effort and Argon variant suffixes for pricing', () => {
     expect(antigravity_rate_model('gemini-3.8-flash-high')).toBe('gemini-3.8-flash');
     expect(antigravity_rate_model('gemini-4-argon')).toBe('gemini-4-argon');
+    expect(antigravity_rate_model('gemini-4-argon-trial')).toBe('gemini-4-argon');
+    expect(antigravity_rate_model('gemini-4-argon-g')).toBe('gemini-4-argon');
   });
 
   it('yields nothing for a file that is not a readable database', async () => {

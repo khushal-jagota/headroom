@@ -1,7 +1,10 @@
 import { parse_backend_instance_id } from '../core/identity.ts';
 import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
 import { afterEach, expect, test, vi } from 'vitest';
-import { BackendPromptAccepted } from '../../conversation/backends/contracts.ts';
+import {
+  BackendPromptAccepted,
+  PromptWriteRefused,
+} from '../../conversation/backends/contracts.ts';
 import {
   ConversationAccess,
   PromptDeliveryMode,
@@ -16,7 +19,8 @@ import { Deferred } from '../../core/deferred.ts';
 import { uncontained_worker_supervision } from '../testing/uncontained_supervision.ts';
 
 afterEach(() => vi.restoreAllMocks());
-test('stop after a successful prompt write cannot turn acceptance into an unwritten refusal', async () => {
+/** A child on a fake client. `write_started` says whether the prompt's stream write began. */
+function synthetic_child(write_started: () => boolean) {
   const written = new Deferred<void>();
   const entered = new Deferred<void>();
   const response = new Deferred<{ stopReason: 'cancelled' }>();
@@ -41,7 +45,7 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
     },
     begin_request() {
       entered.resolve();
-      return { written: written.promise, response: response.promise, cancel() {} };
+      return { written: written.promise, response: response.promise, cancel() {}, write_started };
     },
     close() {
       response.resolve({ stopReason: 'cancelled' });
@@ -80,18 +84,26 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
       message_files: {} as ConversationMessageFiles,
     },
   );
-  try {
-    await child.start(resolved, { vendor_session_cursor: null });
+  const write = () => {
     const content = text_message_content('one delivery');
-    const receipt = child.write_prompt({ conversation_id: 'synthetic', turn_number: 1 }, content, {
+    return child.write_prompt({ conversation_id: 'synthetic', turn_number: 1 }, content, {
       sender_label: 'Owner',
       sender_content: content,
       mode: PromptDeliveryMode.queue,
       model_change: null,
       reasoning_effort_change: null,
     });
+  };
+  return { child, resolved, written, entered, response, stop, seen, write, update: () => update };
+}
+test('stop after a successful prompt write cannot turn acceptance into an unwritten refusal', async () => {
+  const { child, resolved, written, entered, response, stop, seen, write, update } =
+    synthetic_child(() => true);
+  try {
+    await child.start(resolved, { vendor_session_cursor: null });
+    const receipt = write();
     await entered.promise;
-    await update({
+    await update()({
       sessionId: 'synthetic',
       update: {
         sessionUpdate: 'agent_message_chunk',
@@ -108,5 +120,20 @@ test('stop after a successful prompt write cannot turn acceptance into an unwrit
     written.resolve();
     response.resolve({ stopReason: 'cancelled' });
     await child.stop();
+  }
+});
+// Risk: a stop that ends a prompt still queued behind the wire reads as possibly delivered, when
+// nothing reached the agent.
+test('stop before the prompt write began refuses the prompt', async () => {
+  const { child, resolved, written, entered, response, write } = synthetic_child(() => false);
+  try {
+    await child.start(resolved, { vendor_session_cursor: null });
+    const receipt = write();
+    await entered.promise;
+    await child.stop();
+    written.reject(new Error('ACP connection closed'));
+    await expect(receipt).rejects.toBeInstanceOf(PromptWriteRefused);
+  } finally {
+    response.resolve({ stopReason: 'cancelled' });
   }
 });
