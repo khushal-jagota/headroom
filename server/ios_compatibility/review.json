@@ -1,6 +1,6 @@
 {
-  "contract_sha256": "7ceff03bf119a94195a1d58d7161f06804d406b0adee987c5f05fee343552d31",
+  "contract_sha256": "a97a52890fd245e7accd193678c9471827e68f734b8f34511322e6dfcd4d1d49",
   "oldest_supported_build": 1,
   "decision": "compatible",
-  "evidence": "Reviewed by the release agent from source. Since the previous review (release 305dfaa4) one change landed: PR 1122 removes main-thread waste. It changes internal queries and caching in navigation totals, durable facts, attention and Worker supervision. No route, status code, response field or event the iOS app uses changed. The index the new navigation query names exists in the seed and on live. No iOS build or signed-device test ran for this review."
+  "evidence": "Reviewed by an agent from source, against 574875b6 (b6f55d69 after PR 1122 on release 305dfaa4) through the driver-model cutover. For the app: GET /api/drivers and its icon route are new, backend cards add optional fields, and Hermes is no longer a built-in backend, so cards drop it and a stored hermes key reads back unchanged. Old builds keep working: they decode every field they require (card, configuration, ticket and settings changes only add fields), find a backend through an optional lookup, never read tool_kind, and call no removed route. A send on a stored Hermes conversation gets the existing 400 unknown agent backend shape, which old builds show as a failed send. Schema step 1, supervision, install recovery and the executor removals change no response the app reads. Native iOS CI (simulator build and host tests) passed on driver-model, run 44209036980, and PR 1124 had a Mac simulator review. No signed-device test ran."
 }
