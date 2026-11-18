@@ -22,6 +22,7 @@ import {
 /** Page-side state these tests keep on `window`. */
 type TestWindow = Window & {
   __retainedArtifactFrame?: Element;
+  __retainedProposalArtifact?: Element | null;
   __artifactInPlaceMarker?: string;
   __artifactCompromised?: boolean;
 };
@@ -457,4 +458,118 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
       ) + '\n',
       'utf8',
     );
+});
+
+test('test_proposal_artifact_and_draft_stay_open_when_approval_moves_to_owner', async ({
+  railServer,
+  newContext,
+}) => {
+  // Proves the live server PATCH -> SSE change stream -> TicketRoute refetch ->
+  // WorkerProposalCard + ArtifactPreview bar boundary in real Chromium. Lower layers
+  // cannot prove that a background holder transfer leaves the open artifact DOM node
+  // and bar draft untouched and submits the bumped proposal revision on approval.
+  const server = railServer;
+  const project = await api.post(server, '/api/projects', { name: 'Proposal retention proof' });
+  const ticket = await api.post(server, '/api/tickets', {
+    title: 'Keep proposal artifact open across holder transfer',
+    worker_type: 'coding',
+    brief: 'Agreed brief.',
+    project_id: project.id,
+    manager: { kind: 'chief', id: 'chief' },
+  });
+  const ticketId = String(ticket.id);
+  await api.post(server, `/api/tickets/${ticketId}/accept/brief`, {
+    next_ceiling: 'needs_what_changes',
+    next_holder: CHIEF,
+  });
+  const filesRoot = ticketFilesDir(server, ticketId);
+  mkdirSync(join(filesRoot, 'artifacts'), { recursive: true });
+  writeFileSync(
+    join(filesRoot, 'artifacts', 'proposal-note.md'),
+    '# Proposal Evidence\n\nStays open across reviewer transfer.\n',
+    'utf8',
+  );
+  await proposeAsWorker(
+    server,
+    ticketId,
+    `Review [the proposal artifact](/files/tickets/${ticketId}/artifacts/proposal-note.md).`,
+  );
+  const before = await api.get(server, `/api/tickets?id=${ticketId}&detail=full`);
+  const initialRevision = Number(before.pending_proposal.revision);
+
+  const context = await newContext();
+  const page = await openPage(context, server, `#/workspace/${ticketId}`, '[data-approval-block]');
+  page.setDefaultTimeout(WAIT_MS);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  const approvalCard = page.locator('[data-approval-block]');
+  await expect(approvalCard.locator('[data-reviewer-heading]')).toContainText('Chief');
+  await approvalCard.locator('a[href*="proposal-note.md"]').click();
+
+  const artifact = page.locator('[data-ticket-artifact]');
+  const bar = artifact.locator('[data-artifact-bar]');
+  await expect(artifact).toBeVisible({ timeout: WAIT_MS });
+  await expect(bar).toBeVisible({ timeout: WAIT_MS });
+  await expect(artifact.locator('[data-file-preview-markdown]')).toContainText(
+    'Stays open across reviewer transfer.',
+    { timeout: WAIT_MS },
+  );
+
+  const draftNote = 'Keep this note when approval moves to owner.';
+  const noteInput = bar.locator('[data-revision-note]');
+  await noteInput.fill(draftNote);
+
+  await page.evaluate(() => {
+    (window as unknown as TestWindow).__retainedProposalArtifact = document.querySelector('[data-ticket-artifact]');
+  });
+
+  // Transfer ceiling_holder from chief to owner while the proposal artifact and draft note are open.
+  await api.patch(server, `/api/tickets/${ticketId}`, {
+    ceiling_holder: { kind: 'owner', id: 'owner' },
+  });
+
+  const liveCard = page.locator('[data-worker-live-card]');
+  await expect(liveCard).toHaveAttribute('data-proposal-revision', String(initialRevision + 1), {
+    timeout: WAIT_MS,
+  });
+  await expect(approvalCard.locator('[data-reviewer-heading]')).toContainText('User');
+  await expect(artifact).toBeVisible();
+  await expect(bar).toBeVisible();
+  await expect(noteInput).toHaveValue(draftNote);
+  expect(
+    await page.evaluate(
+      () => document.querySelector('[data-ticket-artifact]') === (window as unknown as TestWindow).__retainedProposalArtifact,
+    ),
+  ).toBe(true);
+
+  const evidence = process.env.PANELS_TICKET_EVIDENCE_DIR;
+  if (evidence) {
+    mkdirSync(evidence, { recursive: true });
+    await page.screenshot({ path: join(evidence, 'proposal-artifact-after-transfer.png'), fullPage: true });
+  }
+
+  // Approve from the bar and confirm the bumped revision and preserved note reach the server.
+  const decisionUrl = `${server.base}/api/tickets/${ticketId}/decision-operations/`;
+  const approvedResponse = page.waitForResponse(
+    (response) => response.request().method() === 'POST' && response.url().startsWith(decisionUrl),
+  );
+  await bar.locator('[data-accept]').click();
+  await bar.locator('[data-ceiling-picker-choice="needs_implementation"]').click();
+  await bar.locator('[data-scope-holder="owner"]').click();
+
+  const approved = await approvedResponse;
+  await expectResponse(approved.ok(), true, approved);
+  const payload = approved.request().postDataJSON();
+  expect(payload.decision).toBe('approve');
+  expect(payload.field).toBe('what_changes');
+  expect(payload.message).toBe(draftNote);
+  expect(payload.expected_proposal_revision).toBe(initialRevision + 1);
+
+  const result = await approved.json();
+  expect(result.receipt.outcome).toBe('applied');
+  await expect(artifact).toHaveCount(0, { timeout: WAIT_MS });
+
+  const after = await api.get(server, `/api/tickets?id=${ticketId}&detail=full`);
+  expect(after.stage).toBe('needs_implementation');
+  expect(after.pending_proposal).toBeNull();
 });

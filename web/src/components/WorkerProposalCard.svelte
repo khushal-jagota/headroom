@@ -1,12 +1,13 @@
 <script lang="ts">
   import Button from "./Button.svelte";
-  import { onDestroy, type Snippet } from "svelte";
+  import { onDestroy, untrack, type Snippet } from "svelte";
   import CeilingPicker from "./CeilingPicker.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { advanceTargetFor, finalApprovalFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import { decisionIdentity, decisionRefusals, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
+  import { buildProposalApproveDecision, buildProposalSendBackDecision, proposalContentIdentity, syncProposalDraftState } from "../lib/review/proposalState";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
   let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions, composerOnly = false }: {
@@ -56,26 +57,49 @@
   let terminalRefusal = $derived($decisionRefusals.filter(entry => entry.saved.ticketId === ticketId && entry.saved.command.field === proposal.field).slice(-1)[0]?.error);
   let visibleError = $derived(error ?? terminalRefusal);
   let lastKey: string | null = null;
+  let lastRecalledKey: string | null = null;
   let newStage = $derived(advanceTargetFor(lifecycle, stage, ""));
   let nextCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
   let finalApproval = $derived(finalApprovalFor(lifecycle, stage));
-  let identity = $derived([ticketId, proposal.field, proposal.created_at, proposal.revision, lifecycle.workerType, newStage, finalApproval, lifecycle.stageOrder.join(","), lifecycle.ceilingRange.join(","), manager?.id || ""].join("|"));
+  let identity = $derived(JSON.stringify([
+    ticketId,
+    proposalContentIdentity(proposal),
+    lifecycle.workerType,
+    newStage,
+    finalApproval,
+    lifecycle.stageOrder,
+    lifecycle.ceilingRange,
+    manager?.id || ""
+  ]));
   let decisionKey = $derived(decisionIdentity(ticketId, proposal.revision));
   $effect(() => {
-    if (identity === lastKey) return;
-    const first = lastKey === null;
-    lastKey = identity;
-    draft = first ? initialEditedBody ?? proposal.body : proposal.body;
-    if (!first) revisionText = "";
-    resolved = false;
-    error = null;
-    try {
-      const pending = recallReviewDecision(decisionKey);
-      if (pending) {
-        revisionText = pending.command.message ?? "";
-        draft = pending.command.edited_body ?? proposal.body;
-      }
-    } catch (recoveryError) { error = recoveryError; }
+    const nextIdentity = identity;
+    const nextDecisionKey = decisionKey;
+    untrack(() => {
+      const synced = syncProposalDraftState(
+        {
+          lastIdentity: lastKey,
+          lastRecalledKey,
+          draft,
+          revisionText,
+          resolved,
+          error
+        },
+        {
+          identity: nextIdentity,
+          decisionKey: nextDecisionKey,
+          body: proposal.body,
+          initialEditedBody
+        },
+        recallReviewDecision
+      );
+      lastKey = synced.lastIdentity;
+      lastRecalledKey = synced.lastRecalledKey;
+      draft = synced.draft;
+      revisionText = synced.revisionText;
+      resolved = synced.resolved;
+      error = synced.error;
+    });
   });
   function reviewerLabel(value: Principal): string {
     return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : value.kind === "ticket" ? "Worker" : "Manager";
@@ -90,14 +114,18 @@
     busy = true; error = null;
     try {
       if (change.approval && (change.ceiling || finalApproval)) {
-        await submitReviewDecision(ticketId, proposal.field, { action: "approve", body: {
-          message: text || null,
-          ...(!finalApproval ? { next_ceiling: change.ceiling, next_holder: change.holder } : {}),
-          expected_proposal_revision: revision,
-          ...(editedBody !== proposal.body ? { edited_body: editedBody } : {})
-        } });
-        if (!mounted || decisionKey !== key) return;
+        await submitReviewDecision(ticketId, proposal.field, buildProposalApproveDecision({
+          proposal: { body: proposal.body, revision },
+          editedBody,
+          message: text,
+          finalApproval,
+          nextCeiling: change.ceiling,
+          nextHolder: change.holder
+        }));
+        // Run onAccept before checking mounted/decisionKey: invalidateQueries() inside
+        // submitReviewDecision can clear pending_proposal and unmount this bar first.
         await onAccept();
+        if (!mounted || decisionKey !== key) return;
         revisionText = "";
         resolved = true;
       } else {
@@ -112,11 +140,12 @@
     const key = decisionKey;
     const revision = proposal.revision;
     try {
-      await submitReviewDecision(ticketId, proposal.field, { action: "send_back", body: {
-        message, expected_proposal_revision: revision
-      } });
-      if (!mounted || decisionKey !== key) return;
+      await submitReviewDecision(ticketId, proposal.field, buildProposalSendBackDecision({
+        proposal: { revision },
+        message
+      }));
       await onReturn();
+      if (!mounted || decisionKey !== key) return;
       revisionText = "";
       resolved = true;
     }
