@@ -13,7 +13,9 @@ import {
   probe_step,
   rebuild_step,
 } from '../../../../core/database/schema_steps/testing/steps.ts';
+import { create_database_backup } from '../../../backup/capture.ts';
 import { install } from '../install.ts';
+import { InstallationRecord } from '../record.ts';
 
 export const KILLED_FROM = 'a'.repeat(40),
   KILLED_TO = 'b'.repeat(40),
@@ -48,6 +50,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       current_root: root,
       database,
       data_directory: data,
+      backup_directory: join(root, 'backups'),
       attempt_id: KILLED_ATTEMPT,
       node_executable: process.execPath,
       service_unit: 'never-start.service',
@@ -59,6 +62,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       async capture() {
         if (point === 'before_swap') stopped(root, point);
         return { kind: 'returned', returncode: 0 };
+      },
+      // As snapshot_main.ts does, with a stop before and after the record names the file.
+      async snapshot(deployed_revision) {
+        const snapshot = await create_database_backup(
+          database,
+          join(root, 'backups'),
+          deployed_revision,
+        );
+        if (point === 'snapshot_unrecorded') stopped(root, point);
+        new InstallationRecord({ data_directory: data, attempt_id: KILLED_ATTEMPT }).snapshot_taken(
+          snapshot,
+        );
+        if (point === 'snapshot_recorded') stopped(root, point);
       },
       async schema_steps(_descriptor, backup_taken) {
         const steps = killed_install_steps(point, root);

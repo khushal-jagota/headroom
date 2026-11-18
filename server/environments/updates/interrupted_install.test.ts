@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { it, vi } from 'vitest';
 import {
@@ -13,7 +13,6 @@ import {
 import { require_schema_revision } from '../../core/database/admission.ts';
 import { BASELINE_SEED, probe_step } from '../../core/database/schema_steps/testing/steps.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
-import { create_database_backup } from '../backup/capture.ts';
 import { UpdateBarrier } from '../update_barrier.ts';
 import { recover_interrupted_install, schema_chain } from './interrupted_install.ts';
 import {
@@ -27,8 +26,9 @@ const ENTRY = fileURLToPath(new URL('./installer/testing/killed_install_main.ts'
 
 /**
  * The real installer in its own process, SIGKILLed at `point`: no abort handler, catch or
- * finally runs. Leaves an installed app, a staged app, a baseline database with a verified
- * backup, a frozen barrier and an attempt waiting to install, as the server hands them over.
+ * finally runs. Leaves an installed app, a staged app, a baseline database, a frozen barrier
+ * and an attempt waiting to install that requires a snapshot, as the server hands them over.
+ * The installer takes that snapshot itself after the stop, as in production.
  */
 async function killed_install(point: string) {
   const root = mkdtempSync(join(tmpdir(), 'panels-killed-install-'));
@@ -40,7 +40,6 @@ async function killed_install(point: string) {
   writeFileSync(join(root, 'app/manifest.json'), JSON.stringify({ app_sha: FROM }));
   writeFileSync(join(root, '.app-next-' + TO, 'manifest.json'), JSON.stringify({ app_sha: TO }));
   createDatabaseFromSeed(database, BASELINE_SEED, () => {}).close();
-  const backup = await create_database_backup(database, join(root, 'backups'), FROM);
   writeFileSync(
     join(data, 'update-attempt.json'),
     JSON.stringify({
@@ -48,7 +47,8 @@ async function killed_install(point: string) {
       state: 'installing',
       from_sha: FROM,
       to_sha: TO,
-      backup,
+      backup: null,
+      snapshot_required: true,
       steps: {},
     }),
   );
@@ -107,6 +107,8 @@ it('a kill before the steps commit: the next start puts back the previous app an
     try {
       assert.throws(() => require_schema_revision(killed.database, killed.head));
       assert.equal(installed_sha(killed.root), TO);
+      // The installer's own snapshot, recorded before the swap, is what recovery restores.
+      assert.equal(dirname(record(killed.root).backup), join(killed.root, 'backups'));
 
       const journal = vi.spyOn(console, 'warn').mockImplementation(() => {});
       assert.equal(await killed.recover(TO), 'rolled_back');
@@ -158,20 +160,27 @@ it('a kill after the steps commit keeps the new app on the stepped database', as
   }
 }, 30_000);
 
-it('a kill before the swap changes nothing', async () => {
-  // Today's behaviour: the previous app stays in place on its untouched database.
-  const killed = await killed_install('before_swap');
-  const digest = () =>
-    createHash('sha256').update(readFileSync(killed.database)).digest('hex') +
-    readFileSync(join(killed.root, 'data/update-attempt.json'), 'utf8');
-  try {
-    const before = digest();
-    for (const sha of [FROM, TO]) assert.equal(await killed.recover(sha), 'none');
-    assert.equal(installed_sha(killed.root), FROM);
-    assert(existsSync(join(killed.root, '.app-next-' + TO)));
-    assert.equal(digest(), before);
-    require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
-  } finally {
-    rmSync(killed.root, { recursive: true, force: true });
+it('a kill before the swap changes nothing, during or after the snapshot too', async () => {
+  // The previous app stays in place on its untouched database, and recovery leaves it.
+  for (const point of ['before_swap', 'snapshot_unrecorded', 'snapshot_recorded']) {
+    const killed = await killed_install(point);
+    const digest = () =>
+      createHash('sha256').update(readFileSync(killed.database)).digest('hex') +
+      readFileSync(join(killed.root, 'data/update-attempt.json'), 'utf8');
+    try {
+      assert.equal(record(killed.root).steps.app_swapped, undefined);
+      assert.equal(
+        typeof record(killed.root).backup,
+        point === 'snapshot_recorded' ? 'string' : 'object',
+      );
+      const before = digest();
+      for (const sha of [FROM, TO]) assert.equal(await killed.recover(sha), 'none');
+      assert.equal(installed_sha(killed.root), FROM);
+      assert(existsSync(join(killed.root, '.app-next-' + TO)));
+      assert.equal(digest(), before);
+      require_schema_revision(killed.database, BASELINE_SEED.alembicRevision);
+    } finally {
+      rmSync(killed.root, { recursive: true, force: true });
+    }
   }
 }, 30_000);
