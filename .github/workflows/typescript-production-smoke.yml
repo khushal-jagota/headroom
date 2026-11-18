@@ -3,7 +3,7 @@ name: TypeScript production smoke
 on:
   workflow_dispatch:
   push:
-    branches: [staging, driver-model]
+    branches: [staging]
 
 permissions:
   contents: read
