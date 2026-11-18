@@ -36,6 +36,7 @@ export class AntigravityModelCatalog {
   private readonly launch_options: Omit<AntigravityLaunchOptions, 'executable'>;
   private readonly child_processes: OwnedChildProcesses;
   private readonly one_shot_children: OwnedOneShotChildren;
+  private readonly get_stop_options: (() => StopOptions | undefined) | undefined;
   private readonly shutting_down = new AbortController();
   private readonly reads = new Set<Promise<AntigravityCatalogRead>>();
   private stop_options: StopOptions | undefined;
@@ -44,11 +45,13 @@ export class AntigravityModelCatalog {
     dependencies: {
       child_processes: OwnedChildProcesses;
       one_shot_children: OwnedOneShotChildren;
+      stop_options?: () => StopOptions | undefined;
     },
   ) {
     this.launch_options = launch_options;
     this.child_processes = dependencies.child_processes;
     this.one_shot_children = dependencies.one_shot_children;
+    this.get_stop_options = dependencies.stop_options;
   }
   async read(executable: string, signal?: AbortSignal): Promise<AntigravityCatalogRead> {
     this.shutting_down.signal.throwIfAborted();
@@ -77,6 +80,11 @@ export class AntigravityModelCatalog {
   private async run(executable: string, signal: AbortSignal): Promise<AntigravityCatalogRead> {
     const cwd = await mkdtemp(join(tmpdir(), 'panels-antigravity-catalog-'));
     const launch = antigravity_acp_launch({ ...this.launch_options, executable });
+    const environment = acp_child_environment(
+      launch.environment_overrides,
+      { role_materials: null },
+      launch.inherited_environment,
+    );
     let owned: OwnedProcess | null = null;
     let client: AcpClient | null = null;
     let session_id: string | null = null;
@@ -85,13 +93,14 @@ export class AntigravityModelCatalog {
       await ensure_cli_compatible(antigravity_driver.driver_kind, executable, {
         children: this.one_shot_children,
         signal,
+        ...(this.launch_options.environment === undefined ? {} : { environment }),
       });
       owned = await spawn_owned_process(launch.argv, {
         child_processes: this.child_processes,
         on_created: (created) => {
           owned = created;
         },
-        environment: acp_child_environment(launch.environment_overrides, { role_materials: null }),
+        environment,
         working_directory: cwd,
       });
       // agy's log is not read, and must not fill its pipe.
@@ -137,7 +146,7 @@ export class AntigravityModelCatalog {
       client?.close();
       try {
         // Only a stopped agy has finished writing the files this removes.
-        await (owned as OwnedProcess | null)?.stop(this.stop_options);
+        await (owned as OwnedProcess | null)?.stop(this.stop_options ?? this.get_stop_options?.());
         if (session_id !== null)
           await remove_antigravity_session_files(this.launch_options.home, session_id);
       } catch (error) {

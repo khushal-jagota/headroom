@@ -59,6 +59,10 @@ function scripted_driver(
         },
       };
     },
+    executor: async () => ({
+      child_factory: () => factory,
+      catalog: () => ({ status: scripted_status(kind) }),
+    }),
     ...overrides,
   };
 }

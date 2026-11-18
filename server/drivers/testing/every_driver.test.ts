@@ -1,6 +1,7 @@
 /** Lists that cannot come from a driver still hold every driver. (T3 ManagedPolicy.test.ts pattern) */
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { load_executor_drivers } from '../../executor/mac/adapters.ts';
 import { shipped_worker_types } from '../../worker_types/shipped.ts';
 import { BUILT_IN_DRIVERS } from '../built_in.ts';
 import type { AnyAgentDriver } from '../core/driver.ts';
@@ -84,4 +85,16 @@ it('every shipped worker type defaults to a built-in backend', () => {
   );
   expect(defaults.length).toBeGreaterThan(0);
   expect(defaults.filter((backend) => !built_in.has(backend))).toEqual([]);
+});
+
+// Risk: a built-in driver without a loadable executor half fails only when a Ticket starts on an executor.
+it('every built-in driver loads an executor half', async () => {
+  const loaded = await load_executor_drivers(BUILT_IN_DRIVERS);
+  expect(loaded.map((driver) => driver.driver_kind)).toEqual(
+    BUILT_IN_DRIVERS.map((driver) => driver.driver_kind),
+  );
+  for (const driver of loaded) {
+    expect(typeof driver.executor.child_factory).toBe('function');
+    expect(typeof driver.executor.catalog).toBe('function');
+  }
 });

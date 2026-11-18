@@ -121,7 +121,11 @@ export class AcpBackendChild implements BackendChild {
       const client = await this.launcher.start(
         {
           argv: launch.argv,
-          environment: acp_child_environment(launch.environment_overrides, resolved_start),
+          environment: acp_child_environment(
+            launch.environment_overrides,
+            resolved_start,
+            launch.inherited_environment,
+          ),
         },
         resolved_start,
         {
