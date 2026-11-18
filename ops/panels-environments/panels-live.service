@@ -16,6 +16,8 @@ Environment=PLAN_PORT=8767
 Environment=PLAN_SERVER_CONTROL_SOCKET=%h/Deployments/Panels/current/data/server-control.sock
 Environment=PLAN_BACKUP_DIR=%h/Deployments/Panels/current/data/backups
 ExecStart=%h/Deployments/Panels/current/app/bin/panels-launcher serve
+# The update installer waits 120 seconds for a stop. systemd kills what remains before that.
+TimeoutStopSec=90
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

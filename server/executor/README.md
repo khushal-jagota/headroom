@@ -75,7 +75,7 @@ The launch path preserves ready-marker promotion, failed-trial rollback, and han
 
 Both TypeScript peers use `wire.schema.json` as the message contract. The same schemas generate `wire.generated.ts` and supply Ajv validation. The schema describes wire protocol 26, including supervision protocol 24 inside start commands, cleanup evidence, and workspace messages. The spool format is 5 and the command journal format is 1.
 
-Both runtime identities advertise protocol 26 through `execution_configuration.ts`. Machine credentials, supervision evidence, and workspace messages use that same contract. The presence owner retains an accepted lease when an optional update offer exceeds its response budget.
+Both runtime identities advertise protocol 26 through `execution_configuration.ts`. The home admits a lease, a credential request, and a request header that state protocol 25, 26, or 27, the versions of the adjacent releases. Admission by number does not change validation: each body must still pass this release's schema, which ignores fields it does not know. A protocol change must therefore keep the previous version's messages valid. Machine credentials, supervision evidence, and workspace messages use that same contract. The presence owner retains an accepted lease when an optional update offer exceeds its response budget.
 
 Regenerate or check the types in an isolated development environment:
 

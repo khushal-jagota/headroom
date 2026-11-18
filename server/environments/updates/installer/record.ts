@@ -39,6 +39,23 @@ export class InstallationRecord {
         current.state = state;
         current.detail = detail;
       }
+      // The installer unit's journal keeps the reason when no app returns to report it.
+      if (state === 'failed') console.error(`Update failed: ${detail ?? 'no reason was recorded'}`);
+      current.updated_at = now;
+      assert_installer_path(this.path);
+      replace_existing_json(this.path, current);
+    });
+  }
+  /** The rollback restores this snapshot, so the record names it before the swap. */
+  snapshot_taken(snapshot: string): void {
+    assert_installer_path(this.lock_path);
+    exclusive_existing_lock(this.lock_path, () => {
+      const current = this.read();
+      if (current.attempt_id !== this.request.attempt_id)
+        throw new Error('The update attempt changed before its snapshot was recorded');
+      const now = utc_now();
+      current.backup = snapshot;
+      current.steps = { ...(is_object(current.steps) ? current.steps : {}), backup: now };
       current.updated_at = now;
       assert_installer_path(this.path);
       replace_existing_json(this.path, current);

@@ -134,11 +134,7 @@ function begin_shutdown(
   void (async () => {
     const [cleanup, business] = await Promise.all([
       Promise.allSettled([detaching, janitor, ...host.native_settlements]),
-      Promise.allSettled([
-        ...pumps,
-        ...(host.update_retirement ? [host.update_retirement] : []),
-        ...states.flatMap((state) => [...state.settlement_tasks]),
-      ]),
+      Promise.allSettled([...pumps, ...states.flatMap((state) => [...state.settlement_tasks])]),
     ]);
     // Cancelling our own business observer is expected. A failed native detach,
     // janitor or store cleanup is never excused by its error name.

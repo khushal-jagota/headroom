@@ -1,5 +1,6 @@
 /** Executor identity checks are shared by both peers, independently of the codec facade. */
 import {
+  MAX_SUPPORTED_PROTOCOL_VERSION,
   MIN_SUPPORTED_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   SPOOL_FORMAT_VERSION,
@@ -41,7 +42,7 @@ export function supports_executor_versions(
     is_integer(protocol_version) &&
     is_integer(spool_format_version) &&
     MIN_SUPPORTED_PROTOCOL_VERSION <= protocol_version &&
-    protocol_version <= PROTOCOL_VERSION &&
+    protocol_version <= MAX_SUPPORTED_PROTOCOL_VERSION &&
     spool_format_version === SPOOL_FORMAT_VERSION
   );
 }

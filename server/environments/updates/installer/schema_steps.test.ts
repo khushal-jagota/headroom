@@ -36,6 +36,7 @@ import { create_database_backup } from '../../backup/capture.ts';
 import { restore_database_snapshot } from '../../backup/restore.ts';
 import { create_installer_effects } from './commands.ts';
 import { install } from './install.ts';
+import { InstallationRecord } from './record.ts';
 import { structural_app } from './testing/structural_app.ts';
 import type { InstallerEffects, InstallerRequest } from './contracts.ts';
 
@@ -55,13 +56,14 @@ function installation(prefix: string, backup: string | null) {
     current_root: root,
     database: join(data, 'planner.db'),
     data_directory: data,
+    backup_directory: join(root, 'backups'),
     attempt_id: 'schema-steps',
     node_executable: process.execPath,
     service_unit: 'never-start.service',
     health_url: 'http://127.0.0.1:0',
     health_timeout_seconds: 1,
   };
-  const attempt = (snapshot: string | null) =>
+  const attempt = (snapshot: string | null, snapshot_required = false) =>
     writeFileSync(
       join(data, 'update-attempt.json'),
       JSON.stringify({
@@ -70,6 +72,7 @@ function installation(prefix: string, backup: string | null) {
         from_sha: FROM,
         to_sha: TO,
         backup: snapshot,
+        snapshot_required,
         steps: {},
       }),
     );
@@ -98,6 +101,9 @@ it('steps run after the swap and before start', async () => {
           async capture() {
             events.push('capture');
             return { kind: 'returned', returncode: 0 };
+          },
+          async snapshot() {
+            assert.fail('this attempt requires no snapshot');
           },
           async schema_steps(descriptor, backup_taken) {
             events.push(['schema_steps', installed_sha(root), typeof descriptor, backup_taken]);
@@ -141,6 +147,9 @@ it('a failing step restores the backup before the previous app starts', async ()
         async capture() {
           return { kind: 'returned', returncode: 0 };
         },
+        async snapshot() {
+          assert.fail('this attempt requires no snapshot');
+        },
         async schema_steps() {
           events.push('schema_steps');
           throw new Error('scripted schema step failure');
@@ -172,13 +181,56 @@ it('a failing step restores the backup before the previous app starts', async ()
   }
 });
 
+it('a failed snapshot leaves the app unchanged and starts it again', async () => {
+  // The service is already stopped when the snapshot runs. A failure there must not
+  // leave Panels down, swap the app, or restore anything.
+  const { root, request, attempt } = installation('panels-snapshot-failure-', null);
+  attempt(null, true);
+  const events: unknown[] = [];
+  try {
+    const code = await install(
+      request,
+      {
+        async service(action) {
+          events.push(action);
+        },
+        async capture() {
+          return { kind: 'returned', returncode: 0 };
+        },
+        async snapshot() {
+          throw new Error('scripted snapshot failure');
+        },
+        async schema_steps() {
+          assert.fail('no step runs without its snapshot');
+        },
+        async restore() {
+          assert.fail('nothing changed, so nothing is restored');
+        },
+        async healthy(sha) {
+          events.push(['healthy', sha]);
+          return true;
+        },
+      },
+      { stderr() {} },
+      new AbortController().signal,
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(events, ['stop', 'start', ['healthy', FROM]]);
+    assert.equal(installed_sha(root), FROM);
+    assert.match(record(root).detail, /scripted snapshot failure/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it('step applied, health fails, old app runs on the restored database', async () => {
   // Rollback must restore the data before the old app starts, or the old app meets a
-  // database it refuses. Real backup, real steps, real restore.
+  // database it refuses. The installer takes the snapshot itself, after the stop and
+  // before the swap, and the rollback restores that one. Real backup, steps and restore.
   const { root, request, attempt } = installation('panels-schema-step-rollback-', null);
   try {
     createDatabaseFromSeed(request.database, BASELINE_SEED, () => {}).close();
-    attempt(await create_database_backup(request.database, join(root, 'backups'), FROM));
+    attempt(null, true);
     const events: unknown[] = [];
     const effects: InstallerEffects = {
       async service(action) {
@@ -186,6 +238,17 @@ it('step applied, health fails, old app runs on the restored database', async ()
       },
       async capture() {
         return { kind: 'returned', returncode: 0 };
+      },
+      async snapshot(deployed_revision, descriptor) {
+        assert.equal(typeof descriptor, 'number');
+        events.push(['snapshot', installed_sha(root)]);
+        new InstallationRecord(request).snapshot_taken(
+          await create_database_backup(
+            request.database,
+            request.backup_directory,
+            deployed_revision,
+          ),
+        );
       },
       async schema_steps(_descriptor, backup_taken) {
         events.push('schema_steps');
@@ -237,6 +300,7 @@ it('step applied, health fails, old app runs on the restored database', async ()
     assert.equal(code, 1);
     assert.deepEqual(events, [
       'stop',
+      ['snapshot', FROM],
       'schema_steps',
       'start',
       ['healthy', TO],
@@ -291,6 +355,20 @@ it('node-v2 launches the child with the lock fd; no-backup plus pending steps re
     assert.deepEqual(launched, [
       { argv: [process.execPath, main, request.database, 'no-backup'], descriptor: lock },
     ]);
+
+    // The real snapshot_main.ts child, after the stop: a wrong argument or record write
+    // would fail every update that has schema steps. Its snapshot must restore.
+    symlinkSync(
+      fileURLToPath(new URL('../snapshot_main.ts', import.meta.url)),
+      join(root, 'app/server/environments/updates/snapshot_main.ts'),
+    );
+    await effects.snapshot(FROM, lock);
+    const taken = record(root);
+    assert.equal(typeof taken.steps.backup, 'string');
+    assert.equal(dirname(taken.backup), request.backup_directory);
+    await restore_database_snapshot(taken.backup, join(root, 'restored.sqlite'), {
+      live_stopped: true,
+    });
 
     // Pending steps without a backup refuse before the first write.
     const stepped = join(root, 'baseline.sqlite');

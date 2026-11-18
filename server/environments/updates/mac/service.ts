@@ -1,11 +1,11 @@
 import { ORIGINAL_MAC_MACHINE_ID, valid_uuid } from '../../../execution_identity.ts';
 import { counter } from '../../../executor/logic/counters.ts';
+import { same_identity } from '../../../executor/vps_presence_store.ts';
 /** Pinned Mac bytes and reports survive publication expiry and later VPS failures. */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fsyncSync, openSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, open, readdir, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import yauzl from 'yauzl';
 import type { ZipFile } from 'yauzl';
 import { inspect_mac_archive } from '../../release/archive.ts';
@@ -605,10 +605,13 @@ export class MacUpdateService implements MacUpdateServiceContract {
     const status = value.status;
     for (const key of ['request_id', 'target_revision', 'phase'])
       if (!Object.hasOwn(status, key)) throw new TypeError(`missing Mac status field: ${key}`);
-    for (const key of Object.keys(status))
-      if (!['request_id', 'target_revision', 'phase', 'detail'].includes(key))
-        throw new TypeError(`unknown Mac status field: ${key}`);
-    return { ...status, detail: status.detail ?? null } as unknown as MacUpdateStatus;
+    // An adjacent release can save fields this one does not know.
+    return {
+      request_id: status.request_id,
+      target_revision: status.target_revision,
+      phase: status.phase,
+      detail: status.detail ?? null,
+    } as MacUpdateStatus;
   }
   status(): MacUpdateStatus | null {
     const current = this.attempt();
@@ -648,7 +651,13 @@ export class MacUpdateService implements MacUpdateServiceContract {
   }
   report(report: MacUpdateReport, health: MacUpdateHealthRead | null): MacUpdateStatus {
     const detail = report.detail ?? null,
-      identity = report.identity ?? null,
+      identity =
+        report.identity == null
+          ? null
+          : {
+              ...report.identity,
+              connection_generation: report.identity.connection_generation ?? 0,
+            },
       leased = health?.presence === 'present' ? health.identity : null,
       target = this.target();
     if (
@@ -663,12 +672,12 @@ export class MacUpdateService implements MacUpdateServiceContract {
       (!target.activate ||
         identity === null ||
         identity.application_revision !== target.application_revision ||
-        !isDeepStrictEqual(leased, identity))
+        !same_identity(leased, identity))
     )
       throw new UpdateConflict('The target Mac runtime is not the present, leased one.');
     if (
       report.phase === 'ready_to_restart' &&
-      (identity === null || !isDeepStrictEqual(leased, identity))
+      (identity === null || !same_identity(leased, identity))
     )
       throw new UpdateConflict('The Mac stop report does not match its present process.');
     const result = {

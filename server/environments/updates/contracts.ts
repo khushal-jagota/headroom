@@ -6,8 +6,8 @@ export type UpdateMode = 'now' | 'idle';
 export type UpdateActivity = 'idle' | 'busy' | 'unknown';
 export type UpdateAttemptState = 'waiting' | 'preparing' | 'installing' | 'done' | 'failed';
 export type UpdateExperienceState =
-  'up_to_date' | 'available' | 'waiting' | 'updating' | 'failed' | 'mac_failed' | 'mac_unreachable';
-export type UpdateAction = 'update' | 'cancel' | 'update_now' | 'retry' | 'retry_mac';
+  'up_to_date' | 'available' | 'updating' | 'failed' | 'mac_failed' | 'mac_unreachable';
+export type UpdateAction = 'update' | 'retry' | 'retry_mac';
 
 export interface RuntimePlatform {
   distribution: string;
@@ -80,6 +80,8 @@ export interface UpdateAttempt {
   detail: string | null;
   deadline_at: string | null;
   backup: string | null;
+  /** The installer snapshots the stopped database before it changes anything. */
+  snapshot_required: boolean;
   steps: Record<string, string>;
   mac_attempt_id: string | null;
   extra: Record<string, unknown>;
@@ -128,15 +130,11 @@ export interface InstallerOperations {
   readonly requires_snapshot?: boolean;
   /** Refuse a database off the staged chain. True when the installer must run steps. */
   node_schema_steps_pending(database: string, staged_app: string): boolean | Promise<boolean>;
-  create_backup(
-    database: string,
-    backup_directory: string,
-    deployed_revision: string,
-  ): Promise<string>;
   prepare(options: {
     current_root: string;
     database: string;
     data_directory: string;
+    backup_directory: string;
     attempt_id: string;
     service_unit: string;
     health_url: string;

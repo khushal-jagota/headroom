@@ -65,11 +65,11 @@ const server=createServer(async(req,res)=>{
    const ops=create_installer_operations({application_root:application,node_executable:process.execPath,child_processes:children,signal:controller.signal,environment:{...process.env},darwin_home:home});
    if(ops.requires_snapshot!==true)throw Error('Mac home updater requires its snapshot');
    await ops.node_schema_steps_pending(database,join(root,'.app-next-'+input.manifest.app_sha));
-   const backup=await ops.create_backup(database,join(data,'backups'),revision),now=utc_now();
+   const now=utc_now();
    const release={publication_run_id:1,artifact_id:1,proof_artifact_id:2,manifest:input.manifest,archive_sha256:input.archive_sha256,schema_floor:seed.alembicRevision,expires_at:'2099-01-01T00:00:00+00:00',mac:null};
-   new FileUpdateAttemptStore(join(data,'update-attempt.json'),()=>{}).create({attempt_id:input.attempt_id,from_sha:revision,to_sha:input.manifest.app_sha,mode:'now',confirm_activity:false,state:'installing',created_at:now,updated_at:now,release,detail:null,deadline_at:null,backup,steps:{},mac_attempt_id:null,extra:{}});
+   new FileUpdateAttemptStore(join(data,'update-attempt.json'),()=>{}).create({attempt_id:input.attempt_id,from_sha:revision,to_sha:input.manifest.app_sha,mode:'now',confirm_activity:false,state:'installing',created_at:now,updated_at:now,release,detail:null,deadline_at:null,backup:null,snapshot_required:true,steps:{},mac_attempt_id:null,extra:{}});
    new UpdateBarrier(join(data,'update-barrier.json')).freeze(input.attempt_id);
-   const command=ops.prepare({current_root:root,database,data_directory:data,attempt_id:input.attempt_id,service_unit:home.identity.domain+'/'+home.identity.label,health_url:'http://127.0.0.1:'+process.env.PLAN_PORT+'/api/health',health_timeout_seconds:8});
+   const command=ops.prepare({current_root:root,database,data_directory:data,backup_directory:join(data,'backups'),attempt_id:input.attempt_id,service_unit:home.identity.domain+'/'+home.identity.label,health_url:'http://127.0.0.1:'+process.env.PLAN_PORT+'/api/health',health_timeout_seconds:8});
    writeFileSync(join(data,'probe-launch-'+input.attempt_id+'.json'),JSON.stringify({command,app_pid:process.pid,supervisor_pid:process.ppid}));
    res.end(JSON.stringify({prepared:true}));
    void ops.launch(input.attempt_id,command).catch(error=>writeFileSync(join(data,'probe-launch-error-'+input.attempt_id+'.json'),String(error.stack||error)));

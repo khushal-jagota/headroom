@@ -70,8 +70,15 @@ export async function send_push(
     apns: APNsAdapter | null;
     origin: string | null;
     now_s: number;
+    /** Names another Panels push in its log lines and its native delivery. */
+    source?: { label: string; subject_id: string; notification_type: string };
   },
 ): Promise<number> {
+  const source = options.source ?? {
+    label: 'stall alarm',
+    subject_id: 'stall',
+    notification_type: 'stall_alarm',
+  };
   let delivered = 0;
   if (targets.web_push_identity) {
     for (const subscription of targets.subscriptions) {
@@ -79,7 +86,7 @@ export async function send_push(
         subject: options.origin ?? 'https://localhost',
       });
       if (result.delivered) delivered++;
-      else console.warn('stall alarm web push failed: %s', result.error);
+      else console.warn('%s web push failed: %s', source.label, result.error);
     }
   }
   if (options.apns && options.origin) {
@@ -87,8 +94,8 @@ export async function send_push(
       const delivery: PendingAPNsDelivery = {
         edge: {
           subject_kind: 'panels',
-          subject_id: 'stall',
-          notification_type: 'stall_alarm',
+          subject_id: source.subject_id,
+          notification_type: source.notification_type,
           generation: 1,
         },
         device,
@@ -101,7 +108,7 @@ export async function send_push(
         now: options.now_s,
       });
       if (result.delivered) delivered++;
-      else console.warn('stall alarm native push failed: %s', result.error);
+      else console.warn('%s native push failed: %s', source.label, result.error);
     }
   }
   return delivered;

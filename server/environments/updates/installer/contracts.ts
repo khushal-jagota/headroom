@@ -6,6 +6,7 @@ export interface InstallerRequest {
   readonly current_root: string;
   readonly database: string;
   readonly data_directory: string;
+  readonly backup_directory: string;
   readonly attempt_id: string;
   readonly service_unit: string;
   readonly health_url: string;
@@ -32,6 +33,8 @@ export interface InstallerEffects {
   finish_rollback?(): Promise<string | null>;
   service(action: 'stop' | 'start'): Promise<void>;
   capture(): Promise<CaptureOutcome>;
+  /** After the stop and before the swap: the current app snapshots the quiet database. */
+  snapshot(deployed_revision: string, lifetime_lock_fd: number): Promise<void>;
   restore(snapshot: string, lifetime_lock_fd?: number): Promise<void>;
   /** After the swap and before start: the new app brings the stopped database to its head. */
   schema_steps(lifetime_lock_fd: number, backup_taken: boolean): Promise<void>;

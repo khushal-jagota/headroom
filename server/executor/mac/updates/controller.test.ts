@@ -51,10 +51,7 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
   };
   const archive = runtime_archive('a'.repeat(40), false, runtime_target);
   const phases: string[] = [];
-  let ready!: () => void, exit!: () => void;
-  const ready_received = new Promise<void>((resolve) => {
-    ready = resolve;
-  });
+  let exit!: () => void;
   const exit_requested = new Promise<void>((resolve) => {
     exit = resolve;
   });
@@ -65,6 +62,7 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
   const close_errors: Error[] = [];
   let close_status = 200;
   let close_hold: Promise<void> | undefined;
+  let download_hold: Promise<void> | undefined;
   class Peer extends HttpSessions {
     constructor() {
       super('https://fixture.invalid', CONNECTORS);
@@ -92,10 +90,16 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
         expect(input.path).toBe('/api/executor/update');
         const report = decode_bounded(input.body as Uint8Array, 'MacUpdateReport');
         phases.push(report.phase);
-        if (report.phase === 'ready_to_restart') ready();
         body = Buffer.from('{"confirmed":true}');
       } else {
         download_paths.push(input.path);
+        if (download_hold)
+          await Promise.race([
+            download_hold,
+            new Promise<never>((_resolve, reject) =>
+              input.signal!.addEventListener('abort', () => reject(input.signal!.reason)),
+            ),
+          ]);
         body = archive.bytes;
       }
       const response = new IncomingMessage(new Socket());
@@ -114,7 +118,6 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
     get planned_update_replay() {
       return replay;
     },
-    prepare_update: vi.fn(async () => true),
     finish_planned_replay: vi.fn(() => {
       replay = false;
     }),
@@ -168,13 +171,15 @@ function fixture(replay = false, trial = false, runtime_target?: RuntimeTarget) 
     check,
     phases,
     on_failure,
-    ready_received,
     exit_requested,
     downloads: () => download_paths.length,
     download_paths,
     authentication_trace,
     closes,
     close_errors,
+    hold_download(hold: Promise<void> | undefined) {
+      download_hold = hold;
+    },
     close_response(status: number, hold?: Promise<void>) {
       close_status = status;
       close_hold = hold;
@@ -212,20 +217,15 @@ test('prefetch supplies an offered activation and records handoff before exit', 
       archive_path: prefetch_path,
     },
   });
-  await f.ready_received;
+  await vi.waitFor(() => expect(f.download_paths).toEqual([prefetch_path]));
+  expect(f.phases).toEqual([]);
   expect(f.closes).toHaveLength(1);
   f.controller.offer(f.check({ ...f.target, activate: true }));
   await f.exit_requested;
   expect(f.download_paths).toEqual([prefetch_path]);
   expect(f.authentication_trace[0]![1]).toBe('b'.repeat(43));
   expect(f.authentication_trace.slice(1).every((entry) => entry[1] === 'c'.repeat(43))).toBe(true);
-  expect(f.runner.prepare_update).toHaveBeenCalledTimes(1);
-  expect(f.phases).toEqual([
-    'ready_to_restart',
-    'ready_to_restart',
-    'downloading',
-    'ready_to_restart',
-  ]);
+  expect(f.phases).toEqual(['downloading']);
   expect(existsSync(join(f.root, 'updates', 'prefetch.tar.gz'))).toBe(false);
   const pending = JSON.parse(readFileSync(join(f.root, 'updates', 'pending.json'), 'utf8'));
   expect(pending).toMatchObject({
@@ -237,11 +237,13 @@ test('prefetch supplies an offered activation and records handoff before exit', 
   expect(readFileSync(join(pending.runtime_path, 'node/bin/node'), 'utf8')).toBe(
     'synthetic executable',
   );
-  expect(JSON.parse(readFileSync(join(f.root, 'updates', 'handoff.json'), 'utf8'))).toEqual({
-    executor_incarnation: f.identity.executor_incarnation,
-    connection_generation: 7,
+  const handoff = JSON.parse(readFileSync(join(f.root, 'updates', 'handoff.json'), 'utf8'));
+  expect(handoff).toEqual({
+    executor_incarnation: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    connection_generation: 0,
     replay_pending: true,
   });
+  expect(handoff.executor_incarnation).not.toBe(f.identity.executor_incarnation);
   let settled = false;
   const actual = f.controller.settled().then(() => {
     settled = true;
@@ -252,7 +254,7 @@ test('prefetch supplies an offered activation and records handoff before exit', 
   await actual;
   expect(f.on_failure).not.toHaveBeenCalled();
 });
-test('trial admission waits for supervisor selection, then cancellation resumes a prepared runtime', async () => {
+test('trial admission waits for supervisor selection, and an inactive target stops nothing', async () => {
   const f = fixture(true, true);
   await atomic_record(f.files, f.runtime.handoff_path!, {
     executor_incarnation: f.identity.executor_incarnation,
@@ -311,8 +313,30 @@ test('trial admission waits for supervisor selection, then cancellation resumes 
   expect(JSON.parse(readFileSync(f.runtime.handoff_path!, 'utf8')).replay_pending).toBe(false);
   await f.controller.apply(f.check(f.target));
   await f.controller.apply(f.check(null));
-  expect(f.runner.resume_after_cancelled_update).toHaveBeenCalledTimes(2);
+  expect(f.runner.resume_after_cancelled_update).toHaveBeenCalledTimes(1);
+  expect(f.phases).toEqual(['current', 'current']);
   expect(f.downloads()).toBe(0);
+});
+test('a newer target replaces a download in progress', async () => {
+  const f = fixture();
+  const held = new Deferred<void>();
+  f.hold_download(held.promise);
+  f.controller.start();
+  f.controller.offer(f.check({ ...f.target, activate: true }));
+  await vi.waitFor(() => expect(f.downloads()).toBe(1));
+  f.hold_download(undefined);
+  const newer = '/api/executor/update/newer/archive';
+  f.controller.offer(
+    f.check({ ...f.target, request_id: 'newer', archive_path: newer, activate: true }),
+  );
+  await f.exit_requested;
+  held.resolve();
+  expect(f.download_paths).toEqual([f.target.archive_path, newer]);
+  expect(JSON.parse(readFileSync(join(f.root, 'updates', 'pending.json'), 'utf8')).request_id).toBe(
+    'newer',
+  );
+  expect(existsSync(join(f.root, 'updates', 'failure.json'))).toBe(false);
+  expect(f.on_failure).not.toHaveBeenCalled();
 });
 
 test('handover retries back off, then shutdown joins its admitted close without ending the host', async () => {
