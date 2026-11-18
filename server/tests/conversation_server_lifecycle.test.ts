@@ -486,7 +486,13 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
         ),
       },
     }),
-  ).rejects.toThrow('Missing production backend factories: codex');
+  ).rejects.toThrow(
+    `Missing production backend factories: ${KNOWN_BACKEND_INSTANCE_IDS.filter(
+      (id) => id !== 'claude',
+    )
+      .sort()
+      .join(', ')}`,
+  );
   expect(bindings_seen).toEqual([]);
   let server!: StartedServer;
   await run_application_process(

@@ -138,7 +138,6 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
         on_failure,
         environment: {
           executable_path: () => '/synthetic/codex',
-          configured_executable_path: () => null,
           real_path: (path) => path,
           user_local_npm_prefix: () => join(root, 'npm'),
           prefix_is_owned_and_writable: () => false,

@@ -36,8 +36,6 @@ import {
   create_codex_backend_child_factory,
 } from '../../codex/runtime/adapter.ts';
 import { RememberedCodexLoginRejection } from '../../codex/runtime/login.ts';
-import { create_hermes_backend_child_factory } from '../../hermes/runtime/adapter.ts';
-import { hermes_acp_child_launch } from '../../hermes/runtime/launch.ts';
 import { parse_backend_instance_id } from '../../core/identity.ts';
 import type { PeerStatus } from './peer.ts';
 import type { ReplayScenario } from './scenarios.ts';
@@ -138,18 +136,6 @@ export function driver_factory(
         worker_supervision: owned.worker_supervision,
         remembered_login_rejection: new RememberedCodexLoginRejection(),
       },
-    );
-  }
-  if (driver_kind === 'hermes') {
-    const launch = hermes_acp_child_launch({
-      hermes_python: executable,
-      hermes_home: join(folders.home, '.hermes'),
-      hermes_python_source_root: folders.root,
-      panels_server_url: PANELS_SERVER_URL,
-    });
-    return create_hermes_backend_child_factory(
-      { ...launch, environment_overrides: [...launch.environment_overrides, records] },
-      { child_processes: owned.child_processes, worker_supervision: owned.worker_supervision },
     );
   }
   throw new Error(`no replay launch for driver ${driver_kind}`);

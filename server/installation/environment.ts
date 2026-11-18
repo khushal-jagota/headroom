@@ -51,12 +51,10 @@ export async function home_service_environment(
         });
     environment[home.environment_name] = await resolved_path(configured, host.account_home);
   }
-  // A configured file the executable sits beside is kept everywhere; an executable override
-  // only on macOS.
+  // An executable override is kept only on macOS.
   const retained = ['PLAN_UPDATE_REPOSITORY', 'PLAN_UPDATE_TOKEN_FILE'];
   for (const { manifest } of BUILT_IN_MANIFESTS) {
-    const { configured_beside, override_environment_name } = manifest.executable;
-    if (configured_beside) retained.push(configured_beside.environment_name);
+    const { override_environment_name } = manifest.executable;
     if (override_environment_name && host.system === 'darwin')
       retained.push(override_environment_name);
   }

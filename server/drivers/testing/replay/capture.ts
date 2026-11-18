@@ -31,7 +31,6 @@ const TEE_TARGET_ENVIRONMENT = 'REPLAY_CAPTURE_TARGET_ENVIRONMENT';
 const WIRES: Readonly<Record<string, ReplayWire>> = {
   claude: 'claude_stream_json',
   codex: 'codex_app_server',
-  hermes: 'acp',
 };
 
 export type TeeRecord =

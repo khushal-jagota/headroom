@@ -59,7 +59,7 @@ test('the existing conversation fixtures match Python projection rows and both l
     store.create_conversation(
       new ResolvedConversationStart({
         conversation_id: 'fixture',
-        backend_key: parse_backend_instance_id('hermes'),
+        backend_key: parse_backend_instance_id('codex'),
         model: 'fixture-model',
         reasoning_effort: null,
         role_materials: null,
