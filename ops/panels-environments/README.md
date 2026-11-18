@@ -95,8 +95,8 @@ Staging is not a service. Prepare its fake state under
 and stop it after active work. Ticket servers follow the same on-demand rule from their
 isolated worktrees.
 
-The live and backup units use the `vps` user's ordinary `HOME`, Hermes, Codex, and
-Claude homes. They contain no `User=` switch, privileged ownership choreography,
+The live and backup units use the `vps` user's ordinary `HOME`, Codex, Claude, and
+Antigravity homes. They contain no `User=` switch, privileged ownership choreography,
 tmpfiles rules, or root-owned environment-manager path.
 
 Backup and restore instructions are in [backup-restore.md](backup-restore.md).

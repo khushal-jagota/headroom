@@ -44,7 +44,7 @@ The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
 On the Mac, the command records the external Node at `/opt/homebrew/bin/node` for updates. It must stay outside the home and remain available.
 
-Provider login remains a separate step. Authenticate Codex, Claude, or Hermes before the first Worker starts.
+Provider login remains a separate step. Authenticate Codex, Claude, or Antigravity before the first Worker starts.
 For another device, configure Tailscale Serve HTTPS and the owner login through the existing trusted ingress.
 The local address does not grant remote access. See [deployment](../../docs/deployment.md) and [authority](../../docs/authority.md).
 
