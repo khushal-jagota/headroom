@@ -8,6 +8,7 @@ export function answer(overrides: Partial<CatalogAnswer> = {}): CatalogAnswer {
     default_reasoning_effort: null,
     diagnoses: [],
     complete: false,
+    identity: null,
     ...overrides,
   };
 }

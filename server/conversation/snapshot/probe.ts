@@ -20,7 +20,7 @@ export interface CardProbeParts {
   /** Its executable rule and status recipe. */
   readonly manifest: DriverManifest;
   readonly models?: DriverModelRules;
-  /** Reads the answer to the recipe's identity command. Null: the driver has no identity. */
+  /** Reads the answer to the recipe's identity command. Null: no command; the catalog may tell. */
   readonly read_identity: ((outcome: CommandOutcome) => BackendIdentity) | null;
   readonly read_catalog: CatalogReader;
 }
@@ -98,6 +98,8 @@ export async function probe_card(
     refresh: context.refresh,
   });
   diagnoses.push(...catalog.diagnoses);
+  if (identity === null && catalog.identity !== null)
+    identity = { ...catalog.identity, login_command: recipe.login_command };
   const advisory = context.discover_update_advisory
     ? await update_advisory(recipe, executable_path, version, environment)
     : null;

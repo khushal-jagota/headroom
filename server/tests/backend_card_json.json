@@ -332,85 +332,6 @@
         }
       ],
       "registry_lookups": []
-    },
-    {
-      "name": "hermes-inventory",
-      "card": {
-        "backend_key": "hermes",
-        "installed": true,
-        "executable_path": "/synthetic/hermes/venv/bin/hermes",
-        "version": "1.2.3",
-        "identity": null,
-        "available_models": [
-          {
-            "model_id": "provider:small",
-            "display_name": "Small",
-            "selected_variant": "provider:small",
-            "version": [],
-            "resolved_model_id": "provider:small",
-            "detail": "Configured model",
-            "reasoning_effort_options": null,
-            "enabled": true,
-            "option_descriptors": [],
-            "resolved_display_name": null
-          }
-        ],
-        "reasoning_effort_options": [],
-        "default_model_id": "provider:small",
-        "default_reasoning_effort": null,
-        "update_advisory": null,
-        "diagnoses": [],
-        "cached_usage": null,
-        "can_sign_in": false,
-        "reports_allowance_usage": false
-      },
-      "commands": [
-        [
-          "/synthetic/hermes/venv/bin/hermes",
-          "--version"
-        ]
-      ],
-      "catalog_calls": [
-        {
-          "provider": "hermes",
-          "refresh": true
-        }
-      ],
-      "registry_lookups": []
-    },
-    {
-      "name": "hermes-invalid-inventory",
-      "card": {
-        "backend_key": "hermes",
-        "installed": true,
-        "executable_path": "/synthetic/hermes/venv/bin/hermes",
-        "version": "1.2.3",
-        "identity": null,
-        "available_models": [],
-        "reasoning_effort_options": [],
-        "default_model_id": null,
-        "default_reasoning_effort": null,
-        "update_advisory": null,
-        "diagnoses": [
-          "Hermes' model inventory returned an invalid answer, so no models are listed."
-        ],
-        "cached_usage": null,
-        "can_sign_in": false,
-        "reports_allowance_usage": false
-      },
-      "commands": [
-        [
-          "/synthetic/hermes/venv/bin/hermes",
-          "--version"
-        ]
-      ],
-      "catalog_calls": [
-        {
-          "provider": "hermes",
-          "refresh": true
-        }
-      ],
-      "registry_lookups": []
     }
   ],
   "codex_login": [
@@ -1361,39 +1282,10 @@
       "commands": 12
     }
   ],
-  "hermes_machine": [
+  "codex_machine": [
     {
       "name": "first read",
       "cards": [
-        {
-          "backend_key": "hermes",
-          "installed": true,
-          "executable_path": "/synthetic/hermes/venv/bin/hermes",
-          "version": "1.2.3",
-          "identity": null,
-          "available_models": [
-            {
-              "model_id": "provider:small",
-              "display_name": "Small",
-              "selected_variant": "provider:small",
-              "version": [],
-              "resolved_model_id": "provider:small",
-              "detail": "Configured model",
-              "reasoning_effort_options": null,
-              "enabled": true,
-              "option_descriptors": [],
-              "resolved_display_name": null
-            }
-          ],
-          "reasoning_effort_options": [],
-          "default_model_id": "provider:small",
-          "default_reasoning_effort": null,
-          "update_advisory": null,
-          "diagnoses": [],
-          "cached_usage": null,
-          "can_sign_in": false,
-          "reports_allowance_usage": false
-        },
         {
           "backend_key": "codex",
           "installed": true,
@@ -1485,10 +1377,6 @@
         }
       ],
       "commands": [
-        [
-          "/synthetic/hermes/venv/bin/hermes",
-          "--version"
-        ],
         [
           "/synthetic/bin/codex",
           "--version"
@@ -1504,35 +1392,6 @@
       "name": "kept read",
       "cards": [
         {
-          "backend_key": "hermes",
-          "installed": true,
-          "executable_path": "/synthetic/hermes/venv/bin/hermes",
-          "version": "1.2.3",
-          "identity": null,
-          "available_models": [
-            {
-              "model_id": "provider:small",
-              "display_name": "Small",
-              "selected_variant": "provider:small",
-              "version": [],
-              "resolved_model_id": "provider:small",
-              "detail": "Configured model",
-              "reasoning_effort_options": null,
-              "enabled": true,
-              "option_descriptors": [],
-              "resolved_display_name": null
-            }
-          ],
-          "reasoning_effort_options": [],
-          "default_model_id": "provider:small",
-          "default_reasoning_effort": null,
-          "update_advisory": null,
-          "diagnoses": [],
-          "cached_usage": null,
-          "can_sign_in": false,
-          "reports_allowance_usage": false
-        },
-        {
           "backend_key": "codex",
           "installed": true,
           "executable_path": "/synthetic/bin/codex",
@@ -1623,10 +1482,6 @@
         }
       ],
       "commands": [
-        [
-          "/synthetic/hermes/venv/bin/hermes",
-          "--version"
-        ],
         [
           "/synthetic/bin/codex",
           "--version"

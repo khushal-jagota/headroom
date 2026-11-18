@@ -65,7 +65,7 @@ jobs:
           executor_revision=$(git rev-parse HEAD)
           executor_root=$(mktemp -d "$RUNNER_TEMP/linux-executor.XXXXXX")
           executor_evidence="$RUNNER_TEMP/linux-executor-evidence"
-          mkdir -p "$executor_evidence" "$executor_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,run,tmp,logs,backups,workspace,files,scratch}
+          mkdir -p "$executor_evidence" "$executor_root"/{home/.codex,home/.claude,config,cache,data,state,run,tmp,logs,backups,workspace,files,scratch}
           executor_cleanup() {
             local status=$?
             trap - EXIT
@@ -86,7 +86,7 @@ jobs:
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
             EXECUTOR_ROOT="$executor_root" EXECUTOR_EVIDENCE="$executor_evidence" EXECUTOR_REVISION="$executor_revision" \
             HOME="$executor_root/home" CODEX_HOME="$executor_root/home/.codex" \
-            CLAUDE_CONFIG_DIR="$executor_root/home/.claude" HERMES_HOME="$executor_root/home/.hermes" PLAN_HERMES_HOME="$executor_root/home/.hermes" \
+            CLAUDE_CONFIG_DIR="$executor_root/home/.claude" \
             XDG_CONFIG_HOME="$executor_root/config" XDG_CACHE_HOME="$executor_root/cache" XDG_DATA_HOME="$executor_root/data" \
             XDG_STATE_HOME="$executor_root/state" XDG_RUNTIME_DIR="$executor_root/run" TMPDIR="$executor_root/tmp" TMP="$executor_root/tmp" TEMP="$executor_root/tmp" \
             npm_config_cache="$executor_root/cache/npm" PIP_CONFIG_FILE=/dev/null \
@@ -163,7 +163,7 @@ jobs:
           native_tmp=$(mktemp -d "/tmp/p21-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")
           native_tmp=$(cd "$native_tmp" && pwd -P)
           trap 'native_exit=$?; if [ "$native_exit" -eq 0 ]; then rm -rf -- "$native_tmp"; fi' EXIT
-          mkdir -p "$native_root"/{home/.codex,home/.claude,home/.hermes,config,cache,data,state,runtime,logs,backups,workspace,files,tickets,app} "$native_evidence"
+          mkdir -p "$native_root"/{home/.codex,home/.claude,config,cache,data,state,runtime,logs,backups,workspace,files,tickets,app} "$native_evidence"
           printf '{}\n' > "$native_root/config.yaml"
           native_revision=$(git rev-parse HEAD)
           # Scrub before npm lifecycle scripts or any repository launcher.
@@ -172,7 +172,6 @@ jobs:
             GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" MAC_SOURCE_REVISION="$native_revision" \
             HOME="$native_root/home" \
             CODEX_HOME="$native_root/home/.codex" CLAUDE_CONFIG_DIR="$native_root/home/.claude" \
-            HERMES_HOME="$native_root/home/.hermes" PLAN_HERMES_HOME="$native_root/home/.hermes" \
             XDG_CONFIG_HOME="$native_root/config" XDG_CACHE_HOME="$native_root/cache" \
             XDG_DATA_HOME="$native_root/data" XDG_STATE_HOME="$native_root/state" \
             XDG_RUNTIME_DIR="$native_root/runtime" \

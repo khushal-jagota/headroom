@@ -165,15 +165,15 @@ TypeScript closes sign-in admission when shutdown begins. Later or queued starts
 
 The production provider set also closes catalog and usage admission, aborts its owned probes, and joins them before shutdown completes. Snapshot environment cleanup and sign-in cleanup both run even if either fails. An aggregate error retains their failures.
 
-## Hermes ACP ordering and bounded retirement
+## ACP ordering and bounded retirement
 
-The Manager accepted strict read-order handling for Hermes. TS finishes each notification, request admission, and asynchronous reply effect before it admits the next frame. This includes managed-image persistence. Normal sink callbacks have no deadline, so a slow database does not break a healthy wire.
+The Manager accepted strict read-order handling for the shared ACP layer in `drivers/acp/`. TS finishes each notification, request admission, and asynchronous reply effect before it admits the next frame. This includes managed-image persistence. Normal sink callbacks have no deadline, so a slow database does not break a healthy wire.
 
 The Manager also accepted a 15-second drain bound after the direct child exits while a descendant retains stdout. TS fails the remaining wire operations after the bound. The reused process owner never signals a group after its leader was reaped.
 
-Steer and configuration RPCs each have a 15-second reply deadline. A hung earlier persistence callback can therefore delay those callers only until their own deadline. The official SDK then sends `$/cancel_request` and stops waiting for that RPC only. Steer returns uncertain. Configuration raises `NeedsRebind`, because the applied value is unknown, and the core retires that child before another prompt. During startup, cleanup precedes `SessionLoadFailed`. Other pending requests and the wire stay intact. Regular turns and image persistence gain no deadline, and TS discards no valid content to release the queue.
+Configuration RPCs each have a 15-second reply deadline. A hung earlier persistence callback can therefore delay those callers only until their own deadline. The official SDK then sends `$/cancel_request` and stops waiting for that RPC only. Configuration raises `NeedsRebind`, because the applied value is unknown, and the core retires that child before another prompt. During startup, cleanup precedes `SessionLoadFailed`. Other pending requests and the wire stay intact. Regular turns and image persistence gain no deadline, and TS discards no valid content to release the queue.
 
-Whole-update validation uses the official SDK JSON schema before its best-effort deserializer. TS rejects out-of-schema updates whole, including numeric fields sent as strings, instead of coercing them. Real Hermes serializes numeric model fields as numbers.
+Whole-update validation uses the official SDK JSON schema before its best-effort deserializer. TS rejects out-of-schema updates whole, including numeric fields sent as strings, instead of coercing them.
 
 ## Separate Mac executor state
 

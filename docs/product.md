@@ -10,7 +10,7 @@ Headroom is an agent harness whose job is to reduce Khushal's mental load. Agent
 - **Workers**, one agent per Ticket, doing that Ticket's work.
 - **Goal agents**, one per goal, keeping its page current.
 
-Every agent is a [conversation](conversations.md) running Codex or Claude Code. What may act on what is one rule: you may act on anything strictly below you. See [Who may act](authority.md).
+Every agent is a [conversation](conversations.md) running Codex, Claude Code or Antigravity. What may act on what is one rule: you may act on anything strictly below you. See [Who may act](authority.md).
 
 ## A piece of work, from first thought to done
 

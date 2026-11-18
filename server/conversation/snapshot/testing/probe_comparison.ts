@@ -12,7 +12,6 @@ import { built_in_model_version } from '../probe.ts';
 import type { DriverStatus } from '../../../drivers/core/status.ts';
 import { create_claude_status } from '../../../drivers/claude/runtime/status.ts';
 import { create_codex_status } from '../../../drivers/codex/runtime/status.ts';
-import { create_hermes_status } from '../../../drivers/hermes/runtime/status.ts';
 import { RecordingBackendProbeEnvironment } from '../recording_environment.ts';
 import { parse_version, version_is_newer } from '../logic/versions.ts';
 
@@ -27,7 +26,6 @@ interface Case {
   readonly latest: string | null;
   readonly codex_catalog?: CodexModelCatalog;
   readonly claude_catalog?: ClaudeModelCatalog;
-  readonly hermes_catalog?: unknown;
   readonly login: {
     present: boolean;
     readable: boolean;
@@ -42,9 +40,7 @@ export async function run(cases: readonly Case[]) {
   for (const fixture of cases) {
     const environment = new RecordingBackendProbeEnvironment();
     const catalog_calls: unknown[] = [];
-    const paths =
-      fixture.backend === 'hermes' ? environment.configured_executables : environment.executables;
-    paths.set(fixture.backend, fixture.executable);
+    environment.executables.set(fixture.backend, fixture.executable);
     environment.real_paths.set(fixture.executable, fixture.real_path);
     if (fixture.writable) environment.writable_prefixes.add('/synthetic/.local');
     if (fixture.latest !== null)
@@ -96,16 +92,6 @@ export async function run(cases: readonly Case[]) {
           catalog_calls.push({ provider: 'claude', executable });
           if (fixture.claude_catalog === undefined) throw new ClaudeModelCatalogUnavailable();
           return fixture.claude_catalog;
-        },
-      }),
-      hermes: create_hermes_status({
-        catalog: async ({ refresh }) => {
-          catalog_calls.push({ provider: 'hermes', refresh });
-          return {
-            exit_code: 0,
-            standard_output: JSON.stringify(fixture.hermes_catalog),
-            standard_error: '',
-          };
         },
       }),
     };

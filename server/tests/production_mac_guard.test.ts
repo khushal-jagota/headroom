@@ -176,7 +176,7 @@ test('local composition refuses a retained Mac Ticket before constructing its se
             working_turns: [],
             admission_stopped: false,
             cleanup_uncertainties: [],
-            driver_kinds: ['hermes', 'codex', 'claude'],
+            driver_kinds: ['codex', 'claude'],
           }),
         ],
       );

@@ -73,7 +73,7 @@ it('prefers the concrete catalog label, unless it is only the id or the variant 
     ).toBe('Opus 5.5');
 });
 
-it("offers a reasoning select from the model's own efforts, and none for a Hermes-shaped model", () => {
+it("offers a reasoning select from the model's own efforts, and none for a model without efforts", () => {
   expect(
     card_models('codex', [
       model({ model_id: 'gpt-6.1-sol', reasoning_effort_options: ['low', 'high'] }),
@@ -95,7 +95,7 @@ it("offers a reasoning select from the model's own efforts, and none for a Herme
     [],
   ]);
   expect(
-    card_models('hermes', [
+    card_models('unlisted', [
       model({ model_id: 'anthropic/claude-opus', reasoning_effort_options: null }),
     ]),
   ).toEqual([

@@ -7,7 +7,7 @@ function request_id(frame: unknown): string | number | null {
   if (!is_record(frame) || typeof frame.method !== 'string') return null;
   return typeof frame.id === 'string' || typeof frame.id === 'number' ? frame.id : null;
 }
-/** Codex (`codex_app_server`) and Hermes (`acp`) differ only in the `jsonrpc` member. */
+/** Codex (`codex_app_server`) and ACP (`acp`) differ only in the `jsonrpc` member. */
 export const JSON_RPC_WIRE: ReplayWireRules = {
   launch_placeholders: () => ({}),
   request_method: (frame) =>

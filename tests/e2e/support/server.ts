@@ -39,8 +39,6 @@ export function syntheticHomes(storage: string): Record<string, string> {
     HOME: home,
     CODEX_HOME: join(home, '.codex'),
     CLAUDE_CONFIG_DIR: join(home, '.claude'),
-    HERMES_HOME: join(home, '.hermes'),
-    PLAN_HERMES_HOME: join(home, '.hermes'),
   };
   for (const path of Object.values(homes)) mkdirSync(path, { recursive: true });
   return homes;

@@ -23,6 +23,7 @@ import {
   provision_account_skills,
 } from './account.ts';
 import { environment_provision_skills } from '../environments/cli.ts';
+import { PROVISION_SKILLS_HOME_OPTIONS } from '../environments/command_contracts.ts';
 import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 const roots: string[] = [];
 afterEach(() => {
@@ -30,30 +31,42 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+/** One home per built-in driver home, under root, with that driver's skills folder. */
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'account-skills-'));
   roots.push(root);
   const parent = join(root, 'data'),
-    homes = ['codex', 'claude'].map((name) => join(root, name));
+    homes = PROVISION_SKILLS_HOME_OPTIONS.map(({ destination, home }) => ({
+      destination,
+      environment_name: home.environment_name,
+      path: join(root, home.isolated_directory_name),
+      skills_directory: home.skills_directory ?? 'skills',
+    }));
   for (const name of ['panels', 'panels-worker', 'panels-worker-personal-task']) {
     mkdirSync(join(parent, 'skills', name), { recursive: true });
     writeFileSync(join(parent, 'skills', name, 'SKILL.md'), name);
   }
   return { root, parent, homes };
 }
+const skills_of = (home: { path: string; skills_directory: string }) =>
+  join(home.path, home.skills_directory);
+function stub_homes(root: string, homes: ReturnType<typeof fixture>['homes']) {
+  vi.stubEnv('HOME', root);
+  for (const home of homes) vi.stubEnv(home.environment_name, home.path);
+}
 test('account publication preflights all homes, reconciles only owned links, and preserves foreign entries', async () => {
   const { root, parent, homes } = fixture();
   expect(account_skill_provisioning_conflict(parent, homes)).toBeNull();
   expect(readdirSync(root)).toEqual(['data']);
   expect(provision_account_skills(parent, homes)).toBeNull();
-  const link = join(homes[0], 'skills', 'panels'),
+  const link = join(skills_of(homes[0]!), 'panels'),
     inode = lstatSync(link).ino;
-  const hidden = join(homes[0], 'skills', 'panels-worker-personal-task');
+  const hidden = join(skills_of(homes[0]!), 'panels-worker-personal-task');
   symlinkSync(join(parent, 'skills', 'panels-worker-personal-task'), hidden);
   expect(provision_account_skills(parent, homes)).toBeNull();
   expect(lstatSync(link).ino).toBe(inode);
-  expect(readdirSync(join(homes[0], 'skills'))).not.toContain('panels-worker-personal-task');
-  const foreign = join(homes[0], 'skills', 'panels-rollover');
+  expect(readdirSync(skills_of(homes[0]!))).not.toContain('panels-worker-personal-task');
+  const foreign = join(skills_of(homes[0]!), 'panels-rollover');
   symlinkSync(join(root, 'foreign'), foreign);
   const unused = join(root, 'unused');
   expect(provision_account_skills(parent, [unused, ...homes])).toContain(
@@ -63,7 +76,10 @@ test('account publication preflights all homes, reconciles only owned links, and
   expect(readlinkSync(foreign)).toBe(join(root, 'foreign'));
   expect(lstatSync(link).ino).toBe(inode);
   const result = await environment_provision_skills(
-    { database_parent: parent, codex_home: homes[0], claude_home: homes[1] },
+    {
+      database_parent: parent,
+      ...Object.fromEntries(homes.map(({ destination, path }) => [destination, path])),
+    },
     { expand_path: (value) => value, admit_path: (value) => value },
   );
   expect(result).toMatchObject({ exit_code: 0, stdout: '' });
@@ -85,14 +101,9 @@ test('account publication preflights all homes, reconciles only owned links, and
 });
 test('startup honors provider homes and provisioning choice in test mode, and a conflict warns without aborting', async () => {
   const { root, parent, homes } = fixture();
-  for (const [key, value] of Object.entries({
-    HOME: root,
-    CODEX_HOME: homes[0],
-    CLAUDE_CONFIG_DIR: homes[1],
-  }))
-    vi.stubEnv(key, value);
+  stub_homes(root, homes);
   expect(account_skill_homes()).toEqual(
-    homes.map((path) => ({ path, skills_directory: 'skills' })),
+    homes.map(({ path, skills_directory }) => ({ path, skills_directory })),
   );
   const config = loadConfig(join(root, 'absent.yaml'), {
     PLAN_DB_PATH: join(parent, 'db'),
@@ -104,13 +115,14 @@ test('startup honors provider homes and provisioning choice in test mode, and a 
   expect(() =>
     loadConfig(join(root, 'absent.yaml'), { PLAN_PROVISION_ACCOUNT_SKILLS: 'bad' }),
   ).toThrow('invalid boolean');
-  expect(EXTERNAL_RUNTIME_ENVIRONMENT_KEYS.has('CODEX_HOME')).toBe(true);
-  expect(EXTERNAL_RUNTIME_ENVIRONMENT_KEYS.has('CLAUDE_CONFIG_DIR')).toBe(true);
+  for (const home of homes)
+    expect(EXTERNAL_RUNTIME_ENVIRONMENT_KEYS.has(home.environment_name)).toBe(true);
   config.test_mode = true;
   await publish_worker_skills(config);
-  expect(readlinkSync(join(homes[0], 'skills', 'panels'))).toBe(join(parent, 'skills', 'panels'));
-  rmSync(join(homes[0], 'skills', 'panels'));
-  mkdirSync(join(homes[0], 'skills', 'panels'));
+  for (const home of homes)
+    expect(readlinkSync(join(skills_of(home), 'panels'))).toBe(join(parent, 'skills', 'panels'));
+  rmSync(join(skills_of(homes[0]!), 'panels'));
+  mkdirSync(join(skills_of(homes[0]!), 'panels'));
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   await expect(publish_worker_skills(config)).resolves.toBeUndefined();
   expect(warn).toHaveBeenCalledWith(expect.stringContaining('one instance per OS account'));
@@ -125,15 +137,10 @@ test('startup honors provider homes and provisioning choice in test mode, and a 
 
 test('startup publication keeps the event loop responsive while a provider lock is held', async () => {
   const { root, parent, homes } = fixture();
-  for (const [key, value] of Object.entries({
-    HOME: root,
-    CODEX_HOME: homes[0],
-    CLAUDE_CONFIG_DIR: homes[1],
-  }))
-    vi.stubEnv(key, value);
-  const first = [...homes].sort()[0]!;
-  mkdirSync(first);
-  const fd = openSync(join(first, '.panels-skills.lock'), 'a+', 0o600);
+  stub_homes(root, homes);
+  const first = [...homes].sort((a, b) => (a.path < b.path ? -1 : 1))[0]!;
+  mkdirSync(first.path);
+  const fd = openSync(join(first.path, '.panels-skills.lock'), 'a+', 0o600);
   expect(flock(fd, 'exclusive')).toBe(0);
   const config = loadConfig(join(root, 'absent.yaml'), {
     PLAN_DB_PATH: join(parent, 'db'),
@@ -153,25 +160,29 @@ test('startup publication keeps the event loop responsive while a provider lock 
   }
   await pending;
   expect(settled).toBe(true);
-  expect(readlinkSync(join(first, 'skills', 'panels'))).toBe(join(parent, 'skills', 'panels'));
+  expect(readlinkSync(join(skills_of(first), 'panels'))).toBe(join(parent, 'skills', 'panels'));
 });
 
-// Gap: no other test proves a manifest's skills_directory, rather than 'skills', receives the links.
-test('a driver home that names its skills folder gets its skills linked there', () => {
+// Gap: no other test proves a manifest's nested skills_directory, rather than 'skills', receives
+// the links through folders Panels makes, and that a linked intermediate folder is never followed.
+test('a driver home that names a nested skills folder gets its skills linked there', () => {
   const { root, parent } = fixture();
   const [driver] = BUILT_IN_MANIFESTS;
-  const home = { ...driver!.manifest.home!, skills_directory: 'agent-skills' };
+  const home = { ...driver!.manifest.home!, skills_directory: 'agent/skills' };
   const homes = account_skill_homes(
     { HOME: root, [home.environment_name]: join(root, 'scripted') },
     [{ manifest: { ...driver!.manifest, home } }],
   );
-  expect(homes).toEqual([{ path: join(root, 'scripted'), skills_directory: 'agent-skills' }]);
+  expect(homes).toEqual([{ path: join(root, 'scripted'), skills_directory: 'agent/skills' }]);
   expect(provision_account_skills(parent, homes)).toBeNull();
-  expect(readlinkSync(join(root, 'scripted', 'agent-skills', 'panels'))).toBe(
+  expect(readlinkSync(join(root, 'scripted', 'agent', 'skills', 'panels'))).toBe(
     join(parent, 'skills', 'panels'),
   );
-  expect(readdirSync(join(root, 'scripted')).sort()).toEqual([
-    '.panels-skills.lock',
-    'agent-skills',
-  ]);
+  expect(readdirSync(join(root, 'scripted')).sort()).toEqual(['.panels-skills.lock', 'agent']);
+  const linked = { path: join(root, 'linked'), skills_directory: 'agent/skills' };
+  mkdirSync(join(root, 'elsewhere'));
+  mkdirSync(linked.path);
+  symlinkSync(join(root, 'elsewhere'), join(linked.path, 'agent'));
+  expect(provision_account_skills(parent, [linked])).toContain('one instance per OS account');
+  expect(readdirSync(join(root, 'elsewhere'))).toEqual([]);
 });

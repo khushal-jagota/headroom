@@ -53,9 +53,6 @@ import { create_codex_backend_child_factory } from '../drivers/codex/runtime/ada
 import type { CodexClient } from '../drivers/codex/runtime/adapter.ts';
 import { CodexRequestRejected } from '../drivers/codex/runtime/client.ts';
 import { RememberedCodexLoginRejection } from '../drivers/codex/runtime/login.ts';
-import { create_hermes_backend_child_factory } from '../drivers/hermes/runtime/adapter.ts';
-import { HermesAcpLauncher } from '../drivers/hermes/runtime/client.ts';
-import type { HermesAcpClient } from '../drivers/hermes/runtime/client.ts';
 
 // Inventory #8: the provider reports news while its prompt receipt is still withheld.
 // The real scripted process and real record together prove the provider/core/store boundary.
@@ -710,37 +707,6 @@ test("a failed Codex resume records Codex's own error text", async () => {
     'no rollout found for thread lost-session',
     'rollout file is missing',
   );
-});
-
-test("a failed Hermes resume records Hermes's own error text", async () => {
-  const client = {
-    signal: new AbortController().signal,
-    async request(method: string) {
-      if (method === 'session/load') throw new Error('Session lost-session not found');
-      return {};
-    },
-    close() {},
-  };
-  try {
-    vi.spyOn(HermesAcpLauncher.prototype, 'start').mockResolvedValue(
-      client as unknown as HermesAcpClient,
-    );
-    vi.spyOn(HermesAcpLauncher.prototype, 'stop').mockResolvedValue();
-    vi.spyOn(HermesAcpLauncher.prototype, 'standard_error_tail').mockReturnValue(
-      'KeyError: lost-session\n',
-    );
-    const factory = create_hermes_backend_child_factory(
-      { argv: ['/synthetic/hermes'], environment_overrides: [] },
-      { child_processes: new ChildProcesses(), worker_supervision: {} as WorkerSupervisionRuntime },
-    );
-    expect_session_load_refusal(
-      await refused_resume(factory),
-      'Session lost-session not found',
-      'KeyError: lost-session',
-    );
-  } finally {
-    vi.restoreAllMocks();
-  }
 });
 
 // A refusal detail is shown in place of the friendly sentence, so it must hold no secret.
