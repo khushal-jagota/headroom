@@ -374,6 +374,7 @@ it('copies a complete selected closure once and refuses changed source or an app
       current_root: current,
       database: join(root, 'database/custom.sqlite'),
       data_directory: data,
+      backup_directory: data,
       attempt_id: 'first',
       node_executable: process.execPath,
       service_unit: 'fixture.service',

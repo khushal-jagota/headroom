@@ -16,6 +16,7 @@ import {
   installer_test_mode,
   SERVICE_COMMAND_TIMEOUT_SECONDS,
   INTERRUPTION_CAPTURE_BUDGET_SECONDS,
+  DATABASE_SNAPSHOT_TIMEOUT_SECONDS,
   DATABASE_RESTORE_TIMEOUT_SECONDS,
   SCHEMA_STEP_TIMEOUT_SECONDS,
 } from './configuration.ts';
@@ -276,6 +277,27 @@ export function create_installer_effects(
           throw error;
         return { kind: 'unavailable', detail: error_detail(error).message };
       }
+    },
+    async snapshot(deployed_revision, lifetime_lock_fd) {
+      const value = phase(execution, DATABASE_SNAPSHOT_TIMEOUT_SECONDS);
+      await require_node_runtime(request, value);
+      const app = join(request.current_root, 'app'),
+        main = join(app, 'server/environments/updates/snapshot_main.ts');
+      for (const path of [request.database, request.backup_directory, app, main])
+        assert_installer_path(path, execution.environment);
+      await run_installer_command(
+        [
+          request.node_executable,
+          main,
+          request.database,
+          request.backup_directory,
+          deployed_revision,
+          request.data_directory,
+          request.attempt_id,
+        ],
+        value,
+        { check: true, output: 'inherit', lifetime_lock_fd },
+      );
     },
     async restore(snapshot, lifetime_lock_fd) {
       assert_installer_path(snapshot, execution.environment);

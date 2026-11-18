@@ -1,11 +1,12 @@
 /** Production bindings use the invocation's existing stores and process owners. */
 import { backend_executable_path } from '../../../conversation/snapshot/environment.ts';
-import { SHUTDOWN_GRACE_SECONDS } from '../../../lifecycle/configuration.ts';
+import { SHUTDOWN_GRACE_SECONDS, SHUTDOWN_HARD_SECONDS } from '../../../lifecycle/configuration.ts';
 import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
 import type { LoadedExecutorDriver } from '../adapters.ts';
 import { create_mac_catalog } from '../catalog/production.ts';
 import { MAC_RUNTIME_UPDATE_EXIT_CODE } from '../configuration.ts';
 import { MacUpdateController, create_update_session } from '../updates/controller.ts';
+import { failure_detail } from '../failure_detail.ts';
 import { MacService } from './service.ts';
 import type { MacHostBindings, MacHostOptions } from './contracts.ts';
 
@@ -13,6 +14,7 @@ export function production_bindings(
   configuration: MacHostOptions,
   environment: Readonly<NodeJS.ProcessEnv>,
   drivers: readonly LoadedExecutorDriver[],
+  replacing: () => void = () => {},
 ): MacHostBindings {
   return {
     adapters: (owners) =>
@@ -35,7 +37,10 @@ export function production_bindings(
         runtime: context.runtime,
         session_factory: () =>
           create_update_session(configuration.panels_server_url, configuration.http),
-        request_exit: () => context.request_exit(MAC_RUNTIME_UPDATE_EXIT_CODE),
+        request_exit: () => {
+          replacing();
+          context.request_exit(MAC_RUNTIME_UPDATE_EXIT_CODE);
+        },
         on_failure: context.on_failure,
       }),
   };
@@ -54,12 +59,22 @@ export async function run_mac_service(
   const sigint = () => interrupt(130),
     sigterm = () => interrupt(143);
   const options = () => ({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  // The fixed supervisor swaps runtimes only on the update exit code. Once the swap is
+  // saved, failed or unfinished cleanup of this runtime cannot keep it. The next runtime
+  // stops leftover Workers by their launchd job or cgroup.
+  let forced: ReturnType<typeof setTimeout> | undefined;
+  const replacing = () => {
+    forced ??= setTimeout(
+      () => process.exit(MAC_RUNTIME_UPDATE_EXIT_CODE),
+      SHUTDOWN_HARD_SECONDS * 1000,
+    );
+  };
   process.on('SIGINT', sigint);
   process.on('SIGTERM', sigterm);
   try {
     service = await MacService.open(
       configuration,
-      production_bindings(configuration, environment, await load_executor_drivers()),
+      production_bindings(configuration, environment, await load_executor_drivers(), replacing),
       options(),
     );
     if (interrupted !== undefined) {
@@ -68,6 +83,10 @@ export async function run_mac_service(
       return interrupted;
     }
     return await service.run();
+  } catch (error) {
+    if (forced === undefined) throw error;
+    console.error('Executor cleanup failed before its replacement:', failure_detail(error));
+    return MAC_RUNTIME_UPDATE_EXIT_CODE;
   } finally {
     try {
       if (service) {
@@ -77,7 +96,11 @@ export async function run_mac_service(
           await service.settled();
         }
       }
+    } catch (error) {
+      if (forced === undefined) throw error;
     } finally {
+      // A handle that outlives this return still cannot hold the exit.
+      forced?.unref();
       process.removeListener('SIGINT', sigint);
       process.removeListener('SIGTERM', sigterm);
     }

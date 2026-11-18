@@ -450,7 +450,11 @@ export class MacPresenceService {
     protocol_header: string | null;
   }): ExecutorIdentity {
     this.contact();
-    if (protocol_header !== String(PROTOCOL_VERSION))
+    if (
+      protocol_header === null ||
+      !/^[0-9]+$/.test(protocol_header) ||
+      !supports_executor_versions(Number(protocol_header), SPOOL_FORMAT_VERSION)
+    )
       throw new PlannerError(
         'executor_version_refused',
         'This Mac executor speaks another protocol.',

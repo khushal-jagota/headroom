@@ -30,10 +30,7 @@ import type {
   MacRunningChild,
 } from './contracts.ts';
 import type { MacSourceWorkContract } from './retirement_contracts.ts';
-import type {
-  MacMaintenanceContract,
-  MacMaintenanceDependencies,
-} from './maintenance_contracts.ts';
+import type { MacMaintenanceContract } from './maintenance_contracts.ts';
 import type { MacRunnerLifetimeContract } from './lifetime_contracts.ts';
 
 export interface MacLiveEvents {
@@ -80,7 +77,6 @@ export interface MacRunnerOptions {
   readonly inputs: MacCommandDependencies['inputs'];
   readonly live: MacLiveEvents | null;
   readonly now_ms: MacCommandDependencies['now_ms'];
-  readonly new_update_id: MacMaintenanceDependencies['new_update_id'];
 }
 export interface MacRunnerContract
   extends

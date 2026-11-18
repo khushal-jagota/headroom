@@ -40,9 +40,6 @@ test('refresh capture and publication share the same owner', async () => {
     outbox: {} as OutboxStore,
     cleanup: {} as CleanupReconciliationDependencies,
     now_ms: () => 0,
-    new_update_id: () => {
-      throw new Error('No update');
-    },
     live: null,
     inputs: { download_inputs: unexpected },
     native: native_fixture_options({

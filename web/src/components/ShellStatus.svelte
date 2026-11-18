@@ -27,7 +27,6 @@
     if (!card?.action) return;
     switch (card.action.does) {
       case "offer": actions?.openDialog("offer"); break;
-      case "waiting": actions?.openDialog("waiting"); break;
       case "refresh": requestReleaseReload(); break;
       case "reconnect": retryChangeStream(); break;
       case "retry": void actions?.perform({ action: "retry" }, "failed"); break;

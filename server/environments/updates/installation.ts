@@ -2,7 +2,6 @@
 import type { OwnedChildProcesses } from '../../lifecycle/contracts.ts';
 import type { InstallerOperations } from './contracts.ts';
 import { create_migration_status } from './migration_status.ts';
-import { create_database_backup } from '../backup/capture.ts';
 import { run_release_command } from '../release/process.ts';
 import { copy_installer_runtime } from '../release/installer_bundle.ts';
 import {
@@ -30,7 +29,6 @@ export function create_installer_operations(inputs: {
   return {
     ...(inputs.darwin_home ? { requires_snapshot: true } : {}),
     ...create_migration_status(),
-    create_backup: create_database_backup,
     prepare(options) {
       inputs.signal.throwIfAborted();
       for (const path of [
@@ -38,6 +36,7 @@ export function create_installer_operations(inputs: {
         options.current_root,
         options.database,
         options.data_directory,
+        options.backup_directory,
       ])
         assert_installer_path(path, environment);
       assert_installer_health_url(options.health_url, environment);

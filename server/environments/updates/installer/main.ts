@@ -37,6 +37,7 @@ function read_request(path: string): InstallerRequest {
     current_root: absolute('current_root'),
     database: absolute('database'),
     data_directory: absolute('data_directory'),
+    backup_directory: absolute('backup_directory'),
     attempt_id: text('attempt_id'),
     service_unit: text('service_unit'),
     health_url,

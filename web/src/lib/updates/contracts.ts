@@ -1,11 +1,10 @@
 /** The JSON projection of `GET /api/updates` (self-update contract, section 10). */
 import type { MacStatus } from "../ticketMachines";
 
-export type UpdateMode = "now" | "idle";
 export type UpdateActivity = "idle" | "busy" | "unknown";
-export type UpdateState = "up_to_date" | "available" | "waiting" | "updating" | "failed" | "mac_failed" | "mac_unreachable";
-export type UpdateAction = "update" | "cancel" | "update_now" | "retry" | "retry_mac";
-export type UpdateAttemptState = "waiting" | "preparing" | "installing" | "done" | "failed";
+export type UpdateState = "up_to_date" | "available" | "updating" | "failed" | "mac_failed" | "mac_unreachable";
+export type UpdateAction = "update" | "retry" | "retry_mac";
+export type UpdateAttemptState = "preparing" | "installing" | "done" | "failed";
 
 /** The ready release. The page reads only the SHA it installs. */
 export type AvailableUpdate = { app_sha: string };
@@ -14,7 +13,6 @@ export type UpdateAttempt = {
   attempt_id: string;
   from_sha: string;
   to_sha: string;
-  mode: UpdateMode;
   state: UpdateAttemptState;
   detail: string | null;
   deadline_at: string | null;
@@ -28,7 +26,7 @@ export type UpdateStatus = {
   attempt: UpdateAttempt | null;
   /** The running SHA. */
   app_sha: string;
-  /** Plain text for the existing offer, waiting, and failure details. */
+  /** Plain text: the work an offered update interrupts, or why an update failed. */
   detail: string | null;
   /** Until when a lost connection still counts as updating. */
   deadline_at: string | null;
@@ -36,5 +34,4 @@ export type UpdateStatus = {
   mac_details: MacStatus | null;
 };
 
-export type InstallUpdateBody = { app_sha: string; mode: UpdateMode; confirm_activity: boolean };
-export type UpdateNowBody = { confirm_activity: boolean };
+export type InstallUpdateBody = { app_sha: string };

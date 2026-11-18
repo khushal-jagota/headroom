@@ -1,10 +1,12 @@
 /** Latest lease offers prepare an independent, durable runtime handoff. */
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { platform } from 'node:os';
 import { LINUX_EXECUTOR } from '../../../environments/release/contracts.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
+import { observe_promise } from '../../../core/promise_observer.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 import { encode_bounded } from '../../protocol.ts';
 import { EXECUTOR_HANDOVER_CLOSE_PATH } from '../../configuration.ts';
@@ -37,10 +39,7 @@ export interface MacUpdateControllerOptions {
   paths: ExecutorPaths;
   runner: Pick<
     MacMaintenanceContract,
-    | 'planned_update_replay'
-    | 'prepare_update'
-    | 'finish_planned_replay'
-    | 'resume_after_cancelled_update'
+    'planned_update_replay' | 'finish_planned_replay' | 'resume_after_cancelled_update'
   >;
   presence: { readonly identity: ExecutorIdentity; leased(): boolean };
   outbox: { pending_count(): number };
@@ -81,11 +80,12 @@ export class MacUpdateController {
   private latest: MacUpdateCheck | undefined;
   private offered = false;
   private wake: (() => void) | undefined;
-  private prepared: string | null = null;
   private confirmed: string | null = null;
   private gate_pending: boolean;
   private supervisor_kept = false;
-  private prefetch: { sha: string; done: boolean; task: Promise<void> } | undefined;
+  private prefetch:
+    { sha: string; done: boolean; replaced: AbortController; task: Promise<void> } | undefined;
+  private downloading: { request_id: string; replaced: AbortController } | undefined;
   private readonly options: MacUpdateControllerOptions;
   constructor(options: MacUpdateControllerOptions) {
     this.options = options;
@@ -107,6 +107,13 @@ export class MacUpdateController {
     if (this.signal.aborted) return;
     this.latest = check;
     this.offered = true;
+    // A newer target replaces a download in progress.
+    if (
+      check.target !== null &&
+      this.downloading !== undefined &&
+      check.target.request_id !== this.downloading.request_id
+    )
+      this.downloading.replaced.abort();
     this.wake?.();
   }
   apply(check: MacUpdateCheck): Promise<void> {
@@ -154,10 +161,7 @@ export class MacUpdateController {
           detail === null
             ? null
             : Array.from(detail).slice(0, settings.MAX_MAC_UPDATE_DETAIL_CHARACTERS).join(''),
-        identity:
-          phase === 'current' || phase === 'ready_to_restart'
-            ? this.options.presence.identity
-            : null,
+        identity: phase === 'current' ? this.options.presence.identity : null,
       },
       'MacUpdateReport',
     );
@@ -216,6 +220,7 @@ export class MacUpdateController {
     session: HttpSessions,
     value: MacUpdatePrefetch,
     name: string,
+    signal: AbortSignal,
   ): Promise<string> {
     const files = this.options.files;
     const root = await files.open_directory(this.root, { create: true });
@@ -229,7 +234,7 @@ export class MacUpdateController {
           path: value.archive_path,
           headers: { 'Accept-Encoding': 'identity' },
           read_timeout: settings.REQUEST_TIMEOUT_SECONDS,
-          signal: this.signal,
+          signal,
         },
         this.options.authentication_headers(),
         async (response) => {
@@ -241,7 +246,7 @@ export class MacUpdateController {
             count = 0;
           try {
             for await (const data of response) {
-              this.signal.throwIfAborted();
+              signal.throwIfAborted();
               const bytes = Buffer.from(data as Uint8Array);
               count += bytes.length;
               if (count > value.archive_size)
@@ -259,7 +264,7 @@ export class MacUpdateController {
           }
         },
       );
-      this.signal.throwIfAborted();
+      signal.throwIfAborted();
       return await files.extract_runtime(
         path,
         join(this.root, 'releases'),
@@ -281,26 +286,34 @@ export class MacUpdateController {
       }
     }
   }
-  private async download(session: HttpSessions, target: MacUpdateTarget): Promise<string> {
+  private async download(
+    session: HttpSessions,
+    target: MacUpdateTarget,
+    signal: AbortSignal,
+  ): Promise<string> {
     if (
       !target.request_id ||
       /[^A-Za-z0-9_-]/.test(target.request_id) ||
       !this.valid_reference(target, `/api/executor/update/${target.request_id}/archive`)
     )
       throw new TypeError('Invalid Mac runtime target.');
-    if (this.prefetch?.sha === target.archive_sha256) await this.prefetch.task;
-    this.signal.throwIfAborted();
+    if (this.prefetch?.sha === target.archive_sha256)
+      await observe_promise(this.prefetch.task, signal);
+    signal.throwIfAborted();
     const cached = await this.cached(target);
-    return cached ?? (await this.fetch(session, target, 'download.tar.gz'));
+    return cached ?? (await this.fetch(session, target, 'download.tar.gz', signal));
   }
   private async start_prefetch(value: MacUpdatePrefetch | null): Promise<void> {
     if (
       !value ||
       value.application_revision === this.options.presence.identity.application_revision ||
-      (this.prefetch && (!this.prefetch.done || this.prefetch.sha === value.archive_sha256)) ||
+      this.prefetch?.sha === value.archive_sha256 ||
       !this.valid_reference(value, `/api/executor/update/prefetch/${value.archive_sha256}`)
     )
       return;
+    // A newer release replaces a prefetch in progress. Both use one temporary file.
+    this.prefetch?.replaced.abort();
+    await this.prefetch?.task;
     try {
       if (await this.cached(value)) return;
     } catch (error) {
@@ -308,13 +321,16 @@ export class MacUpdateController {
       return;
     }
     this.signal.throwIfAborted();
-    const prefetch = { sha: value.archive_sha256, done: false, task: Promise.resolve() };
-    prefetch.task = this.with_session((session) => this.fetch(session, value, 'prefetch.tar.gz'))
+    const replaced = new AbortController();
+    const signal = AbortSignal.any([this.signal, replaced.signal]);
+    const prefetch = { sha: value.archive_sha256, done: false, replaced, task: Promise.resolve() };
+    prefetch.task = this.with_session((session) =>
+      this.fetch(session, value, 'prefetch.tar.gz', signal),
+    )
       .then(
         () => {},
         (error: unknown) => {
-          if (!this.signal.aborted)
-            console.warn('Mac update prefetch failed:', failure_detail(error));
+          if (!signal.aborted) console.warn('Mac update prefetch failed:', failure_detail(error));
         },
       )
       .finally(() => {
@@ -329,17 +345,7 @@ export class MacUpdateController {
       throw new TypeError('Unsupported Mac update channel schema.');
     await this.start_prefetch(check.prefetch ?? null);
     const target = check.target;
-    if (target === null) {
-      if (this.prepared !== null) {
-        await this.resume_if_safe();
-        this.prepared = null;
-      }
-      return;
-    }
-    if (this.prepared !== null && this.prepared !== target.request_id) {
-      this.prepared = null;
-      await this.resume_if_safe();
-    }
+    if (target === null) return;
     const failure = await read_record(this.options.files, join(this.root, 'failure.json'));
     if (failure?.request_id === target.request_id) {
       await this.report(
@@ -373,44 +379,28 @@ export class MacUpdateController {
       await this.report(session, target, 'waiting');
       return;
     }
-    if (this.prepared !== target.request_id) {
-      let prepared: boolean;
-      try {
-        prepared = await this.options.runner.prepare_update(
-          target.mode,
-          target.request_id,
-          this.signal,
-        );
-      } catch (error) {
-        this.signal.throwIfAborted();
-        const detail = `Mac work could not stop safely: ${String(error)}`;
-        await atomic_record(this.options.files, join(this.root, 'failure.json'), {
-          request_id: target.request_id,
-          phase: 'failed',
-          detail,
-          admission_stopped: true,
-        });
-        await this.report(session, target, 'failed', detail);
-        return;
-      }
-      this.signal.throwIfAborted();
-      if (!prepared) {
-        await this.report(session, target, 'waiting');
-        return;
-      }
-      this.prepared = target.request_id;
-    }
-    if (!target.activate || this.options.presence.leased())
-      await this.report(session, target, 'ready_to_restart');
+    // The home installs first and asks nothing. Workers here run until this replacement.
     if (!target.activate) return;
     if (!this.options.runtime.child)
       throw new Error('Mac runtime update requires its fixed supervisor.');
-    await this.report(session, target, 'downloading');
-    let runtime: string;
     try {
-      runtime = await this.download(session, target);
+      await this.report(session, target, 'downloading');
     } catch (error) {
       this.signal.throwIfAborted();
+      console.warn('Mac update progress report failed:', failure_detail(error));
+    }
+    const replaced = new AbortController();
+    this.downloading = { request_id: target.request_id, replaced };
+    let runtime: string;
+    try {
+      runtime = await this.download(
+        session,
+        target,
+        AbortSignal.any([this.signal, replaced.signal]),
+      );
+    } catch (error) {
+      this.signal.throwIfAborted();
+      if (replaced.signal.aborted) return;
       const detail = Array.from(`Mac runtime installation failed: ${String(error)}`)
         .slice(0, settings.MAX_MAC_UPDATE_DETAIL_CHARACTERS)
         .join('');
@@ -419,10 +409,10 @@ export class MacUpdateController {
         phase: 'failed',
         detail,
       });
-      this.prepared = null;
-      await this.resume_if_safe();
       await this.report(session, target, 'failed', detail);
       return;
+    } finally {
+      this.downloading = undefined;
     }
     this.signal.throwIfAborted();
     const previous = await read_record(this.options.files, join(this.root, 'selection.json'));
@@ -437,29 +427,23 @@ export class MacUpdateController {
       archive_sha256: target.archive_sha256,
     };
     this.signal.throwIfAborted();
+    // The replacement is a restart under a new incarnation. Ordinary shutdown stops the
+    // Workers within its bound, and the home recovers their interrupted turns as after any restart.
     await atomic_record(
       this.options.files,
       join(this.root, 'handoff.json'),
-      handoff_record(identity, true),
+      handoff_record(
+        { ...identity, executor_incarnation: randomUUID(), connection_generation: 0 },
+        true,
+      ),
     );
     await atomic_record(this.options.files, join(this.root, 'pending.json'), selection);
-    if (this.options.presence.leased()) await this.report(session, target, 'ready_to_restart');
     this.signal.throwIfAborted();
     this.options.request_exit();
   }
-  private async resume_if_safe(): Promise<void> {
-    this.signal.throwIfAborted();
-    const path = this.options.runtime.handoff_path;
-    const custody = path === null ? null : await read_record(this.options.files, path);
-    this.signal.throwIfAborted();
-    if (custody?.replay_pending !== true) {
-      if (this.gate_pending) await this.release_runtime_admission();
-      else this.options.runner.resume_after_cancelled_update();
-    }
-  }
   async release_runtime_admission(): Promise<void> {
     this.signal.throwIfAborted();
-    if (!this.gate_pending || this.prepared !== null) return;
+    if (!this.gate_pending) return;
     if (!(await this.kept_by_supervisor())) return;
     if (!(await this.release_custody())) return;
     this.signal.throwIfAborted();

@@ -149,7 +149,6 @@ export class MacService {
       live: this.live,
       inputs: new MacInputs(this.transfer, this.files, configuration.paths, on_failure),
       now_ms: Date.now,
-      new_update_id: () => randomUUID().replaceAll('-', ''),
       workspace_git: {
         children: this.one_shot_children,
         environment: adapters.environment,

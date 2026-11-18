@@ -10,8 +10,6 @@ export interface MacMaintenanceDependencies extends MacRetirementDependencies {
   readonly commands: () => MacCommandServiceContract;
   readonly retirement: MacRetirementContract;
   readonly outbox: Pick<OutboxStore, 'pending_count'>;
-  /** UUID hex source for the update_stop_ wire identity. */
-  new_update_id(): string;
   /** Permanent lifetime belongs to the final runner. The component fixture uses its actual native owner. */
   permanently_stopped(): boolean;
 }
@@ -23,7 +21,6 @@ export interface MacMaintenanceContract {
   begin_planned_replay(): void;
   planned_replay_finished(signal: AbortSignal): Promise<void>;
   finish_planned_replay(): void;
-  prepare_update(mode: 'now' | 'idle', request_id: string, signal: AbortSignal): Promise<boolean>;
 }
 export interface MacMaintenanceOperations {
   /** Capture actual operations synchronously before native cleanup can release their continuations.
