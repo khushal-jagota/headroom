@@ -425,6 +425,7 @@ export type StartRun = {
   supervision_protocol?: number;
   vendor_session_cursor?: string | null;
   workspace_home_relative?: string | null;
+  workspace_repository?: WorkspaceRepository | null;
 };
 export type Steer = {
   content: MessageContent;
@@ -488,6 +489,7 @@ export type WorkingTurn = { child: ChildReference; tool_running: boolean; turn: 
 export type WorkspaceIdentity = { machine_id: string; workspace_id: string };
 export type WorkspacePathPolicy = 'home_relative' | 'absolute' | 'executor_default';
 export type WorkspaceRegistrationRequest = { child: ChildReference; workspace: WorkspaceIdentity };
+export type WorkspaceRepository = { default_branch: string | null; repository_url: string | null };
 export type WorkspaceRetirementReply = { authorized: boolean };
 export type WorkspaceRetirementRequest = {
   replay?: boolean;
@@ -596,6 +598,7 @@ export interface WireTypes {
   WorkingTurn: WorkingTurn;
   WorkspaceIdentity: WorkspaceIdentity;
   WorkspaceRegistrationRequest: WorkspaceRegistrationRequest;
+  WorkspaceRepository: WorkspaceRepository;
   WorkspaceRetirementReply: WorkspaceRetirementReply;
   WorkspaceRetirementRequest: WorkspaceRetirementRequest;
   WorkspaceState: WorkspaceState;

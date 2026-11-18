@@ -1,6 +1,6 @@
 /** Local physical custody, Git preservation, and durable workspace retirement. */
 export { workspace_identity, read_workspace_identity } from './filesystem/shared.ts';
-export { repository_root, prepare_workspace } from './filesystem/preparation.ts';
+export { prepare_workspace } from './filesystem/preparation.ts';
 export {
   workspace_ticket_owners,
   reason_to_keep,

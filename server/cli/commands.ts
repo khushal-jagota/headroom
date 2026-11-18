@@ -982,6 +982,12 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     option('folder_path', '--folder-path <TEXT>', text, {
       description: 'Optional absolute Project folder path.',
     }),
+    option('repository_url', '--repository-url <TEXT>', text, {
+      description: 'Optional Git repository URL for Ticket checkouts.',
+    }),
+    option('default_branch', '--default-branch <TEXT>', text, {
+      description: 'Optional default Git branch for Ticket checkouts.',
+    }),
     option('as_json', '--json', boolean, {
       default: false,
       description: 'Print machine-readable JSON. Errors are printed as JSON on stderr.',
@@ -997,7 +1003,12 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   ]);
   command('project set', 'Change one Project field.', [
     argument('project_id', '<PROJECT_ID>', text, {}),
-    argument('field', '<FIELD>', choice(['folder-path', 'name', 'summary']), {}),
+    argument(
+      'field',
+      '<FIELD>',
+      choice(['default-branch', 'folder-path', 'name', 'repository-url', 'summary']),
+      {},
+    ),
     option('value', '--value <TEXT>', text, { description: 'Set the field to this value.' }),
     option('body_file', '--body-file <TEXT>', text, {
       description: 'Read field text from this file, or - for stdin.',
