@@ -1,4 +1,4 @@
-/** Every place outside a driver package that still names a driver, and the stage that removes it. */
+/** Every place outside a driver's own package that names it, and the stage that removes it. */
 import type { DriverImportAllowance, DriverNameAllowance } from './check_driver_names.ts';
 
 export const DRIVER_NAME_ALLOWANCES: readonly DriverNameAllowance[] = [

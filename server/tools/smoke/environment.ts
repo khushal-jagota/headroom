@@ -81,9 +81,14 @@ export async function create_environment(
   const peer_driver = built_in_driver_of(DEFAULT_BACKEND_INSTANCE_ID);
   const absent_executables = BUILT_IN_MANIFESTS.filter((driver) => driver !== peer_driver).flatMap(
     ({ manifest: { executable } }) =>
-      [executable.override_environment_name, executable.configured_beside?.environment_name]
-        .filter((name): name is string => name !== undefined)
-        .map((name) => [name, join(root, `bin/absent-${executable.name}`)] as const),
+      executable.override_environment_name === undefined
+        ? []
+        : [
+            [
+              executable.override_environment_name,
+              join(root, `bin/absent-${executable.name}`),
+            ] as const,
+          ],
   );
   return {
     ...environment,

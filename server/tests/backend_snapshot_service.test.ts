@@ -266,7 +266,6 @@ function machine(): BackendProbeEnvironment & {
     calls,
     result: { exit_code: 0, standard_output: 'Recorded update', standard_error: '' },
     executable_path: () => '/synthetic/codex',
-    configured_executable_path: () => null,
     real_path: (path: string) => path,
     user_local_npm_prefix: () => '/synthetic',
     prefix_is_owned_and_writable: () => true,

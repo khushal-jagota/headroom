@@ -4,16 +4,12 @@ export class RecordingBackendProbeEnvironment implements BackendProbeEnvironment
   readonly commands: string[][] = [];
   readonly registry_lookups: string[] = [];
   readonly executables = new Map<string, string>();
-  readonly configured_executables = new Map<string, string>();
   readonly real_paths = new Map<string, string>();
   readonly writable_prefixes = new Set<string>();
   readonly outcomes = new Map<string, CommandOutcome>();
   readonly registry_versions = new Map<string, string>();
   executable_path(name: string): string | null {
     return this.executables.get(name) ?? null;
-  }
-  configured_executable_path(name: string): string | null {
-    return this.configured_executables.get(name) ?? null;
   }
   real_path(path: string): string {
     return this.real_paths.get(path) ?? path;
