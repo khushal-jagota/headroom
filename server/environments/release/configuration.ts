@@ -18,13 +18,13 @@ export const RUNTIME_INVENTORY_PATH = 'runtime/inventory.json';
 export const FILE_CHUNK_BYTES = 1024 * 1024;
 export const ARCHIVE_GZIP_LEVEL = 1;
 export const NODE_RUNTIME_EXECUTABLES = ['bin/panels', 'bin/panels-launcher'] as const;
+/** Files the Mac home build checks for in its own tree. An update never checks a new release against this list. */
 export const NODE_RUNTIME_FILES = [
   'runtime/installer-files.json',
   'server/lifecycle/foreground_main.ts',
   'server/lifecycle/managed_main.ts',
   'server/lifecycle/application.ts',
   'server/lifecycle/stop_main.ts',
-  'server/stalls/watchdog_main.ts',
   'server/stalls/watchdog_main.ts',
   'server/conversation/usage/usageWorker.ts',
   ...DRIVER_SOURCE_FILES,

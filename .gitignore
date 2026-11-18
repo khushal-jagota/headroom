@@ -11,6 +11,7 @@ playwright-report/
 *.egg-info/
 .gstack/
 agent_backends/node_modules
+web/dist/
 web/node_modules
 # The one place the web browser tests build their throwaway Svelte hosts. A killed run
 # never reaches its cleanup, so the directory stays ignored and every run sweeps what

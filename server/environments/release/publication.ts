@@ -10,7 +10,7 @@ import {
   hash_archive,
   remove_owned_tree,
 } from './archive.ts';
-import { admit_runtime } from './admission.ts';
+import { prove_built_runtime } from './admission.ts';
 import { RuntimeProbeUnsettled } from './admission_process.ts';
 import { assert_release_execution } from './process.ts';
 import { validate_app_manifest } from './identity.ts';
@@ -117,7 +117,9 @@ export async function build_linux_publication(
       readFile(join(sealed, RUNTIME_INVENTORY_PATH)),
     );
     const runtime_inventory_sha256 = createHash('sha256').update(native_bytes).digest('hex');
-    await phase('admission', () => admit_runtime(sealed, manifest, execution.child_processes));
+    await phase('admission', () =>
+      prove_built_runtime(sealed, manifest, execution.child_processes),
+    );
     await phase('revalidate', () => validate(sealed));
     if (
       (await phase('archive_rehash', () => hash_archive(archive))) !== archive_sha256 ||

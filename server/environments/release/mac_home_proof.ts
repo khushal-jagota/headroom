@@ -8,7 +8,7 @@ import { MAC_HOME } from './contracts.ts';
 import type { MacHomeBuildResult, MacHomePublicationBuild } from './mac_home_contracts.ts';
 import { MAC_HOME_PUBLICATION_METADATA } from './mac_home_configuration.ts';
 import { extract_app_archive, hash_archive, remove_owned_tree } from './archive.ts';
-import { admit_runtime } from './admission.ts';
+import { prove_built_runtime } from './admission.ts';
 import { RuntimeProbeUnsettled } from './admission_process.ts';
 import { validate_app_manifest } from './identity.ts';
 import { assert_release_execution, run_release_command } from './process.ts';
@@ -85,7 +85,7 @@ export async function prove_mac_home(
     if (!isDeepStrictEqual(extracted, result.manifest))
       throw new Error('Mac home extraction differs from its build');
     await validate();
-    await admit_runtime(sealed, result.manifest, execution.child_processes);
+    await prove_built_runtime(sealed, result.manifest, execution.child_processes);
     await validate();
     await unchanged_archive();
     await writeFile(

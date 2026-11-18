@@ -1,5 +1,8 @@
-/** Closed Node release metadata validation, not a runtime admission probe. */
-import { isDeepStrictEqual as equal } from 'node:util';
+/**
+ * Release runtime contract shape. The values are the release's own requirements: admission
+ * checks this host against them, and never against this version's own constants. The
+ * constants below are what this version writes into the releases it builds.
+ */
 import { is_record as object } from '../../../core/records.ts';
 import type { DarwinNodeRuntimeContract, RuntimeContract, RuntimePlatform } from '../contracts.ts';
 export const SUPPORTED_PLATFORMS: readonly RuntimePlatform[] = [
@@ -42,20 +45,19 @@ function fail(message: string): never {
 function fullmatch(pattern: RegExp, value: string): boolean {
   return pattern.exec(value)?.[0] === value;
 }
+function strings(value: unknown): boolean {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+/** Host checks compare these with this machine, so they must be readable numbers. */
+function versions(value: Record<string, unknown>): void {
+  if (!fullmatch(/^\d+\.\d+\.\d+$/, value.minimum_node_version as string))
+    fail('invalid runtime minimum Node version');
+  if (value.system === 'darwin' && !fullmatch(/^\d+(?:\.\d+)*$/, value.minimum_os as string))
+    fail('invalid Mac runtime minimum OS');
+  if (!fullmatch(/^[0-9a-f]{64}$/, value.inventory_sha256 as string))
+    fail('invalid runtime inventory SHA256');
+}
 function parse_darwin_contract(value: Record<string, unknown>): DarwinNodeRuntimeContract {
-  const required = [
-    'version',
-    'system',
-    'architecture',
-    'role',
-    'minimum_os',
-    'node_major',
-    'minimum_node_version',
-    'inventory_sha256',
-    'external_libraries',
-  ];
-  if (!equal(Object.keys(value).sort(), required.sort()))
-    fail('Mac runtime contract has missing or unknown fields');
   for (const key of [
     'system',
     'architecture',
@@ -66,8 +68,8 @@ function parse_darwin_contract(value: Record<string, unknown>): DarwinNodeRuntim
   ])
     if (typeof value[key] !== 'string')
       fail('Mac runtime contract identity fields must be strings');
-  if (!equal(value.external_libraries, ['/usr/lib/', '/System/Library/']))
-    fail('non-system Mac runtime libraries must be bundled');
+  if (!strings(value.external_libraries))
+    fail('runtime external_libraries must be a list of strings');
   if (
     value.version !== 2 ||
     value.system !== 'darwin' ||
@@ -75,12 +77,8 @@ function parse_darwin_contract(value: Record<string, unknown>): DarwinNodeRuntim
     value.role !== 'home'
   )
     fail('runtime requires a darwin arm64 home artifact');
-  if (value.minimum_os !== '15.0') fail('unsupported Mac runtime minimum OS');
-  if (value.node_major !== 22) fail('runtime requires host Node major 22');
-  if (value.minimum_node_version !== MINIMUM_NODE_VERSION)
-    fail(`runtime requires minimum Node ${MINIMUM_NODE_VERSION}`);
-  if (!fullmatch(/^[0-9a-f]{64}$/, value.inventory_sha256 as string))
-    fail('invalid runtime inventory SHA256');
+  if (!Number.isInteger(value.node_major)) fail('runtime node_major must be an integer');
+  versions(value);
   return {
     ...value,
     external_libraries: [...(value.external_libraries as string[])],
@@ -91,53 +89,30 @@ export function parse_optional_runtime_contract(value: unknown): RuntimeContract
   if (!object(value)) fail('runtime contract must be an object');
   if (value.system === 'darwin') return parse_darwin_contract(value);
   if (value.version !== 2) fail('unsupported runtime contract version; republish the app');
-  const required = [
-    'version',
-    'system',
-    'architecture',
-    'platforms',
-    'minimum_node_version',
-    'node_major',
-    'cpu_features',
-    'external_libraries',
-    'external_executables',
-    'inventory_sha256',
-  ];
-  if (!equal(Object.keys(value).sort(), [...required].sort()))
-    fail('runtime contract has missing or unknown fields');
-  if (!equal(value.platforms, SUPPORTED_PLATFORMS)) fail('unsupported runtime platform boundary');
   for (const key of ['version', 'node_major'])
     if (!Number.isInteger(value[key])) fail(`runtime ${key} must be an integer`);
   for (const key of ['system', 'architecture', 'minimum_node_version', 'inventory_sha256'])
     if (typeof value[key] !== 'string') fail(`runtime ${key} must be a string`);
   for (const key of ['cpu_features', 'external_libraries', 'external_executables'])
-    if (
-      !Array.isArray(value[key]) ||
-      !(value[key] as unknown[]).every((item) => typeof item === 'string')
-    )
-      fail(`runtime ${key} must be a list of strings`);
+    if (!strings(value[key])) fail(`runtime ${key} must be a list of strings`);
   if (value.system !== 'linux' || value.architecture !== 'x86_64')
     fail('unsupported runtime operating system or architecture');
-  if (value.node_major !== 22) fail('runtime requires host Node major 22');
-  if (value.minimum_node_version !== MINIMUM_NODE_VERSION)
-    fail(`runtime requires minimum Node ${MINIMUM_NODE_VERSION}`);
-  if (!fullmatch(/^[0-9a-f]{64}$/, value.inventory_sha256 as string))
-    fail('invalid runtime inventory SHA256');
-  if (!equal(value.external_libraries, GLIBC_LIBRARIES))
-    fail('non-glibc runtime libraries must be bundled');
-  if (!equal(value.external_executables, ['sh', 'node']))
-    fail('unsupported external runtime executables');
-  const features = value.cpu_features as string[];
   if (
-    !SUPPORTED_CPU_FEATURES.every((feature) => features.includes(feature)) ||
-    new Set(features).size !== features.length ||
-    features.some((feature) => !fullmatch(/^[a-z0-9_]+$/, feature))
+    !Array.isArray(value.platforms) ||
+    !value.platforms.every(
+      (platform) =>
+        object(platform) &&
+        ['distribution', 'version', 'minimum_glibc'].every(
+          (key) => typeof platform[key] === 'string',
+        ),
+    )
   )
-    fail('invalid required CPU features');
+    fail('runtime platforms must name a distribution, version and minimum glibc');
+  versions(value);
   return {
     ...value,
     version: value.version,
     node_major: value.node_major,
-    platforms: SUPPORTED_PLATFORMS.map((platform) => ({ ...platform })),
+    platforms: (value.platforms as RuntimePlatform[]).map((platform) => ({ ...platform })),
   } as unknown as RuntimeContract;
 }
