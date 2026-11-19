@@ -108,7 +108,8 @@
     readOnly = false,
     historyOwner,
     pastConversations = [],
-    selectedPastConversationId = $bindable(null)
+    selectedPastConversationId = $bindable(null),
+    workerSetup = null
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     locale?: TicketLocale;
@@ -154,6 +155,8 @@
     /** Which earlier conversation the owner picked, or null for the current one. The
      *  caller opens what this names by passing it back as ``conversationId``. */
     selectedPastConversationId?: string | null;
+    /** The owning Ticket's Worker being prepared, handed straight to the pane's status line. */
+    workerSetup?: import("../../lib/navigation/contracts").WorkerSetup | null;
   } = $props();
 
   let view = $state<ConversationView | null>(null);
@@ -1038,6 +1041,7 @@
   {pastConversations}
   pastConversationsLabel={`${label} conversation`}
   bind:selectedPastConversationId
+  {workerSetup}
   ownerReadThroughSequence={view?.owner_read_through_sequence ?? 0}
   bind:lens
   composerPlaceholder={composerPlaceholder

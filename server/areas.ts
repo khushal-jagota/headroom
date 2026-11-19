@@ -39,6 +39,7 @@ import { routes as messageDelivery } from './message_delivery/routes.ts';
 import { configure_manager_resources } from './managers/resource_versions.ts';
 import { routes as notifications } from './notifications/routes.ts';
 import { initialize_notifications } from './notifications/data.ts';
+import { close_home_worker_setups } from './ticket_workspaces/worker_setup.ts';
 import {
   conversation_attention_snapshot,
   advance_conversation_attention,
@@ -180,6 +181,8 @@ export function createAreasRuntime(
       open_runs: ReadonlyMap<string, OpenRunTurn> = new Map(),
     ): void {
       database.write((tx) => initialize_notifications(tx, clock.nowUnix()));
+      // A Home setup ran inside the previous server process, which is gone.
+      database.write(close_home_worker_setups);
       initialize_worker_settings(database, config);
       configure_conversation_start(database, config);
       configure_chief_resources(config);

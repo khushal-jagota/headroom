@@ -542,6 +542,7 @@
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId
+            workerSetup={selectedPastConversationId === null ? masthead.worker_setup : null}
             readOnly={selectedPastConversationId !== null}
             persistenceKey={`owner:ticket:${detail.id}`}
             uploadOwner={{kind:"ticket",id:detail.id}}

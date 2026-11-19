@@ -1,4 +1,5 @@
 /** Best-effort courtesy messages after a committed review transfer. */
+import { close_home_worker_setup } from '../ticket_workspaces/worker_setup.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { OWNER } from '../core/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
@@ -79,13 +80,16 @@ async function deliver(
       const ticket = database.read((sql) => read_ticket(sql, ticket_id));
       let current = ticket.conversation_id;
       if (current === null) {
+        const making = conversation_start.new_conversation_id();
         const linked = await conversation_start.start_ticket_conversation(
           system,
           database,
           ticket,
           conversation_start.worker_resolve(database, ticket),
-          { conversation_id: conversation_start.new_conversation_id(), now },
+          { conversation_id: making, now },
         );
+        // No prompt follows, so Home's setup ends with the start.
+        database.write((tx) => close_home_worker_setup(tx, ticket_id, making));
         current = linked.conversation_id;
       }
       await system.record_message_to_owner(current, content, {

@@ -78,7 +78,8 @@ export function group(value: Fact, attention: Fact | null, rail: boolean): strin
   if (value.stage_ownership === 'user') return 'assigned';
   if (!rail && attention?.signal.message_for_owner) return 'awaiting_reply';
   if (value.blocked || value.ticket_status === 'blocked') return 'blocked';
-  const working = !!attention?.signal.working,
+  // A Worker that is setting up is active, like a working one.
+  const working = !!attention?.signal.working || !!value.worker_setup,
     failed = !!attention?.last_turn_failed;
   if (!working && (value.ticket_status === 'errored' || (failed && value.stage !== 'done')))
     return 'errored';

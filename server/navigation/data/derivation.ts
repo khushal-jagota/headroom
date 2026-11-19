@@ -1,4 +1,5 @@
 /** Read-only derivation of every navigation root from canonical source rows. */
+import { read_worker_setup } from '../../ticket_workspaces/worker_setup.ts';
 import type { ReadSql } from '../../core/database/contracts.ts';
 import type { NavigationKey, NavigationRecord } from '../contracts.ts';
 import { SCHEMA_VERSION } from '../contracts.ts';
@@ -74,7 +75,7 @@ export function newRoots(sql: ReadSql, [table, id]: NavigationKey): NavigationKe
       [id],
     );
     if (agent?.conversation_id) add('conversation', agent.conversation_id);
-  } else if (table === 'ticket_blocks') add('ticket', id);
+  } else if (table === 'ticket_blocks' || table === 'ticket_worker_setups') add('ticket', id);
   else if (
     ['ticket_conversations', 'navigation_signal_publications'].includes(table) ||
     table.startsWith('conversation')
@@ -250,11 +251,14 @@ export function derive(
         recap_preview: recapPreview(String(t.recap)),
         ...(version >= 7 ? { recap: String(t.recap) } : {}),
       });
-    if (version >= 11)
+    if (version >= 11) {
       Object.assign(value, {
         recap_updated_at: t.recap_updated_at,
         recap_stage_changed: Boolean(t.recap_stage_changed),
       });
+      dep('ticket_worker_setups', id);
+      value.worker_setup = read_worker_setup(sql, id);
+    }
     records.push(record(kind, id, value));
   } else if (kind === 'chief' || kind === 'manager') {
     let key: string, value: Row;

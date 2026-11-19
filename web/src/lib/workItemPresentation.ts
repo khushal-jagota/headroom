@@ -12,6 +12,7 @@ export type WorkItemTicketFacts = WorkItemAttentionFacts & {
   machine_id?: string;
   locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: Partial<import("./conversationSignal").ConversationSignal>;
+  worker_setup?: import("./navigation/contracts").WorkerSetup | null;
   id: string;
   title: string;
   recap?: string;

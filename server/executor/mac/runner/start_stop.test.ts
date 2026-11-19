@@ -56,6 +56,7 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
     for (const mode of ['recover', 'exhaust', 'other'] as const) {
       vi.mocked(pause).mockClear();
       const events: string[] = [];
+      const setup_reports: string[] = [];
       let attempts = 0;
       const cleanup_started = new Deferred<void>();
       const cleanup_release = new Deferred<void>();
@@ -97,6 +98,11 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
           },
         }),
         event_sink: () => ({ async report() {} }),
+        // Every attempt declares its setup steps to the home server, in order.
+        async report_worker_setup(child, step) {
+          expect(child).toEqual(reference);
+          setup_reports.push(step);
+        },
       });
       const starting = owner.start(reference, input, () => {});
       const outcome = starting.then(
@@ -114,6 +120,9 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
           mode === 'other' ? BackendSpawnFailed : BackendInitializationTimeout,
         );
       expect(attempts).toBe(mode === 'other' ? 1 : 3);
+      expect(setup_reports).toEqual(
+        Array.from({ length: attempts }, () => ['preparing_workspace', 'starting_worker']).flat(),
+      );
       expect(vi.mocked(pause).mock.calls.map((call) => call[0])).toEqual(
         mode === 'other' ? [] : [5000, 5000],
       );

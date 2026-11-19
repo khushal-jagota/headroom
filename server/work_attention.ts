@@ -52,7 +52,7 @@ interface WorkAttention {
   awaiting_approval: boolean;
   awaiting_agent_approval: boolean;
   assigned: boolean;
-  agent_state: 'idle' | 'working' | 'errored';
+  agent_state: 'idle' | 'setting_up' | 'working' | 'errored';
 }
 function empty_attention(): WorkAttention {
   return {
@@ -73,9 +73,11 @@ function roll_up(rows: WorkAttention[]): WorkAttention {
     assigned: rows.some((row) => row.assigned),
     agent_state: rows.some((row) => row.agent_state === 'working')
       ? 'working'
-      : rows.some((row) => row.agent_state === 'errored')
-        ? 'errored'
-        : 'idle',
+      : rows.some((row) => row.agent_state === 'setting_up')
+        ? 'setting_up'
+        : rows.some((row) => row.agent_state === 'errored')
+          ? 'errored'
+          : 'idle',
   };
 }
 export async function add_work_attention(
@@ -150,9 +152,11 @@ export async function add_work_attention(
         ? 'errored'
         : signal.working
           ? 'working'
-          : stored.ticket_status === 'errored' || (c?.last_turn_failed && stored.stage !== 'done')
-            ? 'errored'
-            : 'idle',
+          : stored.worker_setup
+            ? 'setting_up'
+            : stored.ticket_status === 'errored' || (c?.last_turn_failed && stored.stage !== 'done')
+              ? 'errored'
+              : 'idle',
     });
   }
   for (const row of tickets) {
@@ -160,6 +164,7 @@ export async function add_work_attention(
     const c = conversations.get(String(records.get(id)?.conversation_id));
     Object.assign(row, attention.get(id) ?? empty_attention(), {
       conversation_signal: c?.signal ?? { working: false, message_for_owner: false },
+      worker_setup: records.get(id)?.worker_setup ?? null,
     });
   }
   for (const row of managers) {

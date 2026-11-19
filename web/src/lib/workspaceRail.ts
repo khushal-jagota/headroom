@@ -105,7 +105,7 @@ export function refreshWorkspaceRailSignals(current: WorkspaceRail, next: Worksp
   const refreshTicket = (ticket: WorkItemTicketFacts): WorkItemTicketFacts => {
     const fresh = tickets.get(ticket.id);
     return fresh ? {...ticket, conversation_signal: fresh.conversation_signal,
-      conversation_id: fresh.conversation_id} : {...ticket,conversation_signal:undefined};
+      conversation_id: fresh.conversation_id, worker_setup: fresh.worker_setup} : {...ticket,conversation_signal:undefined};
   };
   const refreshGroups = (groups: WorkspaceTicketGroup[]) => groups.map((group) =>
     ({...group, cards: group.cards.map(refreshTicket)}));

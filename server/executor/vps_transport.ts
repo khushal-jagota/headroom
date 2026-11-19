@@ -1,4 +1,5 @@
 /** Invocation-owned VPS executor. Request disconnects do not cancel admitted saves. */
+import { declare_worker_setup } from '../ticket_workspaces/worker_setup.ts';
 import type { FastifyInstance } from 'fastify';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { Clock } from '../core/clock.ts';
@@ -268,6 +269,55 @@ export class VpsExecutor {
             registration.child.conversation_id,
             registration.workspace,
           );
+        });
+      },
+      LIVE_READ_SERVER_LIMIT_SECONDS,
+      true,
+    );
+  }
+  /** The machine declares its Worker setup step while this child's start command is open. */
+  report_worker_setup(
+    identity: ExecutorIdentity,
+    report: WireValue<'WorkerSetupReport'>,
+  ): Promise<void> {
+    return this.owned_work(
+      async () => {
+        this.database.write((tx) => {
+          require_current_incarnation_in_transaction(
+            tx,
+            identity.executor_incarnation,
+            this.machine_id,
+          );
+          if (report.child.executor_incarnation !== identity.executor_incarnation)
+            throw new PlannerError('agent_forbidden', 'setup child belongs to another executor');
+          const assignment = this.runs.store.open_child_assignment(tx, report.child);
+          if (assignment === null || assignment[0] !== 'ticket')
+            throw new PlannerError('agent_forbidden', 'setup child has no Ticket assignment');
+          // A report that arrives after its start settled, or from a start the Ticket has
+          // since replaced, declares nothing.
+          if (
+            !tx.get('SELECT 1 FROM tickets WHERE id=? AND conversation_id=?', [
+              assignment[1],
+              report.child.conversation_id,
+            ]) ||
+            !tx.get(
+              "SELECT 1 FROM executor_commands WHERE machine_id=? AND executor_incarnation=? AND child_id=? AND conversation_id=? AND operation='start' AND state IN ('waiting','delivered')",
+              [
+                this.machine_id,
+                report.child.executor_incarnation,
+                report.child.child_id,
+                report.child.conversation_id,
+              ],
+            )
+          )
+            return;
+          declare_worker_setup(tx, {
+            ticket_id: assignment[1],
+            conversation_id: report.child.conversation_id,
+            machine_id: this.machine_id,
+            step: report.step,
+            now: this.clock.nowUnix(),
+          });
         });
       },
       LIVE_READ_SERVER_LIMIT_SECONDS,

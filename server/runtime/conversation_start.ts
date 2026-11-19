@@ -10,6 +10,11 @@ import {
 } from '../ticket_workspaces/filesystem.ts';
 import type { WorkspaceIdentity } from '../ticket_workspaces/contracts.ts';
 import {
+  close_home_worker_setup,
+  declare_worker_setup,
+  type WorkerSetupStep,
+} from '../ticket_workspaces/worker_setup.ts';
+import {
   register_workspace,
   ensure_workspace_activity,
   conversation_workspace_retired,
@@ -349,8 +354,41 @@ export async function start_ticket_conversation(
     const refusal = configured_ticket_execution_refusal(database, sql, current);
     if (refusal !== null) throw refusal;
   });
+  // Home sets up inside this process, so the server declares Home's setup itself. The
+  // setup stays open after success, until the caller's first prompt lands.
+  const home = ticket.machine_id === HOME_MACHINE_ID;
+  const declare = (step: WorkerSetupStep) =>
+    database.write((tx) =>
+      declare_worker_setup(tx, {
+        ticket_id: ticket.id,
+        conversation_id: options.conversation_id,
+        machine_id: HOME_MACHINE_ID,
+        step,
+        now: options.now,
+      }),
+    );
+  if (home) declare('preparing_workspace');
+  try {
+    return await start_prepared_ticket_conversation(system, database, ticket, values, options, {
+      home,
+      declare,
+    });
+  } catch (error) {
+    if (home)
+      database.write((tx) => close_home_worker_setup(tx, ticket.id, options.conversation_id));
+    throw error;
+  }
+}
+async function start_prepared_ticket_conversation(
+  system: ConversationSystem,
+  database: Database,
+  ticket: Ticket,
+  values: ConversationStartValues,
+  options: { conversation_id: string; signal?: AbortSignal; now: number },
+  setup: { home: boolean; declare: (step: WorkerSetupStep) => void },
+): Promise<LinkedConversation> {
   let identity: WorkspaceIdentity | null = null;
-  if (ticket.machine_id === HOME_MACHINE_ID) {
+  if (setup.home) {
     const ticket_folder = join(filesRoot(context(database).db_path, 'ticket'), ticket.id);
     const repository =
       ticket.project_id === null
@@ -377,6 +415,7 @@ export async function start_ticket_conversation(
         { ticket_id: ticket.id },
       );
     }
+    setup.declare('starting_worker');
   }
   const request = start_request(options.conversation_id, values);
   await observe_conversation_operation(() => system.start_conversation(request), options.signal);
@@ -549,60 +588,65 @@ export async function send_to_ticket_conversation(
       now: options.now,
       signal: options.signal,
     });
-    if (!linked.made_here) {
-      await let_go_ticket(system, database, ticket_id, making, options.now);
-      return send_existing_ticket(
-        system,
-        database,
-        ticket_id,
-        linked.conversation_id,
-        await observe_conversation_operation(
-          () => message_content_for(content, linked.conversation_id),
-          options.signal,
-        ),
-        options,
-      );
-    }
-    let fate: PromptDeliveryFate;
     try {
-      fate = await observe_conversation_operation(
-        async () =>
-          system.send(
-            making,
-            await observe_conversation_operation(
-              () => message_content_for(content, making),
-              options.signal,
-            ),
-            send_options(options, true),
+      if (!linked.made_here) {
+        await let_go_ticket(system, database, ticket_id, making, options.now);
+        return send_existing_ticket(
+          system,
+          database,
+          ticket_id,
+          linked.conversation_id,
+          await observe_conversation_operation(
+            () => message_content_for(content, linked.conversation_id),
+            options.signal,
           ),
-        options.signal,
-      );
-      if (fate instanceof PromptDeliveryStarted)
-        database.write((tx) =>
-          tickets.write_ticket_last_chosen_configuration(tx, ticket_id, {
-            expected_conversation_id: making,
-            employee_backend: values.backend_key,
-            model: values.model,
-            reasoning_effort: values.reasoning_effort,
-            now: options.now,
-          }),
+          options,
         );
-    } catch (error) {
-      if (error instanceof ConversationStartAborted) throw error;
-      await let_go_ticket(system, database, ticket_id, making, options.now);
-      throw error;
+      }
+      let fate: PromptDeliveryFate;
+      try {
+        fate = await observe_conversation_operation(
+          async () =>
+            system.send(
+              making,
+              await observe_conversation_operation(
+                () => message_content_for(content, making),
+                options.signal,
+              ),
+              send_options(options, true),
+            ),
+          options.signal,
+        );
+        if (fate instanceof PromptDeliveryStarted)
+          database.write((tx) =>
+            tickets.write_ticket_last_chosen_configuration(tx, ticket_id, {
+              expected_conversation_id: making,
+              employee_backend: values.backend_key,
+              model: values.model,
+              reasoning_effort: values.reasoning_effort,
+              now: options.now,
+            }),
+          );
+      } catch (error) {
+        if (error instanceof ConversationStartAborted) throw error;
+        await let_go_ticket(system, database, ticket_id, making, options.now);
+        throw error;
+      }
+      if (fate instanceof PromptDeliveryRefused) {
+        if (
+          options.retain_definite_start_refusal &&
+          (fate.refusal_reason === 'backend_did_not_start' ||
+            fate.refusal_reason === 'model_resolution_failed')
+        )
+          return { conversation_id: making, fate };
+        await let_go_ticket(system, database, ticket_id, making, options.now);
+        return { conversation_id: null, fate };
+      }
+      return { conversation_id: making, fate };
+    } finally {
+      // The first prompt landed, or this start ended: Home's setup is over either way.
+      database.write((tx) => close_home_worker_setup(tx, ticket_id, making));
     }
-    if (fate instanceof PromptDeliveryRefused) {
-      if (
-        options.retain_definite_start_refusal &&
-        (fate.refusal_reason === 'backend_did_not_start' ||
-          fate.refusal_reason === 'model_resolution_failed')
-      )
-        return { conversation_id: making, fate };
-      await let_go_ticket(system, database, ticket_id, making, options.now);
-      return { conversation_id: null, fate };
-    }
-    return { conversation_id: making, fate };
   }
   const sending_into = options.conversation_id ?? ticket.conversation_id;
   if (sending_into === null || sending_into !== ticket.conversation_id)

@@ -10,7 +10,7 @@ import type { FieldStageVisualState } from './ui';
 export type TicketSection = {
   readonly record: {readonly id:string; readonly value:Pick<TicketValue,
     'stage'|'gating_field'|'stage_ownership'|'terminal'|'ticket_status'|'ceiling'|'ceiling_holder'|
-    'is_backlogged'|'blocked'|'conversation_id'|'proposal_field'|'proposal_created_at'|'proposal_revision'>};
+    'is_backlogged'|'blocked'|'conversation_id'|'proposal_field'|'proposal_created_at'|'proposal_revision'|'worker_setup'>};
   readonly detail: TicketDetail;
   readonly lifecycle: Lifecycle;
 };
@@ -25,7 +25,7 @@ export function ticketSection(detail:TicketDetail | undefined,configuration:Work
     ceiling:detail.ceiling,ceiling_holder:detail.ceiling_holder,is_backlogged:detail.is_backlogged ?? false,
     blocked:detail.blocked ?? false,conversation_id:detail.conversation_id,
     proposal_field:detail.pending_proposal?.field ?? null,proposal_created_at:detail.pending_proposal?.created_at ?? null,
-    proposal_revision:detail.pending_proposal?.revision ?? 0,
+    proposal_revision:detail.pending_proposal?.revision ?? 0,worker_setup:detail.worker_setup ?? null,
   }}};
 }
 
@@ -38,7 +38,7 @@ export function ticketSectionFacts(section:TicketSection,view:EffectiveNavigatio
     assigned:row.stage_ownership==='user',
     awaiting_reply:navigationKnownBoolean(knowledge?.message_for_owner),
     awaiting_answer:navigationKnownBoolean(knowledge?.awaiting_answer),
-    agent_state:navigationAgentState(row.ticket_status,row.stage,knowledge),
+    agent_state:navigationAgentState(row.ticket_status,row.stage,knowledge,row.worker_setup ?? null),
     ticket_status:row.ticket_status,
     conversation_signal:navigationConversationSignal(view,row.conversation_id),
   };

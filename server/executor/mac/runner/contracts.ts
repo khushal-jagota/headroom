@@ -1,4 +1,5 @@
 /** Retained native custody. Command outcomes and event retirement stay with the runner. */
+import type { WorkerSetupReport } from '../../wire.generated.ts';
 import type { AccountSkillHome } from '../../../skills/account.ts';
 import type {
   BackendChild,
@@ -49,6 +50,11 @@ export interface MacNativeChildrenOptions {
   readonly register_workspace: (
     child: ChildReference,
     workspace: WorkspaceIdentity,
+  ) => Promise<void>;
+  /** Tell the home server which Worker setup step this child's start is in. */
+  readonly report_worker_setup: (
+    child: ChildReference,
+    step: WorkerSetupReport['step'],
   ) => Promise<void>;
   readonly factory: (start: ResolvedConversationStart) => BackendChildFactory;
   readonly native_skill_home: (backend: ConversationBackendKey) => AccountSkillHome;
