@@ -2743,41 +2743,6 @@ select {
 .composer-field .chat-voice-cancel svg { width: var(--conversation-glyph, 22px); height: var(--conversation-glyph, 22px); stroke-width: 1.35; }
 .composer-field .chat-voice-square { width: calc(var(--conversation-glyph, 22px) / 2); height: calc(var(--conversation-glyph, 22px) / 2); }
 
-/* Entrance rhythm: each decision's parts fade up in a short stagger. Keyed to the
- * current entry in the markup so advancing to the next decision re-runs it. */
-@keyframes review-arrive {
-  from {
-    opacity: 0;
-    transform: translateY(var(--space-2));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.review-arrive {
-  animation: review-arrive var(--motion-enter) var(--motion-ease) both;
-}
-
-.review-arrive--2 {
-  animation-duration: calc(var(--motion-enter) + 1 * var(--motion-enter-step));
-}
-
-.review-arrive--3 {
-  animation-duration: calc(var(--motion-enter) + 2 * var(--motion-enter-step));
-}
-
-.review-arrive--4 {
-  animation-duration: calc(var(--motion-enter) + 3 * var(--motion-enter-step));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .review-arrive {
-    animation: none;
-  }
-}
-
 /* --- Workspace screen (backed by board data) ----------------------------- */
 
 .board-screen {

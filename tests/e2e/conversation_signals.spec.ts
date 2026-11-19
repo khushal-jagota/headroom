@@ -316,6 +316,9 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   await ticketCard.locator('[data-approval-block] a[href*="note.html"]').click();
   await expect(bar.locator('[data-accept]')).toBeVisible();
   await expect(bar.locator('[data-review-reply]')).toHaveCount(0);
+  // The artifact rises into place. Its geometry is read once the rise has ended.
+  await expect(page.locator('[data-deck-layer]')).toHaveCSS('transform', 'none');
+  await expect(page.locator('[data-deck-layer]')).toHaveCSS('opacity', '1');
   const gap = await page.evaluate(
     () =>
       document.querySelector('[data-artifact-bar]')!.getBoundingClientRect().top -
@@ -391,6 +394,8 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
       (prompt: JsonObject) => prompt.sender_message_id === submitted[0].sender_message_id,
     ),
   ).toBe(true);
+  // The answered card leaves and the card holding the newer message arrives. The test reads it once the move is over.
+  await expect(page.locator('[data-deck-leaving]')).toHaveCount(0);
   await expect(card.locator('[data-review-message-sequence]')).toHaveCount(1);
   await expect(card.locator('.review-message-run')).toHaveText('This newer message stays unread.');
   await expect(badge).toHaveText('1');
@@ -460,6 +465,7 @@ test('test_combined_review_approval_reply_and_bounded_read_reach_canonical_write
   expect(reads).toEqual([{ through_sequence: displayedBound }]);
   snapshot = await api.get(server, `/api/conversation/conversations/${conversation}`);
   expect(snapshot.owner_read_through_sequence).toBe(displayedBound);
+  await expect(page.locator('[data-deck-leaving]')).toHaveCount(0);
   await expect(card.locator('[data-review-message-sequence]')).toHaveCount(1);
   await expect(card.locator('.review-message-run')).toHaveText(
     'This message arrives after the displayed read boundary.',
