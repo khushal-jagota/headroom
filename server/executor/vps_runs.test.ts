@@ -1,7 +1,23 @@
 import { expect, test, vi } from 'vitest';
-import { fixture } from '../tests/ticket_fixture.ts';
+import { dirname } from 'node:path';
+import { fixture, fixture_path, create, read } from '../tests/ticket_fixture.ts';
 import { setup } from '../tests/conversation_core_fixture.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
+import { OWNER } from '../core/contracts.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from '../execution_configuration.ts';
+import { configure_conversation_start } from '../runtime/conversation_start.ts';
+import { start_ready_worker_step } from '../runtime/worker_step_readiness_loop.ts';
+import { configured_worker_type_registry } from '../worker_types/configuration.ts';
+import { explicit_start } from '../conversation/start_admission/index.ts';
+import { restart_worker } from '../tickets/worker_restart.ts';
+import { for_every_built_in_backend, registry_of_factories } from '../drivers/testing/registry.ts';
+import type {
+  BackendChildFactory,
+  BackendEventSink,
+  ChildReference,
+  RetainedBackendChildFactory,
+} from '../conversation/backends/contracts.ts';
 import { admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { MacPresenceService } from './vps_presence.ts';
 import { SqliteCommandMailbox } from './vps_mailbox.ts';
@@ -632,3 +648,158 @@ test.each(['refused', 'uncertain'] as const)(
     }
   },
 );
+
+// Risk: unit fakes reuse the same retained-run object across calls, hiding identity bugs in
+// confirm_killed_source when restarting a running Mac Ticket through ExecutorStore.retained_runs().
+test('restart-worker completes for a running Mac Ticket through the real admitted_runs path', async () => {
+  const database = fixture();
+  database.write((tx) =>
+    tx.run('INSERT INTO conversation_runtime_epoch VALUES (1,?)', ['test-runtime']),
+  );
+  const mailbox = new SqliteCommandMailbox(database);
+  const presence = new MacPresenceService(database, mailbox, { changes: new ChangeSignal() });
+  const runs = new MacRuns(database, presence, mailbox);
+  const factory = runs.as_factory();
+  const f = setup({
+    restart_of: database,
+    core: {
+      backend_registry: registry_of_factories(for_every_built_in_backend(() => factory)),
+    },
+  });
+  configure_conversation_start(f.database, {
+    db_path: f.database_path,
+    workspace_root: dirname(f.database_path),
+  });
+  runs.conversations = f.core;
+  f.core.configure_worker_cleanup_recheck((source, ticket_id) =>
+    runs.recheck_cleanup(source, ticket_id),
+  );
+  const identity: WireValue<'ExecutorIdentity'> = {
+    protocol_version: PROTOCOL_VERSION,
+    spool_format_version: SPOOL_FORMAT_VERSION,
+    application_revision: 'synthetic-mac',
+    executor_incarnation: answer.child.executor_incarnation,
+    connection_generation: 1,
+  };
+  let polling = true;
+  let after = 0;
+  const run_poll_loop = async () => {
+    while (polling) {
+      const reply = await mailbox.poll(identity, after, 0.05);
+      if (!reply.commands.length) continue;
+      const outcomes: WireValue<'CommandOutcomeReport'>['outcomes'] = [];
+      const stops: WireValue<'ChildCommand'>[] = [];
+      for (const envelope of reply.commands) {
+        after = Number(envelope.command_sequence);
+        const command = envelope.child_command;
+        if (command == null) continue;
+        if (command.operation === 'stop') {
+          stops.push(command);
+          continue;
+        }
+        const result =
+          command.operation === 'write_prompt'
+            ? {
+                kind: 'prompt_accepted' as const,
+                composed_content_delivered: true,
+                agent_acceptance_proven: true,
+              }
+            : command.operation === 'recheck_cleanup'
+              ? { complete: true, reason: 'No active child' }
+              : {};
+        outcomes.push({
+          command_id: command.command_id,
+          child_outcome: {
+            command_id: command.command_id,
+            child: command.child,
+            disposition: 'succeeded',
+            result,
+          } as WireValue<'CommandOutcome'>,
+          model_list: null,
+        });
+      }
+      if (outcomes.length) await mailbox.record_results(identity, { outcomes });
+      // The Mac proves a stop with a child_stopped item, not a command result.
+      for (const stop of stops) {
+        const outcome = {
+          command_id: stop.command_id,
+          child: stop.child,
+          disposition: 'succeeded',
+          result: {},
+        } as WireValue<'CommandOutcome'>;
+        await runs.validate_stop(outcome);
+        await runs.accept_stop_receipt(outcome, {
+          disposition: 'accepted',
+          result: { recorded: true, stop_command_id: stop.command_id, stopped_child: stop.child },
+        } as unknown as WireValue<'AcceptanceReceipt'>);
+      }
+    }
+  };
+  let poll_loop: Promise<void> = Promise.resolve();
+  try {
+    await presence.accept_lease({
+      identity,
+      process_id: 4242,
+      mac_wall_clock_ms: Date.now(),
+      queue_depth: 0,
+      oldest_item_age_ms: null,
+      waiting_conversations: [],
+      waiting_conversations_truncated: false,
+      working_turns: [],
+      admission_stopped: false,
+      cleanup_uncertainties: [],
+      driver_kinds: ['codex', 'claude'],
+    });
+    poll_loop = run_poll_loop();
+    const ticket = create(f.database, { now: 100 });
+    f.database.write((tx) => {
+      tx.run("UPDATE tickets SET locale='macos',machine_id=? WHERE id=?", [
+        ORIGINAL_MAC_MACHINE_ID,
+        ticket.id,
+      ]);
+      tx.run("UPDATE ticket_decision_messages SET delivery_status='delivered' WHERE ticket_id=?", [
+        ticket.id,
+      ]);
+    });
+    const step_options = {
+      connect_database: () => f.database,
+      conversation_system: f.core,
+      worker_type_registry: configured_worker_type_registry(),
+      now: () => 100,
+    };
+    const initial = await explicit_start(() => start_ready_worker_step(ticket.id, step_options));
+    expect(initial.started).toBe(true);
+    const first_conversation_id = read(f.database, ticket.id).conversation_id!;
+    expect(first_conversation_id).toBeTruthy();
+    expect(await f.core.is_running(first_conversation_id)).toBe(true);
+    const restarted = await restart_worker(f.core, f.database, OWNER, ticket.id, {
+      now: () => 101,
+      start_worker_step: () =>
+        explicit_start(() => start_ready_worker_step(ticket.id, step_options)),
+    });
+    expect(restarted).toMatchObject({
+      ticket_id: ticket.id,
+      killed_conversation_id: first_conversation_id,
+      killed_conversation_looked_running: true,
+      started: true,
+      not_started_because: null,
+    });
+    const next_conversation_id = read(f.database, ticket.id).conversation_id;
+    expect(next_conversation_id).toBeTruthy();
+    expect(next_conversation_id).not.toBe(first_conversation_id);
+    expect(restarted.conversation_id).toBe(next_conversation_id);
+    expect(await f.core.is_running(first_conversation_id)).toBe(false);
+    expect(await f.core.is_running(next_conversation_id!)).toBe(true);
+  } finally {
+    polling = false;
+    await poll_loop.catch(() => {});
+    const options = { deadline: performance.now() / 1000 + 2 };
+    await Promise.all([
+      runs.stop(options),
+      presence.stop(options),
+      mailbox.stop(options),
+      f.core.shutdown(options),
+    ]);
+    await Promise.all([runs.settled(), presence.settled(), mailbox.settled(), f.core.settled()]);
+  }
+});
