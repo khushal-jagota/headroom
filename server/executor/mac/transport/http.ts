@@ -1,4 +1,5 @@
 /** Protocol-22 Mac client. Each request retains its loop's independent session owner. */
+import type { WorkerSetupReport } from '../../wire.generated.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
@@ -293,6 +294,16 @@ export class MacHttpClient {
       body: encode_bounded({ child, workspace }, 'WorkspaceRegistrationRequest'),
       timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
       signal,
+    });
+    if (reply.status !== 204) throw http_error(reply.status, reply.body);
+  }
+  async report_worker_setup(child: ChildReference, step: WorkerSetupReport['step']): Promise<void> {
+    const reply = await this.json({
+      loop: 'reads',
+      method: 'POST',
+      path: '/api/executor/workspaces/setup',
+      body: encode_bounded({ child, step }, 'WorkerSetupReport'),
+      timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
     });
     if (reply.status !== 204) throw http_error(reply.status, reply.body);
   }

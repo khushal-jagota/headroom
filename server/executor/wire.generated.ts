@@ -485,6 +485,10 @@ export type WorkerCleanupUncertainty = {
   reason: string;
   ticket_id: string;
 };
+export type WorkerSetupReport = {
+  child: ChildReference;
+  step: 'preparing_workspace' | 'starting_worker';
+};
 export type WorkingTurn = { child: ChildReference; tool_running: boolean; turn: TurnToken };
 export type WorkspaceIdentity = { machine_id: string; workspace_id: string };
 export type WorkspacePathPolicy = 'home_relative' | 'absolute' | 'executor_default';
@@ -595,6 +599,7 @@ export interface WireTypes {
   VendorSessionCursorRebound: VendorSessionCursorRebound;
   WaitingConversation: WaitingConversation;
   WorkerCleanupUncertainty: WorkerCleanupUncertainty;
+  WorkerSetupReport: WorkerSetupReport;
   WorkingTurn: WorkingTurn;
   WorkspaceIdentity: WorkspaceIdentity;
   WorkspaceRegistrationRequest: WorkspaceRegistrationRequest;

@@ -4,11 +4,11 @@
   import type { AgentHoldFacts } from "../../lib/workAttentionPresentation";
   import ConversationSignalMark from "../ConversationSignalMark.svelte";
   import MacActivityMark from "./MacActivityMark.svelte";
-  // `working={false}`: a page title shows the unread dot but never the working spinner; the
-  // status line over the composer says Working (owner).
+  // `working={false}`: a page title shows the unread dot but never the working or setting-up spinner; the
+  // status line over the composer says Working or Setting up (owner).
   // `agentHold`: whether an agent holds the Ticket, which a Mac away turns into "Waiting for the Mac".
   let {locale,machineId,signal,conversationId=null,completed=false,working=true,agentHold}: {locale?:TicketLocale;machineId?:string;signal?:Partial<ConversationSignal>;conversationId?:string|null;completed?:boolean;working?:boolean;agentHold?:AgentHoldFacts}=$props();
-  let savedSignal = $derived(signal ? {...signal, working: signal.working && !completed && working} : undefined);
+  let savedSignal = $derived(signal ? {...signal, working: signal.working && !completed && working, setting_up: signal.setting_up && !completed && working} : undefined);
 </script>
 {#if locale === "macos"}
   <MacActivityMark {machineId} {locale} {signal} {conversationId} {completed} {working} {agentHold} />

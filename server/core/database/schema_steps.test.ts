@@ -263,11 +263,15 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0002_project_repository',
-      applied: ['ts_0001_open_backend_keys', 'ts_0002_project_repository'],
+      to_revision: 'ts_0003_ticket_worker_setups',
+      applied: [
+        'ts_0001_open_backend_keys',
+        'ts_0002_project_repository',
+        'ts_0003_ticket_worker_setups',
+      ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0002_project_repository'],
+      revision: ['ts_0003_ticket_worker_setups'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);

@@ -1,4 +1,8 @@
 /** The HTTP-client commands used for Panels work. Domain decisions stay on the server. */
+import {
+  worker_setup_step_label,
+  type WorkerSetupStep,
+} from '../ticket_workspaces/worker_setup.ts';
 import type { CommandResult, Invocation } from './contracts.ts';
 import { send, send_text, emit, error_reason, fail_validation, json } from './http.ts';
 import { read_source, read_json_object, worker_stdin_body } from './input.ts';
@@ -128,6 +132,15 @@ function emit_record(
     render_text(projection, requested ?? [...parts.keys()]),
   );
 }
+/** "preparing workspace for 2m 19s" */
+function setting_up_text(setup: { step: WorkerSetupStep; began_at: unknown }): string {
+  // The CLI reads JSON numbers as JsonNumber values.
+  const began_at = numeric_value(setup.began_at) ?? Math.floor(Date.now() / 1000);
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - began_at);
+  const elapsed =
+    seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60)}s`;
+  return `${worker_setup_step_label(setup.step)} for ${elapsed}`;
+}
 async function ticket_record(
   inv: Invocation,
   data: Body,
@@ -145,6 +158,7 @@ async function ticket_record(
     'employee_launch_reasoning_effort',
     'stage',
     'ticket_status',
+    'agent_state',
     'is_backlogged',
     'record_sha256',
     'deadline',
@@ -156,6 +170,7 @@ async function ticket_record(
   const header = Object.fromEntries(
     keys.filter((key) => key in data).map((key) => [key, data[key]]),
   );
+  if (data.worker_setup) header.setting_up = setting_up_text(data.worker_setup);
   const parts: RecordParts = new Map();
   for (const field of data.workflow.fields)
     parts.set(
@@ -718,6 +733,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
         data.tickets,
         (ticket) =>
           `${scalar(ticket.id)} ${scalar(ticket.stage)} ${scalar(ticket.ticket_status)} ${scalar(ticket.title)}` +
+          (ticket.worker_setup ? ` | setting up: ${setting_up_text(ticket.worker_setup)}` : '') +
           (ticket.is_backlogged ? ' | backlogged' : '') +
           (ticket.project ? ` | ${scalar(ticket.project)}` : '') +
           `\n  ${format_recap(ticket)}`,

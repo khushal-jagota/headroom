@@ -10,7 +10,7 @@
   const machines=createQuery(() => queries.machines());
   const name=$derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
   let unknown=$derived(locale === "macos" && (health.isError || !macActivityKnown(health.data)));
-  let savedSignal=$derived(signal ? {...signal,working:signal.working && !unknown && !completed && working} : undefined);
+  let savedSignal=$derived(signal ? {...signal,working:signal.working && !unknown && !completed && working,setting_up:signal.setting_up && !unknown && !completed && working} : undefined);
   // The mark draws nothing new while the Mac is away; the reason is read out. The Ticket
   // page and the rail hover show it as text.
   let activityLabel=$derived(completed ? null : macTicketActivityLabel(health.isError ? undefined : health.data, {...agentHold, locale, conversation_signal: signal})?.replace("the Mac",name));

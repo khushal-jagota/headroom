@@ -435,6 +435,19 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       }),
     );
     app.post(
+      '/api/executor/workspaces/setup',
+      work(async (request, reply) => {
+        const { endpoint, identity } = await current_for(request);
+        const report = decode(
+          await body(request, MAX_ENVELOPE_BYTES),
+          'WorkerSetupReport',
+          MAX_ENVELOPE_BYTES,
+        );
+        await endpoint.report_worker_setup(identity, report);
+        return reply.code(204).send();
+      }),
+    );
+    app.post(
       '/api/executor/workspaces/retire',
       work(async (request, reply) => {
         const { endpoint, identity } = await current_for(request);

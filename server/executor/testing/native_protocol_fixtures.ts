@@ -290,6 +290,7 @@ export function native_wire_fixtures(): WireTypes {
     WorkspaceStatesRequest: { ticket_ids: [workspace_state.ticket_id] },
     WorkspaceStatesReply: { states: [workspace_state], at_vps_ms: 100 },
     WorkspaceRegistrationRequest: { child, workspace },
+    WorkerSetupReport: { child, step: 'preparing_workspace' },
     WorkspaceRetirementRequest: { state: workspace_state, workspace, replay: true },
     WorkspaceRetirementReply: { authorized: false },
     LeaseRequest: {

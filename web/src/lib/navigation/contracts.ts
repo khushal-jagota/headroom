@@ -16,6 +16,14 @@ export interface PrincipalValue {
   id: string;
 }
 
+/** A Worker being prepared: its machine clones the Ticket workspace, then launches the agent. */
+export interface WorkerSetup {
+  step: "preparing_workspace" | "starting_worker";
+  /** Unix seconds when setup began. */
+  began_at: number;
+  machine_id: string;
+}
+
 export interface TicketValue {
   title: string;
   recap: string;
@@ -47,6 +55,8 @@ export interface TicketValue {
   terminal: boolean;
   locale: string;
   machine_id: string;
+  /** Absent in an older stored record, which means no setup. */
+  worker_setup?: WorkerSetup | null;
 }
 
 export interface NavigationTicketIntegrityIssue {

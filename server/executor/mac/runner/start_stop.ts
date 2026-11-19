@@ -1,4 +1,5 @@
 /** Native starts and stops retain custody independently of command/result retries. */
+import type { WorkerSetupReport } from '../../wire.generated.ts';
 import { same_reference } from '../../child_reference.ts';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
@@ -158,8 +159,18 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     invoking: () => void,
   ): Promise<MacRunningChild> {
     const capability = randomBytes(32).toString('base64url');
+    // This machine declares its setup to the home server. Reports go in order and never hold
+    // the start back. The home server ignores a report after this start settles, and an
+    // older home server refuses the route, so a failed report only costs the display.
+    let reports = Promise.resolve();
+    const report_setup = (step: WorkerSetupReport['step']) => {
+      reports = reports
+        .then(() => this.options.report_worker_setup(entry.reference, step))
+        .catch((error: unknown) => console.warn(`Worker setup report (${step}) failed`, error));
+    };
     try {
       this.assert_start(entry);
+      report_setup('preparing_workspace');
       // Refuses a backend this machine does not run before anything is written.
       const native_home = this.options.native_skill_home(input.resolved_start.backend_key);
       let generation: string;
@@ -210,6 +221,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
           );
         }
       }
+      report_setup('starting_worker');
       const child = await this.options.workspace_lock.run(() => {
         this.assert_start(entry);
         if (

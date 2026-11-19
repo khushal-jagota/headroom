@@ -6,7 +6,7 @@ export type AnyRecord = Record<string, any>;
 import type { WorkerTypeManifest } from "./lifecycle";
 export type { WorkerTypesResponse } from "./lifecycle";
 
-export type AgentState = "working" | "idle" | "errored";
+export type AgentState = "working" | "setting_up" | "idle" | "errored";
 
 // `awaiting_approval` is a proposal the owner holds; `awaiting_agent_approval` is one
 // parked on a manager or another Ticket. The server splits them, so the same word
@@ -46,6 +46,7 @@ export type TicketSummary = WorkAttention & {
   manager_id: string | null;
   manager_title: string | null;
   recap_preview: string;
+  worker_setup?: import("./navigation/contracts").WorkerSetup | null;
 };
 
 export type TicketSummariesResponse = {
@@ -251,6 +252,7 @@ export type TicketDetail = {
   awaiting_agent_approval?: boolean;
   assigned?: boolean;
   agent_state?: AgentState;
+  worker_setup?: import("./navigation/contracts").WorkerSetup | null;
 };
 
 export type EmployeeConfigurationSnapshot = {

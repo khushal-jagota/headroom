@@ -14,9 +14,22 @@ import * as decision_messages from './decision_messages.ts';
 import * as locale_configuration from './locale_configuration.ts';
 import { stage_ownership_mode } from './logic/machine.ts';
 import type { Ticket } from './contracts.ts';
+import {
+  read_worker_setup,
+  still_setting_up,
+  WORKER_SETUP_RESTART_REFUSAL_SECONDS,
+} from '../ticket_workspaces/worker_setup.ts';
 export function require_restartable(sql: ReadSql, principal: Principal, ticket_id: string): Ticket {
   requireAbove(sql, principal, { kind: 'ticket', id: ticket_id });
   const ticket = tickets_data.read_ticket(sql, ticket_id);
+  // A Worker that is setting up is alive. A setup that has outlived the bound may be stuck,
+  // so restart stays available as the way out.
+  const setup = read_worker_setup(sql, ticket_id);
+  if (setup !== null && now_ms() / 1000 - setup.began_at < WORKER_SETUP_RESTART_REFUSAL_SECONDS)
+    throw new PlannerError('validation', still_setting_up(setup), {
+      ticket_id,
+      worker_setup: setup,
+    });
   if (
     stage_ownership_mode(ticket.stage, { worker_type_definition: ticket.workflow }) !== 'worker' &&
     !sql.get(
@@ -59,6 +72,8 @@ export async function restart_worker(
   let killed_conversation_id: string | null = null;
   let killed_conversation_looked_running = false;
   let revision_restarted_in_fresh_conversation = false;
+  // Refuse before the lock: a Home setup holds that lock until its Worker runs.
+  database.read((sql) => require_restartable(sql, principal, ticket_id));
   await conversation_start.conversation_link_lock(`ticket:${ticket_id}`).run(async () => {
     const ticket = database.read((sql) => {
       const current = require_restartable(sql, principal, ticket_id);

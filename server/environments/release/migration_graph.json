@@ -96,6 +96,9 @@
     "ts_0002_project_repository": [
       "ts_0001_open_backend_keys"
     ],
+    "ts_0003_ticket_worker_setups": [
+      "ts_0002_project_repository"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

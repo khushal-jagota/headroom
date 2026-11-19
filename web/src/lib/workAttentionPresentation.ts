@@ -44,5 +44,5 @@ export type AgentHoldFacts = {
 // the Workspace rail still leads with a broken worker, and approval still outranks
 // assignment wherever both are true.
 export function agentHoldsTicket(facts: AgentHoldFacts): boolean {
-  return facts.ticket_status === "agent" || facts.agent_state === "working";
+  return facts.ticket_status === "agent" || facts.agent_state === "working" || facts.agent_state === "setting_up";
 }
