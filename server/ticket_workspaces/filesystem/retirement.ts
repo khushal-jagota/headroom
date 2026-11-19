@@ -4,6 +4,7 @@ import { setTimeout } from 'node:timers/promises';
 import { open, mkdir, readdir, rename, rmdir, unlink } from 'node:fs/promises';
 import { LOGS_DIRECTORY } from '../../agent_homes/agent_home.ts';
 import { basename, dirname, join } from 'node:path';
+import { clean_mirrors } from './mirror.ts';
 import { flock } from '../../core/locks/flock.ts';
 import {
   snapshot_ticket_scratch,
@@ -262,7 +263,9 @@ export async function cleanup_local_workspaces(
         throw new Error('Cannot lock workspace cleanup');
       await setTimeout(20, undefined, { signal: options.signal });
     }
-    return await cleanup_pass(tickets_root, states, now, options);
+    const result = await cleanup_pass(tickets_root, states, now, options);
+    if (options.apply !== false) await clean_mirrors(now, options);
+    return result;
   } finally {
     await descriptor.close();
   }

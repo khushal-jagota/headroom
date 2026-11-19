@@ -13,3 +13,4 @@ export {
   detach_workspace,
   retry_retired_workspaces,
 } from './filesystem/retirement.ts';
+export { git_mirror_root } from './filesystem/mirror.ts';

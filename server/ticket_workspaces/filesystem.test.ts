@@ -11,6 +11,9 @@ import {
   rmSync,
   renameSync,
   readdirSync,
+  utimesSync,
+  openSync,
+  closeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -32,6 +35,8 @@ import {
   workspace_identity,
   prepare_workspace,
 } from './filesystem.ts';
+import { flock } from '../core/locks/flock.ts';
+import { clean_mirrors } from './filesystem/mirror.ts';
 import { git, ticket_match } from './filesystem/shared.ts';
 import { RETENTION_SECONDS } from './contracts.ts';
 import type { WorkspaceOptions } from './contracts.ts';
@@ -315,18 +320,52 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
       await command(project, ['push', 'origin', 'main']);
     };
     const repository = { repository_url: remote, default_branch: 'main' };
+    const mirror_root = join(root, 'cache', 'git-mirrors');
+    const mirrored = { ...options, mirror_root };
     await publish('first');
-    const one = await prepare_workspace(folder(), ticket, repository, options);
-    const mirrors = join(root, 'files', '.project-mirrors');
-    expect(readdirSync(mirrors).filter((name) => name.endsWith('.git'))).toHaveLength(1);
+    const one = await prepare_workspace(folder(), ticket, repository, mirrored);
+    expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toHaveLength(1);
     await publish('second');
     const other = 't_89abcdef';
-    const two = await prepare_workspace(folder(other), other, repository, options);
+    const two = await prepare_workspace(folder(other), other, repository, mirrored);
     expect(readFileSync(join(one, 'tracked.txt'), 'utf8')).toBe('first');
     expect(readFileSync(join(two, 'tracked.txt'), 'utf8')).toBe('second');
     expect(existsSync(join(two, '.git', 'objects', 'info', 'alternates'))).toBe(false);
     expect(await command(two, ['remote', 'get-url', 'origin'])).toBe(remote);
     await command(two, ['fsck', '--no-dangling']);
+  },
+);
+
+// Gap: nothing proves mirror cleanup removes only expired or orphaned mirrors and skips one in use.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'mirror cleanup removes expired mirrors and orphaned partials but not fresh or locked ones',
+  async () => {
+    const mirror_root = join(root, 'cache', 'git-mirrors');
+    mkdirSync(mirror_root, { recursive: true });
+    const day = 24 * 60 * 60,
+      now = 100 * day;
+    const make = (name: string, age_days: number) => {
+      mkdirSync(join(mirror_root, `${name}.git`));
+      writeFileSync(join(mirror_root, `${name}.lock`), '');
+      utimesSync(join(mirror_root, `${name}.lock`), now - age_days * day, now - age_days * day);
+    };
+    make('old', 31);
+    make('fresh', 1);
+    make('busy', 40);
+    mkdirSync(join(mirror_root, 'old.git.abc.tmp'));
+    const held = openSync(join(mirror_root, 'busy.lock'), 'r+');
+    expect(flock(held, 'try-exclusive')).toBe(0);
+    try {
+      const removed = await clean_mirrors(now, { ...options, mirror_root });
+      expect(removed).toEqual([join(mirror_root, 'old.git')]);
+    } finally {
+      closeSync(held);
+    }
+    expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toEqual([
+      'busy.git',
+      'fresh.git',
+    ]);
+    expect(existsSync(join(mirror_root, 'old.git.abc.tmp'))).toBe(false);
   },
 );
 

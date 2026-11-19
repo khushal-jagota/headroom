@@ -128,6 +128,7 @@ export async function localize_start(
       }
       workspace = await prepare_workspace(artifacts, ticket_id, repository, {
         git_execution: options.workspace_git,
+        mirror_root: join(options.paths.root, 'cache', 'git-mirrors'),
       });
     }
   } catch (error) {
