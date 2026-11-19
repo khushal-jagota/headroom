@@ -294,6 +294,42 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   },
 );
 
+// Gap: no test proves a second Ticket clone reads the local mirror yet stays an independent, current checkout.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'a second Ticket clone reuses the Project mirror, sees new commits and shares no objects',
+  async () => {
+    const remote = join(root, 'origin.git'),
+      project = join(root, 'project');
+    mkdirSync(remote);
+    mkdirSync(project);
+    await command(remote, ['init', '--bare']);
+    await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    await command(project, ['init', '-b', 'main']);
+    await command(project, ['config', 'user.email', 'proof@example.test']);
+    await command(project, ['config', 'user.name', 'Synthetic proof']);
+    await command(project, ['remote', 'add', 'origin', remote]);
+    const publish = async (text: string) => {
+      writeFileSync(join(project, 'tracked.txt'), text);
+      await command(project, ['add', '.']);
+      await command(project, ['commit', '-m', text]);
+      await command(project, ['push', 'origin', 'main']);
+    };
+    const repository = { repository_url: remote, default_branch: 'main' };
+    await publish('first');
+    const one = await prepare_workspace(folder(), ticket, repository, options);
+    const mirrors = join(root, 'files', '.project-mirrors');
+    expect(readdirSync(mirrors).filter((name) => name.endsWith('.git'))).toHaveLength(1);
+    await publish('second');
+    const other = 't_89abcdef';
+    const two = await prepare_workspace(folder(other), other, repository, options);
+    expect(readFileSync(join(one, 'tracked.txt'), 'utf8')).toBe('first');
+    expect(readFileSync(join(two, 'tracked.txt'), 'utf8')).toBe('second');
+    expect(existsSync(join(two, '.git', 'objects', 'info', 'alternates'))).toBe(false);
+    expect(await command(two, ['remote', 'get-url', 'origin'])).toBe(remote);
+    await command(two, ['fsck', '--no-dangling']);
+  },
+);
+
 // Gap: successful clone tests do not prove clone failures refuse without creating an empty worktree.
 test.skipIf(!['linux', 'darwin'].includes(process.platform))(
   'a failed clone stops with a clear error and never leaves an empty worktree',

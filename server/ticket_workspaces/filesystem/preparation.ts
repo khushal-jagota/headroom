@@ -1,4 +1,8 @@
+import { closeSync, constants, openSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { flock } from '../../core/locks/flock.ts';
 import { prepare_agent_home } from '../../agent_homes/agent_home.ts';
 import { dirname, join, resolve } from 'node:path';
 import { OWNERSHIP_FILE, WORKTREE_DIRECTORY } from '../contracts.ts';
@@ -28,6 +32,58 @@ async function validate_clone(
   }
 }
 
+/**
+ * Keep one full bare mirror of each Project repository next to the Ticket folders, and fetch it
+ * before a clone so the clone reads objects from disk instead of the network. The mirror is only a
+ * speed-up: on any failure the caller clones from origin as before.
+ */
+async function refresh_mirror(
+  root: string,
+  repository_url: string,
+  options: WorkspaceOptions,
+): Promise<string | null> {
+  const directory = join(dirname(dirname(root)), '.project-mirrors');
+  const name = createHash('sha256').update(repository_url).digest('hex').slice(0, 24);
+  const mirror = join(directory, `${name}.git`);
+  try {
+    await mkdir(directory, { recursive: true });
+    const descriptor = openSync(
+      join(directory, `${name}.lock`),
+      constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      while (flock(descriptor, 'try-exclusive')) {
+        options.signal?.throwIfAborted();
+        await sleep(500);
+      }
+      const refspec = ['+refs/heads/*:refs/heads/*', '--prune'];
+      if (!(await entry_stat(mirror))) {
+        const partial = `${mirror}.${token()}.tmp`;
+        const created = await git(directory, ['init', '--bare', '--', partial], options);
+        const added = created.returncode
+          ? created
+          : await git(partial, ['remote', 'add', 'origin', repository_url], options);
+        const fetched = added.returncode
+          ? added
+          : await git(partial, ['fetch', '--no-tags', 'origin', ...refspec], options);
+        if (fetched.returncode) {
+          await rm(partial, { recursive: true, force: true });
+          return null;
+        }
+        await rename(partial, mirror);
+        return mirror;
+      }
+      const fetched = await git(mirror, ['fetch', '--no-tags', 'origin', ...refspec], options);
+      return fetched.returncode ? null : mirror;
+    } finally {
+      closeSync(descriptor);
+    }
+  } catch {
+    options.signal?.throwIfAborted();
+    return null;
+  }
+}
 async function registered(
   repository: string,
   destination: string,
@@ -213,7 +269,9 @@ export async function prepare_workspace(
       const temporary = join(root, `.clone-${token()}`);
       let recorded = false;
       try {
+        const mirror = await refresh_mirror(root, repository_url, options);
         const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
+        if (mirror !== null) args.push('--reference', mirror, '--dissociate');
         if (default_branch !== null) args.push('--branch', default_branch);
         args.push('--', repository_url, temporary);
         const cloned = await git(root, args, options);
