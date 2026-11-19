@@ -3,7 +3,11 @@ import { prepare_agent_home } from '../agent_homes/agent_home.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { read_machine } from '../machines/data.ts';
 import { filesRoot } from '../files/logic/paths.ts';
-import { prepare_workspace, workspace_identity } from '../ticket_workspaces/filesystem.ts';
+import {
+  git_mirror_root,
+  prepare_workspace,
+  workspace_identity,
+} from '../ticket_workspaces/filesystem.ts';
 import type { WorkspaceIdentity } from '../ticket_workspaces/contracts.ts';
 import {
   register_workspace,
@@ -361,6 +365,7 @@ export async function start_ticket_conversation(
     try {
       await prepare_workspace(ticket_folder, ticket.id, repository, {
         signal: options.signal,
+        mirror_root: git_mirror_root(context(database).db_path),
       });
       values = { ...values, workspace_folder: ticket_folder };
       identity = workspace_identity(ticket_folder);

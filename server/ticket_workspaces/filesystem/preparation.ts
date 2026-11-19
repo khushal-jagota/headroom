@@ -8,6 +8,7 @@ import type {
   WorkspaceMarker,
   WorkspaceOptions,
 } from '../contracts.ts';
+import { with_mirror } from './mirror.ts';
 import { admit, entry_stat, git, json, token, workspace_identity, write_json } from './shared.ts';
 
 async function validate_clone(
@@ -213,10 +214,13 @@ export async function prepare_workspace(
       const temporary = join(root, `.clone-${token()}`);
       let recorded = false;
       try {
-        const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
-        if (default_branch !== null) args.push('--branch', default_branch);
-        args.push('--', repository_url, temporary);
-        const cloned = await git(root, args, options);
+        const cloned = await with_mirror(repository_url, options, (mirror) => {
+          const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
+          if (mirror !== null) args.push('--reference', mirror, '--dissociate');
+          if (default_branch !== null) args.push('--branch', default_branch);
+          args.push('--', repository_url, temporary);
+          return git(root, args, options);
+        });
         if (cloned.returncode) {
           const detail = cloned.stderr.trim();
           const target =

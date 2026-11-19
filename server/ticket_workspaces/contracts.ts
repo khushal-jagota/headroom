@@ -2,6 +2,7 @@ import type { OwnedOneShotChildren } from '../lifecycle/contracts.ts';
 
 export const TICKET_ID_PATTERN = 't_[0-9abcdefghjkmnpqrstuvwxyz]{8}';
 export const RETENTION_SECONDS = 7 * 24 * 60 * 60;
+export const MIRROR_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export const WORKTREE_DIRECTORY = 'worktree';
 export const OWNERSHIP_FILE = '.panels-workspace.json';
 export interface WorkspaceState {
@@ -31,6 +32,8 @@ export interface ProjectRepository {
 export interface WorkspaceOptions {
   signal?: AbortSignal;
   admit_path?: (path: string) => string;
+  /** Cache folder for Project repository mirrors. Without it, clones use origin only. */
+  mirror_root?: string;
   git_execution?: {
     readonly children: OwnedOneShotChildren;
     readonly environment: Readonly<NodeJS.ProcessEnv>;

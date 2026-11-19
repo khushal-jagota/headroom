@@ -21,6 +21,7 @@ import {
   read_workspace_identity,
   detach_workspace,
 } from './filesystem.ts';
+import { git_mirror_root } from './filesystem/mirror.ts';
 import { stat_sync } from './filesystem/shared.ts';
 
 export interface DatabaseCleanupOptions extends WorkspaceCleanupOptions {
@@ -177,6 +178,7 @@ export async function clean_for_database(
   }
   return cleanup_local_workspaces(filesRoot(db_path, 'ticket'), snapshot.states, now, {
     ...options,
+    mirror_root: git_mirror_root(db_path),
     active_ticket_ids: snapshot.active,
     retire: (path, state, identity, checkout_only) =>
       options.retire_local_children
