@@ -111,6 +111,14 @@ export class SubprocessBackendProbeEnvironment implements BackendProbeEnvironmen
       return resolve(path);
     }
   }
+  modified_time_ms(path: string): number | null {
+    require_production_io();
+    try {
+      return statSync(path).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
   user_local_npm_prefix(): string {
     return join(this.environment.HOME ?? homedir(), '.local');
   }

@@ -1,6 +1,5 @@
 /** One Claude instance: its launch and child factory, card, allowance usage and transcripts. */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { DriverCreateInput, DriverInstance } from '../../core/driver.ts';
 import type { DriverHost } from '../../core/host.ts';
 import { CLAUDE_CAPABILITIES, claude_selection_transition } from './selection.ts';
@@ -18,7 +17,7 @@ import { create_claude_backend_child_factory } from './adapter.ts';
 import type { ClaudeAgentSdkChildLaunch } from './adapter.ts';
 import { ClaudeUsageAdapter } from './allowance_usage.ts';
 import { create_claude_catalog_source } from './catalog_source.ts';
-import { create_claude_status } from './status.ts';
+import { claude_auth_paths, create_claude_status, read_claude_auth_freshness } from './status.ts';
 import { claude_transcript_usage } from './transcript_usage.ts';
 
 export function claude_launch(host: DriverHost): ClaudeAgentSdkChildLaunch {
@@ -64,11 +63,15 @@ export async function create_claude_instance(
     unset: '??',
     expand_configured: false,
   });
+  const auth_paths = claude_auth_paths(home, host.environment);
   return {
     ...base,
-    status: create_claude_status({ catalog: catalog.source }),
+    status: create_claude_status({
+      catalog: catalog.source,
+      read_freshness: () => read_claude_auth_freshness(auth_paths),
+    }),
     allowance_usage: new ClaudeUsageAdapter({
-      credential_path: join(home, '.credentials.json'),
+      credential_path: auth_paths.credentials_path,
       http_get: http_get_usage,
       now: () => new Date(),
     }),

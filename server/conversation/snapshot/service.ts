@@ -3,6 +3,7 @@ import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import { FifoLock } from '../runtime/state.ts';
 import type {
   BackendCardSource,
+  BackendProbeEnvironment,
   BackendSnapshot,
   BackendSnapshotServiceContract,
   BackendSnapshotServiceOptions,
@@ -26,6 +27,8 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
   private readonly probed_at = new Map<BackendInstanceId, Date>();
   /** The freshness key each kept card was probed against, recorded only when it had one. */
   private readonly probed_against = new Map<BackendInstanceId, string>();
+  /** The executable identity (real_path and mtimeMs) each kept card was probed against on home reads. */
+  private readonly probed_executable = new Map<BackendInstanceId, string>();
   private readonly snapshot_locks: ReadonlyMap<BackendInstanceId, FifoLock>;
   private readonly update_locks: ReadonlyMap<BackendInstanceId, FifoLock>;
   constructor(options: BackendSnapshotServiceOptions) {
@@ -61,14 +64,16 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
     const environment = cancellable_environment(this.options.environment, options.signal);
     const refresh = options.refresh ?? false;
     const freshness_moved = this.freshness_has_moved(source);
-    let stale = this.options.machine_catalog ? false : freshness_moved;
+    const executable_moved = this.executable_has_moved(source, environment);
+    let stale = freshness_moved || executable_moved;
     if (this.options.machine_catalog && !refresh) {
       const previous = this.kept.get(backend_key);
       if (previous) {
-        stale =
+        const backstop_expired =
           (this.now().getTime() - this.probed_at.get(backend_key)!.getTime()) / 1000 >=
           MACHINE_CATALOG_BACKSTOP_SECONDS;
-        if (source.status.version_detects_upgrade) {
+        stale = stale || backstop_expired;
+        if (!stale && source.status.version_detects_upgrade) {
           const executable = environment.executable_path(source.executable_name);
           let version: string | null = null;
           if (executable !== null) {
@@ -89,14 +94,18 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
     const waiting = lock.locked;
     return lock.run(async () => {
       options.signal?.throwIfAborted();
-      if (waiting && !this.freshness_has_moved(source)) {
+      const freshness_moved_now = this.freshness_has_moved(source);
+      const executable_moved_now = this.executable_has_moved(source, environment);
+      if (waiting && !freshness_moved_now && !executable_moved_now) {
         const shared = this.kept.get(backend_key);
         if (shared) return shared;
       }
-      const kept = refresh || stale ? undefined : this.kept.get(backend_key);
+      const stale_now = stale || freshness_moved_now || executable_moved_now;
+      const kept = refresh || stale_now ? undefined : this.kept.get(backend_key);
       if (kept) return kept;
       const reading_at = this.now();
       const probed_against = source.status.freshness_key?.(reading_at) ?? null;
+      const probed_executable = this.executable_stamp(source, environment);
       const draft = await source.status.probe({
         environment,
         refresh,
@@ -122,12 +131,18 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
           models_complete: false,
         };
       }
-      if (stale && !refresh && probed.update_advisory === null) {
-        const advisory = this.kept.get(backend_key)?.update_advisory;
+      const previous = this.kept.get(backend_key);
+      if (
+        stale_now &&
+        !refresh &&
+        !executable_moved_now &&
+        previous?.version === probed.version &&
+        probed.update_advisory === null
+      ) {
+        const advisory = previous.update_advisory;
         if (advisory != null) probed = { ...probed, update_advisory: advisory };
       }
-      const previous = this.kept.get(backend_key);
-      if (!freshness_moved && previous?.models_complete && !probed.models_complete) {
+      if (!freshness_moved_now && previous?.models_complete && !probed.models_complete) {
         probed = {
           ...probed,
           available_models: previous.available_models,
@@ -147,6 +162,7 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
         }
       }
       if (probed_against !== null) this.probed_against.set(backend_key, probed_against);
+      if (probed_executable !== null) this.probed_executable.set(backend_key, probed_executable);
       return probed;
     });
   }
@@ -155,6 +171,26 @@ export class BackendSnapshotService implements BackendSnapshotServiceContract {
     const against = this.probed_against.get(source.instance_id);
     if (source.status.freshness_key === undefined || against === undefined) return false;
     return (source.status.freshness_key(this.now()) ?? 'null') !== against;
+  }
+  /** Resolved executable path and modification time for home upgrade invalidation without spawning `--version`. */
+  private executable_stamp(
+    source: BackendCardSource,
+    environment: BackendProbeEnvironment,
+  ): string | null {
+    if (this.options.machine_catalog || !source.status.version_detects_upgrade) return null;
+    const executable = environment.executable_path(source.executable_name);
+    if (executable === null) return 'missing';
+    const resolved = environment.real_path(executable);
+    const mtime_ms = environment.modified_time_ms?.(resolved) ?? null;
+    return JSON.stringify([resolved, mtime_ms]);
+  }
+  private executable_has_moved(
+    source: BackendCardSource,
+    environment: BackendProbeEnvironment,
+  ): boolean {
+    const previous = this.probed_executable.get(source.instance_id);
+    if (previous === undefined) return false;
+    return this.executable_stamp(source, environment) !== previous;
   }
   async update_backend(
     backend_key: BackendInstanceId,

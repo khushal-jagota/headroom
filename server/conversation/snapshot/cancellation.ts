@@ -11,6 +11,7 @@ export function cancellable_environment(
       return environment.executable_path(name);
     },
     real_path: (path) => environment.real_path(path),
+    modified_time_ms: (path) => environment.modified_time_ms?.(path) ?? null,
     user_local_npm_prefix: () => environment.user_local_npm_prefix(),
     prefix_is_owned_and_writable: (prefix) => environment.prefix_is_owned_and_writable(prefix),
     run: (argv, options) => environment.run(argv, { ...options, signal }),
