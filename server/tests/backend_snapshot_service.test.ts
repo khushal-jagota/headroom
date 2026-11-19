@@ -1,7 +1,9 @@
 /** Snapshot service ordering does not need a provider process or an HTTP host. */
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { expect, test, vi } from 'vitest';
-import { writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BackendSnapshotService } from '../conversation/snapshot/service.ts';
 import type {
   BackendCardSource,
@@ -579,6 +581,11 @@ const card_json = (card: BackendSnapshot) =>
   });
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import type { CommandOutcome } from '../conversation/snapshot/contracts.ts';
+import {
+  claude_auth_paths,
+  create_claude_status,
+  read_claude_auth_freshness,
+} from '../drivers/claude/runtime/status.ts';
 import type { CodexLoginStanding, CodexModelCatalog } from '../drivers/codex/runtime/contracts.ts';
 import { create_codex_status } from '../drivers/codex/runtime/status.ts';
 
@@ -813,4 +820,349 @@ test('backend card JSON stays the same for every recorded machine and login sequ
   expect(actual).toEqual(
     JSON.parse(readFileSync(new URL('./backend_card_json.json', import.meta.url), 'utf8')),
   );
+});
+
+// Distinct gap: existing refresh route tests only check 503 unavailability and failure cleanup,
+// not that POST /api/conversation/backends/refresh passes refresh: true to update version and identity.
+test('POST /api/conversation/backends/refresh re-probes version and identity without freshness_key movement', async () => {
+  const database = fixture();
+  const writes = new ConversationHttpWriteScope();
+  let version = '1.5.10';
+  let account_label = 'first@example.invalid';
+  let probe_calls = 0;
+  const snapshots = new BackendSnapshotService({
+    environment: machine(),
+    sources: sources_of(async (key) => {
+      probe_calls++;
+      return {
+        ...card(version),
+        backend_key: key,
+        identity: {
+          status: 'authenticated',
+          account_label,
+          detail: null,
+          login_command: null,
+        },
+      };
+    }),
+  });
+  const app = await createApp(
+    loadConfig(undefined, {
+      PLAN_TEST_MODE: '1',
+      PLAN_DB_PATH: fixture_path(database),
+    }),
+    {
+      database,
+      areas: [
+        {
+          prefix: '/api/conversation',
+          routes: createBackendRoutes(
+            {
+              settled: () => writes.drain(),
+              database,
+              backend_snapshots: snapshots,
+              backend_usage: new BackendUsageService(new Map()),
+              backend_state: null,
+              backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
+              sign_in: () => null,
+              machine_catalog: () => null,
+              drivers: BUILT_IN_MANIFESTS,
+              driver_of: () => null,
+              reports_allowance_usage: () => false,
+            },
+            { available: true, writes },
+          ),
+        },
+      ],
+    },
+  );
+  try {
+    const initial = await app.inject({ method: 'GET', url: '/api/conversation/backends' });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json().backends[0]).toMatchObject({
+      version: '1.5.10',
+      identity: { account_label: 'first@example.invalid' },
+    });
+    const probes_before_refresh = probe_calls;
+    version = '1.5.11';
+    account_label = 'second@example.invalid';
+    const refreshed = await app.inject({
+      method: 'POST',
+      url: '/api/conversation/backends/refresh',
+    });
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.json().backends[0]).toMatchObject({
+      version: '1.5.11',
+      identity: { account_label: 'second@example.invalid' },
+    });
+    expect(probe_calls).toBeGreaterThan(probes_before_refresh);
+    const after = await app.inject({ method: 'GET', url: '/api/conversation/backends' });
+    expect(after.statusCode).toBe(200);
+    expect(after.json().backends[0]).toMatchObject({
+      version: '1.5.11',
+      identity: { account_label: 'second@example.invalid' },
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+// Distinct gap: Codex freshness tests do not exercise Claude's non-secret metadata key across
+// VPS (.credentials.json mtime/size + ~/.claude.json) and Mac (Keychain-backed ~/.claude.json only).
+test('Claude freshness_key invalidates on credentials metadata and oauthAccount without reading secrets', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'panels-claude-freshness-'));
+  try {
+    const claude = parse_backend_instance_id('claude');
+    const account_home = join(root, 'home');
+    const claude_home = join(account_home, '.claude');
+    mkdirSync(claude_home, { recursive: true });
+
+    const configured = claude_auth_paths(
+      join(root, 'isolated'),
+      { CLAUDE_CONFIG_DIR: join(root, 'isolated'), HOME: account_home },
+      account_home,
+    );
+    expect(configured.claude_json_path).toBe(join(root, 'isolated', '.claude.json'));
+
+    const vps_paths = claude_auth_paths(claude_home, { HOME: account_home }, account_home);
+    expect(vps_paths.claude_json_path).toBe(join(account_home, '.claude.json'));
+    const vps_env = new RecordingBackendProbeEnvironment();
+    vps_env.executables.set('claude', '/synthetic/claude');
+    vps_env.outcomes.set(JSON.stringify(['/synthetic/claude', '--version']), recorded('2.1.219'));
+    let vps_identity = recorded(JSON.stringify({ loggedIn: false }));
+    let vps_probes = 0;
+    const vps_service = new BackendSnapshotService({
+      environment: vps_env,
+      sources: [
+        {
+          instance_id: claude,
+          executable_name: 'claude',
+          status: {
+            ...create_claude_status({
+              catalog: async () => ({
+                models: [],
+                reasoning_effort_options: ['high'],
+                default_model_id: null,
+              }),
+              read_freshness: () => read_claude_auth_freshness(vps_paths),
+            }),
+            probe: async (context) => {
+              vps_probes++;
+              vps_env.outcomes.set(
+                JSON.stringify(['/synthetic/claude', 'auth', 'status', '--json']),
+                vps_identity,
+              );
+              return create_claude_status({
+                catalog: async () => ({
+                  models: [],
+                  reasoning_effort_options: ['high'],
+                  default_model_id: null,
+                }),
+                read_freshness: () => read_claude_auth_freshness(vps_paths),
+              }).probe(context);
+            },
+          },
+        },
+      ],
+    });
+
+    expect((await vps_service.snapshot(claude)).identity?.status).toBe('unauthenticated');
+    expect(vps_probes).toBe(1);
+    await vps_service.snapshot(claude);
+    expect(vps_probes).toBe(1);
+
+    writeFileSync(
+      vps_paths.credentials_path,
+      JSON.stringify({ claudeAiOauth: { accessToken: 'secret-token-never-in-key' } }),
+    );
+    writeFileSync(
+      vps_paths.claude_json_path,
+      JSON.stringify({
+        numStartups: 1,
+        oauthAccount: {
+          accountUuid: 'acct-1',
+          emailAddress: 'first@example.invalid',
+          organizationUuid: 'org-1',
+          profileFetchedAt: '2026-11-19T10:00:00Z',
+        },
+      }),
+    );
+    expect(read_claude_auth_freshness(vps_paths)).not.toContain('secret-token-never-in-key');
+    vps_identity = recorded(
+      JSON.stringify({
+        loggedIn: true,
+        email: 'first@example.invalid',
+        subscriptionType: 'max',
+        authMethod: 'claude.ai',
+      }),
+    );
+    expect((await vps_service.snapshot(claude)).identity?.account_label).toBe(
+      'first@example.invalid',
+    );
+    expect(vps_probes).toBe(2);
+
+    // Unrelated .claude.json churn and profileFetchedAt do not re-probe.
+    writeFileSync(
+      vps_paths.claude_json_path,
+      JSON.stringify({
+        numStartups: 42,
+        oauthAccount: {
+          accountUuid: 'acct-1',
+          emailAddress: 'first@example.invalid',
+          organizationUuid: 'org-1',
+          profileFetchedAt: '2026-11-19T12:00:00Z',
+        },
+      }),
+    );
+    await vps_service.snapshot(claude);
+    expect(vps_probes).toBe(2);
+
+    // Changing .credentials.json metadata invalidates without reading contents.
+    utimesSync(vps_paths.credentials_path, new Date(2_000_000), new Date(2_000_000));
+    await vps_service.snapshot(claude);
+    expect(vps_probes).toBe(3);
+
+    // Mac layout: no .credentials.json exists; Keychain login switches update ~/.claude.json.
+    const mac_home = join(root, 'mac-home');
+    const mac_claude_home = join(mac_home, '.claude');
+    mkdirSync(mac_claude_home, { recursive: true });
+    const mac_paths = claude_auth_paths(mac_claude_home, { HOME: mac_home }, mac_home);
+    writeFileSync(
+      mac_paths.claude_json_path,
+      JSON.stringify({
+        oauthAccount: { accountUuid: 'mac-1', emailAddress: 'mac-one@example.invalid' },
+      }),
+    );
+    let mac_probes = 0;
+    const mac_status = create_claude_status({
+      catalog: null,
+      read_freshness: () => read_claude_auth_freshness(mac_paths),
+    });
+    const mac_service = new BackendSnapshotService({
+      environment: vps_env,
+      machine_catalog: true,
+      sources: [
+        {
+          instance_id: claude,
+          executable_name: 'claude',
+          status: {
+            ...mac_status,
+            probe: async (context) => {
+              mac_probes++;
+              return mac_status.probe(context);
+            },
+          },
+        },
+      ],
+    });
+    await mac_service.snapshot(claude);
+    expect(mac_probes).toBe(1);
+    writeFileSync(
+      mac_paths.claude_json_path,
+      JSON.stringify({
+        oauthAccount: { accountUuid: 'mac-2', emailAddress: 'mac-two@example.invalid' },
+      }),
+    );
+    await mac_service.snapshot(claude);
+    expect(mac_probes).toBe(2);
+    writeFileSync(mac_paths.claude_json_path, JSON.stringify({ numStartups: 5 }));
+    await mac_service.snapshot(claude);
+    expect(mac_probes).toBe(3);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Distinct gap: codex_machine_sequence only exercises machine_catalog with login: () => null,
+// leaving freshness_moved discard in machine_catalog: true unguarded.
+test('machine_catalog preserves freshness_moved before the 12-hour backstop even when version is unchanged', async () => {
+  const codex = parse_backend_instance_id('codex');
+  const environment = recorded_machine();
+  let key = 'account-one';
+  let probes = 0;
+  const service = new BackendSnapshotService({
+    environment,
+    now: () => new Date('2026-11-19T12:00:00Z'),
+    machine_catalog: true,
+    sources: [
+      {
+        instance_id: codex,
+        executable_name: 'codex',
+        status: {
+          version_detects_upgrade: true,
+          freshness_key: () => key,
+          probe: async () => {
+            probes++;
+            const { backend_key: _key, ...draft } = card('0.150.0');
+            return {
+              ...draft,
+              identity: {
+                status: 'authenticated',
+                account_label: key,
+                detail: null,
+                login_command: 'codex login',
+              },
+            };
+          },
+        },
+      },
+    ],
+  });
+  expect((await service.snapshot(codex)).identity?.account_label).toBe('account-one');
+  expect(probes).toBe(1);
+  expect((await service.snapshot(codex)).identity?.account_label).toBe('account-one');
+  expect(probes).toBe(1);
+  key = 'account-two';
+  expect((await service.snapshot(codex)).identity?.account_label).toBe('account-two');
+  expect(probes).toBe(2);
+});
+
+// Distinct gap: version_detects_upgrade had no home-mode test proving real_path and mtimeMs
+// invalidate kept cards without running `--version` on ordinary GET reads.
+test('home BackendSnapshotService invalidates kept cards when executable real_path or mtimeMs changes', async () => {
+  const antigravity = parse_backend_instance_id('antigravity');
+  const environment = new RecordingBackendProbeEnvironment();
+  environment.executables.set('antigravity', '/synthetic/bin/agy');
+  environment.real_paths.set('/synthetic/bin/agy', '/synthetic/versions/1.5.10/agy');
+  environment.modified_times.set('/synthetic/versions/1.5.10/agy', 1000);
+  let version = '1.5.10';
+  let probes = 0;
+  const service = new BackendSnapshotService({
+    environment,
+    sources: [
+      {
+        instance_id: antigravity,
+        executable_name: 'antigravity',
+        status: {
+          version_detects_upgrade: true,
+          probe: async () => {
+            probes++;
+            const { backend_key: _key, ...draft } = card(version);
+            return draft;
+          },
+        },
+      },
+    ],
+  });
+
+  expect((await service.snapshot(antigravity)).version).toBe('1.5.10');
+  expect(probes).toBe(1);
+  expect((await service.snapshot(antigravity)).version).toBe('1.5.10');
+  expect(probes).toBe(1);
+  expect(environment.commands).toEqual([]);
+
+  // In-place binary update changes mtimeMs.
+  version = '1.5.11';
+  environment.modified_times.set('/synthetic/versions/1.5.10/agy', 2000);
+  expect((await service.snapshot(antigravity)).version).toBe('1.5.11');
+  expect(probes).toBe(2);
+  expect(environment.commands).toEqual([]);
+
+  // Symlink swap changes real_path.
+  version = '1.5.12';
+  environment.real_paths.set('/synthetic/bin/agy', '/synthetic/versions/1.5.12/agy');
+  environment.modified_times.set('/synthetic/versions/1.5.12/agy', 2000);
+  expect((await service.snapshot(antigravity)).version).toBe('1.5.12');
+  expect(probes).toBe(3);
+  expect(environment.commands).toEqual([]);
 });

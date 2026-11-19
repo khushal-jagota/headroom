@@ -63,6 +63,7 @@ export interface BackendProbeEnvironment {
   shutdown?(): Promise<void>;
   executable_path(executable_name: string): string | null;
   real_path(path: string): string;
+  modified_time_ms?(path: string): number | null;
   user_local_npm_prefix(): string;
   prefix_is_owned_and_writable(prefix: string): boolean;
   run(argv: readonly string[], options: BackendCommandOptions): Promise<CommandOutcome>;

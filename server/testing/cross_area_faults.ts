@@ -38,6 +38,7 @@ if (mode === 'guards') {
   ) as SubprocessBackendProbeEnvironment;
   assert.throws(() => door.executable_path('nonexistent-cross-area'), refusal);
   assert.throws(() => door.real_path('/synthetic'), refusal);
+  assert.throws(() => door.modified_time_ms('/synthetic'), refusal);
   assert.throws(() => door.prefix_is_owned_and_writable('/synthetic'), refusal);
   await assert.rejects(door.run(['nonexistent-cross-area'], { timeout_seconds: 1 }), refusal);
   await assert.rejects(door.latest_released_version('synthetic', { timeout_seconds: 1 }), refusal);

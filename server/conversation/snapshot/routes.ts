@@ -179,7 +179,7 @@ export function createBackendRoutes(
       let refreshed;
       try {
         await Promise.resolve();
-        snapshots = await runtime.backend_snapshots.snapshots({ signal });
+        snapshots = await runtime.backend_snapshots.snapshots({ refresh: true, signal });
         refreshed = await usage_refresh;
       } finally {
         controller.abort();

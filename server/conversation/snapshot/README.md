@@ -16,11 +16,13 @@ probes together. Without a registry, the cards come from the built-in manifests 
 recording environment with no executables.
 
 `service.ts` keeps cards, per-backend locks and the complete-list rule. A status may
-name a freshness key, which Codex uses for its saved login, so a kept card goes stale
-when what it read changes. In machine mode, a status that detects upgrades by version
-is re-read when `--version` changes. `probe.ts` holds the one card probe that each
-driver's `runtime/status.ts` calls with its manifest recipe, identity reader and
-catalog reader. The probe also records the CLI version verdict that later launches
+name a freshness key, which Codex and Claude use for local login metadata, so a kept
+card goes stale when what it read changes on either home or machine reads. On home
+reads, a status that detects upgrades by version tracks the resolved executable's
+`real_path` and modification time without running `--version`; in machine mode, it
+re-runs `--version` before reusing a kept card. `probe.ts` holds the one card probe
+that each driver's `runtime/status.ts` calls with its manifest recipe, identity reader
+and catalog reader. The probe also records the CLI version verdict that later launches
 reuse.
 
 Each HTTP operation supplies its cancellation signal to probes and update commands.

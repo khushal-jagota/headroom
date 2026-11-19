@@ -5,6 +5,7 @@ export class RecordingBackendProbeEnvironment implements BackendProbeEnvironment
   readonly registry_lookups: string[] = [];
   readonly executables = new Map<string, string>();
   readonly real_paths = new Map<string, string>();
+  readonly modified_times = new Map<string, number>();
   readonly writable_prefixes = new Set<string>();
   readonly outcomes = new Map<string, CommandOutcome>();
   readonly registry_versions = new Map<string, string>();
@@ -13,6 +14,9 @@ export class RecordingBackendProbeEnvironment implements BackendProbeEnvironment
   }
   real_path(path: string): string {
     return this.real_paths.get(path) ?? path;
+  }
+  modified_time_ms(path: string): number | null {
+    return this.modified_times.get(path) ?? null;
   }
   user_local_npm_prefix(): string {
     return '/synthetic/.local';
