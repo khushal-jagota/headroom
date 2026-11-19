@@ -12,6 +12,7 @@ import { LEASE_CONTINUITY_SECONDS } from '../../executor/configuration.ts';
 import { cleanup_result } from '../../worker_supervision/inspection.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { isDeepStrictEqual } from 'node:util';
+import { same_reference } from '../../executor/child_reference.ts';
 import type { ConversationSystem } from '../contracts.ts';
 import { PlannerError } from '../../core/contracts.ts';
 import type { TransactionSql, ReadSql } from '../../core/database/contracts.ts';
@@ -295,6 +296,15 @@ async function take_recorded_settlement(
     );
 }
 
+type RetainedRun = ReturnType<SqliteProcessConversationSystem['retained_run']>;
+function same_retained_run(left: RetainedRun, right: RetainedRun): boolean {
+  if (left == null || right == null) return (left ?? null) === (right ?? null);
+  return (
+    same_reference(left.reference, right.reference) &&
+    left.retirement_confirmed === right.retirement_confirmed
+  );
+}
+
 export async function confirm_killed_source(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
@@ -413,7 +423,7 @@ export async function confirm_killed_source(
       state.child_is_quarantined ||
       (state.retirement_task !== null && state.retiring_child !== null) ||
       (retained !== null && retained !== undefined && !remote_receipt) ||
-      (remote_inspected && retained !== inspected_remote) ||
+      (remote_inspected && !same_retained_run(retained, inspected_remote)) ||
       (restart !== undefined && state.held_prompts.length > 0) ||
       !(remote_receipt || state.local_child_retirement_proven || state.local_preparation_cancelled)
     )

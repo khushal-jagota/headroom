@@ -141,6 +141,18 @@ export function cli_proxy_for(url: URL, env: NodeJS.ProcessEnv): string | null {
 }
 
 class ClientConfigurationError extends Error {}
+class ReadTimeoutError extends Error {
+  readonly code = 'ETIMEDOUT';
+  constructor() {
+    super('The Panels server timed out waiting for a response; the request may still be running.');
+  }
+}
+function is_read_timeout(error: unknown): boolean {
+  return (
+    error instanceof ReadTimeoutError ||
+    (error instanceof Error && error.cause instanceof ReadTimeoutError)
+  );
+}
 /** The error code when there is one, otherwise the message, for user-facing CLI text. */
 export function error_reason(error: unknown): string {
   const code = (error as NodeJS.ErrnoException | null)?.code;
@@ -254,11 +266,17 @@ async function read_request(
         stop_header_progress();
         reject(error);
       };
-      const wait_for_phase = (milliseconds = limits.read_ms) => {
+      const wait_for_phase = (
+        milliseconds = limits.read_ms,
+        phase: 'connect' | 'write' | 'read' = 'read',
+      ) => {
         if (settled) return;
         clearTimeout(timer);
         timer = setTimeout(() => {
-          const error = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+          const error =
+            phase === 'read'
+              ? new ReadTimeoutError()
+              : Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
           request.destroy(error);
           fail(error);
         }, milliseconds);
@@ -319,12 +337,15 @@ async function read_request(
         header_socket = socket;
         socket.on('data', header_progress);
         socket.once('connect', () =>
-          wait_for_phase(endpoint.protocol === 'https:' ? limits.connect_ms : limits.write_ms),
+          wait_for_phase(
+            endpoint.protocol === 'https:' ? limits.connect_ms : limits.write_ms,
+            endpoint.protocol === 'https:' ? 'connect' : 'write',
+          ),
         );
-        socket.once('secureConnect', () => wait_for_phase(limits.write_ms));
+        socket.once('secureConnect', () => wait_for_phase(limits.write_ms, 'write'));
       });
-      wait_for_phase(limits.connect_ms);
-      request.end(body, () => wait_for_phase(limits.read_ms));
+      wait_for_phase(limits.connect_ms, 'connect');
+      request.end(body, () => wait_for_phase(limits.read_ms, 'read'));
     });
   } finally {
     tunnel?.destroy();
@@ -399,6 +420,12 @@ export async function fail_connection(inv: Invocation, error: unknown): Promise<
           error: { code: 'connection', message: await connection_message(error), detail: {} },
         }) + '\n',
     });
+  if (is_read_timeout(error))
+    throw new CliFailure(
+      human_error(inv.command, 'The request to the Panels server timed out.', 2, {
+        no_route: 'The request may still be running on the server.',
+      }),
+    );
   throw new CliFailure(
     human_error(inv.command, 'The Panels server is unavailable.', 2, {
       no_route: 'No panels call can work until the server is available.',
