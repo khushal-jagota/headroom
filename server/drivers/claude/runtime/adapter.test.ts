@@ -347,3 +347,43 @@ it('ends the turn broken after a cancel that Claude never settles, ignoring its 
   expect(turn_endings[0]).toMatchObject({ ending: 'failed', child_disposition: 'broken' });
   await child.stop();
 });
+
+// bypassPermissions skips the permission modes but not Claude Code's dangerous-rm check, which
+// then asks a person. Full access must start in auto mode.
+it('starts a full-access conversation in auto permission mode', async () => {
+  const start = new ResolvedConversationStart({
+    conversation_id: 'permission-mode',
+    backend_key: parse_backend_instance_id('claude'),
+    model: 'haiku',
+    reasoning_effort: null,
+    role_materials: null,
+    workspace_folder: '/synthetic/workspace',
+    workspace_path_policy: 'absolute',
+    access: 'full',
+  });
+  const client_factory = vi.fn((_options: unknown) => {
+    throw new Error('stop after options');
+  });
+  const child_processes = new ChildProcesses();
+  const one_shot_children = new OneShotChildren(child_processes);
+  const child = new ClaudeAgentSdkBackendChild({
+    child_processes,
+    one_shot_children,
+    worker_supervision: uncontained_worker_supervision(one_shot_children),
+    launch: { claude_executable: '/synthetic/claude' },
+    resolved_start: start,
+    client_factory: client_factory as never,
+    event_sink: { report: async () => {} },
+    message_files: {
+      keep: async () => new Uint8Array() as never,
+      read: async () => new Uint8Array(),
+      media_type_of: async () => null,
+      path_of: () => '/synthetic/unused',
+    },
+  });
+  await child.start(start, { vendor_session_cursor: null }).catch(() => {});
+  expect(client_factory).toHaveBeenCalledTimes(1);
+  const options = client_factory.mock.calls[0]![0] as Record<string, unknown>;
+  expect(options.permissionMode).toBe('auto');
+  expect(options).not.toHaveProperty('allowDangerouslySkipPermissions');
+});

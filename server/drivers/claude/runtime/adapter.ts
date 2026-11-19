@@ -229,10 +229,10 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
       ...(start.reasoning_effort === null
         ? {}
         : { effort: start.reasoning_effort as Options['effort'] }),
-      permissionMode: start.access === ConversationAccess.full ? 'bypassPermissions' : 'default',
-      ...(start.access === ConversationAccess.full
-        ? { allowDangerouslySkipPermissions: true }
-        : {}),
+      // Full access runs in auto mode: bypassPermissions cannot switch off Claude Code's
+      // dangerous-rm check (2.1.322+), which then asks a person. Auto mode lets the
+      // classifier refuse such a command itself, so the agent picks another way.
+      permissionMode: start.access === ConversationAccess.full ? 'auto' : 'default',
       ...(resume !== null ? { resume } : {}),
       ...(sessionId !== null ? { sessionId } : {}),
       env: environment,
