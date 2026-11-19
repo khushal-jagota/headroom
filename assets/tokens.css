@@ -179,11 +179,12 @@
   --motion-base: 150ms;
   --motion-slow: 240ms;
   --motion-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
-  /* Looping animations (spinner, chat thinking dots) + the Review entrance stagger */
+  /* Leaving ends faster than it starts: a card or layer going away. */
+  --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  /* Looping animations (spinner, chat thinking dots) */
   --motion-loop-spin: 900ms;
   --motion-loop-bounce: 1.3s;
   --motion-enter: 320ms;
-  --motion-enter-step: 40ms;
 
   /* The hidden rail grip starts at this vertical scale before its reveal. */
   --rail-grip-rest-scale: 0.6;

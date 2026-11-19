@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { getContext, type Snippet } from 'svelte';
+  import { DECK_CONTEXT, deckGapOut, type Deck } from '../lib/review/deckMotion';
   import type { NavigationReviewTicketItem } from '../lib/types';
   import { navigationApplication } from '../lib/navigation/application.svelte';
 
@@ -13,6 +14,7 @@
   import MarkdownBlock from './MarkdownBlock.svelte';
   let {item,onSkip,busy=false,inlineDecision=false,children}:{item:NavigationReviewTicketItem;onSkip:()=>void;busy?:boolean;inlineDecision?:boolean;children:Snippet}=$props();
   const navigation=navigationApplication()!;
+  const deck=getContext<Deck>(DECK_CONTEXT);
   let record=$derived(navigation.selectors.effective ? navigation.presentationFor(navigation.selectors.effective).rawTicketsById.get(item.ticket_id)?.value : undefined);
   const recapBody=selectedRecap(()=>record && 'recap_reference' in record ? record.recap_reference as import('../lib/navigation/contracts').ViewContentReference|null : null,()=>true);
   let recap=$derived(recapBody.body ?? record?.recap ?? '');
@@ -39,7 +41,7 @@
   <div class="review-ticket-heading"><div class="review-ticket-heading-main">
     <div class="review-ticket-title"><InlineEdit value={item.title} placeholder="Untitled" onSave={saveTitle}/></div>
     {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap}/></ClampedText>{/if}
-    {#if item.messages.length}<div class="review-recap-request"><RequestRecapAction kind="ticket" id={item.ticket_id}/></div>{/if}
+    {#if item.messages.length}<div class="review-recap-request" data-deck-part out:deckGapOut={{deck}}><RequestRecapAction kind="ticket" id={item.ticket_id}/></div>{/if}
   </div></div>
   {@render children()}
 </div>

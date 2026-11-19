@@ -255,9 +255,9 @@
       data-field={field}
     >
       {#if !embedded}
-      <div class="review-ticket-decision-line review-arrive review-arrive--1">{@render queueActions()}</div>
+      <div class="review-ticket-decision-line">{@render queueActions()}</div>
 
-      <div class="review-ticket-heading review-arrive review-arrive--2">
+      <div class="review-ticket-heading">
         <div class="review-ticket-heading-main">
           <div class="review-ticket-title">
             <InlineEdit
@@ -275,7 +275,7 @@
       </div>
 
       {/if}
-      <div class="review-arrive review-arrive--3">
+      <div>
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
@@ -296,7 +296,7 @@
       {#snippet revisionEditor(flashDecisions: () => void)}
         <!-- The note goes with the explicit decision. Enter flashes the decision buttons and
              Shift+Enter adds a line; the field never chooses Send it back or Approve. Spoken words append to the note. -->
-        <div class="review-revise review-arrive review-arrive--4" data-review-revision>
+        <div class="review-revise" data-review-revision>
           <ComposerField
             bind:value={revisionDraft}
             placeholder="Add a note for the worker…"
