@@ -27,7 +27,9 @@
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
-  import ComposerField from "./conversation/ComposerField.svelte";
+  import AttachableComposerField from "./conversation/AttachableComposerField.svelte";
+  import type { PendingConversationFile } from "../lib/conversation/pendingFiles";
+  import type { PendingConversationImage } from "../lib/conversation/pendingImages";
   import {
     createVoiceCapture,
     voiceCaptureAvailable,
@@ -79,6 +81,9 @@
   } = $props();
 
   let revisionDraft = $state("");
+  let revisionImages = $state<PendingConversationImage[]>([]);
+  let revisionFiles = $state<PendingConversationFile[]>([]);
+  let attachmentReadBusy = $state(false);
   let decisionKey = $state<string | null>(null);
 
   let resolvedAnnounced = false;
@@ -285,7 +290,7 @@
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={returnProposal}
-              {revisionEditor} {composerOnly} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
+              {revisionEditor} {composerOnly} bind:revisionText={revisionDraft} bind:revisionImages bind:revisionFiles bind:attachmentReadBusy holdDecisions={voiceState.phase !== "idle"} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
           {/if}
@@ -297,8 +302,11 @@
         <!-- The note goes with the explicit decision. Enter flashes the decision buttons and
              Shift+Enter adds a line; the field never chooses Send it back or Approve. Spoken words append to the note. -->
         <div class="review-revise" data-review-revision>
-          <ComposerField
+          <AttachableComposerField
             bind:value={revisionDraft}
+            bind:images={revisionImages}
+            bind:files={revisionFiles}
+            bind:intakeBusy={attachmentReadBusy}
             placeholder="Add a note for the worker…"
             inputAttributes={{ "data-review-revision-input": "" }}
             onsubmit={flashDecisions}

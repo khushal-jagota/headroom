@@ -4,13 +4,15 @@
   import CeilingPicker from "./CeilingPicker.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
-  import ComposerField from "./conversation/ComposerField.svelte";
+  import AttachableComposerField from "./conversation/AttachableComposerField.svelte";
+  import { pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from "../lib/conversation/pendingFiles";
+  import { pendingImagesAsPieces, releasePendingImages, restoredPendingImages, type PendingConversationImage } from "../lib/conversation/pendingImages";
   import { advanceTargetFor, finalApprovalFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { decisionIdentity, decisionRefusals, DecisionRefusedError, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
+  import { decisionIdentity, decisionRefusals, DecisionRefusedError, recallDecisionAttachments, recallReviewDecision, submitReviewDecision } from "../lib/review/decision";
   import { buildProposalApproveDecision, buildProposalSendBackDecision, proposalContentIdentity, syncProposalDraftState } from "../lib/review/proposalState";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions, composerOnly = false }: {
+  let { ticketId, proposal, lifecycle, stage, ceiling, holder, manager, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", disabled = false, revisionEditor, revisionText = $bindable(""), revisionImages = $bindable([]), revisionFiles = $bindable([]), attachmentReadBusy = $bindable(false), holdDecisions = false, initialEditedBody, onEditedBodyChange, contextRow, utilityActions, composerOnly = false }: {
     ticketId: string;
     proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     manager: { id: string; title: string } | null;
@@ -24,6 +26,11 @@
     revisionEditor?: Snippet<[() => void]>;
     /** What is written in that line now. */
     revisionText?: string;
+    /** Pictures and files attached beside the note. They go with Send it back, and with Approve. */
+    revisionImages?: PendingConversationImage[];
+    revisionFiles?: PendingConversationFile[];
+    /** Pictures or files are still being read: the decisions wait for them. */
+    attachmentReadBusy?: boolean;
     /** The line is being spoken into: Send it back and Approve wait for its words to land. */
     holdDecisions?: boolean;
     initialEditedBody?: string;
@@ -40,7 +47,28 @@
   let scopePicker = $state<{openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void; readonly expanded: boolean; readonly controls: string | undefined} | undefined>();
   let draft = $state("");
   let mounted = true;
-  onDestroy(() => { mounted = false; });
+  onDestroy(() => { mounted = false; releasePendingImages(revisionImages); });
+  let attachmentPieces = $derived([...pendingImagesAsPieces(revisionImages), ...pendingFilesAsPieces(revisionFiles)]);
+  let hasAttachments = $derived(revisionImages.length > 0 || revisionFiles.length > 0);
+  function clearAttachments(): void {
+    releasePendingImages(revisionImages);
+    revisionImages = []; revisionFiles = [];
+  }
+  // An unconfirmed decision made with attachments brings them back with its note, so a retry matches it.
+  $effect(() => {
+    const key = decisionKey;
+    untrack(() => {
+      let saved;
+      try { saved = recallReviewDecision(key); } catch { return; }
+      if (!saved?.attachmentCount || hasAttachments) return;
+      void recallDecisionAttachments(key).then((pieces) => {
+        if (!mounted || decisionKey !== key || hasAttachments) return;
+        const restoredImages = restoredPendingImages(pieces, 0);
+        revisionImages = restoredImages.images;
+        revisionFiles = restoredPendingFiles(pieces, restoredImages.nextId).files;
+      });
+    });
+  });
   let decisionRow = $state<HTMLElement | null>(null);
   // Enter in the note cannot know which decision is meant, so it shows the choices: the focus
   // ring breathes once around each decision button that can be used, then leaves.
@@ -105,12 +133,13 @@
     return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : value.kind === "ticket" ? "Worker" : "Manager";
   }
   async function completeScope(change: { ceiling?: string; holder: Principal | null; approval?: boolean }): Promise<void> {
-    if (!change.holder || disabled || busy || resolved || (change.approval && holdDecisions)) return;
+    if (!change.holder || disabled || busy || resolved || (change.approval && (holdDecisions || attachmentReadBusy))) return;
     // Capture the exact proposal displayed for this gesture before awaiting any write.
     const revision = proposal.revision;
     const editedBody = draft;
     const key = decisionKey;
     const text = revisionText;
+    const attachments = attachmentPieces;
     busy = true; error = null;
     try {
       if (change.approval && (change.ceiling || finalApproval)) {
@@ -118,6 +147,7 @@
           proposal: { body: proposal.body, revision },
           editedBody,
           message: text,
+          attachments,
           finalApproval,
           nextCeiling: change.ceiling,
           nextHolder: change.holder
@@ -127,6 +157,7 @@
         await onAccept();
         if (!mounted || decisionKey !== key) return;
         revisionText = "";
+        clearAttachments();
         resolved = true;
       } else {
         await onScope({ ...(change.ceiling === undefined ? {} : { ceiling:change.ceiling }), ceiling_holder:change.holder });
@@ -135,18 +166,21 @@
     finally { busy = false; }
   }
   async function sendBack(message: string): Promise<void> {
-    if (proposal.field === "brief" || disabled || !canReturn || busy || resolved || holdDecisions || !message) return;
+    if (proposal.field === "brief" || disabled || !canReturn || busy || resolved || holdDecisions || attachmentReadBusy || (!message.trim() && !hasAttachments)) return;
+    const attachments = attachmentPieces;
     busy = true; error = null;
     const key = decisionKey;
     const revision = proposal.revision;
     try {
       await submitReviewDecision(ticketId, proposal.field, buildProposalSendBackDecision({
         proposal: { revision },
-        message
+        message,
+        attachments
       }));
       await onReturn();
       if (!mounted || decisionKey !== key) return;
       revisionText = "";
+      clearAttachments();
       resolved = true;
     }
     catch (err) { error = err instanceof DecisionRefusedError ? null : err; }
@@ -154,9 +188,9 @@
   }
   let revisionSlot = $state<HTMLElement | null>(null);
   function sendItBack(): void {
-    if (!canReturn || holdDecisions) return;
+    if (!canReturn || holdDecisions || attachmentReadBusy) return;
     const message = revisionText;
-    if (message.trim()) void sendBack(message);
+    if (message.trim() || hasAttachments) void sendBack(message);
     else revisionSlot?.querySelector<HTMLElement>("textarea")?.focus();
   }
 
@@ -183,7 +217,8 @@
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="revision" bind:this={revisionSlot}>
     {#if revisionEditor}{@render revisionEditor(flashDecisions)}{:else}
-      <ComposerField bind:value={revisionText} placeholder="Add a note for the worker…"
+      <AttachableComposerField bind:value={revisionText} bind:images={revisionImages} bind:files={revisionFiles} bind:intakeBusy={attachmentReadBusy}
+        placeholder="Add a note for the worker…"
         inputAttributes={{ "data-revision-note": "" }} onsubmit={flashDecisions} />
     {/if}
   </div>
@@ -194,7 +229,7 @@
     {#if utilityActions}<div class="utilities">{@render utilityActions()}</div>{/if}
     <div class="decision" bind:this={decisionRow} onanimationend={() => decisionRow?.classList.remove("flash")}>
       {#if proposal.field !== "brief"}
-        <Button variant="secondary" data-send-back disabled={disabled || !canReturn || busy || resolved || holdDecisions}
+        <Button variant="secondary" data-send-back disabled={disabled || !canReturn || busy || resolved || holdDecisions || attachmentReadBusy}
           onclick={() => void sendItBack()}>Send it back</Button>
       {/if}
       <!-- Approve wears Send it back's fill (owner): its place, furthest right, marks it. -->

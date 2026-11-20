@@ -48,7 +48,7 @@ Automatic admission carries the same stable machine ID as the Ticket. A rename n
 
 ## How a step is sent
 
-Decision notes travel with the next eligible stage opener in one prompt. They preserve the actor, action, proposal, and complete note. A note does not change the stage or authorize further work. Feedback waits when the next step cannot start, and a done Ticket receives no new step. A late failure for an older decision cannot change a newer proposal’s claim. Its delivery outcome remains recorded for explicit recovery. Panels checks for a later receipt and updates the outcome if one appears; it does not replay an uncertain note automatically. See [Review](review.md).
+Decision notes travel with the next eligible stage opener in one prompt. They preserve the actor, action, proposal, and complete note. Pictures and files sent with a note follow its words in the same prompt. A note does not change the stage or authorize further work. Feedback waits when the next step cannot start, and a done Ticket receives no new step. A late failure for an older decision cannot change a newer proposal’s claim. Its delivery outcome remains recorded for explicit recovery. Panels checks for a later receipt and updates the outcome if one appears; it does not replay an uncertain note automatically. See [Review](review.md).
 
 One guarded write repeats every readiness check and takes the claim, so two passes cannot both win. On a user-owned stage, it records the opener fact. The loop starts or reuses the conversation and builds its opener from the current Ticket and saved workflow. The step uses Queue mode, so it waits if a turn starts before delivery.
 

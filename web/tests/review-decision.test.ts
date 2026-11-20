@@ -10,6 +10,11 @@ vi.mock("../src/lib/api", async importOriginal => {
   return { ...original, fetchJson: vi.fn() };
 });
 vi.mock("../src/lib/queryClient", () => ({ queryClient: { invalidateQueries: vi.fn().mockResolvedValue(undefined) } }));
+const draftStore = new Map<string, unknown[]>();
+vi.mock("../src/lib/review/messages", () => ({
+  readReviewDraft: async (id: string) => draftStore.get(id) ?? [],
+  saveReviewDraft: async (id: string, content: unknown[]) => { if (content.length) draftStore.set(id, content); else draftStore.delete(id); return true; }
+}));
 let stored: Map<string, string>;
 let session: Map<string, string>;
 const transport = vi.mocked(fetchJson);
@@ -163,4 +168,19 @@ it("keeps a terminal receipt authoritative when refresh fails and freezes mutabl
   });
   await expect(submitReviewDecision("ticket", "what_changes", incoming)).resolves.toMatchObject({ outcome: "applied" });
   expect(recallReviewDecision(identity)).toBeNull();
+});
+
+// Gap: pictures are far larger than local storage allows, and a retry must still send them.
+it("keeps a decision's pictures out of local storage and sends them with a retried decision", async () => {
+  const picture = { piece: "image" as const, data: "A".repeat(2_000_000), media_type: "image/png" };
+  const withPicture: ReviewDecision = { action: "send_back", body: { expected_proposal_revision: 2, message: "See this.", attachments: [picture] } };
+  transport.mockResolvedValueOnce(absent).mockRejectedValueOnce(new Error("lost answer"));
+  await expect(submitReviewDecision("ticket", "what_changes", withPicture)).rejects.toThrow("lost answer");
+  const saved = recallReviewDecision(identity)!;
+  expect(JSON.stringify([...stored.values()])).not.toContain("AAAA");
+  expect(saved.attachmentCount).toBe(1);
+  transport.mockResolvedValueOnce(absent).mockResolvedValueOnce(receipt(saved));
+  await submitReviewDecision("ticket", "what_changes", withPicture);
+  expect(transport.mock.calls.at(-1)![1]).toMatchObject({ method: "POST", body: { attachments: [picture] } });
+  expect(draftStore.size).toBe(0);
 });

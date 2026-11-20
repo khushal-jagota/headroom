@@ -1,4 +1,5 @@
 import type { Principal } from "../types";
+import type { SentMessagePiece } from "../conversation/wire";
 
 /** Mirrors planner.tickets.contracts: decision operations own the transition receipt. */
 export type DecisionCommand = {
@@ -9,6 +10,8 @@ export type DecisionCommand = {
   edited_body?: string | null;
   next_ceiling?: string | null;
   next_holder?: Principal | null;
+  /** Pictures and files sent with the note, as the conversation composer sends them. */
+  attachments?: SentMessagePiece[];
 };
 export type DecisionReceipt = {
   operation_id: string;
@@ -31,5 +34,7 @@ export type SavedDecision = {
   version: 1;
   ticketId: string;
   operationId: string;
-  command: DecisionCommand;
+  /** Without `attachments`: their bytes are too large for local storage and wait in the draft store. */
+  command: Omit<DecisionCommand, "attachments">;
+  attachmentCount?: number;
 };

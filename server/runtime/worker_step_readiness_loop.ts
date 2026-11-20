@@ -21,7 +21,9 @@ import {
   type PromptDeliveryFate,
   type ConversationSystem,
 } from '../conversation/contracts.ts';
-import { text_message_content } from '../conversation/message_content.ts';
+import { text_message_content, type MessagePiece } from '../conversation/message_content.ts';
+import { conversation_message_content, type SentPiece } from '../conversation/http.ts';
+import type { ConversationMessageFiles } from '../conversation/message_files.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
 import * as tickets_data from '../tickets/data/index.ts';
 import * as decision_messages from '../tickets/decision_messages.ts';
@@ -69,6 +71,14 @@ export interface WorkerStepStartOptions {
   conversation_system: ConversationSystem;
   worker_type_registry: WorkerTypeRegistry;
   now: () => number;
+  /** Keeps the pictures and files that travel with a decision. */
+  message_files?: ConversationMessageFiles;
+}
+/** The pictures and files a saved decision command carries. */
+function decision_attachments(command_json: string | null): SentPiece[] {
+  if (command_json === null) return [];
+  const command = JSON.parse(command_json) as { attachments?: SentPiece[] };
+  return command.attachments ?? [];
 }
 export async function start_ready_worker_step(
   ticket_id: string,
@@ -212,8 +222,12 @@ async function _admitted_start_ready_worker_step(
           ticket_id,
           async (sending_into) => {
             const feedback = database.write((sql) => {
-              const rows = sql.all<{ decision_id: string; model_text: string }>(
-                "SELECT decision_id,model_text FROM ticket_decision_messages WHERE ticket_id=? AND delivery_status='pending' ORDER BY created_at,rowid",
+              const rows = sql.all<{
+                decision_id: string;
+                model_text: string;
+                command_json: string | null;
+              }>(
+                "SELECT m.decision_id,m.model_text,o.command_json FROM ticket_decision_messages m LEFT JOIN ticket_decision_operations o ON o.operation_id=m.decision_id AND o.ticket_id=m.ticket_id WHERE m.ticket_id=? AND m.delivery_status='pending' ORDER BY m.created_at,m.rowid",
                 [ticket_id],
               );
               for (const row of rows) {
@@ -222,10 +236,26 @@ async function _admitted_start_ready_worker_step(
                   [sending_into, feedback_identity_prefix + row.decision_id, row.decision_id],
                 );
               }
-              return rows.map((row) => row.model_text);
+              return rows;
             });
             feedback_started = feedback.length > 0;
-            return text_message_content([...feedback, prompt.model_text].join('\n\n'));
+            const text = text_message_content(
+              [...feedback.map((row) => row.model_text), prompt.model_text].join('\n\n'),
+            );
+            // Pictures and files that came with a decision go after the words, in the order sent.
+            const attachments: MessagePiece[] = [];
+            for (const row of feedback) {
+              const sent = decision_attachments(row.command_json);
+              if (sent.length === 0) continue;
+              if (options.message_files === undefined)
+                throw new Error('decision attachments need the conversation file service');
+              attachments.push(
+                ...(await conversation_message_content(options.message_files, sending_into, sent, {
+                  sender_message_id: feedback_identity_prefix + row.decision_id,
+                })),
+              );
+            }
+            return [...text, ...attachments];
           },
           {
             conversation_id: claimed.conversation_id,

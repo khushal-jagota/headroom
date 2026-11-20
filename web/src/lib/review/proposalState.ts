@@ -1,5 +1,6 @@
 import type { PendingTicketProposal, Principal } from "../types";
 import type { SavedDecision } from "./contracts";
+import type { SentMessagePiece } from "../conversation/wire";
 import type { ReviewDecision } from "./decision";
 
 /** Stable identity of a proposal's content, independent of holder-transfer revision bumps. */
@@ -65,6 +66,7 @@ export function buildProposalApproveDecision(input: {
   proposal: Pick<PendingTicketProposal, "body" | "revision">;
   editedBody: string;
   message: string;
+  attachments?: SentMessagePiece[];
   finalApproval: boolean;
   nextCeiling?: string;
   nextHolder: Principal;
@@ -73,6 +75,7 @@ export function buildProposalApproveDecision(input: {
     action: "approve",
     body: {
       message: input.message || null,
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(!input.finalApproval ? { next_ceiling: input.nextCeiling, next_holder: input.nextHolder } : {}),
       expected_proposal_revision: input.proposal.revision,
       ...(input.editedBody !== input.proposal.body ? { edited_body: input.editedBody } : {})
@@ -84,11 +87,13 @@ export function buildProposalApproveDecision(input: {
 export function buildProposalSendBackDecision(input: {
   proposal: Pick<PendingTicketProposal, "revision">;
   message: string;
+  attachments?: SentMessagePiece[];
 }): ReviewDecision {
   return {
     action: "send_back",
     body: {
       message: input.message,
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       expected_proposal_revision: input.proposal.revision
     }
   };
