@@ -18,6 +18,8 @@ import type {
   Ticket,
 } from './contracts.ts';
 import * as data from './data/index.ts';
+import { validated_sent_files, type SentPiece } from '../conversation/http.ts';
+import { HttpError } from '../core/http/errors.ts';
 import { completion_follows, consequences_follows } from './logic/machine.ts';
 import { validate_revision_guidance, REVISION_GUIDANCE_MAX_CHARACTERS } from './logic/admission.ts';
 
@@ -49,6 +51,29 @@ function holder(value: unknown): DecisionHolder | null {
     throw validation(`${value.kind} principal id must be ${value.kind}`);
   return { kind: value.kind as DecisionHolder['kind'], id: value.id };
 }
+/** Pictures and files that travel with a decision, in the same pieces a conversation message uses. */
+function attachments(value: unknown): void {
+  if (!Array.isArray(value)) throw validation('attachments must be a list of pictures and files');
+  const sent: SentPiece[] = value.map((piece: unknown) => {
+    if (
+      !is_record(piece) ||
+      (piece.piece !== 'image' && piece.piece !== 'file') ||
+      typeof piece.data !== 'string' ||
+      typeof piece.media_type !== 'string' ||
+      (piece.piece === 'file'
+        ? typeof piece.file_name !== 'string'
+        : piece.file_name != null && typeof piece.file_name !== 'string')
+    )
+      throw validation('each attachment must be an image or file piece');
+    return piece as unknown as SentPiece;
+  });
+  try {
+    validated_sent_files(sent);
+  } catch (error) {
+    if (error instanceof HttpError) throw validation(error.message);
+    throw error;
+  }
+}
 export function parse_command(raw: Record<string, unknown>): DecisionCommand {
   const decision = raw.decision;
   if (decision !== 'approve' && decision !== 'send_back')
@@ -58,6 +83,7 @@ export function parse_command(raw: Record<string, unknown>): DecisionCommand {
     'field',
     'expected_proposal_revision',
     'message',
+    'attachments',
     ...(decision === 'approve' ? ['edited_body', 'next_ceiling', 'next_holder'] : []),
   ];
   if (Object.keys(raw).some((key) => !allowed.includes(key)))
@@ -79,6 +105,7 @@ export function parse_command(raw: Record<string, unknown>): DecisionCommand {
     if (Object.hasOwn(raw, name) && raw[name] !== null && typeof raw[name] !== 'string')
       throw validation(`${name} must be text or null`);
   if (typeof raw.message === 'string') validate_revision_guidance(raw.message);
+  if (Object.hasOwn(raw, 'attachments')) attachments(raw.attachments);
   if (
     typeof raw.edited_body === 'string' &&
     Array.from(raw.edited_body).length > REVISION_GUIDANCE_MAX_CHARACTERS

@@ -19,6 +19,8 @@ export interface DecisionCommand {
   edited_body?: string | null;
   next_ceiling?: string | null;
   next_holder?: DecisionHolder | null;
+  /** Pictures and files sent with the note, as conversation message pieces. */
+  attachments?: readonly Record<string, unknown>[];
 }
 export interface DecisionTransition {
   stage: string;

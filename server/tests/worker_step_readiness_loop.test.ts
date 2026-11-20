@@ -15,6 +15,8 @@ import {
 } from './ticket_fixture.ts';
 import * as data from '../tickets/data/index.ts';
 import * as decisions from '../tickets/decision_messages.ts';
+import { apply as apply_decision } from '../tickets/decision_operations.ts';
+import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { deliver_ticket_decision_messages } from '../runtime/decision_message_delivery.ts';
 import { conversation_holds_an_unanswered_memory_loss } from '../runtime/worker_memory.ts';
 import { restart_worker } from '../tickets/worker_restart.ts';
@@ -408,6 +410,44 @@ test('decisions reach the actual prompt and queue ownership prevents replay', as
   expect(fresh).not.toBe(id);
   expect(system.backend_prompt_writes(fresh)[0]!.text).toContain(
     'User sent back the What Changes proposal with this note:\nKeep the note.',
+  );
+});
+// Gap: decision tests prove note text reaches the prompt, and nothing proves a picture sent
+// with a decision does. This crosses the decision command, its saved operation, and the file store.
+test('a picture sent with a decision reaches the Worker prompt', async () => {
+  const { db, system, options } = setup();
+  const ticket = create_ticket(db);
+  const files = { ...options, message_files: new ConversationMessageFiles(fixture_path(db)) };
+  await start_ready_worker_step(ticket.id, files);
+  const id = read(db, ticket.id).conversation_id!;
+  const proposed = propose(db, read(db, ticket.id), 'Revise this proposal.');
+  const png =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  db.write((tx) =>
+    apply_decision(
+      tx,
+      ticket.id,
+      'op-with-picture',
+      {
+        decision: 'send_back',
+        field: 'what_changes',
+        expected_proposal_revision: proposed.pending_proposal_revision,
+        message: 'See the screenshot.',
+        attachments: [
+          { piece: 'image', data: png, media_type: 'image/png', file_name: 'shot.png' },
+        ],
+      },
+      OWNER,
+      now,
+    ),
+  );
+  await start_ready_worker_step(ticket.id, files);
+  const held = (await system.held_prompts(id))[0]!.content;
+  expect(held).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ text: expect.stringContaining('See the screenshot.') }),
+      expect.objectContaining({ media_type: 'image/png', file_name: 'shot.png' }),
+    ]),
   );
 });
 // Multiple decisions can accumulate before a step is eligible. All must share its

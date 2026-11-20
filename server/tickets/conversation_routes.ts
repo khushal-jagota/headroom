@@ -154,6 +154,7 @@ export const conversation_routes: FastifyPluginAsync<AreaServices> = async (app,
             conversation_system: conversations(services),
             worker_type_registry: configured_worker_type_registry(),
             now: () => services.clock.nowUnix(),
+            message_files: files,
           }),
       },
     );
