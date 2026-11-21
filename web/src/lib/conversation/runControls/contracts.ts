@@ -31,7 +31,11 @@ export type ComposerRunControlsInput = Readonly<{
   inputDisabled: boolean;
   hasSendableContent: boolean;
   sendsInFlight: number;
+  /** The mode the person last chose. It only matters while a turn runs. */
   deliveryMode?: import("../wire").PromptDeliveryMode;
+  /** Whether the running turn can take a message into itself. Absent is the older
+   *  caller that never asked, and keeps Steer on offer. */
+  supportsSteer?: boolean;
 }>;
 
 export type ComposerRunSelectionIntent =
@@ -58,7 +62,14 @@ export type ComposerRunControlsView = Readonly<{
     ariaLabel: string;
   }>;
   showStop: boolean;
+  /** How a send is delivered: the person's choice while a turn runs, and with nothing
+   *  running the one way there is, a message that starts the next turn. */
   deliveryMode: import("../wire").PromptDeliveryMode;
+  /** The choice is only drawn while a turn runs: with nothing running every mode means
+   *  the same thing. */
+  showDeliveryMode: boolean;
+  /** The modes on offer while a turn runs, in the order they are drawn. */
+  deliveryModes: readonly import("../wire").PromptDeliveryMode[];
 }>;
 
 export type ComposerRunControlIntents = Readonly<{

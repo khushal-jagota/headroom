@@ -63,7 +63,6 @@
     ComposerRunSelection,
     ComposerRunSelectionIntent
   } from "../../lib/conversation/runControls/contracts";
-  import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
@@ -349,7 +348,6 @@
   /** Browser recording capability controls availability. The question panel and
    *  permission ask always outrank voice. */
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, !takenOver));
-  let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
   /** The Add menu, and the camera the design's third choice needs. */
   let addMenuOpen = $state(false);
   let addMenuElement = $state<HTMLDivElement | null>(null);
@@ -395,7 +393,8 @@
     inputDisabled,
     hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0,
     sendsInFlight,
-    deliveryMode
+    deliveryMode,
+    supportsSteer
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
   $effect(() => {
@@ -544,7 +543,8 @@
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0) || inputDisabled) return;
     const capturedRetryContext = restoredSendContext;
     restoredSendContext = null;
-    const capturedMode = deliveryMode;
+    // The mode the controls show, which is the person's choice only while a turn runs.
+    const capturedMode = runControlsView.deliveryMode;
     const capturedConversationId = conversationId;
     const capturedDestination = uploadDestination ? {...uploadDestination} : undefined;
     const attempt = beginComposerSend(
@@ -691,7 +691,7 @@
         }
         published = true;
         intakeError = rejected
-          ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
+          ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, log, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
           : null;
       } finally {
         // Until published these URLs belong to this intake, including a later read failure.
@@ -968,6 +968,14 @@
     cursorAt = input.value.length;
   }
 
+  /** The recording's level bars, newest at the right: the meter's recent levels, with the
+   *  start of a take (and a browser that cannot measure) drawn as a quiet flat line. */
+  const VOICE_BAR_COUNT = 28;
+  function voiceBars(levels: readonly number[] | undefined): number[] {
+    const recent = (levels ?? []).slice(-VOICE_BAR_COUNT);
+    return [...Array<number>(VOICE_BAR_COUNT - recent.length).fill(0), ...recent];
+  }
+
   // A question panel or permission ask arriving mid-voice takes the composer: whatever
   // voice was doing is cancelled rather than left running under a surface it cannot show.
   $effect(() => {
@@ -1209,17 +1217,17 @@
         {#each entry.attempt.draftBeforeSend.pendingVideos ?? [] as video}
           <div>{video.fileName} · <span role="status">{videoProgress(video)}</span></div>
           {#if video.phase === "failed" && video.file && entry.phase === "waiting"}
-            <button type="button" onclick={() => void transfers.start(video)}>Retry</button>
+            <button type="button" class="button button--secondary" onclick={() => void transfers.start(video)}>Retry</button>
           {/if}
         {/each}
         <div role="status">{entry.error || (entry.phase === "dispatching" ? "Sending…" : entry.phase === "interrupted" ? "Kept in this browser · review before sending" : "Pending in this browser · not sent yet")}</div>
         {#if entry.phase !== "dispatching"}
           {#if entry.phase === "failed" && !entry.needsReconciliation}
-            <button type="button" onclick={() => {entry.phase = "waiting"; entry.error = undefined; videoChanged();}}>Retry send</button>
+            <button type="button" class="button button--secondary" onclick={() => {entry.phase = "waiting"; entry.error = undefined; videoChanged();}}>Retry send</button>
           {/if}
-          <button type="button" onclick={() => recoverLocalSend(entry)}>{entry.phase === "interrupted" ? "Return to composer" : "Cancel send"}</button>
+          <button type="button" class="button button--ghost" onclick={() => recoverLocalSend(entry)}>{entry.phase === "interrupted" ? "Return to composer" : "Cancel send"}</button>
           {#if entry.attempt.draftBeforeSend.pendingVideos?.length}
-            <button type="button" onclick={() => recoverLocalSend(entry, true)}>Remove video</button>
+            <button type="button" class="button button--ghost" onclick={() => recoverLocalSend(entry, true)}>Remove video</button>
           {/if}
         {/if}
       </article>
@@ -1309,10 +1317,10 @@
                   <span class="chat-att-meta" role="status">{videoProgress(attachment.value)}</span>
                 </span>
                 {#if attachment.value.phase === "interrupted" || (attachment.value.phase === "failed" && !attachment.value.file)}
-                  <button type="button" onclick={() => fileInput?.click()}>Choose video again</button>
+                  <button type="button" class="button button--ghost" onclick={() => fileInput?.click()}>Choose video again</button>
                 {/if}
                 {#if attachment.value.phase === "failed" && attachment.value.file}
-                  <button type="button" onclick={() => void transfers.start(attachment.value)}>Retry</button>
+                  <button type="button" class="button button--ghost" onclick={() => void transfers.start(attachment.value)}>Retry</button>
                 {/if}
               {:else}
                 <span class="chat-att-kind" aria-hidden="true">{attachmentExtension(item.fileName)}</span>
@@ -1336,33 +1344,15 @@
         </div>
       {/if}
 
-      {#if userInput === null && voiceState.phase !== "idle"}
-        <!-- Every voice state keeps the composer's shape: this centred line is the main
-             area, and the actions stay down in the foot bar. -->
-        <div class="chat-voice-mid" data-conversation-voice={voiceState.phase}>
-          {#if voiceState.phase === "recording"}
-            <span class="live-text-shimmer">recording</span>
-            <span class="chat-voice-time">{formatVoiceTime(voiceState.elapsedMs)}</span>
-          {:else if voiceState.phase === "transcribing"}
-            <span class="live-text-shimmer">transcribing</span>
-          {:else}
-            <span class="chat-voice-fail">
-              transcription failed · kept
-              <span class="chat-voice-time">{formatVoiceTime(voiceState.keptMs)}</span>
-            </span>
-          {/if}
-        </div>
-      {/if}
-
       <textarea
         class="chat-ta"
         data-conversation-input
         rows="1"
-        placeholder={livePlaceholder}
+        {placeholder}
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
-        hidden={userInput !== null || voiceState.phase !== "idle"}
+        hidden={userInput !== null || ask !== null || voiceState.phase !== "idle"}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
@@ -1383,37 +1373,60 @@
             onCancelTurn={() => onCancelTurn?.()}
           />
         {:else if voiceState.phase !== "idle"}
-          <!-- The X on the left undoes whatever voice is doing; the right-hand slot is the
-               one going-forward action of the state: stop, or retry. -->
+          <!-- A voice take keeps the composer's one row: the X that undoes it where the + is,
+               the take itself where the words go, and its one going-forward action (stop, or
+               retry) where send is, drawn as send is drawn. -->
           <button
             type="button"
-            class="chat-voice-cancel"
+            class="chat-image chat-voice-x"
             data-voice-cancel
             aria-label={voiceState.phase === "recording"
               ? "Cancel recording"
               : voiceState.phase === "transcribing"
                 ? "Cancel transcription"
                 : "Discard recording"}
+            title={voiceState.phase === "recording" ? "Cancel recording" : voiceState.phase === "transcribing" ? "Cancel transcription" : "Discard recording"}
             onclick={() => voice?.cancel()}
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>
           </button>
-          {#if voiceState.phase === "recording"}
-            <button
-              type="button"
-              class="chat-voice-stop"
-              data-voice-stop
-              aria-label="Stop recording and transcribe"
-              onclick={() => voice?.stopRecording()}
-            ><span class="chat-voice-square"></span></button>
-          {:else if voiceState.phase === "failed"}
-            <button
-              type="button"
-              class="chat-voice-retry"
-              data-voice-retry
-              onclick={() => voice?.retry()}
-            >retry</button>
-          {/if}
+          <div class="chat-voice-line" data-conversation-voice={voiceState.phase}>
+            {#if voiceState.phase === "recording"}
+              <span class="chat-voice-dot" aria-hidden="true"></span>
+              <span class="chat-voice-word">Recording</span>
+              <span class="chat-voice-bars" aria-hidden="true">
+                {#each voiceBars(voiceState.levels) as level, index (index)}
+                  <span class="chat-voice-bar" style:--voice-level={level}></span>
+                {/each}
+              </span>
+              <span class="chat-voice-clock">{formatVoiceTime(voiceState.elapsedMs)}</span>
+            {:else if voiceState.phase === "transcribing"}
+              <span class="chat-voice-word live-text-shimmer">Transcribing</span>
+              <span class="chat-voice-clock">{formatVoiceTime(voiceState.keptMs)}</span>
+            {:else}
+              <span class="chat-voice-word chat-voice-failed" role="status">Transcription failed · recording kept</span>
+              <span class="chat-voice-clock">{formatVoiceTime(voiceState.keptMs)}</span>
+            {/if}
+          </div>
+          <span class="chat-voice-go">
+            {#if voiceState.phase === "recording"}
+              <button
+                type="button"
+                class="chat-send on"
+                data-voice-stop
+                aria-label="Stop recording and transcribe"
+                title="Stop recording and transcribe"
+                onclick={() => voice?.stopRecording()}
+              ><span class="chat-send-fill" aria-hidden="true"></span></button>
+            {:else if voiceState.phase === "failed"}
+              <button
+                type="button"
+                class="button button--secondary chat-voice-again"
+                data-voice-retry
+                onclick={() => voice?.retry()}
+              >Retry</button>
+            {/if}
+          </span>
         {:else}
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
@@ -1558,8 +1571,14 @@
         {/if}
       </div>
       {/if}
+      <!-- While something is dragged over it, the whole box becomes the place to drop: one
+           opaque face over everything in it, so no word of the draft or the controls shows
+           through the instruction. -->
       <div class="chat-drop-label" data-conversation-drop-label aria-hidden="true">
-        Drop images or files to attach
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8" />
+        </svg>
+        <span>Drop images or files to attach</span>
       </div>
     </div>
   </div>
@@ -1584,10 +1603,10 @@
     flex-direction: column;
     gap: 1px;
     padding: var(--space-1);
-    background: var(--surface-2);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-md);
-    box-shadow: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
+    background: var(--surface-raised);
+    border: var(--border-hairline) solid var(--border-raised);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-float);
   }
   .chat-add-item {
     display: flex;
@@ -1606,7 +1625,7 @@
     cursor: pointer;
   }
   .chat-add-item:hover,
-  .chat-add-item:focus-visible { color: var(--text-strong); background: var(--surface-1); }
+  .chat-add-item:focus-visible { color: var(--text-strong); background: var(--surface-selected); }
   .chat-add-item svg {
     width: 20px;
     height: 20px;
@@ -1629,6 +1648,100 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     color: var(--accent-bright);
+  }
+
+  /* The drop face covers the box edge to edge (above its own popovers) on the composer's
+   * own fill with an accent tint, so nothing under it can collide with its words. */
+  .chat-drop-label {
+    inset: 0;
+    gap: var(--space-2);
+    border: var(--border-hairline) dashed color-mix(in srgb, var(--accent-bright) 80%, transparent);
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--accent-bright) 8%, var(--composer-surface));
+    color: var(--tone-strong);
+    font-family: var(--font-ui);
+    font-size: var(--type-row);
+    font-weight: var(--weight-small);
+    z-index: 45;
+  }
+  .chat-drop-label svg {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    fill: none;
+    stroke: var(--accent-bright);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* --- a voice take, on the composer's one row -------------------------------------------- */
+  /* In the one-row grid the take's three parts take the +, the draft and the send columns;
+     elsewhere the foot is a flex row and the line simply takes the room between them. */
+  .chat-voice-x { grid-column: 1; grid-row: 1; }
+  .chat-voice-line {
+    grid-column: 2 / 4;
+    grid-row: 1;
+    flex: 1;
+    min-width: 0;
+    min-height: var(--composer-control, 32px);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-inline: var(--space-1);
+    font-family: var(--font-ui);
+    font-size: var(--type-row);
+    color: var(--tone-secondary);
+  }
+  .chat-voice-go {
+    grid-column: 4;
+    grid-row: 1;
+    flex: none;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+  }
+  .chat-voice-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-error);
+    animation: chat-voice-pulse 1.4s var(--motion-ease) infinite;
+  }
+  @keyframes chat-voice-pulse { 50% { opacity: .35; } }
+  .chat-voice-word { flex: none; white-space: nowrap; }
+  .chat-voice-failed { color: var(--tone-primary); overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+  .chat-voice-bars {
+    flex: 1;
+    min-width: 0;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    overflow: hidden;
+  }
+  .chat-voice-bar {
+    flex: none;
+    width: 3px;
+    height: max(3px, calc(var(--voice-level, 0) * 20px));
+    border-radius: 2px;
+    background: var(--tone-secondary);
+    transition: height var(--motion-fast) linear;
+  }
+  /* The clock is the same face as the words beside it, with figures that do not jitter. */
+  .chat-voice-clock {
+    flex: none;
+    margin-inline-start: auto;
+    font-variant-numeric: tabular-nums;
+    color: var(--tone-strong);
+  }
+  .chat-voice-bars + .chat-voice-clock { margin-inline-start: 0; }
+  .chat-voice-again { height: 28px; }
+  @media (prefers-reduced-motion: reduce) {
+    .chat-voice-dot { animation: none; }
+    .chat-voice-bar { transition: none; }
   }
 
   .c2-composer { display: grid; gap: var(--space-2); }

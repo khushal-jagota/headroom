@@ -17,6 +17,7 @@ export function validated_image_media_type(payload: Buffer): string {
 const MEDIA_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
+  '.log': 'text/plain',
   '.md': 'text/markdown',
   '.markdown': 'text/markdown',
   '.csv': 'text/csv',

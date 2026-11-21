@@ -50,6 +50,9 @@
 
 {#snippet checklist()}
   <span class="task-pop" role="list" aria-label="Tasks" data-conversation-task-list>
+    {#if variant === "strip"}
+      <span class="task-pop-head" aria-hidden="true">Tasks · {progress.completedCount} of {total} done</span>
+    {/if}
     {#each progress.entries as entry, index (index)}
       <span
         class={`task-plan-item task-plan-item--${statusClass(entry.status)}`}
@@ -91,10 +94,11 @@
       onpointerleave={releaseIfOutside}
       onblur={releaseIfOutside}
         data-conversation-task-progress
-        aria-label={`${progress.completedCount} of ${total} tasks complete`}
+        aria-label={`Task ${position} of ${total}, ${progress.completedCount} complete`}
       >
         {#if moving}<span class="acp-spin" aria-hidden="true"></span>{/if}
-        <span class="task-count">{position} / {total} tasks</span>
+        <!-- The step being worked on, not a count of finished ones: "3 / 5" read as three done. -->
+        <span class="task-count">Task {position} of {total}</span>
       </button>
       {@render checklist()}
   </div>
@@ -110,21 +114,27 @@
     justify-content: center;
   }
   .task-strip.has-composer-gap { margin-block-end: var(--space-2); }
+  /* The raised plane every floating thing in Panels shares (--surface-raised and its
+     --border-raised ring), in the UI face: it floats over the transcript, so it carries the
+     popover's finish rather than a near-page fill that disappeared against the bar. */
   .task-pill {
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
-    border: var(--border-hairline) solid var(--border-color);
+    min-height: 26px;
+    box-sizing: border-box;
+    border: var(--border-hairline) solid var(--border-raised);
     border-radius: var(--radius-pill);
-    background: var(--surface-2);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    background: var(--surface-raised);
+    color: var(--text-default);
+    font-family: var(--font-ui);
     font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-    padding: var(--space-1) var(--space-3);
+    padding: 0 var(--space-3);
     cursor: default;
     font-variant-numeric: tabular-nums;
   }
+  .task-pill:hover,
+  .task-pill:focus-visible { color: var(--text-strong); }
   .c2-rest-progress {
     flex: none;
     position: relative;
@@ -152,10 +162,11 @@
     transform: translateX(-50%);
     min-width: 280px;
     max-width: 90vw;
-    background: var(--surface-2);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-md);
-    padding: var(--space-2) var(--space-3);
+    box-sizing: border-box;
+    background: var(--surface-raised);
+    border: var(--border-hairline) solid var(--border-raised);
+    border-radius: var(--radius-lg);
+    padding: var(--space-2) var(--space-3) var(--space-2);
     display: none;
     z-index: 5;
   }
@@ -170,6 +181,14 @@
     gap: var(--space-1);
   }
   .c2-rest-progress .task-pop { left: 0; transform: none; }
+  .task-pop-head {
+    padding: var(--space-1) 0 var(--space-1);
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--type-xs);
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+  }
   .task-plan-item {
     display: flex;
     gap: var(--space-2);
@@ -183,16 +202,17 @@
     text-align: left;
   }
   .task-plan-mark {
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    font-family: var(--font-ui);
+    font-size: var(--type-sm);
     flex: none;
     width: 14px;
+    text-align: center;
   }
   .task-plan-text { min-width: 0; overflow-wrap: anywhere; }
   .task-plan-item--done {
-    color: var(--text-faint);
+    color: var(--text-muted);
     text-decoration: line-through;
-    text-decoration-color: var(--text-faintest);
+    text-decoration-color: color-mix(in srgb, var(--text-muted) 55%, transparent);
   }
   .task-plan-item--done .task-plan-mark { color: var(--accent-done); text-decoration: none; }
   .task-plan-item--now { color: var(--text-strong); }

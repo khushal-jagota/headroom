@@ -8,7 +8,8 @@
 import { preselectedValue } from "../../composer";
 import type {
   BackendModel,
-  ConversationBackendKey
+  ConversationBackendKey,
+  PromptDeliveryMode
 } from "../../wire";
 import type {
   ComposerRunControlsInput,
@@ -55,21 +56,46 @@ function shownBackend(
     : (input.selection.pickedBackend ?? input.backendKey);
 }
 
+/** What a running turn can do with a new message. Steer is only offered to a turn that
+ *  can take one. */
+export function deliveryModesFor(
+  input: Pick<ComposerRunControlsInput, "supportsSteer">
+): readonly PromptDeliveryMode[] {
+  return input.supportsSteer === false ? ["queue", "send_now"] : ["steer", "queue", "send_now"];
+}
+
+/** The mode a send carries now. With nothing running there is no turn to steer, queue
+ *  behind or interrupt, so the message simply starts the next one; the server treats a
+ *  steer into an idle conversation exactly that way. While a turn runs the person's
+ *  choice holds, unless this turn cannot take it, and then the first mode it can. */
+export function effectiveDeliveryMode(
+  input: Pick<ComposerRunControlsInput, "running" | "deliveryMode" | "supportsSteer">
+): PromptDeliveryMode {
+  if (!input.running) return "steer";
+  const offered = deliveryModesFor(input);
+  return input.deliveryMode !== undefined && offered.includes(input.deliveryMode)
+    ? input.deliveryMode
+    : offered[0];
+}
+
 function submitProjection(
   input: ComposerRunControlsInput
 ): ComposerRunControlsView["submit"] {
   const sending = input.sendsInFlight > 0 && !input.running;
-  const mode = input.deliveryMode ?? "steer";
+  const mode = effectiveDeliveryMode(input);
+  const words = sending
+    ? "On its way"
+    : !input.running
+      ? "Send this message"
+      : mode === "steer"
+        ? "Steer this message"
+        : mode === "send_now" ? "Send this message now" : "Queue this message";
   return {
     active: input.hasSendableContent,
     sending,
     disabled: input.inputDisabled || !input.hasSendableContent,
-    title: sending ? "On its way" : mode === "steer"
-      ? "Steer this message"
-      : mode === "send_now" ? "Send this message now" : "Queue this message",
-    ariaLabel: sending ? "On its way" : mode === "steer"
-      ? "Steer this message"
-      : mode === "send_now" ? "Send this message now" : "Queue this message"
+    title: words,
+    ariaLabel: words
   };
 }
 
@@ -129,7 +155,9 @@ export function resolveComposerRunControls(
     },
     submit: submitProjection(input),
     showStop: input.running,
-    deliveryMode: input.deliveryMode ?? "steer"
+    deliveryMode: effectiveDeliveryMode(input),
+    showDeliveryMode: input.running,
+    deliveryModes: deliveryModesFor(input)
   };
 }
 

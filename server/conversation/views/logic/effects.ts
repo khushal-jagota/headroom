@@ -91,7 +91,7 @@ export function event_effect(payload: ConversationEventPayload): EventEffect {
     case 'context_compacted':
       return effect('context_compacted', false);
     case 'command_reply':
-      return effect('command_reply', true);
+      return effect('command_reply');
     case 'turn_ended':
       return effect('turn_ended', visible, { closes_turn: true });
   }

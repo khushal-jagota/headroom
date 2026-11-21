@@ -9,12 +9,23 @@
 import { readableConversationDetail } from "../conversationDetail";
 import type { ToolCallRow } from "../transcript";
 
+/** How a call ended, as the person should read it. A search that found nothing is not a
+ *  failure, even when the backend reports its exit status as one. */
+export type ToolCallOutcome = "running" | "completed" | "failed" | "no_matches";
+
 export type ToolCallPresentation = {
   iconPaths: readonly string[];
+  /** What was done, in plain words: "Ran", "Edited", "Updated to-dos". */
   title: string;
+  /** Which call it was: the command, the file, the pattern. Shortened to fit one line. */
   summary: string | null;
+  /** The summary as it was given, when shortening it dropped something. */
+  summaryInFull: string | null;
+  /** Both halves as one line, for places with room for a single string. */
+  sentence: string;
   detail: string | null;
   canExpand: boolean;
+  outcome: ToolCallOutcome;
 };
 
 type ToolGlyphKind =
@@ -32,6 +43,9 @@ type ToolGlyphKind =
 type ToolCallLine = {
   title: string;
   summary: string | null;
+  summaryInFull?: string | null;
+  /** What the row opens onto, when that is not the call's raw output. */
+  detail?: string | null;
 };
 
 const TOOL_GLYPH_KINDS: readonly ToolGlyphKind[] = [
@@ -90,14 +104,16 @@ const TOOL_NAME_HINTS: readonly (readonly [ToolGlyphKind, readonly string[]])[] 
   ["think", ["think", "plan", "task", "todo", "reason"]]
 ];
 
+/** The verb a row leads with when the call names its subject. The subject follows in the
+ *  tool voice, so the verb alone reads as a sentence: "Ran npm test", "Read store.ts". */
 const TOOL_CALL_PHRASES: Partial<Record<ToolGlyphKind, string>> = {
-  read: "Read file",
-  edit: "Edited file",
-  delete: "Deleted file",
-  move: "Moved file",
-  search: "Searched files",
-  execute: "Ran command",
-  fetch: "Fetched page",
+  read: "Read",
+  edit: "Edited",
+  delete: "Deleted",
+  move: "Moved",
+  search: "Searched for",
+  execute: "Ran",
+  fetch: "Fetched",
   switch_mode: "Switched mode"
 };
 
@@ -169,7 +185,11 @@ function commandWithoutShellInvocation(text: string): string {
 
 function unquoted(text: string): string {
   const quote = text[0];
-  if ((quote !== '"' && quote !== "'") || text.length < 2 || !text.endsWith(quote)) {
+  if (quote !== '"' && quote !== "'") return text;
+  // A backend that caps its titles cuts the closing quote off with the rest. The opening
+  // one is still only how the command was carried.
+  if (text.endsWith("…") && !text.slice(1).includes(quote)) return text.slice(1);
+  if (text.length < 2 || !text.endsWith(quote)) {
     return text;
   }
   const inside = text.slice(1, -1);
@@ -299,6 +319,8 @@ function toolCallLine(row: ToolCallRow): ToolCallLine {
   // rules below read — an object that no longer parses, a first line that was never the
   // whole of one — so a capped row's line is drawn from what is whole.
   const wholeDetail = typeof row.cappedDetailSequence === "number" ? null : row.detail;
+  const known = knownToolLine(row, wholeDetail);
+  if (known !== null) return known;
   // Both halves matter: the title says what happened and the summary says which call it
   // was. When a backend kind has no trustworthy phrase, its own title remains the fact.
   const tool = namedTool(row);
@@ -307,30 +329,221 @@ function toolCallLine(row: ToolCallRow): ToolCallLine {
     tool
   );
   const titleNamesTheTool = row.title.trim().toLowerCase() === tool.trim().toLowerCase();
-  const phrase = TOOL_CALL_PHRASES[toolGlyphKind(tool)];
+  const kind = toolGlyphKind(tool);
+  const phrase = TOOL_CALL_PHRASES[kind];
   const spoken =
     identifyingFact(row.startedDetail, wholeDetail) ??
     (titleNamesTheTool ? spokenDetail(row.startedDetail, wholeDetail) : written);
-  const summary =
-    spoken === null ? null : shortened(commandWithoutShellInvocation(spoken));
-  const title = phrase !== undefined && summary !== null ? phrase : written;
+  const subject = spoken === null ? null : commandWithoutShellInvocation(spoken);
+  const title = phrase !== undefined && subject !== null ? phrase : written;
+  if (subject === null || addsNothingTo(subject, title)) return { title, summary: null };
+  return subjectLine(title, subject, kind);
+}
+
+/** A subject made to fit one line without losing what identifies it.
+ *
+ * A path keeps its end, because the file's name is what a reader recognises and the
+ * folders above the nearest two are where every call in the turn already was. An address
+ * drops its scheme. Anything else keeps its start and says, with an ellipsis, that it
+ * was cut. The whole subject stays with the line for anyone who wants it.
+ */
+function subjectLine(title: string, subject: string, kind: ToolGlyphKind): ToolCallLine {
+  const whole = subject.trim();
+  let compact = whole;
+  if (kind === "read" || kind === "edit" || kind === "delete" || kind === "move") {
+    compact = pathTail(whole);
+  } else if (kind === "fetch") {
+    compact = whole.replace(/^https?:\/\/(?:www\.)?/i, "");
+  }
+  const summary = shortened(compact);
+  return { title, summary, summaryInFull: summary === whole ? null : whole };
+}
+
+const PATH_SEGMENTS_KEPT = 2;
+
+function pathTail(path: string): string {
+  if (/\s/.test(path) || !/^(?:\/|~\/|[A-Za-z]:[\\/])/.test(path)) return path;
+  const segments = path.split(/[\\/]/).filter((segment) => segment !== "");
+  if (segments.length <= PATH_SEGMENTS_KEPT + 1) return path;
+  return `…/${segments.slice(-PATH_SEGMENTS_KEPT).join("/")}`;
+}
+
+type TodoEntry = { content: string; status: string; activeForm?: string };
+
+/** Lines for a checklist, marked by state, so an opened to-do update reads as the list. */
+const TODO_MARKS: Record<string, string> = {
+  completed: "✓",
+  in_progress: "→",
+  pending: "○"
+};
+
+function todoEntries(started: string | null): TodoEntry[] | null {
+  const given = started === null ? null : callArguments(started.trim());
+  const todos = given?.todos;
+  if (!Array.isArray(todos)) return null;
+  return todos.flatMap((todo): TodoEntry[] => {
+    if (todo === null || typeof todo !== "object") return [];
+    const { content, status, activeForm } = todo as Record<string, unknown>;
+    if (typeof content !== "string") return [];
+    return [{
+      content,
+      status: typeof status === "string" ? status : "pending",
+      activeForm: typeof activeForm === "string" ? activeForm : undefined
+    }];
+  });
+}
+
+function todoLine(started: string | null): ToolCallLine {
+  // The tool's own result only confirms the write ("Todos have been modified…"). What the
+  // person wants is the list, so the list is what the row says and what it opens onto.
+  const entries = todoEntries(started);
+  if (entries === null || entries.length === 0) {
+    return { title: "Updated to-dos", summary: null, detail: null };
+  }
+  const done = entries.filter((entry) => entry.status === "completed").length;
+  const current = entries.find((entry) => entry.status === "in_progress");
+  const counted = `${done} of ${entries.length} done`;
   return {
-    title,
-    summary: summary !== null && addsNothingTo(summary, title) ? null : summary
+    title: "Updated to-dos",
+    summary: shortened(current ? `${counted} · ${current.activeForm ?? current.content}` : counted),
+    detail: entries
+      .map((entry) => `${TODO_MARKS[entry.status] ?? TODO_MARKS.pending} ${entry.content}`)
+      .join("\n")
   };
+}
+
+/** A Codex file change, titled "Change <path>" or "Change N files" with one
+ *  "<kind> <path>" line per file as its detail. */
+const CODEX_CHANGE_TITLE = /^Change (.+)$/;
+
+function fileChangeLine(row: ToolCallRow, named: string): ToolCallLine {
+  const changes = (row.startedDetail ?? row.detail ?? "")
+    .split("\n")
+    .map((line) => /^(add|update|delete|move)\s+(.+)$/.exec(line.trim()))
+    .flatMap((match) => (match ? [{ kind: match[1], path: match[2] }] : []));
+  const kinds = new Set(changes.map((change) => change.kind));
+  const verb =
+    kinds.size === 1 && kinds.has("add") ? "Created"
+    : kinds.size === 1 && kinds.has("delete") ? "Deleted"
+    : "Edited";
+  const count = /^(\d+) files$/.exec(named);
+  if (count === null) return subjectLine(verb, named, "edit");
+  const names = changes.map((change) => change.path.split(/[\\/]/).at(-1) ?? change.path);
+  return {
+    title: `${verb} ${count[1]} files`,
+    summary: names.length === 0 ? null : shortened(names.join(", ")),
+    summaryInFull: names.length === 0 ? null : changes.map((change) => change.path).join(", ")
+  };
+}
+
+/** Tools whose names say more than their kind, read by the name the backend gave them. */
+function knownToolLine(row: ToolCallRow, wholeDetail: string | null): ToolCallLine | null {
+  const title = row.title.trim();
+  const change = CODEX_CHANGE_TITLE.exec(title);
+  if (change && toolGlyphKind(row.toolKind) === "edit" && callArguments(row.startedDetail ?? "") === null) {
+    return fileChangeLine(row, change[1]);
+  }
+  const tool = namedTool(row);
+  const name = tool.trim().toLowerCase();
+  const given = callArguments(row.startedDetail?.trim() ?? "");
+  const named = (key: string): string | null => {
+    const value = given?.[key];
+    return typeof value === "string" && value.trim() !== "" ? firstLine(value) : null;
+  };
+  switch (name) {
+    case "todowrite":
+      return todoLine(row.startedDetail);
+    case "write": {
+      const path = named("file_path");
+      if (path === null) return null;
+      const created = /^File created successfully/i.test(wholeDetail?.trim() ?? "");
+      return subjectLine(created ? "Created" : "Wrote", path, "edit");
+    }
+    case "glob":
+    case "ls": {
+      const pattern = named("pattern") ?? named("path");
+      return pattern === null ? null : subjectLine("Listed files", pattern, "search");
+    }
+    case "websearch": {
+      const query = named("query");
+      return query === null ? null : subjectLine("Searched the web for", query, "search");
+    }
+    case "task":
+    case "agent": {
+      const description = named("description");
+      return { title: "Ran a subagent", summary: description === null ? null : shortened(description) };
+    }
+    case "exitplanmode":
+      return { title: "Presented a plan", summary: null };
+  }
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(title);
+  if (mcp) return { title: "Used", summary: shortened(`${mcp[1]} · ${mcp[2]}`) };
+  return null;
+}
+
+/** Search programs that report "nothing found" with exit status 1 and no output. */
+const SEARCH_PROGRAMS = /^(?:\S*\/)?(?:rg|grep|egrep|fgrep|ag|ack)$/;
+
+/** Whether a failed call is really a search that found nothing.
+ *
+ * rg and grep exit 1 when nothing matches, and a backend that reports exit status as
+ * success or failure turns that into a failed call. A real search error says what went
+ * wrong on stderr, so a failure with no output at all from a command whose last step is
+ * a search is the empty result, not a fault.
+ */
+function searchFoundNothing(row: ToolCallRow): boolean {
+  if (row.status !== "failed" || toolGlyphKind(namedTool(row)) !== "execute") return false;
+  if (row.cappedDetailSequence !== null) return false;
+  const output = row.detail?.trim() ?? "";
+  const startedArguments = callArguments(row.startedDetail?.trim() ?? "");
+  // Claude's Bash reports the bare exit status as the result of a silent failure.
+  if (output !== "" && output !== row.startedDetail?.trim() && !/^(?:Error: )?Exit code 1$/.test(output)) {
+    return false;
+  }
+  const command = typeof startedArguments?.command === "string"
+    ? startedArguments.command
+    : row.title;
+  const last = lastStep(commandWithoutShellInvocation(command.trim())).split(/\s+/);
+  const program = last[0] === "git" && last[1] === "grep" ? "grep" : last[0] ?? "";
+  return SEARCH_PROGRAMS.test(program);
+}
+
+/** The last step of a shell line: what follows its final unquoted `;`, `&&`, `||` or `|`,
+ *  which is the step whose exit status the whole line reports. */
+function lastStep(command: string): string {
+  let quote: string | null = null;
+  let from = 0;
+  for (let at = 0; at < command.length; at += 1) {
+    const character = command[at];
+    if (quote !== null) {
+      if (character === "\\" && quote === '"') at += 1;
+      else if (character === quote) quote = null;
+    } else if (character === "\\") {
+      at += 1;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ";" || character === "|" || (character === "&" && command[at + 1] === "&")) {
+      if (command[at + 1] === character) at += 1;
+      from = at + 1;
+    }
+  }
+  return command.slice(from).trim();
 }
 
 function lineShowsWholeDetail(line: ToolCallLine, detail: string): boolean {
   // An expander that opens onto exactly what the closed line already says is an
   // affordance that does nothing.
-  return addsNothingTo(detail, `${line.title} ${line.summary ?? ""}`);
+  return addsNothingTo(detail, `${line.title} ${line.summaryInFull ?? line.summary ?? ""}`);
 }
 
 export function presentToolCall(row: ToolCallRow): ToolCallPresentation {
   // The renderers receive one coherent decision. Classification cannot choose one icon
   // while a caller independently chooses different wording or disclosure behavior.
   const line = toolCallLine(row);
-  const detail = readableConversationDetail(row.progress ?? row.detail);
+  const noMatches = searchFoundNothing(row);
+  const detail = line.detail !== undefined
+    ? line.detail
+    : noMatches ? null : readableConversationDetail(row.progress ?? row.detail);
   // A capped row holds the start of output the reader has not seen, so it opens whatever
   // that start happens to look like. Reading the prefix instead would let a row whose
   // first line repeats its title refuse to open onto the rest of the output.
@@ -339,7 +552,11 @@ export function presentToolCall(row: ToolCallRow): ToolCallPresentation {
     iconPaths: STEP_ICON_PATHS[toolGlyphKind(namedTool(row))],
     title: line.title,
     summary: line.summary,
+    summaryInFull: line.summaryInFull ?? null,
+    sentence: line.summary === null ? line.title : `${line.title} ${line.summary}`,
     detail,
-    canExpand: capped || (detail !== null && !lineShowsWholeDetail(line, detail))
+    canExpand: (capped && line.detail === undefined)
+      || (detail !== null && !lineShowsWholeDetail(line, detail)),
+    outcome: noMatches ? "no_matches" : row.status
   };
 }

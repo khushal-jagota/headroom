@@ -30,6 +30,7 @@
   let step = $state(0);
   let draft = $state<UserInputDraft>(emptyUserInputDraft());
   let rememberedRequestId = $state("");
+  const uid = $props.id();
 
   $effect(() => {
     if (request.requestId === rememberedRequestId) return;
@@ -60,6 +61,13 @@
     };
   }
 
+  /** Enter in the Other field answers with it, as it would in any one-line form. */
+  function otherKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Enter" || event.isComposing || event.shiftKey) return;
+    event.preventDefault();
+    continueOrSubmit();
+  }
+
   function continueOrSubmit(): void {
     if (!canContinue || question === undefined || busy || !answerAvailable) return;
     if (!isLast) {
@@ -71,6 +79,8 @@
   }
 </script>
 
+<!-- The question is the composer's content while it waits, so it stands on the
+     composer's own surface: no plane, no frame, no outlined boxes inside it. -->
 <section
   class="question-panel"
   data-user-input-panel
@@ -80,14 +90,24 @@
   {#if question}
     <header>
       <div class="progress">
-        <span>{question.header || "Question"}</span>
-        <span>{step + 1} of {request.questions.length}</span>
+        <span class="eyebrow">{question.header || "Question"}</span>
+        {#if request.questions.length > 1}
+          <span class="count">{step + 1} of {request.questions.length}</span>
+        {/if}
       </div>
-      <h3>{question.question}</h3>
-      {#if question.multi_select}<p class="hint">Choose all that apply.</p>{/if}
+      <h3 id={`${uid}-question`}>{question.question}</h3>
+      <p class="hint" id={`${uid}-hint`}>
+        {question.multi_select ? "Choose all that apply." : "Choose one."}
+        {#if question.allow_other}Or write your own below.{/if}
+      </p>
     </header>
 
-    <div class="options" role={question.multi_select ? "group" : "radiogroup"}>
+    <div
+      class="options"
+      role="group"
+      aria-labelledby={`${uid}-question`}
+      aria-describedby={`${uid}-hint`}
+    >
       {#each question.options as option (option.label)}
         {@const selected = (draft.selected[question.question_id] ?? []).includes(option.label)}
         <button
@@ -98,21 +118,29 @@
           disabled={busy || !answerAvailable}
           onclick={() => choose(option.label)}
         >
-          <span>{option.label}</span>
-          {#if option.description}<small>{option.description}</small>{/if}
+          <span
+            class="mark"
+            class:square={question.multi_select}
+            aria-hidden="true"
+          ></span>
+          <span class="words">
+            <span class="label">{option.label}</span>
+            {#if option.description}<small>{option.description}</small>{/if}
+          </span>
         </button>
       {/each}
     </div>
 
     {#if question.allow_other}
       <label class="other">
-        <span>Other</span>
+        <span class="visually-hidden">Other answer</span>
         <input
           data-user-input-other
           value={draft.other[question.question_id] ?? ""}
-          placeholder="Type your answer"
+          placeholder="Other: type your own answer"
           disabled={busy || !answerAvailable}
           oninput={(event) => writeOther(event.currentTarget.value)}
+          onkeydown={otherKeydown}
         />
       </label>
     {/if}
@@ -122,7 +150,7 @@
     <footer>
       <button
         type="button"
-        class="quiet"
+        class="button button--ghost stop"
         data-user-input-cancel
         disabled={busy}
         onclick={() => onCancelTurn?.()}
@@ -131,7 +159,7 @@
       {#if step > 0}
         <button
           type="button"
-          class="quiet"
+          class="button button--secondary"
           data-user-input-back
           disabled={busy}
           onclick={() => (step -= 1)}
@@ -139,37 +167,50 @@
       {/if}
       <button
         type="button"
-        class="continue"
+        class="button button--primary"
         data-user-input-continue
         disabled={busy || !answerAvailable || !canContinue}
         onclick={continueOrSubmit}
-      >{busy && isLast ? "Sending…" : isLast ? "Submit answers" : "Next"}</button>
+      >{busy && isLast ? "Sending…" : isLast ? (request.questions.length > 1 ? "Submit answers" : "Submit answer") : "Next"}</button>
     </footer>
   {:else}
     <p class="note" role="alert">This question request contained no questions.</p>
     <footer>
-      <button type="button" class="quiet" onclick={() => onCancelTurn?.()}>Stop</button>
+      <button type="button" class="button button--ghost stop" onclick={() => onCancelTurn?.()}>Stop</button>
     </footer>
   {/if}
 </section>
 
 <style>
-  .question-panel { display: grid; gap: var(--space-3); padding: var(--space-3); width: 100%; box-sizing: border-box; background: var(--surface-recessed); color: var(--accent-text); border-radius: var(--radius-lg); }
+  .question-panel { display: grid; gap: var(--space-3); padding: var(--space-3) 0 var(--space-1); width: 100%; box-sizing: border-box; color: var(--text-default); }
   header { display: grid; gap: var(--space-1); }
-  .progress { display: flex; justify-content: space-between; gap: var(--space-2); color: var(--accent-bright); font-family: var(--font-mono); font-size: var(--type-xs); }
-  h3 { margin: 0; font: inherit; font-weight: 700; line-height: 1.35; }
-  .hint, .note { margin: 0; color: var(--text-muted); font-size: var(--type-xs); }
+  .progress { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); font-size: var(--type-xs); }
+  .eyebrow { color: var(--accent-bright); font-weight: var(--weight-title); letter-spacing: var(--tracking-label); text-transform: uppercase; overflow-wrap: anywhere; }
+  .count { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  h3 { margin: 0; font: inherit; font-size: var(--type-md); font-weight: var(--weight-title); line-height: 1.4; color: var(--text-strong); overflow-wrap: anywhere; }
+  .hint, .note { margin: 0; color: var(--text-muted); font-size: var(--type-xs); line-height: 1.5; }
   .note[role="alert"] { color: var(--accent-error); }
   .options { display: grid; gap: var(--space-1); }
-  .options button { display: grid; gap: var(--space-1); width: 100%; padding: var(--space-2) var(--space-3); text-align: left; border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: transparent; color: inherit; }
-  .options button.selected { border-color: var(--accent-bright); }
-  .options small { color: var(--text-muted); font-size: var(--type-xs); }
-  .other { display: grid; gap: var(--space-1); font-size: var(--type-xs); color: var(--text-muted); }
-  .other input { width: 100%; box-sizing: border-box; padding: var(--space-2) var(--space-3); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); background: transparent; color: var(--accent-text); font: inherit; }
-  footer { display: flex; align-items: center; gap: var(--space-2); }
+  /* Filled, not outlined, like the shared secondary button: one step of white on the
+     composer. The chosen answer carries the accent in its mark and a tint of it. */
+  .options button { display: flex; align-items: flex-start; gap: var(--space-3); width: 100%; min-height: var(--button-height); padding: var(--space-2) var(--space-3); text-align: left; border: 0; border-radius: var(--radius-md); background: var(--state-step); color: inherit; font: inherit; font-size: var(--type-row); cursor: pointer; }
+  .options button:hover:not(:disabled) { background-image: var(--interaction-hover); }
+  .options button.selected { background: color-mix(in srgb, var(--accent-bright) 16%, transparent); }
+  .options button.selected .label { color: var(--text-strong); }
+  .mark { flex: none; box-sizing: border-box; width: 14px; height: 14px; margin-top: 3px; border: 1.5px solid var(--text-muted); border-radius: 50%; }
+  .mark.square { border-radius: var(--radius-sm); }
+  .selected .mark { border-color: var(--accent-bright); background: radial-gradient(circle, var(--accent-bright) 0 3.5px, transparent 4px); }
+  .selected .mark.square { background: linear-gradient(var(--accent-bright), var(--accent-bright)) center / 6px 6px no-repeat; }
+  .words { display: grid; gap: 2px; min-width: 0; }
+  .label { overflow-wrap: anywhere; }
+  .options small { color: var(--text-muted); font-size: var(--type-xs); line-height: 1.45; overflow-wrap: anywhere; }
+  .other { display: grid; }
+  .other input { width: 100%; box-sizing: border-box; min-height: var(--button-height); padding: var(--space-2) var(--space-3); border: var(--border-hairline) solid var(--border-raised); border-radius: var(--radius-md); background: transparent; color: var(--text-strong); font: inherit; font-size: var(--type-row); }
+  .other input::placeholder { color: var(--text-muted); }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .spacer { flex: 1; }
-  footer button { min-height: 2rem; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); border: var(--border-hairline) solid var(--border-color); font: inherit; }
-  footer .quiet { background: transparent; color: var(--text-faint); }
-  footer .continue { background: var(--accent-bright); color: var(--surface-ink); border-color: var(--accent-bright); }
-  button:disabled, input:disabled { opacity: .5; cursor: default; }
+  .stop:hover:not(:disabled) { color: var(--accent-error); }
+  .options button:disabled { cursor: default; color: var(--text-faint); }
+  input:disabled { opacity: .5; cursor: default; }
 </style>

@@ -110,76 +110,99 @@
 <section bind:this={root} class="key-request" aria-label={`${current.provider} API key request`} data-conversation-row="credential_request" data-credential-request={current.request_id} data-credential-state={current.state}>
   {#if current.state !== 'pending'}
     <div bind:this={result} class="result-status" role="status" tabindex="-1">
-      <div class="saved-row"><span class="saved-name">{current.credential?.reference.name ?? current.name}</span><span class="saved-status">{outcome}</span></div>
+      <div class="saved-row"><span class="saved-provider">{current.provider} API key</span><span class="saved-name">{current.credential?.reference.name ?? current.name}</span><span class="saved-status">{outcome}</span></div>
       {#if current.delivery?.status === 'queued'}<p class="state-note">Result queued for the agent.</p>
       {:else if current.delivery?.status === 'refused'}
         <div class="delivery-state"><p class="state-note">Result did not reach the agent.</p>
-          {#if !readOnly}<button class="request-action ghost" type="button" disabled={draft.busy} onclick={() => void action('retry-delivery')}>{draft.busy ? 'Sending…' : 'Retry delivery'}</button>{/if}
+          {#if !readOnly}<button class="button button--secondary" type="button" disabled={draft.busy} onclick={() => void action('retry-delivery')}>{draft.busy ? 'Sending…' : 'Retry delivery'}</button>{/if}
         </div>
       {:else if current.delivery?.status === 'uncertain'}<p class="state-note">Delivery is uncertain. Check the conversation before another attempt.</p>
       {:else if current.delivery?.status === 'canceled'}<p class="state-note">Result delivery canceled.</p>{/if}
       {#if draft.error}<p class="error-note" role="alert">{draft.error}</p>{/if}
     </div>
   {:else if readOnly}
-    <div class="saved-row"><span class="saved-name">{current.name}</span><span class="saved-status">Requested</span></div>
+    <div class="saved-row"><span class="saved-provider">{current.provider} API key</span><span class="saved-name">{current.name}</span><span class="saved-status">Requested</span></div>
   {:else}
-    <form autocomplete="off" aria-label="API key request" aria-describedby={draft.error && !draft.invalid ? `${uid}-error` : undefined}
+    <header class="request-head">
+      <h3 class="request-title" id={`${uid}-title`}>{replacement ? `Replace the ${current.provider} API key` : `${current.provider} API key`}</h3>
+      {#if current.use}<p class="request-use">{current.use}</p>{/if}
+    </header>
+    <form autocomplete="off" aria-labelledby={`${uid}-title`} aria-describedby={draft.error && !draft.invalid ? `${uid}-error` : undefined}
       onsubmit={(event) => { event.preventDefault(); void submit(); }}>
       <div class="stacked-fields">
-        {#if replacement}<span class="fixed-name">{current.name}</span>
-        {:else}<input bind:this={nameInput} bind:value={draft.name} class="key-name" aria-label="Key name" placeholder="Key name" autocomplete="off" disabled={draft.busy} aria-invalid={draft.invalid === 'name' ? 'true' : undefined} aria-describedby={draft.invalid === 'name' ? `${uid}-error` : undefined} onkeydown={inputKey} oninput={(event) => corrected('name', event.currentTarget.value)} />{/if}
+        <!-- Each field says what it is: the name the key is saved under (editable, in the
+             mono of a variable) and the secret itself. -->
+        <div class="field">
+          <span class="field-label" aria-hidden={replacement ? undefined : 'true'}>Key name</span>
+          {#if replacement}<span class="fixed-name">{current.name}</span>
+          {:else}<input bind:this={nameInput} bind:value={draft.name} class="key-name" aria-label="Key name" placeholder="KEY_NAME" autocomplete="off" spellcheck="false" disabled={draft.busy} aria-invalid={draft.invalid === 'name' ? 'true' : undefined} aria-describedby={draft.invalid === 'name' ? `${uid}-error` : undefined} onkeydown={inputKey} oninput={(event) => corrected('name', event.currentTarget.value)} />{/if}
+        </div>
         {#if !draft.stale}
-          <div class="private-input"><input bind:this={secretInput} bind:value={draft.secret} type={draft.revealed ? 'text' : 'password'} aria-label={replacement ? 'New API key' : 'API key'} placeholder={replacement ? 'Paste new API key' : 'Paste API key'} autocomplete="off" spellcheck="false" disabled={draft.busy} aria-invalid={draft.invalid === 'secret' ? 'true' : undefined} aria-describedby={draft.invalid === 'secret' ? `${uid}-error` : undefined} onkeydown={inputKey} oninput={(event) => corrected('secret', event.currentTarget.value)} />
-            {#if draft.secret}<button type="button" class="quiet-affordance reveal-button" aria-label={draft.revealed ? 'Hide API key' : 'Show API key'} aria-pressed={draft.revealed} disabled={draft.busy} onclick={() => draft.revealed = !draft.revealed}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>{#if draft.revealed}<path d="m3 3 18 18"/>{/if}</svg></button>{/if}
+          <div class="field">
+            <span class="field-label" aria-hidden="true">{replacement ? 'New API key' : 'API key'}</span>
+            <div class="private-input"><input bind:this={secretInput} bind:value={draft.secret} type={draft.revealed ? 'text' : 'password'} aria-label={replacement ? 'New API key' : 'API key'} placeholder={replacement ? 'Paste the new key' : 'Paste the key'} autocomplete="off" spellcheck="false" disabled={draft.busy} aria-invalid={draft.invalid === 'secret' ? 'true' : undefined} aria-describedby={draft.invalid === 'secret' ? `${uid}-error` : undefined} onkeydown={inputKey} oninput={(event) => corrected('secret', event.currentTarget.value)} />
+              {#if draft.secret}<button type="button" class="quiet-affordance reveal-button" aria-label={draft.revealed ? 'Hide API key' : 'Show API key'} aria-pressed={draft.revealed} disabled={draft.busy} onclick={() => draft.revealed = !draft.revealed}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>{#if draft.revealed}<path d="m3 3 18 18"/>{/if}</svg></button>{/if}
+            </div>
           </div>
         {/if}
       </div>
-      <!-- Mutation labels describe work without marking the row as unfinished presentation. -->
-      <div class="form-footer">
-        {#if !draft.stale}<button type="button" class="request-action primary" disabled={draft.busy} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace' : 'Save'}</button>{/if}
-        <button type="button" class="request-action ghost" disabled={draft.busy} onclick={() => void action('reject')}>Reject</button>
-        <span class="footer-space"></span>
-        {#if current.help || current.help_url}<button type="button" class="quiet-affordance" aria-label="API key help" aria-expanded={draft.helpOpen} aria-controls={`${uid}-help`} onclick={() => draft.helpOpen = !draft.helpOpen}>?</button>{/if}
-      </div>
       {#if replacement}<p class="replacement-note">Replaces this key everywhere it is used.</p>{/if}
-      {#if draft.helpOpen}<div class="key-help" id={`${uid}-help`}>{current.help ?? ''} {#if current.help_url}<a href={current.help_url} target="_blank" rel="noreferrer">{current.provider} guide ↗</a>{/if}</div>{/if}
+      {#if current.help || current.help_url}
+        <div class="help">
+          <button type="button" class="help-toggle" aria-expanded={draft.helpOpen} aria-controls={`${uid}-help`} onclick={() => draft.helpOpen = !draft.helpOpen}>How to get a key</button>
+          {#if draft.helpOpen}<div class="key-help" id={`${uid}-help`}>{current.help ?? ''} {#if current.help_url}<a href={current.help_url} target="_blank" rel="noreferrer">{current.provider} guide ↗</a>{/if}</div>{/if}
+        </div>
+      {/if}
       {#if draft.error}<p id={`${uid}-error`} class="error-note" role="alert">{draft.error}</p>{/if}
-      {#if draft.stale}<button bind:this={reviewButton} type="button" class="request-action ghost review" disabled={draft.busy} onclick={() => void action('review')}>Review current key</button>{/if}
+      {#if draft.stale}<button bind:this={reviewButton} type="button" class="button button--secondary review" disabled={draft.busy} onclick={() => void action('review')}>Review current key</button>{/if}
       {#if draft.reviewed}<p class="state-note">Current key · updated just now</p>{/if}
+      <!-- THE button (app.css, "Buttons"): the one primary, then a ghost to decline. -->
+      <div class="form-footer">
+        {#if !draft.stale}<button type="button" class="button button--primary" disabled={draft.busy} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace' : 'Save'}</button>{/if}
+        <button type="button" class="button button--ghost reject" disabled={draft.busy} onclick={() => void action('reject')}>Reject</button>
+      </div>
     </form>
   {/if}
 </section>
 
 <style>
-  .key-request{align-self:flex-start;width:100%;max-width:calc(var(--credential-request-width) + var(--space-7)*2);min-width:0;box-sizing:border-box;background:var(--surface-2);border:0;border-radius:var(--radius-lg);padding:var(--space-5);font-size:var(--type-sm);overflow-wrap:anywhere}
+  .key-request{align-self:flex-start;width:100%;max-width:calc(var(--credential-request-width) + var(--space-7)*2);min-width:0;box-sizing:border-box;background:var(--surface-2);border:0;border-radius:var(--radius-lg);padding:var(--space-4) var(--space-5) var(--space-5);font-size:var(--type-sm);overflow-wrap:anywhere}
+  .request-head{display:grid;gap:var(--space-1);margin-bottom:var(--space-4)}
+  .request-title{margin:0;font:inherit;font-size:var(--type-md);font-weight:var(--weight-title);line-height:1.4;color:var(--text-strong)}
+  .request-use{margin:0;color:var(--text-muted);line-height:1.5}
   form{display:grid;gap:var(--space-4);margin:0;min-width:0}
   .stacked-fields{display:grid;gap:var(--space-3)}
-  .key-name,.fixed-name{box-sizing:border-box;min-width:0;width:100%;padding:var(--space-3);min-height:var(--space-7);background:var(--surface-input);border:0;border-radius:var(--radius-md);color:var(--text-default);font-family:var(--font-ui);font-size:var(--type-input);line-height:1.5}
-  .fixed-name{display:flex;align-items:center;overflow-wrap:anywhere}
-  .key-name:hover{color:var(--text-strong)}
+  .field{display:grid;gap:var(--space-1);min-width:0}
+  .field-label{color:var(--text-muted);font-size:var(--type-xs)}
+  .key-name,.fixed-name{box-sizing:border-box;min-width:0;width:100%;padding:var(--space-2) var(--space-3);min-height:40px;background:var(--surface-input);border:0;border-radius:var(--radius-md);color:var(--text-strong);font-family:var(--font-mono);font-size:var(--type-code);letter-spacing:var(--tracking-mono);line-height:1.5}
+  .key-name::placeholder{color:var(--text-muted)}
+  /* A fixed name is a value, not a field: no fill, so it cannot be mistaken for one. */
+  .fixed-name{display:flex;align-items:center;overflow-wrap:anywhere;background:transparent;padding-inline:0;min-height:0}
+  .key-name:hover{background:var(--surface-input-hover)}
   .private-input{min-width:0;display:flex;align-items:center;background:var(--surface-input);border:0;border-radius:var(--radius-md)}
-  .private-input input{width:100%;min-width:0;box-sizing:border-box;min-height:var(--space-7);padding:var(--space-3);border:0;border-radius:var(--radius-md);background:transparent;color:var(--text-strong);font-family:var(--font-ui);font-size:var(--type-input)}
-  .private-input input::placeholder{color:var(--text-faintest)}
-  .request-action{font:inherit;font-size:var(--type-sm);font-weight:590;line-height:1.6;padding:var(--space-2) calc(var(--space-4) + var(--border-strong));border:0;border-radius:var(--radius-pill);cursor:pointer}
-  button:disabled{opacity:.5;cursor:default}
-  .primary{background:var(--accent-bright);color:var(--surface-ink)}
-  .ghost{background:transparent;color:var(--text-faint);padding:var(--space-2) var(--space-3)}
-  .ghost:hover{background-image:var(--interaction-hover);color:var(--text-strong)}
-  .quiet-affordance{display:inline-flex;align-items:center;justify-content:center;font:inherit;line-height:1.6;padding:var(--space-2);border:0;border-radius:var(--radius-pill);background:transparent;color:var(--text-faint);cursor:pointer}
+  .private-input input{width:100%;min-width:0;box-sizing:border-box;min-height:40px;padding:var(--space-2) var(--space-3);border:0;border-radius:var(--radius-md);background:transparent;color:var(--text-strong);font-family:var(--font-ui);font-size:var(--type-input);line-height:1.5}
+  .private-input input::placeholder{color:var(--text-muted)}
+  .private-input:hover{background:var(--surface-input-hover)}
+  .quiet-affordance{display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;font:inherit;line-height:1.6;padding:var(--space-1);border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);cursor:pointer}
   .quiet-affordance:hover{color:var(--text-strong)}
   .reveal-button{flex:none;margin-right:var(--space-2)}
-  svg{width:var(--space-4);height:var(--space-4);fill:none;stroke:currentColor;stroke-width:var(--border-hairline);stroke-linecap:round;stroke-linejoin:round}
-  .form-footer{display:flex;gap:var(--space-4);align-items:center;margin-top:var(--space-1)}
-  .footer-space{flex:1}
-  .key-help{color:var(--text-faint);font-size:var(--type-sm);line-height:1.6}
+  svg{width:var(--space-4);height:var(--space-4);fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+  .help{display:grid;gap:var(--space-2);justify-items:start}
+  .help-toggle{min-height:24px;padding:0;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);font:inherit;font-size:var(--type-xs);text-decoration:underline;text-decoration-color:var(--border-raised);text-underline-offset:3px;cursor:pointer}
+  .help-toggle:hover{color:var(--text-strong)}
+  .form-footer{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+  .reject:hover:not(:disabled){color:var(--accent-error)}
+  .review{justify-self:start}
+  .key-help{color:var(--text-muted);font-size:var(--type-sm);line-height:1.6}
   .key-help a{color:var(--accent-bright);white-space:nowrap}
-  .replacement-note,.state-note,.error-note{margin:0;font-size:var(--type-sm);line-height:1.5;color:var(--text-faint)}
+  .replacement-note,.state-note,.error-note{margin:0;font-size:var(--type-sm);line-height:1.5;color:var(--text-muted)}
   .error-note{color:var(--accent-error)}
-  .saved-row{display:flex;align-items:baseline;gap:var(--space-3);min-width:0}
-  .saved-name{color:var(--text-muted);min-width:0;overflow-wrap:anywhere}
-  .saved-status{color:var(--text-faint);flex:none;font-size:var(--type-xs)}
+  .saved-row{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:var(--space-3);row-gap:var(--space-1);min-width:0}
+  .saved-provider{color:var(--text-default);flex:none}
+  .saved-name{color:var(--text-muted);min-width:0;overflow-wrap:anywhere;font-family:var(--font-mono);font-size:var(--type-code)}
+  .saved-status{color:var(--text-muted);flex:none;font-size:var(--type-xs);margin-left:auto}
   .result-status>.state-note,.delivery-state{margin-top:var(--space-2)}
-  .delivery-state .request-action{margin-top:var(--space-2)}
+  .delivery-state .button{margin-top:var(--space-2)}
   .result-status:focus{outline:none}
-  @media(max-width:560px){.key-request{padding:var(--space-4)}.key-name,.fixed-name,.private-input input{font-size:var(--space-4)}}
+  @media(max-width:560px){.key-request{padding:var(--space-4)}.private-input input{font-size:var(--space-4)}.key-name{font-size:var(--space-4)}}
 </style>

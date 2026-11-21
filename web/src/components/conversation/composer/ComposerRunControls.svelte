@@ -42,13 +42,18 @@
 <!-- What is on the right is what there is to do. The microphone leads the turn actions,
      and sending appears when there is something to send: a composer with
      nothing in it offers no Send, greyed out or otherwise. How the message will be
-     delivered is a standing choice rather than an action, so it leads the group. -->
+     delivered is a standing choice rather than an action, so it leads the group, and it
+     is only there while a turn runs: with nothing running a message starts the next turn
+     whatever the choice says. -->
 <div class="chat-submit">
-  <DeliveryModePicker
-    value={view.deliveryMode}
-    disabled={view.disabled}
-    onChoose={intents.chooseDeliveryMode}
-  />
+  {#if view.showDeliveryMode}
+    <DeliveryModePicker
+      value={view.deliveryMode}
+      modes={view.deliveryModes}
+      disabled={view.disabled}
+      onChoose={intents.chooseDeliveryMode}
+    />
+  {/if}
   {#if beforeSubmit}{@render beforeSubmit()}{/if}
   {#if view.showStop}
     <button

@@ -72,15 +72,30 @@
 </script>
 
 {#snippet body()}
-  <span class="acp-step-title">{presentation.title}{#if presentation.summary}{" "}<span data-conversation-tool-summary>{presentation.summary}</span>{/if}</span>
-  {#if row.status === "completed"}
-    <span class="acp-step-mark acp-mark-ok" role="img" aria-label="Completed">✓</span>
-  {:else if row.status === "failed"}
-    <span class="acp-step-mark acp-mark-fail" role="img" aria-label="Failed">✕</span>
+  <svg class="c2-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+    {#each presentation.iconPaths as path (path)}<path d={path} />{/each}
+  </svg>
+  <!-- The verb never gives way; the subject takes whatever width is left and ends in an
+       ellipsis inside the row, with the whole of it in its tooltip. -->
+  <span class="acp-step-title c2-tool-line">
+    <span class="c2-tool-verb">{presentation.title}</span>{#if presentation.summary}<span class="c2-tool-subject" data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}
+  </span>
+  {#if presentation.outcome === "completed"}
+    <svg class="c2-tool-mark c2-tool-mark--ok" viewBox="0 0 24 24" role="img" aria-label="Completed"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+  {:else if presentation.outcome === "failed"}
+    <span class="c2-tool-state c2-tool-state--failed">
+      <svg class="c2-tool-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" /></svg>
+      <span>Failed</span>
+    </span>
+  {:else if presentation.outcome === "no_matches"}
+    <span class="c2-tool-state" data-conversation-tool-no-matches>No matches</span>
   {:else if activityUncertain}
-    <span class="c2-tool-summary">activity unknown</span>
+    <span class="c2-tool-state">activity unknown</span>
   {:else}
-    <span class="acp-spin" role="img" aria-label="Running"></span>
+    <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
+  {/if}
+  {#if presentation.canExpand}
+    <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
   {/if}
 {/snippet}
 
@@ -88,13 +103,14 @@
   <!-- The line and what it opens onto are one thing, not two. The wash sits out here so
        it covers both, and what opens sits inside the same shape rather than arriving as a
        second box below it. -->
-  <div class="c2-tool" class:is-open={open}>
+  <div class="c2-tool" class:is-open={open} class:is-failed={presentation.outcome === "failed"}>
     <button
       type="button"
       class="acp-step acp-step--expandable"
       data-conversation-row="tool_call"
       data-conversation-tool={row.toolCallId}
       data-conversation-tool-status={row.status}
+      data-conversation-tool-outcome={presentation.outcome}
       aria-expanded={open}
       aria-controls={regionId}
       onclick={openRow}
@@ -116,19 +132,105 @@
     data-conversation-row="tool_call"
     data-conversation-tool={row.toolCallId}
     data-conversation-tool-status={row.status}
+    data-conversation-tool-outcome={presentation.outcome}
   >{@render body()}</div>
 {/if}
 
 <style>
+  /* One line: the kind's glyph, what was done in words, which call it was in the tool
+     voice, and how it went. The words carry the reading; the mono subject is the exact
+     thing, set one step quieter so a run of rows scans by its verbs. */
   .acp-step {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     min-width: 0;
-    padding: 2px 0;
+    min-height: 26px;
+    padding: var(--space-1) 0;
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--type-small);
+    letter-spacing: normal;
+    text-align: start;
+  }
+  .c2-tool-icon {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: var(--text-faintest);
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .acp-step { max-width: 100%; }
+  .c2-tool-line {
+    flex: 0 1 auto;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35em;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    color: inherit;
+    font-size: inherit;
+    letter-spacing: normal;
+  }
+  .c2-tool-verb { flex: none; color: var(--text-muted); }
+  .c2-tool-subject {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--text-faintest);
+    font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);
   }
-  .acp-step-title { color: inherit; font-size: inherit; }
-  .acp-step-mark, .acp-spin { margin-inline-start: 0; }
+  .c2-tool-mark {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .c2-tool-mark--ok { color: var(--accent-done); }
+  .c2-tool-state {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-faintest);
+    font-size: var(--type-small);
+    white-space: nowrap;
+  }
+  .c2-tool-state--failed { color: var(--accent-error); }
+  .c2-tool-spin { margin: 0; }
+  /* What opens the row, said where the line ends. Quiet until the row is pointed
+     at, focused or open; always there where nothing can point. */
+  .c2-tool-chevron {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: var(--text-faintest);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0;
+    transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+  }
+  .c2-tool:hover .c2-tool-chevron,
+  .acp-step:focus-visible .c2-tool-chevron,
+  .c2-tool.is-open .c2-tool-chevron { opacity: 1; }
+  .c2-tool.is-open .c2-tool-chevron { transform: rotate(90deg); }
+  @media (hover: none) { .c2-tool-chevron { opacity: 1; } }
+  .acp-step--expandable { width: 100%; background: transparent; border: 0; cursor: pointer; }
+  .acp-step--expandable:hover .c2-tool-verb { color: var(--text-strong); }
+  .acp-step--expandable:hover .c2-tool-subject { color: var(--text-muted); }
   /* One shape for the line and what it opens onto, so opening a row grows it rather than
      putting a second thing underneath it. The wash is on the whole shape, including the
      part that is only there when it is open. */
@@ -140,10 +242,10 @@
     transition: background var(--motion-fast) var(--motion-ease);
   }
   .c2-tool:hover { background-image: var(--interaction-hover); }
-  /* Details hang from the plain tool line, one step in. */
+  /* The output sits in its own recessed well under the line, so it reads as what the call
+     printed rather than as more of the conversation. */
   .c2-tool-body {
-    margin-inline-start: 0;
-    padding: 0 0 var(--space-2) var(--space-3);
+    padding: 0 0 var(--space-2) calc(14px + var(--space-2));
   }
   /* The cap is the point: an expanded row scrolls its own output rather than growing
      the thread by the length of whatever the tool happened to print. */
@@ -151,11 +253,23 @@
     margin: 0;
     max-height: calc(var(--type-xs) * 24);
     overflow: auto;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--surface-recessed);
+    border-inline-start: 2px solid var(--border-raised);
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
+    line-height: 1.55;
     white-space: pre;
     overflow-wrap: normal;
+  }
+  /* A failure's output is the reason it failed: tinted and edged in the error colour so
+     it reads as the problem, not as one more listing. */
+  .c2-tool.is-failed .c2-tool-output {
+    background: color-mix(in srgb, var(--error-surface) 55%, var(--surface-recessed));
+    border-inline-start-color: var(--accent-error);
+    color: var(--text-default);
   }
   .c2-tool-detail-failed {
     margin: var(--space-1) 0 0;
@@ -163,6 +277,6 @@
     font-size: var(--type-xs);
   }
   @media (prefers-reduced-motion: reduce) {
-    .c2-tool { transition: none; }
+    .c2-tool, .c2-tool-chevron { transition: none; }
   }
 </style>

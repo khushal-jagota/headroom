@@ -15,7 +15,12 @@
   } = $props();
 
   let week = $derived(usageWindow(windows, "seven_day", modelId));
-  let values = $derived([{ kind: "seven_day", label: "week", window: week }]);
+  /* A compact ring stands beside a name in a list, where a dashed empty circle for "nothing
+   * reported" reads as a spinner that never finishes. There it is left out, and the row
+   * says nothing about usage; the full rings keep the dash and its "—". */
+  let values = $derived(
+    [{ kind: "seven_day", label: "week", window: week }].filter((value) => !compact || value.window !== null)
+  );
 
   function circumference(radius: number): number {
     return 2 * Math.PI * radius;
@@ -38,6 +43,7 @@
   }
 </script>
 
+{#if values.length > 0}
 <span class="usage-rings" class:compact role="group" aria-label={label}>
   {#each values as value (value.label)}
     <span
@@ -62,7 +68,7 @@
             cy={compact ? 9 : 17}
             r={compact ? 7 : 14}
             fill="none"
-            stroke="var(--border-color)"
+            stroke="var(--usage-ring-track)"
             stroke-width={compact ? 2 : 2.5}
             stroke-dasharray={value.window === null ? "2 3" : undefined}
           />
@@ -87,9 +93,12 @@
     </span>
   {/each}
 </span>
+{/if}
 
 <style>
-  .usage-rings { display: inline-flex; gap: var(--space-2); }
+  /* The track is a quiet but visible circle on the raised plane; the remaining arc is the
+   * secondary tone over it (6.4:1). */
+  .usage-rings { display: inline-flex; gap: var(--space-2); --usage-ring-track: color-mix(in srgb, var(--tone-secondary) 28%, transparent); }
   .usage-rings.compact { gap: var(--space-2); }
   .usage-ring { display: grid; justify-items: center; gap: var(--space-1); }
   .usage-ring-visual { display: grid; place-items: center; }

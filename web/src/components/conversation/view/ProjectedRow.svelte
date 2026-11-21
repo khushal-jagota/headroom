@@ -58,7 +58,7 @@
   });
 </script>
 <SkeletonRegion shape="block" loading={row === null && !error} loadingText="Loading conversation detail…">
-{#if row?.kind==='tool_call' && reader.lens==='full'}
+{#if row?.kind==='tool_call'}
   <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow {activityUncertain} row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
 {:else if row?.kind==='credential_request'}
   <ConversationCredentialRequestCard request={row.request}/>

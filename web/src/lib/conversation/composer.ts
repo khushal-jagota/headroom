@@ -111,29 +111,6 @@ export function askIsGeneric(ask: { options?: readonly PermissionAskOption[] } |
   return askActions(ask).some((action) => !action.supplied);
 }
 
-/** The ask's own words, used as the composer's placeholder while it takes over.
- *
- * A placeholder is one line of grey text, so only a detail that is genuinely one short
- * line is used as one. Anything longer — and anything structured — belongs in the card,
- * where it can be read and scrolled; squeezing it in here produced the JSON-in-a-
- * placeholder the owner saw.
- */
-const LONGEST_DETAIL_WORTH_A_PLACEHOLDER = 80;
-
-export function askPlaceholder(
-  ask: { title: string; detail?: string | null } | null
-): string {
-  if (ask === null) return "";
-  const detail = ask.detail?.trim() ?? "";
-  const isOneShortLine =
-    detail !== ""
-    && !detail.includes("\n")
-    && detail.length <= LONGEST_DETAIL_WORTH_A_PLACEHOLDER
-    && !detail.startsWith("{")
-    && !detail.startsWith("[");
-  return isOneShortLine ? detail : ask.title;
-}
-
 // --- what a picker changes ---------------------------------------------------------------
 
 export type RunValues = {

@@ -604,10 +604,12 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
+  /* The one raised plane every popover stands on: its own surface, a 1px ring and the float
+   * shadow, so an open picker reads as a layer over whatever is under it. */
   .listbox-picker-panel {
     position: absolute; z-index: 40; bottom: calc(100% + var(--space-1)); left: 0;
-    background: var(--surface-2); border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-lg); overflow: hidden;
+    background: var(--surface-raised); border: var(--border-hairline) solid var(--border-raised);
+    border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-float);
   }
   /* The top layer's own rules would otherwise center the panel and pad it. */
   .listbox-picker-panel.viewport {
@@ -636,7 +638,7 @@
     text-align: left;
   }
   .listbox-picker-option:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
-  .listbox-picker-option.cursor { background: var(--surface-recessed); color: var(--text-strong); }
+  .listbox-picker-option.cursor { background: var(--surface-selected); color: var(--text-strong); }
   .listbox-picker-option.on { color: var(--text-strong); }
   .listbox-picker-tick { flex: none; font-family: var(--font-mono); font-size: var(--type-xs); }
   .listbox-picker-panel[aria-busy="true"] .listbox-picker-option { cursor: progress; opacity: .55; }

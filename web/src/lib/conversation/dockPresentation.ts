@@ -40,3 +40,44 @@ export function dockFeedbackFor(latest: { kind: string; ending?: string } | null
   if (latest.kind === 'turn_ended' && latest.ending === 'completed') return null;
   return said?.text || null;
 }
+
+type PaneRole = 'Worker' | 'Manager' | 'Chief' | 'Goal';
+const ROLE_TITLES: Record<PaneRole, string> = { Worker: 'Worker', Manager: 'Manager', Chief: 'Chief of Staff', Goal: 'Goal' };
+/** Who the opened conversation is with, for its top bar: the owner's own name for it when the
+ * page gave one, else the role the pane already knows. Never blank, never invented. */
+export function paneTitleFor(title: string | null | undefined, role: PaneRole): string {
+  return title?.trim() || ROLE_TITLES[role];
+}
+
+/** What the opened conversation is doing, as its top bar says it. `live` draws the moving
+ * mark, `attention` the person's own accent, `quiet` words alone. Idle says nothing: the
+ * transcript already shows a conversation at rest. */
+export type PaneHeadStatus = { text: string; tone: 'live' | 'attention' | 'quiet' };
+export function paneHeadStatus(state: {
+  readOnly: boolean;
+  activityUncertain: boolean;
+  waitingForYou: boolean;
+  running: boolean;
+  backgroundWorking: boolean;
+  /** The Worker-setup sentence ("Setting up · preparing workspace · 1m 35s"), or null. */
+  settingUp: string | null;
+  /** Seconds the running turn has taken, or null while that is not known. */
+  elapsed: string | null;
+}): PaneHeadStatus | null {
+  if (state.readOnly) return { text: 'Past conversation · read only', tone: 'quiet' };
+  if (state.activityUncertain) return { text: 'Activity on this machine unknown', tone: 'quiet' };
+  if (state.waitingForYou) return { text: 'Waiting for you', tone: 'attention' };
+  if (state.running) return { text: state.elapsed ? `Working · ${state.elapsed}` : 'Working', tone: 'live' };
+  if (state.backgroundWorking) return { text: 'Working in the background', tone: 'live' };
+  if (state.settingUp) return { text: state.settingUp, tone: 'live' };
+  return null;
+}
+
+/** The dock's line under the status while the machine's own activity cannot be read. Setup
+ * is the one state that line would otherwise contradict ("Setting up" beside "unknown"), so
+ * it says the two together: the setup is recorded, the machine cannot confirm it now. */
+export function uncertainActivityFeedback(settingUp: boolean): string {
+  return settingUp
+    ? 'This machine is not connected, so setup progress cannot be confirmed.'
+    : 'Current activity on this machine is unknown.';
+}

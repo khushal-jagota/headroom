@@ -17,6 +17,7 @@
    * turn ends moves everything under it for no reason anybody reading could name.
    */
   import {
+    foldedWorkSentence,
     turnFoldLabel,
     workingSentence
   } from "../../lib/conversation/transcript";
@@ -38,7 +39,9 @@
     toolCallCount = 0,
     foldedMessageCount = 0,
     expanded = false,
-    livenessPulse = 0
+    waiting = null,
+    livenessPulse = 0,
+    onToggle
   }: {
     activityUncertain?: boolean;
     settled?: boolean;
@@ -55,8 +58,12 @@
     foldedMessageCount?: number;
     /** Whether this turn's work is showing. The turn owns it, not the individual runs. */
     expanded?: boolean;
+    /** What the running turn is waiting on the person for, if anything. A turn held by a
+     *  question or an approval is not working, and its head must not say it is. */
+    waiting?: "permission" | "question" | null;
     /** Moves whenever a live frame arrives. Only its movement is read. */
     livenessPulse?: number;
+    /** Opens and closes what this turn did. Absent where the reading already shows it. */
     onToggle?: () => void;
   } = $props();
 
@@ -78,6 +85,18 @@
   // fold when it did work, because that work is behind the fold and this is the only way
   // to reach it.
   let visible = $derived(!settled || !stopped || foldVisible);
+  // Where the work is not already on screen, the head says how much there is and opens
+  // onto it. A running turn counts only its tool calls: what it said so far is not folded.
+  let foldCount = $derived(
+    onToggle === undefined ? "" : settled
+      ? foldedWorkSentence(toolCallCount, foldedMessageCount)
+      : foldedWorkSentence(toolCallCount, 0)
+  );
+  let waitingSentence = $derived(
+    waiting === "permission" ? "Waiting for your approval"
+      : waiting === "question" ? "Waiting for your answer"
+      : null
+  );
 
   $effect(() => {
     livenessPulse;
@@ -97,32 +116,71 @@
     data-conversation-turn-expanded={expanded ? "true" : "false"}
   >
     {#if settled && (!stopped || foldVisible)}
-      <!-- Nothing is folded in this presentation, so there is nothing to open. The head
-           stays where it has been since the turn began. It is the same line that was
-           counting a moment ago, and a line that removes itself when a turn ends moves
-           everything under it for no reason. Nothing is reserved for the missing chevron:
-           it lives on the far side, where coming and going costs the label nothing.
-           A turn that stopped without an ending is the one exception: it has no length
-           anybody can claim, its own row already says what happened, and "Worked" over a
-           dead process would be the head telling a story nobody can stand behind. -->
-      <div class="c2-turn-fold c2-turn-settled" data-conversation-turn-settled-head>
-        <span data-conversation-turn-label>{foldLabel}</span>
-      </div>
-    {:else if !settled}
-      <div
-        class="c2-alive"
-        class:is-fresh={fresh && !activityUncertain}
-        data-conversation-alive
-        data-conversation-alive-fresh={fresh && !activityUncertain ? "true" : "false"}
-        role="status"
-      >
-        <span
-          class="c2-alive-word"
-          class:live-text-shimmer={fresh && !activityUncertain}
-          data-conversation-alive-word
+      {#if foldCount !== ""}
+        <!-- The one place to open this turn: everything it did comes back where it
+             happened, and closes again from here. -->
+        <button
+          type="button"
+          class="c2-turn-fold"
+          data-conversation-turn-fold
+          aria-expanded={expanded}
+          onclick={() => onToggle?.()}
         >
-          {activityUncertain ? "Current activity on this machine is unknown." : workingSentence(elapsed.seconds)}
-        </span>
+          <span data-conversation-turn-label>{foldLabel}</span>
+          <span class="c2-turn-count" aria-hidden="true">·</span>
+          <span class="c2-turn-count">{foldCount}</span>
+          <svg class="c2-turn-chevron" class:is-open={expanded} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+        </button>
+      {:else}
+        <!-- Nothing is folded here, or the reading already shows it, so there is nothing
+             to open. The head stays where it has been since the turn began: it is the
+             same line that was counting a moment ago, and a line that removes itself
+             when a turn ends moves everything under it for no reason. A turn that
+             stopped without an ending is the one exception: it has no length anybody
+             can claim, its own row already says what happened, and "Worked" over a dead
+             process would be the head telling a story nobody can stand behind. -->
+        <div class="c2-turn-fold c2-turn-settled" data-conversation-turn-settled-head>
+          <span data-conversation-turn-label>{foldLabel}</span>
+        </div>
+      {/if}
+    {:else if !settled}
+      <div class="c2-alive-line">
+        {#if waitingSentence !== null && !activityUncertain}
+          <!-- Held by the person, not working: the count would claim progress that is
+               not being made, so the head says who the turn is waiting on instead. -->
+          <div class="c2-alive c2-waiting" data-conversation-alive data-conversation-turn-waiting={waiting} role="status">
+            <span class="c2-waiting-dot" aria-hidden="true"></span>
+            <span data-conversation-alive-word>{waitingSentence}</span>
+          </div>
+        {:else}
+          <div
+            class="c2-alive"
+            class:is-fresh={fresh && !activityUncertain}
+            data-conversation-alive
+            data-conversation-alive-fresh={fresh && !activityUncertain ? "true" : "false"}
+            role="status"
+          >
+            <span
+              class="c2-alive-word"
+              class:live-text-shimmer={fresh && !activityUncertain}
+              data-conversation-alive-word
+            >
+              {activityUncertain ? "Current activity on this machine is unknown." : workingSentence(elapsed.seconds)}
+            </span>
+          </div>
+        {/if}
+        {#if foldCount !== ""}
+          <button
+            type="button"
+            class="c2-turn-fold c2-turn-fold--live"
+            data-conversation-turn-fold
+            aria-expanded={expanded}
+            onclick={() => onToggle?.()}
+          >
+            <span>{foldCount}</span>
+            <svg class="c2-turn-chevron" class:is-open={expanded} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -136,9 +194,10 @@
     align-items: center;
     gap: var(--space-2);
     color: var(--text-faintest);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
+    /* The thread's own voice at its small size, not the tool voice: the head is the
+       turn speaking about itself, and tabular numerals keep the clock from jittering. */
+    font-family: var(--font-ui);
+    font-size: var(--type-small);
     /* Flush with the thread, like every other line in it. The head is not a control that
        sits in from the edge; it is the turn's own line and it starts where they start. */
     padding: var(--space-1) 0;
@@ -157,9 +216,10 @@
     border-radius: var(--radius-sm);
     color: var(--text-faintest);
     cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
+    /* The thread's own voice at its small size, not the tool voice: the head is the
+       turn speaking about itself, and tabular numerals keep the clock from jittering. */
+    font-family: var(--font-ui);
+    font-size: var(--type-small);
     /* Flush left with the thread, and the hover reaches back out to cover the gap the
        padding used to hold — the target stays as big as it was, the text stops sitting in. */
     padding: var(--space-1) var(--space-2);
@@ -167,7 +227,44 @@
     font-variant-numeric: tabular-nums;
   }
   .c2-turn-fold:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
+  .c2-turn-fold:focus-visible { color: var(--text-muted); }
+  .c2-turn-count { color: var(--text-faintest); }
+  .c2-turn-chevron {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform var(--motion-fast) var(--motion-ease);
+  }
+  .c2-turn-chevron.is-open { transform: rotate(90deg); }
   /* Same line, same place, nothing to open: it keeps the geometry and drops the affordance. */
   .c2-turn-settled { cursor: default; }
   .c2-turn-settled:hover { color: var(--text-faintest); background: transparent; }
+  /* A running turn's count sits on the same line as its clock, after it. */
+  .c2-alive-line {
+    justify-self: start;
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-2);
+    min-width: 0;
+  }
+  .c2-turn-fold--live { margin-inline: 0; }
+  /* Waiting on the person is the one state this head speaks in the accent: it is the
+     brand's "needs the human", and it does not move, because nothing is moving. */
+  .c2-waiting { color: var(--accent-bright); }
+  .c2-waiting-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-pill);
+    background: currentColor;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .c2-turn-chevron { transition: none; }
+  }
 </style>

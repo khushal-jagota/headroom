@@ -1,7 +1,7 @@
 <script lang="ts">
   /** The band that says what the agent has stopped for.
    *
-   * It sits on top of the composer and is deliberately one header line plus a bounded,
+   * It sits on top of the composer and is deliberately a short head plus a bounded,
    * scrolling body — that bound is the whole of why it stays the composer's size instead
    * of growing to whatever the backend put in the request. Nothing is truncated and
    * nothing hides behind a hover; a structured request is laid out to be read.
@@ -40,7 +40,8 @@
   let shape = $derived(askShape(ask));
   let choices = $derived(askQuestionChoices(ask));
   let detail = $derived(readableConversationDetail(ask.detail));
-  let eyebrow = $derived(shape === "question" ? "question" : "pending approval");
+  // The rail names this state "Needs your approval"; the card says it in the same words.
+  let eyebrow = $derived(shape === "question" ? "Question" : "Needs your approval");
   let rawOpen = $state(false);
 
   function onWindowKeydown(event: KeyboardEvent): void {
@@ -77,6 +78,7 @@
           class="c2-ask-choice"
           data-conversation-ask-choice={choice.optionId}
           data-conversation-ask-shortcut={choice.shortcutDigit ?? undefined}
+          aria-keyshortcuts={choice.shortcutDigit === null ? undefined : String(choice.shortcutDigit)}
           disabled={busy || !answerAvailable}
           onclick={() => answerAvailable && onAnswer(choice.optionId)}
         >
@@ -100,7 +102,8 @@
       {/if}
     {/if}
   {:else if detail}
-    <pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>
+    <!-- The one place the command is shown while it waits: the answers sit right under it. -->
+    <pre class="c2-ask-detail is-command" data-conversation-ask-detail>{detail}</pre>
   {/if}
 
   {#if shape === "shapeless"}
@@ -115,33 +118,26 @@
 </section>
 
 <style>
+  /* No plane of its own: the ask is the composer's content while it waits, so it stands on
+     the composer's surface. A recessed band inside the box read as a box in a box. */
   .c2-ask {
     min-width: 0;
     max-width: 100%;
     display: grid;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-block-end: var(--border-hairline) solid var(--border-color);
-    /* The recessed plane the card already uses for the well below it. The cool ink plane
-       was invisible while the card itself was drawn in ink; on the card's own warm surface
-       it read as a foreign rectangle. */
-    background: var(--surface-recessed);
-    color: var(--accent-text);
-    border-start-start-radius: var(--radius-lg);
-    border-start-end-radius: var(--radius-lg);
+    padding: var(--space-3) 0 var(--space-1);
+    color: var(--text-default);
   }
   .c2-ask-head {
-    display: flex;
+    display: grid;
     min-width: 0;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--space-2);
+    gap: var(--space-1);
   }
   .c2-ask-eyebrow {
-    flex: none;
     color: var(--accent-bright);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: var(--type-xs);
+    font-weight: var(--weight-title);
     letter-spacing: var(--tracking-label);
     text-transform: uppercase;
   }
@@ -149,8 +145,10 @@
     min-width: 0;
     overflow-wrap: anywhere;
     font-family: var(--font-ui);
-    font-size: var(--type-sm);
-    color: var(--accent-text);
+    font-size: var(--type-md);
+    font-weight: var(--weight-title);
+    line-height: 1.4;
+    color: var(--text-strong);
   }
   /* The bound that keeps this band the composer's size: whatever the backend sent
      wraps and scrolls in here rather than growing the composer to fit it. */
@@ -158,11 +156,20 @@
     margin: 0;
     max-height: calc(var(--type-xs) * 12);
     overflow: auto;
-    color: var(--accent-text);
+    color: var(--text-default);
     font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    font-size: var(--type-code);
+    line-height: 1.55;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  /* A command reads as a command: one quiet code well, the only one on the card. */
+  .c2-ask-detail.is-command,
+  .c2-ask-raw-toggle[aria-expanded="true"] + .c2-ask-detail {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--surface-recessed);
+    color: var(--text-strong);
   }
   .c2-ask-choices {
     display: grid;
@@ -175,49 +182,54 @@
     align-items: center;
     gap: var(--space-3);
     width: 100%;
-    background: transparent;
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-sm);
-    color: var(--accent-text);
+    min-height: var(--button-height);
+    /* Filled, not outlined: an answer is a button, and on the composer's surface one step
+       of white says so without drawing a box around each line. */
+    background: var(--state-step);
+    border: 0;
+    border-radius: var(--radius-md);
+    color: var(--text-default);
     cursor: pointer;
     font: inherit;
-    font-size: var(--type-sm);
+    font-size: var(--type-row);
     padding: var(--space-2) var(--space-3);
     text-align: start;
   }
-  .c2-ask-choice:hover,
-  .c2-ask-choice:focus-visible { border-color: var(--accent-bright); }
-  .c2-ask-choice:disabled { cursor: default; opacity: 0.7; }
+  .c2-ask-choice:hover:not(:disabled) { background-image: var(--interaction-hover); color: var(--text-strong); }
+  .c2-ask-choice:disabled { cursor: default; color: var(--text-faint); }
   .c2-ask-choice-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .c2-ask-kbd {
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: var(--space-4);
-    border: var(--border-hairline) solid var(--border-color);
+    min-width: var(--space-5);
     border-radius: var(--radius-sm);
-    color: var(--accent-bright);
+    background: var(--state-step);
+    color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     font-variant-numeric: tabular-nums;
-    padding: 0 var(--space-1);
+    line-height: 1.6;
   }
   .c2-ask-raw-toggle {
     justify-self: start;
+    min-height: 24px;
     background: transparent;
     border: 0;
-    color: var(--accent-bright);
+    border-radius: var(--radius-sm);
+    color: var(--text-faint);
     cursor: pointer;
-    font-family: var(--font-mono);
+    font: inherit;
     font-size: var(--type-xs);
     padding: 0;
   }
+  .c2-ask-raw-toggle:hover { color: var(--text-strong); }
   .c2-ask-note {
     margin: 0;
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
+    color: var(--text-faint);
     font-size: var(--type-xs);
+    line-height: 1.5;
     overflow-wrap: anywhere;
   }
 </style>

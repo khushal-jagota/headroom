@@ -22,7 +22,7 @@
    * a person has to get themselves out of before they can type.
    */
   import {SvelteSet} from "svelte/reactivity";
-  import { onMount, tick, untrack, type Snippet } from "svelte";
+  import { onMount, setContext, tick, untrack, type Snippet } from "svelte";
   import ConversationPane from "./ConversationPane.svelte";
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
@@ -30,6 +30,8 @@
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     heldPromptIsInLens,
+    conversationLensPreference,
+    rememberConversationLensPreference,
     type ConversationLens
   } from "../../lib/conversation/lens";
   import type { ConversationState } from "../../lib/conversation/conversationState";
@@ -64,6 +66,8 @@
   import {
     liveAskFrom,
     liveUserInputFrom,
+    ASK_CARD_CONTEXT,
+    type AskCardReading
   } from "../../lib/conversation/transcript";
   import {
     answerPermissionAsk,
@@ -109,8 +113,11 @@
     historyOwner,
     pastConversations = [],
     selectedPastConversationId = $bindable(null),
-    workerSetup = null
+    workerSetup = null,
+    title = null
   }: {
+    /** Who this conversation is with, for the pane's top bar. */
+    title?: string | null;
     /** The conversation to show, or null for a caller that has not started one. */
     locale?: TicketLocale;
     machineId?: string;
@@ -205,7 +212,9 @@
   let askNoteKey = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
-  let lens = $state<ConversationLens>("focus");
+  // Focus or Full is one reading preference for this browser: it opens the way it was left.
+  let lens = $state<ConversationLens>(conversationLensPreference());
+  $effect(() => { rememberConversationLensPreference(lens); });
   /** The conversation this component currently has open. It follows the prop, and a start
    *  sets it directly, because the message that caused the start has to go somewhere now
    *  rather than after the parent's own state has come back round. */
@@ -225,6 +234,13 @@
    *  page puts an id in the address before anything has been started under it. Only the
    *  record answering is a conversation. */
   let started = $derived(view !== null);
+  /** Known to hold nothing yet: no conversation has been started here, or the record
+   *  answered and has no events at all. Loading is neither, so nothing shows meanwhile. */
+  let nothingSaidYet = $derived(
+    (!started && (conversationId ?? null) === null && !ownerLoading)
+    || (reader !== null && reader.status !== null && !reader.loading && reader.coverage === 0
+      && reader.pages.every(page => page.items.length === 0))
+  );
   let rows = $derived((reader?.pages ?? []).flatMap(page=>page.items.flatMap(item=>
     item.kind==='row'&&item.body.kind==='inline' ? [rowForBody(item,item.body.value)] : [])));
   let visibleRows = $derived(rows);
@@ -244,11 +260,18 @@
     reader?.status?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
     reader?.status?.pending_user_input?.request_id === userInput?.requestId));
-  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).map(row => ({answerId:row.key,sentence:executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate)})));
+  let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).flatMap(row => { const sentence = executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate); return sentence === null ? [] : [{answerId:row.key,sentence}]; }));
   let permissionNote = $derived((askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
     (remote && !permissionAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
   let userInputNote = $derived((askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ??
     (remote && !userInputAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
+  // The transcript leaves a waiting ask to its card, and needs to know when that card is
+  // the one saying its availability on this machine is unknown.
+  setContext<AskCardReading>(ASK_CARD_CONTEXT, {
+    saysAvailabilityUnknown: (kind, id) => kind === "permission"
+      ? ask?.askId === id && permissionNote === EXECUTOR_ASK_UNCERTAIN
+      : userInput?.requestId === id && userInputNote === EXECUTOR_ASK_UNCERTAIN
+  });
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
@@ -993,6 +1016,7 @@
   <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
 {/each}
 <ConversationPane
+  title={title ?? null}
   roleLabel={historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
@@ -1057,7 +1081,7 @@
   onStopDrawingHeldPrompt={(senderMessageId) => void stopDrawing(senderMessageId)}
   onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}
   onNewConversation={() => void newConversation()}
-  emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
+  emptyState={beforeThereIsAConversation}
   showRunPicker={started || emptyState === undefined}
 />
 
@@ -1066,5 +1090,29 @@
 {#snippet beforeThereIsAConversation()}
   {#if !started && emptyState}
     {@render emptyState()}
+  {:else if !emptyState && !readOnly && nothingSaidYet}
+    <!-- Orientation, not content: nothing here is invented, it says what will appear. -->
+    <div class="conversation-empty" data-conversation-empty role="note">
+      <p class="conversation-empty-title">No messages yet</p>
+      <p>Your first message starts this conversation. Replies, questions and anything that needs your approval appear here.</p>
+      <p class="conversation-empty-hint">Focus shows what is said to you. Full also shows the work as it happens.</p>
+    </div>
   {/if}
 {/snippet}
+
+<style>
+  .conversation-empty {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-width: 52ch;
+    padding-block: var(--space-6) var(--space-3);
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--type-body);
+    line-height: var(--leading-body);
+  }
+  .conversation-empty p { margin: 0; }
+  .conversation-empty-title { color: var(--text-strong); font-size: var(--type-page-section); font-weight: var(--weight-title); }
+  .conversation-empty-hint { margin-block-start: var(--space-2) !important; color: var(--text-faintest); font-size: var(--type-small); }
+</style>

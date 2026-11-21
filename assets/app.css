@@ -2058,19 +2058,13 @@ button.list-row:hover .list-row-title {
 }
 .chat-att-x:hover { border-color: var(--accent-error); background-image: var(--interaction-hover); }
 .chat-att-x:disabled { opacity: 0.5; cursor: default; }
+/* The drop face's place and when it shows; its look is ConversationComposer's own. */
 .chat-drop-label {
   position: absolute;
-  inset: var(--space-2);
   display: none;
   align-items: center;
   justify-content: center;
-  border: var(--border-hairline) dashed color-mix(in srgb, var(--accent-bright) 72%, transparent);
-  border-radius: var(--radius-md);
-  background: var(--scrim);
-  color: var(--text-strong);
-  font-weight: var(--weight-title);
   pointer-events: none;
-  z-index: 15;
 }
 .chat-box.drag .chat-drop-label { display: flex; }
 .chat-ta {
@@ -2219,39 +2213,12 @@ button.list-row:hover .list-row-title {
 .chat-send:disabled { opacity: 0.5; cursor: default; }
 
 /* --- Voice input (t_0pgfmbsr) -------------------------------------------- */
-/* Every voice state keeps the composer's two-zone shape: a centred line where the
- * textarea rests (same min-height, so the box never jumps) and actions in the foot. */
+/* The conversation composer draws its voice take on its own one row, in its own styles.
+ * The .chat-voice-* faces below are the composer field's (ComposerField.svelte), sized for
+ * it under THE COMPOSER FIELD. */
 /* The textarea declares display: block, which beats the hidden attribute the
  * component sets while a voice face owns the main area. */
 .chat-ta[hidden] { display: none; }
-.chat-voice-mid {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: 40px;
-  font-size: var(--type-md);
-}
-/* Inside the conversation the voice faces belong to the card, so they take its measures
- * with every other control. The Review screen draws the same faces and keeps its own. */
-[data-conversation-pane] .chat-voice-mid { min-height: 44px; }
-[data-conversation-pane] .chat-voice-cancel,
-[data-conversation-pane] .chat-voice-stop {
-  width: var(--conversation-target);
-  height: var(--conversation-target);
-}
-[data-conversation-pane] .chat-voice-retry { height: var(--conversation-target); }
-[data-conversation-pane] .chat-voice-cancel svg {
-  width: var(--conversation-glyph);
-  height: var(--conversation-glyph);
-  stroke-width: 1.35;
-}
-/* The voice stop is the same filled square as the composer's, drawn as an element rather
-   than a glyph, so it is sized to paint the same. */
-[data-conversation-pane] .chat-voice-square {
-  width: calc(var(--conversation-glyph) / 2);
-  height: calc(var(--conversation-glyph) / 2);
-}
 .chat-voice-time {
   font-family: var(--font-mono);
   letter-spacing: var(--tracking-mono);
@@ -2346,19 +2313,25 @@ button.list-row:hover .list-row-title {
 }
 .chat-qrow[data-fate="in_flight"] .chat-qrow-txt,
 .chat-qrow[data-fate="unknown"] .chat-qrow-txt { color: var(--text-faintest); }
+/* A held or unconfirmed message's small actions: ghost buttons in the interface face, in the
+ * shared button's radius, never under a 24px target. */
 .chat-qrow-x {
   flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
   background: none;
   border: 0;
-  padding: var(--space-1);
-  border-radius: var(--radius-sm);
-  color: var(--text-faintest);
+  padding: 0;
+  border-radius: var(--button-radius);
+  color: var(--tone-tertiary);
   cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
+  font-family: var(--font-ui);
+  font-size: var(--type-row);
   line-height: 1;
 }
-.chat-qrow-x:hover:not(:disabled) { color: var(--accent-error); background-image: var(--interaction-hover); }
+.chat-qrow-x:hover:not(:disabled) { color: var(--tone-strong); background: var(--button-ghost-fill-hover); }
 .chat-qrow-state {
   flex: none;
   align-self: center;
@@ -2371,19 +2344,22 @@ button.list-row:hover .list-row-title {
 .chat-qrow-act {
   flex: none;
   align-self: center;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   background: transparent;
-  border: var(--border-hairline) solid transparent;
-  border-radius: var(--radius-pill);
-  color: var(--text-muted);
+  border: 0;
+  border-radius: var(--button-radius);
+  color: var(--tone-secondary);
   cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-mono);
+  font-family: var(--font-ui);
+  font-size: var(--type-small);
+  font-weight: var(--weight-small);
   line-height: 1.2;
-  padding: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2);
   white-space: nowrap;
 }
-.chat-qrow-act:hover:not(:disabled) { border-color: var(--border-color); color: var(--text-strong); }
+.chat-qrow-act:hover:not(:disabled) { background: var(--button-ghost-fill-hover); color: var(--tone-strong); }
 .chat-qrow-x:disabled,
 .chat-qrow-act:disabled { opacity: 0.45; cursor: default; }
 @media (prefers-reduced-motion: reduce) {

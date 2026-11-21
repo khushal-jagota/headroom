@@ -862,3 +862,44 @@ export function liveUserInputFrom(rows: readonly TranscriptRow[]): Extract<
   }
   return null;
 }
+
+/** The words of a message, as a copy of it should hold them. Pictures and files are not
+ *  words, so a message that is only those has nothing to copy and offers no copy. */
+export function messageCopyText(content: readonly { piece: string; text?: string }[]): string {
+  return content.flatMap(piece => piece.piece === "text" && typeof piece.text === "string" && piece.text.trim() ? [piece.text] : []).join("\n\n");
+}
+
+/** When a message was recorded, read the way a thread reads it: the time alone today,
+ *  the day and time before that. Null when the record holds no time. */
+export function messageTimeLabel(createdAtUnixSeconds: number | null | undefined, now: Date = new Date()): { short: string; full: string; iso: string } | null {
+  if (typeof createdAtUnixSeconds !== "number" || !Number.isFinite(createdAtUnixSeconds) || createdAtUnixSeconds <= 0) return null;
+  const at = new Date(createdAtUnixSeconds * 1000);
+  const time = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  const day = at.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(at.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
+  return {
+    short: sameDay ? time : `${day}, ${time}`,
+    full: at.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" }),
+    iso: at.toISOString()
+  };
+}
+
+/** What the ask card above the composer is saying right now, as the transcript needs to
+ *  know it. Given by the live conversation; absent, the card is taken to say nothing. */
+export const ASK_CARD_CONTEXT = Symbol("conversation-ask-card");
+export type AskCardReading = {
+  /** Whether the card for this ask is showing that its availability on the machine is unknown. */
+  saysAvailabilityUnknown(kind: "permission" | "user_input", id: string): boolean;
+};
+
+/** A live ask nobody has answered yet is shown once, by its card above the composer, and
+ *  the turn head already says it waits. Its transcript row is the record, drawn once the
+ *  ask is answered, saved, failed or dead. While the machine's activity is unknown the row
+ *  stays, because it says so, unless the card is already saying the same. */
+export function askShownByItsCard(
+  row: { state: string; answerFate?: string | null },
+  activityUncertain = false,
+  cardSaysAvailabilityUnknown = false
+): boolean {
+  return row.state === "live" && !row.answerFate && (!activityUncertain || cardSaysAvailabilityUnknown);
+}

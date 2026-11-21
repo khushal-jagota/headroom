@@ -1,5 +1,6 @@
 <script lang="ts">
   import MessagePieces from './MessagePieces.svelte';
+  import MessageActions from './MessageActions.svelte';
   import { promptLabelFor, PROMPT_DISCARDED_SENTENCE, type TranscriptRow } from '../../lib/conversation/transcript';
   import { outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
@@ -34,9 +35,11 @@
     </div>{/if}
   </div></div>
   <MessagePieces {presentationRowKey} content={row?.content ?? local?.content ?? []} {conversationId}/>
+  <MessageActions content={row?.content ?? local?.content ?? []} createdAt={row?.createdAt ?? null}/>
 </article>
 <style>
   .chat-u { transition: box-shadow var(--message-move) linear; }
+  article { position: relative; }
   .message-outcome { box-shadow: inset 0 0 0 var(--border-hairline) var(--border-color); }
   .message-refused { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-error) 55%, transparent); }
   .c2-label { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--text-faint); font-family:var(--font-mono); font-size:var(--type-xs); letter-spacing:var(--tracking-mono); padding-block-end:var(--space-1); }

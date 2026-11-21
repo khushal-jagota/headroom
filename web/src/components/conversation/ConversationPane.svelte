@@ -21,7 +21,10 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { dockFeedbackFor, dockPreviewText, latestUnreadReply } from "../../lib/conversation/dockPresentation";
+  import { dockFeedbackFor, dockPreviewText, latestUnreadReply, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
+  import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
+  import { formatDuration } from "../../lib/conversation/transcript";
+  import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
   import { restLineFrom, whatThisRowSays } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
@@ -41,6 +44,7 @@
 
   let {
     conversationId,
+    title = null,
     workerSetup = null,
     roleLabel = "Worker",
     backendKey = null,
@@ -117,6 +121,9 @@
     reconcileLocalSend?: (messageId: string) => Promise<boolean>;
     transcriptLoading?: boolean;
     conversationId: string;
+    /** Who this conversation is with, in the page's own words ("Vylo pricing and launch",
+     *  "Coding worker"), for the opened pane's top bar. Without it the role names it. */
+    title?: string | null;
     /** The owning Ticket's Worker being prepared; the status line says so until a turn runs. */
     workerSetup?: import("../../lib/navigation/contracts").WorkerSetup | null;
     roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
@@ -225,13 +232,6 @@
   let menuElement = $state<HTMLDivElement | null>(null);
   let menuButton = $state<HTMLButtonElement | null>(null);
 
-  let headerException = $derived.by(() => {
-    if (readOnly) return { text: "past · read only", accent: false };
-    if (activityUncertain) return {text:"activity unknown on this machine",accent:false};
-    if (ask || userInput) return { text: "waiting for you", accent: true };
-    if (running || backgroundWorking) return { text: "working", accent: false };
-    return null;
-  });
 
   // Work the agent started that outlived its turn counts as working, as the sidebar does.
   // Stop and the composer still follow the turn alone.
@@ -267,6 +267,26 @@
   let turnStartedAt = $derived(reader?.status
     ? reader.status.rest.latest_turn?.started_at_unix_milliseconds ?? null
     : conversationThreadItemsForLens(rows, rowsForLens, lens).filter(item => item.kind === "turn").at(-1)?.startedAtUnixMilliseconds ?? null);
+
+  // The opened pane's top bar says who the conversation is with and what it is doing. At rest
+  // the bar is not drawn: the dock's status line says the same there.
+  let headTitle = $derived(paneTitleFor(title, roleLabel));
+  let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
+  const headElapsed = elapsedTurnTime(() => conversationState !== "rest" && running && !activityUncertain ? turnStartedAt : null);
+  const headSetupElapsed = elapsedTurnTime(() => conversationState !== "rest" && headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
+  let headStatus = $derived(paneHeadStatus({
+    readOnly,
+    activityUncertain,
+    waitingForYou: ask !== null || userInput !== null,
+    running,
+    backgroundWorking,
+    settingUp: headSettingUp && workerSetup ? workerSetupSentence(workerSetup, headSetupElapsed.seconds) : null,
+    elapsed: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds)
+  }));
+  // A model list that could not be read because the machine is not connected is that same
+  // machine state, which the dock already says. The model picker keeps the sentence and its
+  // retry; the red line under the box is kept for failures nothing else explains.
+  let composerErrorNote = $derived(activityUncertain && errorNote !== null && errorNote === readError ? null : errorNote);
 
   /** The one control through the states, and what it means where it is standing.
    *
@@ -384,11 +404,16 @@
     {#if connectionTrouble}
       <span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>
     {/if}
-    {#if headerException && conversationState !== "opened"}
-      <span class={`chat-state ${headerException.accent ? "chat-state--attn" : ""}`}>
-        {headerException.text}
-      </span>
-    {/if}
+    <div class="chat-head-identity" data-conversation-head-identity>
+      <span class="chat-head-title" data-conversation-title title={headTitle}>{headTitle}</span>
+      {#if headStatus}
+        <span class="chat-head-status" data-conversation-head-status={headStatus.tone}>
+          {#if headStatus.tone === "live"}<span class="chat-head-mark chat-head-mark--live" aria-hidden="true"></span>
+          {:else if headStatus.tone === "attention"}<span class="chat-head-mark chat-head-mark--attention" aria-hidden="true"></span>{/if}
+          <span class="chat-head-status-text">{headStatus.text}</span>
+        </span>
+      {/if}
+    </div>
     <!-- Two named choices rather than one control whose label is the state it is in:
          which lens you are in and which you can move to are both on the screen. -->
     <div
@@ -565,7 +590,7 @@
       startedAtUnixMilliseconds={turnStartedAt}
       {backgroundWorking}
       {workerSetup}
-      feedback={activityUncertain ? "Current activity on this machine is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
+      feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
   {#if readOnly}
@@ -599,7 +624,7 @@
       {heldPromptRows}
       {supportsSteer}
       {fateNote}
-      {errorNote}
+      errorNote={composerErrorNote}
       placeholder={composerPlaceholder}
       disabled={composerDisabled}
       {showRunPicker}
@@ -644,10 +669,71 @@
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
     display: none;
   }
+  /* Who the conversation is with, then what it is doing, on the bar's left. The title gives
+     way first: on a narrow pane it ellipsizes before the status does, and the lens and the
+     two controls never move. */
+  .chat-head-identity {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: baseline;
+    gap: var(--space-3);
+    min-width: 0;
+    overflow: hidden;
+  }
+  .chat-head-title {
+    flex: 0 100 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--tone-strong);
+    font-family: var(--font-ui);
+    font-size: var(--type-row);
+    font-weight: var(--weight-needs-you);
+    line-height: 18px;
+  }
+  .chat-head-status {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    align-self: center;
+    gap: var(--space-2);
+    min-width: 0;
+    color: var(--tone-tertiary);
+    font-family: var(--font-ui);
+    font-size: var(--type-small);
+    font-weight: var(--weight-small);
+    line-height: 18px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .chat-head-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .chat-head-status[data-conversation-head-status="attention"] { color: var(--accent-text); }
+  .chat-head-mark { flex: none; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); }
+  /* The dock's live mark, the same ring and arc, so working reads the same open or at rest. */
+  .chat-head-mark--live {
+    border: var(--border-strong) solid color-mix(in srgb, var(--tone-tertiary) 40%, transparent);
+    border-top-color: var(--accent-bright);
+    animation: chat-head-spin var(--motion-loop-spin) linear infinite;
+  }
+  .chat-head-mark--attention {
+    width: var(--space-2);
+    height: var(--space-2);
+    background: var(--accent-bright);
+  }
+  @keyframes chat-head-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .chat-head-mark--live { animation: none; } }
+  /* A narrow pane stacks the two, the status under the title, inside the bar's own height. */
+  @container conversation-pane (max-width: 560px) {
+    .chat-head-identity { flex-direction: column; align-items: flex-start; gap: 0; }
+    .chat-head-title { flex: none; max-width: 100%; line-height: 17px; }
+    .chat-head-status { align-self: flex-start; max-width: 100%; line-height: 16px; }
+    .chat-lens-choice { padding-inline: var(--space-2); }
+  }
   .chat-lens {
     display: inline-flex;
+    flex: none;
     gap: var(--space-1);
-    margin-inline-start: var(--space-2);
   }
   .chat-lens-choice {
     border: var(--border-hairline) solid transparent;

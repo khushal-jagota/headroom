@@ -266,15 +266,10 @@ function senderOf(senderLabel: string, ownSenderLabel: string): string {
   return promptLabelFor(senderLabel, ownSenderLabel) ?? YOU;
 }
 
-/** A tool call as the one string this line has room for — the same two halves the row in
- *  the transcript is drawn from, joined the way the pane joins a fact to its reason. */
+/** A tool call as the one string this line has room for — the same sentence the row in
+ *  the transcript reads as. */
 export function toolCallSentence(row: ToolCallRow): string {
-  const presentation = presentToolCall(row);
-  return oneLine(
-    presentation.summary === null
-      ? presentation.title
-      : `${presentation.title} · ${presentation.summary}`
-  );
+  return oneLine(presentToolCall(row).sentence);
 }
 
 function newestTurn(items: readonly ThreadItem[]): Extract<ThreadItem, { kind: "turn" }> | null {

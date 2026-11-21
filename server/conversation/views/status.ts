@@ -287,7 +287,8 @@ export function read_status(
     pending_user_input: user_input,
     plan: plan_reference,
     live_output: output,
-    live_tool_key: lens === 'full' ? live.latest_tool_id(conversation_id) : null,
-    live_tool_progress: lens === 'full' ? live.progress(conversation_id) : null,
+    // Both lenses can hold an opened running tool call, so both hear its progress.
+    live_tool_key: live.latest_tool_id(conversation_id),
+    live_tool_progress: live.progress(conversation_id),
   };
 }

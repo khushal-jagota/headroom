@@ -1083,6 +1083,9 @@
     });
     const observer = new ResizeObserver(() => {
       navigationPending = false;
+      // A height change no motion made (the Latest shelf coming or going) is not one the
+      // next motion frame should compensate for, so it becomes the new baseline.
+      if (!(thread.closest('[data-conversation-pane]') ?? thread).hasAttribute('data-conversation-motion')) previousThreadHeight = thread.clientHeight;
       if (!canMeasure()) { dirty = true; return; }
       repairLayout(thread);
       requestReconciliation();
@@ -1177,18 +1180,66 @@
     {/if}
   </div>
   {#if newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending}
-    <button
-      type="button"
-      class="chat-jump"
-      aria-label="Jump to latest message"
-      onclick={(event) => void jumpToTheNewestLine(event.currentTarget)}
-    >{belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Latest"}</button>
+    <!-- Latest stands on its own shelf under the thread rather than floating over it, so
+         it never covers a line of what was said. The thread gives up the shelf's height
+         only while there is something below to jump to. -->
+    <div class="chat-jump-shelf" data-conversation-jump-shelf>
+      <button
+        type="button"
+        class="chat-jump"
+        aria-label="Jump to latest message"
+        onclick={(event) => void jumpToTheNewestLine(event.currentTarget)}
+      ><svg class="chat-jump-arrow" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.5v7M2.75 6.5 6 9.5l3.25-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Latest"}</button>
+    </div>
   {/if}
 </div>
 
 <style>
   /* Ordinary navigation stays reachable while exact transcript placement waits. */
   .chat-jump { visibility: visible; }
+  .chat-jump-shelf {
+    flex: none;
+    display: flex;
+    justify-content: center;
+    padding-block: var(--space-1) 0;
+  }
+  .chat-jump-shelf .chat-jump {
+    position: static;
+    transform: none;
+    min-height: 28px;
+    padding: var(--space-1) var(--space-3);
+    font-family: var(--font-ui);
+    font-weight: var(--weight-body);
+    color: var(--text-default);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  }
+  .chat-jump-arrow { inline-size: 12px; block-size: 12px; flex: none; }
+  /* Lines leave the thread softly at both edges, never cut flat against the composer.
+     At rest the bottom fade covers only the newest line's own clear space under it
+     (NEWEST_LINE_BOTTOM_GAP_PIXELS), so nothing that was said is dimmed; with more
+     below, it is deeper, so a line cut by the edge reads as continuing. */
+  .chat-thread {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 12px), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 12px), transparent 100%);
+  }
+  .chat-thread[data-more-below="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 28px), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 28px), transparent 100%);
+  }
+  /* Tables in the thread read as rows, not a grid: hairlines between rows only, and a
+     heading set apart by weight and one firmer rule. */
+  .chat-thread :global(.markdown th),
+  .chat-thread :global(.markdown td) {
+    border: 0;
+    border-block-end: var(--border-hairline) solid var(--border-color);
+    padding: var(--space-2) var(--space-4) var(--space-2) 0;
+  }
+  .chat-thread :global(.markdown th) {
+    background: transparent;
+    border-block-end-color: var(--border-hover);
+  }
+  .chat-thread :global(.markdown tr:last-child > td) { border-block-end: 0; }
+  .chat-thread :global(.markdown :is(th, td):last-child) { padding-inline-end: 0; }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */

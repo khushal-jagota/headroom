@@ -32,15 +32,23 @@
     {#if action.act === "cancel_turn"}
       <button
         type="button"
-        class="c2-ask-cancel"
+        class="button button--ghost c2-ask-cancel"
         data-conversation-ask-action="cancel_turn"
         disabled={busy}
         onclick={onCancelTurn}
       >{action.label}</button>
+      <!-- Cancelling stands apart on the left; the answers to the ask itself sit together
+           on the right, ending in the one that commits. -->
+      <span class="c2-ask-gap" aria-hidden="true"></span>
     {:else}
+      <!-- THE button (app.css, "Buttons"): decline is ghost, the backend's own options are
+           secondary, approve once is the one primary. -->
       <button
         type="button"
-        class="c2-ask-answer"
+        class="button c2-ask-answer"
+        class:button--ghost={action.emphasis === "decline"}
+        class:button--secondary={action.emphasis === "option"}
+        class:button--primary={action.emphasis === "primary"}
         class:is-decline={action.emphasis === "decline"}
         class:is-primary={action.emphasis === "primary"}
         class:is-supplied={!action.supplied}
@@ -64,42 +72,21 @@
     align-items: center;
     gap: var(--space-2);
   }
-  button { max-width: 100%; overflow-wrap: anywhere; font: inherit; cursor: pointer; }
-  button:disabled { cursor: default; opacity: 0.7; }
-  .c2-ask-cancel {
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--text-faint);
-    font-size: var(--type-xs);
-    padding: var(--space-1) 0;
-  }
-  .c2-ask-cancel:hover,
-  .c2-ask-cancel:focus-visible { color: var(--accent-error); }
+  .c2-ask-gap { flex: 1; }
+  /* A long backend label wraps rather than pushing the row wider than the composer. */
   .c2-ask-answer {
-    background: transparent;
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-sm);
-    color: var(--text-default);
-    font-size: var(--type-xs);
-    padding: var(--space-1) var(--space-3);
+    flex: 0 1 auto;
+    max-width: 100%;
+    min-height: var(--button-height);
+    height: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
   }
-  .c2-ask-answer:hover,
-  .c2-ask-answer:focus-visible { border-color: var(--accent-bright); }
-  .c2-ask-answer.is-decline {
-    border-color: transparent;
-    color: var(--text-faint);
-    padding: var(--space-1) var(--space-2);
+  .c2-ask-cancel:hover:not(:disabled) { color: var(--accent-error); }
+  .c2-ask-answer.is-decline:hover:not(:disabled) { color: var(--accent-error); }
+  /* An answer Panels made up is marked as such: a dashed edge, never a solid one. */
+  .c2-ask-answer.is-supplied {
+    border: var(--border-hairline) dashed var(--border-raised);
   }
-  .c2-ask-answer.is-decline:hover,
-  .c2-ask-answer.is-decline:focus-visible { color: var(--accent-error); border-color: transparent; }
-  .c2-ask-answer.is-primary {
-    margin-inline-start: auto;
-    background: var(--accent-bright);
-    border-color: var(--accent-bright);
-    color: var(--surface-ink);
-    font-weight: 660;
-  }
-  .c2-ask-answer.is-primary:hover { filter: brightness(1.08); }
-  .c2-ask-answer.is-supplied { border-style: dashed; }
 </style>

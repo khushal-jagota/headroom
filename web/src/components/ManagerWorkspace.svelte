@@ -263,6 +263,7 @@
         readOnly={selectedPastConversationId !== null}
         bind:selectedPastConversationId
         label="Manager"
+        title={workspace.data?.title ?? null}
         composerPlaceholder="Message this manager…"
         bind:backends
         startValues={startValues.data ?? null}

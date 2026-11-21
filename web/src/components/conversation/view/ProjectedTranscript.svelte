@@ -4,7 +4,7 @@
   import type { OutgoingMessage } from '../../../lib/conversation/outgoing';
   import ProjectedMessage from './ProjectedMessage.svelte';
   import { transcriptHistoryEdges } from '../../../lib/conversation/view/presentation';
-  import { untrack } from 'svelte';
+  import { getContext, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
   import { compareItems } from '../../../lib/conversation/view/reader.svelte';
@@ -14,7 +14,7 @@
   import ProjectedRow from './ProjectedRow.svelte';
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
-  import { TURN_STOPPED_SENTENCE, backgroundTasksAfterTheTurn, backgroundWorkSentence } from '../../../lib/conversation/transcript';
+  import { TURN_STOPPED_SENTENCE, ASK_CARD_CONTEXT, askShownByItsCard, backgroundTasksAfterTheTurn, backgroundWorkSentence, type AskCardReading } from '../../../lib/conversation/transcript';
   let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
       acknowledgedMessageIds?: ReadonlySet<string>;
@@ -27,6 +27,7 @@
       ownSenderLabel: string | null;
       livenessPulse: number;
   } = $props();
+  const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
   let openRows = $derived(reader.openTools);
   let wholeDetails = new SvelteMap<string, string>();
   // Only a deferred ending needs a body read to discover that it has no visual
@@ -34,7 +35,7 @@
   let emptyEndings = new SvelteMap<string, string>();
   const items = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
       for (const item of page.items)
-          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call')) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
+          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call') && (item.turn_key === null || !reader.isExpanded({ kind: 'turn', key: item.turn_key }))) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
   const historyEdges = $derived(transcriptHistoryEdges(reader.pages, items));
   const exits = new MessageExits<MessageDisplaySlot>();
@@ -57,10 +58,15 @@
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
           return !item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0;
+      // A run draws nothing of its own: an opened turn shows every call in it.
       if (item.kind === 'work_group')
-          return reader.lens !== 'full' && item.entry_count > 1;
+          return false;
       if (item.row_kind === 'token_usage')
           return false;
+      if (item.body.kind === 'inline' && item.body.value.kind === 'permission_ask')
+          return !askShownByItsCard({ state: item.body.value.state, answerFate: item.body.value.answer_fate }, activityUncertain, askCard?.saysAvailabilityUnknown('permission', item.body.value.ask_id) ?? false);
+      if (item.body.kind === 'inline' && item.body.value.kind === 'user_input')
+          return !askShownByItsCard({ state: item.body.value.state, answerFate: item.body.value.answer_fate }, activityUncertain, askCard?.saysAvailabilityUnknown('user_input', item.body.value.request_id) ?? false);
       if (item.row_kind !== 'turn_ended')
           return true;
       if (item.body.kind === 'deferred')
@@ -136,7 +142,9 @@
       const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
       const ask = (): void => {
           if (['loading','placing','error'].includes(reader.entryPhase)) return;
-          if (reader.lens !== 'full' && !reader.isExpanded(scope)) return;
+          // Focus reaches a run through its opened turn rather than one run at a time.
+          const opened = reader.lens === 'full' || reader.isExpanded(scope) || (item.kind === 'work_group' && item.turn_key !== null && reader.isExpanded({ kind: 'turn', key: item.turn_key }));
+          if (!opened) return;
           if (reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key)) return;
           void reader.expand(scope, true);
       };
@@ -166,11 +174,10 @@
     <ViewItem itemKey={item.key} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={!item.settled && reader.status?.turn_key === item.key ? (reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null) : null} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
         </div>
       {:else if item.kind==='work_group'}
         <div use:demand={item} data-conversation-work-group>
-          {#if reader.lens!=='full'&&item.entry_count>1}<button type="button" class="c2-run-toggle" data-conversation-work-fold onclick={()=>void reader.expand({kind:'work_group',key:item.key},!reader.isExpanded({kind:'work_group',key:item.key}))}>{item.entry_count-1} earlier tool calls</button>{/if}
         </div>
       {:else}
         <ProjectedRow {activityUncertain} {item} {reader} {models} {ownSenderLabel} {openRows} {wholeDetails} onEmptyEnding={(reference)=>emptyEndings.set(item.key,endingVersion(reference))}/>

@@ -207,7 +207,7 @@
               "started_at_unix_milliseconds": 100000,
               "ending": "completed",
               "duration_seconds": 6,
-              "tool_call_count": 0,
+              "tool_call_count": 1,
               "folded_message_count": 0,
               "latest_message_key": "e6",
               "is_latest": true
@@ -3674,7 +3674,7 @@
               "started_at_unix_milliseconds": 101000,
               "ending": "completed",
               "duration_seconds": 11,
-              "tool_call_count": 0,
+              "tool_call_count": 3,
               "folded_message_count": 0,
               "latest_message_key": "e12",
               "is_latest": true

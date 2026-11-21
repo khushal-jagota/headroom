@@ -10,6 +10,7 @@ import { MARKDOWN_GROUP_WEIGHT, MARKDOWN_WORKER_THRESHOLD } from "./markdown/con
 import type { MarkdownTreeNode, ParsedMarkdown } from "./markdown/contracts";
 import { observeVisibleContent, holdVisibleContentHeight, resetVisibleContentHeight } from "./visibleContent";
 import { registerMarkdownCopyRange } from "./markdown/copy";
+import { presentCodeBlock } from "./markdown/codeBlocks";
 
 export type ReadOnlyManagedMarkdownInput = Readonly<{
   source: unknown;
@@ -70,6 +71,8 @@ export function createManagedMarkdownSurface(
   const mode = options.mode;
   const previews = new Map<HTMLElement, MountedPreview>();
   const imageObservers = new Map<HTMLImageElement, () => void>();
+  /** Code blocks given a header and colour, and how to take each off again. */
+  const codeBlocks = new Map<HTMLElement, () => void>();
   let destroyed = false;
   let observer: MutationObserver | null = null;
   let observerConnected = false;
@@ -124,6 +127,9 @@ export function createManagedMarkdownSurface(
           }
           for (const [image, stop] of imageObservers) {
             if (element.contains(image)) { stop(); imageObservers.delete(image); }
+          }
+          for (const [frame, stop] of codeBlocks) {
+            if (element.contains(frame)) { stop(); codeBlocks.delete(frame); }
           }
           element.replaceChildren();
           options.presentation?.prune();
@@ -232,6 +238,8 @@ export function createManagedMarkdownSurface(
     for (const preview of [...previews.values()]) unmountPreview(preview);
     for (const stop of imageObservers.values()) stop();
     imageObservers.clear();
+    for (const stop of codeBlocks.values()) stop();
+    codeBlocks.clear();
   }
 
   function reconcileRemovedPreviews(): void {
@@ -278,6 +286,11 @@ export function createManagedMarkdownSurface(
             props: { block: chart.block, identity: `chat-${++nextChartIdentity}` }
           })
         });
+      }
+      // What is left is code: give each block its language, a copy button and colour.
+      for (const pre of Array.from(root.querySelectorAll<HTMLElement>("pre"))) {
+        const { frame, stop } = presentCodeBlock(pre);
+        codeBlocks.set(frame, stop);
       }
     }
     for (const renderedTarget of Array.from(root.querySelectorAll("a[href], img[src]"))) {

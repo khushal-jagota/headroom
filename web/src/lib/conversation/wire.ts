@@ -612,6 +612,13 @@ function detailSentence(raw: string, status: number): string {
       const detail = (parsed as { detail: unknown }).detail;
       if (typeof detail === "string" && detail !== "") return detail;
     }
+    // Routes that raise a planner error answer in its envelope, `{error: {message}}`. Its
+    // message is the sentence the server meant to send, so it is read the same way.
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      const error = (parsed as { error: unknown }).error;
+      const message = error && typeof error === "object" && "message" in error ? (error as { message: unknown }).message : null;
+      if (typeof message === "string" && message !== "") return message;
+    }
   } catch {
     // Not JSON. The status is all the server said.
   }

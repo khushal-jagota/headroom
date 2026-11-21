@@ -12,6 +12,7 @@
   import UserMessage from "./UserMessage.svelte";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import MessagePieces from "./MessagePieces.svelte";
+  import MessageActions from "./MessageActions.svelte";
   import TurnAnchor from "./TurnAnchor.svelte";
   import WorkGroup from "./WorkGroup.svelte";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
@@ -30,8 +31,12 @@
     promptLabelFor,
     turnEndingSentence,
     PROMPT_DISCARDED_SENTENCE,
-    TURN_STOPPED_SENTENCE
+    TURN_STOPPED_SENTENCE,
+    ASK_CARD_CONTEXT,
+    askShownByItsCard,
+    type AskCardReading
   } from "../../lib/conversation/transcript";
+  import { getContext } from "svelte";
   import { modelDisplayName } from "../../lib/conversation/composer";
   import type { BackendModel } from "../../lib/conversation/wire";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
@@ -68,6 +73,7 @@
     ownSenderLabel?: string | null;
   } = $props();
 
+  const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
   let items = $derived<readonly ThreadItem[]>(projectedItems ?? conversationThreadItemsForLens(rows, visibleRows, lens));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
@@ -189,8 +195,13 @@
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
       <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
     {:else if item.row.kind === "agent_message"}
-      <article class="chat-a" data-conversation-row="agent_message" data-conversation-source-key={item.row.key}>
+      {@const toYou = lens === "full" && item.row.toOwner}
+      <!-- In Full, where the agent's own narration sits beside them, the messages it
+           addressed to the owner are marked as theirs. Focus shows little else. -->
+      <article class="chat-a" class:chat-a--to-you={toYou} data-conversation-row="agent_message" data-conversation-to-owner={item.row.toOwner ? "" : undefined} data-conversation-source-key={item.row.key}>
+        {#if toYou}<div class="c2-to-you">To you</div>{/if}
         <MessagePieces presentationRowKey={item.key} content={item.row.content} {conversationId} />
+        <MessageActions content={item.row.content} createdAt={item.row.createdAt} />
       </article>
     {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
@@ -198,6 +209,9 @@
       </article>
     {:else if item.row.kind === 'credential_request'}
       <ConversationCredentialRequestCard request={item.row.request} />
+    {:else if (item.row.kind === "permission_ask" || item.row.kind === "user_input") && askShownByItsCard(item.row, activityUncertain,
+      askCard?.saysAvailabilityUnknown(item.row.kind === "permission_ask" ? "permission" : "user_input", item.row.kind === "permission_ask" ? item.row.askId : item.row.requestId) ?? false)}
+      <!-- Waiting: the card above the composer asks it, and the turn head says it waits. -->
     {:else if item.row.kind === "permission_ask"}
       {@const detail = readableConversationDetail(item.row.detail)}
       <div
@@ -206,7 +220,7 @@
         data-conversation-row="permission_ask"
         data-conversation-ask-state={item.row.state}
       >
-        <div class="c2-label">permission · {askStateLine(item.row)}</div>
+        <div class="c2-ask-label">Permission · {askStateLine(item.row)}</div>
         <div class="c2-ask-title">{item.row.title}</div>
         {#if detail}<pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>{/if}
       </div>
@@ -217,17 +231,17 @@
         data-conversation-row="user_input"
         data-conversation-user-input-state={item.row.state}
       >
-        <div class="c2-label">question · {userInputStateLine(item.row)}</div>
+        <div class="c2-ask-label">Question · {userInputStateLine(item.row)}</div>
         {#if item.row.questions.length > 0}<div class="c2-ask-title">
           {item.row.questions.length === 1
             ? item.row.questions[0]?.question
             : `${item.row.questions.length} questions`}
         </div>{/if}
         {#if item.row.state === "answered" && item.row.answers}
-          <div class="c2-ask-detail" data-conversation-user-input-answers>
+          <div class="c2-ask-answers" data-conversation-user-input-answers>
             {#each item.row.questions as question (question.question_id)}
               <div>
-                <strong>{question.header || question.question}</strong>
+                <span class="c2-ask-question">{question.header || question.question}</span>
                 <span> · {item.row.answers[question.question_id]?.answers.join(", ") ?? ""}</span>
               </div>
             {/each}
@@ -270,36 +284,47 @@
 
 <style>
   .c2-transcript { display: contents; }
-  .c2-label {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-    margin-block-end: var(--space-1);
-  }
   .c2-streaming { color: var(--text-muted); }
+  .chat-a { position: relative; }
+  .chat-a--to-you {
+    padding-inline-start: var(--space-3);
+    border-inline-start: var(--border-strong) solid var(--accent-bright);
+    color: var(--text-strong);
+  }
+  .c2-to-you {
+    margin-block-end: var(--space-1);
+    color: var(--accent-bright);
+    font-family: var(--font-ui);
+    font-size: var(--type-small);
+    font-weight: var(--weight-title);
+    line-height: 1.4;
+  }
+  /* An ask's record reads like the turn head beside it: the thread's own small voice,
+     flush with the thread, no box. Only the command it asked about stays in mono. */
   .c2-ask-row {
     align-self: stretch;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-md);
-    background: var(--accent-surface);
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
     color: var(--text-default);
     font-family: var(--font-ui);
-    font-size: var(--type-sm);
+    font-size: var(--type-small);
+    line-height: 1.5;
     overflow-wrap: anywhere;
   }
-  .c2-ask-row.is-dead {
-    background: var(--surface-2);
-    color: var(--text-faintest);
-  }
-  .c2-ask-row.is-dead .c2-label { color: var(--text-faintest); }
-  .c2-ask-title { color: var(--text-strong); }
-  .c2-ask-row.is-dead .c2-ask-title { color: var(--text-faint); }
+  .c2-ask-label { color: var(--text-faintest); }
+  .c2-ask-title { color: var(--text-muted); }
+  .c2-ask-question { color: var(--text-muted); }
+  .c2-ask-answers { color: var(--text-faintest); }
+  .c2-ask-row.is-dead .c2-ask-title { color: var(--text-faintest); }
   /* Capped and scrolling: a transcript row never grows by the size of a payload. */
   .c2-ask-detail {
-    margin: var(--space-1) 0 0;
+    margin: 0;
     max-height: calc(var(--type-xs) * 16);
     overflow: auto;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--surface-code);
     color: var(--text-faint);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
