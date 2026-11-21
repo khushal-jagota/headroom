@@ -27,7 +27,9 @@
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
-  import ComposerField from "./conversation/ComposerField.svelte";
+  import AttachableComposerField from "./conversation/AttachableComposerField.svelte";
+  import type { PendingConversationFile } from "../lib/conversation/pendingFiles";
+  import type { PendingConversationImage } from "../lib/conversation/pendingImages";
   import {
     createVoiceCapture,
     voiceCaptureAvailable,
@@ -79,6 +81,9 @@
   } = $props();
 
   let revisionDraft = $state("");
+  let revisionImages = $state<PendingConversationImage[]>([]);
+  let revisionFiles = $state<PendingConversationFile[]>([]);
+  let attachmentReadBusy = $state(false);
   let decisionKey = $state<string | null>(null);
 
   let resolvedAnnounced = false;
@@ -255,9 +260,9 @@
       data-field={field}
     >
       {#if !embedded}
-      <div class="review-ticket-decision-line review-arrive review-arrive--1">{@render queueActions()}</div>
+      <div class="review-ticket-decision-line">{@render queueActions()}</div>
 
-      <div class="review-ticket-heading review-arrive review-arrive--2">
+      <div class="review-ticket-heading">
         <div class="review-ticket-heading-main">
           <div class="review-ticket-title">
             <InlineEdit
@@ -275,7 +280,7 @@
       </div>
 
       {/if}
-      <div class="review-arrive review-arrive--3">
+      <div>
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
@@ -285,7 +290,7 @@
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
               onReturn={returnProposal}
-              {revisionEditor} {composerOnly} bind:revisionText={revisionDraft} holdDecisions={voiceState.phase !== "idle"} />
+              {revisionEditor} {composerOnly} bind:revisionText={revisionDraft} bind:revisionImages bind:revisionFiles bind:attachmentReadBusy holdDecisions={voiceState.phase !== "idle"} />
             {/key}
           {:else if decisionActions}{@render decisionActions()}
           {/if}
@@ -296,9 +301,12 @@
       {#snippet revisionEditor(flashDecisions: () => void)}
         <!-- The note goes with the explicit decision. Enter flashes the decision buttons and
              Shift+Enter adds a line; the field never chooses Send it back or Approve. Spoken words append to the note. -->
-        <div class="review-revise review-arrive review-arrive--4" data-review-revision>
-          <ComposerField
+        <div class="review-revise" data-review-revision>
+          <AttachableComposerField
             bind:value={revisionDraft}
+            bind:images={revisionImages}
+            bind:files={revisionFiles}
+            bind:intakeBusy={attachmentReadBusy}
             placeholder="Add a note for the worker…"
             inputAttributes={{ "data-review-revision-input": "" }}
             onsubmit={flashDecisions}

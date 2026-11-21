@@ -1,14 +1,21 @@
 <script lang="ts">
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
+  import type { WorkerSetup } from "../../lib/navigation/contracts";
+  import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
   /** Activity and the unread preview belong to the conversation surface.
    * Delivery and request feedback remains independent of the control that opens it. */
   let { preview = null, roleLabel = "Worker", activityKnown = true, connectionTrouble = false,
-    running = false, startedAtUnixMilliseconds = null, backgroundWorking = false, feedback = null, onOpen }: { preview?: string | null;
+    running = false, startedAtUnixMilliseconds = null, backgroundWorking = false, workerSetup = null, feedback = null, onOpen }: { preview?: string | null;
     roleLabel?: "Worker" | "Manager" | "Chief" | "Goal"; activityKnown?: boolean; connectionTrouble?: boolean;
-    running?: boolean; startedAtUnixMilliseconds?: number | null; backgroundWorking?: boolean; feedback?: string | null; onOpen: () => void } = $props();
+    running?: boolean; startedAtUnixMilliseconds?: number | null; backgroundWorking?: boolean;
+    /** The Ticket's Worker being prepared, which can precede any conversation. A live turn outranks it. */
+    workerSetup?: WorkerSetup | null; feedback?: string | null; onOpen: () => void } = $props();
   const elapsed = elapsedTurnTime(() => running ? startedAtUnixMilliseconds : null);
-  let activity = $derived(running ? elapsed.seconds === null ? "Working" : `Working · ${formatDuration(elapsed.seconds)}` : backgroundWorking ? "Working" : (activityKnown ? `${roleLabel} idle` : null));
+  let settingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
+  const setupElapsed = elapsedTurnTime(() => settingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
+  let activity = $derived(running ? elapsed.seconds === null ? "Working" : `Working · ${formatDuration(elapsed.seconds)}` : backgroundWorking ? "Working"
+    : settingUp && workerSetup ? workerSetupSentence(workerSetup, setupElapsed.seconds) : (activityKnown ? `${roleLabel} idle` : null));
 </script>
 
 <!-- The composer's status line, where staging placed it: above the composer, what the agent is
@@ -18,7 +25,7 @@
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
-      {#if running || backgroundWorking}<span class="c2-mark--running" aria-label="working"></span>{/if}
+      {#if running || backgroundWorking}<span class="c2-mark--running" aria-label="working"></span>{:else if settingUp}<span class="c2-mark--running" aria-label="setting up"></span>{/if}
       {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
       {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
     </span>

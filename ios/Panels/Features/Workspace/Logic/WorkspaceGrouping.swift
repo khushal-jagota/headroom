@@ -34,7 +34,7 @@ enum WorkspaceGrouping {
         if ticket.awaitingAnswer { return .answer }
         if ticket.assigned { return .yours }
         if ticket.agentState == "errored" { return .errored }
-        if ticket.ticketStatus == "agent" || ticket.agentState == "working" { return .agent }
+        if ticket.ticketStatus == "agent" || ticket.agentState == "working" || ticket.agentState == "setting_up" { return .agent }
         if ticket.awaitingAgentApproval { return .agentApproval }
         return .other
     }

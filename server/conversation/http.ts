@@ -277,15 +277,10 @@ function decoded(data: string, maximum: number, too_large: string): Buffer {
     throw new HttpError(422, "a piece's data is not base64");
   return Buffer.from(data, 'base64');
 }
-export async function conversation_message_content(
-  files: ConversationMessageFiles,
-  conversation_id: string,
+/** Decode and check every picture and file in a message: sizes, base64, and real media type. */
+export function validated_sent_files(
   sent: SentPiece[],
-  options: {
-    sender_message_id?: string | null;
-    video_admission?: Pick<VideoSendAdmission, 'adopt'>;
-  } = {},
-): Promise<MessageContent> {
+): Map<number, { bytes: Buffer; media_type: string }> {
   const validated = new Map<
     number,
     {
@@ -295,10 +290,6 @@ export async function conversation_message_content(
   >();
   let image_bytes = 0,
     file_bytes = 0;
-  const video_count = sent.filter((p) => p.piece === 'video_upload').length;
-  if (video_count > 1) throw new HttpError(422, 'a message permits only one video');
-  if (video_count && !options.video_admission)
-    throw new HttpError(422, 'video upload requires send admission');
   for (const [index, piece] of sent.entries()) {
     if (piece.piece !== 'image' && piece.piece !== 'file') continue;
     const bytes = decoded(
@@ -326,6 +317,22 @@ export async function conversation_message_content(
       throw new HttpError(422, (error as Error).message);
     }
   }
+  return validated;
+}
+export async function conversation_message_content(
+  files: ConversationMessageFiles,
+  conversation_id: string,
+  sent: SentPiece[],
+  options: {
+    sender_message_id?: string | null;
+    video_admission?: Pick<VideoSendAdmission, 'adopt'>;
+  } = {},
+): Promise<MessageContent> {
+  const video_count = sent.filter((p) => p.piece === 'video_upload').length;
+  if (video_count > 1) throw new HttpError(422, 'a message permits only one video');
+  if (video_count && !options.video_admission)
+    throw new HttpError(422, 'video upload requires send admission');
+  const validated = validated_sent_files(sent);
   const pieces = [];
   for (const [index, piece] of sent.entries()) {
     if (piece.piece === 'text') {

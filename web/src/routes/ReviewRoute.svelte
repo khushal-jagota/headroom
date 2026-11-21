@@ -1,6 +1,6 @@
 <script lang="ts">
   import Button from "../components/Button.svelte";
-  import { tick, onDestroy, untrack } from "svelte";
+  import { tick, onDestroy, untrack, setContext } from "svelte";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -15,7 +15,10 @@
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
   import ReviewMessageCard from "../components/ReviewMessageCard.svelte";
   import ReviewFinalState from "../components/ReviewFinalState.svelte";
-  import { reviewMessageHref } from "../lib/review/messages";
+  import ReviewDeck from "../components/ReviewDeck.svelte";
+  import { Deck, DECK_CONTEXT, FINAL_VIEW, deckLayerIn, deckLayerOut, deckPartOut } from "../lib/review/deckMotion";
+  import { reviewMessageHref, unreadOwnerMessages } from "../lib/review/messages";
+  import { readConversation, readEventsAfter } from "../lib/conversation/wire";
   import {reviewHistoryKey,reviewReturnLabel,sameReviewHistory} from "../lib/review/return";
   import {shownReviewItem} from "../lib/review/shown";
   import type {ReviewHistoryKey} from "../lib/navigation/contracts";
@@ -51,11 +54,25 @@
   // Proposals decided on this screen. The decided card leaves at once: the queue's own
   // refresh confirms it later, and nothing waits on that read.
   let decidedProposals=$state<Record<string,boolean>>({});
+  // Conversations answered or marked read on this screen. Like a decided proposal, the message
+  // leaves at once. This holds only until the queue's refresh arrives: from then on the queue
+  // is the truth, and a newer message in the same conversation is shown.
+  let readMessages=$state<Record<string,boolean>>({});
   let returnLabel=$derived.by(()=>{void reviewRequest;return reviewReturnLabel(displayed,navigation.owner.getRequest(),skippedHistory);});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
   // card mounted by another screen at the same time can never be the one a Review
   // keystroke reaches.
   let screenElement = $state<HTMLElement | null>(null);
+  // The deck: the one thing on screen moves out and the next moves in. See lib/review/deckMotion.
+  const deck = new Deck();
+  setContext(DECK_CONTEXT, deck);
+  let rootElement = $state<HTMLElement | null>(null);
+  let deckItemElement = $state<HTMLElement | null>(null);
+  let layerElement = $state<HTMLElement | null>(null);
+  // Closing an artifact draws its card again, so a note typed under the artifact is in it.
+  let coverEpoch = $state(0);
+  // Each opening of an artifact is its own layer, even when it comes while the last one is dropping.
+  let layerOpening = $state(0);
 
   function itemKey(item: ReviewItem): string {
     return item.review_item_type === 'message' ? `message:${item.conversation_id}` : `ticket:${item.ticket_id}`;
@@ -63,8 +80,11 @@
   /** The item as this screen knows it: a proposal decided here is gone from its card, and a
    *  card with nothing left is gone from the queue. */
   function undecided(item: ReviewItem): ReviewItem | null {
-    if (item.review_item_type !== 'ticket' || !item.proposal || !decidedProposals[reviewProposalIdentity(item.proposal)]) return item;
-    return item.messages.length ? { ...item, proposal: null } : null;
+    if (item.review_item_type === 'message') return readMessages[item.conversation_id] ? null : item;
+    const messages=item.messages.filter(message=>!readMessages[message.conversation_id]);
+    const proposal=item.proposal && !decidedProposals[reviewProposalIdentity(item.proposal)] ? item.proposal : null;
+    if(!proposal && !messages.length)return null;
+    return messages.length===item.messages.length && proposal===item.proposal ? item : {...item,proposal,messages};
   }
 
   let items = $derived((queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'message' ? 'address' : 'ticket') && key.id===(item.review_item_type === 'message' ? item.address_id : item.ticket_id))) : review?.items ?? [])
@@ -75,7 +95,6 @@
   let returning = $state(false);
   let returnError = $state<unknown>(null);
   let busyConversations = $state<Record<string,boolean>>({});
-  let messageGenerations = $state<Record<string,number>>({});
   // Keep a painted conversation through delivery uncertainty and its exit. Owner
   // state and canonical address still govern admission, even for a retained draft.
   let heldCard = $state<ReviewItem|null>(null);
@@ -181,6 +200,8 @@
 
   function skip(item: ReviewItem): void {
     if(messageBusy)return;
+    // A skip made under the artifact finishes the item: the artifact goes with it.
+    if (heldFile) { deck.layerExit='left'; artifact.close(); }
     advancePast(item);
     const key=reviewHistoryKey(item);
     if(!skippedHistory.some(previous=>previous.kind===key.kind && previous.id===key.id))skippedHistory=[...skippedHistory,key];
@@ -196,29 +217,61 @@
   // The card says a decision has left the queue — approved, sent back, or already
   // gone by the time its Ticket was read. Re-read the queue so the next ask comes up.
   function messageResolved(conversationId:string):void {
-    // While an artifact is open only its bar can resolve a message: that reply finishes with it.
-    if (heldFile) artifact.close();
     const item=currentItem;
     const leaves=item?.review_item_type==='message' ? item.conversation_id===conversationId
       : item?.review_item_type==='ticket' && !item.proposal && item.messages.every(message=>message.conversation_id===conversationId);
+    // While an artifact is open only its bar can resolve a message. If that finishes the item,
+    // the artifact leaves with it. If part of the card remains, the artifact drops onto it.
+    if (heldFile) { deck.layerExit=leaves ? 'left' : 'drop'; artifact.close(); }
+    readMessages={...readMessages,[conversationId]:true};
     if(item && leaves)advancePast(item);
     if(heldCard?.review_item_type==='message' && heldCard.conversation_id===conversationId)heldCard=null;
     else if(heldCard?.review_item_type==='ticket') {
       const messages=heldCard.messages.filter(message=>message.conversation_id!==conversationId);
       heldCard=messages.length ? {...heldCard,messages} : null;
     }
-    messageGenerations={...messageGenerations,[conversationId]:(messageGenerations[conversationId] ?? 0)+1};
     busyConversations={...busyConversations,[conversationId]:false};
     void navigation.owner.recover().catch(()=>undefined);
+    void newerMessageWaits(conversationId).then(async waits=>{
+      if(!waits)return;
+      // A newer message arrived while the answer was on its way. It is new work for this
+      // conversation, so it is shown, and the final screen that took the card's place gives it back.
+      const {[conversationId]:_answered,...rest}=readMessages;
+      readMessages=rest;
+      await tick();
+      if(finalLatched && !returning)finalLatched=false;
+    }).catch(()=>undefined);
   }
-  function messageBusyChanged(conversationId:string,busy:boolean):void {
+  /** Whether the conversation holds a message that the answer did not cover. */
+  async function newerMessageWaits(conversationId:string):Promise<boolean> {
+    const view=await readConversation(conversationId);
+    const rows=await readEventsAfter(conversationId,view.owner_read_through_sequence);
+    return unreadOwnerMessages(rows,view.owner_read_through_sequence).length>0;
+  }
+  // An answered message is hidden until the queue itself no longer holds its conversation.
+  $effect(()=>{
+    const held=new Set((review?.items ?? []).flatMap(item=>item.review_item_type==='message' ? [item.conversation_id] : item.messages.map(message=>message.conversation_id)));
+    untrack(()=>{
+      const gone=Object.keys(readMessages).filter(id=>!held.has(id));
+      if(gone.length)readMessages=Object.fromEntries(Object.entries(readMessages).filter(([id])=>held.has(id)));
+    });
+  });
+  function messageBusyChanged(busy:boolean,conversationId:string):void {
     if(Boolean(busyConversations[conversationId])!==busy)busyConversations={...busyConversations,[conversationId]:busy};
   }
 
+  // While an artifact covers the card, the bar under it holds the one live copy of the note and
+  // the edited text. The card underneath is drawn again when the artifact closes, so it never
+  // writes over what the bar keeps.
+  function covered(composerOnly: boolean): boolean {
+    return !composerOnly && Boolean(artifact.shown);
+  }
+
   function proposalResolved(identity: string): void {
-    // A decision made under the artifact finishes with it, even when the card stays for its messages.
-    if (heldFile) artifact.close();
     const item=currentItem;
+    // A decision made under the artifact ends it. If it finished the item, the artifact leaves
+    // with it. If the card stays for its messages, the artifact drops onto what remains.
+    if (heldFile) { deck.layerExit=item?.review_item_type==='ticket' && item.messages.length===0 ? 'left' : 'drop'; artifact.close(); }
     if(item?.review_item_type==='ticket' && item.proposal && reviewProposalIdentity(item.proposal)===identity && item.messages.length===0)advancePast(item);
     decidedProposals = { ...decidedProposals, [identity]: true };
     void navigation.owner.recover().catch(() => undefined);
@@ -242,6 +295,26 @@
     untrack(() => {
       if (file && artifactCardKey !== null && key !== artifactCardKey) artifact.close();
       artifactCardKey = key;
+    });
+  });
+  // What is on screen, named by what moves it: an item, or the final screen. A change inside the
+  // same view, such as a late refresh, is not a move.
+  let viewKey = $derived(showFinal ? FINAL_VIEW : currentItem ? itemKey(currentItem) : 'none');
+  let partsKey = $derived(currentItem?.review_item_type==='ticket' ? JSON.stringify([Boolean(currentItem.proposal),currentItem.messages.map(message=>message.conversation_id)]) : '');
+  // Runs before the screen is redrawn, while it still shows what is about to leave.
+  $effect.pre(() => {
+    const view=viewKey;
+    void partsKey;
+    void artifact.shown;
+    untrack(() => deck.beforeChange(rootElement,view,deckItemElement));
+  });
+  let wasCovered=false;
+  $effect.pre(() => {
+    const covered=Boolean(artifact.shown);
+    untrack(() => {
+      if(wasCovered && !covered)coverEpoch+=1;
+      if(!wasCovered && covered)layerOpening+=1;
+      wasCovered=covered;
     });
   });
   /** The message whose reply stands under the artifact, or null for the proposal's decisions. */
@@ -274,7 +347,9 @@
     if (event.repeat || event.defaultPrevented || typingTarget(event)) return;
 
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      const button = screenElement?.querySelector<HTMLButtonElement>(
+      // The decision is the one in front: the artifact's bar, else the item that is not leaving.
+      const scope = artifact.shown && layerElement ? layerElement : screenElement?.querySelector("[data-deck-item]:not([data-deck-leaving])");
+      const button = scope?.querySelector<HTMLButtonElement>(
         item.review_item_type === "ticket" && item.proposal ? "[data-review-card] [data-accept]" : "[data-review-card] [data-review-send]"
       );
       if (button && !button.disabled) {
@@ -318,8 +393,8 @@
       title={proposal.title} onResolved={() => proposalResolved(identity)}
       initialRevisionDraft={proposalDraft?.identity===identity ? proposalDraft.text : ""}
       initialEditedBody={proposalDraft?.identity===identity ? proposalDraft.editedBody : undefined}
-      onEditedBodyChange={editedBody=>{proposalDraft={identity,text:proposalDraft?.identity===identity ? proposalDraft.text : "",editedBody};}}
-      onRevisionDraftChange={text=>{proposalDraft={identity,text,editedBody:proposalDraft?.identity===identity ? proposalDraft.editedBody : undefined};}}/>
+      onEditedBodyChange={editedBody=>{if(covered(composerOnly))return;proposalDraft={identity,text:proposalDraft?.identity===identity ? proposalDraft.text : "",editedBody};}}
+      onRevisionDraftChange={text=>{if(covered(composerOnly))return;proposalDraft={identity,text,editedBody:proposalDraft?.identity===identity ? proposalDraft.editedBody : undefined};}}/>
   {/key}
 {/snippet}
 
@@ -327,9 +402,9 @@
 {#snippet reviewBar()}
   {#if barMessage}
     {@const message = barMessage}
-    {#key `${message.conversation_id}:${messageGenerations[message.conversation_id] ?? 0}`}
+    {#key message.conversation_id}
       <ReviewMessageCard item={message} embedded replyOnly onSkip={() => { if (currentItem) skip(currentItem); }}
-        onResolved={()=>messageResolved(message.conversation_id)} onBusy={value=>messageBusyChanged(message.conversation_id,value)}/>
+        onResolved={()=>messageResolved(message.conversation_id)} onBusy={messageBusyChanged}/>
     {/key}
   {:else if currentItem?.review_item_type === "ticket" && currentItem.proposal}
     {@render proposalCard(currentItem.proposal, true)}
@@ -338,52 +413,64 @@
 
 <svelte:window onkeydown={artifact.closeOnEscape} />
 
-{#if artifact.shown && currentItem && !showFinal}
-  <section class="review-artifact-screen" data-screen="review" data-review-artifact bind:this={screenElement}>
-    <ArtifactPreview target={artifact.shown} reloadSignal={artifact.reloadSignal} bind:element={artifact.element}
-      onRefresh={artifact.refresh} onClose={artifact.close} bar={reviewBar} />
-  </section>
-{:else}
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<section class="review-screen" class:review-screen-final={showFinal} data-screen="review" bind:this={screenElement} onclick={artifact.claimPress}>
-  <ResourceState shape="block" loading={!reviewReady} hasData={reviewReady} loadingText="Loading review...">
-    {#if showFinal}
-      <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
-    {:else if currentItem}
-      {#if currentItem.review_item_type === "message"}
-        {@const message = currentItem}
-        {#key `${itemKey(message)}:${messageGenerations[message.conversation_id] ?? 0}`}
-          <ReviewMessageCard item={message} onSkip={()=>skip(message)} onResolved={()=>messageResolved(message.conversation_id)}
-            onBusy={value=>messageBusyChanged(message.conversation_id,value)} footer={messageKeys}/>
-        {/key}
-      {:else}
-        {@const ticket = currentItem}
-        {#key ticket.ticket_id}
-          <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>
-            {#if ticket.proposal}
-              {@const proposal = ticket.proposal}
-              {@render proposalCard(proposal, false)}
-            {/if}
-            {#each ticket.messages as message, index (message.conversation_id)}
-              {#key messageGenerations[message.conversation_id] ?? 0}
-                <ReviewMessageCard item={message} embedded onSkip={()=>skip(ticket)}
-                  onResolved={()=>messageResolved(message.conversation_id)} onBusy={value=>messageBusyChanged(message.conversation_id,value)}
-                 />
+<div class="review-root" data-review-root bind:this={rootElement}>
+  <div class="review-scroll" data-deck-scroll>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- The card stays drawn under an artifact, so the artifact can drop onto it. It takes no input meanwhile. -->
+    <section class="review-screen" data-screen="review" inert={Boolean(artifact.shown)} bind:this={screenElement} onclick={artifact.claimPress}>
+      <ResourceState shape="block" loading={!reviewReady} hasData={reviewReady} loadingText="Loading review...">
+        <ReviewDeck {deck} view={viewKey} final={showFinal} bind:element={deckItemElement}>
+          {#key coverEpoch}
+          {#if showFinal}
+            <ReviewFinalState {returnLabel} {waitingCount} {runningWorkerCount} {returning} {returnError} onReturn={() => void backToReview()} />
+          {:else if currentItem}
+            {#if currentItem.review_item_type === "message"}
+              {@const message = currentItem}
+              {#key itemKey(message)}
+                <ReviewMessageCard item={message} onSkip={()=>skip(message)} onResolved={()=>messageResolved(message.conversation_id)}
+                  onBusy={messageBusyChanged} footer={messageKeys}/>
               {/key}
-            {/each}
-            {#if ticket.proposal}{@render proposalKeys()}{:else}{@render messageKeys()}{/if}
-          </ReviewTicketCard>
-        {/key}
-      {/if}
-    {/if}
-  </ResourceState>
-</section>
-{/if}
-
+            {:else}
+              {@const ticket = currentItem}
+              {#key ticket.ticket_id}
+                <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>
+                  {#if ticket.proposal}
+                    {@const proposal = ticket.proposal}
+                    <div data-deck-part out:deckPartOut={{ deck }}>{@render proposalCard(proposal, false)}</div>
+                  {/if}
+                  {#each ticket.messages as message, index (message.conversation_id)}
+                    <div data-deck-part out:deckPartOut={{ deck }}>
+                      <ReviewMessageCard item={message} embedded onSkip={()=>skip(ticket)}
+                        onResolved={()=>messageResolved(message.conversation_id)} onBusy={messageBusyChanged}/>
+                    </div>
+                  {/each}
+                  {#if ticket.proposal}{@render proposalKeys()}{:else}{@render messageKeys()}{/if}
+                </ReviewTicketCard>
+              {/key}
+            {/if}
+          {/if}
+          {/key}
+        </ReviewDeck>
+      </ResourceState>
+    </section>
+  </div>
+  {#key layerOpening}
+  {#if artifact.shown && currentItem && !showFinal}
+    <!-- The artifact is a layer over the card: it rises to open and drops to close. -->
+    <div class="review-layer" data-review-artifact data-deck-layer bind:this={layerElement}
+      in:deckLayerIn={{ deck }} out:deckLayerOut={{ deck }} onoutroend={() => { deck.covering = false; }}>
+      <ArtifactPreview target={artifact.shown} reloadSignal={artifact.reloadSignal} bind:element={artifact.element}
+        onRefresh={artifact.refresh} onClose={artifact.close} bar={reviewBar} />
+    </div>
+  {/if}
+  {/key}
+</div>
 
 <style>
-  .review-screen-final { max-width:calc(var(--measure-index) + var(--page-gutter)*2); }
-  /* The artifact covers the whole Review pane, and the card's controls stand under it. */
-  .review-artifact-screen { position:relative; flex:1; width:100%; height:100%; min-height:0; }
+  /* The page is a scroll area with the artifact layer over it. The layer is not part of the
+     scrolling, so it covers what is on screen however far the card is scrolled. */
+  .review-root { position:relative; flex:1; min-height:0; display:flex; flex-direction:column; }
+  .review-scroll { flex:1; min-height:0; display:flex; flex-direction:column; overflow-y:auto; }
+  .review-layer { position:absolute; inset:0; z-index:1; }
 </style>

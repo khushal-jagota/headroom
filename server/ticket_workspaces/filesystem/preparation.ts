@@ -2,25 +2,15 @@ import { mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { prepare_agent_home } from '../../agent_homes/agent_home.ts';
 import { dirname, join, resolve } from 'node:path';
 import { OWNERSHIP_FILE, WORKTREE_DIRECTORY } from '../contracts.ts';
-import type { RetirementRecord, WorkspaceMarker, WorkspaceOptions } from '../contracts.ts';
+import type {
+  ProjectRepository,
+  RetirementRecord,
+  WorkspaceMarker,
+  WorkspaceOptions,
+} from '../contracts.ts';
+import { with_mirror } from './mirror.ts';
 import { admit, entry_stat, git, json, token, workspace_identity, write_json } from './shared.ts';
 
-async function clone_source(
-  repository: string | null,
-  options: WorkspaceOptions,
-): Promise<[string, string | null]> {
-  if (options.panels_project) return ['https://github.com/khushal-jagota/panels.git', 'staging'];
-  const remote = await git(repository!, ['remote', 'get-url', 'origin'], options);
-  if (remote.returncode || !remote.stdout.trim())
-    throw new Error("Cannot find the Project repository's origin remote");
-  const source = remote.stdout.trim();
-  return [
-    /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/|[^/]+:|\/)/.test(source)
-      ? source
-      : resolve(repository!, source),
-    null,
-  ];
-}
 async function validate_clone(
   destination: string,
   branch: string | null | undefined,
@@ -39,32 +29,6 @@ async function validate_clone(
   }
 }
 
-export async function repository_root(
-  folder: string | null,
-  options: WorkspaceOptions = {},
-): Promise<string | null> {
-  if (folder === null || !(await entry_stat(admit(folder, options)))?.isDirectory()) return null;
-  for (const candidate of [folder, join(folder, 'repository')]) {
-    if (!(await entry_stat(candidate))?.isDirectory()) continue;
-    const result = await git(candidate, ['rev-parse', '--show-toplevel'], options);
-    if (result.returncode === 0) return realpath(result.stdout.trim());
-  }
-  const children: string[] = [];
-  for (const child of await readdir(folder, { withFileTypes: true }))
-    if (child.isDirectory() && (await entry_stat(join(folder, child.name, '.git'))))
-      children.push(join(folder, child.name));
-  if (children.length > 1)
-    throw new Error(
-      'Project folder contains repositories; select the repository folder explicitly',
-    );
-  if (children.length === 1) {
-    const child = children[0]!;
-    const result = await git(child, ['rev-parse', '--show-toplevel'], options);
-    if (result.returncode !== 0) throw new Error(`Cannot inspect Project repository: ${child}`);
-    return realpath(result.stdout.trim());
-  }
-  return null;
-}
 async function registered(
   repository: string,
   destination: string,
@@ -194,8 +158,8 @@ async function repair_previous(
 }
 export async function prepare_workspace(
   root: string,
-  repository: string | null,
   ticket_id: string,
+  repository: ProjectRepository | null,
   options: WorkspaceOptions = {},
 ): Promise<string> {
   root = admit(root, options);
@@ -208,10 +172,10 @@ export async function prepare_workspace(
   const marker = await json<WorkspaceMarker>(marker_path);
   if (marker.ticket_id !== ticket_id) throw new Error('Ticket workspace ownership does not match');
   await prepare_agent_home(root, 'worker');
-  const selected =
-    !options.panels_project || (marker.worktree !== undefined && marker.checkout_kind !== 'clone')
-      ? await repository_root(repository, options)
-      : null;
+  const repository_url = repository?.repository_url ?? null;
+  const default_branch = repository?.default_branch ?? null;
+  if (default_branch !== null && repository_url === null)
+    throw new Error('Cannot prepare Ticket workspace: default_branch requires repository_url');
   if (marker.worktree !== undefined && marker.checkout_kind === 'clone') {
     if (marker.worktree !== destination)
       throw new Error('Ticket workspace path changed; owner review required');
@@ -232,8 +196,9 @@ export async function prepare_workspace(
     await write_json(marker_path, marker);
     return destination;
   }
+  const selected = marker.repository ?? null;
   if (marker.worktree !== undefined) {
-    if (marker.worktree !== destination || marker.repository !== selected)
+    if (marker.worktree !== destination || (selected === null && repository_url !== null))
       throw new Error('Ticket workspace repository or path changed; owner review required');
     if (!marker.preparing) {
       if (!(await entry_stat(destination))?.isDirectory())
@@ -244,23 +209,33 @@ export async function prepare_workspace(
   } else {
     if (await entry_stat(destination))
       throw new Error('Ticket worktree exists without preparation ownership evidence');
-    if (options.panels_project || selected !== null) {
-      const [source, base] = await clone_source(selected, options);
+    if (repository_url !== null) {
       const branch = `ticket/${ticket_id}-workspace-${identity.workspace_id.slice(0, 12)}`;
       const temporary = join(root, `.clone-${token()}`);
       let recorded = false;
       try {
-        const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
-        if (base) args.push('--branch', base);
-        args.push('--', source, temporary);
-        const cloned = await git(root, args, options);
-        if (cloned.returncode)
-          throw new Error('Cannot clone the Project origin; check remote access and branch');
+        const cloned = await with_mirror(repository_url, options, (mirror) => {
+          const args = ['clone', '--filter=blob:none', '--single-branch', '--no-local'];
+          if (mirror !== null) args.push('--reference', mirror, '--dissociate');
+          if (default_branch !== null) args.push('--branch', default_branch);
+          args.push('--', repository_url, temporary);
+          return git(root, args, options);
+        });
+        if (cloned.returncode) {
+          const detail = cloned.stderr.trim();
+          const target =
+            default_branch !== null ? `${repository_url} (${default_branch})` : repository_url;
+          throw new Error(
+            detail
+              ? `Cannot clone the Project repository ${target}: ${detail}`
+              : `Cannot clone the Project repository ${target}; check remote access and branch`,
+          );
+        }
         const switched = await git(temporary, ['switch', '-c', branch], options);
         if (switched.returncode) throw new Error('Cannot create the Ticket branch');
         await validate_clone(temporary, branch, options);
         Object.assign(marker, {
-          repository: selected,
+          repository: null,
           branch,
           worktree: destination,
           preparing: true,
@@ -278,29 +253,12 @@ export async function prepare_workspace(
       await write_json(marker_path, marker);
       return destination;
     }
-    const branch = selected
-      ? `ticket/${ticket_id}-workspace-${identity.workspace_id.slice(0, 12)}`
-      : null;
-    let initial_commit: string | null = null;
-    if (selected) {
-      const existing = await git(
-        selected,
-        ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
-        options,
-      );
-      if (existing.returncode === 0)
-        throw new Error('Ticket branch exists without preparation ownership evidence');
-      if (existing.returncode !== 1) throw new Error('Cannot inspect the Ticket branch');
-      const head = await git(selected, ['rev-parse', '--verify', 'HEAD'], options);
-      if (head.returncode) throw new Error("Cannot resolve the repository's initial commit");
-      initial_commit = head.stdout.trim();
-    }
     Object.assign(marker, {
-      repository: selected,
-      branch,
+      repository: null,
+      branch: null,
       worktree: destination,
       preparing: true,
-      initial_commit,
+      initial_commit: null,
     });
     await write_json(marker_path, marker);
   }

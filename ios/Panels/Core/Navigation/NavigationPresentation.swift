@@ -203,7 +203,7 @@ struct NavigationPresentation: Sendable {
                 activityAt: row.updatedAt, conversationId: row.conversationId, signal: NavigationSignal(facts),
                 awaitingReply: facts?.messageForOwner, awaitingAnswer: facts?.awaitingAnswer,
                 awaitingApproval: parked && owner, awaitingAgentApproval: parked && !owner, assigned: row.stageOwnership == "user",
-                agentState: Self.agentState(status: row.ticketStatus, stage: row.stage, facts),
+                agentState: Self.agentState(status: row.ticketStatus, stage: row.stage, facts, settingUp: row.workerSetup != nil),
                 gatingField: row.gatingField,
                 recap: row.recap, recapPreview: row.recapPreview, manager: manager, managerId: parent, managerTitle: parentRow?.title,
                 projectId: row.projectId, project: project)
@@ -273,9 +273,10 @@ struct NavigationPresentation: Sendable {
     }
 
     /// Existing agent-state precedence; unknown runtime never becomes idle.
-    static func agentState(status: String?, stage: String?, _ facts: ConversationKnowledge?) -> String? {
+    static func agentState(status: String?, stage: String?, _ facts: ConversationKnowledge?, settingUp: Bool = false) -> String? {
         let working = facts?.working, failed = facts?.lastTurnFailed
         if working == true { return "working" }
+        if settingUp { return "setting_up" }
         if status == "errored" { return "errored" }
         if failed == true && stage != "done" { return "errored" }
         return working == false && (failed == false || stage == "done") ? "idle" : nil

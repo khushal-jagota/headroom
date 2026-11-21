@@ -18,4 +18,7 @@ export const antigravity_driver: AgentDriver<null> = {
     const { create_antigravity_instance } = await import('./runtime/instance.ts');
     return create_antigravity_instance(input, host);
   },
+  async executor() {
+    return (await import('./executor.ts')).antigravity_executor;
+  },
 };

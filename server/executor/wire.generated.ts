@@ -425,6 +425,7 @@ export type StartRun = {
   supervision_protocol?: number;
   vendor_session_cursor?: string | null;
   workspace_home_relative?: string | null;
+  workspace_repository?: WorkspaceRepository | null;
 };
 export type Steer = {
   content: MessageContent;
@@ -484,10 +485,15 @@ export type WorkerCleanupUncertainty = {
   reason: string;
   ticket_id: string;
 };
+export type WorkerSetupReport = {
+  child: ChildReference;
+  step: 'preparing_workspace' | 'starting_worker';
+};
 export type WorkingTurn = { child: ChildReference; tool_running: boolean; turn: TurnToken };
 export type WorkspaceIdentity = { machine_id: string; workspace_id: string };
 export type WorkspacePathPolicy = 'home_relative' | 'absolute' | 'executor_default';
 export type WorkspaceRegistrationRequest = { child: ChildReference; workspace: WorkspaceIdentity };
+export type WorkspaceRepository = { default_branch: string | null; repository_url: string | null };
 export type WorkspaceRetirementReply = { authorized: boolean };
 export type WorkspaceRetirementRequest = {
   replay?: boolean;
@@ -593,9 +599,11 @@ export interface WireTypes {
   VendorSessionCursorRebound: VendorSessionCursorRebound;
   WaitingConversation: WaitingConversation;
   WorkerCleanupUncertainty: WorkerCleanupUncertainty;
+  WorkerSetupReport: WorkerSetupReport;
   WorkingTurn: WorkingTurn;
   WorkspaceIdentity: WorkspaceIdentity;
   WorkspaceRegistrationRequest: WorkspaceRegistrationRequest;
+  WorkspaceRepository: WorkspaceRepository;
   WorkspaceRetirementReply: WorkspaceRetirementReply;
   WorkspaceRetirementRequest: WorkspaceRetirementRequest;
   WorkspaceState: WorkspaceState;

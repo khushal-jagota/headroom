@@ -1,14 +1,17 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
 import ConversationSignalMark from "../src/components/ConversationSignalMark.svelte";
+import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
 
 describe("exact conversation signal marks", () => {
   it.each([
     [{ working: false, message_for_owner: false }, null, null],
     [{ working: true, message_for_owner: false }, "working", "Working"],
     [{ working: false, message_for_owner: true }, "message", "Unread message"],
-    [{ working: true, message_for_owner: true }, "message", "Unread message"]
-  ] as const)("shows one mark with message precedence %j", (signal, mark, label) => {
+    [{ working: true, message_for_owner: true }, "message", "Unread message"],
+    [{ working: false, message_for_owner: false, setting_up: true }, "setting_up", "Setting up"],
+    [{ working: true, message_for_owner: false, setting_up: true }, "working", "Working"]
+  ] as const)("shows one mark with message, then working, then setting-up precedence %j", (signal, mark, label) => {
     const html = render(ConversationSignalMark, {
       props: { signal, conversationId: "conversation-exact" }
     }).body;
@@ -18,6 +21,15 @@ describe("exact conversation signal marks", () => {
       expect(html).toContain(`aria-label="${label}"`);
       expect(html).toContain('data-conversation-id="conversation-exact"');
     }
+  });
+
+  it("reads a Worker being set up on the status line until a turn runs", () => {
+    const workerSetup = { step: "preparing_workspace", began_at: 1, machine_id: "machine" } as const;
+    const line = (props: Record<string, unknown>) => render(ConversationRestBar, { props: { onOpen: () => {}, ...props } }).body;
+    expect(line({ workerSetup })).toContain("Setting up · preparing workspace");
+    expect(line({ workerSetup: { ...workerSetup, step: "starting_worker" } })).toContain("Setting up · starting Worker");
+    expect(line({ workerSetup, running: true })).not.toContain("Setting up");
+    expect(line({})).toContain("Worker idle");
   });
 
   it("keeps an absent conversation quiet", () => {

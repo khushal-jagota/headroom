@@ -248,6 +248,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
     if (navigation_table) write(path, [RUNTIME_NAVIGATION_VIEW_ORDERED, ORDERED_ROW]);
     write(path, [
       "INSERT INTO projects (id, name, created_at, updated_at) VALUES ('project', 'Project', 0, 0)",
+      "INSERT INTO projects (id, name, created_at, updated_at) VALUES ('project_panels', 'Panels', 0, 0), ('project_wren', 'Wren', 0, 0), ('project_rewire', 'Rewire', 0, 0), ('project_vylo', 'Vylo', 0, 0), ('project_personal', 'Personal', 0, 0)",
       ...keyed_rows('codex'),
       "INSERT INTO backend_usage_windows (backend_key, window_kind, model_id, used_percent, resets_at) VALUES ('codex', 'five_hour', '', 40, 2)",
       "INSERT INTO measure_sources (id, name, project_id, account, responsible_kind, responsible_goal_id, responsibility_revision, source_revision, created_at, updated_at) VALUES ('source', 'Source', 'project', 'account', 'goal', 'goal_codex', 1, 1, 0, 0)",
@@ -262,13 +263,52 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0001_open_backend_keys',
-      applied: ['ts_0001_open_backend_keys'],
+      to_revision: 'ts_0003_ticket_worker_setups',
+      applied: [
+        'ts_0001_open_backend_keys',
+        'ts_0002_project_repository',
+        'ts_0003_ticket_worker_setups',
+      ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0001_open_backend_keys'],
+      revision: ['ts_0003_ticket_worker_setups'],
       statements: application_schema_seed.statements,
     });
+    const project_reader = createReadAccess(path);
+    try {
+      assert.deepEqual(
+        project_reader.read((sql) =>
+          sql.all(
+            "SELECT id, repository_url, default_branch FROM projects WHERE id IN ('project_panels', 'project_wren', 'project_rewire', 'project_vylo', 'project_personal') ORDER BY id",
+          ),
+        ),
+        [
+          {
+            id: 'project_panels',
+            repository_url: 'https://github.com/khushal-jagota/panels.git',
+            default_branch: 'staging',
+          },
+          { id: 'project_personal', repository_url: null, default_branch: null },
+          {
+            id: 'project_rewire',
+            repository_url: 'https://github.com/khushal-jagota/rewire.git',
+            default_branch: 'main',
+          },
+          {
+            id: 'project_vylo',
+            repository_url: 'https://github.com/khushal-jagota/vylo-convex.git',
+            default_branch: 'main',
+          },
+          {
+            id: 'project_wren',
+            repository_url: 'https://github.com/khushal-jagota/Wren.git',
+            default_branch: 'main',
+          },
+        ],
+      );
+    } finally {
+      project_reader.close();
+    }
     assert.deepEqual(rows(path), before);
     // Step 1 keeps an existing navigation table and its rows, and creates an empty one otherwise.
     assert.deepEqual(ordered_rows(path), ordered_before);

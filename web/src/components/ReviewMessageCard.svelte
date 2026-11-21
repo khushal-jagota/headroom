@@ -15,7 +15,6 @@
   import { pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from '../lib/conversation/pendingFiles';
   import { pendingImagesAsPieces, restoredPendingImages, releasePendingImages, type PendingConversationImage } from '../lib/conversation/pendingImages';
   import ReviewReplyInput from './ReviewReplyInput.svelte';
-  import { fadeConversationExit } from '../lib/conversation/surfaceMotion';
   import { fateSentence } from '../lib/conversation/composer';
   import { unreadOwnerMessages, reviewMessageHref, reviewReplyEndpoint, reviewReplyReceipt, readReviewDraft, saveReviewDraft, draftStorageKey, attemptStorageKey, type OwnerMessage } from '../lib/review/messages';
   import MessagePieces from './conversation/MessagePieces.svelte';
@@ -32,7 +31,7 @@
     /** Only the reply and its row, for the bar under an artifact opened from this message. */
     replyOnly?:boolean;
     item:ReviewMessageItem; onSkip:()=>void; onResolved:(through:number)=>void;
-    onBusy?:(busy:boolean)=>void; footer?:Snippet;
+    onBusy?:(busy:boolean,conversationId:string)=>void; footer?:Snippet;
   } = $props();
   const navigation = navigationApplication()!;
   // The route keys this component by conversation, never by changing attention facts.
@@ -51,7 +50,6 @@
   let intakeBusy = $state(false);
   let leaving = $state(false);
   let destroyed = false;
-  let card = $state<HTMLDivElement|null>(null);
   let voiceActive = $state(false);
   let nextId = 0;
   const chief = createQuery(()=>({...queries.chiefSettings(),enabled:item.owner_kind==='chief'}));
@@ -60,7 +58,7 @@
   let disabled = $derived(busy || intakeBusy || !ready || retryingUnknown);
   let hasReply = $derived(Boolean(text.trim() || files.length || images.length));
   let through = $derived(events.at(-1)?.sequence ?? 0);
-  $effect(()=>{ onBusy?.(busy || intakeBusy || voiceActive); });
+  $effect(()=>{ onBusy?.(busy || intakeBusy || voiceActive,conversationId); });
   $effect(()=>{ if(ready) { const content=[...pendingImagesAsPieces(images),...pendingFilesAsPieces(files)]; void saveReviewDraft(conversationId,content).then(saved=>{if(!saved)error=new Error('The attachment could not be saved in this browser.');}); } });
 
   async function load():Promise<void> {
@@ -84,14 +82,13 @@
       ready=true;
       await load();
     })().catch(problem=>{error=problem;});
-    return ()=>{destroyed=true;releasePendingImages(images);onBusy?.(false);};
+    return ()=>{destroyed=true;releasePendingImages(images);onBusy?.(false,conversationId);};
   });
 
   async function resolve(bound:number):Promise<void> {
     leaving=true;
-    // Freeze the painted card through the settled leave beat. Queue refresh can finish
-    // independently, but the next item cannot take its slot before this animation ends.
-    await Promise.all([navigation.owner.recover().catch(()=>undefined),fadeConversationExit(card)]);
+    // The page takes the decision at once and moves the card out. The queue's read happens
+    // behind it: nothing here waits for the server to confirm.
     if(!destroyed)onResolved(bound);
   }
   async function markRead():Promise<void> {
@@ -147,7 +144,7 @@
   }
 </script>
 
-<div bind:this={card} data-review-card data-review-item-type="message" data-artifact-origin={`message:${conversationId}`} data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
+<div data-review-card data-review-item-type="message" data-artifact-origin={`message:${conversationId}`} data-conversation-id={conversationId} data-message-identity={`message:${conversationId}`} data-review-leaving={leaving} data-review-loaded={loaded}>
   {#snippet ownActions()}
     {#if embedded}<div class="review-ticket-decision-line review-ticket-decision-line--inline">
       <Button variant="ghost" data-open-conversation href={reviewMessageHref(item)} aria-disabled={busy} onclick={(event: MouseEvent)=>{if(busy)event.preventDefault();}}>Open conversation</Button>

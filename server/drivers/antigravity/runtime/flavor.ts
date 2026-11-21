@@ -5,6 +5,7 @@ import { ensure_cli_compatible } from '../../../conversation/backends/cli_compat
 import type { OwnedOneShotChildren } from '../../../lifecycle/contracts.ts';
 import { worker_process_root_environment } from '../../../worker_supervision/config.ts';
 import type { AcpFlavor, AcpLaunch } from '../../acp/flavor.ts';
+import { acp_child_environment } from '../../acp/environment.ts';
 import { antigravity_driver } from '../driver.ts';
 import { PROMPT_INACTIVITY_TIMEOUT_MS } from './configuration.ts';
 import { watch_antigravity_prompt_outcome } from './turn_outcome.ts';
@@ -18,8 +19,9 @@ export interface AntigravityLaunchOptions {
   readonly executable: string;
   /** Absolute. */
   readonly home: string;
-  readonly worker_process_root: string;
+  readonly worker_process_root?: string;
   readonly panels_server_url: string;
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 /**
  * The launch every `agy acp` Panels starts shares: conversations, the model catalog, sign-in and
@@ -33,8 +35,11 @@ export function antigravity_acp_launch(options: AntigravityLaunchOptions): AcpLa
       // No browser can open here.
       ['BROWSER', 'false'],
       ['PLAN_SERVER_URL', options.panels_server_url],
-      worker_process_root_environment(options.worker_process_root),
+      ...(options.worker_process_root === undefined
+        ? []
+        : [worker_process_root_environment(options.worker_process_root)]),
     ],
+    ...(options.environment === undefined ? {} : { inherited_environment: options.environment }),
   };
 }
 export function antigravity_requires_sign_in(error: unknown): string | null {
@@ -54,6 +59,15 @@ export function create_antigravity_flavor(
       // As Codex and Claude do before each launch. The card's read normally left a verdict.
       await ensure_cli_compatible(antigravity_driver.driver_kind, options.executable, {
         children: one_shot_children,
+        ...(options.environment === undefined
+          ? {}
+          : {
+              environment: acp_child_environment(
+                launch.environment_overrides,
+                { role_materials: null },
+                options.environment,
+              ),
+            }),
       });
       return start.access === ConversationAccess.full
         ? { ...launch, argv: [...launch.argv, '--dangerously-skip-permissions'] }

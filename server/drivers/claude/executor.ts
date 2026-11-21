@@ -7,7 +7,11 @@ import {
   probe_claude_model_catalog,
   ClaudeModelCatalogUnavailable as NativeClaudeUnavailable,
 } from './runtime/model_catalog.ts';
-import { create_claude_status } from './runtime/status.ts';
+import {
+  claude_auth_paths,
+  create_claude_status,
+  read_claude_auth_freshness,
+} from './runtime/status.ts';
 
 export const claude_executor: ExecutorDriver = {
   child_factory(host) {
@@ -27,6 +31,7 @@ export const claude_executor: ExecutorDriver = {
     );
   },
   catalog(host, custody) {
+    const auth_paths = host.home === null ? null : claude_auth_paths(host.home, host.environment);
     return {
       status: create_claude_status({
         catalog: (executable) =>
@@ -43,6 +48,7 @@ export const claude_executor: ExecutorDriver = {
               throw error;
             }
           }),
+        read_freshness: auth_paths === null ? null : () => read_claude_auth_freshness(auth_paths),
       }),
     };
   },

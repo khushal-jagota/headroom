@@ -3,7 +3,7 @@ import koffi from 'koffi';
 import { PlannerError } from '../../core/contracts.ts';
 import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import type { CreateProjectBody, Project, UpdateProjectBody } from '../contracts.ts';
-import { projectIdForName } from '../logic/index.ts';
+import { projectIdForName, resolveProjectRepository } from '../logic/index.ts';
 
 const libc = koffi.load(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
 const passwordEntry = koffi.struct('CatalogPasswordEntry', {
@@ -24,7 +24,8 @@ function accountHome(name: string): string | undefined {
     : (koffi.decode(pointer, passwordEntry) as { pw_dir: string }).pw_dir;
 }
 
-const COLUMNS = 'id, name, summary, folder_path, created_at, updated_at';
+const COLUMNS =
+  'id, name, summary, folder_path, repository_url, default_branch, created_at, updated_at';
 export function listProjects(sql: ReadSql): Project[] {
   return sql.all<Project>(`SELECT ${COLUMNS} FROM projects ORDER BY lower(name), id`);
 }
@@ -85,7 +86,11 @@ function normalizeFolderPath(raw: string | null): string | null {
 export function createProject(tx: TransactionSql, body: CreateProjectBody, now: number): Project {
   const name = body.name.trim(),
     summary = body.summary.trim(),
-    folder_path = normalizeFolderPath(body.folder_path ?? null);
+    folder_path = normalizeFolderPath(body.folder_path ?? null),
+    { repository_url, default_branch } = resolveProjectRepository(
+      { repository_url: null, default_branch: null },
+      { repository_url: body.repository_url ?? null, default_branch: body.default_branch ?? null },
+    );
   if (!name) throw new PlannerError('validation', 'project name is required');
   if (tx.get('SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE', [name]))
     throw new PlannerError('validation', 'project already exists', { name });
@@ -94,8 +99,8 @@ export function createProject(tx: TransactionSql, body: CreateProjectBody, now: 
     suffix = 2;
   while (tx.get('SELECT 1 FROM projects WHERE id = ?', [id])) id = `${base}_${suffix++}`;
   tx.run(
-    'INSERT INTO projects (id, name, summary, folder_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [id, name, summary, folder_path, now, now],
+    'INSERT INTO projects (id, name, summary, folder_path, repository_url, default_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, name, summary, folder_path, repository_url, default_branch, now, now],
   );
   return readProject(tx, id);
 }
@@ -112,10 +117,19 @@ export function updateProject(
     updates.name = name;
   }
   if (body.summary !== undefined) updates.summary = body.summary.trim();
-  if ('folder_path' in body) updates.folder_path = normalizeFolderPath(body.folder_path!);
+  if (body.folder_path !== undefined) updates.folder_path = normalizeFolderPath(body.folder_path);
+  const current = readProject(tx, id);
+  if (body.repository_url !== undefined || body.default_branch !== undefined) {
+    const resolved = resolveProjectRepository(current, {
+      ...(body.repository_url !== undefined ? { repository_url: body.repository_url } : {}),
+      ...(body.default_branch !== undefined ? { default_branch: body.default_branch } : {}),
+    });
+    if (body.repository_url !== undefined) updates.repository_url = resolved.repository_url;
+    if (body.default_branch !== undefined || resolved.default_branch !== current.default_branch)
+      updates.default_branch = resolved.default_branch;
+  }
   if (!Object.keys(updates).length)
     throw new PlannerError('validation', 'no project fields to update');
-  readProject(tx, id);
   if ('name' in updates) {
     const existing = tx.get<{ id: string }>(
       'SELECT id FROM projects WHERE name = ? COLLATE NOCASE',

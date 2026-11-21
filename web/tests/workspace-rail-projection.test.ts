@@ -455,6 +455,7 @@ import { navigationWorkspacePresentation, navigationTicketMasthead, navigationRe
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
 import { encodeCursor } from './support/navigation/fixtures';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
+import { conversationSignalKind } from '../src/lib/conversationSignal';
 const sourceTicket:(TicketRecord & {value:import('../src/lib/navigation/contracts').TicketValue})={kind:'ticket',id:'source-ticket',value:{
   title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',recap_updated_at:null,recap_stage_changed:false,worker_type:'coding',stage_label:'Implementation',workflow_label:'Coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
   updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',manager_kind:'manager',
@@ -519,6 +520,25 @@ describe('canonical navigation workspace presentation',()=>{
       adapter.publishSnapshot(currentSnapshot({...continuity,revision:'2',records:[agentApproval]}),'agent-approval');
       const last=navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!)).tickets[0];
       expect(last.awaiting_approval).toBe(false);expect(last.awaiting_agent_approval).toBe(true);
+    } finally {adapter.destroy();}
+  });
+  it('reads a Worker being set up as setting_up, below a live turn',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    try {
+      const worker_setup={step:'preparing_workspace' as const,began_at:100,machine_id:sourceTicket.value.machine_id};
+      const read=(conversation_id:string | null)=>{
+        const ticket={...sourceTicket,value:{...sourceTicket.value,conversation_id,worker_setup}};
+        adapter.publishSnapshot(currentSnapshot({...continuity,records:[ticket,...sourceRecords.slice(1)]}),'setup');
+        return navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!));
+      };
+      const before=read(null);
+      expect(before.tickets[0]).toMatchObject({agent_state:'setting_up',worker_setup,conversation_signal:{setting_up:true}});
+      expect(conversationSignalKind(before.tickets[0].conversation_signal)).toBe('setting_up');
+      expect(before.ticketMastheadsById.get(sourceTicket.id)?.worker_setup).toEqual(worker_setup);
+      expect(buildWorkspaceRail(before.tickets,before.managers).items[0].groups.map(group=>group.key)).toEqual(['agent']);
+      const running=read('conversation').tickets[0];
+      expect(running.agent_state).toBe('working');
+      expect(conversationSignalKind({...running.conversation_signal,message_for_owner:false})).toBe('working');
     } finally {adapter.destroy();}
   });
   it('keeps Consequences in ordinary resting work while the label manifest stays stale',()=>{

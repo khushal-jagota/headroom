@@ -49,6 +49,8 @@
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
   import { workerPageHistory } from "../lib/workerPageHistory";
   import { createArtifactOnThePage } from "../lib/artifactOnThePage.svelte";
+  import { artifactForPressOnThePage } from "../lib/managedArtifactPress";
+  import { proposalContentIdentity } from "../lib/review/proposalState";
   import { type ManagedFileTarget } from "../lib/filePreview";
 
   let {
@@ -105,7 +107,11 @@
     selected: { kind: "ticket", id: stableId },
     selected_conversation_id: selectedPastConversationId, windows: []
   }));
-  onDestroy(() => navigation.owner.setDemand("ticket", undefined));
+  let routeMounted = true;
+  onDestroy(() => {
+    routeMounted = false;
+    navigation.owner.setDemand("ticket", undefined);
+  });
   let observedPointer:string | undefined;
   $effect(()=>{
     if(!canonicalTicket) return;
@@ -176,11 +182,12 @@
   /** The current stage's proposal, when one waits. A link inside it opens its artifact with
    *  the note and decisions under it, in place of the conversation. */
   let pageProposal = $derived(section && section.detail.pending_proposal?.field === section.record.value.gating_field ? section.detail.pending_proposal : null);
-  let pageProposalKey = $derived(pageProposal ? `${pageProposal.field}:${pageProposal.created_at}:${pageProposal.revision}` : null);
+  let pageProposalKey = $derived(pageProposal ? proposalContentIdentity(pageProposal) : null);
   // The card and the bar under its artifact are one decision: one note and one edited text.
   let proposalNote = $state("");
   let proposalEditedBody = $state<string | undefined>(undefined);
   let notedProposalKey: string | null = null;
+  let proposalBarDetached = $state(false);
   $effect(() => {
     const key = pageProposalKey;
     untrack(() => {
@@ -190,10 +197,17 @@
       if (!replaced) return;
       proposalNote = "";
       proposalEditedBody = undefined;
-      // A decided or replaced proposal takes its bar with it: the reader is back on the Ticket.
-      if (artifact.origin === "proposal") artifact.close();
+      // A decided or replaced proposal detaches its bar while keeping the artifact open.
+      if (artifact.origin === "proposal") proposalBarDetached = true;
     });
   });
+  $effect(() => {
+    if (!artifact.shown || artifact.origin !== "proposal") proposalBarDetached = false;
+  });
+  function claimTicketArtifactPress(event: MouseEvent): void {
+    if (artifactForPressOnThePage(event)) proposalBarDetached = false;
+    artifact.claimPress(event);
+  }
   // Which stages the reader has opened or closed with their own hands, by field name. A
   // stage that settles moves into the fold above and is rebuilt there, so the answer
   // cannot live in the stage. It lives here, where it outlives the move.
@@ -318,7 +332,7 @@
   data-screen="ticket"
   data-ticket-id={stableId}
   data-stage={section?.record.value.stage}
-  onclick={artifact.claimPress}
+  onclick={claimTicketArtifactPress}
 >
   {#if brokenTicket}
     <div class="ticket-page" data-broken-ticket>
@@ -439,7 +453,7 @@
             {#if currentField}
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
-                  {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
+                  {#key pageProposalKey}
                     <WorkerProposalCard ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
                       ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
                       onAccept={async () => {}}
@@ -503,7 +517,7 @@
           bind:element={artifact.element}
           onRefresh={artifact.refresh}
           onClose={artifact.close}
-          bar={artifact.origin === "proposal" && pageProposal ? proposalBar : undefined}
+          bar={artifact.origin === "proposal" && pageProposal && !proposalBarDetached ? proposalBar : undefined}
         />
       {/if}
       {#snippet proposalBar()}
@@ -512,9 +526,9 @@
             <WorkerProposalCard composerOnly ticketId={stableId} proposal={pageProposal} lifecycle={section.lifecycle} stage={section.detail.stage}
               ceiling={section.detail.ceiling} holder={section.detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(section.detail.conversation_id)}
               bind:revisionText={proposalNote} initialEditedBody={proposalEditedBody}
-              onAccept={async () => artifact.close()}
+              onAccept={async () => { if (routeMounted) artifact.close(); }}
               onScope={updateScope}
-              onReturn={async () => artifact.close()} />
+              onReturn={async () => { if (routeMounted) artifact.close(); }} />
           {/key}
         {/if}
       {/snippet}
@@ -528,6 +542,7 @@
             bind:conversationState
             conversationId={shownConversationId}
             bind:selectedPastConversationId
+            workerSetup={selectedPastConversationId === null ? masthead.worker_setup : null}
             readOnly={selectedPastConversationId !== null}
             persistenceKey={`owner:ticket:${detail.id}`}
             uploadOwner={{kind:"ticket",id:detail.id}}

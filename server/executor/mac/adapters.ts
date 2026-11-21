@@ -20,24 +20,17 @@ export interface LoadedExecutorDriver {
   readonly manifest: DriverManifest;
   readonly executor: ExecutorDriver;
 }
-/** Every driver that has an executor half, in BUILT_IN_DRIVERS order. */
+/** Every driver's executor half, in BUILT_IN_DRIVERS order. */
 export async function load_executor_drivers(
   drivers: readonly AnyAgentDriver[] = BUILT_IN_DRIVERS,
 ): Promise<readonly LoadedExecutorDriver[]> {
-  const loaded = await Promise.all(
-    drivers.map(async (driver) => {
-      return driver.executor
-        ? [
-            {
-              driver_kind: driver.driver_kind,
-              manifest: driver.manifest,
-              executor: await driver.executor(),
-            },
-          ]
-        : [];
-    }),
+  return Promise.all(
+    drivers.map(async (driver) => ({
+      driver_kind: driver.driver_kind,
+      manifest: driver.manifest,
+      executor: await driver.executor(),
+    })),
   );
-  return loaded.flat();
 }
 export interface MacAdapterOptions {
   readonly drivers: readonly LoadedExecutorDriver[];

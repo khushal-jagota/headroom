@@ -11,6 +11,9 @@ import {
   rmSync,
   renameSync,
   readdirSync,
+  utimesSync,
+  openSync,
+  closeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -32,6 +35,8 @@ import {
   workspace_identity,
   prepare_workspace,
 } from './filesystem.ts';
+import { flock } from '../core/locks/flock.ts';
+import { clean_mirrors } from './filesystem/mirror.ts';
 import { git, ticket_match } from './filesystem/shared.ts';
 import { RETENTION_SECONDS } from './contracts.ts';
 import type { WorkspaceOptions } from './contracts.ts';
@@ -113,8 +118,16 @@ test('the synthetic guard rejects outside paths and symlink escapes before produ
 test('identity rejects replacement during retirement and preparation resumes the same artifact-only folder', async () => {
   const path = folder(),
     identity = workspace_identity(admit(path));
-  expect(await prepare_workspace(path, null, ticket, options)).toBe(join(path, 'worktree'));
-  expect(await prepare_workspace(path, null, ticket, options)).toBe(join(path, 'worktree'));
+  expect(await prepare_workspace(path, ticket, null, options)).toBe(join(path, 'worktree'));
+  expect(await prepare_workspace(path, ticket, null, options)).toBe(join(path, 'worktree'));
+  await expect(
+    prepare_workspace(
+      path,
+      ticket,
+      { repository_url: 'https://example.invalid/repo.git' },
+      options,
+    ),
+  ).rejects.toThrow('Ticket workspace repository or path changed');
   renameSync(path, join(root, 'older'));
   mkdirSync(path);
   const replacement = workspace_identity(admit(path));
@@ -210,7 +223,7 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
         preparing: false,
       }),
     );
-    expect(await prepare_workspace(path, primary, ticket, options)).toBe(managed);
+    expect(await prepare_workspace(path, ticket, null, options)).toBe(managed);
     const other = admit(join(root, 'unrelated')),
       locked = admit(join(root, 'locked'));
     await command(primary, ['worktree', 'add', '-b', 'unrelated', other]);
@@ -248,10 +261,22 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     await command(project, ['remote', 'add', 'origin', remote]);
     await command(project, ['push', 'origin', 'main']);
     const path = folder(),
-      checkout = await prepare_workspace(path, project, ticket, options);
+      checkout = await prepare_workspace(
+        path,
+        ticket,
+        { repository_url: remote, default_branch: 'main' },
+        options,
+      );
     expect(lstatSync(join(checkout, '.git')).isDirectory()).toBe(true);
     expect(await command(checkout, ['remote', 'get-url', 'origin'])).toBe(remote);
-    expect(await prepare_workspace(path, project, ticket, options)).toBe(checkout);
+    expect(
+      await prepare_workspace(
+        path,
+        ticket,
+        { repository_url: remote, default_branch: 'main' },
+        options,
+      ),
+    ).toBe(checkout);
     expect(readFileSync(join(path, 'AGENTS.md'), 'utf8')).toContain('## logs/');
     expect(readFileSync(join(path, 'CLAUDE.md'), 'utf8')).toContain('## logs/');
     const marker = read_workspace_identity(path);
@@ -271,6 +296,95 @@ test.skipIf(!['linux', 'darwin'].includes(process.platform))(
     );
     expect(expired.removed).toContain(path);
     expect(readdirSync(path)).toEqual(['logs']);
+  },
+);
+
+// Gap: no test proves a second Ticket clone reads the local mirror yet stays an independent, current checkout.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'a second Ticket clone reuses the Project mirror, sees new commits and shares no objects',
+  async () => {
+    const remote = join(root, 'origin.git'),
+      project = join(root, 'project');
+    mkdirSync(remote);
+    mkdirSync(project);
+    await command(remote, ['init', '--bare']);
+    await command(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    await command(project, ['init', '-b', 'main']);
+    await command(project, ['config', 'user.email', 'proof@example.test']);
+    await command(project, ['config', 'user.name', 'Synthetic proof']);
+    await command(project, ['remote', 'add', 'origin', remote]);
+    const publish = async (text: string) => {
+      writeFileSync(join(project, 'tracked.txt'), text);
+      await command(project, ['add', '.']);
+      await command(project, ['commit', '-m', text]);
+      await command(project, ['push', 'origin', 'main']);
+    };
+    const repository = { repository_url: remote, default_branch: 'main' };
+    const mirror_root = join(root, 'cache', 'git-mirrors');
+    const mirrored = { ...options, mirror_root };
+    await publish('first');
+    const one = await prepare_workspace(folder(), ticket, repository, mirrored);
+    expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toHaveLength(1);
+    await publish('second');
+    const other = 't_89abcdef';
+    const two = await prepare_workspace(folder(other), other, repository, mirrored);
+    expect(readFileSync(join(one, 'tracked.txt'), 'utf8')).toBe('first');
+    expect(readFileSync(join(two, 'tracked.txt'), 'utf8')).toBe('second');
+    expect(existsSync(join(two, '.git', 'objects', 'info', 'alternates'))).toBe(false);
+    expect(await command(two, ['remote', 'get-url', 'origin'])).toBe(remote);
+    await command(two, ['fsck', '--no-dangling']);
+  },
+);
+
+// Gap: nothing proves mirror cleanup removes only expired or orphaned mirrors and skips one in use.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'mirror cleanup removes expired mirrors and orphaned partials but not fresh or locked ones',
+  async () => {
+    const mirror_root = join(root, 'cache', 'git-mirrors');
+    mkdirSync(mirror_root, { recursive: true });
+    const day = 24 * 60 * 60,
+      now = 100 * day;
+    const make = (name: string, age_days: number) => {
+      mkdirSync(join(mirror_root, `${name}.git`));
+      writeFileSync(join(mirror_root, `${name}.lock`), '');
+      utimesSync(join(mirror_root, `${name}.lock`), now - age_days * day, now - age_days * day);
+    };
+    make('old', 31);
+    make('fresh', 1);
+    make('busy', 40);
+    mkdirSync(join(mirror_root, 'old.git.abc.tmp'));
+    const held = openSync(join(mirror_root, 'busy.lock'), 'r+');
+    expect(flock(held, 'try-exclusive')).toBe(0);
+    try {
+      const removed = await clean_mirrors(now, { ...options, mirror_root });
+      expect(removed).toEqual([join(mirror_root, 'old.git')]);
+    } finally {
+      closeSync(held);
+    }
+    expect(readdirSync(mirror_root).filter((name) => name.endsWith('.git'))).toEqual([
+      'busy.git',
+      'fresh.git',
+    ]);
+    expect(existsSync(join(mirror_root, 'old.git.abc.tmp'))).toBe(false);
+  },
+);
+
+// Gap: successful clone tests do not prove clone failures refuse without creating an empty worktree.
+test.skipIf(!['linux', 'darwin'].includes(process.platform))(
+  'a failed clone stops with a clear error and never leaves an empty worktree',
+  async () => {
+    const path = folder();
+    workspace_identity(admit(path));
+    await expect(
+      prepare_workspace(
+        path,
+        ticket,
+        { repository_url: join(root, 'missing.git'), default_branch: 'main' },
+        options,
+      ),
+    ).rejects.toThrow('Cannot clone the Project repository');
+    expect(existsSync(join(path, 'worktree'))).toBe(false);
+    expect(readdirSync(path).filter((name) => name.startsWith('.clone-'))).toEqual([]);
   },
 );
 

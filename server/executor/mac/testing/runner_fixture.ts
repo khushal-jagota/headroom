@@ -24,7 +24,11 @@ const unexpected_workspace_operation = (): never => {
 };
 export const unexpected_workspaces: Pick<
   MacRunnerOptions,
-  'workspace_git' | 'register_workspace' | 'retire_workspace' | 'retirement_is_committed'
+  | 'workspace_git'
+  | 'register_workspace'
+  | 'report_worker_setup'
+  | 'retire_workspace'
+  | 'retirement_is_committed'
 > = {
   workspace_git: {
     environment: {},
@@ -36,6 +40,8 @@ export const unexpected_workspaces: Pick<
     },
   },
   register_workspace: async () => unexpected_workspace_operation(),
+  // Every start reports its setup steps; this fixture discards them.
+  report_worker_setup: async () => {},
   retire_workspace: async () => unexpected_workspace_operation(),
   retirement_is_committed: async () => unexpected_workspace_operation(),
 };
@@ -54,6 +60,7 @@ export function native_fixture_options(
     workspace_lock: new FifoLock(),
     workspace_git: unexpected_workspaces.workspace_git,
     register_workspace: unexpected_workspaces.register_workspace,
+    report_worker_setup: unexpected_workspaces.report_worker_setup,
     factory: input.factory,
     on_failure: input.on_failure,
     native_skill_home: input.native_skill_home,

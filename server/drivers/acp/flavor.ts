@@ -15,6 +15,8 @@ export const ACP_CHILD_CAPABILITIES: BackendCapabilities = {
 export interface AcpLaunch {
   readonly argv: readonly string[];
   readonly environment_overrides: readonly (readonly [string, string])[];
+  /** Inherited host environment filtered through INHERITED_ENVIRONMENT_NAMES. Defaults to process.env. */
+  readonly inherited_environment?: Readonly<NodeJS.ProcessEnv>;
 }
 /** Taken before a prompt is written. Read once the agent has answered that prompt `end_turn`. */
 export interface AcpPromptOutcomeWatch {

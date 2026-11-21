@@ -51,7 +51,7 @@ enum WorkerGroup: String, CaseIterable, Identifiable {
         // Replies remain unread dots; the complete page has no Messages bucket.
         if ticket.ticketStatus == "blocked" || ticket.isBlocked { return .blocked }
         if ticket.agentState == "errored" { return .errored }
-        if ticket.ticketStatus == "agent" || ticket.agentState == "working" { return .agent }
+        if ticket.ticketStatus == "agent" || ticket.agentState == "working" || ticket.agentState == "setting_up" { return .agent }
         if ticket.awaitingAgentApproval { return .agentApproval }
         return .empty
     }

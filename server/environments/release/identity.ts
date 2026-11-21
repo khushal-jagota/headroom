@@ -15,10 +15,8 @@ import { AppValidationError } from './contracts.ts';
 import {
   FILE_CHUNK_BYTES,
   NODE_RUNTIME_EXECUTABLES,
-  NODE_RUNTIME_FILES,
   RUNTIME_CONTRACT_PATH,
   RUNTIME_INVENTORY_PATH,
-  SHARED_RUNTIME_FILES,
 } from './configuration.ts';
 import { expand_path, resolved_path } from '../paths.ts';
 import { parse_optional_runtime_contract } from '../updates/logic/runtime_contract.ts';
@@ -115,6 +113,7 @@ export async function validate_app_tree(root: string): Promise<void> {
     if ((await lstat(path)).isSymbolicLink()) await assert_link(root, path);
   }
 }
+/** The release's own launch entry points, which the updater and service run. */
 async function validate_runtime_tree(root: string): Promise<void> {
   for (const name of NODE_RUNTIME_EXECUTABLES) {
     const path = join(root, name);
@@ -125,9 +124,6 @@ async function validate_runtime_tree(root: string): Promise<void> {
       throw new AppValidationError(`runtime file is not executable: ${name}`, { cause: error });
     }
   }
-  for (const name of [...SHARED_RUNTIME_FILES, ...NODE_RUNTIME_FILES])
-    if (!(await file(join(root, name))))
-      throw new AppValidationError(`runtime file is missing: ${name}`);
 }
 function decode(bytes: Uint8Array): unknown {
   return JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));

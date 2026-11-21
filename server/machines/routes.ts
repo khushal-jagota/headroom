@@ -40,8 +40,11 @@ async function machine_views(services: AreaServices): Promise<{ machines: Machin
     machines: records.map((machine) => {
       const available = machine.machine_id === HOME_MACHINE_ID || present.has(machine.machine_id);
       const rows = by_destination.get(machine.machine_id) ?? [];
-      const running = rows.filter((row) =>
-        Boolean((row.conversation_signal as { working?: boolean } | undefined)?.working),
+      // A Worker that is setting up already holds the machine.
+      const running = rows.filter(
+        (row) =>
+          Boolean((row.conversation_signal as { working?: boolean } | undefined)?.working) ||
+          row.agent_state === 'setting_up',
       ).length;
       return {
         ...machine,
@@ -49,8 +52,12 @@ async function machine_views(services: AreaServices): Promise<{ machines: Machin
         running_workers: available ? running : null,
         waiting_tickets: available
           ? 0
-          : rows.filter((row) => row.ticket_status === 'agent' || row.agent_state === 'working')
-              .length,
+          : rows.filter(
+              (row) =>
+                row.ticket_status === 'agent' ||
+                row.agent_state === 'working' ||
+                row.agent_state === 'setting_up',
+            ).length,
       };
     }),
   };

@@ -26,6 +26,8 @@
       <StageMark state="current-awaiting-approval" aria-label="Unread message" data-conversation-signal="message" />
     {:else if kind === 'working'}
       <StageMark state="current-running" aria-label="Working" data-conversation-signal="working" />
+    {:else if kind === 'setting_up'}
+      <StageMark state="current-running" aria-label="Setting up" data-conversation-signal="setting_up" />
     {/if}
   </span>
 {/if}

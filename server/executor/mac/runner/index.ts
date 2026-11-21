@@ -69,6 +69,7 @@ export class MacRunner implements MacRunnerContract {
       workspace_lock,
       workspace_git: options.workspace_git,
       register_workspace: options.register_workspace,
+      report_worker_setup: options.report_worker_setup,
       event_sink: (reference) => events.event_sink(reference),
       on_failure: failure,
       worker_cleanup: {

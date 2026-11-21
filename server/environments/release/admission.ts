@@ -209,11 +209,36 @@ export async function validate_node_probe_report(
     if (typeof value !== 'string' || !path_is_within(root, await resolved_path(value)))
       throw new AppValidationError("runtime probe packages differ from the candidate's own");
 }
-export async function admit_runtime(
+/**
+ * Install-time admission. The release must match its own receipt and contract, and this host
+ * must meet the requirements that the release declares. Candidate code does not run here: the
+ * installer's health check after the swap, with rollback, proves that the release runs.
+ */
+export function admit_runtime(
   root: string,
   manifest: AppManifest,
   child_processes: OwnedChildProcesses,
   expected_target?: RuntimeTarget,
+): Promise<void> {
+  return admit(root, manifest, child_processes, expected_target, false);
+}
+/**
+ * Build-time proof for a release this same code built. It also runs the candidate's packages,
+ * usage worker and driver tools, so it never runs against another version's release.
+ */
+export function prove_built_runtime(
+  root: string,
+  manifest: AppManifest,
+  child_processes: OwnedChildProcesses,
+): Promise<void> {
+  return admit(root, manifest, child_processes, undefined, true);
+}
+async function admit(
+  root: string,
+  manifest: AppManifest,
+  child_processes: OwnedChildProcesses,
+  expected_target: RuntimeTarget | undefined,
+  prove: boolean,
 ): Promise<void> {
   if (manifest.runtime_contract === null)
     throw new AppValidationError('candidate lacks a runtime contract; republish the app');
@@ -251,6 +276,7 @@ export async function admit_runtime(
     if (contract.system === 'darwin' && path_is_within(root, node))
       throw new AppValidationError('Mac home requires a host Node outside its application');
     current(deadline);
+    if (!prove) return;
     const report = await run_runtime_json_probe(
       [
         node,

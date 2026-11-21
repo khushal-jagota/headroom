@@ -41,6 +41,7 @@
 
   let {
     conversationId,
+    workerSetup = null,
     roleLabel = "Worker",
     backendKey = null,
     conversationExists = false,
@@ -116,6 +117,8 @@
     reconcileLocalSend?: (messageId: string) => Promise<boolean>;
     transcriptLoading?: boolean;
     conversationId: string;
+    /** The owning Ticket's Worker being prepared; the status line says so until a turn runs. */
+    workerSetup?: import("../../lib/navigation/contracts").WorkerSetup | null;
     roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
@@ -561,6 +564,7 @@
       {connectionTrouble} running={running && !activityUncertain}
       startedAtUnixMilliseconds={turnStartedAt}
       {backgroundWorking}
+      {workerSetup}
       feedback={activityUncertain ? "Current activity on this machine is unknown." : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 

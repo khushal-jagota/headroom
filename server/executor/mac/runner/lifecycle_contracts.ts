@@ -1,4 +1,5 @@
 /** The complete local runner owns command, native and source work. Storage stays with its host. */
+import type { WorkerSetupReport } from '../../wire.generated.ts';
 import type {
   BackendEventSink,
   BackendEventValue,
@@ -56,12 +57,22 @@ export interface MacRunnerOptions {
   readonly incarnation: string;
   readonly native: Omit<
     MacNativeChildrenOptions,
-    'event_sink' | 'workspace_lock' | 'workspace_git' | 'register_workspace' | 'worker_cleanup'
+    | 'event_sink'
+    | 'workspace_lock'
+    | 'workspace_git'
+    | 'register_workspace'
+    | 'report_worker_setup'
+    | 'worker_cleanup'
   >;
   readonly workspace_git: NonNullable<WorkspaceOptions['git_execution']>;
   readonly register_workspace: (
     child: ChildReference,
     workspace: WorkspaceIdentity,
+  ) => Promise<void>;
+  /** Tell the home server which Worker setup step this child's start is in. */
+  readonly report_worker_setup: (
+    child: ChildReference,
+    step: WorkerSetupReport['step'],
   ) => Promise<void>;
   readonly retire_workspace: (
     state: WorkspaceState,

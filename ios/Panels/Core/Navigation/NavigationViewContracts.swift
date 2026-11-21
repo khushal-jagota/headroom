@@ -93,6 +93,8 @@ struct ViewRequest: Encodable, Equatable, Sendable {
 struct ViewPrincipal: Codable, Hashable, Sendable { let kind: String; let id: String }
 struct ViewContentReference: Codable, Sendable { let version: String; let utf8Bytes: Int }
 struct ViewIntegrityIssue: Codable, Sendable { let reason: String }
+/// The Ticket's Worker is setting up: its machine prepares the workspace, then launches the agent.
+struct ViewWorkerSetup: Codable, Sendable { let step: String; let beganAt: Double; let machineId: String }
 
 // BEGIN GENERATED TICKET CONTRACT
 // Maintained by hand. It mirrors the Ticket view in server/navigation/views/contracts.ts.
@@ -130,6 +132,7 @@ struct ViewTicketValue: Codable, Sendable {
     let machineId: String
     let recapReference: ViewContentReference?
     let integrityError: ViewIntegrityIssue?
+    let workerSetup: ViewWorkerSetup?
 }
 // END GENERATED TICKET CONTRACT
 

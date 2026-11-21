@@ -154,6 +154,7 @@ export class MacService {
         environment: adapters.environment,
       },
       register_workspace: (child, workspace) => this.client.register_workspace(child, workspace),
+      report_worker_setup: (child, step) => this.client.report_worker_setup(child, step),
       retire_workspace: (state, workspace) => this.client.retire_workspace(state, workspace),
       retirement_is_committed: (state, workspace) =>
         this.client.retire_workspace(state, workspace, { replay: true }),

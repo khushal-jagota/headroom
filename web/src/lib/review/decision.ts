@@ -1,6 +1,8 @@
 import { writable } from "svelte/store";
 import { fetchJson, PlannerFetchError } from "../api";
 import { queryClient } from "../queryClient";
+import { readReviewDraft, saveReviewDraft } from "./messages";
+import type { SentMessagePiece } from "../conversation/wire";
 import type { DecisionCommand, DecisionReceipt, SavedDecision } from "./contracts";
 
 export type ReviewDecisionBody = Omit<DecisionCommand, "decision" | "field">;
@@ -50,7 +52,8 @@ export function recallReviewDecision(identity: string): SavedDecision | null {
     const value: unknown = JSON.parse(raw);
     if (!isObject(value) || value.version !== 1 || typeof value.ticketId !== "string"
       || typeof value.operationId !== "string" || !value.operationId || !validCommand(value.command)
-      || decisionIdentity(value.ticketId, value.command.expected_proposal_revision) !== identity) throw storageError();
+      || decisionIdentity(value.ticketId, value.command.expected_proposal_revision) !== identity
+      || !(value.attachmentCount === undefined || (Number.isInteger(value.attachmentCount) && Number(value.attachmentCount) > 0))) throw storageError();
     return value as SavedDecision;
   } catch (error) {
     if (error instanceof Error && error.message.includes("older route")) throw error;
@@ -68,6 +71,11 @@ function save(identity: string, value: SavedDecision): void {
 function forget(identity: string): void {
   try { window.localStorage.removeItem(storageKey(identity)); }
   catch { throw storageError(); }
+}
+const attachmentKey = (identity: string) => `decision:${identity}`;
+/** The pictures and files saved with a decision that is not yet confirmed. */
+export async function recallDecisionAttachments(identity: string): Promise<SentMessagePiece[]> {
+  return (await readReviewDraft(attachmentKey(identity))) as SentMessagePiece[];
 }
 function publishRefusal(identity: string, saved: SavedDecision, error: unknown): void {
   refusals.set(identity, { saved, error });
@@ -106,14 +114,23 @@ async function locked<T>(identity: string, action: () => Promise<T>): Promise<T>
   if (!navigator.locks) throw new Error("This browser cannot safely coordinate decisions across tabs.");
   return navigator.locks.request(storageKey(identity), action);
 }
+async function commandToSend(identity: string, saved: SavedDecision): Promise<DecisionCommand> {
+  if (!saved.attachmentCount) return saved.command;
+  const attachments = await recallDecisionAttachments(identity);
+  if (attachments.length !== saved.attachmentCount) {
+    throw new Error("The pictures and files for the previous decision cannot be recovered. Open the Ticket and check it before another decision.");
+  }
+  return { ...saved.command, attachments };
+}
 async function resolve(identity: string, saved: SavedDecision): Promise<DecisionReceipt> {
   const path = `/api/tickets/${encodeURIComponent(saved.ticketId)}/decision-operations/${encodeURIComponent(saved.operationId)}`;
   // Only a validated terminal receipt clears a saved operation. A failed or timed-out request cannot.
   const found = validateDecisionResponse(await fetchJson(path, { cache: "no-store", signal: AbortSignal.timeout(requestTimeoutMs) }), saved, true);
   const receipt = found ?? validateDecisionResponse(await fetchJson(path, {
-    method: "POST", body: saved.command, cache: "no-store", signal: AbortSignal.timeout(requestTimeoutMs)
+    method: "POST", body: await commandToSend(identity, saved), cache: "no-store", signal: AbortSignal.timeout(requestTimeoutMs)
   }), saved, false)!;
   forget(identity);
+  if (saved.attachmentCount) await saveReviewDraft(attachmentKey(identity), []);
   const refusal = receipt.outcome === "refused"
     ? new DecisionRefusedError(
       `${saved.command.decision === "approve" ? "Approval" : "Send back"} did not apply: ${receipt.error!.message}`,
@@ -126,16 +143,21 @@ async function resolve(identity: string, saved: SavedDecision): Promise<Decision
   return receipt;
 }
 export async function submitReviewDecision(ticketId: string, field: string, decision: ReviewDecision): Promise<DecisionReceipt> {
-  const command = JSON.parse(JSON.stringify({ decision: decision.action, field, ...decision.body })) as DecisionCommand;
+  const { attachments = [], ...body } = decision.body;
+  const command = JSON.parse(JSON.stringify({ decision: decision.action, field, ...body })) as SavedDecision["command"];
+  const attachmentCount = attachments.length || undefined;
   const identity = decisionIdentity(ticketId, command.expected_proposal_revision);
   return locked(identity, async () => {
     clearRefusals(ticketId, field);
     const previous = recallReviewDecision(identity);
-    if (previous && canonical(previous.command) !== canonical(command)) {
+    if (previous && (canonical(previous.command) !== canonical(command) || previous.attachmentCount !== attachmentCount)) {
       throw new Error("The previous decision is unconfirmed. Check its original note and approval choice before another decision.");
     }
     const saved: SavedDecision = previous ?? { version: 1, ticketId, operationId: crypto.randomUUID(),
-      command };
+      command, ...(attachmentCount ? { attachmentCount } : {}) };
+    if (!previous && attachmentCount && !await saveReviewDraft(attachmentKey(identity), attachments)) {
+      throw new Error("The pictures and files could not be saved in this browser. Your note is kept.");
+    }
     save(identity, saved);
     return resolve(identity, saved);
   });

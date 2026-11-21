@@ -1,4 +1,4 @@
-import type { TicketValue, TicketRecord, GoalRecord, ManagerRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledManagerRecord } from './contracts';
+import type { TicketValue, WorkerSetup, TicketRecord, GoalRecord, ManagerRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledManagerRecord } from './contracts';
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState } from '../types';
 import type { WorkspaceTicket, WorkspaceManager, WorkspaceSettledManager, WorkspaceChief } from '../workspaceRail';
@@ -19,10 +19,16 @@ function signal(knowledge: ConversationKnowledge | undefined): Partial<Conversat
   const working=value(knowledge?.working), message=value(knowledge?.message_for_owner);
   return {...(working === null ? {} : {working}),...(message === null ? {} : {message_for_owner:message})};
 }
-/** Same existing agent-state precedence; unknown runtime never becomes an idle fact. */
-function agentState(status: string | null, stage: string | null, knowledge: ConversationKnowledge | undefined): AgentState | null {
+/** A Ticket's conversation facts, with its Worker setup beside them. */
+function ticketSignal(knowledge: ConversationKnowledge | undefined, workerSetup: WorkerSetup | null): Partial<ConversationSignal> {
+  return workerSetup === null ? signal(knowledge) : {...signal(knowledge),setting_up:true};
+}
+/** Same existing agent-state precedence; unknown runtime never becomes an idle fact.
+ *  A live turn outranks Worker setup, and setup outranks every resting state. */
+function agentState(status: string | null, stage: string | null, knowledge: ConversationKnowledge | undefined, workerSetup: WorkerSetup | null): AgentState | null {
   const working=value(knowledge?.working), failed=value(knowledge?.last_turn_failed);
   if (working === true) return 'working';
+  if (workerSetup !== null) return 'setting_up';
   if (status === 'errored') return 'errored';
   if (failed === true && stage !== 'done') return 'errored';
   return working === false && (failed === false || stage === 'done') ? 'idle' : null;
@@ -88,12 +94,13 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
     const parent=row.manager_kind==='chief' ? null : row.manager_id;
+    const workerSetup=row.worker_setup ?? null;
     return [{id:record.id,machine_id:row.machine_id,locale:row.locale === "macos" ? "macos" as const : "vps" as const,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,stage_label:row.stage_label,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
-      activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
+      activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:ticketSignal(knowledge,workerSetup),worker_setup:workerSetup,
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
       awaiting_approval:parked && owner,awaiting_agent_approval:parked && !owner,assigned:row.stage_ownership==='user',
-      agent_state:agentState(row.ticket_status,row.stage,knowledge),
+      agent_state:agentState(row.ticket_status,row.stage,knowledge,workerSetup),
       gating_field:row.gating_field,recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,
       manager:parent === null ? {kind:'chief',id:'chief'} : {kind:'manager',id:parent},
       manager_id:parent,manager_title:parent === null ? null : managersById.get(parent)?.title ?? null}];
@@ -111,7 +118,8 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(projectId!==null && !rawProjectsById.has(projectId)) continue;
     ticketMastheadsById.set(ticket.id,{id:ticket.id,machine_id:ticket.machine_id,locale:ticket.locale ?? "vps",title:raw.title,worker_type:raw.worker_type,workflow_label:'workflow_label' in raw ? raw.workflow_label : undefined,
       project:projectId===null ? null : rawProjectsById.get(projectId)!.value.name,
-      conversation_id:raw.conversation_id,conversation_signal:signal(raw.conversation_id===null ? undefined : view.conversations.get(raw.conversation_id))});
+      conversation_id:raw.conversation_id,conversation_signal:signal(raw.conversation_id===null ? undefined : view.conversations.get(raw.conversation_id)),
+      worker_setup:ticket.worker_setup ?? null});
   }
   const managers: WorkspaceManager[]=managerRecords.map(record=>{
     const row=record.value;
@@ -121,14 +129,14 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
       conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`manager:${record.id}`) ?? [],
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
-      awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};
+      awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge,null)};
   });
   const settledManagers:WorkspaceSettledManager[]=[...rawSettledManagersById.values()].map(record=>{
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
     return {id:record.id,...row,conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`manager:${record.id}`) ?? [],
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
-      awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};
+      awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge,null)};
   });
   const chief=chiefRecord?.kind==='chief' ? {
     label:chiefRecord.value.label,conversation_id:chiefRecord.value.conversation_id,
@@ -278,6 +286,8 @@ export type NavigationTicketMasthead = {
   readonly project:string | null;
   readonly conversation_id:string | null;
   readonly conversation_signal:Partial<ConversationSignal>;
+  /** Ticket-level: the Worker can be setting up before any conversation exists. */
+  readonly worker_setup:WorkerSetup | null;
 };
 export function navigationTicketMasthead(view:EffectiveNavigationView,id:string):NavigationTicketMasthead | undefined {
   return navigationWorkspacePresentation(view).ticketMastheadsById.get(id);

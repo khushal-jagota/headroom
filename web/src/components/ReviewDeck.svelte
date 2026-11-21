@@ -1,0 +1,38 @@
+<script lang="ts">
+  import { untrack, type Snippet } from "svelte";
+  import { deckItemIn, deckItemOut, type Deck } from "../lib/review/deckMotion";
+
+  /** The one thing on the review screen: an item, or the final screen. When `view` changes
+   *  the old one leaves and the new one arrives. A change inside the same view moves nothing. */
+  let { deck, view, final = false, element = $bindable(null), children }: {
+    deck: Deck;
+    view: string;
+    final?: boolean;
+    element?: HTMLElement | null;
+    children: Snippet;
+  } = $props();
+
+  // Every change of view is a new appearance. A view that comes back while its last copy is
+  // still leaving must be a new element: the framework would reuse the old one, mid-exit.
+  let appearance = $state(0);
+  let lastView: string | null = null;
+  $effect.pre(() => {
+    const current = view;
+    untrack(() => {
+      if (lastView !== null && current !== lastView) appearance += 1;
+      lastView = current;
+    });
+  });
+</script>
+
+{#key `${view}:${appearance}`}
+  <div class="deck-item" class:deck-item--final={final} data-deck-item bind:this={element}
+    in:deckItemIn={{ deck }} out:deckItemOut={{ deck }}>
+    {@render children()}
+  </div>
+{/key}
+
+<style>
+  /* The final screen is a narrower column than a card. */
+  .deck-item--final { width:100%; max-width:calc(var(--measure-index) + var(--page-gutter)*2); margin-inline:auto; }
+</style>

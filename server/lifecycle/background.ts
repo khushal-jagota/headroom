@@ -1,4 +1,5 @@
 /** Production loop factories remain explicit until the production core composes them. */
+import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { composeAreaLoops } from '../areas.ts';
 import type { AreaLoopOptions } from '../areas.ts';
 import type { OwnedAreaContext } from '../core/authority/register.ts';
@@ -188,6 +189,7 @@ export function compose_background_services(
               conversation_system: context.conversationSystem,
               worker_type_registry: configured_worker_type_registry(),
               now: () => context.clock.nowUnix(),
+              message_files: new ConversationMessageFiles(context.config.db_path),
             }
           : null,
       });

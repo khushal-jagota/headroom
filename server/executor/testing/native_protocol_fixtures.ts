@@ -210,6 +210,14 @@ export function native_wire_fixtures(): WireTypes {
       kind: 'start',
       vendor_session_cursor: 'cursor',
       workspace_home_relative: 'unit22',
+      workspace_repository: {
+        repository_url: 'https://github.com/khushal-jagota/panels.git',
+        default_branch: 'staging',
+      },
+    },
+    WorkspaceRepository: {
+      repository_url: 'https://github.com/khushal-jagota/panels.git',
+      default_branch: 'staging',
     },
     WritePrompt: prompt,
     Steer: { content: pieces, sender_content: pieces, sender_label: 'Owner', kind: 'steer' },
@@ -282,6 +290,7 @@ export function native_wire_fixtures(): WireTypes {
     WorkspaceStatesRequest: { ticket_ids: [workspace_state.ticket_id] },
     WorkspaceStatesReply: { states: [workspace_state], at_vps_ms: 100 },
     WorkspaceRegistrationRequest: { child, workspace },
+    WorkerSetupReport: { child, step: 'preparing_workspace' },
     WorkspaceRetirementRequest: { state: workspace_state, workspace, replay: true },
     WorkspaceRetirementReply: { authorized: false },
     LeaseRequest: {

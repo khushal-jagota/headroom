@@ -105,6 +105,7 @@ export class MacWorkspaceCleanup {
       now,
       {
         git_execution: workspace_git,
+        mirror_root: join(paths.root, 'cache', 'git-mirrors'),
         extra_roots: [join(workspace_home, 'panels-session-evidence')],
         active_ticket_ids: new Set(
           native_children

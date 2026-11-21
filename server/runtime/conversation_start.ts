@@ -3,8 +3,17 @@ import { prepare_agent_home } from '../agent_homes/agent_home.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { read_machine } from '../machines/data.ts';
 import { filesRoot } from '../files/logic/paths.ts';
-import { prepare_workspace, workspace_identity } from '../ticket_workspaces/filesystem.ts';
+import {
+  git_mirror_root,
+  prepare_workspace,
+  workspace_identity,
+} from '../ticket_workspaces/filesystem.ts';
 import type { WorkspaceIdentity } from '../ticket_workspaces/contracts.ts';
+import {
+  close_home_worker_setup,
+  declare_worker_setup,
+  type WorkerSetupStep,
+} from '../ticket_workspaces/worker_setup.ts';
 import {
   register_workspace,
   ensure_workspace_activity,
@@ -41,6 +50,7 @@ import type {
 import type { MessageContent } from '../conversation/message_content.ts';
 import { resolve_conversation_start_request } from '../conversation/logic/conversation_start_resolution.ts';
 import { ensure_started_conversation_record } from '../conversation/record/data/store.ts';
+import { readProject } from '../projects/data/index.ts';
 import type { Ticket, TicketLocale } from '../tickets/contracts.ts';
 import * as tickets from '../tickets/data/index.ts';
 import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
@@ -180,9 +190,6 @@ async function message_content_for(
 ): Promise<MessageContent> {
   return typeof content === 'function' ? await content(id) : content;
 }
-export function mac_project_workspace_folder(project_id: string): string {
-  return join('/', 'projects', project_id);
-}
 export function workspace_for_project(
   database: Database,
   ticket_locale: TicketLocale,
@@ -193,32 +200,8 @@ export function workspace_for_project(
 ): [string, WorkspacePathPolicy] {
   if (options.explicit != null)
     return [options.explicit, ticket_locale === 'macos' ? 'absolute' : 'home_relative'];
-  if (ticket_locale === 'macos')
-    return [
-      project_id === null ? '/' : mac_project_workspace_folder(project_id),
-      'executor_default',
-    ];
-  if (project_id !== null) {
-    const project = database.read((sql) =>
-      sql.get<{
-        folder_path: string | null;
-      }>('SELECT folder_path FROM projects WHERE id=?', [project_id]),
-    );
-    if (!project) throw new PlannerError('validation', 'invalid project_id', { project_id });
-    if (project.folder_path !== null) {
-      try {
-        if (statSync(project.folder_path).isDirectory())
-          return [realpathSync(project.folder_path), 'home_relative'];
-      } catch (error) {
-        if (!(
-          error instanceof Error &&
-          'code' in error &&
-          ['ENOENT', 'ENOTDIR'].includes(String(error.code))
-        ))
-          throw error;
-      }
-    }
-  }
+  if (ticket_locale === 'macos') return ['/', 'executor_default'];
+  if (project_id !== null) database.read((sql) => readProject(sql, project_id));
   return [default_workspace(database, options), 'home_relative'];
 }
 interface ResolveOptions extends Partial<WorkspaceContext> {
@@ -371,23 +354,56 @@ export async function start_ticket_conversation(
     const refusal = configured_ticket_execution_refusal(database, sql, current);
     if (refusal !== null) throw refusal;
   });
+  // Home sets up inside this process, so the server declares Home's setup itself. The
+  // setup stays open after success, until the caller's first prompt lands.
+  const home = ticket.machine_id === HOME_MACHINE_ID;
+  const declare = (step: WorkerSetupStep) =>
+    database.write((tx) =>
+      declare_worker_setup(tx, {
+        ticket_id: ticket.id,
+        conversation_id: options.conversation_id,
+        machine_id: HOME_MACHINE_ID,
+        step,
+        now: options.now,
+      }),
+    );
+  if (home) declare('preparing_workspace');
+  try {
+    return await start_prepared_ticket_conversation(system, database, ticket, values, options, {
+      home,
+      declare,
+    });
+  } catch (error) {
+    if (home)
+      database.write((tx) => close_home_worker_setup(tx, ticket.id, options.conversation_id));
+    throw error;
+  }
+}
+async function start_prepared_ticket_conversation(
+  system: ConversationSystem,
+  database: Database,
+  ticket: Ticket,
+  values: ConversationStartValues,
+  options: { conversation_id: string; signal?: AbortSignal; now: number },
+  setup: { home: boolean; declare: (step: WorkerSetupStep) => void },
+): Promise<LinkedConversation> {
   let identity: WorkspaceIdentity | null = null;
-  if (ticket.machine_id === HOME_MACHINE_ID) {
+  if (setup.home) {
     const ticket_folder = join(filesRoot(context(database).db_path, 'ticket'), ticket.id);
-    const project_folder =
+    const repository =
       ticket.project_id === null
-        ? null
-        : database.read(
-            (sql) =>
-              sql.get<{ folder_path: string | null }>(
-                'SELECT folder_path FROM projects WHERE id=?',
-                [ticket.project_id],
-              )?.folder_path ?? null,
-          );
+        ? { repository_url: null, default_branch: null }
+        : database.read((sql) => {
+            const project = readProject(sql, ticket.project_id!);
+            return {
+              repository_url: project.repository_url,
+              default_branch: project.default_branch,
+            };
+          });
     try {
-      await prepare_workspace(ticket_folder, project_folder, ticket.id, {
+      await prepare_workspace(ticket_folder, ticket.id, repository, {
         signal: options.signal,
-        panels_project: ticket.project_id === 'project_panels',
+        mirror_root: git_mirror_root(context(database).db_path),
       });
       values = { ...values, workspace_folder: ticket_folder };
       identity = workspace_identity(ticket_folder);
@@ -399,6 +415,7 @@ export async function start_ticket_conversation(
         { ticket_id: ticket.id },
       );
     }
+    setup.declare('starting_worker');
   }
   const request = start_request(options.conversation_id, values);
   await observe_conversation_operation(() => system.start_conversation(request), options.signal);
@@ -571,60 +588,65 @@ export async function send_to_ticket_conversation(
       now: options.now,
       signal: options.signal,
     });
-    if (!linked.made_here) {
-      await let_go_ticket(system, database, ticket_id, making, options.now);
-      return send_existing_ticket(
-        system,
-        database,
-        ticket_id,
-        linked.conversation_id,
-        await observe_conversation_operation(
-          () => message_content_for(content, linked.conversation_id),
-          options.signal,
-        ),
-        options,
-      );
-    }
-    let fate: PromptDeliveryFate;
     try {
-      fate = await observe_conversation_operation(
-        async () =>
-          system.send(
-            making,
-            await observe_conversation_operation(
-              () => message_content_for(content, making),
-              options.signal,
-            ),
-            send_options(options, true),
+      if (!linked.made_here) {
+        await let_go_ticket(system, database, ticket_id, making, options.now);
+        return send_existing_ticket(
+          system,
+          database,
+          ticket_id,
+          linked.conversation_id,
+          await observe_conversation_operation(
+            () => message_content_for(content, linked.conversation_id),
+            options.signal,
           ),
-        options.signal,
-      );
-      if (fate instanceof PromptDeliveryStarted)
-        database.write((tx) =>
-          tickets.write_ticket_last_chosen_configuration(tx, ticket_id, {
-            expected_conversation_id: making,
-            employee_backend: values.backend_key,
-            model: values.model,
-            reasoning_effort: values.reasoning_effort,
-            now: options.now,
-          }),
+          options,
         );
-    } catch (error) {
-      if (error instanceof ConversationStartAborted) throw error;
-      await let_go_ticket(system, database, ticket_id, making, options.now);
-      throw error;
+      }
+      let fate: PromptDeliveryFate;
+      try {
+        fate = await observe_conversation_operation(
+          async () =>
+            system.send(
+              making,
+              await observe_conversation_operation(
+                () => message_content_for(content, making),
+                options.signal,
+              ),
+              send_options(options, true),
+            ),
+          options.signal,
+        );
+        if (fate instanceof PromptDeliveryStarted)
+          database.write((tx) =>
+            tickets.write_ticket_last_chosen_configuration(tx, ticket_id, {
+              expected_conversation_id: making,
+              employee_backend: values.backend_key,
+              model: values.model,
+              reasoning_effort: values.reasoning_effort,
+              now: options.now,
+            }),
+          );
+      } catch (error) {
+        if (error instanceof ConversationStartAborted) throw error;
+        await let_go_ticket(system, database, ticket_id, making, options.now);
+        throw error;
+      }
+      if (fate instanceof PromptDeliveryRefused) {
+        if (
+          options.retain_definite_start_refusal &&
+          (fate.refusal_reason === 'backend_did_not_start' ||
+            fate.refusal_reason === 'model_resolution_failed')
+        )
+          return { conversation_id: making, fate };
+        await let_go_ticket(system, database, ticket_id, making, options.now);
+        return { conversation_id: null, fate };
+      }
+      return { conversation_id: making, fate };
+    } finally {
+      // The first prompt landed, or this start ended: Home's setup is over either way.
+      database.write((tx) => close_home_worker_setup(tx, ticket_id, making));
     }
-    if (fate instanceof PromptDeliveryRefused) {
-      if (
-        options.retain_definite_start_refusal &&
-        (fate.refusal_reason === 'backend_did_not_start' ||
-          fate.refusal_reason === 'model_resolution_failed')
-      )
-        return { conversation_id: making, fate };
-      await let_go_ticket(system, database, ticket_id, making, options.now);
-      return { conversation_id: null, fate };
-    }
-    return { conversation_id: making, fate };
   }
   const sending_into = options.conversation_id ?? ticket.conversation_id;
   if (sending_into === null || sending_into !== ticket.conversation_id)
