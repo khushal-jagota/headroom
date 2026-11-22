@@ -98,7 +98,7 @@ describe("a tool call row", () => {
     expect(silent).toMatch(/class="c2-tool-chevron[ "]/);
     expect(silent).toContain('aria-expanded="false"');
     const failed = draw({ ...base, title: "npm run check", detail: "svelte-check found 1 error" });
-    // v4.1: the chevron stands right after the label; the subject and the outcome follow it.
+    // The chevron stands right after the label; the subject and the outcome follow it.
     expect(failed.indexOf("c2-tool-verb")).toBeLessThan(failed.indexOf("c2-tool-chevron"));
     expect(failed.indexOf("c2-tool-chevron")).toBeLessThan(failed.indexOf("Failed"));
   });
@@ -134,6 +134,13 @@ describe("a tool call row", () => {
     const html = draw({ ...base, title: "npm test", status: "running", detail: null });
     expect(html).toContain("Running");
     expect(html).toContain('aria-label="Running"');
+  });
+
+  it("keeps its static icon while it runs, marked running, with no spinner of its own", () => {
+    const html = draw({ ...base, title: "Run go test", status: "running", detail: "go test -race ./..." });
+    expect(html).toContain('class="c2-tool-icon');
+    expect(html).not.toContain("c2-tool-spin");
+    expect(html).toContain('data-conversation-tool-status="running"');
   });
 
   it("opens a failed call onto its output in a block whose header says it failed", () => {

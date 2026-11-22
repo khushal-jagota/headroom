@@ -1,5 +1,7 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error -- the tests' type check has no Node types; vitest runs in Node.
+import { readFileSync } from "node:fs";
 import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
 import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 import ConversationCredentialRequestCard from "../src/components/conversation/ConversationCredentialRequestCard.svelte";
@@ -26,11 +28,11 @@ describe("the permission ask", () => {
   it("names what it needs and shows the command once", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } });
     expect(body).toContain("Needs your permission");
-    // v16 (2): the same 8px accent dot as a question and a proposal, no shield.
+    // The same accent dot as a question and a proposal, no shield.
     expect(body).toContain("cv-ask-dot");
     expect(body).not.toContain("data-ask-shield");
     expect(body).toContain(ask.title);
-    // v17 (7): each word of the command is its own unbreakable piece; the text reads once.
+    // Each word of the command is its own piece; the text reads once.
     expect(count(body.replace(/<[^>]+>/g, ""), "xcrun altool")).toBe(1);
   });
 
@@ -46,8 +48,8 @@ describe("the permission ask", () => {
     // No row of big buttons on the composer: rows, each with its number key.
     expect(body).not.toContain("cv-button--primary");
     expect(body).not.toContain("cv-button--outline");
-    // One tile style for every ask. v10 (4): no row is pre-highlighted (each row is the
-    // action), and Deny is labelled in the same tone as the others.
+    // One tile style for every ask. No row is pre-highlighted (each row is the action),
+    // and Deny is labelled in the same tone as the others.
     expect(count(body, "is-selected")).toBe(0);
     expect(body).not.toContain("aria-pressed");
     expect(count(body, "is-quiet")).toBe(0);
@@ -77,10 +79,23 @@ describe("the permission ask", () => {
     expect(order).toEqual(["allow_once", "reject_once"]);
     expect(body).toContain('data-conversation-ask-supplied="false"');
   });
+  it("wraps a command only at spaces: every word is one piece", () => {
+    const upload = { ...ask, detail: "xcrun altool --upload-app -f build/Wren-41.ipa -t ios" };
+    const { body } = render(PermissionAskCard, { props: { ask: upload, onAnswer: () => {} } });
+    const words = [...body.matchAll(/<span class="c2-ask-word[^"]*">([^<]*)<\/span>/g)].map((match) => match[1]);
+    expect(words).toEqual(["xcrun", "altool", "--upload-app", "-f", "build/Wren-41.ipa", "-t", "ios"]);
+  });
+
+  it("gives only the first answer the lead, and Deny its decline tone", () => {
+    const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } });
+    const emphases = [...body.matchAll(/data-conversation-ask-emphasis="(\w+)"/g)].map((match) => match[1]);
+    expect(emphases).toEqual(["primary", "option", "decline"]);
+    expect(body.indexOf('data-conversation-ask-emphasis="primary"')).toBeLessThan(body.indexOf("Allow once"));
+  });
 });
 
 describe("the question panel", () => {
-  it("says where it is in the questions; v10 (4): no confirm pill and no pre-highlighted row", () => {
+  it("says where it is in the questions, with no confirm pill and no pre-highlighted row", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: {
         request: {
@@ -107,13 +122,13 @@ describe("the question panel", () => {
       }
     });
     expect(body).toContain("1 of 2");
-    // v4.1: no category label beside the pager.
+    // No category label beside the pager.
     expect(body).not.toContain(">Style<");
     expect(body).not.toContain('class="topic');
     expect(body).toContain("Needs your answer");
     expect(body).toContain("Which illustration direction?");
-    // v10 (4): no confirm pill, standing alone or docked; no row is pre-highlighted. v13 (5):
-    // back is unavailable on the first question; forward moves on (unavailable on the last).
+    // No confirm pill, standing alone or docked; no row is pre-highlighted. Back is
+    // unavailable on the first question; forward moves on (unavailable on the last).
     expect(body).not.toContain("data-user-input-continue");
     expect(body).not.toContain("cv-button--primary");
     expect(body).toMatch(/data-user-input-back[^>]*disabled/);
@@ -135,7 +150,7 @@ describe("the question panel", () => {
     expect(body).not.toContain("data-conversation-stop");
   });
 
-  it("v10 (4): a several-answer question draws no pill; rows toggle and the composer sends", () => {
+  it("draws no pill for a several-answer question: rows toggle and the composer sends", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: {
         onStop: () => {},
@@ -146,12 +161,18 @@ describe("the question panel", () => {
         }
       }
     });
-    // v10 (4): a several-answer question has no pill of its own either: rows toggle, and the
+    // A several-answer question has no pill of its own either: rows toggle, and the
     // composer's send goes on. Nothing is pre-highlighted.
     expect(body).not.toContain("data-user-input-continue");
     expect(body).not.toContain("is-focused");
     // Its stop row is the same one a permission ask ends in.
     expect(count(body, "data-conversation-ask-stop")).toBe(1);
+  });
+  it("moves on when a single-answer row is chosen, back to a passed-over question when the last cannot send yet", () => {
+    // Choosing is a click and the tests run without a DOM; the wiring is read from the source.
+    const panel = readFileSync(new URL("../src/components/conversation/UserInputQuestionPanel.svelte", import.meta.url), "utf8") as string;
+    expect(panel).toMatch(/if \(question\.multi_select\) \{\s*draft = toggleUserInputChoice\(draft, question, option\);\s*return;\s*\}[\s\S]*?continueOrSubmit\(\);\s*\}/);
+    expect(panel).toContain("if (open >= 0) step = open;");
   });
 });
 
@@ -256,7 +277,7 @@ describe("an own answer written in the composer", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: { request: { requestId: "q-own", questions: [single] }, ownAnswer: "", onSubmit: () => {} }
     });
-    // v4: the composer line itself is the place for an own answer: no field and no row here,
+    // The composer line itself is the place for an own answer: no field and no row here,
     // and no primary of its own (the composer's pill is it).
     expect(body).not.toContain("data-user-input-other");
     expect(body).not.toContain("data-user-input-own");

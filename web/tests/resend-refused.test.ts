@@ -64,7 +64,7 @@ describe("sending again a message that was not delivered", () => {
     const html = drawWith(refused, { available: () => true, resend });
     expect(html).toContain('data-conversation-resend-refused="e7"');
     expect(html).toContain(">Resend</button>");
-    // B5: the bubble says the cause; its actions say the rest.
+    // The bubble says the cause; its actions say the rest.
     expect(html).toMatch(/Not delivered<span aria-hidden="true"> · <\/span>The backend did not start/);
     expect(html).not.toContain("Resend it, or choose another model in the composer first.");
   });

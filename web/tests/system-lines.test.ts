@@ -6,8 +6,8 @@ import TranscriptStatusRow from "../src/components/conversation/TranscriptStatus
 import { promptOutcomeStatus, statusReason, turnEndingStatus, turnFailureSentence, TURN_STOPPED_STATUS, type TranscriptRow } from "../src/lib/conversation/transcript";
 import { placeHoverRow } from "../src/lib/conversation/hoverRowPlacement";
 
-// The owner's review (B3, B4, B5, B9): every system and lifecycle line is the one SystemLine,
-// no line is a card, and a message that was not delivered says so inside its own bubble.
+// Every system and lifecycle line is the one SystemLine, no line is a card, and a message
+// that was not delivered says so inside its own bubble.
 
 type PromptRow = Extract<TranscriptRow, { kind: "prompt" | "prompt_refused" | "prompt_uncertain" | "prompt_discarded" }>;
 const words = [{ piece: "text" as const, text: "Are you still on this?" }];
@@ -88,7 +88,7 @@ describe("a turn's status line", () => {
 });
 
 describe("a message's system lines", () => {
-  it("B5: a message that was not delivered says so inside its bubble, under a rule, with its actions", () => {
+  it("a message that was not delivered says so inside its bubble, under a rule, with its actions", () => {
     const sentence = "codex app-server exited with code 1 before it accepted the prompt";
     const html = draw({ ...base, kind: "prompt_refused", reason: "backend_did_not_start", sentence });
     const bubble = html.slice(html.indexOf("data-conversation-bubble"));
@@ -115,9 +115,15 @@ describe("a message's system lines", () => {
     expect(html).toContain("From Panels");
     expect(html).not.toContain("c2-bubble");
   });
+
+  it("a note from another sender says who sent it, with no system mark", () => {
+    const html = draw({ ...base, kind: "prompt", mode: "queue", sentAtUnixMilliseconds: 1000, senderLabel: "Chief of Staff", content: [{ piece: "text", text: "Look at the flaky test first." }] });
+    expect(html).toContain("From Chief of Staff");
+    expect(html).not.toContain("data-conversation-system-mark");
+  });
 });
 
-// B6, B7, B9: the hover row needs 4 + 24 px. It sits in the gap that follows, goes under a
+// The hover row needs 4 + 24 px. It sits in the gap that follows, goes under a
 // following system line when the gap is smaller, and is not drawn over anything else.
 describe("where a message's hover row stands", () => {
   it("in the gap under the message when the gap holds it", () => {

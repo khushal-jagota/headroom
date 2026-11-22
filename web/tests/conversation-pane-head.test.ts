@@ -93,10 +93,12 @@ describe("the dock's status line", () => {
   });
   const rest = (status: DockStatus, props: Record<string, unknown> = {}) =>
     render(ConversationRestBar, { props: { onOpen: () => {}, status, ...props } }).body.replace(/<!--[^]*?-->/g, "");
-  it("draws the state with its clock, a spinner only while live, and Open with its arrow", () => {
+  it("draws the state with its clock and no narration, a spinner only while live, and Open with its arrow", () => {
     const working = rest({ kind: "working", clock: "29h 28m" });
     expect(working).toContain('data-conversation-system-mark="spinner"');
     expect(working).toMatch(/Working · <span data-conversation-rest-clock[^>]*>29h 28m<\/span>/);
+    // No narration sentence under the Working line.
+    expect(working).not.toContain("narration");
     expect(rest({ kind: "setting-up", clock: "1m 35s" })).toMatch(/Setting up · <span data-conversation-rest-clock[^>]*>1m 35s</);
     for (const [kind, words] of [["idle", "Idle"], ["offline", "Machine offline"]] as const) {
       const html = rest({ kind, clock: null });

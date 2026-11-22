@@ -73,7 +73,7 @@ describe("Focus is focus: no tool activity at all", () => {
 
   it("draws no running command either", () => {
     const html = draw({ expanded: false, settled: false, running: true });
-    // v6: the running turn's Working line is the live edge at the end of the thread, drawn
+    // The running turn's Working line is the live edge at the end of the thread, drawn
     // by the viewport (LiveEdge), never at the turn's top.
     expect(html).not.toContain("Working");
     expect(html).not.toContain("git status");
@@ -88,6 +88,25 @@ describe("Focus is focus: no tool activity at all", () => {
     expect(html).not.toContain("Waiting for your approval");
     expect(html).not.toContain("Working");
     expect(html).not.toContain("tool call");
+    // The transcript ends at the last message; the waiting ask is the composer's.
+    expect(html).not.toContain("data-conversation-paused");
+    expect(html).not.toContain("data-conversation-alive-word");
+  });
+});
+
+describe("a turn's head in Full", () => {
+  it("shows nothing at the top while the turn runs; the live line is the live edge at the end", () => {
+    const html = draw({ expanded: false, lens: "full", settled: false, running: true });
+    expect(html).not.toContain("data-conversation-alive-word");
+    expect(html).toContain("data-conversation-work-group");
+    expect(html).not.toContain("data-conversation-tool-elapsed");
+  });
+
+  it("heads the settled turn again with its meta line, over its work", () => {
+    const html = draw({ expanded: false, lens: "full" });
+    expect(html).toContain("data-conversation-turn-settled-head");
+    expect(html).not.toContain("data-conversation-live-tail");
+    expect(html.indexOf("data-conversation-turn-label")).toBeLessThan(html.indexOf("data-conversation-work-group"));
   });
 });
 
@@ -110,7 +129,7 @@ describe("Full keeps each run of tool calls behind one summary", () => {
     const html = draw({ expanded: false, lens: "full", settled: false, running: true });
     expect(html).toContain("Running");
     expect(html).toContain("git status");
-    // v4: no step counts on the running line.
+    // No step counts on the running line.
     expect(html).not.toContain("2 steps");
   });
 });

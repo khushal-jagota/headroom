@@ -41,7 +41,7 @@ describe("a key request is asked in the composer's place", () => {
     expect(body).toMatch(/class="chat-box[^"]*is-compact/);
   });
 
-  it("v14 (2): draws no Stop of its own while the turn waits on it (the header menu stops the agent)", () => {
+  it("draws no Stop of its own while the turn waits on it (the header menu stops the agent)", () => {
     const running = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, running: true, onStop: () => {}, onCancelTurn: () => {} } }).body;
     expect(running).not.toContain("data-credential-cancel-turn");
     expect(running).not.toContain(">Stop turn<");
@@ -63,7 +63,7 @@ describe("a key request is asked in the composer's place", () => {
     expect(body).not.toContain("Needs a key");
     expect(body).toContain("data-conversation-input");
     expect(body).toContain("Or write a reply");
-    // v6: no Paused line above the ask; the card's own label is the one waiting label.
+    // No Paused line above the ask; the card's own label is the one waiting label.
     expect(body).not.toContain("data-conversation-paused");
     expect(body).not.toContain("Paused");
   });
