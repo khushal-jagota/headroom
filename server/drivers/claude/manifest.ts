@@ -21,8 +21,8 @@ export const claude_manifest: DriverManifest = {
   },
   launcher_environment_names: ['PLAN_CLAUDE_EXECUTABLE', 'ANTHROPIC_API_KEY'],
   cli_floor: {
-    minimum_version: '2.1.219',
-    feature: 'queued message cancellation on Stop',
+    minimum_version: '2.1.259',
+    feature: 'the prompt ids that each result names',
     version_pattern: /^(\S+) \(Claude Code\)$/,
   },
   install: {

@@ -54,7 +54,7 @@ it('checks the selected executable with merged overrides and waits for close', a
     settled = true;
   });
   await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
-  started.stdout.end('2.1.219 (Claude Code)\n');
+  started.stdout.end('2.1.259 (Claude Code)\n');
   await Promise.resolve();
   expect(settled).toBe(false);
   started.exitCode = 0;
@@ -87,7 +87,7 @@ it('kills only its owned timed-out probe and joins its close before rejection', 
     })
     .catch(() => {});
   const result = expect(check).rejects.toThrow(
-    'Cannot check the Claude version at /synthetic/blocked-cli. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.',
+    'Cannot check the Claude version at /synthetic/blocked-cli. Update Claude to at least 2.1.259. Panels requires the prompt ids that each result names.',
   );
   await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
   await vi.advanceTimersByTimeAsync(10_000);
@@ -106,7 +106,7 @@ it('kills only its owned timed-out probe and joins its close before rejection', 
 
 it('answers from the probe-kept verdict without a spawn until the file changes', async () => {
   const path = executable();
-  (await cli_version_recorder('claude', path))('2.1.219 (Claude Code)\n', 0);
+  (await cli_version_recorder('claude', path))('2.1.259 (Claude Code)\n', 0);
   await ensure_cli_compatible('claude', path);
   expect(spawn).not.toHaveBeenCalled();
   // An update replaces the file, so its identity no longer matches the kept verdict.
@@ -118,7 +118,7 @@ it('answers from the probe-kept verdict without a spawn until the file changes',
   started.stdout.end('2.1.100 (Claude Code)\n');
   started.exitCode = 0;
   started.emit('close', 0);
-  const too_old = `Claude 2.1.100 at ${path} is too old. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.`;
+  const too_old = `Claude 2.1.100 at ${path} is too old. Update Claude to at least 2.1.259. Panels requires the prompt ids that each result names.`;
   await expect(check).rejects.toThrow(too_old);
   await expect(ensure_cli_compatible('claude', path)).rejects.toThrow(too_old);
   expect(spawn).toHaveBeenCalledOnce();
@@ -126,10 +126,10 @@ it('answers from the probe-kept verdict without a spawn until the file changes',
 
 it('lets a too-old handshake version replace a kept compatible verdict', async () => {
   const path = executable();
-  (await cli_version_recorder('claude', path))('2.1.219 (Claude Code)\n', 0);
+  (await cli_version_recorder('claude', path))('2.1.259 (Claude Code)\n', 0);
   await confirm_reported_cli_version('claude', path, undefined);
-  await confirm_reported_cli_version('claude', path, '2.1.219');
-  const too_old = `Claude 2.1.100 at ${path} is too old. Update Claude to at least 2.1.219. Panels requires queued message cancellation on Stop.`;
+  await confirm_reported_cli_version('claude', path, '2.1.259');
+  const too_old = `Claude 2.1.100 at ${path} is too old. Update Claude to at least 2.1.259. Panels requires the prompt ids that each result names.`;
   await expect(confirm_reported_cli_version('claude', path, '2.1.100')).rejects.toThrow(too_old);
   await expect(ensure_cli_compatible('claude', path)).rejects.toThrow(too_old);
   expect(spawn).not.toHaveBeenCalled();
