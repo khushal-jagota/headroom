@@ -40,7 +40,10 @@
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
   import type { Snippet } from "svelte";
-  let { address, externalPane, railFoot, railStatus }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; railStatus?: Snippet } = $props();
+  // While Settings is open, `settingsRail` takes the rail's content. The column keeps its
+  // width and its foot. `settingsInSection` is false on the bare Settings address, where a
+  // phone shows the section list as its first screen.
+  let { address, externalPane, railFoot, railStatus, settingsRail, settingsInSection = false }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; railStatus?: Snippet; settingsRail?: Snippet; settingsInSection?: boolean } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
@@ -70,7 +73,6 @@
     if (managerId) return cachedImport("../components/ManagerWorkspace.svelte", () => import("../components/ManagerWorkspace.svelte"));
     switch (opening.markedUtility) {
       case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
-      case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
       case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./IdeasRoute.svelte"));
       default: return null;
     }
@@ -371,6 +373,9 @@
     enterHover({ target, title:worker.title, kicker:"Worker", worker }, immediate);
   }
 
+  // Settings replaces the rail's rows, so a preview opened from one of them has nothing left to point at.
+  $effect(() => { if (settingsRail) untrack(() => dismissHover()); });
+
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
     busyItem = item.id; settleError = ""; dismissHover();
     try {
@@ -383,9 +388,10 @@
 
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
-      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked && !managerId} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
+      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={(Boolean(externalPane) || opening.markedUtility !== null) && !(settingsRail && !settingsInSection)} class:board-workspace-shell--settings={Boolean(settingsRail)} class:board-workspace-shell--settings-list={Boolean(settingsRail) && !settingsInSection} class:board-workspace-shell--chief={opening.chiefMarked && !managerId} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section use:workspaceRailWash bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
+          {#if settingsRail}{@render settingsRail()}{:else}
           <ResourceState shape="block" layout="fill" loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
             <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:renderedRailWindow('rail_parents'),pageRestoration:{coordinator:scrollCoordinator,priority:'parent',publicationId:presentation.scrollPublication?.publicationId ?? null,members:rail.items.map(item=>item.id)},activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.manager-card:not(.chief)',key:node=>node.dataset.manager ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={scrollHover}>
@@ -397,13 +403,14 @@
             </div>
           </div>
           </ResourceState>
+          {/if}
           <!-- Outside the loading region, so the one card never remounts and shows while the workspace cannot load. -->
           {#if railStatus}<div class="rail-status">{@render railStatus()}</div>{/if}
           </div>
           <!-- The dock: Settled and the destinations, one grouping at the foot of the column. -->
           <div class="rail-dock">
             <div class="rail-dock-inner">
-            {#if workspace}
+            {#if workspace && !settingsRail}
               <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
                 <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>{workspace?.globalCounts?.settled ?? rail.settledItems.length}</span></span></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
                 {#if presentation.settledBodyOpen ?? settledOpen}
@@ -456,12 +463,6 @@
           {#if placement.utility === "usage"}
             {#await import("./BackendsRoute.svelte") then view}
 <view.default {...placement.usage} href={utilityHref("usage")} />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if placement.utility === "settings"}
-            {#await import("./SettingsRoute.svelte") then view}
-<view.default {...placement.settings} href={utilityHref("settings")} />
 {:catch error}
 <ErrorLine {error} />
 {/await}
@@ -618,5 +619,8 @@
     .board-workspace-shell--ticket .approved-rail,
     .board-workspace-shell--destination .approved-rail { display:none; }
     .board-workspace-right--destination { display:flex; padding:0; }
+    /* Settings on a phone: the section list is the first screen, and a section replaces it. */
+    .board-workspace-shell--settings .rail-dock { display:none; }
+    .board-workspace-shell--settings-list .board-workspace-right { display:none; }
   }
 </style>

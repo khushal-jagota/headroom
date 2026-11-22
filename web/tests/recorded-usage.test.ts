@@ -66,10 +66,11 @@ describe("T3 Svelte presentation", () => {
     expect(body).not.toContain("reset credits banked");
     expect(body.indexOf('datetime="2026-10-29T11:59:00Z"')).toBeLessThan(body.indexOf('data-allowance-window='));
   });
-  it("keeps the ordinary Config address and disables the period only on Limits", () => {
+  it("offers no Config tab, which moved to Settings, and disables the period only on Limits", () => {
     const body = render(UsageHeader, { props: { tab: "limits", href: prefixHref("#/backends"), days: 1,
       providerKeys: ["codex"], selectedProviders: ["codex"], busy: false, drivers: DRIVERS, onDays: () => {}, onProviders: () => {}, onRefresh: () => {} } }).body;
-    expect(body).toContain('href="#/backends/config"');
+    expect(body).toContain('href="#/backends/tokens"');
+    expect(body).not.toContain('href="#/backends/config"');
     expect(body).toContain("24h");
     expect(body).toContain("disabled");
   });

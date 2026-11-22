@@ -50,7 +50,7 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 
 - `server/notifications/`: flags and edges (`attention.ts`), the policy (`logic/policy.ts`), deliveries, preferences, Web Push, and APNs.
 - `static/service-worker.js`: the service worker.
-- `web/src/routes/NotificationsRoute.svelte`: the settings section.
+- `web/src/components/settings/NotificationSettings.svelte`: the settings section.
 
 _Last verified: 2026-11-15._
 
