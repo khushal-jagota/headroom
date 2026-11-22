@@ -44,24 +44,26 @@ until the outgoing work and the composer clear have committed together.
 
 Every message, approval, send-back, mark read, Review recording and ask answer goes
 through one outbox. It saves the action first and shows it as done at once. It then
-sends it while the app is in the foreground, and sends it again by itself until the
-server answers. Activation, a new item and a network change wake it. After a failed
-attempt an item waits 5 seconds, doubling up to 30; that delay lives only in memory,
-so a relaunch or a regained network tries again at once. Outside the foreground
-nothing is sent, except the one short attempt a
-[notification reply](NOTIFICATIONS.md) gets.
+sends it while the app is in the foreground, and sends it again by itself: without
+limit while the network is down, and five times when the server answers without
+settling it (5xx, 408, 429). Then it fails, and an unreadable reply fails at once.
+Activation, a new item and a network change wake it. After a failed attempt an item
+waits 5 seconds, doubling up to 30; that delay lives only in memory, so a relaunch or
+a regained network tries again at once. Outside the foreground nothing is sent,
+except the one short attempt a [notification reply](NOTIFICATIONS.md) gets.
 
 Each conversation owner (Chief, a Manager, a Ticket), ticket decision, draft and read
 point is a lane. One request runs per lane, so an owner's messages and answers go out
 in the order they were saved, from any screen, and at most two run per server.
 
-An item is waiting (it looks done), sent, or refused. A recording is the one item
+An item is waiting (it looks done), sent, or failed. A recording is the one item
 that cannot look done: its words come from the server, so it shows "transcribing"
-until they arrive. Only a refusal shows a mark:
+until they arrive. A failed item leaves its lane, and only it shows a mark:
 
-- A refused message gets a red mark in its conversation. Tapping it shows the
-  server's reason and Try Again, which sends the same words with a new ID in the
-  same place. A refused photo message puts its draft back in the composer.
+- A failed message gets a red mark in its conversation. Tapping it shows the
+  reason and Try Again, which sends the same words in the same place: with a new ID
+  after a refusal, with its own ID otherwise. A refused photo message puts its draft
+  back in the composer.
 - A refused approval or send-back shows the server's note on its proposal card,
   with the saved edits and guidance.
 - A recording that cannot be transcribed shows a red mark and offers Retry.
@@ -108,12 +110,15 @@ clears only after an applied receipt, and only if the draft has not changed sinc
 ## Ask answers
 
 An answer to an agent's ask is an outbox kind with an entry point
-(`Outbox.enqueueAskAnswer`); no screen calls it yet. After a refusal or a lost
-response, the phone looks up the answer's receipt first. A receipt means it landed.
-A lost response with no receipt sends the answer again with the same operation ID.
-A refusal with no receipt means the ask stopped waiting: in one transaction the
-answer becomes one ordinary message, `Answer to "<question>": <chosen answer>`,
-whose ID is derived from the answer's operation ID, so it cannot be sent twice.
+(`Outbox.enqueueAskAnswer`); no screen calls it yet. After a refusal (its fate or a
+4xx) or a lost response, the phone looks up the answer's receipt first. A receipt
+means it landed. A lost response with no receipt sends the answer again with the
+same operation ID. After a refusal with no receipt the phone reads the conversation:
+while the ask still waits, or the read fails, the same answer goes again later. Once
+the ask is gone, in one transaction the answer becomes one ordinary message,
+`Answer to "<question>": <chosen answer>`, whose ID is derived from the answer's
+operation ID, so it cannot be sent twice. Try Again sends a failed answer again with
+its operation ID.
 
 ## Review recordings
 

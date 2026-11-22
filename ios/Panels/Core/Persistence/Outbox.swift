@@ -23,6 +23,9 @@ import Observation
     private struct Backoff { let deadline: Date; let delay: TimeInterval }
     nonisolated static let initialRetryDelay: TimeInterval = 5
     nonisolated static let maximumRetryDelay: TimeInterval = 30
+    /// Five unsettled attempts span about a minute of backoff (5, 10, 20, 30 seconds):
+    /// enough to ride out a server restart, short enough that the lane soon moves on.
+    nonisolated static let unsettledAttemptBound = 5
     /// Foreground memory only: a relaunch or a regained network path tries again at once.
     @ObservationIgnored private var backoff: [String: [String: Backoff]] = [:]
     init(store: LocalStore, now: @escaping () -> Date = { .now }) { self.store = store; self.now = now }
@@ -178,8 +181,15 @@ import Observation
                 Task { await drain(api: api) }
                 return id
             }
-            guard work.state == .failed, let message = work.message else { return nil }
             let original = try store.outgoing.summary(server: server, id: id)
+            // An answer, and a message the server never settled, keep their identity: the
+            // server may already hold them, and drops a repeat.
+            if work.state == .failed, work.kind == .askAnswer || (work.kind == .message && content == nil && original?.gaveUp == true) {
+                try store.outgoing.requeue(server: server, id: id)
+                Task { await drain(api: api) }
+                return id
+            }
+            guard work.state == .failed, let message = work.message else { return nil }
             let replacementContent: [ConversationSend.Piece]
             if let content { replacementContent = content }
             else {
@@ -252,26 +262,43 @@ import Observation
 
     /// How one failed request leaves its item.
     private enum Failure {
-        /// No answer that settles it: try again later with the same identity.
+        /// The request did not reach the server, or the network dropped it: try again
+        /// later with the same identity, quietly and without limit.
         case later
+        /// The server answered without settling it: try again later, up to the bound.
+        case unsettled(String)
+        /// The server answered with a reply the phone cannot read: fail at once.
+        case unreadable
         /// The server refused it. The note shows on the item.
         case refused(String)
         /// This build is too old for the server. The update screen covers the app.
         case updateRequired
     }
+    private static func isRefusal(_ error: APIError) -> Bool {
+        !error.isUpdateRequired && (400..<500).contains(error.status) && ![408, 429].contains(error.status)
+    }
     private static func classify(_ error: Error) -> Failure {
         if let error = error as? APIError {
             if error.isUpdateRequired { return .updateRequired }
-            if error.status >= 400 && error.status < 500 && ![408, 429].contains(error.status) { return .refused("Not sent · " + error.message) }
-            return error.status == 0 ? .refused(error.message) : .later
+            if isRefusal(error) { return .refused("Not sent · " + error.message) }
+            return error.status == 0 ? .refused(error.message) : .unsettled("Not sent · " + error.message)
         }
         if error is DecisionResponseError { return .refused("The server returned an invalid decision response. Refresh and review again.") }
-        return .later
+        if error is DecodingError { return .unreadable }
+        if ServerReadFailure.isPassing(error) { return .later }
+        return .unsettled("Not sent · " + error.localizedDescription)
     }
     private func settleFailure(_ failure: Failure, id: String, server: String, restorePhotoDraft: Bool = false) {
         switch failure {
         case .later: deferAttempt(server: server, id: id)
         case .updateRequired: break
+        case .unsettled(let note):
+            if (try? store.outgoing.countUnsettledAttempt(server: server, id: id, bound: Self.unsettledAttemptBound, note: note)) == false {
+                deferAttempt(server: server, id: id)
+            }
+        case .unreadable:
+            _ = try? store.outgoing.countUnsettledAttempt(server: server, id: id, bound: 1,
+                note: "Not sent · the server's reply could not be read.")
         case .refused(let note):
             try? store.outgoing.settle(server: server, id: id, state: .failed, note: note, restoreRejectedPhotoDraft: restorePhotoDraft)
         }
@@ -361,8 +388,10 @@ import Observation
         } catch { settleFailure(Self.classify(error), id: work.id, server: server) }
     }
 
-    /// A receipt means the answer landed. After a refusal, no receipt means the ask stopped
-    /// waiting: the answer becomes an ordinary message. After a lost response, it is sent again.
+    /// A receipt means the answer landed. After a refusal (the refused fate or a 4xx) with
+    /// no receipt, the answer becomes an ordinary message only once the ask no longer waits;
+    /// while it waits, the same answer is sent again later. After a lost response, it is
+    /// sent again.
     private func processAskAnswer(_ row: OutgoingStore.Summary, work: PendingWork, api: APIClient, server: String) async {
         guard let answer = work.askAnswer else { return }
         do {
@@ -371,13 +400,27 @@ import Observation
                 return
             }
             try store.outgoing.beginAttempt(server: server, id: work.id)
-            let fate = try await api.answerAsk(answer, operationID: work.id)
+            let fate: String
+            do { fate = try await api.answerAsk(answer, operationID: work.id) }
+            catch let error as APIError where Self.isRefusal(error) { fate = "refused" }
             guard fate == "refused" else {
                 try store.outgoing.settle(server: server, id: work.id, state: .sent)
                 return
             }
             if try await api.askAnswerReceipt(conversationID: answer.conversationID, operationID: work.id) != nil {
                 try store.outgoing.settle(server: server, id: work.id, state: .sent)
+                return
+            }
+            // The server also refuses when its write to the agent fails for a moment, and
+            // the ask then waits again. A failed read of the ask is not proof it is gone.
+            let waits: Bool
+            do { waits = try await Self.askStillWaits(answer, api: api) }
+            catch {
+                settleFailure(ServerReadFailure.isPassing(error) ? .later : .unsettled("Not sent · " + error.localizedDescription), id: work.id, server: server)
+                return
+            }
+            if waits {
+                settleFailure(.unsettled("Not sent · the question still waits for this answer."), id: work.id, server: server)
                 return
             }
             let messageID = Self.lateAnswerMessageID(operationID: work.id)
@@ -388,6 +431,16 @@ import Observation
             drainWakes[server]?.yield(.changed)
         } catch is OutgoingStore.StoreError {
         } catch { settleFailure(Self.classify(error), id: work.id, server: server) }
+    }
+
+    /// Whether the conversation still waits for this ask. An unknown reading counts as waiting.
+    private static func askStillWaits(_ answer: AskAnswer, api: APIClient) async throws -> Bool {
+        let status = try await api.conversationSnapshot(answer.conversationID, lens: .focus, transcript: false).status
+        guard status.authority == "current" else { return true }
+        switch answer.request {
+        case .permission(let askID, _): return status.pendingPermission?.requestId == askID
+        case .userInput(let requestID): return status.pendingUserInput?.requestId == requestID
+        }
     }
 
     private func processDecision(_ fact: OutgoingStore.Summary, work: PendingWork, api: APIClient, server: String) async {
@@ -416,7 +469,7 @@ import Observation
         } catch let error as APIError where [401, 403].contains(error.status) {
             try? store.outgoing.settle(server: server, id: fact.id, state: .failed,
                 note: "Not sent · sign in or check your access to this ticket, then review again.")
-        } catch let error as APIError where !error.isUpdateRequired && (400..<500).contains(error.status) && ![408, 429].contains(error.status) {
+        } catch let error as APIError where Self.isRefusal(error) {
             try? store.outgoing.settle(server: server, id: fact.id, state: .failed, note: "Not sent · " + error.message)
         } catch { settleFailure(Self.classify(error), id: fact.id, server: server) }
     }

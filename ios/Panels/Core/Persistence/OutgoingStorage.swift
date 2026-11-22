@@ -28,6 +28,10 @@ import SwiftData
     var sequence: Int64
     /// The phone has sent this at least once. An ask answer checks its receipt first.
     var attempted: Bool = false
+    /// Attempts the server answered without settling the item: 5xx, 408, 429, an
+    /// unreadable reply, or an ask that still waits. A passing transport failure does
+    /// not count. Kept on disk, so a phone opened briefly still reaches the bound.
+    var unsettledAttempts: Int = 0
     var proposalField: String?
     var proposalRevision: Int?
     var proposalCreatedAt: Double?
@@ -107,6 +111,7 @@ import SwiftData
         let note: String
         let sequence: Int64
         let attempted: Bool
+        let unsettledAttempts: Int
         let proposalField: String?
         let proposalRevision: Int?
         let proposalCreatedAt: Double?
@@ -117,12 +122,15 @@ import SwiftData
             id = value.identity; ownerKey = value.ownerKey; conversationID = value.conversationID; ownerReadThroughSequence = value.ownerReadThroughSequence
             ticketID = value.ticketID; draftID = value.draftID; lane = value.lane
             state = value.state; kind = value.kind; note = value.note; sequence = value.sequence
-            attempted = value.attempted
+            attempted = value.attempted; unsettledAttempts = value.unsettledAttempts
             proposalField = value.proposalField; proposalRevision = value.proposalRevision
             proposalCreatedAt = value.proposalCreatedAt
             created = value.created; completed = value.completed; expiresAt = value.expiresAt
         }
         var refused: Bool { state == PendingWork.State.failed.rawValue }
+        /// Failed without a settling answer from the server, which may already hold it.
+        /// Try Again sends it again with the same identity.
+        var gaveUp: Bool { refused && unsettledAttempts > 0 }
     }
     nonisolated static let finishedLifetime: TimeInterval = 24 * 60 * 60
     private let context: ModelContext
@@ -375,10 +383,33 @@ import SwiftData
             }
             if row.state != state.rawValue { row.state = state.rawValue }
             if row.note != note { row.note = note }
+            if row.unsettledAttempts != 0 { row.unsettledAttempts = 0 }
             if [.sent, .failed].contains(state), row.completed == nil { row.completed = now }
             let deadline = Self.expiry(kind: row.kind, state: state, completed: row.completed ?? now)
             if row.expiresAt != deadline { row.expiresAt = deadline }
             if let conversationID, row.conversationID != conversationID { try adopt(conversationID, from: row, server: server) }
+        }
+    }
+    /// One more attempt the server answered without settling. At the bound the item
+    /// fails with its note, keeps its count (so Try Again keeps its identity), and its
+    /// lane moves on. Returns whether it failed.
+    func countUnsettledAttempt(server: String, id: String, bound: Int, note: String, now: Date = .now) throws -> Bool {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.state == "waiting" else { throw StoreError.invalidTransition }
+            row.unsettledAttempts += 1
+            guard row.unsettledAttempts >= bound else { return false }
+            row.state = PendingWork.State.failed.rawValue; row.note = note
+            if row.completed == nil { row.completed = now }
+            row.expiresAt = Self.expiry(kind: row.kind, state: .failed, completed: row.completed ?? now)
+            return true
+        }
+    }
+    /// Try Again for an item that keeps its identity: it waits again in its old place.
+    func requeue(server: String, id: String) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.state == "failed" else { throw StoreError.invalidTransition }
+            row.state = PendingWork.State.waiting.rawValue; row.note = ""; row.unsettledAttempts = 0
+            row.completed = nil; row.expiresAt = nil
         }
     }
     /// A first message created a conversation: later, never-sent messages behind it go there too.
@@ -447,7 +478,7 @@ import SwiftData
     func retryVoice(server: String, id: String) throws {
         try transaction(server) {
             guard let row = try metadata(server, id), row.kind == "voice", ["waiting", "failed", "recording"].contains(row.state) else { throw StoreError.invalidTransition }
-            row.state = "waiting"; row.note = ""; row.expiresAt = nil
+            row.state = "waiting"; row.note = ""; row.unsettledAttempts = 0; row.expiresAt = nil
         }
     }
     func remove(server: String, ids: [String]) throws {

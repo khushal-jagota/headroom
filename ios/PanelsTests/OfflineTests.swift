@@ -421,6 +421,34 @@ import XCTest
         XCTAssertEqual(outbox.work(server, id: id)?.state, .sent)
     }
 
+    func testServerErrorsFailAMessageAfterTheBoundAndItsLaneMovesOn() async throws {
+        var clock = Date.now
+        let outbox = Outbox(store: store, now: { clock })
+        try store.outgoing.enqueue(message("first"), server: server)
+        try store.outgoing.enqueue(message("second", at: 2), server: server)
+        OfflineProtocol.state.messageStatus = 503
+        for _ in 1..<Outbox.unsettledAttemptBound {
+            await outbox.drain(api: api); clock += 60
+            OfflineProtocol.state.offline = true
+            await outbox.drain(api: api); clock += 60 // No network does not count.
+            OfflineProtocol.state.offline = false
+        }
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.waiting, .waiting], "The second waits behind the first")
+        await outbox.drain(api: api); clock += 60
+        let first = try XCTUnwrap(outbox.work(server, id: "first"))
+        XCTAssertEqual(first.state, .failed)
+        XCTAssertEqual(first.note, "Not sent · Server returned HTTP 503.")
+        OfflineProtocol.state.messageStatus = 200
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: "second")?.state, .sent, "The lane moves on past the failed item")
+        let retried = await outbox.retry("first", api: api)
+        XCTAssertEqual(retried, "first", "The server may hold it already, so Try Again keeps its identity")
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: "first")?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.writes, Array(repeating: "first", count: Outbox.unsettledAttemptBound) + ["second", "second", "first"])
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, ["first", "second"])
+    }
+
     // MARK: Decisions
 
     private func decision(_ id: String, kind: PendingWork.Kind = .approval, guidance: String? = nil) throws -> PendingWork {
@@ -504,16 +532,22 @@ import XCTest
 
     private let question = AskAnswer(conversationID: "conversation", request: .userInput(requestID: "request-1"),
         questions: [.init(id: "colourChoice", prompt: "Which colour?", answers: ["blue"], labels: ["Blue"])])
-    func testRefusedAskAnswerWithoutReceiptBecomesExactlyOneLateMessage() async throws {
+    func testRefusedAskAnswerWaitsWhileItsAskWaitsThenBecomesExactlyOneLateMessage() async throws {
         var outbox = Outbox(store: store)
         OfflineProtocol.state.answerFate = "refused"
+        OfflineProtocol.state.pendingUserInput = "request-1"
         let operation = try outbox.enqueueAskAnswer(question, owner: .ticket("ticket"), api: api)
+        await outbox.drain(api: api)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "The ask still waits: the answer is sent again later, not as a message")
+        XCTAssertEqual(outbox.work(server, id: operation)?.state, .waiting)
+        OfflineProtocol.state.pendingUserInput = nil
+        outbox = relaunch()
         await outbox.drain(api: api)
         await outbox.drain(api: api)
         outbox = relaunch()
         await outbox.drain(api: api)
         let late = Outbox.lateAnswerMessageID(operationID: operation)
-        XCTAssertEqual(OfflineProtocol.state.answers, [operation])
+        XCTAssertEqual(OfflineProtocol.state.answers, [operation, operation])
         XCTAssertEqual(OfflineProtocol.state.writes, [late], "One late message, sent once")
         let body = try JSONSerialization.jsonObject(with: XCTUnwrap(OfflineProtocol.state.messageBodies.first?.1)) as! [String: Any]
         XCTAssertEqual(body["conversation_id"] as? String, "conversation")
@@ -523,6 +557,23 @@ import XCTest
         let sentAnswer = try XCTUnwrap(OfflineProtocol.state.answerBodies.first)
         let answers = (sentAnswer["answers"] as? [String: Any])?["colourChoice"] as? [String: Any]
         XCTAssertEqual(answers?["answers"] as? [String], ["blue"], "Question IDs reach the server as named")
+    }
+    func testAnswerRefusedWithAnHTTPErrorTakesTheSamePathAndTryAgainKeepsItsIdentity() async throws {
+        var clock = Date.now
+        let outbox = Outbox(store: store, now: { clock })
+        OfflineProtocol.state.answerStatus = 409
+        OfflineProtocol.state.pendingUserInput = "request-1"
+        let operation = try outbox.enqueueAskAnswer(question, owner: .ticket("ticket"), api: api)
+        for _ in 0..<Outbox.unsettledAttemptBound { await outbox.drain(api: api); clock += 60 }
+        XCTAssertEqual(outbox.work(server, id: operation)?.state, .failed, "An ask that keeps waiting fails after the bound")
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        OfflineProtocol.state.pendingUserInput = nil
+        let retried = await outbox.retry(operation, api: api)
+        XCTAssertEqual(retried, operation)
+        await outbox.drain(api: api)
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.answers, Array(repeating: operation, count: Outbox.unsettledAttemptBound + 1))
+        XCTAssertEqual(OfflineProtocol.state.writes, [Outbox.lateAnswerMessageID(operationID: operation)], "The ask is gone: one late message")
     }
     func testRefusedAskAnswerWithAReceiptSendsNothingMore() async throws {
         let outbox = Outbox(store: store)
@@ -598,6 +649,8 @@ private final class OfflineState: @unchecked Sendable {
         var answerBodies: [[String: Any]] = []
         var answerFate = "applied"
         var answerReceipts: [String: String] = [:]
+        var answerStatus = 200
+        var pendingUserInput: String?
         var decisionReceipts: [String: Data] = [:]
         var recordedDecisions: [(String, Data)] = []
         var decisionOutcomes = 0
@@ -616,6 +669,8 @@ private final class OfflineState: @unchecked Sendable {
     var createdConversation: String? { get { value(\.createdConversation) } set { store(\.createdConversation, newValue) } }
     var answerFate: String { get { value(\.answerFate) } set { store(\.answerFate, newValue) } }
     var answerReceipts: [String: String] { get { value(\.answerReceipts) } set { store(\.answerReceipts, newValue) } }
+    var answerStatus: Int { get { value(\.answerStatus) } set { store(\.answerStatus, newValue) } }
+    var pendingUserInput: String? { get { value(\.pendingUserInput) } set { store(\.pendingUserInput, newValue) } }
     var messageStatus: Int { get { value(\.messageStatus) } set { store(\.messageStatus, newValue) } }
     var loseDecisionBeforeCommit: Bool { get { value(\.loseDecisionBeforeCommit) } set { store(\.loseDecisionBeforeCommit, newValue) } }
     var loseDecisionAfterCommit: Bool { get { value(\.loseDecisionAfterCommit) } set { store(\.loseDecisionAfterCommit, newValue) } }
@@ -640,7 +695,10 @@ private final class OfflineState: @unchecked Sendable {
         }
     }
     func status(_ request: URLRequest) -> Int {
-        lock.withLock { request.url!.path.hasSuffix("/send") ? values.messageStatus : 200 }
+        lock.withLock {
+            let path = request.url!.path
+            return path.hasSuffix("/send") ? values.messageStatus : path.hasSuffix("-answers") ? values.answerStatus : 200
+        }
     }
     private func requestBody(_ request: URLRequest) -> Data {
         var data = request.httpBody ?? Data()
@@ -691,6 +749,11 @@ private final class OfflineState: @unchecked Sendable {
                 let receipt: Any = values.answerReceipts[operationID].map { ["operation_id": operationID, "fate": $0] } ?? NSNull()
                 return try JSONSerialization.data(withJSONObject: ["receipt": receipt])
             }
+            if path.hasSuffix("/view") {
+                let input: Any = values.pendingUserInput.map { ["kind": "user_input", "request_id": $0, "row_key": "input", "source_sequence": 2] } ?? NSNull()
+                return try JSONSerialization.data(withJSONObject: ["page": ["items": [], "older": NSNull()],
+                    "status": ["authority": "current", "turn_running": true, "rest": ["plan_progress": [:]], "pending_user_input": input]])
+            }
             if request.httpMethod != "POST" { return values.ticket }
             let data = requestBody(request)
             let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -702,6 +765,7 @@ private final class OfflineState: @unchecked Sendable {
             if path.hasSuffix("-answers") {
                 let operationID = body["operation_id"] as! String
                 values.answers.append(operationID); values.answerBodies.append(body)
+                if values.answerStatus != 200 { return Data(#"{"error":{"message":"the conversation is not the Ticket's active conversation"}}"#.utf8) }
                 if values.loseAnswerBeforeSave { values.loseAnswerBeforeSave = false; throw URLError(.networkConnectionLost) }
                 if values.answerFate != "refused" { values.answerReceipts[operationID] = values.answerFate }
                 return try respond(JSONSerialization.data(withJSONObject: ["fate": values.answerFate]))
