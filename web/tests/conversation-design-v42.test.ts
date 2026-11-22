@@ -35,8 +35,9 @@ describe("design v4.2: the dock line under which an ask waits", () => {
     }
   });
 
-  it("keeps its line when no ask is below: a proposal alone still says Waiting for your approval", () => {
-    expect(draw({ pageHoldsTheAsk: true })).toContain("Waiting for your approval");
+  it("keeps its line when no ask is below: a proposal alone says Needs your approval (v5: the card's words)", () => {
+    expect(draw({ pageHoldsTheAsk: true })).toContain("Needs your approval");
+    expect(draw({ pageHoldsTheAsk: true })).not.toContain("Waiting for your approval");
     expect(draw({})).toContain("Needs your approval");
   });
 
@@ -46,14 +47,15 @@ describe("design v4.2: the dock line under which an ask waits", () => {
 });
 
 describe("design v4.2: asks", () => {
-  it("answer tiles are filled #222222 at rest, #262626 on hover, the chosen one #2a2a2a with the accent edge", () => {
-    expect(shell).toMatch(/:global\(\.cv-ask-row\) \{[^}]*background: #222222;/);
-    expect(shell).toContain(":global(.cv-ask-row:hover:not(:disabled)) { background: #262626; }");
-    expect(shell).toContain("background: #2a2a2a; box-shadow: inset 0 0 0 1px rgb(169 187 227 / 55%);");
+  it("answer tiles are filled #262626 at rest, #2c2c2c on hover, the chosen one #2e2e2e with the accent edge (v5)", () => {
+    expect(shell).toMatch(/:global\(\.cv-ask-row\) \{[^}]*background: #262626;/);
+    expect(shell).toContain(":global(.cv-ask-row:hover:not(:disabled)) { background: #2c2c2c; }");
+    expect(shell).toContain("background: #2e2e2e; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%);");
   });
 
-  it("the pager's arrows stay #a3a3a3, disabled ones too", () => {
-    expect(shell).toContain(".cv-ask-context :global(.cv-icon-button), .cv-ask-context :global(.cv-icon-button:disabled) { color: var(--cv-t3); }");
+  it("the pager's arrows are the meta tone; a disabled one is #8c8c8c (v5.1)", () => {
+    expect(shell).toContain(".cv-ask-context :global(.cv-icon-button) { color: var(--cv-t3); }");
+    expect(shell).toContain(".cv-ask-context :global(.cv-icon-button:disabled) { color: #8c8c8c; }");
   });
 
   it("the disabled primary pill reads #a3a3a3 on #2a2a2a", () => {
@@ -85,14 +87,14 @@ describe("design v4.2: one primary button style", () => {
 describe("design v4.2: messages", () => {
   it("a queued message's words are #d9d9d9 in the ghost frame", () => {
     const stack = source("../src/components/conversation/composer/HeldPromptStack.svelte");
-    expect(stack).toMatch(/\.chat-qrow :global\(\.c2-bubble\) \{[^}]*rgb\(255 255 255 \/ 12%\);[^}]*color: var\(--cv-t2\);/);
+    expect(stack).toMatch(/\.chat-qrow :global\(\.c2-bubble\) \{[^}]*rgb\(255 255 255 \/ 16%\);[^}]*color: var\(--cv-t2\);/);
   });
 
   it("an undelivered message has the small red ! beside its bubble again", () => {
     expect(source("../src/components/conversation/UserMessage.svelte")).toMatch(/\.chat-u\.undelivered :global\(\.c2-bubble\)::before \{[^}]*right: calc\(100% \+ 10px\);[^}]*background: #e5848a;/);
   });
 
-  it("a message from Panels: \"From Panels\" on its own line, then the words in the prose style, #a3a3a3, no arrow", () => {
+  it("a message from Panels (v5): a small well, \"From Panels\" on its own line, then the words, #b0b0b0, no arrow", () => {
     const row = { key: "e1", kind: "prompt" as const, sequence: 1, createdAt: 1, senderLabel: "Panels", senderMessageId: null,
       content: [{ piece: "text" as const, text: "Continue the Ticket at Stage: Problem understanding." }] };
     const html = render(UserMessage, { props: { row, conversationId: "c", ownSenderLabel: "owner" } }).body;
@@ -102,7 +104,9 @@ describe("design v4.2: messages", () => {
     expect(note).not.toContain("<svg");
     const css = source("../src/components/conversation/UserMessage.svelte");
     expect(css).toMatch(/\.c2-system-body \{[^}]*flex-direction: column;/);
-    expect(css).toMatch(/\.c2-system-body :global\(\.markdown\) \{[^}]*color: var\(--cv-t3\);[^}]*font-size: var\(--cv-type-prose\);[^}]*line-height: var\(--cv-leading-prose\);/);
+    expect(css).toMatch(/\.c2-system-row \{[^}]*padding: 10px 14px;[^}]*border-radius: 10px;[^}]*background: #191919;/);
+    expect(css).toMatch(/\.c2-label \{[^}]*color: #b0b0b0;[^}]*font: var\(--cv-weight-label\) 12px\/16px/);
+    expect(css).toMatch(/\.c2-system-body :global\(\.markdown\) \{[^}]*color: #b0b0b0;[^}]*font-size: 14px;/);
   });
 
 
@@ -176,14 +180,15 @@ describe("design v4.2: the Working line is always the last thing in the transcri
     return render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: null, livenessPulse: 0 } }).body;
   };
 
-  it("while the turn runs, Working comes after the running tool row, at the tail", () => {
+  it("v5.1: while the turn runs, Working · time heads the turn, above its running tool row; nothing counts at the tail", () => {
     const html = draw(false);
     const working = html.indexOf("data-conversation-alive-word");
     const run = html.indexOf("data-conversation-work-group");
     expect(working).toBeGreaterThan(-1);
     expect(run).toBeGreaterThan(-1);
-    expect(run).toBeLessThan(working);
-    expect(html).toContain("data-conversation-live-tail");
+    expect(working).toBeLessThan(run);
+    expect(html).not.toContain("data-conversation-live-tail");
+    expect(html).not.toContain("data-conversation-tool-elapsed");
   });
 
   it("once settled, the turn's meta line heads the turn again, over its work", () => {
@@ -214,10 +219,10 @@ describe("design v4.3", () => {
 });
 
 describe("pass 11 strict review fixes", () => {
-  it("the header measures the title against the identity's own room, not the whole head", () => {
+  it("v5: the header carries the title alone, never the role", () => {
     const pane = source("../src/components/conversation/ConversationPane.svelte");
-    expect(pane).toContain('<div class="chat-head-identity" data-conversation-head-identity bind:clientWidth={headRowWidth}>');
-    expect(pane).not.toContain('<div class="chat-head" bind:clientWidth={headRowWidth}>');
+    expect(pane).toContain('<div class="chat-head-identity" data-conversation-head-identity>');
+    expect(pane).not.toContain("data-conversation-subtitle");
   });
   it("a file tile sits on #242424 so the #2a2a2a remove circle reads", () => {
     expect(composer).toMatch(/\.chat-att\.file \{[^}]*background: #242424;/);
@@ -226,16 +231,15 @@ describe("pass 11 strict review fixes", () => {
 
 describe("pass 11 manager review of p11b", () => {
   const viewport = source("../src/components/conversation/viewport/ConversationViewport.svelte");
-  it("under the header the thread is hidden outright, then one short 8px fade", () => {
-    expect(viewport).toContain("--c2-top-fade: transparent 0, transparent 16px, #000 24px;");
+  it("v5: under the solid header a 24px fade starts right at its bottom edge", () => {
+    expect(viewport).toContain("--c2-top-fade: transparent 0, #000 24px;");
   });
   it("while newer content is below the view, the bottom edge dissolves over 24px above the composer", () => {
     expect(viewport).toContain("--c2-bottom-fade: #000 calc(100% - 24px), transparent 100%;");
     expect(viewport).toMatch(/\.chat-thread\[data-more-below="true"\] \{[^}]*mask-image: linear-gradient\(to bottom, var\(--c2-top-fade\), var\(--c2-bottom-fade\)\);/);
   });
-  it("the role is hidden whenever the title would truncate beside it; 24px before the lens control", () => {
+  it("24px before the lens control", () => {
     const pane = source("../src/components/conversation/ConversationPane.svelte");
-    expect(pane).toContain("headTitleWidth + 8 + headRoleWidth <= headRowWidth");
     expect(pane).toMatch(/\.chat-head-identity \{[^}]*margin-inline-end: 12px;/);
   });
 });

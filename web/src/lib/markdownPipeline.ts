@@ -285,6 +285,28 @@ export function serializeMarkdownDomToSource(root: Node): string {
 
 const NO_FILE_REFERENCES_INSIDE = new Set(["CODE", "PRE", "A"]);
 
+/** Punctuation that sits against the word before it. */
+const CLOSING_PUNCTUATION = /^[.,;:!?)\]}'"’”…]/;
+
+/** v5.1: inline code spacing. A code span's chip has its own side padding; drawn as is, a
+ *  full stop or comma after it reads as spaced off ("batcher.go:97 ,"), and a list item that
+ *  opens with code reads as indented past the bullet's text edge. The rendering marks both
+ *  cases so the stylesheet can pull the chip's edge in: "cv-code-before-punctuation" when
+ *  the next text starts with closing punctuation, "cv-code-leads" when the code opens a list
+ *  item. `siblings` are the parent's children as text (null for an element). */
+export function inlineCodeSpacing(parentTag: string, siblings: readonly (string | null)[], index: number): string[] {
+  const classes: string[] = [];
+  const next = siblings[index + 1];
+  if (typeof next === "string" && CLOSING_PUNCTUATION.test(next)) classes.push("cv-code-before-punctuation");
+  const before = siblings.slice(0, index);
+  if ((parentTag || "").toUpperCase() === "LI" && before.every((text) => typeof text === "string" && text.trim() === "")) classes.push("cv-code-leads");
+  return classes;
+}
+
+function hastSiblingTexts(children: readonly HastNode[]): (string | null)[] {
+  return children.map((child) => child.type === "text" ? child.value || "" : null);
+}
+
 function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownTextMapper, blockIndex = 0, path: readonly number[] = [], fileReferences = false): void {
   if (node.type === "text") {
     const value = node.value || "";
@@ -293,11 +315,12 @@ function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownT
     if (pieces.some((piece) => piece.reference)) {
       // Each piece is its own text leaf, at its own path under this one, so a text location
       // taken from this render is found again in the next.
+      const pieceTexts = pieces.map((piece) => piece.reference ? null : piece.text);
       pieces.forEach((piece, index) => {
         const text = document.createTextNode(piece.text);
         if (piece.reference) {
           const code = document.createElement("code");
-          code.className = "cv-file-ref";
+          code.className = ["cv-file-ref", ...inlineCodeSpacing(parent.tagName, pieceTexts, index)].join(" ");
           code.appendChild(text);
           parent.appendChild(code);
         } else parent.appendChild(text);
@@ -320,7 +343,15 @@ function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownT
   applySanitizedProperties(element, node.properties || {});
   // Attached before its children, so a text inside code, pre or a link can see it is there.
   parent.appendChild(element);
-  (node.children || []).forEach((child, index) => appendHastNode(element, child, mapText, blockIndex, [...path, index], fileReferences));
+  const children = node.children || [];
+  const siblingTexts = children.some((child) => child.type === "element" && child.tagName === "code") ? hastSiblingTexts(children) : null;
+  children.forEach((child, index) => {
+    appendHastNode(element, child, mapText, blockIndex, [...path, index], fileReferences);
+    if (siblingTexts === null || child.type !== "element" || child.tagName !== "code" || element.tagName === "PRE") return;
+    const spacing = inlineCodeSpacing(element.tagName, siblingTexts, index);
+    const code = element.lastChild as HTMLElement | null;
+    if (spacing.length > 0 && code?.classList) code.classList.add(...spacing);
+  });
 }
 
 function collectReferenceDefinitions(tree: MarkdownNode): ReferenceDefinition[] {

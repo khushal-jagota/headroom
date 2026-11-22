@@ -33,7 +33,8 @@ describe("design v4.1: surfaces", () => {
     expect(app).toContain("[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }");
   });
   it("an error callout is the one tinted surface", () => {
-    expect(css("../src/components/conversation/TranscriptStatusRow.svelte")).toContain(".c2-status--callout.c2-status--error { background: rgb(229 132 138 / 8%); }");
+    // v5.2: 7% red fill held by a 22% red edge.
+    expect(css("../src/components/conversation/TranscriptStatusRow.svelte")).toContain(".c2-status--callout.c2-status--error { background: rgb(229 132 138 / 7%); box-shadow: inset 0 0 0 1px rgb(229 132 138 / 22%); }");
   });
   it("the empty conversation keeps its composer in its normal bottom place", () => {
     const pane = css("../src/components/conversation/ConversationPane.svelte");

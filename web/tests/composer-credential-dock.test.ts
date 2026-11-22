@@ -56,8 +56,11 @@ describe("a key request is asked in the composer's place", () => {
       options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }]
     };
     const { body } = render(ComposerWithQueryClient, { props: { ...base, ask, credentialRequest: request } });
-    expect(body).toContain("Needs your approval");
+    expect(body).toContain("Needs your permission");
     expect(body).not.toContain("Needs a key");
+    // p12c: the Paused line is attached to the ask, above the card.
+    expect(body).toContain('data-conversation-paused="permission"');
+    expect(body.indexOf("data-conversation-paused")).toBeLessThan(body.indexOf("data-ask-shell"));
   });
 
   it("leaves the composer as it was with no request", () => {

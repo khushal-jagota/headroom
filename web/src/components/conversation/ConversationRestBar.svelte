@@ -4,10 +4,13 @@
    * derived state the opened pane's header reads), the way to open it, and the latest unread
    * message under them. Its words never name a tool or a command, in either lens. */
   let { preview = null, roleLabel = "Worker", state, connectionTrouble = false,
-    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, askBelow = false, onOpen }: {
+    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, askBelow = false, pausedFor = null, onOpen }: {
+    /** p12c: what the ask under this line waits for. The line then says "Paused · waiting for
+     *  your permission" (or "… for your answer"), in the full view's Paused style. */
+    pausedFor?: "permission" | "answer" | null;
     /** v4.2: an ask (permission, question, key) waits in the conversation and is drawn as the
      *  composer under this line. The ask already says what waits, so the line carries no status
-     *  text at all (not even a proposal's "Waiting for your approval") and keeps only
+     *  text at all (not even a proposal's "Needs your approval") and keeps only
      *  "Open conversation". */
     askBelow?: boolean;
     /** The page above draws the waiting ask itself (a proposal to approve): the dock does not
@@ -38,12 +41,12 @@
   );
   /** The setup the machine cannot confirm keeps saying setup; one chip says why it is still. */
   let offlineChip = $derived(offline && state.state === "setting-up");
-  /** The page above draws the waiting ask (a proposal): v4 has the line say "Waiting for your
-   *  approval" with the accent dot, and not repeat the proposal's title. */
+  /** The page above draws the waiting ask (a proposal): v5 has the line say "Needs your
+   *  approval" (the card's own words) with the accent dot, and not repeat the proposal's title. */
   let pageWaits = $derived(pageHoldsTheAsk && !askBelow && state.state === "waiting");
   let saysState = $derived(!askBelow);
   let label = $derived(
-    pageWaits ? "Waiting for your approval"
+    pageWaits ? "Needs your approval"
     : state.state === "idle" ? `${ROLE_NAMES[roleLabel]} idle`
     : state.state === "unknown" ? (feedback ?? state.text)
     : state.text
@@ -74,9 +77,12 @@
       {:else if saysState && state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
       {:else if saysState && state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
       {:else if saysState && state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
+      {#if askBelow && pausedFor !== null}
+        <span class="c2-rest-paused" role="status" data-conversation-rest-paused={pausedFor}><span class="c2-rest-paused-dot" aria-hidden="true"></span><span class="c2-rest-paused-word">Paused</span><span aria-hidden="true">·</span><span>waiting for your {pausedFor}</span></span>
+      {/if}
       {#if saysState || pageWaits}
       <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined}>
-        {#if workingClock !== null}<span class="c2-rest-label">{workingClock.word}</span><span class="c2-rest-clock" data-conversation-rest-clock>{` · ${workingClock.clock}`}</span>{:else}<span class="c2-rest-label">{label}</span>{/if}{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
+        {#if workingClock !== null}<span class="c2-rest-working"><span class="c2-rest-label">{workingClock.word}</span><span class="c2-rest-sep" aria-hidden="true">·</span><span class="c2-rest-clock" data-conversation-rest-clock>{workingClock.clock}</span></span>{:else}<span class="c2-rest-label">{label}</span>{/if}{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
       </span>
       {/if}
       {#if saysState && offlineChip}<span class="c2-rest-chip" title={feedback ?? undefined} data-conversation-offline-chip>Machine offline</span>{/if}
@@ -99,10 +105,8 @@
     width:100%; min-width:0; border:0; padding:0 0 var(--cv-s2); background:transparent; color:var(--cv-t3);
     text-align:left; cursor:pointer; font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
     font-variant-numeric:tabular-nums; }
-  /* A short canvas gradient carries the page into the dock, so a line scrolling under it is
-     covered within a few pixels instead of cut. */
-  .c2-rest::before { content:""; position:absolute; left:0; right:0; bottom:100%; height:var(--cv-s5);
-    background:linear-gradient(to bottom, transparent, var(--cv-canvas)); pointer-events:none; }
+  /* v5.2: the dock stands on its own #161616 surface (app.css), so no canvas gradient is drawn
+     over its top edge. */
   .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--cv-s3);
     min-width:0; min-height:40px; }
   .c2-rest-activity { display:flex; align-items:center; gap:var(--cv-s2); min-width:0; }
@@ -111,8 +115,16 @@
   .c2-rest-detail { color:var(--cv-t3); }
   /* Tone follows the state, never a line: working is the brighter text and its motion,
      waiting is the accent with its title in t2, a failure is the danger colour. */
-  [data-conversation-rest-state="working"] .c2-rest-label { color:var(--cv-t2); }
+  /* v5.2: a live status label is 13 medium #d9d9d9, its detail #b0b0b0. */
+  [data-conversation-rest-state="working"] .c2-rest-label { color:var(--cv-t2); font-weight:var(--cv-weight-label); }
   .c2-rest-clock { color:var(--cv-t3); }
+  /* p12c: "Working · 2m 14s" spaced exactly as the transcript's live line: three parts 6px apart. */
+  .c2-rest-working { display:inline-flex; align-items:center; gap:6px; }
+  .c2-rest-sep { color:var(--cv-t4); }
+  /* p12c: the full view's Paused line, on the dock's status row while an ask is below it. */
+  .c2-rest-paused { display:inline-flex; align-items:center; gap:6px; min-width:0; color:var(--cv-t3); font:var(--cv-weight-body) 13px/18px var(--cv-font); white-space:nowrap; }
+  .c2-rest-paused-dot { flex:none; width:7px; height:7px; margin-inline-end:2px; border-radius:50%; background:var(--cv-accent); }
+  .c2-rest-paused-word { color:var(--cv-t2); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }

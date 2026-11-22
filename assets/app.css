@@ -1321,6 +1321,11 @@ a.pv-name:focus-visible { outline:0; }
   background: rgb(255 255 255 / 6%);
   color: #e0e0e0;
 }
+/* v5.1: a code chip followed by closing punctuation keeps 1px of its right pad, so the comma
+ * or full stop sits against the code as against a word; a chip that opens a list item hangs
+ * its left pad outside the item's text edge, so the code's first letter stands on that edge. */
+.chat-thread .markdown :not(pre) > code.cv-code-before-punctuation { padding-inline-end: 1px; }
+.chat-thread .markdown li > code.cv-code-leads { margin-inline-start: -4px; }
 /* A link is the first tone with a soft underline; the accent stays "needs you". */
 .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) {
   color: var(--cv-t1);
@@ -1356,13 +1361,13 @@ a.pv-name:focus-visible { outline:0; }
   padding-block-end: var(--cv-s2);
   /* The head is a step up in weight and tone from a caption, so it reads as the table's
      head and not as one more grey row. */
-  color: var(--cv-t2);
-  font-size: var(--cv-type-meta);
+  color: #d9d9d9;
+  font-size: 13px;
   font-weight: var(--cv-weight-title);
   border-block-end-color: var(--cv-line-strong);
 }
-.chat-thread .markdown td { color: var(--cv-t2); }
-.chat-thread .markdown td:first-child { color: var(--cv-t1); }
+/* v5.2: the head row 13 semibold #d9d9d9; every body cell #d9d9d9. */
+.chat-thread .markdown td { color: #d9d9d9; }
 .chat-thread .markdown :is(th, td)[align="right"] { text-align: right; }
 .chat-thread .markdown :is(th, td)[align="center"] { text-align: center; }
 
@@ -1384,10 +1389,11 @@ a.pv-name:focus-visible { outline:0; }
   .c2-streaming .markdown > :is(ul, ol):last-child > li:last-child::after { animation: none; }
 }
 
-/* Pictures the person sent: a glance (240 x 180 at most) on their own edge, opening the viewer. */
-.chat-u .file-preview-media { max-width: 240px; border-radius: var(--cv-r-lg); }
+/* Pictures the person sent (v5.2): up to 320 tall (and 480 wide) on their own edge, so a mock
+ * can be read in place; they open the viewer. */
+.chat-u .file-preview-media { max-width: min(100%, 480px); border-radius: var(--cv-r-lg); }
 .chat-u .file-preview-media > :is(.file-preview-image, .file-preview-video-poster) {
-  max-height: 180px;
+  max-height: 320px;
   border-radius: var(--cv-r-lg);
 }
 .chat-u .file-preview-media > .file-preview-media--wide { min-width: 0; }
@@ -1972,36 +1978,41 @@ button.list-row:hover .list-row-title {
   overflow-wrap: anywhere;
 }
 
-/* --- The composer stack's status slot: the jump to the newest line, centred, in flow between
- * transcript and composer, drawn only while there is something below to go back to. */
+/* --- The way back to the newest line (v5.4): a 32px round button (#262626, a 1px #3a3a3a
+ * edge, the arrow #d9d9d9) centred on the column that straddles the composer's top edge (the
+ * ask card's, when an ask is the composer): its centre is on that line, so half of it sits
+ * on the composer and it never covers a readable line of the transcript. The slot has no
+ * height and stands right on the composer's top edge. */
 .cv-status-slot {
   position: relative;
   flex: none;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  min-height: 28px;
-  margin-block-end: var(--cv-s2);
+  height: 0;
+  z-index: 2;
 }
 .cv-jump {
-  grid-column: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 var(--cv-s3) 0 10px;
-  border: 0;
-  border-radius: var(--cv-r-pill);
-  background: var(--cv-raised);
-  color: var(--cv-t2);
-  font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
-  white-space: nowrap;
+  position: absolute;
+  left: 50%;
+  bottom: -16px;
+  transform: translateX(-50%);
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #3a3a3a;
+  border-radius: 50%;
+  background: #262626;
+  color: #d9d9d9;
   cursor: pointer;
   animation: cv-fade-in var(--cv-dur-base) var(--cv-ease-out);
   transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
 }
-.cv-jump svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.cv-jump:hover { background: var(--cv-control); color: var(--cv-t1); }
+/* With an ask as the composer, the Paused line (18px, 12px above the card) stands over the
+ * card: the button's centre goes down to the card's own top edge. */
+[data-conversation-pane]:has(.chat-paused) .cv-jump { bottom: calc(-16px - 30px); }
+.cv-jump svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.cv-jump:hover { background: #2c2c2c; color: var(--cv-t1); }
 .cv-jump:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 @keyframes cv-fade-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .cv-jump { animation: none; } }
@@ -2401,8 +2412,11 @@ button.list-row:hover .list-row-title {
   color: var(--cv-t1);
   font-weight: var(--cv-weight-label);
 }
-[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger:hover:not(:disabled),
-[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open { background: var(--cv-control-hover); color: var(--cv-t1); }
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger:hover:not(:disabled) { background: var(--cv-control-hover); color: var(--cv-t1); }
+/* p12c: an open chip is filled #3a3a3a, its words and chevron #f2f2f2, the chevron up. */
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open,
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open:hover:not(:disabled) { position: relative; z-index: 41; background: #3a3a3a; color: #f2f2f2; }
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open .listbox-picker-chevron-drawn { color: #f2f2f2; }
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger:disabled { background: var(--cv-control); color: var(--cv-t3); }
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] .listbox-picker-chevron-drawn {
   display: block;
@@ -2432,10 +2446,10 @@ button.list-row:hover .list-row-title {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--cv-control);
-  /* v4: #2a2a2a with a #8c8c8c arrow while there is nothing to send; #f2f2f2 with a dark
-   * arrow once there is. */
-  color: var(--cv-placeholder);
+  /* v5.2: #242424 with a #737373 arrow while there is nothing to send; #f2f2f2 with a
+   * #121212 arrow once there is. */
+  background: #242424;
+  color: #737373;
   cursor: pointer;
   line-height: 1;
   display: grid;
@@ -2452,10 +2466,11 @@ button.list-row:hover .list-row-title {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.chat-send.on { background: var(--cv-t1); color: #121212; }
+.chat-send.on { background: #f2f2f2; color: #121212; }
 .chat-send.on:hover:not(:disabled) { background: #ffffff; }
-.chat-send.stop { background: var(--cv-control); color: var(--cv-t1); }
-.chat-send.stop:hover { background: var(--cv-control-hover); }
+/* v5.2: Stop while running is the enabled send's look: #f2f2f2 with a #121212 square. */
+.chat-send.stop { background: #f2f2f2; color: #121212; }
+.chat-send.stop:hover { background: #ffffff; }
 .chat-send .chat-send-fill {
   width: 10px;
   height: 10px;
@@ -5486,3 +5501,15 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-machine-color="plum"] { --machine-color:var(--machine-plum); }
 [data-machine-color="lime"] { --machine-color:var(--machine-lime); }
 [data-machine-color="stone"] { --machine-color:var(--machine-stone); }
+
+/* v5.2: the docked conversation (at rest under a page) stands on its own surface: #161616,
+ * top corners 16, padding 12 16. The surface reaches 16px past the page text's edges, so the
+ * status line and composer keep standing on them. It replaces the hairline over the zone. */
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) > .conversation-layer > .conversation-column {
+  box-sizing: border-box;
+  width: min(calc(var(--page-measure) + 32px), calc(100% - 2 * var(--space-5) + 32px));
+  padding: 12px 16px;
+  border-radius: 16px 16px 0 0;
+  background: #161616;
+}
+:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) > .conversation-layer::after { opacity: 0; }

@@ -59,6 +59,7 @@
     ComposerRunSelectionIntent
   } from "../../lib/conversation/runControls/contracts";
   import type { RunValues } from "../../lib/conversation/composer";
+  import { askShape } from "../../lib/conversation/composer";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import {
@@ -349,6 +350,12 @@
   /** The asks that bring their own actions, so the box draws none of its own under them. */
   // Every ask draws its own answers in its shell's footer, so the box's own foot gives way to it.
   let panelTakesTheBox = $derived(userInput !== null || ask !== null || credentialInTheBox);
+  /** p12c: while a permission ask or a question is the composer, one meta line attached to it
+   *  says the turn is paused on the person: "Paused · waiting for your permission" (or "… for
+   *  your answer"). It stands 12px above the ask card, on the card's left edge. */
+  let pausedFor = $derived<"permission" | "answer" | null>(
+    userInput !== null ? "answer" : ask !== null ? (askShape(ask) === "question" ? "answer" : "permission") : null
+  );
   /** The question on screen, when it takes an own answer: the composer is then the one place
    *  to write it, right under the question, and its send answers. */
   let questionPanel = $state<{ answerWith: (words: string) => boolean; commit: () => void } | null>(null);
@@ -1267,6 +1274,11 @@
         {/if}
       </article>
     {/each}
+    {#if pausedFor !== null}
+      <div class="chat-paused" role="status" data-conversation-paused={pausedFor}>
+        <span class="chat-paused-dot" aria-hidden="true"></span><span class="chat-paused-word">Paused</span><span aria-hidden="true">·</span><span>waiting for your {pausedFor}</span>
+      </div>
+    {/if}
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
@@ -1662,6 +1674,20 @@
 <style>
   /* --- the stack ----------------------------------------------------------------------------- */
   .c2-composer { display: grid; gap: var(--cv-s2); }
+  /* p12c: the Paused line, attached to the ask: 12px above the card, on its outer left edge.
+     13px, the label medium #d9d9d9, the rest #b0b0b0, an accent dot. Docked at rest, the
+     dock's own status line says it instead (ConversationRestBar). */
+  .chat-paused {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-block-end: 12px;
+    color: var(--cv-t3);
+    font: var(--cv-weight-body) 13px/18px var(--cv-font);
+  }
+  .chat-paused-dot { flex: none; width: 7px; height: 7px; margin-inline-end: 2px; border-radius: 50%; background: var(--cv-accent); }
+  .chat-paused-word { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  :global([data-conversation-state="rest"]) .chat-paused { display: none; }
 
   /* --- one button set (§2.7), for the few buttons the composer draws itself ------------------ */
   .cv-btn {
@@ -1977,7 +2003,7 @@
 
   /* --- popovers -------------------------------------------------------------------------------- */
   /* A menu opens from the control that opened it, as a native dropdown does: anchored on its
-     own button, 6px off it, its edge on the button's edge (the add menu from +'s left, the
+     own button, 8px off it (v5), its edge on the button's edge (the add menu from +'s left, the
      model and delivery pickers from their chips' right). It overlays what is above and never
      moves it. Their height is capped by the room over the composer (app.css). */
   .chat-box :global(:is(.listbox-picker-panel, .chat-menu)) { z-index: 40; }
@@ -1985,9 +2011,9 @@
   .chat-box .chat-foot :global([data-conversation-model-picker] > .listbox-picker-panel) {
     left: auto;
     right: 0;
-    bottom: calc(100% + 6px);
+    bottom: calc(100% + 8px);
   }
-  .chat-add-menu { inset-block-end: calc(100% + 6px); inset-inline-start: 0; }
+  .chat-add-menu { inset-block-end: calc(100% + 8px); inset-inline-start: 0; }
 
   /* --- pending attachments (§3.9) -------------------------------------------------------------- */
   /* A picture is a 56px square that its thumbnail fills; a file is a 56px tile up to 240px wide
@@ -1998,13 +2024,17 @@
     border-radius: var(--cv-r-md);
     background: var(--cv-control);
   }
-  .chat-att.img { width: 56px; }
+  /* v5.2: a picture chip is 76 tall (and square), so it can be recognised. */
+  .chat-att.img { width: 76px; height: 76px; }
   .chat-att.img img { border-radius: var(--cv-r-md); }
   /* A picture keeps a hairline frame, so a dark image still reads as a tile. */
   .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--cv-line-strong); pointer-events: none; }
   /* Pass 11: a file tile sits on #242424, one step under the #2a2a2a remove circle in its
      corner, so the circle reads as on a picture (on #2a2a2a it vanished and the x floated). */
+  /* p12c: a file chip is as tall as a picture chip (76), its content centred. */
   .chat-att.file {
+    height: 76px;
+    align-items: center;
     gap: 10px;
     max-width: 240px;
     padding: 0 var(--cv-s3) 0 var(--cv-s3);

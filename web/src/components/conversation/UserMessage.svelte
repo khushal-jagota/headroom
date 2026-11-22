@@ -60,9 +60,8 @@
 </script>
 <article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} class:undelivered={row?.kind === 'prompt_refused' || row?.kind === 'prompt_discarded'} class:has-callout={label === null && status?.tone === 'error'} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
   {#if label !== null}
-    <!-- Someone other than the person wrote this (Panels, another agent). v4.2: a meta label
-         "From Panels" (13, #a3a3a3) on its own line, then the words in the prose style in
-         #a3a3a3. No arrow, no box. -->
+    <!-- Someone other than the person wrote this (Panels, another agent). v5: a small well,
+         "From Panels" (12 semibold) on line 1 and the words (14) on line 2, both #b0b0b0. -->
     <div class="c2-system-row">
       <div class="c2-system-body">
         <div class="c2-label" data-conversation-prompt-label>From {label}</div>
@@ -112,29 +111,36 @@
   .chat-u :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; }
   .chat-u :global(.conversation-file-card--media) { align-self: flex-end; }
 
-  .c2-system-row { color: var(--cv-t3); }
-  /* The label on its own line in the meta style, 6px over the words (v4.3), as a turn's meta line
-     stands over its prose. */
-  .c2-system-body { min-width: 0; display: flex; flex-direction: column; gap: var(--cv-gap-meta); }
+  /* v5: Panels' words stand in a small well (#191919, radius 10, padding 10 14), fitted to
+     them: "From Panels" 12 semibold #b0b0b0 on line 1, the words 14 #b0b0b0 on line 2. */
+  .c2-system-row {
+    align-self: flex-start;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: #191919;
+    color: #b0b0b0;
+  }
+  .c2-system-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .c2-label {
-    color: var(--cv-t3);
-    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    color: #b0b0b0;
+    font: var(--cv-weight-label) 12px/16px var(--cv-font);
   }
-  /* The sent words in the prose style (15/24), in #a3a3a3: Panels' words, not the agent's. */
   .c2-system-body :global(.markdown) {
-    color: var(--cv-t3);
-    font-size: var(--cv-type-prose);
-    line-height: var(--cv-leading-prose);
+    color: #b0b0b0;
+    font-size: 14px;
+    line-height: 20px;
   }
-  .c2-system-body :global(.markdown :is(p, ul, ol, blockquote)) { margin-block-end: var(--cv-s3); }
+  .c2-system-body :global(.markdown :is(p, ul, ol, blockquote)) { margin-block-end: var(--cv-s2); }
   .c2-system-body :global(.markdown > :last-child) { margin-block-end: 0; }
   .c2-system-body :global(.markdown :is(h1, h2, h3, h4, h5, h6)) {
-    margin-block: var(--cv-s3) 0;
-    color: var(--cv-t3);
-    font-size: var(--cv-type-prose);
-    line-height: var(--cv-leading-prose);
+    margin-block: var(--cv-s2) 0;
+    color: #b0b0b0;
+    font-size: 14px;
+    line-height: 20px;
   }
-  .c2-system-body :global(.markdown :is(strong, b, h1, h2, h3, h4, h5, h6)) { color: var(--cv-t3); }
+  .c2-system-body :global(.markdown :is(strong, b, h1, h2, h3, h4, h5, h6)) { color: #b0b0b0; }
 
   /* A message that never reached the agent is not drawn as one that did: its bubble steps
      back (the well, the body tone) and (v4.2) a small red "!" stands beside it on the left, as

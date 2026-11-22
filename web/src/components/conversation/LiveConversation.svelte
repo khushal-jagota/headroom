@@ -1127,15 +1127,16 @@
   {#if !started && emptyState}
     {@render emptyState()}
   {:else if !emptyState && !readOnly && nothingSaidYet}
-    <!-- v4.1: an empty conversation is the composer in its normal bottom place and an empty
-         canvas above it. This marker draws nothing; it tells a screen reader there is nothing
-         here yet. -->
+    <!-- v5: an empty conversation is one quiet line centred in the empty canvas, and the
+         composer in its normal bottom place. Nothing else. -->
     <div class="conversation-empty" data-conversation-empty data-conversation-empty-bare role="note">
-      <span class="conversation-empty-said">No messages yet</span>
+      <span class="conversation-empty-said">Start with a message. You can attach or drop files here.</span>
     </div>
   {/if}
 {/snippet}
 
 <style>
-  .conversation-empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* v5.1: one quiet line, 15 px #b0b0b0, centred in the canvas above the composer. */
+  .conversation-empty { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; align-self: stretch; }
+  .conversation-empty-said { color: #b0b0b0; font: var(--cv-weight-body) 15px/24px var(--cv-font); text-align: center; }
 </style>

@@ -12,7 +12,7 @@
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
-  import { DOCKED_CREDENTIAL_REQUEST, pendingCredentialRequest, type RunValues } from "../../lib/conversation/composer";
+  import { askShape, DOCKED_CREDENTIAL_REQUEST, pendingCredentialRequest, type RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
@@ -273,37 +273,8 @@
   // The opened pane's top bar says who the conversation is with and what it is doing. At rest
   // the bar is not drawn: the dock's status line says the same there.
   let headTitle = $derived(paneTitleFor(title, roleLabel));
-  /** The role stands after the title only while the title needs no more than 70% of the
-   *  header row; past that the title keeps the room and ellipsizes alone (v4). The row is the
-   *  room the identity has beside the lens and menu controls (pass 11: measured against the
-   *  whole head, a long title was cut while the role still stood beside it). */
-  let headRowWidth = $state(0);
-  let headTitleElement = $state<HTMLElement | null>(null);
-  let headTitleWidth = $state(0);
-  let headRoleWidth = $state(0);
-  $effect(() => {
-    void headTitle; void headRowWidth; void subtitle;
-    const element = headTitleElement;
-    if (element === null) return;
-    headTitleWidth = element.scrollWidth;
-    headRoleWidth = roleTextWidth(subtitle, element);
-  });
-  /** The role's natural width, measured whether or not it is drawn, so hiding it never
-   *  changes the answer (no flicker between the two layouts). */
-  let roleCanvas: HTMLCanvasElement | null = null;
-  function roleTextWidth(text: string | null | undefined, title: HTMLElement): number {
-    if (!text || typeof document === "undefined") return 0;
-    roleCanvas ??= document.createElement("canvas");
-    const context = roleCanvas.getContext("2d");
-    if (context === null) return 0;
-    context.font = `400 13px ${getComputedStyle(title).fontFamily}`;
-    return Math.ceil(context.measureText(text).width);
-  }
-  /** Pass 11: the role shows only while the title needs no more than 70% of the room and the
-   *  title and role both fit whole (8px between them). If the title would truncate beside the
-   *  role, the role goes and the title keeps the room. */
-  let showsRole = $derived(headRowWidth === 0
-    || (headTitleWidth <= headRowWidth * 0.7 && headTitleWidth + 8 + headRoleWidth <= headRowWidth));
+  /** v5: the header carries the title alone, in every state. The composer's placeholder
+   *  ("Message <role>") already names who does the work. */
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
   const headElapsed = elapsedTurnTime(() => running && !activityUncertain ? turnStartedAt : null);
   const headSetupElapsed = elapsedTurnTime(() => headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
@@ -468,10 +439,9 @@
   bind:this={paneElement}
 >
   <div class="chat-head">
-    <div class="chat-head-identity" data-conversation-head-identity bind:clientWidth={headRowWidth}>
+    <div class="chat-head-identity" data-conversation-head-identity>
       <span class="chat-head-name">
-        <span class="chat-head-title" data-conversation-title title={headTitle} bind:this={headTitleElement}>{headTitle}</span>
-        {#if subtitle && subtitle !== headTitle && showsRole}<span class="chat-head-subtitle" data-conversation-subtitle>{subtitle}</span>{/if}
+        <span class="chat-head-title" data-conversation-title title={headTitle}>{headTitle}</span>
       </span>
       {#if headStatus}
         <!-- One derived state (conversationState), the same the dock's line reads. -->
@@ -517,9 +487,11 @@
     </div>
     <div class="chat-head-right">
       {#if stateControl !== null && conversationState !== "rest"}
+        <!-- v5.1: a text button "Dock" with a down chevron, the same style as the dock's
+             "Open conversation" with its up chevron. -->
         <button
           type="button"
-          class="cv-icon-button chat-head-collapse"
+          class="chat-head-collapse"
           data-conversation-state-control
           data-conversation-expand={stateControl.opensIt ? true : undefined}
           data-conversation-collapse={stateControl.opensIt ? undefined : true}
@@ -527,6 +499,7 @@
           title={stateControl.label}
           onclick={moveThroughTheStates}
         >
+          <span class="chat-head-collapse-label">{stateControl.opensIt ? "Open conversation" : "Dock"}</span>
           <svg viewBox="0 0 16 16" aria-hidden="true">
             {#if stateControl.opensIt}<path d="m4 10 4-4 4 4" />{:else}<path d="m4 6 4 4 4-4" />{/if}
           </svg>
@@ -687,22 +660,23 @@
       waitingTitle={restLine?.waiting ? restWaitingTitle : null}
       pageHoldsTheAsk={waitingOnPage !== null && ask === null && userInput === null && !credentialWaiting}
       askBelow={ask !== null || userInput !== null || credentialWaiting}
+      pausedFor={userInput !== null ? "answer" : ask !== null ? (askShape(ask) === "question" ? "answer" : "permission") : null}
       offline={activityUncertain}
       feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
-  <!-- The composer stack's status slot: the way back to the newest line, in the flow between
-       the transcript and the composer, so it never covers a line of what was said; empty, it
-       takes no room. -->
+  <!-- v5: the way back to the newest line is a 36px round icon button at the bottom-right of
+       the column, 12px above the composer. The slot takes no room in the flow. -->
   {#if jump && conversationState !== "rest"}
   <div class="cv-status-slot" data-conversation-status-slot>
       <button
         type="button"
         class="cv-jump"
         data-conversation-jump
-        aria-label="Jump to latest message"
+        aria-label={jump.label === "Jump to latest" ? "Jump to latest message" : `Jump to latest message (${jump.label})`}
+        title={jump.label}
         onclick={(event) => jump?.go(event.currentTarget)}
-      ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9" /></svg>{jump.label}</button>
+      ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9" /></svg></button>
   </div>
   {/if}
 
@@ -790,16 +764,8 @@
     min-width: 0;
     overflow: hidden;
   }
-  /* The ticket's title, the name the person knows it by, and after it in the meta voice who
-     is doing the work, while the title leaves room for it (showsRole). The title is one line
-     and ellipsizes. */
-  .chat-head-name { display: flex; align-items: baseline; gap: var(--cv-s2); min-width: 0; flex: 0 1 auto; }
-  .chat-head-subtitle {
-    flex: none;
-    color: var(--cv-t3);
-    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
-    white-space: nowrap;
-  }
+  /* v5: the ticket's title alone, one line, ellipsized. No role beside it. */
+  .chat-head-name { display: flex; align-items: baseline; min-width: 0; flex: 0 1 auto; }
   .chat-head-title {
     flex: 0 1 auto;
     min-width: 0;
@@ -807,7 +773,8 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     color: var(--cv-t1);
-    font: var(--cv-weight-title) var(--cv-type-title)/var(--cv-leading-title) var(--cv-font);
+    /* v5.2: 16 semibold #f2f2f2. */
+    font: var(--cv-weight-title) 16px/24px var(--cv-font);
   }
   .cv-state {
     display: inline-flex;
@@ -826,6 +793,26 @@
   .cv-state[data-conversation-head-status="waiting"] { color: var(--cv-accent); font-weight: var(--cv-weight-label); }
   .cv-state:is([data-conversation-head-status="failed"], [data-conversation-head-status="undelivered"]) { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
   .cv-state[data-conversation-head-status="working"] { color: var(--cv-t3); }
+
+  /* v5.1: "Dock ⌄", the dock's "Open conversation ⌃" style: 32 high, 13 medium #d9d9d9. */
+  .chat-head-collapse {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cv-s1);
+    height: 32px;
+    padding: 0 var(--cv-s2) 0 var(--cv-s3);
+    border: 0;
+    border-radius: var(--cv-r-md);
+    background: transparent;
+    color: var(--cv-t2);
+    font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    cursor: pointer;
+    transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: var(--cv-t1); background-color: var(--cv-control); }
+  .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  .chat-head-collapse svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
   /* --- Lens: a segmented control. The track is a well; the chosen segment is a control. */
   .cv-segmented {

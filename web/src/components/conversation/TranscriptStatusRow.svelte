@@ -12,6 +12,7 @@
    *  callout. Never by a coloured edge or rule. */
   import { untrack, type Snippet } from "svelte";
   import type { TranscriptStatus } from "../../lib/conversation/transcript";
+  import { registerCallout } from "../../lib/conversation/newestCallout";
   let { status, align = "start", mark = null, weight = undefined, actions, ...attributes }: {
     status: TranscriptStatus | (Omit<TranscriptStatus, "tone"> & { tone: "quiet" });
     /** A line about a message stands under that message; a line about a turn starts where the thread does. */
@@ -66,6 +67,14 @@
     const said = cause.charAt(0).toUpperCase() + cause.slice(1);
     return [said, status.next].filter(Boolean).join(" ");
   });
+  /** v5: only the newest error callout in the conversation keeps the filled primary; older
+   *  ones draw every action unfilled. Until it is measured (and on the server) a callout counts
+   *  as the newest. */
+  let newest = $state(true);
+  $effect(() => {
+    if (root === null || shownWeight !== "callout" || status.tone !== "error") return;
+    return registerCallout(root, (value) => (newest = value));
+  });
   const uid = $props.id();
   const detailsId = `c2-status-details-${uid}`;
 </script>
@@ -114,7 +123,7 @@
 {#if shownWeight === "callout"}
   <!-- v4.1: a callout is always the full column width and left-aligned, whatever it belongs
        to; a message's callout says which message by its heading. -->
-  <div bind:this={root} class="c2-status c2-status--callout c2-status--{status.tone}" {...attributes}>
+  <div bind:this={root} class="c2-status c2-status--callout c2-status--{status.tone}" class:is-older={!newest} data-conversation-callout-newest={newest ? "true" : "false"} {...attributes}>
     <span class="c2-status-line"><span class="c2-status-dot" aria-hidden="true"></span><span class="c2-status-title">{calloutHeading}</span></span>
     {#if calloutReason}<p class="c2-status-reason" data-conversation-status-next>{calloutReason}</p>{/if}
     {#if actions || status.detail || status.action === "choose-model"}
@@ -199,7 +208,8 @@
     background: #191919;
     text-align: start;
   }
-  .c2-status--callout.c2-status--error { background: rgb(229 132 138 / 8%); }
+  /* v5.2: a faint red fill (7%) held by a 1px red edge (22%). */
+  .c2-status--callout.c2-status--error { background: rgb(229 132 138 / 7%); box-shadow: inset 0 0 0 1px rgb(229 132 138 / 22%); }
   .c2-status-dot { flex: none; width: 8px; height: 8px; margin-block-start: 6px; border-radius: 50%; background: var(--cv-t3); }
   .c2-status--error .c2-status-dot { background: #e5848a; }
   .c2-status--warning .c2-status-dot { background: var(--cv-caution); }
@@ -226,7 +236,8 @@
 
   /* Details is a quiet ghost beside the real next step, never above it. Its chevron sits
      right after its word. */
-  .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t2); }
+  /* v5: Details is 13px #b0b0b0, quieter than the real actions. */
+  .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t3); font-size: 13px; font-weight: var(--cv-weight-body); }
   /* The callout's buttons (v4.2), one size, 32 high: the first action wears the one primary
      style of the conversation (#f2f2f2, #121212 words, radius 18), whether it is Resend or,
      alone, Choose another model; the others are bare in #d9d9d9. The same in every callout. */
@@ -244,6 +255,13 @@
   /* With no Resend before it, Choose another model is the first action and takes the primary. */
   .c2-status-actions > :global(.c2-status-second:first-child) { background: #f2f2f2; color: #121212; }
   .c2-status-actions > :global(.c2-status-second:first-child:hover:not(:disabled)) { background: #ffffff; color: #121212; }
+  /* v5: an older callout (not the newest error in the conversation) shows all its actions
+     unfilled. */
+  .c2-status--callout.is-older :global(:is(.c2-status-main, .c2-status-second)),
+  .c2-status--callout.is-older .c2-status-actions > :global(.c2-status-second:first-child) { background: transparent; color: var(--cv-t2); }
+  .c2-status--callout.is-older :global(:is(.c2-status-main, .c2-status-second):hover:not(:disabled)) { background: #2a2a2a; color: var(--cv-t1); }
+  /* Unfilled, the first action's words stand on the callout's text edge, not inset by its pad. */
+  .c2-status--callout.is-older .c2-status-actions > :global(:is(.c2-status-main, .c2-status-second):first-child) { margin-inline-start: calc(var(--cv-s4) * -1); }
   .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { color: var(--cv-t1); }
   .c2-status-actions > .c2-status-toggle:first-child { margin-inline-start: calc(var(--cv-s2) * -1); }
   .c2-status-chevron {

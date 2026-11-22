@@ -75,23 +75,33 @@
     color: var(--cv-t1);
     font-weight: var(--cv-weight-label);
   }
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger:hover:not(:disabled)),
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open) {
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger:hover:not(:disabled)) {
     background: var(--cv-control-hover);
     color: var(--cv-t1);
   }
+  /* p12c: an open chip is filled #3a3a3a, its words and chevron #f2f2f2, the chevron up. */
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open),
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open:hover:not(:disabled)) {
+    background: #3a3a3a;
+    color: #f2f2f2;
+    /* Above its own menu, so the menu's float shadow does not darken the open chip. */
+    position: relative;
+    z-index: 41;
+  }
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open .listbox-picker-chevron-drawn) { color: #f2f2f2; }
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] .listbox-picker-chevron-drawn) {
     display: block;
     width: 14px;
     height: 14px;
     color: var(--cv-t3);
   }
-  /* The menu is a native dropdown: anchored on its own chip, right edges aligned, 6px over
-   * it. Three short labels: it is as narrow as they are. */
+  /* The menu is a native dropdown: anchored on its own chip, right edges aligned, 8px over
+   * it (v5). Its width fits its longest label (min 160). */
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;
     right: 0;
-    bottom: calc(100% + 6px);
-    width: 160px;
+    bottom: calc(100% + 8px);
+    width: max-content;
+    min-width: 160px;
   }
 </style>

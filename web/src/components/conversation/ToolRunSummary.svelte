@@ -44,11 +44,16 @@
   aria-controls={controls}
   onclick={onToggle}
 >
-  <!-- One live mark per turn: the turn's head already turns its spinner, so a running call
-       keeps its own glyph and says it is live by breathing, not with a second spinner. -->
-  <svg class="c2-run-icon" class:is-live={live} viewBox="0 0 24 24" role={live ? "img" : undefined} aria-label={live ? "Running" : undefined} aria-hidden={live ? undefined : "true"}>
-    {#each summary.iconPaths as path (path)}<path d={path} />{/each}
-  </svg>
+  <!-- v5/v5.1: while a call runs, the row is the live tool: a spinner in the glyph's place,
+       "Running", the command (mono, at most 2 lines), the chevron. No time on it: the turn's
+       head carries the turn's time. -->
+  {#if live}
+    <span class="c2-run-spin" role="img" aria-label="Running" data-conversation-run-spinner></span>
+  {:else}
+    <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {#each summary.iconPaths as path (path)}<path d={path} />{/each}
+    </svg>
+  {/if}
   <!-- v4.2: the chevron always ends the row's words: "Ran 2 commands ›", and while a call
        runs "Running <command> ›", the command in mono ellipsizing before the chevron. -->
   <span class="c2-run-line" title={live ? summary.running?.sentence : summary.sentence}>
@@ -105,8 +110,34 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .c2-run-icon.is-live { stroke: #8c8c8c; animation: c2-run-breathe 1.6s ease-in-out infinite; }
-  @keyframes c2-run-breathe { 50% { opacity: 0.4; } }
+  .c2-run-spin {
+    flex: none;
+    box-sizing: border-box;
+    width: 12px;
+    height: 12px;
+    margin-inline: 1px;
+    border: 1.5px solid rgb(255 255 255 / 18%);
+    border-top-color: var(--cv-t2);
+    border-radius: 50%;
+    animation: c2-run-spin var(--cv-spin) linear infinite;
+  }
+  @keyframes c2-run-spin { to { transform: rotate(360deg); } }
+  /* Live: the row grows to hold a command of up to two lines; the spinner and the chevron
+     stand on the first line. */
+  .c2-run-summary.is-live { height: auto; min-height: 32px; padding-block: 6px; align-items: flex-start; }
+  .c2-run-summary.is-live > .c2-run-spin { margin-block-start: 4px; }
+  .c2-run-summary.is-live > .c2-run-chevron { margin-block-start: 3px; }
+  .c2-run-summary.is-live .c2-run-line {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .c2-run-summary.is-live .c2-run-verb { margin-inline-end: 8px; }
+  .c2-run-summary.is-live .c2-run-subject { white-space: normal; line-height: 20px; }
   /* One line, always: the subject gives way with an ellipsis inside the column. */
   .c2-run-line {
     flex: 0 1 auto;
@@ -162,7 +193,7 @@
   .c2-run-summary:hover .c2-run-chevron, .c2-run-summary:focus-visible .c2-run-chevron { stroke: var(--cv-t2); }
   .c2-run-summary.is-open .c2-run-chevron { transform: rotate(90deg); }
   @media (prefers-reduced-motion: reduce) {
-    .c2-run-icon.is-live { animation: none; }
+    .c2-run-spin { animation-duration: 3s; }
     .c2-run-summary, .c2-run-chevron { transition: none; }
   }
 </style>

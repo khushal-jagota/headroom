@@ -185,7 +185,8 @@
   .c2-meta--fold:hover .c2-meta-chevron, .c2-meta--fold:focus-visible .c2-meta-chevron { stroke: var(--cv-t2); }
   .c2-meta-chevron.is-open { transform: rotate(90deg); }
   /* Working has no colour: it is said by motion and by a brighter tone. */
-  /* v4: a 12px spinner and "Working · 2m 14s" in the meta style, at the transcript's tail. */
+  /* v5.1: a 12px spinner and "Working · 2m 14s" at the top of the live turn, where "Worked
+     for 7m" stands on a finished one. */
   .c2-meta-spin {
     flex: none;
     box-sizing: border-box;
@@ -198,8 +199,8 @@
   }
   .c2-meta-spin.is-turning { animation: c2-meta-spin var(--cv-spin) linear infinite; }
   @keyframes c2-meta-spin { to { transform: rotate(395deg); } }
-  /* v4.1: "Working" in #d9d9d9, its duration in #a3a3a3. "Worked for" stays #a3a3a3. */
-  .c2-meta-working { color: var(--cv-t2); }
+  /* v5.2: "Working" 13 medium #d9d9d9, its duration #b0b0b0. "Worked for" 13 regular #b0b0b0. */
+  .c2-meta-working { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
   .c2-meta-working.is-alive {
     background: linear-gradient(90deg, var(--cv-t2) 0%, var(--cv-t2) 35%, var(--cv-t1) 50%, var(--cv-t2) 65%, var(--cv-t2) 100%);
     background-size: 200% 100%;

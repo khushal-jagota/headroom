@@ -1,5 +1,5 @@
 /** Production adapter of the approved app.tsx BarCard (period and composition). */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useReducedMotion } from 'motion/react';
 import { Chart, registerables, type ChartDataset } from 'chart.js';
 import type { ChartBlock, ChartSeries, ChartProjection } from '../../goals/contracts';
@@ -42,6 +42,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const topStackKey = entries.at(-1)?.key;
   if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--chart-reference)' });
 
+  const [legendInset, setLegendInset] = useState(0);
   useEffect(() => {
     if (!ref.current) return;
     const tokens = getComputedStyle(ref.current), color = (token: string) => tokens.getPropertyValue(token).trim();
@@ -92,6 +93,8 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
       chart.current.options = configuration.options;
       chart.current.update();
     } else chart.current = new Chart<'bar' | 'line'>(ref.current, configuration);
+    // v5.2: a chat snapshot's key starts on the plot area's left edge (past the y-axis numbers).
+    if (showLegend) setLegendInset(Math.max(0, Math.round(chart.current.chartArea?.left ?? 0)));
   }, [data, block, series, reduce, projection, range, dateAxis, showLegend]);
 
   useEffect(() => () => { chart.current?.destroy(); chart.current = null; }, []);
@@ -114,7 +117,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   // The key stands above the plot, under the title, so it is read before the bars and is
   // never the part a scrolled card leaves below the fold.
   return <>
-    {showLegend && <SeriesLegend series={entries} />}
+    {showLegend && <SeriesLegend series={entries} inset={legendInset} />}
     {/* A chat snapshot is a figure in a sentence, not a dashboard: a shorter plot, so the
         whole of it, axis labels included, reads in one glance with the words around it. */}
     <div className="bar-plot" style={{ height: block.plot_height ?? (showLegend ? 156 : compact ? 176 : 242) }}>

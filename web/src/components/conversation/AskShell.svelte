@@ -56,7 +56,12 @@
 <section class="cv-ask" class:is-framed={framed} data-ask-shell data-ask-kind={kind} {...rest}>
   <div class="cv-ask-body">
     <div class="cv-ask-eyebrow">
-      <span class="cv-ask-dot" aria-hidden="true"></span>
+      {#if kind === "permission"}
+        <!-- v5: a permission ask leads with a 12px shield in the accent, not the dot. -->
+        <svg class="cv-ask-shield" data-ask-shield viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.1 10 2.6v3c0 2.6-1.7 4.3-4 5.3-2.3-1-4-2.7-4-5.3v-3z" /></svg>
+      {:else}
+        <span class="cv-ask-dot" aria-hidden="true"></span>
+      {/if}
       <span class="cv-ask-need">{eyebrow}</span>
       {#if onStop || context}
         <span class="cv-ask-context">
@@ -108,6 +113,7 @@
     font: var(--cv-weight-title) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
   }
   .cv-ask-dot { flex: none; width: 7px; height: 7px; border-radius: var(--cv-r-pill); background: var(--cv-accent); }
+  .cv-ask-shield { flex: none; width: 12px; height: 12px; fill: none; stroke: var(--cv-accent); stroke-width: 1.3; stroke-linejoin: round; }
   .cv-ask-need { flex: none; }
   .cv-ask-context {
     display: inline-flex;
@@ -120,7 +126,9 @@
     font-variant-numeric: tabular-nums;
   }
   /* v4.2: the pager's arrows stay in the meta tone, #a3a3a3, even when one cannot go further. */
-  .cv-ask-context :global(.cv-icon-button), .cv-ask-context :global(.cv-icon-button:disabled) { color: var(--cv-t3); }
+  .cv-ask-context :global(.cv-icon-button) { color: var(--cv-t3); }
+  /* v5.1: a pager arrow that cannot go further is #8c8c8c. */
+  .cv-ask-context :global(.cv-icon-button:disabled) { color: #8c8c8c; }
   .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { color: var(--cv-t1); }
   .cv-ask-title {
     margin: 6px 0 0;
@@ -176,9 +184,10 @@
   .cv-ask-stop:disabled { cursor: default; }
 
   /* --- the one answer tile every ask uses (v4) ------------------------------------------- */
-  /* Tiles 6px apart, radius 12, padding 12 16 (v4.2): filled #222222 at rest so they read as
-     clickable, #262626 on hover. The chosen one is #2a2a2a with a 1px accent edge, its number
-     chip in the accent. Every answer, a declining one too, is labelled in the same tone. */
+  /* Tiles 6px apart, radius 12, padding 12 16 (v5): filled #262626 at rest on the #1c1c1c
+     composer so they read as clickable, #2c2c2c on hover. The chosen one is #2e2e2e with a 1px
+     accent edge, its number chip in the accent; the others' keycaps are #333333 with a #d9d9d9
+     number. Every answer, a declining one too, is labelled in the same tone. */
   :global(.cv-ask-rows) { display: grid; gap: 6px; }
   :global(.cv-ask-row) {
     display: flex;
@@ -189,15 +198,15 @@
     padding: var(--cv-s3) var(--cv-s4);
     border: 0;
     border-radius: var(--cv-r-lg);
-    background: #222222;
+    background: #262626;
     color: var(--cv-t1);
     cursor: pointer;
     font: var(--cv-weight-body) var(--cv-type-prose)/var(--cv-leading-ui) var(--cv-font);
     text-align: start;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), box-shadow var(--cv-dur-fast) var(--cv-ease-out);
   }
-  :global(.cv-ask-row:hover:not(:disabled)) { background: #262626; }
-  :global(.cv-ask-row.is-selected), :global(.cv-ask-row.is-selected:hover:not(:disabled)) { background: #2a2a2a; box-shadow: inset 0 0 0 1px rgb(169 187 227 / 55%); }
+  :global(.cv-ask-row:hover:not(:disabled)) { background: #2c2c2c; }
+  :global(.cv-ask-row.is-selected), :global(.cv-ask-row.is-selected:hover:not(:disabled)) { background: #2e2e2e; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
   :global(.cv-ask-row:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
   :global(.cv-ask-row:disabled) { cursor: default; }
   :global(.cv-ask-key) {
@@ -208,8 +217,8 @@
     height: 24px;
     box-sizing: border-box;
     border-radius: var(--cv-r-sm);
-    background: #2a2a2a;
-    color: var(--cv-t3);
+    background: #333333;
+    color: #d9d9d9;
     font: var(--cv-weight-label) var(--cv-type-caption)/1 var(--cv-font);
     font-variant-numeric: tabular-nums;
   }

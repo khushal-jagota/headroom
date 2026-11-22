@@ -25,7 +25,8 @@ function count(haystack: string, needle: string): number {
 describe("the permission ask", () => {
   it("names what it needs and shows the command once", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } });
-    expect(body).toContain("Needs your approval");
+    expect(body).toContain("Needs your permission");
+    expect(body).toContain("data-ask-shield");
     expect(body).toContain(ask.title);
     expect(count(body, "xcrun altool")).toBe(1);
   });

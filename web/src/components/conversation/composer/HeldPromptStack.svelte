@@ -152,7 +152,7 @@
             >
               <svg class="chat-qrow-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v4.2l2.6 1.6" /></svg>
               <span>{stateWord(row)}</span>
-              <svg class="chat-qrow-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+              <svg class="chat-qrow-chevron" viewBox="0 0 16 16" aria-hidden="true">{#if menuOpenFor === row.key}<path d="m4 10 4-4 4 4" />{:else}<path d="m4 6 4 4 4-4" />{/if}</svg>
             </button>
             <!-- Drawn closed as hidden, so its actions are always the same buttons. -->
               <div class="chat-qrow-menu" role="menu" aria-label="Queued message" hidden={menuOpenFor !== row.key} data-conversation-held-menu>
@@ -245,7 +245,8 @@
      the words stay readable in #d9d9d9. */
   .chat-qrow :global(.c2-bubble) {
     background: transparent;
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%);
+    /* v5.2: the frame at 16% so it holds against the canvas. */
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
     color: var(--cv-t2);
   }
   /* A picture waiting to go is a thumbnail of itself: what it is, not the picture at size. */
@@ -270,7 +271,9 @@
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-qrow-chip.is-static { cursor: default; }
-  .chat-qrow-chip:not(.is-static):hover:not(:disabled), .chat-qrow-chip[aria-expanded="true"] { background: var(--cv-raised); color: var(--cv-t1); }
+  .chat-qrow-chip:not(.is-static):hover:not(:disabled) { background: var(--cv-raised); color: var(--cv-t1); }
+  /* p12c: an open chip is filled #3a3a3a, its words #f2f2f2, its chevron pointing up. */
+  .chat-qrow-chip[aria-expanded="true"], .chat-qrow-chip[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }
   .chat-qrow-chip:disabled { cursor: default; }
   .chat-qrow-chip:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
   .chat-qrow-clock { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
@@ -288,7 +291,8 @@
     position: absolute;
     z-index: 30;
     right: calc(var(--cv-s2) * -1);
-    bottom: calc(100% + 6px);
+    bottom: calc(100% + 8px);
+    width: max-content;
     min-width: 160px;
     display: grid;
     padding: 6px;

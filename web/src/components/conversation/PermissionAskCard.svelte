@@ -61,8 +61,9 @@
     ? askQuestionChoices(ask).map((choice) => ({ ...choice, emphasis: "option" as const, supplied: true }))
     : permissionAnswerRows(ask));
   let detail = $derived(readableConversationDetail(ask.detail));
-  // The rail names this state "Needs your approval"; the card says it in the same words.
-  let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your approval");
+  // v5: a permission ask says "Needs your permission" (with the shield); a question keeps
+  // "Needs your answer". "Needs your approval" belongs to proposals.
+  let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your permission");
   let rawOpen = $state(false);
   /** The chosen answer while docked: the default (the first row, allow once) until another
    *  is chosen. Reset when a new ask arrives. */

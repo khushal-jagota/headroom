@@ -16,8 +16,6 @@
   import type { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { DiagnosticExpiredError, DIAGNOSTIC_EXPIRED_MESSAGE } from "../../lib/conversation/diagnosticExpiry";
   import { readToolCallDetail } from "../../lib/conversation/wire";
-  import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
-  import { formatDuration } from "../../lib/conversation/transcript";
 
   /** How tall an opened output stands before it scrolls in its own block. */
   const OUTPUT_HEIGHT_CAP_LINES = 17;
@@ -54,8 +52,6 @@
   let shownDetail = $derived(selectedDetail ?? wholeDetails.get(row.toolCallId) ?? presentation.detail);
   let showAll = $state(false);
   let copied = $state(false);
-  // A running call counts from the moment its start was recorded, as the turn head does.
-  const running = elapsedTurnTime(() => presentation.outcome === "running" && !activityUncertain && row.createdAt > 0 ? row.createdAt * 1_000 : null);
   let outputLines = $derived((shownDetail ?? "").replace(/\n$/, "").split("\n"));
   let exitCode = $derived(presentation.outcome === "failed" ? /exit (?:code|status)[:\s]+(\d+)/i.exec(shownDetail ?? "")?.[1] ?? null : null);
   let outputLabel = $derived(
@@ -139,8 +135,8 @@
       <span class="c2-tool-state">Unknown</span>
     {:else}
       <span class="c2-tool-state c2-tool-state--running">
+        <!-- v5.1: no time on a running row; the turn's head carries the turn's time. -->
         <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
-        {#if running.seconds !== null}<span data-conversation-tool-elapsed>{formatDuration(running.seconds)}</span>{/if}
       </span>
     {/if}
   </span>

@@ -688,3 +688,20 @@
   --cv-spin: 1s;
   --cv-shimmer: 2s;
 }
+
+/* v5: inside the conversation (transcript, composer, header, dock) quiet text is #b0b0b0 and
+   placeholders #999999. Scoped to the pane so the page around it (the proposal card, the work
+   page) keeps its own tones. */
+[data-conversation-pane] {
+  /* v5.2: the "needs you" accent is #bccbf0 everywhere in the conversation. */
+  --cv-accent: #bccbf0;
+  --cv-accent-wash: rgb(188 203 240 / 12%);
+  --cv-accent-line: rgb(188 203 240 / 45%);
+  --cv-accent-halo: rgb(188 203 240 / 10%);
+  /* v5.2: chat charts draw their two series in the accent and #e0b36b. */
+  --cv-data-1-strong: #bccbf0;
+  --cv-data-2-strong: #e0b36b;
+  --cv-t3: #b0b0b0;
+  --cv-t4: #b0b0b0;
+  --cv-placeholder: #999999;
+}

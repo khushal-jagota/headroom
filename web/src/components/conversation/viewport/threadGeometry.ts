@@ -4,7 +4,16 @@ import {
   SENT_MESSAGE_TOP_GAP_PIXELS
 } from "./viewportConfiguration";
 
+/** v5.4: Jump to latest shows only when the newest content is more than one transcript
+ *  viewport below the visible area. Closer than that, the reader can see the transcript is
+ *  near its end. `distancePixels` is how far the thread must still scroll to reach it. */
+export function jumpToLatestWanted(distancePixels: number, viewportHeightPixels: number): boolean {
+  return viewportHeightPixels > 0 && distancePixels > viewportHeightPixels;
+}
+
 export type ThreadReading = {
+  /** v5.4: the newest content is more than one viewport below the visible area. */
+  newestLineIsFarBelow: boolean;
   newestLineBottomPixels: number;
   remainingReservedSpacePixels: number;
   newestLineIsInSight: boolean;
@@ -20,6 +29,7 @@ export type ThreadGeometry = {
   ): ThreadReading;
   newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean;
   newestLineIsBelowTheView(cachedNewestLineBottomPixels: number): boolean;
+  newestLineIsFarBelow(cachedNewestLineBottomPixels: number): boolean;
   newestLineScrollTop(cachedNewestLineBottomPixels: number): number;
   sentMessage(messageId: string): Element | null;
   /** Where the thread must be for this element to sit at the top, clear of the fade. */
@@ -100,6 +110,10 @@ export function threadGeometry(
     return newestLineScrollTop(cachedNewestLineBottomPixels) - thread.scrollTop > NEAR_NEWEST_LINE_PIXELS;
   }
 
+  function newestLineIsFarBelow(cachedNewestLineBottomPixels: number): boolean {
+    return jumpToLatestWanted(newestLineScrollTop(cachedNewestLineBottomPixels) - thread.scrollTop, thread.clientHeight);
+  }
+
   function newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean {
     if (newestLineIsBelowTheView(cachedNewestLineBottomPixels)) return false;
     return cachedNewestLineBottomPixels >= thread.scrollTop;
@@ -129,7 +143,8 @@ export function threadGeometry(
       newestLineBottomPixels,
       remainingReservedSpacePixels,
       newestLineIsInSight: newestLineIsInSight(newestLineBottomPixels),
-      newestLineIsBelowTheView: newestLineIsBelowTheView(newestLineBottomPixels)
+      newestLineIsBelowTheView: newestLineIsBelowTheView(newestLineBottomPixels),
+      newestLineIsFarBelow: newestLineIsFarBelow(newestLineBottomPixels)
     };
   }
 
@@ -151,6 +166,7 @@ export function threadGeometry(
 
     newestLineIsInSight,
     newestLineIsBelowTheView,
+    newestLineIsFarBelow,
     newestLineScrollTop,
 
     sentMessage(messageId: string): Element | null {

@@ -160,6 +160,8 @@
   let newestLineOutOfSight = $state(false);
   // Latest points down, so a newest line above the view does not call for it.
   let newestLineBelowTheView = $state(false);
+  /** v5.4: more than one viewport of newer content below: the only time Jump to latest shows. */
+  let newestLineFarBelow = $state(false);
   /** Whether the thread is scrolled to its very top, where there is nothing above to fade. */
   let atTheTop = $state(true);
   let belowCount = $state(0);
@@ -489,6 +491,7 @@
     newestLineBottomPixels = reading.newestLineBottomPixels;
     newestLineOutOfSight = !reading.newestLineIsInSight;
     newestLineBelowTheView = reading.newestLineIsBelowTheView;
+    newestLineFarBelow = reading.newestLineIsFarBelow;
   }
 
   /** Is the reader with the newest line right now? Measured, never remembered. */
@@ -939,6 +942,7 @@
         takeTheReading(geometry.read(reservedSpacePixels));
         newestLineOutOfSight = !geometry.newestLineIsInSight(newestLineBottomPixels) && !followingMore;
         newestLineBelowTheView = geometry.newestLineIsBelowTheView(newestLineBottomPixels) && !followingMore;
+        newestLineFarBelow = geometry.newestLineIsFarBelow(newestLineBottomPixels) && !followingMore;
         const finalRow = presentationRoots(thread).at(-1) ?? contentElement ?? thread;
         const latestPresented = intent?.cause !== 'restoration-fallback' || presentationReady(finalRow);
         const latestPlaced = latestPending && isCurrentLatest(intent) && intent?.admitted && actualNewestIsHeld()
@@ -1178,9 +1182,10 @@
     return () => observer.disconnect();
   });
 
-  // The jump is drawn by the pane in its status slot, so it never covers a line of the
-  // transcript. It shows while there is something below to go back to.
-  const jumpShown = $derived(newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending);
+  // The jump is drawn by the pane, straddling the composer's top edge. v5.4: it shows only
+  // while the newest content is more than one viewport below the visible area (or newer
+  // history is not loaded yet, or a jump is under way).
+  const jumpShown = $derived(newestLineFarBelow || newerHistory || newerThanUnplacedAnchor || latestPending);
   $effect(() => {
     jump = jumpShown
       ? { label: belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Jump to latest",
@@ -1261,12 +1266,10 @@
     padding-bottom: 32px;
     margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
     max-width: none;
-    /* Pass 11: the header's solid #121212 backing hides what is under it outright (the first
-       16px of the thread), then one short 8px fade, so a line scrolled to the header's edge is
-       either clearly visible or gone, never left half-faded. While newer content sits below the
-       view, the bottom edge dissolves over 24px above the composer instead of cutting a block
-       flat. */
-    --c2-top-fade: transparent 0, transparent 16px, #000 24px;
+    /* v5: the header is solid; the thread fades in over 24px starting right at the header's
+       bottom edge (no solid band, no hard cut). While newer content sits below the view, the
+       bottom edge dissolves over 24px above the composer. */
+    --c2-top-fade: transparent 0, #000 24px;
     --c2-bottom-fade: #000 calc(100% - 24px), transparent 100%;
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
             mask-image: linear-gradient(to bottom, var(--c2-top-fade));
