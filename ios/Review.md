@@ -22,8 +22,8 @@ no longer holds:
 
 - its own exit, while the card fades after Khushal handled it here;
 - a refused decision, which comes back to the front with the server's reason and
-  the saved note, even when its proposal now waits for someone else. A proposal the
-  view shows decided or replaced has nothing left to decide and does not come back.
+  the saved note, even when its proposal now waits for someone else. Outside the
+  window it comes back only while the view shows that exact proposal still waiting.
   Each refusal comes forward once; Skip moves on;
 - a proposal that moved to another reviewer while on screen. It stays as a notice
   that says who reviews it now, its actions are off, and Skip or the swipe moves on.
@@ -142,8 +142,9 @@ unread and returns to Review. A lost connection or response resends it with the 
 identity, and the server drops the repeat. A refused reply returns to its card with
 its words and attachments, and Try Again sends the corrected words under a new
 identity with the original read boundary. A refused reply or Mark read brings its
-card to the front once, like a refused decision. A reply that gave up may already be on the
-server, so Try Again sends it again as it was, under its own identity.
+card to the front once per refusal, with its reason; only the conversation's latest
+reply or read counts, and a later read point settles it. A reply that gave up may
+already be on the server, so Try Again sends it again as it was, under its own identity.
 
 Mark read acknowledges only the displayed run, joins the outbox, and the card leaves
 at once until the server's read point catches up. A card read ahead before its

@@ -131,6 +131,9 @@ import SwiftData
         /// Failed without a settling answer from the server, which may already hold it.
         /// Try Again sends it again with the same identity.
         var gaveUp: Bool { refused && unsettledAttempts > 0 }
+        /// One refusal of this item. Try Again can keep the item's identity, so a later
+        /// refusal of the same item is told apart by when it failed.
+        var refusalAttempt: String { "\(id)@\(completed?.timeIntervalSince1970 ?? 0)" }
     }
     nonisolated static let finishedLifetime: TimeInterval = 24 * 60 * 60
     private let context: ModelContext

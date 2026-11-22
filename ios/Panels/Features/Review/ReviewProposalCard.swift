@@ -84,11 +84,14 @@ struct ReviewProposalCard: View {
             guard isActive, sheet == nil, busyAction == nil, notice == nil else { return }
             await load()
         }
+        // A move to another reviewer turns the decision off, an open sheet included.
+        .onChange(of: notice != nil) { _, moved in if moved { sheet = nil } }
         .decisionSheets($sheet, ticket: decision.ticket, manifest: decision.manifest, note: approvalGuidance?.text,
             onDismiss: {
                 if resolvedAfterDismiss { resolvedAfterDismiss = false; leave() }
             },
             approve: { ceiling, holder in
+                guard notice == nil else { throw APIError(status: 0, message: "Someone else reviews this proposal now.") }
                 busyAction = "approve"
                 if await decision.approve(api: store.client, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
                 else {
@@ -97,7 +100,7 @@ struct ReviewProposalCard: View {
                 }
             },
             setReviewer: { holder in
-                guard let ticket = decision.ticket else { return }
+                guard notice == nil, let ticket = decision.ticket else { return }
                 let current = try await decision.scopeChange.save(api: store.client, ticket: ticket, ceiling: nil, holder: holder)
                 decision.acceptScopeRead(current)
                 // Moved to someone else here: the card leaves once the sheet closes, and

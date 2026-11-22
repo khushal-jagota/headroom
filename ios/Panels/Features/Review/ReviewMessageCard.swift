@@ -7,6 +7,8 @@ struct ReviewMessageCard: View {
     let isActive: Bool
     /// Owned by the session so the next message can be read ahead, like proposals.
     let decision: ReviewMessageDecision
+    /// The server's reason for refusing this card's latest reply or Mark read.
+    let refusal: String?
     let motion: ReviewCardMotion
     let onSkip: (CGFloat?) -> Void
     let onResolve: (_ afterExit: (() -> Void)?) -> Void
@@ -31,6 +33,10 @@ struct ReviewMessageCard: View {
     var body: some View {
         ReviewCardFrame(title: item.title, recap: item.recap, motion: motion, locked: locked, onSkip: onSkip) {
             VStack(alignment: .leading, spacing: 14) {
+                // A refused reply shows its reason in its composer; a refused Mark read here.
+                if let refusal, decision.attempt?.state != .failed {
+                    ReviewInlineNote(tone: .refused, title: "Refused", text: refusal)
+                }
                 if decision.loaded {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Message").panelsScaledFont(size: 13, weight: .semibold).foregroundStyle(PanelsTheme.Web.secondary)

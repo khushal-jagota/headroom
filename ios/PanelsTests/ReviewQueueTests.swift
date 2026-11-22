@@ -129,7 +129,7 @@ final class ReviewQueueTests: XCTestCase {
         let gone = ReviewItem(reviewItemType: "proposal", ticketId: "z", field: "plan", title: "Z", waitingSince: 9, proposalRevision: 3)
         queue.returnToCards(); reconcile(&queue, [chiefMessage, ask])
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
-        let refusal = ReviewRefusal(item: gone, note: "Not sent · the reviewer changed.", summaryID: "op-1")
+        let refusal = ReviewRefusal(item: gone, note: "Not sent · the reviewer changed.", refusalID: "op-1")
         reconcile(&queue, [chiefMessage, ask], refusals: [refusal])
         XCTAssertEqual(queue.shown?.id, gone.id, "The refused card comes to the front")
         XCTAssertEqual(queue.cards([chiefMessage, ask], refusals: [refusal]).first?.id, gone.id)
@@ -138,19 +138,65 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertEqual(queue.shown?.id, chiefMessage.id, "Each refusal comes forward once")
         // A refusal that lands while a card's exit runs comes forward once the exit ends.
         queue.resolve(chiefMessage)
-        let late = ReviewRefusal(item: gone, note: "Not sent · changed.", summaryID: "op-3")
+        let late = ReviewRefusal(item: gone, note: "Not sent · changed.", refusalID: "op-3")
         reconcile(&queue, [ask], refusals: [late])
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
         queue.finishExit(); reconcile(&queue, [ask], refusals: [late])
         XCTAssertEqual(queue.shown?.id, gone.id)
         // A refused card still in the window moves to the front and is listed once.
-        let liveRefusal = ReviewRefusal(item: ask, note: "Refused", summaryID: "op-2")
+        let liveRefusal = ReviewRefusal(item: ask, note: "Refused", refusalID: "op-2")
         XCTAssertEqual(queue.cards([chiefMessage, ask], refusals: [liveRefusal]).map(\.id), [ask.id, chiefMessage.id])
         // On the summary, a refusal waits in the queue; the summary stays.
         var away = ReviewQueue()
         reconcile(&away, [chiefMessage], refusals: [refusal])
         XCTAssertNil(away.shown)
         XCTAssertEqual(away.counts(away.cards([chiefMessage], refusals: [refusal]), unloaded: 0).newCount, 2)
+    }
+
+    /// Risk: a card handled here comes back before saved work or the window hides it: a
+    /// refusal already seen forcing a handled card forward (review fault 1), or an answered
+    /// ask flashing back when its answer settles before the window drops it (fault 6).
+    func testHandledCardsStayHiddenUntilSavedWorkOrTheWindowCatchesUp() {
+        var queue = ReviewQueue()
+        queue.returnToCards()
+        let refusal = ReviewRefusal(item: chiefMessage, note: "Refused", refusalID: "read@1")
+        queue.reconcile([chiefMessage, ask], refusals: [refusal], moved: { _ in nil }, freshSession: nil)
+        XCTAssertEqual(queue.shown?.id, chiefMessage.id)
+        queue.resolve(chiefMessage); queue.finishExit()
+        queue.reconcile([chiefMessage, ask], refusals: [refusal], moved: { _ in nil }, freshSession: nil)
+        XCTAssertEqual(queue.shown?.id, ask.id, "A refusal already seen cannot bring back a card handled since")
+        XCTAssertFalse(queue.cards([chiefMessage, ask], refusals: [refusal]).contains { $0.id == chiefMessage.id })
+        // A new refusal of the same card brings it back.
+        let again = ReviewRefusal(item: chiefMessage, note: "Refused again", refusalID: "read@2")
+        queue.reconcile([chiefMessage, ask], refusals: [again], moved: { _ in nil }, freshSession: nil)
+        XCTAssertEqual(queue.shown?.id, chiefMessage.id)
+        // The answered ask: saved work hides it while the answer waits, then the answer is
+        // sent while the window still holds the ask.
+        queue.skip(chiefMessage, in: queue.cards([chiefMessage, ask], refusals: [again]))
+        queue.reconcile([chiefMessage, ask], refusals: [again], moved: { _ in nil }, freshSession: nil)
+        XCTAssertEqual(queue.shown?.id, ask.id)
+        queue.resolve(ask); queue.finishExit()
+        queue.reconcile([chiefMessage], refusals: [again], moved: { _ in nil }, freshSession: nil, window: [chiefMessage, ask])
+        queue.reconcile([chiefMessage, ask], refusals: [again], moved: { _ in nil }, freshSession: nil)
+        XCTAssertFalse(queue.cards([chiefMessage, ask], refusals: [again]).contains { $0.id == ask.id }, "Hidden until the window drops it")
+        queue.reconcile([chiefMessage], refusals: [again], moved: { _ in nil }, freshSession: nil)
+        XCTAssertTrue(queue.handled.isEmpty)
+    }
+
+    /// Risk: the skipped keys the server is told about go stale (review fault 7): an entry
+    /// with a new card stays "skipped", or one whose last unskipped card was handled is missed.
+    func testSkippedKeysFollowTheCurrentCards() {
+        var queue = ReviewQueue()
+        queue.returnToCards(); reconcile(&queue, [proposal, ticketMessage, chiefMessage])
+        queue.skip(proposal, in: [proposal, ticketMessage, chiefMessage]); reconcile(&queue, [proposal, ticketMessage, chiefMessage])
+        XCTAssertTrue(queue.history.skipped.isEmpty)
+        // The Ticket's message is read elsewhere: its entry is now fully skipped.
+        reconcile(&queue, [proposal, chiefMessage])
+        XCTAssertEqual(queue.history.skipped, [RecordKey(kind: "ticket", id: "a")])
+        // A new message on the same Ticket: the entry waits again.
+        let newer = ReviewItem(reviewItemType: "message", title: "A", waitingSince: 6, conversationId: "a-other", ownerKind: "ticket", ownerId: "a")
+        reconcile(&queue, [proposal, chiefMessage, newer])
+        XCTAssertTrue(queue.history.skipped.isEmpty)
     }
 
     /// Risk: a proposal that moved to another reviewer vanishes with no word, or its
@@ -178,7 +224,13 @@ final class ReviewQueueTests: XCTestCase {
 
     /// Risk: the refusal card is built from the wrong saved decision: an earlier refusal
     /// after a later waiting decision, or a refusal with no proposal identity.
-    @MainActor func testRefusalsComeFromEachProposalsLatestDecision() throws {
+    /// Risk: a refusal card is built from the wrong saved attempt. A proposal's card comes
+    /// from its latest decision, and one outside the window only while the view shows it
+    /// still waiting. A message card comes only from its conversation's latest reply or
+    /// Mark read, until the server's read point passes it; an older refused row cannot
+    /// force a handled card back (review fault 1), and the same item refused again after
+    /// Try Again is a new refusal (fault 3). Fault 5: an unknown proposal is not shown.
+    @MainActor func testRefusalsComeFromEachCardsLatestAttempt() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = LocalStore(url: directory.appendingPathComponent("review.store"))
@@ -188,19 +240,32 @@ final class ReviewQueueTests: XCTestCase {
         try outbox.save(PendingWork(id: "refused", created: .now, kind: .approval, state: .failed, note: "Not sent · moved", ticketID: "z", proposal: gone), server: "a")
         try outbox.save(PendingWork(id: "first", created: .now, kind: .approval, state: .failed, note: "Not sent", ticketID: "a", proposal: retried), server: "a")
         try outbox.save(PendingWork(id: "second", created: .now, kind: .approval, ticketID: "a", proposal: retried), server: "a")
-        let refusals = ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [proposal]) { $0.ticketID == "z" ? "Moved Ticket" : nil }
+        let refusals = ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [proposal], title: { $0.ticketID == "z" ? "Moved Ticket" : nil }, waits: { _ in true })
         XCTAssertEqual(refusals.map(\.item.id), ["z:plan:9.0:revision:3"])
         XCTAssertEqual(refusals.first?.item.title, "Moved Ticket")
         XCTAssertEqual(refusals.first?.note, "Not sent · moved")
+        // Decided, replaced or not carried by the view: nothing is shown or counted.
+        XCTAssertTrue(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [], title: { _ in nil }, waits: { _ in false }).isEmpty)
+        XCTAssertTrue(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [], title: { _ in nil }).isEmpty)
+
         // A refused reply brings its message card forward.
         let reply = ConversationSend(conversationId: "chief", content: [.init(text: "Refused reply")], senderMessageId: "reply", sentAtUnixMilliseconds: 1, ownerReadThroughSequence: 3)
-        try outbox.save(PendingWork(id: "reply", created: .now, kind: .message, state: .failed, note: "Not sent · refused", owner: .chief, message: reply), server: "a")
+        var refusedReply = PendingWork(id: "reply", created: .now, kind: .message, state: .failed, note: "Not sent · refused", owner: .chief, message: reply)
+        refusedReply.completed = Date(timeIntervalSince1970: 100)
+        try outbox.save(refusedReply, server: "a")
         let withReply = ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [chiefMessage, proposal], title: { _ in nil })
         XCTAssertEqual(withReply.first?.item.id, chiefMessage.id)
         XCTAssertEqual(withReply.first?.note, "Not sent · refused")
-        try store.remove(server: "a", kind: "outbox", id: "reply")
-        // Decided or replaced since: nothing is left to decide, so no card comes back.
-        XCTAssertTrue(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [], title: { _ in nil }, waits: { _ in false }).isEmpty)
-        XCTAssertEqual(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [], title: { _ in nil }, waits: { _ in true }).count, 1)
+        // A later read point, past what the reply answered, settles it.
+        var later = chiefMessage; later.ownerReadThroughSequence = 3
+        XCTAssertFalse(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [later], title: { _ in nil }).contains { $0.item.isMessage })
+        // Refused again after Try Again kept its identity: a new refusal.
+        refusedReply.completed = Date(timeIntervalSince1970: 200)
+        try outbox.save(refusedReply, server: "a")
+        let again = ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [chiefMessage], title: { _ in nil })
+        XCTAssertNotEqual(again.first?.refusalID, withReply.first?.refusalID)
+        // A newer Mark read settles the refused reply, so the handled card stays handled.
+        try store.outgoing.enqueueMarkRead(server: "a", owner: .chief, conversationID: "chief", through: 4)
+        XCTAssertFalse(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [chiefMessage], title: { _ in nil }).contains { $0.item.isMessage })
     }
 }

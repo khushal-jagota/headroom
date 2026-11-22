@@ -133,7 +133,7 @@ private struct ReviewCardScreen: View {
         switch item.reviewItemType {
         case "message":
             ReviewMessageCard(item: item, isActive: isActive, decision: session.messageDecisions.decision(for: item, savedWork: savedWork),
-                              motion: motion, onSkip: skip, onResolve: resolve)
+                              refusal: session.refusalNotes[item.id], motion: motion, onSkip: skip, onResolve: resolve)
         case "ask":
             ReviewAskCard(item: item, isActive: isActive, decision: session.askDecisions.decision(for: item),
                           motion: motion, onSkip: skip, onResolve: resolve)

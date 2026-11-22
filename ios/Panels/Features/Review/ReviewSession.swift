@@ -1,13 +1,13 @@
 import Foundation
 import Observation
 
-/// A refused decision. Its card comes back to the front with the server's reason and the
-/// saved note, even when its proposal no longer waits in the window.
+/// A refused decision, reply or mark read. Its card comes back to the front with the
+/// server's reason and the saved note.
 struct ReviewRefusal: Equatable, Sendable {
     let item: ReviewItem
     let note: String
-    /// The outbox summary that was refused; each refusal comes to the front once.
-    let summaryID: String
+    /// One refused attempt; each comes to the front once.
+    let refusalID: String
 }
 
 /// A proposal that moved to another reviewer while it was on screen.
@@ -84,7 +84,7 @@ struct ReviewQueue: Equatable, Sendable {
         let returned = Set(history.priority)
         let ordered = window.filter { !returned.contains($0.historyKey) } + window.filter { returned.contains($0.historyKey) }
         var seen: Set<String> = []
-        return (refusals.map(\.item) + ordered).filter { seen.insert($0.id).inserted }
+        return (refusals.map(\.item).filter { !handled.contains($0.id) } + ordered).filter { seen.insert($0.id).inserted }
     }
 
     /// The card on screen; nil is the summary.
@@ -102,10 +102,17 @@ struct ReviewQueue: Equatable, Sendable {
     /// Brings the queue up to the latest window.
     /// - `moved`: who reviews a proposal now, when it waits for someone else.
     /// - `freshSession`: the connection session whose first fresh window this is, if any.
-    mutating func reconcile(_ live: [ReviewItem], refusals: [ReviewRefusal], moved: (ReviewItem) -> String?, freshSession: Int?) {
-        let liveIDs = Set(live.map(\.id))
-        handled.formIntersection(liveIDs)
+    /// - `window`: the window's cards before saved work hides any; nil when it is `live`.
+    mutating func reconcile(_ live: [ReviewItem], refusals: [ReviewRefusal], moved: (ReviewItem) -> String?, freshSession: Int?,
+                            window: [ReviewItem]? = nil) {
+        // A handled card stays hidden until saved work hides it, so a refusal can bring it
+        // back; an answered ask until the window itself drops it, as its answer can settle
+        // first. A new refusal brings its card back at once.
+        let liveIDs = Set(live.map(\.id)), windowIDs = Set((window ?? live).map(\.id))
+        handled = handled.filter { liveIDs.contains($0) || ($0.hasPrefix("ask:") && windowIDs.contains($0)) }
+        if leaving == nil { handled.subtract(refusals.filter { !seenRefusals.contains($0.refusalID) }.map(\.item.id)) }
         let cards = cards(live, refusals: refusals)
+        defer { recordSkippedEntries(cards) }
         if let away, let freshSession, freshSession > away.session {
             self.away = nil
             // A card that left while the app was away gives way to the summary.
@@ -113,8 +120,8 @@ struct ReviewQueue: Equatable, Sendable {
         }
         // A refusal that lands during an exit comes forward once the exit ends.
         if leaving != nil { return }
-        let newRefusal = refusals.first { !seenRefusals.contains($0.summaryID) }
-        seenRefusals.formUnion(refusals.map(\.summaryID))
+        let newRefusal = refusals.first { !seenRefusals.contains($0.refusalID) }
+        seenRefusals.formUnion(refusals.map(\.refusalID))
         if summary { return }
         if let newRefusal {
             notice = nil
@@ -138,20 +145,25 @@ struct ReviewQueue: Equatable, Sendable {
         if pinned == nil { showSummary() }
     }
 
+    /// The skipped history the server is told about, from the current cards: each Ticket or
+    /// conversation whose every card is skipped.
+    private mutating func recordSkippedEntries(_ cards: [ReviewItem]) {
+        var keys: [RecordKey] = []
+        for key in cards.map(\.historyKey) where !keys.contains(key) {
+            if cards.filter({ $0.historyKey == key }).allSatisfy({ skipped.contains($0.id) }) { keys.append(key) }
+        }
+        history.skipped = keys
+    }
+
     private mutating func showSummary() {
         summary = true; pinned = nil; notice = nil; away = nil
     }
 
-    /// Skip is per card. When every card of one Ticket or conversation is skipped, its key
-    /// joins the skipped history the server is told about.
+    /// Skip is per card.
     mutating func skip(_ item: ReviewItem, in cards: [ReviewItem]) {
         skipped.insert(item.id)
         away = nil
-        let key = item.historyKey
-        let entry = cards.filter { $0.historyKey == key }
-        if !entry.isEmpty, entry.allSatisfy({ skipped.contains($0.id) }), !history.skipped.contains(key) {
-            history.skipped.append(key)
-        }
+        recordSkippedEntries(cards)
         if notice?.item.id == item.id { notice = nil }
         if pinned?.id == item.id { pinned = nil }
     }
@@ -206,6 +218,7 @@ struct ReviewQueue: Equatable, Sendable {
     @ObservationIgnored let messageDecisions = ReviewMessageDecisions()
     @ObservationIgnored let askDecisions = ReviewAskDecisions()
     @ObservationIgnored private var live: [ReviewItem] = []
+    @ObservationIgnored private var window: [ReviewItem] = []
     @ObservationIgnored private var refusals: [ReviewRefusal] = []
     @ObservationIgnored private var moved: (ReviewItem) -> String? = { _ in nil }
 
@@ -223,7 +236,8 @@ struct ReviewQueue: Equatable, Sendable {
     func update(store: AppStore, savedWork: ReviewSavedWork, freshSession: Int?) {
         let server = LocalStore.server(store.baseURL)
         let decided = savedWork.decisions(server)
-        live = ReviewSavedWork.cards(store.review?.items ?? [], decisions: decided)
+        window = store.review?.items ?? []
+        live = ReviewSavedWork.cards(window, decisions: decided)
         let view = store.view
         let presentation = store.presentation
         refusals = ReviewSavedWork.refusals(decided, live: store.review?.items ?? [], title: { summary in
@@ -241,7 +255,7 @@ struct ReviewQueue: Equatable, Sendable {
     }
 
     private func reconcile(freshSession: Int? = nil) {
-        queue.reconcile(live, refusals: refusals, moved: moved, freshSession: freshSession)
+        queue.reconcile(live, refusals: refusals, moved: moved, freshSession: freshSession, window: window)
         cards = queue.cards(live, refusals: refusals)
     }
 

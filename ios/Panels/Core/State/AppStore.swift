@@ -118,6 +118,9 @@ import SwiftUI
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; workspaceSettled = []; workspaceView = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
         errors = [:]
+        // Review's history names one server's Tickets and conversations.
+        reviewHistory = ReviewHistory()
+        updateScope(opening: false)
         restore()
     }
 

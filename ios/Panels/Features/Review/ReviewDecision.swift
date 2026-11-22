@@ -273,9 +273,8 @@ struct DecisionGuidance: Sendable, Equatable {
     }
     /// Each proposal whose latest saved decision was refused, as a card. A card in the
     /// window keeps its own facts; one that left takes its Ticket's title from `title`.
-    /// One that left is kept only while its proposal may still wait (`waits` is true, or
-    /// nil when the view does not carry the Ticket): a decided or replaced proposal has
-    /// nothing left to decide.
+    /// One that left is kept only while the view shows its proposal still waiting (`waits`
+    /// is true): a decided, replaced or unknown proposal is not shown or counted.
     static func refusals(_ decisions: [OutgoingStore.Summary], live: [ReviewItem], title: (OutgoingStore.Summary) -> String?,
                          waits: (ReviewItem) -> Bool? = { _ in nil }) -> [ReviewRefusal] {
         var latest: [String: OutgoingStore.Summary] = [:]
@@ -286,23 +285,29 @@ struct DecisionGuidance: Sendable, Equatable {
             if latest[key] == nil { order.append(key) }
             if latest[key].map({ $0.sequence < saved.sequence }) ?? true { latest[key] = saved }
         }
-        // A refused reply or mark read brings its message card forward the same way.
-        var messages: [String: ReviewRefusal] = [:]
-        for saved in decisions where ["message", "markRead"].contains(saved.kind) && saved.refused {
-            guard let item = live.first(where: { $0.isMessage && $0.conversationId == saved.conversationID }) else { continue }
-            messages[item.id] = ReviewRefusal(item: item, note: saved.note, summaryID: saved.id)
+        // A refused reply or mark read brings its message card forward the same way. Only the
+        // conversation's latest reply or read counts, and only while the server's read
+        // point has not passed it: a newer action or a later read point settles it.
+        var lastAction: [String: OutgoingStore.Summary] = [:]
+        for saved in decisions where ["message", "markRead"].contains(saved.kind) {
+            guard let conversation = saved.conversationID else { continue }
+            if lastAction[conversation].map({ $0.sequence < saved.sequence }) ?? true { lastAction[conversation] = saved }
         }
-        let replies = live.compactMap { messages[$0.id] }
+        let replies = live.compactMap { item -> ReviewRefusal? in
+            guard item.isMessage, let conversation = item.conversationId, let saved = lastAction[conversation], saved.refused,
+                  (saved.ownerReadThroughSequence ?? 0) > item.ownerReadThroughSequence else { return nil }
+            return ReviewRefusal(item: item, note: saved.note, refusalID: saved.refusalAttempt)
+        }
         return replies + order.compactMap { key in
             guard let saved = latest[key], saved.refused, let ticket = saved.ticketID, let field = saved.proposalField,
                   let created = saved.proposalCreatedAt else { return nil }
             if let item = live.first(where: { $0.isProposal && decides(saved, $0) }) {
-                return ReviewRefusal(item: item, note: saved.note, summaryID: saved.id)
+                return ReviewRefusal(item: item, note: saved.note, refusalID: saved.refusalAttempt)
             }
             let item = ReviewItem(reviewItemType: "proposal", ticketId: ticket, field: field, title: title(saved) ?? "Proposal",
                                   waitingSince: created, proposalRevision: saved.proposalRevision)
-            guard waits(item) != false else { return nil }
-            return ReviewRefusal(item: item, note: saved.note, summaryID: saved.id)
+            guard waits(item) == true else { return nil }
+            return ReviewRefusal(item: item, note: saved.note, refusalID: saved.refusalAttempt)
         }
     }
 }
