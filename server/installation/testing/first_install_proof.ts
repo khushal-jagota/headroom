@@ -138,6 +138,11 @@ const linux_jobs = [
   service + '.service',
 ];
 const joined_job = system === 'linux' ? 'panels-executor-typescript.service' : mac.job;
+const persistent_jobs = new Set(
+  system === 'linux'
+    ? [service + '.service', service + '.machine.service', joined_job]
+    : [service, service + '.machine', joined_job],
+);
 const domain = `gui/${process.getuid!()}`;
 let install_attempted = false;
 let join_attempted = false;
@@ -257,9 +262,7 @@ try {
   assert.equal(named.length, 1);
   assert.notEqual(named[0].machine_id, first_identity.machine_id);
   const pids: number[] = [];
-  for (const job of system === 'linux'
-    ? [service + '.service', service + '.machine.service', joined_job]
-    : [service, service + '.machine', joined_job]) {
+  for (const job of persistent_jobs) {
     const result =
       system === 'linux'
         ? await run('process-' + job, [
@@ -309,6 +312,7 @@ try {
     const births = new Map<number, WorkerProcess>();
     try {
       const pids = new Set<number>();
+      const required_pids = new Set<number>();
       for (const job of jobs) {
         const result = await run_release_command(
           system === 'linux'
@@ -321,17 +325,31 @@ try {
           const pid = Number(
             system === 'linux' ? result.stdout.trim() : result.stdout.match(/\bpid = (\d+)/)?.[1],
           );
-          if (Number.isSafeInteger(pid) && pid > 0) pids.add(pid);
+          if (Number.isSafeInteger(pid) && pid > 0) {
+            pids.add(pid);
+            if (persistent_jobs.has(job)) required_pids.add(pid);
+          }
         }
       }
       for (const value of [report.first_machine, report.second_machine]) {
         const runtime = value as { process_id?: number } | undefined;
-        if (runtime?.process_id) pids.add(runtime.process_id);
+        if (runtime?.process_id) {
+          pids.add(runtime.process_id);
+          required_pids.add(runtime.process_id);
+        }
       }
       const snapshot = await primitives.snapshot(performance.now() / 1000 + 10);
       for (const pid of pids) {
         const birth = snapshot.get(pid);
-        assert.ok(birth, 'Cannot capture the native birth of an installed process: ' + pid);
+        // An auxiliary oneshot can finish between the job query and this snapshot.
+        // Persistent jobs and health-reported runtimes must still have native birth evidence.
+        if (!birth) {
+          assert.ok(
+            !required_pids.has(pid),
+            'Cannot capture the native birth of an installed process: ' + pid,
+          );
+          continue;
+        }
         births.set(pid, birth);
       }
       // Include runtime children and any commands that were still in flight at the snapshot.
