@@ -1,0 +1,62 @@
+name: Desktop app
+# Builds the desktop app from desktop/ with the web/ screens packed inside, and
+# drives it with Playwright under a virtual display against a test server.
+on:
+  pull_request:
+    branches: [staging]
+    paths: ['desktop/**', 'web/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
+  push:
+    branches: [staging]
+    paths: ['desktop/**', 'web/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  app-checks:
+    name: Desktop app checks (Linux, Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb libicu-dev pkg-config build-essential
+          npm ci --prefix server
+          npm ci --prefix web
+          npm ci --prefix tests/e2e
+          npm ci --prefix desktop
+          tests/e2e/node_modules/.bin/playwright install-deps chromium
+      - name: Typecheck
+        run: |
+          set -euo pipefail
+          npm --prefix desktop run check
+          npm --prefix tests/e2e run check
+      - name: Build the screens and the app
+        run: |
+          set -euo pipefail
+          (cd web && node node_modules/vite/bin/vite.js build)
+          npm --prefix desktop run build
+      - name: Drive the app against a test server
+        env:
+          PANELS_E2E_FAILURE_DIR: ${{ runner.temp }}/desktop-failure
+        run: |
+          cd tests/e2e
+          xvfb-run -a node_modules/.bin/playwright test --config desktop.config.ts
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-failure
+          path: ${{ runner.temp }}/desktop-failure
+          if-no-files-found: ignore
+          retention-days: 14

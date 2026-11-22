@@ -1,0 +1,20 @@
+{
+  "name": "panels-desktop",
+  "productName": "Panels",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The Panels desktop app for macOS.",
+  "main": "build/main.js",
+  "scripts": {
+    "check": "tsc --noEmit -p .",
+    "build": "tsc -p . && node scripts/pack_web.mjs",
+    "start": "electron .",
+    "build:mac": "npm run build && electron-builder --mac --publish never"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.3",
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0",
+    "typescript": "5.9.3"
+  }
+}
