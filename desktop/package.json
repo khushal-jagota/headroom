@@ -1,0 +1,15 @@
+{
+  "name": "panels-desktop",
+  "productName": "Panels",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The Panels desktop app for macOS.",
+  "main": "main.js",
+  "scripts": {
+    "build:mac": "electron-builder --mac --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0"
+  }
+}

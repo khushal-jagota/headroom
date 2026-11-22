@@ -1,0 +1,12 @@
+appId: com.khushaljagota.panels.desktop
+productName: Panels
+files:
+  - main.js
+  - package.json
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: zip
+      arch: arm64
+  hardenedRuntime: true
+  notarize: true
