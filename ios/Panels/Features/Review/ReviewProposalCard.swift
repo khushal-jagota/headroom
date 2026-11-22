@@ -230,7 +230,9 @@ struct ReviewProposalDock: View {
                 }
                 Spacer()
                 Button { Haptics.light(); Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg)).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
-            case .transcribing: Text("transcribing"); Spacer(); RingSpinner()
+            case .saved:
+                Text(voice.transcribing ? "transcribing" : "saved"); Spacer()
+                if voice.transcribing { RingSpinner() }
             case .failed:
                 Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not transcribed")
                 Spacer()

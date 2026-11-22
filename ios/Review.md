@@ -131,7 +131,8 @@ inherit an older refusal.
 The microphone records AAC locally after permission, then calls the existing
 conversation voice-transcription endpoint. Words append to the note. The recording
 is saved on disk first, and the outbox transcribes it, including after reconnect or
-relaunch. A failed transcription keeps the audio and offers Retry. Explicit discard
+relaunch. Meanwhile the note reads `saved`; it reads `transcribing`, with a spinner,
+only while the request is in flight. A failed transcription keeps the audio and offers Retry. Explicit discard
 removes it.
 
 ### Message card
@@ -209,7 +210,8 @@ Simulator.
   note and attachments; voice; and deployment expiry.
 - `OutboxRecoveryTests` (in `OfflineTests.swift`) checks that a decision's
   attachments are frozen before sending, resent as the same bytes after a lost
-  request, and land once after a lost reply.
+  request, and land once after a lost reply, and that a recording counts as
+  transcribing only while its request is in flight.
 
 Simulator checks reuse the offline stub (`ios/scripts/test-offline-simulator.py`) on
 an already booted lane under its lock; `PANELS_OFFLINE_DEVICE` names the lane's UDID.

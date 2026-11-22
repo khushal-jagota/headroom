@@ -3,8 +3,11 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class ReviewVoiceCapture {
-    enum Phase { case idle, recording, transcribing, failed }
+    /// `saved`: the recording is on disk and waits for its words.
+    enum Phase { case idle, recording, saved, failed }
     var phase = Phase.idle
+    /// A saved recording is transcribing only while the outbox's request for it is in flight.
+    var transcribing: Bool { phase == .saved && work.map { Outbox.shared.transcriptionsInFlight.contains($0.id) } == true }
     var startedAt = Date()
     var error: String?
     private var recorder: AVAudioRecorder?
@@ -27,7 +30,7 @@ import Observation
             Task { await Outbox.shared.drain(api: api) }
         }
         // A saved recording waits for its words. Only a refusal offers Retry.
-        phase = saved.state == .failed ? .failed : .transcribing
+        phase = saved.state == .failed ? .failed : .saved
         error = saved.state == .failed ? saved.note : nil
     }
     func start(api: APIClient, draftID: String?) async {
@@ -62,7 +65,7 @@ import Observation
         work.state = .waiting
         do { try Outbox.shared.save(work, server: LocalStore.server(api.baseURL)); self.work = work }
         catch { self.error = error.localizedDescription }
-        phase = .transcribing
+        phase = .saved
         Task { await Outbox.shared.drain(api: api) }
     }
     func stop(api: APIClient) async -> String? {
@@ -71,7 +74,7 @@ import Observation
     }
     func transcribe(api: APIClient) async -> String? {
         guard let work else { return nil }
-        phase = .transcribing; error = nil
+        phase = .saved; error = nil
         if Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)?.state == .failed { await Outbox.shared.retry(work.id, api: api) }
         await Outbox.shared.drain(api: api)
         let current = Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)
