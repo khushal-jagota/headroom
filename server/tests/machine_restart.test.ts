@@ -78,7 +78,7 @@ test.each(['socket', 'https'] as const)(
           const drop =
             drop_next_write_reply &&
             incoming.url?.includes('/items') &&
-            body.includes('Created despite lost reply');
+            body.includes('Filed despite lost reply');
           if (drop) drop_next_write_reply = false;
           const request = http_request(
             new URL(incoming.url!, target),
@@ -94,7 +94,7 @@ test.each(['socket', 'https'] as const)(
                 response.once('end', () => {
                   const request_body = JSON.parse(body.toString()) as ItemBatch;
                   const submission = request_body.items.find((item) =>
-                    JSON.stringify(item).includes('Created despite lost reply'),
+                    JSON.stringify(item).includes('Filed despite lost reply'),
                   )!.envelope.submission_id;
                   const receipt_body = JSON.parse(
                     Buffer.concat(chunks).toString(),
@@ -244,13 +244,8 @@ test.each(['socket', 'https'] as const)(
           operation: 'cli.request',
           arguments: {
             method: 'POST',
-            path: '/api/tickets',
-            body: {
-              title: 'Created during restart',
-              brief: 'Restart proof',
-              worker_type: 'coding',
-              ceiling_holder: { kind: 'owner', id: 'owner' },
-            },
+            path: `/api/tickets/${turn.ticket_id}/propose`,
+            body: { body: 'Filed during restart' },
           },
         },
       }).then((value) => {
@@ -290,6 +285,15 @@ test.each(['socket', 'https'] as const)(
       expect((read_result.result as JsonObject).id).toBe(turn.ticket_id);
       expect(write_result.error).toBeNull();
       expect(write_result.unconfirmed ?? null).toBeNull();
+      const revision = () =>
+        server!.context.database.read(
+          (sql) =>
+            sql.get<{ revision: number }>(
+              'SELECT pending_proposal_revision AS revision FROM tickets WHERE id=?',
+              [turn.ticket_id],
+            )!.revision,
+        );
+      expect(revision()).toBe(1);
       if (transport === 'https') {
         drop_next_write_reply = true;
         const lost = await command('ipc', {
@@ -298,13 +302,8 @@ test.each(['socket', 'https'] as const)(
             operation: 'cli.request',
             arguments: {
               method: 'POST',
-              path: '/api/tickets',
-              body: {
-                title: 'Created despite lost reply',
-                brief: 'Restart proof',
-                worker_type: 'coding',
-                ceiling_holder: { kind: 'owner', id: 'owner' },
-              },
+              path: `/api/tickets/${turn.ticket_id}/propose`,
+              body: { body: 'Filed despite lost reply' },
             },
           },
         });
@@ -312,23 +311,7 @@ test.each(['socket', 'https'] as const)(
         expect(lost.unconfirmed ?? null).toBeNull();
         expect(lost_replies).toBe(1);
       }
-      expect(
-        server.context.database.read(
-          (sql) =>
-            sql.get<{ count: number }>(
-              "SELECT count(*) AS count FROM tickets WHERE title='Created during restart'",
-            )!.count,
-        ),
-      ).toBe(1);
-      if (transport === 'https')
-        expect(
-          server.context.database.read(
-            (sql) =>
-              sql.get<{ count: number }>(
-                "SELECT count(*) AS count FROM tickets WHERE title='Created despite lost reply'",
-              )!.count,
-          ),
-        ).toBe(1);
+      expect(revision()).toBe(transport === 'https' ? 2 : 1);
       await command('emit', { kind: 'tool_finished', native_id: 'offline-tool' });
       await command('emit', { kind: 'end' });
       const events = await server.turn_result(turn.conversation_id);

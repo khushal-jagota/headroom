@@ -231,10 +231,11 @@ test('reads and write capability probes wait through a temporary server failure'
   }
   // A forced stop can leave an uncertain durable receipt. Neither the initial waiter
   // nor a later inspection can translate it into a refusal or repeat its effect.
-  for (const result of [
+  const uncertain_results: JsonObject[] = [
     { error: { code: 'uncertain', message: 'Outcome unknown' } },
     { fate: 'uncertain' },
-  ]) {
+  ];
+  for (const result of uncertain_results) {
     const uncertain: AcceptanceReceipt = {
       ...receipt,
       submission_id: 'original-write',
