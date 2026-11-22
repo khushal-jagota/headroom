@@ -500,6 +500,11 @@
           onclick={moveThroughTheStates}
         >
           <span class="chat-head-collapse-label">{stateControl.opensIt ? "Open conversation" : "Dock"}</span>
+          {#if !stateControl.opensIt}
+            <!-- v10 (5): the mirror of Open conversation's up arrow: a 12px down arrow after
+                 "Dock" (owner allowed that pair). -->
+            <svg class="chat-head-collapse-arrow" viewBox="0 0 16 16" aria-hidden="true" data-conversation-dock-arrow><path d="m4 6 4 4 4-4" /></svg>
+          {/if}
         </button>
       {/if}
       {#if !readOnly || historyOwner || pastConversations.length > 0 || workspaceFolder}
@@ -769,8 +774,8 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     color: #ececec;
-    /* v7: the header title 16/24 600. */
-    font: var(--cv-weight-title) 16px/24px var(--cv-font);
+    /* v10 (7): the header title 17/24 600 (answer headings are 17 at most). */
+    font: var(--cv-weight-title) 17px/24px var(--cv-font);
   }
   .cv-state {
     display: inline-flex;
@@ -808,6 +813,11 @@
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
+  /* v10 (5): the same resting pill as the dock's Open conversation: #232323, #d9d9d9, hover
+     #2a2a2a, and a 12px down arrow 6px after the label (padding 0 12 0 14). */
+  .chat-head-collapse { background: #232323; color: #d9d9d9; }
+  .chat-head-collapse:has(.chat-head-collapse-arrow) { padding-inline-end: 12px; }
+  .chat-head-collapse-arrow { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 

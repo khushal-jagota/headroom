@@ -5,9 +5,9 @@
    * The ask is read first: its title, then the command in a well, then the answers as one
    * list of numbered tiles, the same tiles a question's choices are. Allow once leads and is
    * chosen by default (key 1); the standing permissions follow, and decline comes last, a
-   * tone down. Docked in the composer (v4), a tile only chooses; the composer's primary pill
-   * in the send slot (v9: the chosen row's own label, "Allow once" … "Deny") commits it. Standing alone, a
-   * tile answers at once. The turn is stopped from the header's "Stop turn".
+   * tone down. v10 (4): there is no confirm pill: each row is the action, docked or not. A
+   * click or its number answers at once. No row is pre-highlighted; hover and keyboard focus
+   * light a row. The turn is stopped from the footer's "Stop turn" (the composer draws it).
    */
   import type { Snippet } from "svelte";
   import AskShell from "./AskShell.svelte";
@@ -29,9 +29,6 @@
     replyStrip,
     onStop,
     docked = false,
-    commitLabel = $bindable(""),
-    commitReady = $bindable(false),
-    declineAction = $bindable(null),
     onAnswer
   }: {
     ask: {
@@ -47,15 +44,11 @@
     framed?: boolean;
     /** The composer's one-line reply, under the answers. */
     replyStrip?: Snippet;
-    /** Ends the waiting turn, from the header's "Stop turn". */
+    /** Ends the waiting turn. v10 (3): the composer draws Stop turn in the footer, so it
+     *  passes none; standing alone the shell's header still offers it. */
     onStop?: () => void;
-    /** In the composer: tiles choose, and the composer's pill commits (commit()). */
+    /** In the composer's place. v10 (4): rows answer at once either way. */
     docked?: boolean;
-    /** What the composer's pill says, and whether it can commit now. */
-    commitLabel?: string;
-    commitReady?: boolean;
-    /** v9 (2): always null; Deny is an option row (v7 drew it as a button from this). */
-    declineAction?: { label: string; optionId: string } | null;
     onAnswer: (optionId: string) => void;
   } = $props();
 
@@ -64,39 +57,17 @@
     ? askQuestionChoices(ask).map((choice) => ({ ...choice, emphasis: "option" as const, supplied: true }))
     : permissionAnswerRows(ask));
   let detail = $derived(readableConversationDetail(ask.detail));
-  /** v9 (2): Deny is an option row again (the last one), never a separate button. The
-   *  composer's one primary pill says the focused row's label and acts on that row. */
+  /** v9 (2): Deny is an option row (the last one), never a separate button. */
   let tiles = $derived(rows);
-  $effect(() => { declineAction = null; });
-  /** Kept for the composer's contract; nothing draws a separate decline any more. */
-  export function decline(): void {}
-  /** What a row is called on the primary pill: its own label ("Decline" reads "Deny"). */
-  function pillLabel(label: string): string { return label === "Decline" ? "Deny" : label; }
   // v5: a permission ask says "Needs your permission" (with the shield); a question keeps
   // "Needs your answer". "Needs your approval" belongs to proposals.
   let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your permission");
   let rawOpen = $state(false);
-  /** The chosen answer while docked: the default (the first row, allow once) until another
-   *  is chosen. Reset when a new ask arrives. */
-  let chosenId = $state<string | null>(null);
-  let chosenFor = $state("");
-  $effect(() => { if (ask.askId !== chosenFor) { chosenFor = ask.askId; chosenId = null; } });
-  let chosen = $derived(rows.find((row) => row.optionId === chosenId) ?? (shape === "question" ? null : rows[0] ?? null));
-  $effect(() => {
-    commitLabel = shape === "question" ? "Send answer" : chosen === null ? "Allow once" : pillLabel(chosen.label);
-    commitReady = chosen !== null && !busy && answerAvailable;
-  });
 
-  /** Commits the chosen answer, for the composer's pill. */
-  export function commit(): void {
-    if (chosen === null || busy || !answerAvailable) return;
-    onAnswer(chosen.optionId);
-  }
-
+  /** v10 (4): a row is the action: choosing it answers. */
   function pick(optionId: string): void {
     if (busy || !answerAvailable) return;
-    if (docked) chosenId = optionId;
-    else onAnswer(optionId);
+    onAnswer(optionId);
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
@@ -138,8 +109,6 @@
       <button
         type="button"
         class="cv-ask-row c2-ask-choice"
-        class:is-selected={docked && chosen?.optionId === row.optionId}
-        aria-pressed={docked ? chosen?.optionId === row.optionId : undefined}
         data-conversation-ask-choice={row.optionId}
         data-conversation-ask-action={shape === "question" ? undefined : row.optionId}
         data-conversation-ask-emphasis={shape === "question" ? undefined : row.emphasis}

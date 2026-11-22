@@ -99,9 +99,9 @@ describe("v6 transcript (items 9-15)", () => {
     expect(html).toContain("c2-status--callout");
     expect(html).not.toContain("data-conversation-error-inline");
   });
-  it("13: a queued picture wears the queued frame (1px at 16%) at full strength", () => {
+  it("13: a queued picture wears a 1px frame at full strength (v10 (9): rgba(255,255,255,0.12))", () => {
     const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
-    expect(held).toMatch(/\.chat-qrow :global\(\.c2-piece-image-slot img\) \{[^}]*outline: 1px solid rgb\(255 255 255 \/ 16%\);/);
+    expect(held).toMatch(/\.chat-qrow :global\(\.c2-piece-image-slot img\) \{[^}]*outline: 1px solid rgb\(255 255 255 \/ 12%\);/);
     expect(held).not.toMatch(/c2-piece-image-slot img\) \{[^}]*opacity/);
   });
   it("14: a heading right after Worked for gets 12px more above it", () => {

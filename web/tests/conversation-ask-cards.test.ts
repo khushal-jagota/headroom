@@ -31,7 +31,7 @@ describe("the permission ask", () => {
     expect(count(body, "xcrun altool")).toBe(1);
   });
 
-  it("answers with one list of numbered tiles: allow once first and chosen; v9 (2): docked too, Deny is option row 3", () => {
+  it("answers with one list of numbered tiles, allow once first, none pre-chosen; Deny is option row 3, docked too", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, docked: true } });
     const order = [...body.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1]);
     expect(order).toEqual(["allow", "always", "deny"]);
@@ -43,11 +43,10 @@ describe("the permission ask", () => {
     // No row of big buttons on the composer: rows, each with its number key.
     expect(body).not.toContain("cv-button--primary");
     expect(body).not.toContain("cv-button--outline");
-    // One tile style for every ask; allow once is chosen by default. v4.1: Deny is labelled in
-    // the same tone as the others; its words say it declines.
-    expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*is-selected[^"]*"[^>]*data-conversation-ask-action="allow"/);
-    expect(count(body, "is-selected")).toBe(1);
-    expect(body).toMatch(/<button[^>]*(aria-pressed="true"[^>]*data-conversation-ask-action="allow"|data-conversation-ask-action="allow"[^>]*aria-pressed="true")/);
+    // One tile style for every ask. v10 (4): no row is pre-highlighted (each row is the
+    // action), and Deny is labelled in the same tone as the others.
+    expect(count(body, "is-selected")).toBe(0);
+    expect(body).not.toContain("aria-pressed");
     expect(count(body, "is-quiet")).toBe(0);
     expect(body).toMatch(/data-conversation-ask-action="allow"[^>]*aria-keyshortcuts="1"/);
     // The command is read before the answers.
@@ -78,7 +77,7 @@ describe("the permission ask", () => {
 });
 
 describe("the question panel", () => {
-  it("says where it is in the questions; standing alone it keeps its own primary, waiting for an answer", () => {
+  it("says where it is in the questions; v10 (4): no confirm pill and no pre-highlighted row", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: {
         request: {
@@ -110,14 +109,13 @@ describe("the question panel", () => {
     expect(body).not.toContain('class="topic');
     expect(body).toContain("Needs your answer");
     expect(body).toContain("Which illustration direction?");
-    // v6: option 1 is focused at start (the accent ring) and Next, the white primary, picks
-    // it, so Next and the forward arrow are available from the start. Standing alone (not in
-    // the composer) the panel draws its own Next.
-    expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue/);
-    expect(body).not.toMatch(/data-user-input-continue[^>]*disabled/);
-    expect(body).toContain("Next");
-    expect(body).not.toMatch(/data-user-input-forward[^>]*disabled/);
-    expect(body).toMatch(/class="cv-ask-row is-focused"[^>]*data-user-input-option="Soft shapes"[^>]*data-user-input-option-focused="true"/);
+    // v10 (4): no confirm pill, standing alone or docked; no row is pre-highlighted, and the
+    // forward arrow waits for an answer (a chosen row moves on by itself).
+    expect(body).not.toContain("data-user-input-continue");
+    expect(body).not.toContain("cv-button--primary");
+    expect(body).toMatch(/data-user-input-forward[^>]*disabled/);
+    expect(body).not.toContain("is-focused");
+    expect(body).not.toContain("is-selected");
     // The options are the one ask row, the same as a permission ask's answers.
     expect(body).toMatch(/class="cv-ask-row[^"]*"[^>]*data-user-input-option="Soft shapes"/);
     // Every option carries its number key, and the field for something else is offered.
@@ -133,7 +131,7 @@ describe("the question panel", () => {
     expect(body).not.toContain("data-conversation-stop");
   });
 
-  it("keeps the shared primary for questions where several answers may be chosen", () => {
+  it("v10 (4): a several-answer question draws no pill; rows toggle and the composer sends", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: {
         onStop: () => {},
@@ -144,11 +142,10 @@ describe("the question panel", () => {
         }
       }
     });
-    expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue/);
-    expect(body).not.toMatch(/data-user-input-continue[^>]*disabled/);
-    expect(body).toContain("Send answer");
-    // v6: only the first option carries the focus ring at start.
-    expect(count(body, "data-user-input-option-focused")).toBe(1);
+    // v10 (4): a several-answer question has no pill of its own either: rows toggle, and the
+    // composer's send goes on. Nothing is pre-highlighted.
+    expect(body).not.toContain("data-user-input-continue");
+    expect(body).not.toContain("is-focused");
     // Its stop row is the same one a permission ask ends in.
     expect(count(body, "data-conversation-ask-stop")).toBe(1);
   });

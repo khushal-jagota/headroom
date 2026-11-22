@@ -23,15 +23,17 @@ function held(key: string, text: string): HeldPromptRow {
 }
 
 describe("the composer's controls row", () => {
-  it("under a question, its pill says Next between questions and is unavailable until there is an answer", () => {
+  it("v10 (4): under a question there is no confirm pill; the well keeps its round send, and Stop turn is the footer pill", () => {
     const userInput = { requestId: "q-1", questions: [
       { question_id: "a", header: "Style", question: "Which style?", multi_select: false, allow_other: true, options: [{ label: "Soft", description: "" }] },
       { question_id: "b", header: "Tone", question: "Which tone?", multi_select: false, allow_other: false, options: [{ label: "Warm", description: "" }] }
     ] };
     const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, userInput, onStop: () => {} } });
-    expect(body).toMatch(/data-conversation-ask-primary[^>]*disabled[^>]*>Next</);
+    expect(body).not.toContain("data-conversation-ask-primary");
+    expect(body).toMatch(/<button[^>]*class="chat-send[^"]*chat-ask-send[^"]*"[^>]*data-conversation-send[^>]*disabled/);
     expect(body).not.toContain("chat-send stop");
     expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
+    expect(body).toMatch(/class="chat-ask-stop[^"]*"[^>]*data-conversation-stop/);
   });
 
   it("keeps the round Stop while a turn works with nothing waiting on the person", () => {
@@ -63,19 +65,18 @@ describe("the composer's controls row", () => {
     expect(body).toContain("data-conversation-model-picker");
   });
 
-  it("while an ask waits, the send slot holds the ask's primary pill, and Stop turn is in the ask's header", () => {
+  it("v10 (3, 4): while a permission ask waits, Stop turn is the footer pill on the left, and the send slot keeps the round send", () => {
     const ask = { askId: "a-1", title: "Upload build 41", detail: "xcrun altool --upload-app", options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }, { option_id: "deny", label: "Deny", option_kind: "reject_once" as const }] };
     const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, ask, onStop: () => {}, onCancelTurn: () => {} } });
-    // Exactly one way to stop, and it is the ask header's text button, not the composer's round.
+    // Exactly one way to stop: the footer's secondary pill, not the header and not the round.
     expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
-    // v4.1: a small real button: the stop square, then its label.
-    expect(body).toMatch(/class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*data-conversation-ask-stop[^>]*><svg class="cv-ask-stop-mark[^"]*"[^>]*>[\s\S]*?<\/svg>Stop turn</);
+    expect(body).toMatch(/class="chat-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*data-conversation-ask-stop[^>]*><svg[^>]*>[\s\S]*?<\/svg>Stop turn</);
+    expect(body).not.toContain("cv-ask-stop");
     expect(body).not.toContain("chat-send stop");
-    // No round Send and no mode chip: the send slot is the ask's primary, Allow (allow once is
-    // chosen by default), and the line starts with a pen.
-    expect(body).not.toContain("data-conversation-send=");
+    // No confirm pill and no mode chip: the well's round send, unavailable while empty.
+    expect(body).not.toContain("data-conversation-ask-primary");
     expect(body).not.toContain("data-conversation-send-mode");
-    expect(body).toMatch(/class="chat-ask-primary[^"]*"[^>]*data-conversation-ask-primary[^>]*>Allow</);
+    expect(body).toMatch(/<button[^>]*class="chat-send[^"]*chat-ask-send[^"]*"[^>]*data-conversation-send[^>]*disabled/);
     expect(body).toContain("chat-ask-pen");
     expect(body).not.toContain('data-conversation-ask-action="cancel_turn"');
     expect(body).toContain('placeholder="Or write a message"');

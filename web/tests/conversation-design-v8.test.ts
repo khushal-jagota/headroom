@@ -58,13 +58,14 @@ describe("v8 live edge (items 3-5)", () => {
     expect(source("../src/components/conversation/view/LiveEdge.svelte")).toContain("margin-block-start: 24px;");
     expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).toContain(".chat-queue-slot { flex: none; margin-block-start: 0; }");
   });
-  it("3: each queued message says Queued · sends after this turn while a turn runs", () => {
+  it("3 (v10 2): a queued message's chip says Queued · 1 of 1, running or not", () => {
     const row = { key: "a", heldPromptId: "a", senderMessageId: null, state: "held", queueReason: null,
       content: [{ piece: "text", text: "Log each 429" }] } as unknown as HeldPromptRow;
     const running = render(HeldPromptStack, { props: { rows: [row], running: true, conversationId: "c" } }).body;
-    expect(running).toMatch(/class="chat-qrow-word[^"]*">Queued<\/span>(?:<!--[^>]*-->)?<span class="chat-qrow-sep[^"]*" aria-hidden="true">·<\/span><span class="chat-qrow-detail[^"]*" data-conversation-held-detail="">sends after this turn<\/span>/);
+    expect(running).toMatch(/class="chat-qrow-word[^"]*">Queued<\/span>(?:<!--[^>]*-->)?<span class="chat-qrow-sep[^"]*" aria-hidden="true">·<\/span><span class="chat-qrow-detail[^"]*" data-conversation-held-detail="">1 of 1<\/span>/);
+    expect(running).not.toContain("sends after this turn");
     const idle = render(HeldPromptStack, { props: { rows: [row], running: false, conversationId: "c" } }).body;
-    expect(idle).not.toContain("sends after this turn");
+    expect(idle).toContain("1 of 1");
   });
   it("4 (replaced by v9 1): the Working line keeps the spinner in Full while a tool runs", () => {
     const full = render(LiveEdge, { props: { reader: reader("full", [turn, toolRow("running")]) } }).body;
@@ -106,13 +107,16 @@ describe("v8 messages and asks (items 6-9)", () => {
 });
 
 describe("v8 item 14: no chevrons on dropdown or expand controls", () => {
-  it("the model, Steer and Queued chips, Dock and Open conversation show their label alone", () => {
+  it("the model, Steer and Queued chips show their label alone; Dock and Open conversation keep their arrows", () => {
     expect(source("../src/components/conversation/composer/ComposerRunControls.svelte")).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/DeliveryModePicker.svelte")).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).not.toContain("chat-qrow-chevron");
     const pane = source("../src/components/conversation/ConversationPane.svelte");
     const head = pane.slice(pane.indexOf('class="chat-head-collapse"'), pane.indexOf("</button>", pane.indexOf('class="chat-head-collapse"')));
-    expect(head).not.toContain("<svg");
+    // v10 (5): Dock's 12px down arrow mirrors Open conversation's up arrow (owner allowed the
+    // pair); it is the only drawing in the control and shows for Dock only.
+    expect(head.match(/<svg/g)?.length).toBe(1);
+    expect(head).toMatch(/\{#if !stateControl\.opensIt\}[\s\S]*<svg class="chat-head-collapse-arrow" viewBox="0 0 16 16"[^>]*data-conversation-dock-arrow><path d="m4 6 4 4 4-4" \/><\/svg>/);
     const facts = { readOnly: false, activityUncertain: false, waitingForYou: false, waitingFor: null, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
     const rest = render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState(facts) } }).body;
     const control = rest.slice(rest.indexOf("c2-rest-control"));

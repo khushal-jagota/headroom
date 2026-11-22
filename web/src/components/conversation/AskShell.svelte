@@ -9,8 +9,8 @@
    *
    * Every ask answers with one kind of tile (.cv-ask-row, styled here for all of them): a
    * number chip on the left, a label, an optional line under it. While the turn waits on the
-   * person, stopping it is the "Stop turn" text button in the header (onStop): the composer's
-   * send slot then holds the ask's primary pill, never a Stop. */
+   * person, stopping it is "Stop turn": v10 (3) the composer draws it in the ask's footer, on
+   * the left, for every ask; a shell standing alone keeps it in its header (onStop). */
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
 
@@ -270,11 +270,13 @@
      digit. */
   :global([data-conversation-pane] .cv-ask-rows) { gap: 8px; }
   :global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424; font: var(--cv-weight-body) 15px/22px var(--cv-font); }
-  :global([data-conversation-pane] .cv-ask-row:hover:not(:disabled)) { background: #2a2a2a; }
-  /* v8 (7): the focused (or chosen) row is lighter: #2c2c2c with the accent edge. */
-  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row.is-focused)), :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row.is-focused):hover:not(:disabled)) { background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
+  /* v10 (4): a row is the action. Under the pointer or keyboard focus (and a question's
+     answer already chosen) it is #2c2c2c with the accent edge and an accent keycap. Nothing is
+     lit when the pointer is not on it; the accent edge is the focus mark (no extra ring). */
+  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
+  :global([data-conversation-pane] .cv-ask-row:focus-visible) { outline: none; }
   :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #2e2e2e; color: #d9d9d9; font: var(--cv-weight-label) 13px/1 var(--cv-font); }
-  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row.is-focused) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
+  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
   :global([data-conversation-pane] .cv-ask-label) { color: #ececec; }
   :global([data-conversation-pane] .cv-ask-sub) { color: #b0b0b0; font: var(--cv-weight-body) 13px/20px var(--cv-font); }
   @keyframes cv-ask-in { from { opacity: 0; transform: translateY(4px); } }

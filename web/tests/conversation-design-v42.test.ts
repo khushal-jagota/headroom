@@ -58,16 +58,18 @@ describe("design v4.2: asks", () => {
     expect(shell).toContain(".cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }");
   });
 
-  it("v9 (9): the disabled primary pill reads #a6a6a6 on #2e2e2e", () => {
-    expect(composer).toContain(".chat-box :global(.chat-ask-primary:disabled) { background: #2e2e2e; color: #a6a6a6; cursor: default; }");
+  it("v10 (4): asks have no confirm pill; the well's round send is the composer's own send (disabled #2e2e2e/#a6a6a6)", () => {
+    expect(composer).not.toContain("chat-ask-primary");
+    expect(app).toMatch(/v9 \(9\): disabled is #2e2e2e with a #a6a6a6 arrow\. \*\/[\s\S]{0,80}color: #a6a6a6;/);
   });
 
-  it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid), the pill outside it on the right", () => {
+  it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid), its round send outside it on the right", () => {
     expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-foot > \.chat-ask-pen \{[^}]*min-height: 40px;[^}]*border-radius: 12px 0 0 12px;[^}]*background: #141414;/);
     expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-ta \{[^}]*padding-block: 8px;[^}]*background: #141414;/);
     expect(composer).toMatch(/\.chat-submit > \.chat-voice-mic\) \{[^}]*border-radius: 0 12px 12px 0;[^}]*background: #141414;/);
     expect(composer).toContain(".chat-box.has-ask.is-compact:not(:has(.chat-voice-mic)) > .chat-ta { border-radius: 0 12px 12px 0; }");
-    expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-primary\) \{ order: 3; margin-inline: var\(--cv-s2\); \}/);
+    // v10 (4): the well's own round send stands 8px right of it.
+    expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send\) \{ order: 3; margin-inline: var\(--cv-s2\); \}/);
   });
 });
 
@@ -203,9 +205,10 @@ describe("design v4.3", () => {
   it("inline code is lighter: 6% white fill, radius 4, padding 0 4px, #e0e0e0", () => {
     expect(app).toMatch(/\.chat-thread \.markdown :not\(pre\) > code,\n\.cv-code \{\s*padding: 0 4px;[^}]*border-radius: 4px;[^}]*background: rgb\(255 255 255 \/ 6%\);[^}]*color: #e0e0e0;/);
   });
-  it("v6: an attachment's remove button sits outside the tile's corner, a 20px #333 circle with a 2px ring", () => {
-    expect(composer).toMatch(/\.chat-att-x \{\s*top: -10px;\s*right: -10px;\s*width: 20px;\s*height: 20px;[^}]*border-radius: 50%;\s*background: #333333;\s*box-shadow: 0 0 0 2px #1c1c1c;/);
-    expect(composer).toMatch(/\.chat-attachments \{ gap: var\(--cv-s4\); padding-block-start: 12px; padding-inline-end: 12px; \}/);
+  it("v10 (11): an attachment's remove button sits inside the chip's top-right corner, 6px in, a 20px rgba(0,0,0,0.6) circle with a white x", () => {
+    expect(composer).toMatch(/\.chat-att-x \{\s*top: 6px;\s*right: 6px;\s*width: 20px;\s*height: 20px;[^}]*border-radius: 50%;\s*background: rgb\(0 0 0 \/ 60%\);\s*box-shadow: none;\s*color: #ffffff;/);
+    expect(composer).toMatch(/\.chat-attachments \{ gap: var\(--cv-s2\); padding-block-start: 4px; padding-inline-end: 0; \}/);
+    expect(composer).toContain(".chat-att.file { padding-inline-end: 32px; }");
   });
   it("rhythm: 32 between turns, 6 from a meta line to its prose, 12 between paragraphs", () => {
     expect(tokens).toMatch(/--cv-gap-turn: 32px;/);

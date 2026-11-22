@@ -93,6 +93,8 @@
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
+  /* v10 (9): a settled run's sentence ("Ran 2 commands") is #c4c4c4. */
+  .c2-run-summary, .c2-run-summary .c2-run-verb { color: #c4c4c4; }
   .c2-run-summary:hover { background-color: #2a2a2a; }
   /* Running: the row is as wide as its words up to the column; a long command ellipsizes
      before the chevron, which stays at the row's end. */

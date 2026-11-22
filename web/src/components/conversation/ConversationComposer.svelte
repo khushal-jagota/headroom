@@ -354,26 +354,10 @@
   /** The question on screen, when it takes an own answer: the composer is then the one place
    *  to write it, right under the question, and its send answers. */
   let questionPanel = $state<{ answerWith: (words: string) => boolean; commit: () => void } | null>(null);
-  let permissionCard = $state<{ commit: () => void; decline: () => void } | null>(null);
-  /** The ask's primary, which the composer's send slot holds while the ask is the composer
-   *  (v4): its label and whether it can commit, as the ask reports them. */
-  let questionCommitLabel = $state("");
+  /** v10 (4): asks have no confirm pill: each option row is the action. The free-text well
+   *  keeps its own round send. Only a question that takes several answers waits for that
+   *  send to go on once something is chosen (questionCommitReady). */
   let questionCommitReady = $state(false);
-  let permissionCommitLabel = $state("");
-  let permissionCommitReady = $state(false);
-  let permissionCommitSeen = $state(false);
-  let permissionDecline = $state<{ label: string; optionId: string } | null>(null);
-  $effect(() => { if (permissionCommitLabel !== "") permissionCommitSeen = true; });
-  // Until the ask reports (its first paint, or a server render), the pill says what the ask
-  // starts at: a question's first step, or a permission ask's default, allow once.
-  let askPrimary = $derived(
-    userInput !== null
-      ? { label: questionCommitLabel || (userInput.questions.length > 1 ? "Next" : "Send answer"), ready: questionCommitReady, onCommit: () => questionPanel?.commit() }
-      : ask !== null
-        ? { label: permissionCommitLabel || "Allow", ready: permissionCommitSeen ? permissionCommitReady : !disabled && permissionAvailable, onCommit: () => permissionCard?.commit(),
-            decline: permissionDecline === null ? null : { ...permissionDecline, ready: !disabled && permissionAvailable, onDecline: () => permissionCard?.decline() } }
-        : null
-  );
   let questionTakesOwnAnswer = $state(false);
   /** What a waiting ask makes of the draft (runControls contracts). Words alone answer a
    *  question that takes an own answer; anything else waits for the blocked turn, or ends it. */
@@ -590,6 +574,12 @@
 
   async function send(): Promise<void> {
     await intakeTail;
+    // v10 (4): a question that takes several answers goes on from the well's send once
+    // something is chosen and nothing is written.
+    if (userInput !== null && questionPanel !== null && questionCommitReady && text.trim() === "" && attachments.length === 0) {
+      questionPanel.commit();
+      return;
+    }
     // Words written under a question that takes an own answer are that answer: they go to
     // the question, not into the turn, and leave the box once taken.
     if (askWaiting === "answers" && questionPanel !== null && text.trim() !== "") {
@@ -1343,7 +1333,6 @@
           <UserInputQuestionPanel
             bind:this={questionPanel}
             bind:acceptsOwnAnswer={questionTakesOwnAnswer}
-            bind:commitLabel={questionCommitLabel}
             bind:commitReady={questionCommitReady}
             framed={false}
             ownAnswer={attachments.length === 0 ? text : ""}
@@ -1358,21 +1347,17 @@
           />
         {:else if takenOver && ask}
           <PermissionAskCard
-            bind:this={permissionCard}
-            bind:commitLabel={permissionCommitLabel}
-            bind:commitReady={permissionCommitReady}
-            bind:declineAction={permissionDecline}
             docked
             ask={ask}
             framed={false}
             answerAvailable={permissionAvailable}
             busy={disabled}
             note={askNote}
-            onStop={running && onStop ? onStop : undefined}
+            onStop={undefined}
             onAnswer={(optionId) => onAnswer?.(optionId)}
           />
         {:else if credentialInTheBox && credentialRequest}
-          <ConversationCredentialRequestCard request={credentialRequest} framed={false} onStop={running && onStop ? onStop : undefined} />
+          <ConversationCredentialRequestCard request={credentialRequest} framed={false} onStop={undefined} />
         {/if}
       </div>
       {/if}
@@ -1538,9 +1523,10 @@
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
-          {#if panelTakesTheBox && userInput && running && onStop}
-            <!-- v9 (20): a question's Stop turn stands in its footer, left of the answer well,
-                 as a secondary pill; the pager is alone at the top right. -->
+          {#if panelTakesTheBox && running && onStop}
+            <!-- v10 (3): Stop turn stands in the same place in every ask (question, permission,
+                 key request, docked or open): the footer, left of the answer well, a secondary
+                 pill. -->
             <button type="button" class="chat-ask-stop" data-conversation-stop={true} data-conversation-ask-stop
               title="Stop turn" disabled={disabled} onclick={() => onStop?.()}><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="2" /></svg>Stop turn</button>
           {/if}
@@ -1682,7 +1668,8 @@
               intents={runControlIntents}
               bind:snapshots={backends}
               beforeSubmit={microphone}
-              {askPrimary}
+              asking={panelTakesTheBox}
+              askCommitReady={userInput !== null && questionCommitReady && text.trim() === "" && attachments.length === 0}
             />
           {:else}
             <span class="chat-submit">{@render microphone()}</span>
@@ -1982,27 +1969,8 @@
   .chat-box.has-ask.is-compact { column-gap: 0; padding-block-end: var(--cv-s4); }
   .chat-box.has-ask.is-compact > .chat-foot > :global(.chat-submit) { display: contents; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > *) { order: 2; }
-  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-primary) { order: 3; margin-inline: var(--cv-s2); }
-  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-quiet) { order: 3; margin-inline-start: var(--cv-s2); }
-  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-quiet + .chat-ask-primary) { margin-inline-start: 4px; }
-  /* v8 (7): Deny is a secondary Button: 32 tall pill, 13/20 500, #2a2a2a with #ececec,
-     hover #3a3a3a. */
-  .chat-box :global(.chat-ask-quiet) {
-    flex: none;
-    height: 32px;
-    padding: 0 14px;
-    border: 0;
-    border-radius: 999px;
-    background: #2a2a2a;
-    color: #ececec;
-    font: var(--cv-weight-label) 13px/20px var(--cv-font);
-    white-space: nowrap;
-    cursor: pointer;
-    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
-  }
-  .chat-box :global(.chat-ask-quiet:hover:not(:disabled)) { background: #3a3a3a; color: #ececec; }
-  .chat-box :global(.chat-ask-quiet:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
-  .chat-box :global(.chat-ask-quiet:disabled) { color: #8c8c8c; cursor: default; }
+  /* v10 (4): the well's own round send stands 8px right of the well (no confirm pill). */
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send) { order: 3; margin-inline: var(--cv-s2); }
   /* v8 (7): the free-text well wears a 1px #333 edge. It is three pieces (pen, draft, mic),
      so each draws its share of the edge. */
   .chat-box.has-ask.is-compact > .chat-foot > .chat-ask-pen { box-shadow: inset 1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
@@ -2041,26 +2009,6 @@
   /* A draft that wraps grows the box to two rows: the draft itself is then the well. */
   .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 12px; background: #141414; }
   .chat-box.has-ask:not(.is-compact) > .chat-foot > .chat-ask-pen { display: none; }
-  /* The ask's primary in the send slot: a 36px pill, #f2f2f2 with dark words; unavailable it
-     is #2a2a2a with #a3a3a3 words (v4.2: not dimmer). */
-  /* v7: the ask's primary is the one primary Button: 32 tall pill, 13/20 500, padding 0 14,
-     #f2f2f2 with #141414 words; unavailable #2a2a2a with #8c8c8c. */
-  .chat-box :global(.chat-ask-primary) {
-    flex: none;
-    height: 32px;
-    padding: 0 14px;
-    border: 0;
-    border-radius: 999px;
-    background: #f2f2f2;
-    color: #141414;
-    font: var(--cv-weight-label) 13px/20px var(--cv-font);
-    white-space: nowrap;
-    cursor: pointer;
-    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
-  }
-  .chat-box :global(.chat-ask-primary:hover:not(:disabled)) { background: #ffffff; }
-  .chat-box :global(.chat-ask-primary:disabled) { background: #2e2e2e; color: #a6a6a6; cursor: default; }
-  .chat-box :global(.chat-ask-primary:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow
      staying lit is the one thing on screen that says the send has not landed yet. */
@@ -2112,7 +2060,8 @@
   }
   .chat-att.img { width: 76px; height: 76px; border: 0; border-radius: 12px; background: #1c1c1c; }
   .chat-att.img img { border-radius: 12px; }
-  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px #2a2a2a; pointer-events: none; }
+  /* v10 (9): a thumbnail's edge is 1px rgba(255,255,255,0.12). */
+  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%); pointer-events: none; }
   /* Pass 11: a file tile sits on #242424, one step under the #2a2a2a remove circle in its
      corner, so the circle reads as on a picture (on #2a2a2a it vanished and the x floated). */
   /* p12c: a file chip is as tall as a picture chip (76), its content centred. */
@@ -2177,25 +2126,25 @@
     background: var(--cv-t2);
     transition: width var(--cv-dur-base) linear;
   }
-  /* v6: the remove button sits outside the tile's corner, centred on it: a 20px #333 circle
-     with a 2px ring in the composer's own fill, so it reads as cut out of the tile and never
-     covers the picture. The row keeps room for it (12px above and right, 16px between tiles). */
-  .chat-attachments { gap: var(--cv-s4); padding-block-start: 12px; padding-inline-end: 12px; }
+  /* v10 (11): the remove button sits inside the chip's top-right corner, 6px in: a 20px
+     rgba(0,0,0,0.6) circle with a white x. Nothing overhangs the chip, so the row needs no
+     room around it; chips are 8px apart. */
+  .chat-attachments { gap: var(--cv-s2); padding-block-start: 4px; padding-inline-end: 0; }
   .chat-att-x {
-    top: -10px;
-    right: -10px;
+    top: 6px;
+    right: 6px;
     width: 20px;
     height: 20px;
     padding: 0;
     border: 0;
     border-radius: 50%;
-    background: #333333;
-    box-shadow: 0 0 0 2px #1c1c1c;
-    color: #d9d9d9;
+    background: rgb(0 0 0 / 60%);
+    box-shadow: none;
+    color: #ffffff;
     z-index: 1;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { background: #3d3d3d; background-image: none; color: var(--cv-t1); }
+  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { background: rgb(0 0 0 / 80%); background-image: none; color: #ffffff; }
   .chat-att-x svg {
     display: block;
     width: 20px;
@@ -2208,6 +2157,6 @@
     stroke-linecap: round;
   }
   .chat-att-x:disabled { color: var(--cv-t3); cursor: default; }
-  /* The circle is outside the tile now, so a file tile's words keep its ordinary edge. */
-  .chat-att.file { padding-inline-end: var(--cv-s3); }
+  /* v10 (11): the circle is inside the tile's corner, so a file tile's words stop short of it. */
+  .chat-att.file { padding-inline-end: 32px; }
 </style>

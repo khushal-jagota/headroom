@@ -97,8 +97,9 @@
     return null;
   }
 
-  /** v9 (12): the first message waiting its turn carries the caption's detail. */
-  let firstHeldKey = $derived(displayedRows.find(row => row.state === "held")?.key ?? null);
+  /** v10 (2): every queued message carries the same chip, "Queued · 1 of 2", "Queued · 2 of 2":
+   *  its place among the messages waiting their turn. */
+  let heldKeys = $derived(displayedRows.filter(row => row.state === "held").map(row => row.key));
 
   async function act(key: string, action: () => Promise<void> | void): Promise<void> {
     if (actionInFlight !== null) return;
@@ -116,8 +117,7 @@
   }
 </script>
 
-<!-- v9 (12): the full caption "Queued · sends after this turn" stands only under the first
-     queued message; the ones after it say "Queued". -->
+<!-- v10 (2): every queued message shows the same chip: "Queued · 1 of 2", "Queued · 2 of 2". -->
 <div class="chat-queue-slot" use:conversationHeight><div bind:this={stackElement}>
 {#if displayedRows.length > 0}
   <!-- Messages waiting to be sent stand at the end of the thread, where they will land, as the
@@ -156,7 +156,7 @@
               onclick={() => (menuOpenFor = menuOpenFor === row.key ? null : row.key)}
             >
               <svg class="chat-qrow-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v4.2l2.6 1.6" /></svg>
-              <span class="chat-qrow-word">{stateWord(row)}</span>{#if row.state === "held" && running && row.key === firstHeldKey}<span class="chat-qrow-sep" aria-hidden="true">·</span><span class="chat-qrow-detail" data-conversation-held-detail>sends after this turn</span>{/if}
+              <span class="chat-qrow-word">{stateWord(row)}</span>{#if row.state === "held" && heldKeys.includes(row.key)}<span class="chat-qrow-sep" aria-hidden="true">·</span><span class="chat-qrow-detail" data-conversation-held-detail>{heldKeys.indexOf(row.key) + 1} of {heldKeys.length}</span>{/if}
             </button>
             <!-- Drawn closed as hidden, so its actions are always the same buttons. -->
               <div class="chat-qrow-menu" role="menu" aria-label="Queued message" hidden={menuOpenFor !== row.key} data-conversation-held-menu>
@@ -258,7 +258,8 @@
   /* A picture waiting to go is a thumbnail of itself: what it is, not the picture at size. */
   .chat-qrow :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; margin: 0; }
   /* v6: a queued picture wears the queued bubble's frame (1px at 16%), at full strength. */
-  .chat-qrow :global(.c2-piece-image-slot img) { width: auto; max-width: 160px; max-height: 96px; object-fit: cover; border-radius: var(--cv-r-lg); outline: 1px solid rgb(255 255 255 / 16%); outline-offset: -1px; }
+  /* v10 (9): thumbnails wear a 1px rgba(255,255,255,0.12) edge. */
+  .chat-qrow :global(.c2-piece-image-slot img) { width: auto; max-width: 160px; max-height: 96px; object-fit: cover; border-radius: var(--cv-r-lg); outline: 1px solid rgb(255 255 255 / 12%); outline-offset: -1px; }
   .chat-qrow-meta { display: flex; justify-content: flex-end; }
   .chat-qrow-anchor { position: relative; display: inline-flex; }
   /* The chip: clock, "Queued", chevron, 13 in the meta tone; its hover lifts onto a fill. */

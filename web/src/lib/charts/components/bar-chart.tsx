@@ -49,7 +49,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
     const resolve = (css: string) => css.replace(/var\((--[a-z-]+)\)/g, (_, name: string) => color(name));
     // A chat snapshot (the one bar chart with its own key) reads its axes a step larger and
     // brighter: it stands alone in a conversation, with no page around it to carry the scale.
-    const axis = { color: (showLegend && color('--chart-axis')) || color('--chart-muted'), font: { size: showLegend ? 12 : 11 } };
+    const axis = { color: (showLegend && color('--chart-axis')) || color('--chart-muted'), font: showLegend ? { size: 13, lineHeight: 16 / 13 } : { size: 11 } }; // v10 (9): a chat snapshot's axis labels 13/16
     const datasets: ChartDataset<'bar' | 'line', (number | null)[]>[] = entries.map(entry => entry.key === 'target' ? {
       type: 'line', label: entry.label, data: data.map(d => d.values.target ?? null),
       borderColor: color('--chart-reference'), borderDash: [4, 5], borderWidth: 1.5, pointRadius: 0,

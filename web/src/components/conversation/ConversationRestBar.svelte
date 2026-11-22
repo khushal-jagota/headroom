@@ -130,10 +130,11 @@
   [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .cv-dot { width:8px; height:8px; margin-inline:4px; background:var(--cv-accent); }
   /* v9 (10): with a proposal on the page, "Needs your approval" is the card's own label, set
-     identically: the page accent (#a9bbe3, the card's colour), 13/20 500, a 6px dot 8px
+     identically: the accent, 13/20 500, a 6px dot 8px
      before it, the dot on the composer's left edge (v9 17). */
-  [data-conversation-rest-page-waits-row] .c2-rest-label { color:#a9bbe3; }
-  [data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#a9bbe3; }
+  /* v10 (10): every ask label is #bccbf0, the dock's too. */
+  [data-conversation-rest-page-waits-row] .c2-rest-label { color:#bccbf0; }
+  [data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#bccbf0; }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }

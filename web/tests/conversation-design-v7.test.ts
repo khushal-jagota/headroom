@@ -48,11 +48,13 @@ describe("v7 the five parts", () => {
     expect(source("../src/lib/markdown/codeBlocks.css")).toMatch(/border-radius: 12px;\s*background: var\(--cv-code-surface, #1a1a1a\);/);
     expect(source("../src/components/conversation/MessagePieces.svelte")).toMatch(/background: #242424;\s*color: #ececec;\s*border-radius: 18px;\s*padding: 12px 16px;/);
   });
-  it("2 Button: the ask's primary 32 pill #f2f2f2/#141414; v9 (2): Deny is an option row, not a button", () => {
-    expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-primary\) \{[^}]*height: 32px;\s*padding: 0 14px;[^}]*background: #f2f2f2;\s*color: #141414;/);
-    expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-quiet\) \{[^}]*height: 32px;[^}]*background: #2a2a2a;\s*color: #ececec;/);
+  it("2 Button: v10 (4) asks draw no confirm pill and no decline button; Deny is an option row; Stop turn a secondary pill", () => {
+    expect(composer).not.toContain("chat-ask-primary");
+    expect(composer).not.toContain("chat-ask-quiet");
+    expect(composer).toMatch(/\.chat-ask-stop \{[^}]*height: 32px;[^}]*border-radius: 999px;\s*background: #2a2a2a;\s*color: #ececec;/);
     const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
-    expect(controls.indexOf("data-conversation-ask-decline")).toBeLessThan(controls.indexOf("data-conversation-ask-primary"));
+    expect(controls).not.toContain("data-conversation-ask-primary");
+    expect(controls).not.toContain("data-conversation-ask-decline");
     const docked = render(PermissionAskCard, { props: { docked: true, onAnswer: () => {}, ask: { askId: "a", title: "Upload", detail: null, options: [
       { option_id: "allow", label: "Allow once", option_kind: "allow_once" }, { option_id: "deny", label: "Deny", option_kind: "reject_once" }] } } }).body;
     expect(docked).toContain('data-conversation-ask-action="deny"');
@@ -70,11 +72,15 @@ describe("v7 the five parts", () => {
     expect(row).toContain(".c2-status-title { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }");
     expect(row).toContain(".c2-status--error .c2-status-dot { background: #f08a7e; }");
   });
-  it("5 Option row: min 48, #242424, radius 12; keycap 24 #2e2e2e radius 6; focused ring and accent keycap", () => {
+  it("5 Option row: min 48, #242424, radius 12; keycap 24 #2e2e2e radius 6; hover/focus ring and accent keycap", () => {
     const shell = source("../src/components/conversation/AskShell.svelte");
     expect(shell).toContain(":global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424;");
     expect(shell).toContain(":global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #2e2e2e;");
-    expect(shell).toContain(":global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row.is-focused) .cv-ask-key) { background: var(--cv-accent); color: #141414; }");
+    // v10 (4): hover and keyboard focus (and a chosen answer) light a row: #2c2c2c, the accent
+    // edge and an accent keycap. Nothing is lit otherwise.
+    expect(shell).toContain(":global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }");
+    expect(shell).toContain(":global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }");
+    expect(shell).not.toContain("is-focused");
     expect(shell).toContain(":global([data-conversation-pane] .cv-ask-rows) { gap: 8px; }");
   });
 });

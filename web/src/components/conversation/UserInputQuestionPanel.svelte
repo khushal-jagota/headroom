@@ -13,7 +13,7 @@
     type UserInputDraft
   } from "../../lib/conversation/userInput";
   import type { Snippet } from "svelte";
-  import { onMount, untrack } from "svelte";
+  import { untrack } from "svelte";
   import AskShell from "./AskShell.svelte";
 
   let {
@@ -24,7 +24,6 @@
     framed = true,
     replyStrip,
     onStop,
-    commitLabel = $bindable(""),
     commitReady = $bindable(false),
     ownAnswer = null,
     acceptsOwnAnswer = $bindable(false),
@@ -42,9 +41,8 @@
     replyStrip?: Snippet;
     /** Ends the turn that waits on these questions, from the header's "Stop turn". */
     onStop?: () => void;
-    /** Docked in the composer (v4): what its primary pill says ("Next", "Send answers") and
-     *  whether it can go on now; the pill calls commit(). */
-    commitLabel?: string;
+    /** v10 (4): no confirm pill. A row is the action; only a question where several answers
+     *  may be chosen waits for the composer's send (commit()), and commitReady says it can. */
     commitReady?: boolean;
     /** The words in the composer, when the composer is where an own answer is written (it is
      *  docked right under the question). Null: the panel draws its own field for them. */
@@ -69,20 +67,17 @@
     step = 0;
     draft = emptyUserInputDraft();
   });
-  /** v6: the option the primary will pick when nothing is chosen yet. It starts on option 1
-   *  of every question (a 1px accent ring, as Allow once wears), follows a choice, the
-   *  keyboard's arrows and a tile's focus, and "Next" (or "Send answers") picks it. */
-  let focusedOption = $state(0);
-  $effect(() => { step; request.requestId; focusedOption = 0; });
+  /** Where the arrow keys are among the rows. v10 (4): nothing is pre-highlighted; a row
+   *  lights only under the pointer or keyboard focus. */
+  let focusedOption = $state(-1);
+  $effect(() => { step; request.requestId; focusedOption = -1; });
 
   let question = $derived(request.questions[step]);
   let currentAnswers = $derived(
     question === undefined ? [] : userInputAnswerFor(draft, question)
   );
   let chosenSomething = $derived(currentAnswers.length > 0);
-  /** The option "Next" would pick when nothing is chosen. */
-  let pickable = $derived(question === undefined || chosenSomething ? null : question.options[focusedOption]?.label ?? null);
-  let canContinue = $derived(chosenSomething || pickable !== null);
+  let canContinue = $derived(chosenSomething);
   let isLast = $derived(step === request.questions.length - 1);
   let optionsElement = $state<HTMLDivElement | null>(null);
   let composerAnswers = $derived(ownAnswer !== null);
@@ -109,13 +104,7 @@
     return true;
   }
 
-  // The decision is where the person's attention goes: the first answer takes focus when the
-  // ask appears, unless they are already somewhere else on the page.
-  onMount(() => {
-    if (document.activeElement === null || document.activeElement === document.body) {
-      optionsElement?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
-    }
-  });
+  // v10 (4): no row takes focus on its own (it would light it); numbers and arrows work at once.
 
   /** 1–9 choose an answer, as a permission ask's question does. Typing a number into a
    *  field means the number. */
@@ -128,7 +117,9 @@
     if ((event.key === "ArrowDown" || event.key === "ArrowUp") && question.options.length > 0) {
       event.preventDefault();
       const count = question.options.length;
-      focusedOption = (focusedOption + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+      focusedOption = focusedOption < 0
+        ? (event.key === "ArrowDown" ? 0 : count - 1)
+        : (focusedOption + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
       optionsElement?.querySelectorAll<HTMLButtonElement>("[data-user-input-option]")[focusedOption]?.focus({ preventScroll: true });
       return;
     }
@@ -138,21 +129,29 @@
     choose(option);
   }
 
-  /** A tile chooses (or, where several may be chosen, toggles); the one primary goes on. */
+  /** v10 (4): a row is the action. Choosing one answers this question and moves to the next;
+   *  the last choice sends all answers. Where several may be chosen, a row toggles and the
+   *  composer's send goes on (commit()). */
   function choose(option: string): void {
     if (question === undefined || busy || !answerAvailable) return;
     const at = question.options.findIndex((each) => each.label === option);
     if (at >= 0) focusedOption = at;
-    draft = toggleUserInputChoice(draft, question, option);
+    if (question.multi_select) {
+      draft = toggleUserInputChoice(draft, question, option);
+      return;
+    }
+    draft = {
+      selected: { ...draft.selected, [question.question_id]: [option] },
+      other: { ...draft.other, [question.question_id]: "" }
+    };
+    continueOrSubmit();
   }
 
-  let primaryLabel = $derived(busy && isLast ? "Sending…" : isLast ? (request.questions.length > 1 ? "Send answers" : "Send answer") : "Next");
   $effect(() => {
-    commitLabel = primaryLabel;
-    commitReady = question !== undefined && canContinue && !busy && answerAvailable;
+    commitReady = question !== undefined && question.multi_select && canContinue && !busy && answerAvailable;
   });
 
-  /** Goes on, as the primary does: the composer's pill calls this. */
+  /** Goes on with the answers chosen so far (a several-answer question): the composer's send. */
   export function commit(): void { continueOrSubmit(); }
 
   function writeOther(value: string): void {
@@ -174,8 +173,6 @@
 
   function continueOrSubmit(): void {
     if (!canContinue || question === undefined || busy || !answerAvailable) return;
-    // v6: with nothing chosen, the primary picks the focused option.
-    if (!chosenSomething && pickable !== null) draft = toggleUserInputChoice(draft, question, pickable);
     if (composerAnswers && ownWords !== "") onOwnAnswerUsed?.();
     if (!isLast) {
       step += 1;
@@ -201,18 +198,6 @@
   {/if}
 {/snippet}
 
-{#snippet primaryButton()}
-  <!-- The one primary. Before there is an answer it waits as a quiet outline. -->
-  <button
-    type="button"
-    class="cv-button cv-button--primary"
-    data-user-input-continue
-    title={!canContinue ? "Choose an answer, or write your own, to go on" : undefined}
-    disabled={busy || !answerAvailable || !canContinue}
-    onclick={continueOrSubmit}
-  >{primaryLabel}</button>
-{/snippet}
-
 {#if question}
   <AskShell
     kind="question"
@@ -223,7 +208,6 @@
     description={question.multi_select ? "Choose all that apply." : null}
     {framed}
     {replyStrip}
-    footerEnd={composerAnswers ? undefined : primaryButton}
     {onStop}
     stopDisabled={busy}
     data-user-input-panel
@@ -242,14 +226,12 @@
           type="button"
           class="cv-ask-row"
           class:is-selected={selected}
-          class:is-focused={!chosenSomething && index === focusedOption}
           data-user-input-option={option.label}
-          data-user-input-option-focused={!chosenSomething && index === focusedOption ? "true" : undefined}
           aria-pressed={selected}
           aria-keyshortcuts={index < 9 ? String(index + 1) : undefined}
           disabled={busy || !answerAvailable}
           onclick={() => choose(option.label)}
-          onfocus={() => { if (!chosenSomething) focusedOption = index; }}
+          onfocus={() => (focusedOption = index)}
         >
           <span class="cv-ask-key" aria-hidden="true">
             {#if selected}<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></svg>{:else if index < 9}{index + 1}{/if}
@@ -294,8 +276,6 @@
 
 <style>
   .count { flex: none; }
-  /* v6: the focused option (what Next picks): a 1px accent ring at 55%, as Allow once wears. */
-  .options :global(.cv-ask-row.is-focused) { box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
   .options { max-height: 360px; overflow: auto; }
   /* The field: a canvas well inside the raised ask, with a pen where the key would be. */
   .other {

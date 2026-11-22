@@ -69,10 +69,11 @@ describe("v9 (2): the permission ask", () => {
     expect(order).toEqual(["allow", "always", "deny"]);
     expect(html).toMatch(/data-conversation-ask-action="deny"[^>]*aria-keyshortcuts="3"/);
   });
-  it("the primary pill says the focused row's own label", () => {
+  it("v10 (4) replaces the primary pill: the card has no commit; a row answers at once", () => {
     const card = source("../src/components/conversation/PermissionAskCard.svelte");
-    expect(card).toContain('commitLabel = shape === "question" ? "Send answer" : chosen === null ? "Allow once" : pillLabel(chosen.label);');
-    expect(card).toContain('$effect(() => { declineAction = null; });');
+    expect(card).not.toContain("commitLabel");
+    expect(card).not.toContain("declineAction");
+    expect(card).toMatch(/function pick\(optionId: string\): void \{\s*if \(busy \|\| !answerAvailable\) return;\s*onAnswer\(optionId\);\s*\}/);
   });
 });
 
@@ -132,13 +133,14 @@ describe("v9 (10, 14, 17, 24, 25): the dock", () => {
     expect(html).toMatch(/>Open conversation<\/span>[\s\S]*?<svg class="c2-rest-control-arrow[^"]*" viewBox="0 0 16 16" data-conversation-open-arrow=""><path d="m4 10 4-4 4 4"><\/path><\/svg>/);
     expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-control-arrow { flex:none; width:12px; height:12px;");
   });
-  it("with a proposal on the page, Needs your approval wears the card's colour and dot", () => {
+  it("with a proposal on the page, Needs your approval wears its dot; v10 (10): in #bccbf0 like every ask label", () => {
     const bar = source("../src/components/conversation/ConversationRestBar.svelte");
-    expect(bar).toContain("[data-conversation-rest-page-waits-row] .c2-rest-label { color:#a9bbe3; }");
-    expect(bar).toContain("[data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#a9bbe3; }");
+    expect(bar).toContain("[data-conversation-rest-page-waits-row] .c2-rest-label { color:#bccbf0; }");
+    expect(bar).toContain("[data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#bccbf0; }");
+    expect(bar).not.toContain("#a9bbe3");
   });
-  it("the dock zone has a 1px white 8% top edge across the dock's column only, faded by the dock's move", () => {
-    expect(app).toMatch(/:is\(\.manager-page, \.ticket-page\) > \.conversation-layer::after \{\s*left: 50%;\s*right: auto;\s*width: min\(var\(--page-measure\), calc\(100% - 2 \* var\(--space-5\)\)\);\s*transform: translateX\(-50%\);\s*height: 1px;\s*background: rgba\(255, 255, 255, 0\.08\);\s*opacity: var\(--conversation-dock-line, 1\);/);
+  it("the dock zone has a 1px white top edge (v10 (9): 12%) across the dock's column only, faded by the dock's move", () => {
+    expect(app).toMatch(/:is\(\.manager-page, \.ticket-page\) > \.conversation-layer::after \{\s*left: 50%;\s*right: auto;\s*width: min\(var\(--page-measure\), calc\(100% - 2 \* var\(--space-5\)\)\);\s*transform: translateX\(-50%\);\s*height: 1px;\s*background: rgba\(255, 255, 255, 0\.12\);[^\n]*\s*opacity: var\(--conversation-dock-line, 1\);/);
     expect(app).toContain(':is(.manager-page, .ticket-page)[data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer::after { opacity: 0; }');
   });
   it("the edge fades over 180ms: out at the start of opening, in over the end of the return", () => {
@@ -161,12 +163,13 @@ describe("v9 (11, 12, 19, 20): thread pieces", () => {
   it("From Panels is a left-aligned status line", () => {
     expect(source("../src/components/conversation/UserMessage.svelte")).toMatch(/\.c2-system-note \{\s*align-self: flex-start;[^}]*text-align: start;/);
   });
-  it("only the first queued message carries 'sends after this turn'", () => {
+  it("v10 (2): every queued message carries the same chip, Queued · n of m", () => {
     const row = (key: string) => ({ key, heldPromptId: key, senderMessageId: null, state: "held", queueReason: null,
       content: [{ piece: "text", text: `Message ${key}` }] }) as unknown as HeldPromptRow;
     const html = render(HeldPromptStack, { props: { rows: [row("a"), row("b")], running: true, conversationId: "c" } }).body;
-    expect(html.match(/sends after this turn/g)?.length).toBe(1);
+    expect(html).not.toContain("sends after this turn");
     expect(html.match(/chat-qrow-word[^"]*">Queued</g)?.length).toBe(2);
+    expect(html).toMatch(/data-conversation-held-detail="">1 of 2<[\s\S]*data-conversation-held-detail="">2 of 2</);
   });
   it("file cards fill the bubble; a one-image bubble is as wide as its image", () => {
     const one = render(MessagePieces, { props: { bubble: true, conversationId: "c", content: [
@@ -182,11 +185,14 @@ describe("v9 (11, 12, 19, 20): thread pieces", () => {
     expect(css).toContain(".c2-bubble--one-image { min-width: 240px; }");
     expect(css).toContain(".c2-bubble--one-image > .c2-bubble-words { width: 0; min-width: 100%; }");
   });
-  it("a question's Stop turn is a secondary pill in the footer, left of the well", () => {
-    expect(composer).toContain('{#if panelTakesTheBox && userInput && running && onStop}');
+  it("v10 (3): every ask's Stop turn is a secondary pill in the footer, left of the well", () => {
+    expect(composer).toContain('{#if panelTakesTheBox && running && onStop}');
     expect(composer).toMatch(/class="chat-ask-stop" data-conversation-stop=\{true\} data-conversation-ask-stop/);
     expect(composer).toMatch(/\.chat-ask-stop \{[^}]*order: -1;[^}]*background: #2a2a2a;\s*color: #ececec;/);
     const question = composer.slice(composer.indexOf("<UserInputQuestionPanel"), composer.indexOf("/>", composer.indexOf("<UserInputQuestionPanel")));
     expect(question).toContain("onStop={undefined}");
+    const permission = composer.slice(composer.indexOf("<PermissionAskCard"), composer.indexOf("/>", composer.indexOf("<PermissionAskCard")));
+    expect(permission).toContain("onStop={undefined}");
+    expect(composer).toContain("<ConversationCredentialRequestCard request={credentialRequest} framed={false} onStop={undefined} />");
   });
 });

@@ -26,12 +26,13 @@ describe("design v5: empty and header", () => {
     expect(live).not.toMatch(/\.conversation-empty \{[^}]*clip-path/);
   });
 
-  it("the header title is 16 semibold, alone, and the collapse control is a Dock text button with a down chevron (v5.1, v5.2)", () => {
-    expect(pane).toContain("font: var(--cv-weight-title) 16px/24px var(--cv-font);");
+  it("v10 (7): the header title is 17/24 semibold, alone, and the collapse control is a Dock button", () => {
+    expect(pane).toContain("font: var(--cv-weight-title) 17px/24px var(--cv-font);");
     expect(pane).not.toContain("data-conversation-subtitle");
     expect(pane).toContain('{stateControl.opensIt ? "Open conversation" : "Dock"}');
-    // v7: Dock is a quiet Button: 32 tall pill, #bdbdbd.
-    expect(pane).toMatch(/\.chat-head-collapse \{[^}]*height: 32px;[^}]*border-radius: 999px;[^}]*color: #bdbdbd;/);
+    // v7: Dock is a Button: a 32 tall pill. v10 (5): the resting #232323 pill, #d9d9d9.
+    expect(pane).toMatch(/\.chat-head-collapse \{[^}]*height: 32px;[^}]*border-radius: 999px;/);
+    expect(pane).toContain(".chat-head-collapse { background: #232323; color: #d9d9d9; }");
   });
 });
 

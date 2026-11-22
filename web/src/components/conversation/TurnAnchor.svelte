@@ -159,6 +159,8 @@
     white-space: nowrap;
   }
   .c2-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* v10 (9): a settled turn's "Worked for" line is #bdbdbd. */
+  :is(.c2-meta--fold, [data-conversation-turn-settled-head]), .c2-meta--fold .c2-meta-sep { color: #bdbdbd; }
   .c2-meta-sep { margin-inline: -2px; color: var(--cv-detail-ink, #b0b0b0); }
   .c2-meta-slot { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; }
   /* The fold is a quiet control: the line itself, with a hover fill that reaches past

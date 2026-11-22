@@ -207,6 +207,8 @@
   .c2-status-next { color: var(--cv-detail-ink, #b0b0b0); font-weight: var(--cv-weight-body); }
   .c2-status-dot { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--cv-detail-ink, #b0b0b0); }
   .c2-status--error .c2-status-dot { background: #f08a7e; }
+  /* v10 (2): a steered line's detail ("into the running turn") is #c4c4c4. */
+  .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #c4c4c4; }
 
   /* A note: one status line, its own width, under the bubble or in the turn. */
   .c2-status--note { align-self: flex-start; display: flex; width: fit-content; }
@@ -237,6 +239,10 @@
     background: var(--cv-surface, #1c1c1c);
     text-align: start;
   }
+  /* v10 (6): the newest error card says failure by its edge and title: a 1px
+     rgba(240,138,126,0.35) edge, "This turn failed" in #f08a7e. No fill tint. */
+  .c2-status--callout.c2-status--error { border-color: rgb(240 138 126 / 35%); }
+  .c2-status--callout.c2-status--error .c2-status-title { color: #f08a7e; }
   .c2-status-reason {
     margin: 8px 0 0;
     color: var(--cv-ink, #ececec);

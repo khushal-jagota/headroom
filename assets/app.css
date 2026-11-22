@@ -5523,7 +5523,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
   transform: translateX(-50%);
   height: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.12); /* v10 (9) */
   opacity: var(--conversation-dock-line, 1);
 }
 :is(.manager-page, .ticket-page)[data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer::after { opacity: 0; }
@@ -5638,3 +5638,20 @@ details:not([open]) > summary > .manager-workspace-chevron {
 @media (prefers-reduced-motion: reduce) {
   [data-conversation-pane] :is(.c2-meta-slot, .c2-status-slot, .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph)) { animation: none; }
 }
+
+/* ==========================================================================================
+ * v10 (22 Nov, after round 16) — clearance. Scoped to the conversation pane.
+ * ========================================================================================== */
+/* (7) Headings in answers: h1/h2 17/24 600, h3 and smaller 16/24 600 (the header title is 17/24). */
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2) { font-size: 17px; line-height: 24px; font-weight: 600; }
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h3, h4, h5, h6) { font-size: 16px; line-height: 24px; font-weight: 600; }
+/* (8) Links in answers: #bccbf0 with an underline at 40%. */
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #bccbf0; text-decoration-color: rgb(188 203 240 / 40%); }
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #bccbf0; text-decoration-color: #bccbf0; }
+/* (9) Thumbnails (pictures in messages) wear a 1px rgba(255,255,255,0.12) edge. */
+[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%); }
+/* (12) Inline code: #232323, padding 1px 4px; in narration the chip's text is #b4b4b4. */
+[data-conversation-pane] .chat-thread .markdown :not(pre) > code,
+[data-conversation-pane] .cv-code { padding: 1px 4px; background: #232323; }
+[data-conversation-pane] .chat-thread .markdown li > code.cv-code-leads { margin-inline-start: -4px; }
+[data-conversation-pane] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { color: #b4b4b4; }
