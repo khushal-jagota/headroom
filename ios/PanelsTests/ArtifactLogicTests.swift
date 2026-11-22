@@ -29,11 +29,73 @@ final class ArtifactLogicTests: XCTestCase {
     }
 
     func testMarkdownKeepsCodeLiteralAndDoesNotLoseUnclosedFence() {
-        let blocks = ArtifactMarkdownBlock.parse("# Plan\n\n- [Read](other.md)\n\n```swift\n# not a heading\nlet x = 1\n```\n\n> Caveat\n\n```\nunfinished")
-        XCTAssertEqual(blocks.map(\.kind), [.heading(1), .list, .code, .quote, .code])
+        let blocks = ArtifactMarkdownBlock.parse("# Plan\n\n- [Read](other.md)\n\n```swift\n# not a heading\nlet x = 1\n```\n\n> Caveat\n\n````markdown\n```swift\ninner\n```\n````\n\n```\nunfinished")
+        XCTAssertEqual(blocks.map(\.kind), [.heading(1), .list, .code, .quote, .code, .code])
         XCTAssertEqual(blocks[1].text, "• [Read](other.md)")
         XCTAssertEqual(blocks[2].text, "# not a heading\nlet x = 1")
+        XCTAssertEqual(blocks[4].text, "```swift\ninner\n```")
         XCTAssertEqual(blocks.last?.text, "unfinished")
+        XCTAssertEqual(ArtifactMarkdownBlock.parse("```npm test``` runs it\n\nAfter").map(\.kind), [.paragraph, .paragraph])
+    }
+
+    // Risk: a chart the web would leave as code (or the reverse) draws differently on the phone.
+    // Gap: no earlier test reads a fence's language or a chart spec. Layer: host logic, no view.
+    private let chartSpec = #"{"kind":"bar","title":"Merged PRs","stacked":true,"format":{"prefix":"$","decimals":2},"series":[{"name":"Panels","points":[{"label":"Week 1","value":-2.5},{"label":"Week 2","value":null}]},{"name":"Panels","points":[{"label":"Week 3","value":4},{"label":"Week 1","value":1500}]}]}"#
+
+    func testOnlyAClosedPanelsChartFenceWithAValidSpecBecomesAChart() throws {
+        let fence = "```panels-chart\n" + chartSpec + "\n```"
+        let chart = try XCTUnwrap(ArtifactMarkdownBlock.parse("Before\n\n" + fence).last?.chart)
+        XCTAssertEqual(chart.series.map(\.key), ["actual", "inline-1"])
+        XCTAssertTrue(chart.stacked)
+        for source in [fence.replacingOccurrences(of: "panels-chart", with: "panels-chart extra"),
+                       fence.replacingOccurrences(of: "panels-chart", with: " panels-chart"),
+                       fence.replacingOccurrences(of: "panels-chart", with: "json"),
+                       String(fence.dropLast()), fence.replacingOccurrences(of: "\n```", with: "\n~~~"),
+                       "~~~~panels-chart\n" + chartSpec + "\n~~~~"] {
+            let blocks = ArtifactMarkdownBlock.parse(source)
+            XCTAssertEqual(blocks.map(\.kind), [.code], source)
+            XCTAssertEqual(blocks.first?.chart == nil, !source.hasPrefix("~~~~"), source)
+        }
+        let line = #"{"kind":"line","series":[{"name":"A","points":[{"label":"a","value":1}]}]}"#
+        XCTAssertEqual(ArtifactChart(source: line)?.isLine, true)
+        let invalid = [#"{"#, "null", "[]", #"{"kind":"gauge","series":[{"name":"A","points":[{"label":"a","value":1}]}]}"#,
+                       line.replacingOccurrences(of: #""kind":"line""#, with: #""kind":"line","stacked":false"#),
+                       line.replacingOccurrences(of: #""kind":"line""#, with: #""kind":"bar","stacked":1"#),
+                       line.replacingOccurrences(of: #""kind":"line""#, with: #""kind":"bar","title":null"#),
+                       line.replacingOccurrences(of: #""kind":"line""#, with: #""kind":"bar","measure_id":"x""#),
+                       line.replacingOccurrences(of: #""kind":"line""#, with: #""kind":"bar","format":{"decimals":21}"#),
+                       line.replacingOccurrences(of: #""kind":"line""#, with: #""kind":"bar","format":{"decimals":1.5}"#),
+                       line.replacingOccurrences(of: #""kind":"line""#, with: #""kind":"bar","format":{"suffix":4}"#),
+                       line.replacingOccurrences(of: #""name":"A""#, with: #""name":"A","color":"red""#),
+                       line.replacingOccurrences(of: #","value":1"#, with: ""),
+                       line.replacingOccurrences(of: #""value":1"#, with: #""value":true"#),
+                       line.replacingOccurrences(of: #""value":1"#, with: #""value":"1""#),
+                       line.replacingOccurrences(of: #""value":1"#, with: #""value":1e999"#),
+                       line.replacingOccurrences(of: #""value":1"#, with: #""value":9007199254740992"#),
+                       line.replacingOccurrences(of: #"{"label":"a","value":1}"#, with: #"{"label":"a","value":1},{"label":"a","value":2}"#),
+                       line.replacingOccurrences(of: #"{"label":"a","value":1}"#, with: ""),
+                       #"{"kind":"line","series":[]}"#]
+        for source in invalid { XCTAssertNil(ArtifactChart(source: source), source) }
+        let rejected = ArtifactMarkdownBlock.parse("```panels-chart\n" + invalid[5] + "\n```")
+        XCTAssertEqual(rejected.map(\.kind), [.code])
+        XCTAssertEqual(rejected.first?.text, invalid[5])
+    }
+
+    func testChartKeepsLabelOrderNullsAndTheWebsNumberFormats() throws {
+        let chart = try XCTUnwrap(ArtifactChart(source: chartSpec))
+        XCTAssertEqual(chart.data.map(\.id), ["Week 1", "Week 2", "Week 3"])
+        XCTAssertEqual(chart.data.map { $0.values["actual"] }, [-2.5, nil, nil])
+        XCTAssertEqual(chart.data.map { $0.values["inline-1"] }, [1500, nil, 4])
+        XCTAssertEqual(chart.reading(1500), "$1,500.00")
+        XCTAssertEqual(chart.reading(nil), "No reading")
+        XCTAssertEqual(chart.tick(1500), "$1.5k")
+        let units = try XCTUnwrap(ArtifactChart(source: #"{"kind":"line","unit":"ms","series":[{"name":"A","points":[{"label":"a","value":12.4}]}]}"#))
+        XCTAssertEqual(units.title, "Reading")
+        XCTAssertEqual(units.reading(12.4), "12 ms")
+        XCTAssertEqual(units.tick(12.5), "12.5")
+        let percent = try XCTUnwrap(ArtifactChart(source: #"{"kind":"bar","format":{"suffix":"%","decimals":1},"series":[{"name":"A","points":[{"label":"a","value":50}]}]}"#))
+        XCTAssertEqual(percent.reading(50), "50.0%")
+        XCTAssertEqual(percent.tick(50), "50%")
     }
 
     func testProseLoadsOnlyLinkedPhotosAndVideos() throws {

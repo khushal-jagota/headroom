@@ -178,7 +178,7 @@ private struct ReviewMessageContent: View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
             ForEach(Array(pieces.enumerated()), id: \.offset) { _, piece in
                 if let text = piece.text {
-                    ArtifactMarkdownContent(source: text, baseURL: store.baseURL)
+                    PanelsMarkdown(source: text, baseURL: store.baseURL)
                 } else if let id = piece.storedFileId,
                           let url = try? store.client.url("/api/conversation/conversations/\(conversationID)/files/\(id)") {
                     if piece.piece == "image" {

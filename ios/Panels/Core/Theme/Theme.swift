@@ -92,10 +92,9 @@ enum PanelsTheme {
         static let configurationHeading = Font.title3.weight(.medium)
         static let allowanceLabel = Font.body.weight(.medium)
         static let allowanceValue = Font.body.weight(.semibold)
-        // The renderer's inline body font has always determined heading size.
-        // Preserve that size while matching the web's h2/h3 600 and other headings 700.
-        static func markdownHeading(_ level: Int) -> Font {
-            Font.body.weight(level == 2 || level == 3 ? .semibold : .bold)
+        // Markdown headings share one size; the level sets the weight: h2/h3 600, others 700.
+        static func markdownHeadingWeight(_ level: Int) -> Font.Weight {
+            level == 2 || level == 3 ? .semibold : .bold
         }
 
         enum SectionRole {

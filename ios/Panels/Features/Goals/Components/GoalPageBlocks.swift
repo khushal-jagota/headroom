@@ -82,7 +82,7 @@ private struct GoalPageBlock: View {
         }
     }
     @ViewBuilder private func text(_ value: String, markdown: Bool = false) -> some View {
-        if markdown { ArtifactMarkdownContent(source: value, baseURL: session.baseURL) } else { GoalReadText(value: value) }
+        if markdown { PanelsMarkdown(source: value, baseURL: session.baseURL) } else { GoalReadText(value: value) }
     }
     private var views: some View {
         let views = block["views"].array

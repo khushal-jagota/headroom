@@ -147,10 +147,9 @@ regular for navigation and VPS, medium for configuration and Usage.
 `panelsNavigationTitle` sets the weight on each native navigation item. Usage
 keeps its semibold heading; other utility pages use medium. This retains native
 navigation geometry and restores the destination's style on back navigation.
-The Sidebar, proposals, and Ticket use web base sizes with Dynamic Type scaling.
-Other font roles remain native. Artifact Markdown headings retain their
-existing rendered body size, with the web's bold h1/h4–h6 and semibold h2/h3;
-the inline renderer accepts the shared font so its body default cannot mask it.
+The Sidebar, proposals, Ticket and all Markdown use web base sizes with Dynamic Type
+scaling. Other font roles remain native. Markdown text is 14 points, headings 15 points
+with bold h1/h4–h6 and semibold h2/h3, and code 12.5 points.
 
 ## Proposal decisions
 
@@ -464,7 +463,7 @@ field for larger catalogs. HTML runs from its Panels URL in a persistent WKWebVi
 desktop. Fit desktop scales a 1024-point canvas into the available width; pinch
 zoom lets the reader inspect a fixed-width design without changing its styles. Folder sections show five files before
 expanding, with image thumbnails.
-Markdown uses native text, and images support pinch, pan and double-tap zoom.
+Markdown uses the shared renderer below, and images support pinch, pan and double-tap zoom.
 PDF uses continuous PDFKit scrolling, supported media uses AVKit, and other
 supported files use Quick Look. Text wraps and previews at most 256 KB.
 Sharing sends the downloaded file through the system share sheet. Temporary files
@@ -494,8 +493,17 @@ A tap opens the existing native viewer. Conversation text resolves relative link
 against the configured server and uses the same managed-file route. Artifact
 catalogs and viewers keep their existing presentation.
 
+One renderer, `PanelsMarkdown`, shows Markdown on the artifact page, in proposals,
+messages, Ticket fields, Goal prose and conversation rows. Code and tables scroll
+sideways inside the page, and text hugs its width, so a short own message keeps a short
+bubble. Each view parses its source once. Only the artifact page lays blocks out lazily,
+so conversation rows keep stable heights. A closed `panels-chart` fence that passes the
+web's checks draws a Swift Charts bar or line chart with the goal number formats. Any
+other fence stays code. A fence inside a quote is not read, so a quoted chart, which the
+web draws, shows as quote text.
+
 Artifact logic tests cover cross-owner URLs and encoding, unsafe file paths,
-Markdown code blocks, and the photo/video-only rule. The media cases cover a gap
+Markdown code blocks, chart fences and specs, and the photo/video-only rule. The media cases cover a gap
 in the earlier URL tests: file links must not enter the automatic media loader,
 and literal code must not load photos. They reuse the existing XCTest target and
 require no server. Simulator captures are a separate read-only smoke
