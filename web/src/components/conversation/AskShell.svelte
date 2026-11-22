@@ -244,9 +244,9 @@
   :global([data-conversation-pane]) .cv-ask-context { gap: 0; color: #b0b0b0; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button) { width: 32px; height: 32px; border-radius: 999px; color: #bdbdbd; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button svg) { width: 16px; height: 16px; }
-  /* v13 (5): an unavailable pager arrow (back on the first question, forward on the last) is
-     #5a5a5a and takes no pointer at all (no hover, no pointer cursor). */
-  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #5a5a5a; background: none; cursor: default; pointer-events: none; }
+  /* v13 (5): an unavailable pager arrow (back on the first question, forward on the last)
+     takes no pointer at all (no hover, no pointer cursor). v14 (4): it is #6e6e6e. */
+  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #6e6e6e; background: none; cursor: default; pointer-events: none; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { background: #2a2a2a; color: #ececec; }
   :global([data-conversation-pane]) .cv-ask-context :global(.count) { margin-inline: 0 4px; }
   :global([data-conversation-pane]) .cv-ask-title { margin-block-start: 8px; color: #ececec; }
@@ -280,11 +280,8 @@
      lit when the pointer is not on it; the accent edge is the focus mark (no extra ring). */
   :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
   :global([data-conversation-pane] .cv-ask-row:focus-visible) { outline: none; }
-  /* v13 (4): 1 is the default key, so the first row wears the keyboard-focus style at rest
-     (#303030, the accent edge, an accent keycap) while no other row is under the pointer, has
-     keyboard focus or is chosen. Deny keeps its #f08a7e label. */
-  :global([data-conversation-pane] .cv-ask-rows:not(:has(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) > .cv-ask-row:first-child:not(:disabled)) { background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
-  :global([data-conversation-pane] .cv-ask-rows:not(:has(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) > .cv-ask-row:first-child:not(:disabled) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
+  /* v14 (3): no row is lit at rest (v13 (4) withdrawn); every keycap is the neutral #3a3a3a.
+     Hover and keyboard focus keep their style. */
   :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #3a3a3a; color: #d9d9d9; font: var(--cv-weight-label) 13px/1 var(--cv-font); }
   :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
   :global([data-conversation-pane] .cv-ask-label) { color: #ececec; }

@@ -26,36 +26,7 @@ describe("v13 (1): one inline-code style", () => {
   });
 });
 
-describe("v13 (2): Stop inside the ask's answer well", () => {
-  it("is the well's last control, after send, titled Stop the agent", () => {
-    expect(composer).toMatch(/<button type="button" class="chat-ask-stop" data-conversation-stop=\{true\} data-conversation-ask-stop\s+title="Stop the agent" aria-label="Stop the agent"[^\n]*<span class="chat-ask-stop-round" aria-hidden="true"><span class="chat-send-fill"><\/span><\/span><\/button>/);
-    expect(composer).toMatch(/\.chat-box\.has-ask > \.chat-foot > \.chat-ask-stop \{[^}]*order: 4;[^}]*width: 40px;[^}]*padding: 0 6px;[^}]*border-radius: 0 20px 20px 0;[^}]*background: #141414;/);
-  });
-  it("a 28px ghost round: no fill, a 1px #3a3a3a ring, a 10px #ececec square", () => {
-    expect(composer).toMatch(/\.chat-ask-stop-round \{[^}]*width: 28px;\s*height: 28px;[^}]*box-shadow: inset 0 0 0 1px #3a3a3a;/);
-    expect(composer).toContain(".chat-ask-stop-round > .chat-send-fill { display: block; width: 10px; height: 10px; border-radius: 2.5px; background: currentColor; }");
-    expect(composer).toMatch(/\.chat-box\.has-ask > \.chat-foot > \.chat-ask-stop \{[^}]*color: #ececec;/);
-  });
-  it("with Stop after it the send is a middle piece; the well is a pill (radius 20 at both ends)", () => {
-    expect(composer).toMatch(/:has\(\.chat-ask-stop\) > \.chat-foot :global\(\.chat-submit > \.chat-ask-send:hover:not\(:disabled\)\) \{\s*width: 36px;\s*margin: 0;\s*padding: 0;\s*border-radius: 0;/);
-    expect(composer).toMatch(/\.chat-ask-pen \{[^}]*border-radius: 20px 0 0 20px;/);
-  });
-});
-
-describe("v13 (3): disabled send everywhere", () => {
-  it("#262626 with a #7a7a7a arrow, on the composer and in the ask well", () => {
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #262626;\s*color: #7a7a7a;/);
-    expect(composer).toMatch(/:global\(\.chat-ask-send-round\) \{[^}]*background: #262626;\s*color: #7a7a7a;/);
-    expect(app).toContain(".chat-send.on { background: #f2f2f2; color: #121212; }");
-  });
-});
-
-describe("v13 (4): the first option shows the focus style at rest", () => {
-  it("while no row is hovered, focused or chosen, row 1 is #303030 with the accent edge and an accent keycap", () => {
-    expect(shell).toContain(":global([data-conversation-pane] .cv-ask-rows:not(:has(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) > .cv-ask-row:first-child:not(:disabled)) { background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }");
-    expect(shell).toMatch(/> \.cv-ask-row:first-child:not\(:disabled\) \.cv-ask-key\) \{ background: var\(--cv-accent\); color: #141414; \}/);
-  });
-});
+// v13 (2), (3) and (4) were replaced by v14 (2), (4) and (3): see conversation-design-v14.test.ts.
 
 describe("v13 (5): the question pager", () => {
   const request = {
@@ -65,8 +36,8 @@ describe("v13 (5): the question pager", () => {
       { question_id: "b", header: "B", question: "Second?", multi_select: false, allow_other: false, options: [{ label: "Three", description: "" }] },
     ],
   };
-  it("an unavailable arrow is #5a5a5a and takes no pointer", () => {
-    expect(shell).toContain(":global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #5a5a5a; background: none; cursor: default; pointer-events: none; }");
+  it("an unavailable arrow takes no pointer (v14 (4): #6e6e6e)", () => {
+    expect(shell).toContain(":global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #6e6e6e; background: none; cursor: default; pointer-events: none; }");
   });
   it("on 1 of 2 back is unavailable and forward is not; forward is unavailable only on the last", () => {
     const body = render(UserInputQuestionPanel, { props: { request, onSubmit: () => {} } as never }).body;

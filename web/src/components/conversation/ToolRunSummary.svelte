@@ -48,7 +48,7 @@
        "Running", the command (mono, one line, ellipsis), the chevron right after it. No time on it: the turn's
        head carries the turn's time. -->
   <!-- p13b: one live indicator in the transcript, the Working line's spinner. A running row
-       keeps the run's static icon; "Running" in #ececec 500 says it is live. -->
+       keeps the run's static icon; "Running" in #c4c4c4 500 (v14 (6)) says it is live. -->
   <!-- v9 (1): the Working line holds the one spinner in every view. -->
   <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true" data-conversation-run-icon={live ? "running" : undefined}>
     {#each summary.iconPaths as path (path)}<path d={path} />{/each}
@@ -116,6 +116,10 @@
   /* v6: live, the row stays one line: the command ellipsizes, and the chevron stands right
      after the text, as in "Ran 2 commands ›". */
   .c2-run-summary.is-live .c2-run-verb { margin-inline-end: 2px; color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
+  /* v14 (6): "Running" is #c4c4c4 500, not white, so only the Working line reads as the live
+     status. Under the pointer it lights as every row does. */
+  .c2-run-summary.is-live .c2-run-verb { color: #c4c4c4; }
+  .c2-run-summary.is-live:is(:hover, :focus-visible) .c2-run-verb { color: var(--cv-ink, #ececec); }
   /* One line, always: the subject gives way with an ellipsis inside the column. */
   .c2-run-line {
     flex: 0 1 auto;

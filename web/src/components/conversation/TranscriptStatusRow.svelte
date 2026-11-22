@@ -209,6 +209,10 @@
   .c2-status--error .c2-status-dot { background: #f08a7e; }
   /* v10 (2): a steered line's detail ("into the running turn") is #c4c4c4. */
   .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #c4c4c4; }
+  /* v14 (7): the Steered note is quieter: icon and label #bdbdbd 500, the detail #a6a6a6, 13/20. */
+  .c2-status[data-conversation-steered] .c2-status-title { color: #bdbdbd; font-weight: var(--cv-weight-label); }
+  .c2-status[data-conversation-steered] .c2-status-mark { stroke: #bdbdbd; }
+  .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #a6a6a6; }
 
   /* A note: one status line, its own width, under the bubble or in the turn. */
   .c2-status--note { align-self: flex-start; display: flex; width: fit-content; }

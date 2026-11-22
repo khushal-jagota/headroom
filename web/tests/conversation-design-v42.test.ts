@@ -58,10 +58,10 @@ describe("design v4.2: asks", () => {
     expect(shell).toContain(".cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }");
   });
 
-  it("v10 (4): asks have no confirm pill; the well's round send is the composer's own send (v11 (8): disabled #333333/#bdbdbd)", () => {
+  it("v10 (4): asks have no confirm pill; the well's round send is the composer's own send (v14 (4): disabled #2a2a2a/#9a9a9a)", () => {
     expect(composer).not.toContain("chat-ask-primary");
-    expect(app).toMatch(/v13 \(3\): disabled everywhere is #262626 with a #7a7a7a arrow\. \*\/\s*background: #262626;\s*color: #7a7a7a;/);
-    expect(composer).toMatch(/:global\(\.chat-ask-send-round\) \{[^}]*background: #262626;\s*color: #7a7a7a;/);
+    expect(app).toContain(".chat-send { background: #2a2a2a; color: #9a9a9a; }");
+    expect(composer).toMatch(/:global\(\.chat-ask-send-round\) \{[^}]*background: #2a2a2a;\s*color: #9a9a9a;/);
   });
 
   it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid); v11 (3): the round send is its last piece, inside it", () => {
@@ -71,8 +71,9 @@ describe("design v4.2: asks", () => {
     expect(composer).toMatch(/\.chat-submit > \.chat-voice-mic\) \{[^}]*border-radius: 0;[^}]*background: #141414;/);
     expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send:hover:not\(:disabled\)\) \{[^}]*width: 40px;[^}]*border-radius: 0 20px 20px 0;\s*background: #141414;\s*box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;/);
     expect(composer).toContain(".chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send) { order: 3; }");
-    // v13 (2): Stop is the well's closing piece, its right edge on the rows' edge.
-    expect(composer).toMatch(/\.chat-box\.has-ask > \.chat-foot > \.chat-ask-stop \{[^}]*order: 4;[^}]*margin: 0 var\(--cv-s2\) 0 0;[^}]*border-radius: 0 20px 20px 0;/);
+    // v14 (2): no Stop in the ask; the send closes the well, its right edge on the rows' edge.
+    expect(composer).not.toContain("chat-ask-stop");
+    expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send:hover:not\(:disabled\)\) \{[^}]*margin: 0 var\(--cv-s2\) 0 0;/);
   });
 });
 

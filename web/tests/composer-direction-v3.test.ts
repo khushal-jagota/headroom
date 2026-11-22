@@ -23,7 +23,7 @@ function held(key: string, text: string): HeldPromptRow {
 }
 
 describe("the composer's controls row", () => {
-  it("v11 (3): under a question there is no confirm pill; the well keeps its round send, and the one round Stop ends the row", () => {
+  it("v11 (3): under a question there is no confirm pill; the well keeps its round send; v14 (2): no Stop in the ask", () => {
     const userInput = { requestId: "q-1", questions: [
       { question_id: "a", header: "Style", question: "Which style?", multi_select: false, allow_other: true, options: [{ label: "Soft", description: "" }] },
       { question_id: "b", header: "Tone", question: "Which tone?", multi_select: false, allow_other: false, options: [{ label: "Warm", description: "" }] }
@@ -31,8 +31,8 @@ describe("the composer's controls row", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, userInput, onStop: () => {} } });
     expect(body).not.toContain("data-conversation-ask-primary");
     expect(body).toMatch(/<button[^>]*class="chat-send[^"]*chat-ask-send[^"]*"[^>]*data-conversation-send[^>]*disabled/);
-    expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
-    expect(body).toMatch(/class="chat-ask-stop[^"]*"[^>]*data-conversation-stop/);
+    expect(body).not.toContain("data-conversation-stop");
+    expect(body).not.toContain("chat-ask-stop");
     expect(body).not.toContain(">Stop turn<");
     // The send is drawn inside the well: its round is a span in the button.
     expect(body).toMatch(/class="chat-send chat-ask-send[^"]*"[^>]*>(<!--[^>]*-->)*<span class="chat-ask-send-round"/);
@@ -67,12 +67,12 @@ describe("the composer's controls row", () => {
     expect(body).toContain("data-conversation-model-picker");
   });
 
-  it("v11 (3): while a permission ask waits, the one round Stop ends the row, and the well keeps its round send", () => {
+  it("v14 (2): while a permission ask waits, the ask draws no Stop, and the well keeps its round send", () => {
     const ask = { askId: "a-1", title: "Upload build 41", detail: "xcrun altool --upload-app", options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }, { option_id: "deny", label: "Deny", option_kind: "reject_once" as const }] };
     const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, ask, onStop: () => {}, onCancelTurn: () => {} } });
-    // Exactly one way to stop: the composer's round Stop, not the header and no text pill.
-    expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
-    expect(body).toMatch(/class="chat-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*data-conversation-ask-stop[^>]*aria-label="Stop the agent"[^>]*><span class="chat-ask-stop-round[^"]*"[^>]*><span class="chat-send-fill/);
+    // v14 (2): the ask's bottom row is the answer well only; the header's menu stops the agent.
+    expect(body).not.toContain("data-conversation-stop");
+    expect(body).not.toContain("chat-ask-stop");
     expect(body).not.toContain("cv-ask-stop");
     expect(body).not.toContain(">Stop turn<");
     // No confirm pill and no mode chip: the well's round send, unavailable while empty.

@@ -411,6 +411,12 @@
     if (conversationState === "rest" && window.matchMedia(COMPACT_LAYOUT_MEDIA_QUERY).matches) conversationState = "opened";
   }
 
+  function stopFromTheMenu(): void {
+    closeMenu();
+    onStop?.();
+    menuButton?.focus();
+  }
+
   function confirmNewConversation(): void {
     onNewConversation?.();
     closeMenu();
@@ -536,6 +542,18 @@
             <div class="chat-overflow-menu" data-conversation-options-menu>
               {#if !readOnly}
                 <div class="chat-overflow-actions" role="menu" aria-label="Conversation">
+                  {#if running && onStop}
+                    <!-- v14 (2): while a turn is open (working, or waiting on an ask) the menu
+                         leads with Stop; an ask has no Stop button of its own. -->
+                    <button
+                      type="button"
+                      class="chat-overflow-item"
+                      role="menuitem"
+                      data-conversation-stop={true}
+                      data-conversation-menu-stop
+                      onclick={stopFromTheMenu}
+                    >Stop the agent</button>
+                  {/if}
                   {#if confirmArmed}
                     <button
                       type="button"

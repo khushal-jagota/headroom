@@ -338,6 +338,12 @@
     animation: chat-qrow-spin var(--cv-spin) linear infinite;
   }
   @keyframes chat-qrow-spin { to { transform: rotate(360deg); } }
+  /* v14 (7): the Queued note is as quiet as the Steered note: icon and label #bdbdbd 500, the
+     detail #a6a6a6, 13/20. v14 (8): the queued bubble's frame is 1px #4a4a4a. */
+  .chat-qrow-word { color: #bdbdbd; }
+  .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #a6a6a6; }
+  .chat-qrow-spin { border-top-color: #bdbdbd; }
+  .chat-qrow :global(.c2-bubble) { box-shadow: inset 0 0 0 1px #4a4a4a; }
   /* The dropdown (v4): the float plane anchored on its chip, opening upward from its right
      edge; labels only, 14px on 36px rows. Remove is in the danger ink. */
   .chat-qrow-menu[hidden] { display: none; }

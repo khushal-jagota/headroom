@@ -48,10 +48,10 @@ describe("v7 the five parts", () => {
     expect(source("../src/lib/markdown/codeBlocks.css")).toMatch(/border-radius: 12px;\s*background: var\(--cv-code-surface, #1a1a1a\);/);
     expect(source("../src/components/conversation/MessagePieces.svelte")).toMatch(/background: #242424;\s*color: #ececec;\s*border-radius: 18px;\s*padding: 12px 16px;/);
   });
-  it("2 Button: v10 (4) asks draw no confirm pill and no decline button; Deny is an option row; v11 (3): Stop is the composer's round", () => {
+  it("2 Button: v10 (4) asks draw no confirm pill and no decline button; Deny is an option row; v14 (2): no Stop in the ask", () => {
     expect(composer).not.toContain("chat-ask-primary");
     expect(composer).not.toContain("chat-ask-quiet");
-    expect(composer).toContain('class="chat-ask-stop"');
+    expect(composer).not.toContain('class="chat-ask-stop"');
     const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
     expect(controls).not.toContain("data-conversation-ask-primary");
     expect(controls).not.toContain("data-conversation-ask-decline");

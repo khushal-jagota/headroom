@@ -136,7 +136,7 @@
     {:else if activityUncertain}
       <span class="c2-tool-state">Unknown</span>
     {:else}
-      <!-- The verb ("Running", #ececec 500) says it runs; the Working line holds the spinner. -->
+      <!-- The verb ("Running", #c4c4c4 500) says it runs; the Working line holds the spinner. -->
       <span class="c2-tool-state c2-tool-state--running" role="img" aria-label="Running"></span>
     {/if}
   </span>
@@ -252,6 +252,10 @@
   .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-ink, #ececec); }
   /* p13b: a running call says so in words ("Running"-style verb, #ececec 500), not a spinner. */
   .acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
+  /* v14 (6): the live row's "Running" is #c4c4c4 500, not white, so only the Working line reads
+     as the live status. Under the pointer it lights as every row does. */
+  .acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: #c4c4c4; }
+  .acp-step[data-conversation-tool-status="running"]:is(:hover, :focus-visible) .c2-tool-verb { color: var(--cv-ink, #ececec); }
   .c2-tool-outcome { display: flex; justify-content: flex-end; min-width: 0; }
   .c2-tool-state {
     display: inline-flex;
