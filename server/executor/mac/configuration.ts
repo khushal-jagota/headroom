@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { homedir } from 'node:os';
 import { resolve_path_sync } from '../../core/path_resolution.ts';
+import { safe_component } from './file_metadata.ts';
 import { STOP_SECONDS } from '../../worker_supervision/config.ts';
 import {
   default_executor_root,
@@ -107,14 +108,20 @@ export const MAX_MAC_UPDATE_DETAIL_CHARACTERS = 500;
 export const MAC_RUNTIME_ARCHIVE_NAME = 'panels-mac-runtime.tar.gz';
 export const MAC_RUNTIME_MANIFEST_NAME = 'mac-runtime.json';
 
+/** The server's own folders, when machine code works in them over the local link. */
+export interface ServerFolders {
+  readonly tickets: string;
+  readonly chief: string;
+  readonly managers: string;
+}
 /** Persistent paths only. Construction opens neither a journal nor an outbox. */
 export class ExecutorPaths {
   readonly root: string;
-  /** The server's own Ticket folder, when machine code reaches the server over the local link. */
-  readonly server_tickets: string | null;
-  constructor(root: string, server_tickets: string | null = null) {
+  /** Set only for the server's own machine code, on the local link with the home identity. */
+  readonly server_folders: ServerFolders | null;
+  constructor(root: string, server_folders: ServerFolders | null = null) {
     this.root = root;
-    this.server_tickets = server_tickets;
+    this.server_folders = server_folders;
   }
   get workspace(): string {
     return join(this.root, 'workspace');
@@ -123,7 +130,17 @@ export class ExecutorPaths {
     return join(this.root, 'spool');
   }
   get artifacts(): string {
-    return this.server_tickets ?? join(this.root, 'artifacts', 'tickets');
+    return this.server_folders?.tickets ?? join(this.root, 'artifacts', 'tickets');
+  }
+  get chief_home(): string {
+    return this.server_folders?.chief ?? join(this.root, 'chief');
+  }
+  /** The folder that holds one home folder per Manager. */
+  get managers(): string {
+    return this.server_folders?.managers ?? join(this.root, 'managers');
+  }
+  manager_home(manager_id: string): string {
+    return join(this.managers, safe_component(manager_id));
   }
   get message_files_anchor(): string {
     return join(this.root, 'artifacts', 'message-files.db');

@@ -1,6 +1,10 @@
 /** Bind canonical agent mutations and native message dispatch to one inbox position. */
+import { IncomingMessage } from 'node:http';
+import type { FastifyInstance, InjectOptions } from 'fastify';
 import type { Clock } from '../core/clock.ts';
-import type { Principal } from '../core/contracts.ts';
+import type { Principal, RequestContext } from '../core/contracts.ts';
+import { IN_PROCESS_REQUEST_CONTEXT } from '../core/authority/identity.ts';
+import { failure_payload } from '../cli/http.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
 import { admitCommand } from '../core/authority/intake.ts';
@@ -41,12 +45,91 @@ import { InboxStore } from './data/inbox.ts';
 import type { PublishedFiles } from './data/inbox.ts';
 import type { InboxRuns, PublishFiles } from './vps_inbox.ts';
 import type { WireValue } from './contracts.ts';
+import type { JsonValue } from './wire.generated.ts';
 import { require_current_incarnation_in_transaction } from './vps_presence_store.ts';
 import { decode_value, ExecutorValidationError } from './protocol.ts';
 import { now_ms } from './clock.ts';
 import { is_record as is_json_object } from './../core/records.ts';
 
 type Json = WireValue<'JsonObject'>;
+/** Any agent write without a transactional operation. The home runs its ordinary route. */
+export const CLI_REQUEST = 'cli.request';
+const RELAYED_WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+/** Saved before the route runs. A home that stops before the route answers leaves this result. */
+const UNFINISHED_REQUEST: Json = {
+  error: {
+    code: 'uncertain',
+    message:
+      'Home stopped before this request finished, so its effect is unknown. Check the current state before you repeat it.',
+    detail: {},
+  },
+};
+interface AgentRequest {
+  readonly method: string;
+  readonly url: string;
+  readonly body: Json | null;
+}
+/** A local generic agent has no launch identity, so its relayed requests have none either. */
+export function agent_request_context(
+  principal: { readonly kind: string; readonly id: string },
+  conversation_id: string,
+): RequestContext {
+  return principal.kind === 'conversation'
+    ? { principal: { kind: 'unidentified', id: 'unidentified' }, conversationId: null }
+    : { principal: principal as Principal, conversationId: conversation_id };
+}
+/** Run one route in this process as the agent. Ordinary route authority decides. */
+export function inject_agent_request(
+  app: FastifyInstance,
+  context: RequestContext,
+  request: AgentRequest,
+  signal?: AbortSignal,
+) {
+  return app.inject({
+    method: request.method as InjectOptions['method'],
+    url: request.url,
+    signal,
+    ...(request.body === null
+      ? {}
+      : { payload: JSON.stringify(request.body), headers: { 'content-type': 'application/json' } }),
+    Request: class extends IncomingMessage {
+      get [IN_PROCESS_REQUEST_CONTEXT]() {
+        return context;
+      }
+    },
+  });
+}
+/** The JSON that the agent's CLI receives, the same as it decodes from the local route. */
+export function agent_response_json(status: number, body: string): Json {
+  let data: unknown = null;
+  let parsed = true;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    parsed = false;
+  }
+  const refused = is_json_object(data) && Object.hasOwn(data, 'error');
+  if (status < 200 || status >= 300 || refused) {
+    const payload = failure_payload(status, data, body) as Json;
+    // A receipt and an IPC error carry an error object, never bare text.
+    return is_json_object(payload.error)
+      ? payload
+      : (failure_payload(status, { detail: data }, body) as Json);
+  }
+  if (!parsed) return { text: body };
+  return is_json_object(data) ? (data as Json) : { data: data as JsonValue };
+}
+function agent_request(args: Json): AgentRequest {
+  const { method, path, body } = args;
+  if (typeof method !== 'string' || !RELAYED_WRITE_METHODS.has(method))
+    throw new PlannerError('validation', 'an agent request needs a write method');
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//'))
+    throw new PlannerError('validation', 'an agent request path must be a server path');
+  if (body !== null && !is_json_object(body))
+    throw new PlannerError('validation', 'an agent request body must be a JSON object or null');
+  const target = new URL(path, 'http://executor');
+  return { method, url: target.pathname + target.search, body };
+}
 /** Effects use the caller's writer. Canonical domain writers own all mutation rules. */
 export function write_ticket_mutation(
   tx: TransactionSql,
@@ -129,6 +212,7 @@ export class AgentWrites {
   readonly clock: Clock;
   readonly runs: InboxRuns;
   conversations!: ConversationSystem;
+  app!: FastifyInstance;
   constructor(store: InboxStore, clock: Clock, runs: InboxRuns) {
     this.store = store;
     this.clock = clock;
@@ -146,6 +230,8 @@ export class AgentWrites {
     const published = await publish();
     if (write.operation === 'message.send')
       return this.deliver_message(envelope, write, principal, identity, published);
+    if (write.operation === CLI_REQUEST)
+      return this.relay_request(envelope, write, principal, identity, published);
     const notices: ReviewTransferNotice[] = [];
     const receipt = this.store.accept(
       envelope,
@@ -199,6 +285,52 @@ export class AgentWrites {
       result = error.toPayload() as Json;
     }
     // Reservation admitted the native delivery. Its known outcome survives replacement.
+    return this.store.database.write((tx) => this.finish_dispatch(tx, envelope, result));
+  }
+  /** Exactly one route run per inbox position. A lost answer leaves an uncertain receipt. */
+  private async relay_request(
+    envelope: WireValue<'QueuedEnvelope'>,
+    write: WireValue<'CliWrite'>,
+    principal: Principal,
+    identity: ExecutorIdentity,
+    published: PublishedFiles | null,
+  ): Promise<WireValue<'AcceptanceReceipt'>> {
+    const context = agent_request_context(principal, write.child.conversation_id);
+    const reserved = this.store.database.write((tx) => {
+      require_current_incarnation_in_transaction(
+        tx,
+        identity.executor_incarnation,
+        this.store.machine_id,
+      );
+      const previous = this.store.prior_receipt(tx, envelope, identity);
+      if (previous !== null) return { previous, request: null };
+      const request = agent_request(write.arguments);
+      const assignment = open_child_assignment(tx, write.child);
+      const current =
+        assignment === null
+          ? null
+          : agent_request_context({ kind: assignment[0], id: assignment[1] }, '').principal;
+      if (current?.kind !== context.principal.kind || current.id !== context.principal.id)
+        throw new PlannerError('agent_forbidden', 'child assignment changed');
+      this.store.require_file_owner(tx, envelope);
+      this.store.require_unchanged_files(envelope, published);
+      this.store.write_position(
+        tx,
+        envelope,
+        {
+          sender_id: envelope.sender_id,
+          submission_id: envelope.submission_id,
+          disposition: 'uncertain',
+          accepted_at_vps_ms: now_ms(),
+          result: UNFINISHED_REQUEST,
+        },
+        { dispatching: true },
+      );
+      return { previous: null, request };
+    });
+    if (reserved.previous !== null) return reserved.previous;
+    const response = await inject_agent_request(this.app, context, reserved.request);
+    const result = agent_response_json(response.statusCode, response.body);
     return this.store.database.write((tx) => this.finish_dispatch(tx, envelope, result));
   }
   private reserve_dispatch(

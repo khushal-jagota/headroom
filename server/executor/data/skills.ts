@@ -9,29 +9,42 @@ import { WORKER_ONLY_SKILL_NAMES } from '../../skills/native_publication.ts';
 import { workflow_from_row } from '../../worker_types/store.ts';
 import { validate_skill_snapshot } from '../skills.ts';
 import type { CanonicalSkillSnapshot } from '../wire.generated.ts';
+import type { ChildOwner } from './runs.ts';
+/** The role skill each non-Ticket owner must have. A conversation without a role needs none. */
+const ROLE_SKILL_NAMES: Readonly<Record<Exclude<ChildOwner['kind'], 'ticket'>, string | null>> = {
+  chief: 'panels-chief-of-staff',
+  manager: 'panels-manager',
+  conversation: null,
+};
 /** Read the canonical rows in the caller's read or transaction scope, without seeding. */
 export function read_canonical_skill_snapshot(
   sql: ReadSql,
-  ticket_id: string,
+  owner: ChildOwner,
 ): CanonicalSkillSnapshot {
   try {
-    const row = sql.get<{ workflow_json: string }>(
-      'SELECT workflow_json FROM tickets WHERE id = ?',
-      [ticket_id],
-    );
-    if (row === undefined) throw new ExecutorValidationError('assigned Ticket does not exist');
-    const definition = workflow_from_row(row);
     const sources = read_all_skill_sources(sql);
-    const required_skill_names = [
-      ...new Set([
-        'panels',
-        'panels-worker',
-        ...(definition.specialist_skill !== null &&
-        Object.hasOwn(sources, definition.specialist_skill)
-          ? [definition.specialist_skill]
-          : []),
-      ]),
-    ];
+    let required_skill_names: string[];
+    if (owner.kind === 'ticket') {
+      const row = sql.get<{ workflow_json: string }>(
+        'SELECT workflow_json FROM tickets WHERE id = ?',
+        [owner.id],
+      );
+      if (row === undefined) throw new ExecutorValidationError('assigned Ticket does not exist');
+      const definition = workflow_from_row(row);
+      required_skill_names = [
+        ...new Set([
+          'panels',
+          'panels-worker',
+          ...(definition.specialist_skill !== null &&
+          Object.hasOwn(sources, definition.specialist_skill)
+            ? [definition.specialist_skill]
+            : []),
+        ]),
+      ];
+    } else {
+      const role = ROLE_SKILL_NAMES[owner.kind];
+      required_skill_names = role === null ? ['panels'] : ['panels', role];
+    }
     const snapshot: CanonicalSkillSnapshot = {
       sources: Object.entries(sources)
         .filter(

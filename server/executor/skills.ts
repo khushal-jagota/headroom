@@ -31,8 +31,8 @@ export function validate_skill_snapshot(snapshot: CanonicalSkillSnapshot): void 
     }
     const required = snapshot.required_skill_names;
     if (new Set(required).size !== required.length) invalid('duplicate required skill name');
-    if (!required.includes('panels') || !required.includes('panels-worker'))
-      invalid('base Worker skills are not required');
+    // A Worker also needs panels-worker; the Chief and the Managers need their role skill.
+    if (!required.includes('panels')) invalid('the base Panels skill is not required');
     if (required.some((name) => RETIRED_PANELS_SKILL_NAMES.has(name)))
       invalid('required canonical skill is retired');
     if (required.some((name) => !names.has(name))) invalid('required canonical skill is absent');

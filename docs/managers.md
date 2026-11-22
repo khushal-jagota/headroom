@@ -14,9 +14,9 @@ A Manager is an agent that holds one direction and the Tickets that serve it. It
 
 ## Manager identity
 
-Each Manager conversation receives its own launch credential. `PLAN_ACTOR=manager` and `PLAN_MANAGER_ID` describe its role and workspace, but do not establish authority. The server resolves the Manager from its canonical conversation association. The CLI sends the credential automatically, including through `panels api` for an operation without a dedicated command.
+Each Manager conversation and the Chief run through the machine code of their machine, as Tickets do. At install that machine is the server's machine, and a new conversation keeps the machine of the one it replaces. Each child receives its own credential from that machine code. `PLAN_ACTOR=manager` and `PLAN_MANAGER_ID` describe its role and workspace, but do not establish authority. The server resolves the Manager from its canonical conversation association. The CLI sends each request through machine code automatically, including through `panels api` for an operation without a dedicated command.
 
-A Manager's home is its files folder. Each new Manager conversation sets it up the same way as a Ticket folder: a `logs/` folder where the Manager notes problems, and a CLAUDE.md and an AGENTS.md that explain it. Manager files retain `/files/sprint-items/` addresses so that existing Ticket links still open. Historical migration backfills remain isolated from current navigation writes.
+A Manager's home is its files folder on its machine. Each new Manager conversation sets it up the same way as a Ticket folder: a `logs/` folder where the Manager notes problems, and a CLAUDE.md and an AGENTS.md that explain it. Manager files retain `/files/sprint-items/` addresses so that existing Ticket links still open. Historical migration backfills remain isolated from current navigation writes.
 
 ## Chief
 

@@ -11,12 +11,15 @@ import type {
 import type { BackendHttpRuntime } from '../conversation/snapshot/contracts.ts';
 import type { UsageTranscriptSource } from '../conversation/usage/contracts.ts';
 import {
-  conversation_execution_refusal,
   local_ticket_execution_refusal,
   canonical_ticket_execution_refusal,
 } from '../tickets/execution_admission.ts';
 import { LocaleBackendChildFactory } from '../executor/routing.ts';
-import { configure_conversation_start } from '../runtime/conversation_start.ts';
+import {
+  configure_conversation_start,
+  configured_conversation_execution_refusal,
+} from '../runtime/conversation_start.ts';
+import { conversation_machine_refusal } from '../machines/conversation_machine.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import type { ProductionServerDependencies } from './production.ts';
 import { accessSync, constants, statSync } from 'node:fs';
@@ -88,13 +91,16 @@ export function compose_production_backends(
   // Only an invocation-owned executor supplies remote execution. Persisted presence alone does not.
   const policy =
     context.executor == null ? local_ticket_execution_refusal : canonical_ticket_execution_refusal;
-  const execution_refusal = (id: string) =>
-    context.database.read((sql) => conversation_execution_refusal(sql, id, policy));
   configure_conversation_start(context.database, {
     db_path: context.config.db_path,
     workspace_root: context.config.workspace_root,
     execution_refusal: policy,
+    ...(context.executor == null ? {} : { conversation_refusal: conversation_machine_refusal }),
   });
+  const execution_refusal = (id: string) =>
+    context.database.read((sql) =>
+      configured_conversation_execution_refusal(context.database, sql, id),
+    );
   const require_execution = (id: string) => {
     const refusal = execution_refusal(id);
     if (refusal !== null)

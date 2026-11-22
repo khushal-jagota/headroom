@@ -14,6 +14,7 @@ import {
 import { decode_json, decode_value, encode_frame, ExecutorValidationError } from '../protocol.ts';
 import type { IpcOperation, IpcResponse, JsonObject, MacLocalStatus } from '../wire.generated.ts';
 
+/** The six Ticket and message writes keep their transactional operations. */
 export function cli_mutation(method: string, path: string, body: unknown): [string, JsonObject] {
   const blocker = /^\/api\/collections\/blockers\/([^/]+)\/([^/]+)$/.exec(path);
   if (blocker && (method === 'PUT' || method === 'DELETE'))
@@ -38,7 +39,12 @@ export function cli_mutation(method: string, path: string, body: unknown): [stri
     return ['ticket.edit', { ticket_id: patch[1], body } as JsonObject];
   if (method === 'POST' && path === '/api/messages/send')
     return ['message.send', { body } as JsonObject];
-  throw new ExecutorValidationError(`This executor does not support ${method} ${path}`);
+  // The home runs any other write as its ordinary route. The relay carries JSON only.
+  if (body !== null && (typeof body !== 'object' || Array.isArray(body)))
+    throw new ExecutorValidationError(
+      `Machine code sends only a JSON object as a request body, so it cannot send ${method} ${path}`,
+    );
+  return ['cli.request', { method, path, body } as JsonObject];
 }
 
 /** Both runtimes use the OS monotonic clock for the deadline across this process boundary. */

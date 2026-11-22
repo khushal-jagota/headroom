@@ -66,11 +66,14 @@ export function fail_validation(
     { cause: options.cause },
   );
 }
+/** The error payload of a failed route response. The executor relay returns the same payload. */
+export function failure_payload(status: number, data: any, text: string): any {
+  return data && typeof data === 'object' && 'error' in data
+    ? data
+    : { error: { code: 'http_error', message: `HTTP ${status}`, detail: data ?? text } };
+}
 function fail_response(inv: Invocation, status: number, data: any, text: string): never {
-  const payload =
-    data && typeof data === 'object' && 'error' in data
-      ? data
-      : { error: { code: 'http_error', message: `HTTP ${status}`, detail: data ?? text } };
+  const payload = failure_payload(status, data, text);
   if (inv.values.as_json)
     throw new CliFailure({ exit_code: 1, stdout: '', stderr: json(payload) + '\n' });
   const error = payload.error;
@@ -352,6 +355,20 @@ async function read_request(
   }
 }
 
+function add_params(url: URL, params: Record<string, any> | undefined): void {
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (Array.isArray(value)) for (const item of value) url.searchParams.append(key, String(item));
+    else
+      url.searchParams.set(
+        key,
+        value == null
+          ? ''
+          : typeof value === 'boolean'
+            ? String(value).toLowerCase()
+            : String(value),
+      );
+  }
+}
 async function request(
   inv: Invocation,
   method: string,
@@ -379,19 +396,7 @@ async function request(
       throw new ClientConfigurationError('API request must stay on the configured Panels server');
     if (!['http:', 'https:'].includes(url.protocol))
       throw new Error(`Request URL has an unsupported protocol '${url.protocol.slice(0, -1)}://'.`);
-    for (const [key, value] of Object.entries(options.params ?? {})) {
-      if (Array.isArray(value))
-        for (const item of value) url.searchParams.append(key, String(item));
-      else
-        url.searchParams.set(
-          key,
-          value == null
-            ? ''
-            : typeof value === 'boolean'
-              ? String(value).toLowerCase()
-              : String(value),
-        );
-    }
+    add_params(url, options.params);
     const headers = authentication_headers(env);
     if (options.json_body !== undefined) headers['Content-Type'] = 'application/json';
     return await read_request(
@@ -482,9 +487,16 @@ async function executor_send(
   if (method.toUpperCase() === 'GET')
     return executor_request(inv, 'read', { path, params: options.params ?? {} });
   const { cli_mutation } = await import('../executor/mac/ipc_client.ts');
+  // A write carries its query in the path, as the local request would send it.
+  const target = new URL(path, 'http://executor');
+  add_params(target, options.params);
   let translated: ReturnType<typeof cli_mutation>;
   try {
-    translated = cli_mutation(method.toUpperCase(), path, options.json_body ?? null);
+    translated = cli_mutation(
+      method.toUpperCase(),
+      target.pathname + target.search,
+      options.json_body ?? null,
+    );
   } catch (error) {
     if (error instanceof ExecutorValidationError) fail_validation(inv, error.message);
     throw error;

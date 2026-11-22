@@ -18,8 +18,8 @@ import { FilesService } from '../files.ts';
 import { create_mac_output_publication } from '../runner/publication.ts';
 import { OutboxStore } from '../storage/outbox.ts';
 import { ExecutorHttpError } from './errors.ts';
-import { MacTicketFileSync } from './ticket_files.ts';
-import type { TicketFileSyncOptions } from './ticket_files.ts';
+import { MacArtifactSync } from './artifact_sync.ts';
+import type { ArtifactSyncOptions } from './artifact_sync.ts';
 
 const stop_options = () => ({ deadline: performance.now() / 1000 + 10 });
 const clock = {
@@ -32,16 +32,20 @@ afterEach(async () => {
   vi.useRealTimers();
   for (const step of cleanup.splice(0).reverse()) await step();
 });
-async function fixture(transfer: Partial<TicketFileSyncOptions['transfer']> = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'ticket-file-sync-')));
-  const ticket = join(root, 'tickets', 'ticket');
+async function fixture(
+  transfer: Partial<ArtifactSyncOptions['transfer']> = {},
+  scope: ArtifactSyncOptions['scope'] = 'ticket',
+) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'artifact-sync-')));
+  const ticket = join(root, 'owners', scope);
   mkdirSync(join(ticket, 'artifacts'), { recursive: true });
   const store = await OutboxStore.open(join(root, 'spool'), clock, stop_options(), () => {});
   const files = new FilesService();
   const uploads: string[] = [],
     removals: string[] = [],
     warnings: string[] = [];
-  const sync = new MacTicketFileSync({
+  const sync = new MacArtifactSync({
+    scope,
     store,
     files,
     transfer: {
@@ -53,7 +57,7 @@ async function fixture(transfer: Partial<TicketFileSyncOptions['transfer']> = {}
       },
       ...transfer,
     },
-    tickets_root: join(root, 'tickets'),
+    owners_root: join(root, 'owners'),
     now_ns: clock.now_ns,
     warn: (message) => warnings.push(message),
   });
@@ -107,7 +111,9 @@ test('each changed artifact goes once, a deleted one is removed, and other folde
   f.store.note_ticket_activity('ticket');
   await f.sync.settled();
   expect(f.removals).toHaveLength(1);
-  expect(f.store.home_files('ticket').map((row) => row.relative_path)).toEqual(['artifacts/a.txt']);
+  expect(f.store.home_files('ticket', 'ticket').map((row) => row.relative_path)).toEqual([
+    'artifacts/a.txt',
+  ]);
 });
 
 test('an item is queued while an upload still runs, and a failed or refused file delays nothing', async () => {
@@ -134,7 +140,7 @@ test('an item is queued while an upload still runs, and a failed or refused file
   const add = (submission_id: string) =>
     publication.add(
       { submission_id, conversation_id: 'conversation', kind: 'backend_event', payload: {} },
-      { ticket_id: 'ticket' },
+      { owner: { kind: 'ticket', id: 'ticket' } },
     );
   await vi.waitFor(() => expect(attempts).toEqual(['artifacts/large.bin']));
   await add('tool_result');
@@ -145,7 +151,7 @@ test('an item is queued while an upload still runs, and a failed or refused file
   release();
   await vi.waitFor(
     () =>
-      expect(f.store.home_files('ticket').map((row) => row.relative_path)).toEqual([
+      expect(f.store.home_files('ticket', 'ticket').map((row) => row.relative_path)).toEqual([
         'artifacts/large.bin',
       ]),
     { timeout: 5000 },
@@ -155,4 +161,38 @@ test('an item is queued while an upload still runs, and a failed or refused file
   expect(attempts.filter((path) => path === 'artifacts/large.bin')).toHaveLength(2);
   expect(f.warnings.some((line) => line.includes('home is offline'))).toBe(true);
   expect(f.warnings.some((line) => line.includes('artifacts/refused.txt: HTTP 403'))).toBe(true);
+});
+
+test("a Manager's artifacts go relative to its artifacts folder, and its other files stay local", async () => {
+  const sent: string[] = [];
+  const f = await fixture(
+    {
+      async upload_ticket_file(manifest: FileManifest) {
+        sent.push(`${manifest.scope}:${manifest.owner_id} ${manifest.relative_path}`);
+      },
+    },
+    'manager',
+  );
+  mkdirSync(join(f.ticket, 'artifacts/deep'));
+  mkdirSync(join(f.ticket, 'logs'));
+  f.write('artifacts/page.md', 'visible');
+  f.write('artifacts/deep/b.txt', 'nested');
+  f.write('logs/tools.md', 'private');
+  f.write('CLAUDE.md', 'instructions');
+  f.sync.start();
+  await f.sync.settled();
+  expect(sent).toEqual(['manager:manager page.md', 'manager:manager deep/b.txt']);
+
+  // A Manager's activity, not a Ticket's, starts its pass.
+  rmSync(join(f.ticket, 'artifacts/deep/b.txt'));
+  f.store.note_ticket_activity('manager');
+  await f.sync.settled();
+  expect(f.removals).toEqual([]);
+  f.store.note_manager_activity('manager');
+  await f.sync.settled();
+  expect(f.removals).toEqual(['deep/b.txt']);
+  expect(f.store.home_files('manager', 'manager').map((row) => row.relative_path)).toEqual([
+    'page.md',
+  ]);
+  expect(f.store.home_files('ticket', 'manager')).toEqual([]);
 });

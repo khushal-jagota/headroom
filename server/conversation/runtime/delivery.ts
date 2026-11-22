@@ -1,4 +1,3 @@
-import { worker_ticket_id } from '../../worker_supervision/logic/worker_launch.ts';
 import { is_memory_notice_sender_message_id } from '../../runtime/worker_memory.ts';
 /** A local prompt crosses the provider boundary once, then settles only its record. */
 import {
@@ -210,7 +209,7 @@ export async function deliver_prompt(
       : host.options.delivery_model_refusal(
           state.record.backend_key,
           requested,
-          worker_ticket_id(state.record.resolved_start()),
+          state.record.conversation_id,
         );
   if (refusal !== null) {
     return result({

@@ -9,7 +9,9 @@ import { join } from 'node:path';
 import { setup } from './conversation_core_fixture.ts';
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { conversation_machine_refusal } from '../machines/conversation_machine.ts';
+import { seed_present_home_machine } from '../machines/testing/present_home.ts';
 import { create, read } from './ticket_fixture.ts';
 import {
   reconcile,
@@ -410,6 +412,36 @@ test('recovery releases its deferred reservation when execution becomes unavaila
     expect(attempted).toHaveBeenCalledTimes(1);
     expect(f.core.start_admission.snapshots()).toEqual([]);
     expect(f.children).toHaveLength(0);
+  } finally {
+    await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+// Gap: at the switch the server starts before its own machine code joins. Without a wait, the
+// Chief's or another non-Ticket turn spent its recovery prompt on an absent machine.
+test('a non-Ticket recovery waits while its machine is away and runs once it returns', async () => {
+  const f = setup();
+  try {
+    await f.start();
+    configure_conversation_start(f.database, {
+      db_path: f.database_path,
+      workspace_root: null,
+      execution_refusal: canonical_ticket_execution_refusal,
+      conversation_refusal: conversation_machine_refusal,
+    });
+    f.database.write((tx) => {
+      tx.run('DELETE FROM mac_executor_presence WHERE machine_id=?', [HOME_MACHINE_ID]);
+      tx.run(
+        "INSERT INTO conversation_lifecycle_facts VALUES ('core','turn','1',1,'turn','running',NULL)",
+      );
+      reconcile(tx, [manifest()], 100);
+    });
+    await recover_conversations(f.core, f.database, { startup: true });
+    expect(f.children).toHaveLength(0);
+    expect(f.database.read(select_recoveries).size).toBe(1);
+    f.database.write(seed_present_home_machine);
+    await recover_conversations(f.core, f.database, { conversation_ids: ['core'] });
+    await vi.waitFor(() => expect(f.children).toHaveLength(1));
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }

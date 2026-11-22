@@ -24,10 +24,22 @@ import { ExecutorHttpError } from '../transport/errors.ts';
 import { failure_detail } from '../failure_detail.ts';
 import type { GatewayOptions, Publication } from './contracts.ts';
 import { GatewayListener } from './listener.ts';
+import { child_ticket_id } from '../runner/logic/child_owner.ts';
 const monotonic = () => {
   const [seconds, nanoseconds] = process.hrtime();
   return seconds + nanoseconds / 1_000_000_000;
 };
+/** Writes that an older home cannot accept. The executor asks before it saves one. */
+const HOME_SUPPORT: ReadonlyMap<
+  string,
+  { readonly capability: string; readonly name: string; readonly label: string }
+> = new Map([
+  ['ticket.send_back', { capability: 'ticket_send_back', name: 'send-back', label: 'Send-back' }],
+  [
+    'cli.request',
+    { capability: 'cli_request', name: 'command', label: 'This command through machine code' },
+  ],
+]);
 class GatewayConnectionError extends Error {}
 const permission = (message: string) => new MacPermissionDenied(message);
 const connection = (message: string) => new GatewayConnectionError(message);
@@ -141,6 +153,10 @@ export class AgentGateway {
           );
         } catch (error) {
           if (error instanceof ExecutorHttpError) {
+            if (error.status === 400 && error.message === 'unsupported executor read')
+              throw new ExecutorValidationError(
+                'This read is not supported by Home yet; update Home before retrying',
+              );
             if (error.status === 400)
               throw new ExecutorValidationError(error.message || 'read refused');
             if (error.status === 403) throw permission(error.message || 'read forbidden');
@@ -182,12 +198,14 @@ export class AgentGateway {
       const incoming = decode_value(request.payload, 'IpcWritePayload');
       const submission = safe_component(request.request_id);
       if (this.options.runner.admission_stopped) throw permission('executor admission stopped');
-      if (incoming.operation === 'ticket.send_back') {
+      const support = HOME_SUPPORT.get(incoming.operation);
+      if (support !== undefined) {
         if (this.options.client === null)
-          throw connection('Home unavailable; send-back support is unconfirmed');
-        let support: JsonObject;
+          throw connection(`Home unavailable; ${support.name} support is unconfirmed`);
+        const update = `${support.label} is not supported by Home yet; update Home before retrying`;
+        let capabilities: JsonObject;
         try {
-          support = await this.options.client.read(
+          capabilities = await this.options.client.read(
             { child: child.reference, path: '/api/executor/capabilities', params: {} },
             AbortSignal.any([
               this.controller.signal,
@@ -197,9 +215,7 @@ export class AgentGateway {
         } catch (error) {
           if (error instanceof ExecutorHttpError) {
             if (error.status === 400 && error.message === 'unsupported executor read')
-              throw new ExecutorValidationError(
-                'Send-back is not supported by Home yet; update Home before retrying',
-              );
+              throw new ExecutorValidationError(update);
             if (error.status === 403) throw permission(error.message || 'support read forbidden');
             throw connection(`Home support read failed: HTTP ${error.status} ${error.code}`);
           }
@@ -207,10 +223,7 @@ export class AgentGateway {
             `Home support read failed: ${error instanceof Error ? error.name : 'Error'}`,
           );
         }
-        if (support.ticket_send_back !== true)
-          throw new ExecutorValidationError(
-            'Send-back is not supported by Home yet; update Home before retrying',
-          );
+        if (capabilities[support.capability] !== true) throw new ExecutorValidationError(update);
       }
       const write = {
         operation: incoming.operation,
@@ -219,7 +232,7 @@ export class AgentGateway {
         turn: child.active_turn,
       };
       const task = this.options.runner.source_work(child.reference, () =>
-        this.options.outbox.add(write, submission, child.ticket_id),
+        this.options.outbox.add(write, submission, child_ticket_id(child.owner)),
       );
       const publication = { child: child.reference, task };
       this.publishing.set(submission, publication);

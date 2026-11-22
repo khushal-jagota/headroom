@@ -1,11 +1,13 @@
 /**
- * Test-only: the home's machine code is present. Production runs every Ticket through
- * machine code, so tests that run the home's Tickets on a local child need this row.
+ * Test-only: the home's machine code is present and runs every built-in backend. Production
+ * runs every conversation through machine code, so tests that run the home's conversations on
+ * a local child need this row.
  */
 import type { TransactionSql } from '../../core/database/contracts.ts';
 import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { native_wire_fixtures } from '../../executor/testing/native_protocol_fixtures.ts';
+import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
 export function seed_present_home_machine(tx: TransactionSql): void {
   const fixture = native_wire_fixtures().LeaseRequest;
@@ -18,6 +20,7 @@ export function seed_present_home_machine(tx: TransactionSql): void {
     waiting_conversations: [],
     working_turns: [],
     going_to_sleep: false,
+    driver_kinds: BUILT_IN_MANIFESTS.map((driver) => driver.driver_kind),
     cleanup_uncertainties: [],
     legacy_cleanup_notice: null,
   };

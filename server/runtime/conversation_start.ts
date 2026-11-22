@@ -1,6 +1,7 @@
 import { revoke_launch_tokens } from '../agent_identity/data.ts';
 import { prepare_agent_home } from '../agent_homes/agent_home.ts';
 import { read_machine } from '../machines/data.ts';
+import { agent_machine_id } from '../machines/conversation_machine.ts';
 import {
   ensure_workspace_activity,
   conversation_workspace_retired,
@@ -39,7 +40,10 @@ import { ensure_started_conversation_record } from '../conversation/record/data/
 import { readProject } from '../projects/data/index.ts';
 import type { Ticket, TicketLocale } from '../tickets/contracts.ts';
 import * as tickets from '../tickets/data/index.ts';
-import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
+import {
+  canonical_ticket_execution_refusal,
+  conversation_execution_refusal,
+} from '../tickets/execution_admission.ts';
 import type { TicketExecutionRefusal } from '../tickets/execution_admission.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import type { WorkerTypeRegistry } from '../worker_types/registry.ts';
@@ -100,6 +104,8 @@ interface WorkspaceContext {
   db_path: string;
   workspace_root: string | null;
   execution_refusal?: TicketExecutionRefusal;
+  /** Refuses a conversation that is not a Ticket's. Absent: no restriction. */
+  conversation_refusal?: (sql: ReadSql, conversation_id: string) => PlannerError | null;
 }
 const contexts = new WeakMap<Database, WorkspaceContext>();
 export function configure_conversation_start(database: Database, context: WorkspaceContext): void {
@@ -113,6 +119,20 @@ export function configured_ticket_execution_refusal(
 ): PlannerError | null {
   const policy = contexts.get(database)?.execution_refusal;
   return policy === undefined ? null : policy(sql, ticket);
+}
+/** The configured refusal of any conversation: a Ticket's by its policy, any other by its own. */
+export function configured_conversation_execution_refusal(
+  database: Database,
+  sql: ReadSql,
+  conversation_id: string,
+): PlannerError | null {
+  return (
+    conversation_execution_refusal(sql, conversation_id, (current, ticket) =>
+      configured_ticket_execution_refusal(database, current, ticket),
+    ) ??
+    contexts.get(database)?.conversation_refusal?.(sql, conversation_id) ??
+    null
+  );
 }
 /** Record an accepted held delivery's choice on its still-active Ticket. */
 export function write_held_ticket_configuration(
@@ -231,6 +251,7 @@ export function worker_resolve(
     overrides,
     workspace_folder: project_workspace,
     workspace_path_policy,
+    machine_id: ticket.machine_id,
   });
   values.role_materials = new ConversationRoleMaterials({
     ...values.role_materials,
@@ -271,8 +292,9 @@ export function agent_resolve_from_sql(
     overrides,
     workspace_folder: join(dirname(resolve(db_path)), 'files', 'chief'),
     shared_workspace_folder: options.workspace_root ?? default_host_workspace(),
+    machine_id: agent_machine_id(sql, { kind: 'chief' }),
   });
-  require_usable_model(sql, values.backend_key, values.model, 'vps');
+  require_usable_model(sql, values.backend_key, values.model, values.machine_id);
   return values;
 }
 export function agent_resolve(
@@ -303,6 +325,7 @@ export function manager_resolve(
     overrides,
     workspace_folder: options.workspace_folder ?? manager_home_folder(database, item.id),
     shared_workspace_folder: default_workspace(database, options),
+    machine_id: database.read((sql) => agent_machine_id(sql, { kind: 'manager', id: item.id })),
   });
 }
 export interface LinkedConversation {
@@ -339,6 +362,7 @@ export async function start_ticket_conversation(
     linked = database.write((tx) => {
       ensure_started_conversation_record(tx, resolve_conversation_start_request(request), {
         created_at: options.now,
+        machine_id: request.machine_id,
       });
       const actual = tx.get<{ model: string | null; reasoning_effort: string | null }>(
         'SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?',

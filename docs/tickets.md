@@ -76,7 +76,7 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 ## Where the Worker runs
 
-The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. The home runs its Workers directly. Registered extra destinations pull their own work and wait while they are away. Chief and Managers stay on the home.
+The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. Each destination's machine code pulls its own work, and the work waits while that machine is away. The Chief and Managers record their own machine; see [Managers](managers.md).
 
 The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The operator registers extra destinations without an enrollment screen. See [Extra machines](executor.md).
 

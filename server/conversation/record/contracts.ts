@@ -362,7 +362,8 @@ export interface ConversationRecordStore {
   readonly database_unusable_error: unknown;
   finish_writes(): Promise<void>;
   update_work_metadata(): ReadonlyMap<string, readonly [string, string]>;
-  create_conversation(start: ResolvedConversationStart): ConversationRecord;
+  /** `machine_id` defaults to the server's own machine. */
+  create_conversation(start: ResolvedConversationStart, machine_id?: string): ConversationRecord;
   read_conversation(conversation_id: string): ConversationRecord | null;
   read_conversation_records(conversation_ids: readonly string[]): readonly ConversationRecord[];
   read_events_after(

@@ -262,7 +262,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0006_machine_backend_state',
+      to_revision: 'ts_0007_conversation_machine',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -270,10 +270,11 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0004_drop_ideas',
         'ts_0005_server_link',
         'ts_0006_machine_backend_state',
+        'ts_0007_conversation_machine',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0006_machine_backend_state'],
+      revision: ['ts_0007_conversation_machine'],
       statements: application_schema_seed.statements,
     });
     assert.deepEqual(rows(path), before);

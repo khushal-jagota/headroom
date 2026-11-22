@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import type { Duplex } from 'node:stream';
 import type { MacHttpClient } from '../executor/mac/transport/http.ts';
 import type { MacRunningChild } from '../executor/mac/runner/contracts.ts';
+import { child_ticket_id } from '../executor/mac/runner/logic/child_owner.ts';
 import type { JsonObject } from '../executor/wire.generated.ts';
 import { PreviewError, type ProcessIdentity } from './contracts.ts';
 import { process_inspector } from './platform.ts';
@@ -15,6 +16,7 @@ import { PreviewRelay } from './relay.ts';
 import { require_port } from './logic/eligibility.ts';
 import { CONNECT_SECONDS, RESERVED_PANELS_PORT, LIFECYCLE_SECONDS } from './config.ts';
 interface Prepared {
+  ticket_id: string;
   ended: boolean;
   generation: string;
   worktree: string;
@@ -66,6 +68,8 @@ export class MachinePreviews {
   }
   private async dispatch(child: MacRunningChild, payload: JsonObject): Promise<JsonObject> {
     if (this.closed) throw new PreviewError('Previews are stopped.', 503);
+    const ticket_id = child_ticket_id(child.owner);
+    if (ticket_id === null) throw new PreviewError('Only a Ticket Worker shows previews.', 403);
     const operation = payload.operation;
     if (!['prepare', 'register', 'show', 'stop'].includes(operation as string))
       throw new PreviewError('Unknown preview operation.');
@@ -81,10 +85,11 @@ export class MachinePreviews {
             ? join(child.localized_start.workspace_folder, 'worktree')
             : child.localized_start.workspace_folder,
         );
-        const previous = this.prepared.get(child.ticket_id);
+        const previous = this.prepared.get(ticket_id);
         if (previous) this.end(previous);
         if (typeof result.generation !== 'string') throw new Error('Invalid preview preparation');
-        this.prepared.set(child.ticket_id, {
+        this.prepared.set(ticket_id, {
+          ticket_id,
           ended: false,
           generation: result.generation,
           worktree,
@@ -93,13 +98,13 @@ export class MachinePreviews {
         return { ...result, worktree };
       }
       if (operation === 'stop') {
-        const entry = this.prepared.get(child.ticket_id);
+        const entry = this.prepared.get(ticket_id);
         if (entry) this.end(entry);
       }
-      const local = this.prepared.get(child.ticket_id);
+      const local = this.prepared.get(ticket_id);
       return local ? { ...result, worktree: local.worktree } : result;
     }
-    const entry = this.prepared.get(child.ticket_id);
+    const entry = this.prepared.get(ticket_id);
     if (!entry || entry.ended || entry.child !== child || entry.relay)
       throw new PreviewError('Prepare a new preview address before registration.');
     const port = payload.port;
@@ -109,7 +114,7 @@ export class MachinePreviews {
     entry.process = await this.inspector.discover(port, entry.worktree);
     await this.check(entry);
     const socket = await this.client.preview_channel(entry.generation, port);
-    if (this.closed || this.prepared.get(child.ticket_id) !== entry) {
+    if (this.closed || this.prepared.get(ticket_id) !== entry) {
       socket.terminate();
       throw new Error('Preview preparation ended');
     }
@@ -127,7 +132,7 @@ export class MachinePreviews {
     if (
       this.closed ||
       entry.ended ||
-      this.prepared.get(entry.child.ticket_id) !== entry ||
+      this.prepared.get(entry.ticket_id) !== entry ||
       !entry.process ||
       (await realpath(entry.worktree)) !== entry.worktree
     )
@@ -141,7 +146,7 @@ export class MachinePreviews {
         stream.destroyed ||
         this.closed ||
         entry.ended ||
-        this.prepared.get(entry.child.ticket_id) !== entry
+        this.prepared.get(entry.ticket_id) !== entry
       )
         throw new PreviewError('Preview connection ended.', 410);
     };

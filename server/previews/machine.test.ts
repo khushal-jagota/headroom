@@ -11,6 +11,7 @@ import type { PreviewRelay } from './relay.ts';
 import { MachinePreviews } from './machine.ts';
 
 interface Entry {
+  ticket_id: string;
   ended: boolean;
   generation: string;
   worktree: string;
@@ -32,14 +33,15 @@ test('a browser close during admission retires only its connection and permits t
   const worktree = await realpath(process.cwd());
   const close_preview = vi.fn();
   const entry: Entry = {
+    ticket_id: 'ticket',
     ended: false,
     generation: 'generation',
     worktree,
-    child: { ticket_id: 'ticket' } as MacRunningChild,
+    child: { owner: { kind: 'ticket', id: 'ticket' } } as MacRunningChild,
     process: { boot_id: 'boot', pid: 1, start_ticks: 1, listener_inode: 1, port: 1234, worktree },
     relay: { close: close_preview } as unknown as PreviewRelay,
   };
-  access.prepared.set(entry.child.ticket_id, entry);
+  access.prepared.set(entry.ticket_id, entry);
   const sockets: FakeSocket[] = [];
   let auto_connect = true;
   let connection_entered = new Deferred<void>();

@@ -70,8 +70,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       const configuration = parse_launch_configuration(request.body);
       return manager_lifecycle_lock(request.params.item_id).run(async () =>
         database.write((tx) => {
-          validate_launch_configuration(tx, configuration);
           const item = data.read_manager(tx, request.params.item_id).item;
+          validate_launch_configuration(tx, configuration, item.id);
           const current = tx.get<{ conversation_id: string | null }>(
             'SELECT conversation_id FROM agents WHERE agent_key=?',
             [item.manager_agent_key],

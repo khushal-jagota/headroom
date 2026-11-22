@@ -20,7 +20,13 @@ import { MAX_ITEM_BATCH_ITEMS, MAX_LEASE_WAITING_CONVERSATIONS } from '../config
 import { OutboxResources } from './resources.ts';
 import type { SidecarOpenScope } from './journal_contracts.ts';
 import { item_size_guard } from './size.ts';
-import { DATABASE_NAME, FORMAT_REFUSAL, OUTBOX_SCHEMA, SPOOL_FORMAT_VERSION } from './schema.ts';
+import {
+  DATABASE_NAME,
+  FORMAT_REFUSAL,
+  MANAGER_FILES_TABLE,
+  OUTBOX_SCHEMA,
+  SPOOL_FORMAT_VERSION,
+} from './schema.ts';
 import {
   delivery_diagnostics,
   delivery_state,
@@ -32,9 +38,15 @@ import type {
   ItemRow,
   OutboxClock,
   OutboxDeliveryStatus,
-  TicketFileRow,
+  HomeFileRow,
+  SyncedFileScope,
 } from './contracts.ts';
 export type * from './contracts.ts';
+/** Each scope's confirmed versions: its table and its owner column. */
+const HOME_FILE_TABLES: Readonly<Record<SyncedFileScope, readonly [string, string]>> = {
+  ticket: ['ticket_files', 'ticket_id'],
+  manager: ['manager_files', 'manager_id'],
+};
 export type { OutboxCleanup } from './resources.ts';
 
 async function exists(path: string): Promise<boolean> {
@@ -132,6 +144,7 @@ export class OutboxStore {
       const store = new OutboxStore(root, database, files, clock, resources, on_failure);
       files.assert_healthy();
       database.write((tx) => {
+        tx.run(MANAGER_FILES_TABLE);
         tx.run(`DELETE FROM items WHERE receipt_json IS NOT NULL AND ${NO_DELIVERY_DIAGNOSTICS}`);
         // Items no longer carry files. A file that waited on an item never reached the home,
         // so the file sync must send it. `ticket_files` records only what the home holds.
@@ -415,12 +428,20 @@ export class OutboxStore {
   note_ticket_activity(ticket_id: string): void {
     this.pending_events.emit('ticket_activity', safe_component(ticket_id));
   }
-  /** The file versions that the home confirmed for this Ticket. */
-  home_files(ticket_id: string): TicketFileRow[] {
+  /** The same for a Manager's files, on a machine that keeps its own Manager folders. */
+  note_manager_activity(manager_id: string): void {
+    this.pending_events.emit('manager_activity', safe_component(manager_id));
+  }
+  /** The file versions that the home confirmed for this Ticket or Manager. */
+  home_files(scope: SyncedFileScope, owner_id: string): HomeFileRow[] {
     this.admit();
+    const [table, owner] = HOME_FILE_TABLES[scope];
     return this.database
       .read((sql) =>
-        sql.all<TicketFileRow>('SELECT * FROM ticket_files WHERE ticket_id=?', [ticket_id]),
+        sql.all<HomeFileRow>(
+          `SELECT ${owner} AS owner_id,relative_path,byte_count,modified_ns,sha256 FROM ${table} WHERE ${owner}=?`,
+          [owner_id],
+        ),
       )
       .map((row) => ({
         ...row,
@@ -428,21 +449,23 @@ export class OutboxStore {
         modified_ns: BigInt(row.modified_ns),
       }));
   }
-  record_home_file(file: TicketFileRow): void {
+  record_home_file(scope: SyncedFileScope, file: HomeFileRow): void {
     this.admit();
+    const [table, owner] = HOME_FILE_TABLES[scope];
     this.database.write((tx) => {
       tx.run(
-        'INSERT INTO ticket_files VALUES(?,?,?,?,?) ON CONFLICT(ticket_id,relative_path) DO UPDATE SET byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,sha256=excluded.sha256',
-        [file.ticket_id, file.relative_path, file.byte_count, file.modified_ns, file.sha256],
+        `INSERT INTO ${table}(${owner},relative_path,byte_count,modified_ns,sha256) VALUES(?,?,?,?,?) ON CONFLICT(${owner},relative_path) DO UPDATE SET byte_count=excluded.byte_count,modified_ns=excluded.modified_ns,sha256=excluded.sha256`,
+        [file.owner_id, file.relative_path, file.byte_count, file.modified_ns, file.sha256],
       );
       this.assert_healthy();
     });
   }
-  forget_home_file(ticket_id: string, relative_path: string): void {
+  forget_home_file(scope: SyncedFileScope, owner_id: string, relative_path: string): void {
     this.admit();
+    const [table, owner] = HOME_FILE_TABLES[scope];
     this.database.write((tx) => {
-      tx.run('DELETE FROM ticket_files WHERE ticket_id=? AND relative_path=?', [
-        ticket_id,
+      tx.run(`DELETE FROM ${table} WHERE ${owner}=? AND relative_path=?`, [
+        owner_id,
         relative_path,
       ]);
       this.assert_healthy();

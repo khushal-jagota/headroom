@@ -109,7 +109,7 @@ export interface ConversationCoreOptions {
   readonly delivery_model_refusal: (
     backend: BackendInstanceId,
     model: string,
-    ticket_id: string | null,
+    conversation_id: string,
   ) => string | null;
   readonly execution_refusal: (
     conversation_id: string,
