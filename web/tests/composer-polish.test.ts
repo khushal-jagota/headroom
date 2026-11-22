@@ -110,12 +110,12 @@ describe("plain-text log files", () => {
 describe("model picker list", () => {
   const model = (model_id: string): BackendModel => ({ model_id, display_name: null } as BackendModel);
 
-  it("leads with the model the control names when the catalogue does not offer it", () => {
+  it("v6.1: lists only the catalogue's models, as on the base branch (no extra current-model row)", () => {
     const view = resolveModelPicker({
       backendKey: "claude", drivers: [], model: "claude-opus-5-5", reasoningEffort: "high",
       backends: [], backendLocked: true, models: [model("other-model")]
     });
-    expect(view.models.map((choice) => choice.value)).toEqual(["claude-opus-5-5", "other-model"]);
+    expect(view.models.map((choice) => choice.value)).toEqual(["other-model"]);
   });
 
   it("does not repeat a model the catalogue offers", () => {

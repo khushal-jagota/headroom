@@ -16,7 +16,9 @@
   }: {
     /** While an ask is the composer (v4): its primary pill in the send slot ("Next",
      *  "Send answers", "Allow"), which commits the ask. No mode chip and no Stop beside it. */
-    askPrimary?: { label: string; ready: boolean; onCommit: () => void } | null;
+    askPrimary?: { label: string; ready: boolean; onCommit: () => void;
+      /** v7: a declining answer (Deny) as a quiet Button before the primary. */
+      decline?: { label: string; optionId: string; ready: boolean; onDecline: () => void } | null } | null;
     onRetry?: () => Promise<void>;
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
@@ -36,7 +38,6 @@
   backendEffortOptions={view.pickerSource.backendEffortOptions}
   showUsage
   tonedMark
-  layout="composer"
   disabled={view.disabled}
   attributes={{ "data-conversation-picker-model": "" }}
   afterChoose={() => {}}
@@ -61,6 +62,17 @@
     />
   {/if}
   {#if beforeSubmit}{@render beforeSubmit()}{/if}
+  {#if askPrimary !== null && askPrimary.decline}
+    <button
+      type="button"
+      class="chat-ask-quiet"
+      data-conversation-ask-decline
+      data-conversation-ask-action={askPrimary.decline.optionId}
+      disabled={!askPrimary.decline.ready}
+      onmousedown={(event) => event.preventDefault()}
+      onclick={() => askPrimary?.decline?.ready && askPrimary.decline.onDecline()}
+    >{askPrimary.decline.label}</button>
+  {/if}
   {#if askPrimary !== null}
     <button
       type="button"

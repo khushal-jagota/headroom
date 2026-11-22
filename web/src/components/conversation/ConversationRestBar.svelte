@@ -4,10 +4,7 @@
    * derived state the opened pane's header reads), the way to open it, and the latest unread
    * message under them. Its words never name a tool or a command, in either lens. */
   let { preview = null, roleLabel = "Worker", state, connectionTrouble = false,
-    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, askBelow = false, pausedFor = null, onOpen }: {
-    /** p12c: what the ask under this line waits for. The line then says "Paused · waiting for
-     *  your permission" (or "… for your answer"), in the full view's Paused style. */
-    pausedFor?: "permission" | "answer" | null;
+    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, askBelow = false, onOpen }: {
     /** v4.2: an ask (permission, question, key) waits in the conversation and is drawn as the
      *  composer under this line. The ask already says what waits, so the line carries no status
      *  text at all (not even a proposal's "Needs your approval") and keeps only
@@ -77,9 +74,6 @@
       {:else if saysState && state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
       {:else if saysState && state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
       {:else if saysState && state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
-      {#if askBelow && pausedFor !== null}
-        <span class="c2-rest-paused" role="status" data-conversation-rest-paused={pausedFor}><span class="c2-rest-paused-dot" aria-hidden="true"></span><span class="c2-rest-paused-word">Paused</span><span aria-hidden="true">·</span><span>waiting for your {pausedFor}</span></span>
-      {/if}
       {#if saysState || pageWaits}
       <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined}>
         {#if workingClock !== null}<span class="c2-rest-working"><span class="c2-rest-label">{workingClock.word}</span><span class="c2-rest-sep" aria-hidden="true">·</span><span class="c2-rest-clock" data-conversation-rest-clock>{workingClock.clock}</span></span>{:else}<span class="c2-rest-label">{label}</span>{/if}{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
@@ -105,8 +99,10 @@
     width:100%; min-width:0; border:0; padding:0 0 var(--cv-s2); background:transparent; color:var(--cv-t3);
     text-align:left; cursor:pointer; font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
     font-variant-numeric:tabular-nums; }
-  /* v5.2: the dock stands on its own #161616 surface (app.css), so no canvas gradient is drawn
-     over its top edge. */
+  /* A short canvas gradient carries the page into the dock, so a line scrolling under it is
+     covered within a few pixels instead of cut (restored in v6.1: the dock has no surface). */
+  .c2-rest::before { content:""; position:absolute; left:0; right:0; bottom:100%; height:var(--cv-s5);
+    background:linear-gradient(to bottom, transparent, var(--cv-canvas)); pointer-events:none; }
   .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--cv-s3);
     min-width:0; min-height:40px; }
   .c2-rest-activity { display:flex; align-items:center; gap:var(--cv-s2); min-width:0; }
@@ -116,16 +112,20 @@
   /* Tone follows the state, never a line: working is the brighter text and its motion,
      waiting is the accent with its title in t2, a failure is the danger colour. */
   /* v5.2: a live status label is 13 medium #d9d9d9, its detail #b0b0b0. */
-  [data-conversation-rest-state="working"] .c2-rest-label { color:var(--cv-t2); font-weight:var(--cv-weight-label); }
+  /* v7: the dock's line is a Status line: 13/20, a 16px icon slot, the label 500 #ececec,
+     " · ", the detail #b0b0b0. */
+  .c2-rest { font:var(--cv-weight-body) 13px/20px var(--cv-font); }
+  .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph) { flex:none; }
+  [data-conversation-rest-state="working"] .c2-rest-label { color:#ececec; font-weight:var(--cv-weight-label); }
   .c2-rest-clock { color:var(--cv-t3); }
   /* p12c: "Working · 2m 14s" spaced exactly as the transcript's live line: three parts 6px apart. */
   .c2-rest-working { display:inline-flex; align-items:center; gap:6px; }
+  .c2-rest-working .c2-rest-label { color:#ececec; font-weight:var(--cv-weight-label); }
   .c2-rest-sep { color:var(--cv-t4); }
-  /* p12c: the full view's Paused line, on the dock's status row while an ask is below it. */
-  .c2-rest-paused { display:inline-flex; align-items:center; gap:6px; min-width:0; color:var(--cv-t3); font:var(--cv-weight-body) 13px/18px var(--cv-font); white-space:nowrap; }
-  .c2-rest-paused-dot { flex:none; width:7px; height:7px; margin-inline-end:2px; border-radius:50%; background:var(--cv-accent); }
-  .c2-rest-paused-word { color:var(--cv-t2); font-weight:var(--cv-weight-label); }
+  /* v6: "Needs your approval" is said exactly as the card's eyebrow says it: the accent, 13
+     semibold, behind the card's 7px accent dot 8px before it. */
   [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
+  [data-conversation-rest-state="waiting"] .cv-dot { width:8px; height:8px; margin-inline:4px; background:var(--cv-accent); }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }
@@ -134,12 +134,13 @@
     border-radius:var(--cv-r-sm); background:color-mix(in srgb, var(--cv-caution) 12%, transparent); color:var(--cv-caution);
     font:var(--cv-weight-label) var(--cv-type-caption)/var(--cv-leading-caption) var(--cv-font); }
   /* The way to open it: a ghost with its label on a wide screen, the chevron alone on a narrow one. */
-  .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:var(--cv-s1); height:32px; padding:0 var(--cv-s2) 0 var(--cv-s3);
-    border-radius:var(--cv-r-md); color:var(--cv-t2); font-weight:var(--cv-weight-label);
+  /* v7: "Open conversation" is a quiet Button: 32 tall pill, #bdbdbd, its 16px chevron 6px after. */
+  .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px 0 14px;
+    border-radius:999px; color:#bdbdbd; font-weight:var(--cv-weight-label);
     transition:color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out); }
   .c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
-    color:var(--cv-t1); background-color:var(--cv-control); }
-  .c2-rest-control svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+    color:#ececec; background-color:#2a2a2a; }
+  .c2-rest-control svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   @media (max-width:1023px) {
     .c2-rest-control { width:32px; padding:0; justify-content:center; }
     .c2-rest-control-label { display:none; }

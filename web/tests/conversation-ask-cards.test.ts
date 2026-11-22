@@ -31,10 +31,14 @@ describe("the permission ask", () => {
     expect(count(body, "xcrun altool")).toBe(1);
   });
 
-  it("answers with one list of numbered tiles: allow once first and chosen, decline last", () => {
+  it("answers with one list of numbered tiles: allow once first and chosen; v7: docked, Deny is the composer's quiet button", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, docked: true } });
     const order = [...body.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1]);
-    expect(order).toEqual(["allow", "always", "deny"]);
+    expect(order).toEqual(["allow", "always"]);
+    // Standing alone (not docked), every answer, Deny too, is a tile.
+    const alone = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } }).body;
+    expect([...alone.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1])).toEqual(["allow", "always", "deny"]);
+    expect(alone).toMatch(/data-conversation-ask-action="deny"[^>]*aria-keyshortcuts="3"/);
     // No row of big buttons on the composer: rows, each with its number key.
     expect(body).not.toContain("cv-button--primary");
     expect(body).not.toContain("cv-button--outline");
@@ -43,10 +47,8 @@ describe("the permission ask", () => {
     expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*is-selected[^"]*"[^>]*data-conversation-ask-action="allow"/);
     expect(count(body, "is-selected")).toBe(1);
     expect(body).toMatch(/<button[^>]*(aria-pressed="true"[^>]*data-conversation-ask-action="allow"|data-conversation-ask-action="allow"[^>]*aria-pressed="true")/);
-    expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*"[^>]*data-conversation-ask-action="deny"/);
     expect(count(body, "is-quiet")).toBe(0);
     expect(body).toMatch(/data-conversation-ask-action="allow"[^>]*aria-keyshortcuts="1"/);
-    expect(body).toMatch(/data-conversation-ask-action="deny"[^>]*aria-keyshortcuts="3"/);
     // The command is read before the answers.
     expect(body.indexOf("xcrun altool")).toBeLessThan(body.indexOf('data-conversation-ask-action="allow"'));
   });
@@ -60,7 +62,7 @@ describe("the permission ask", () => {
   it("offers Stop turn as a small button (stop square + label) in its header when the waiting turn can be stopped", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, onStop: () => {} } });
     expect(count(body, "data-conversation-stop")).toBe(1);
-    expect(body).toMatch(/<button type="button" class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*><svg class="cv-ask-stop-mark[^"]*" viewBox="0 0 10 10"[^>]*><rect[^>]*><\/rect><\/svg>Stop turn<\/button>/);
+    expect(body).toMatch(/<button type="button" class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*><svg class="cv-ask-stop-mark[^"]*" viewBox="0 0 16 16"[^>]*><rect[^>]*><\/rect><\/svg>Stop turn<\/button>/);
     // In the header row, before the question and the answers.
     expect(body.indexOf("data-conversation-ask-stop")).toBeLessThan(body.indexOf(ask.title));
     expect(body.indexOf("data-conversation-ask-stop")).toBeLessThan(body.indexOf('data-conversation-ask-action="allow"'));
@@ -107,11 +109,14 @@ describe("the question panel", () => {
     expect(body).not.toContain('class="topic');
     expect(body).toContain("Needs your answer");
     expect(body).toContain("Which illustration direction?");
-    // The step control is the header's count and arrows, the forward one unavailable until
-    // answered; standing alone (not in the composer) the panel draws its own Next.
-    expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue[^>]*disabled/);
+    // v6: option 1 is focused at start (the accent ring) and Next, the white primary, picks
+    // it, so Next and the forward arrow are available from the start. Standing alone (not in
+    // the composer) the panel draws its own Next.
+    expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue/);
+    expect(body).not.toMatch(/data-user-input-continue[^>]*disabled/);
     expect(body).toContain("Next");
-    expect(body).toMatch(/data-user-input-forward[^>]*disabled/);
+    expect(body).not.toMatch(/data-user-input-forward[^>]*disabled/);
+    expect(body).toMatch(/class="cv-ask-row is-focused"[^>]*data-user-input-option="Soft shapes"[^>]*data-user-input-option-focused="true"/);
     // The options are the one ask row, the same as a permission ask's answers.
     expect(body).toMatch(/class="cv-ask-row[^"]*"[^>]*data-user-input-option="Soft shapes"/);
     // Every option carries its number key, and the field for something else is offered.
@@ -138,8 +143,11 @@ describe("the question panel", () => {
         }
       }
     });
-    expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue[^>]*disabled/);
+    expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue/);
+    expect(body).not.toMatch(/data-user-input-continue[^>]*disabled/);
     expect(body).toContain("Send answer");
+    // v6: only the first option carries the focus ring at start.
+    expect(count(body, "data-user-input-option-focused")).toBe(1);
     // Its stop row is the same one a permission ask ends in.
     expect(count(body, "data-conversation-ask-stop")).toBe(1);
   });

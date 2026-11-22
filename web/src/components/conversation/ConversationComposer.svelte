@@ -350,16 +350,11 @@
   /** The asks that bring their own actions, so the box draws none of its own under them. */
   // Every ask draws its own answers in its shell's footer, so the box's own foot gives way to it.
   let panelTakesTheBox = $derived(userInput !== null || ask !== null || credentialInTheBox);
-  /** p12c: while a permission ask or a question is the composer, one meta line attached to it
-   *  says the turn is paused on the person: "Paused · waiting for your permission" (or "… for
-   *  your answer"). It stands 12px above the ask card, on the card's left edge. */
-  let pausedFor = $derived<"permission" | "answer" | null>(
-    userInput !== null ? "answer" : ask !== null ? (askShape(ask) === "question" ? "answer" : "permission") : null
-  );
+  // v6: no waiting line above an ask: the ask card's own label is the one waiting label.
   /** The question on screen, when it takes an own answer: the composer is then the one place
    *  to write it, right under the question, and its send answers. */
   let questionPanel = $state<{ answerWith: (words: string) => boolean; commit: () => void } | null>(null);
-  let permissionCard = $state<{ commit: () => void } | null>(null);
+  let permissionCard = $state<{ commit: () => void; decline: () => void } | null>(null);
   /** The ask's primary, which the composer's send slot holds while the ask is the composer
    *  (v4): its label and whether it can commit, as the ask reports them. */
   let questionCommitLabel = $state("");
@@ -367,6 +362,7 @@
   let permissionCommitLabel = $state("");
   let permissionCommitReady = $state(false);
   let permissionCommitSeen = $state(false);
+  let permissionDecline = $state<{ label: string; optionId: string } | null>(null);
   $effect(() => { if (permissionCommitLabel !== "") permissionCommitSeen = true; });
   // Until the ask reports (its first paint, or a server render), the pill says what the ask
   // starts at: a question's first step, or a permission ask's default, allow once.
@@ -374,7 +370,8 @@
     userInput !== null
       ? { label: questionCommitLabel || (userInput.questions.length > 1 ? "Next" : "Send answer"), ready: questionCommitReady, onCommit: () => questionPanel?.commit() }
       : ask !== null
-        ? { label: permissionCommitLabel || "Allow", ready: permissionCommitSeen ? permissionCommitReady : !disabled && permissionAvailable, onCommit: () => permissionCard?.commit() }
+        ? { label: permissionCommitLabel || "Allow", ready: permissionCommitSeen ? permissionCommitReady : !disabled && permissionAvailable, onCommit: () => permissionCard?.commit(),
+            decline: permissionDecline === null ? null : { ...permissionDecline, ready: !disabled && permissionAvailable, onDecline: () => permissionCard?.decline() } }
         : null
   );
   let questionTakesOwnAnswer = $state(false);
@@ -1215,6 +1212,47 @@
     };
   });
 
+  /** v7 motion: the composer grows into an ask (and back) over 220 ms ease-out, and the ask's
+   *  contents fade in over 120 ms. Reduced motion skips both. */
+  let heightBeforeTheAsk = 0;
+  let askShownBefore = false;
+  $effect.pre(() => {
+    panelTakesTheBox;
+    heightBeforeTheAsk = boxElement?.getBoundingClientRect().height ?? 0;
+  });
+  $effect(() => {
+    const shown = panelTakesTheBox;
+    const box = boxElement;
+    if (box === null || shown === askShownBefore) { askShownBefore = shown; return; }
+    askShownBefore = shown;
+    if (typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const from = heightBeforeTheAsk;
+    const to = box.getBoundingClientRect().height;
+    if (from <= 0 || Math.abs(to - from) < 1 || typeof box.animate !== "function") return;
+    box.animate([{ height: `${from}px`, overflow: "clip" }, { height: `${to}px`, overflow: "clip" }], { duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" });
+    if (shown) box.querySelector<HTMLElement>(".chat-ask")?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: "ease-out" });
+  });
+
+  /** v6: menus open with their bottom 8px above the composer's top edge. Each menu's anchor
+   *  (+, the model chip, the Steer chip) learns how far it stands under that edge. */
+  function liftMenus(): void {
+    const box = boxElement;
+    if (box === null) return;
+    const top = box.getBoundingClientRect().top;
+    for (const anchor of box.querySelectorAll<HTMLElement>(".chat-add, [data-conversation-model-picker], [data-conversation-send-mode]"))
+      anchor.style.setProperty("--c2-menu-lift", `${Math.max(0, anchor.getBoundingClientRect().top - top)}px`);
+  }
+  $effect(() => {
+    const box = boxElement;
+    if (box === null) return;
+    const observer = new ResizeObserver(() => liftMenus());
+    observer.observe(box);
+    const mutations = new MutationObserver(() => liftMenus());
+    mutations.observe(box, { childList: true, subtree: true });
+    liftMenus();
+    return () => { observer.disconnect(); mutations.disconnect(); };
+  });
+
   onMount(() => {
     void restoreLocalState();
     voiceSupported = voiceCaptureSupported();
@@ -1274,11 +1312,6 @@
         {/if}
       </article>
     {/each}
-    {#if pausedFor !== null}
-      <div class="chat-paused" role="status" data-conversation-paused={pausedFor}>
-        <span class="chat-paused-dot" aria-hidden="true"></span><span class="chat-paused-word">Paused</span><span aria-hidden="true">·</span><span>waiting for your {pausedFor}</span>
-      </div>
-    {/if}
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
@@ -1328,6 +1361,7 @@
             bind:this={permissionCard}
             bind:commitLabel={permissionCommitLabel}
             bind:commitReady={permissionCommitReady}
+            bind:declineAction={permissionDecline}
             docked
             ask={ask}
             framed={false}
@@ -1674,20 +1708,6 @@
 <style>
   /* --- the stack ----------------------------------------------------------------------------- */
   .c2-composer { display: grid; gap: var(--cv-s2); }
-  /* p12c: the Paused line, attached to the ask: 12px above the card, on its outer left edge.
-     13px, the label medium #d9d9d9, the rest #b0b0b0, an accent dot. Docked at rest, the
-     dock's own status line says it instead (ConversationRestBar). */
-  .chat-paused {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-block-end: 12px;
-    color: var(--cv-t3);
-    font: var(--cv-weight-body) 13px/18px var(--cv-font);
-  }
-  .chat-paused-dot { flex: none; width: 7px; height: 7px; margin-inline-end: 2px; border-radius: 50%; background: var(--cv-accent); }
-  .chat-paused-word { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
-  :global([data-conversation-state="rest"]) .chat-paused { display: none; }
 
   /* --- one button set (§2.7), for the few buttons the composer draws itself ------------------ */
   .cv-btn {
@@ -1752,10 +1772,11 @@
     min-width: 220px;
     display: flex;
     flex-direction: column;
+    /* v7: a menu is a Surface with the float shadow; its rows are quiet Buttons. */
     padding: 6px;
-    background: var(--cv-float);
-    border: 0;
-    border-radius: var(--cv-r-lg);
+    background: #1c1c1c;
+    border: 1px solid #2a2a2a;
+    border-radius: 20px;
     box-shadow: var(--cv-shadow-float);
     animation: chat-pop-in var(--cv-dur-base) var(--cv-ease-out);
   }
@@ -1766,22 +1787,23 @@
   .chat-add-item {
     display: flex;
     align-items: center;
-    gap: 10px;
     width: 100%;
-    min-height: 36px;
-    padding: 6px var(--cv-s2);
+    gap: 6px;
+    min-height: 32px;
+    padding: 6px 14px;
     background: none;
     border: none;
-    border-radius: var(--cv-r-md);
-    color: var(--cv-t2);
+    border-radius: 999px;
+    color: #bdbdbd;
     font-family: var(--cv-font);
-    font-size: var(--cv-type-ui);
-    line-height: var(--cv-leading-meta);
+    font-size: 13px;
+    font-weight: var(--cv-weight-label);
+    line-height: 20px;
     text-align: left;
     cursor: pointer;
   }
   .chat-add-item:hover:not(:disabled),
-  .chat-add-item:focus-visible { color: var(--cv-t1); background: var(--cv-control); }
+  .chat-add-item:focus-visible { color: #ececec; background: #2a2a2a; }
   .chat-add-item:disabled { color: var(--cv-t4); cursor: default; }
   .chat-add-item svg {
     width: 16px;
@@ -1789,12 +1811,12 @@
     flex: none;
     fill: none;
     stroke: currentColor;
-    stroke-width: 1.6;
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
-    color: var(--cv-t3);
+    color: #bdbdbd;
   }
-  .chat-add-item:hover svg { color: var(--cv-t1); }
+  .chat-add-item:hover svg { color: #ececec; }
   .chat-add-count {
     margin-inline-start: auto;
     font-size: var(--cv-type-caption);
@@ -1895,11 +1917,11 @@
     flex-wrap: wrap;
     align-items: center;
     column-gap: var(--cv-s1);
-    /* v4: a 52px line: 7 + 36 + 7 inside the 1px edge, radius 26. */
+    /* v7: a 52px Surface line: 9 + 32 + 9 inside the 1px edge, radius 20 like every Surface. */
     min-height: 52px;
     box-sizing: border-box;
-    padding: 7px;
-    border-radius: 26px;
+    padding: 9px;
+    border-radius: 20px;
   }
   .chat-box.is-compact > .chat-ta { flex: 1 1 0; order: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
   .chat-box.is-compact > .chat-foot { display: contents; }
@@ -1917,8 +1939,8 @@
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
   .chat-box.has-ask > .chat-foot :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
-  .chat-ask-pen { flex: none; display: grid; place-items: center; width: 36px; height: 36px; color: var(--cv-t3); }
-  .chat-ask-pen svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .chat-ask-pen { flex: none; display: grid; place-items: center; width: 32px; height: 32px; color: var(--cv-quiet-ink, #bdbdbd); }
+  .chat-ask-pen svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   /* v4.2: the ask's own-answer line sits in its own well (#141414, radius 12, 44 high) so it
      reads as an input: the pen, the draft and the microphone share one fill, joined edge to
      edge; the primary pill stands outside it, on its right, 8px off. The send slot gives its
@@ -1929,11 +1951,30 @@
   .chat-box.has-ask.is-compact > .chat-foot > :global(.chat-submit) { display: contents; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > *) { order: 2; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-primary) { order: 3; margin-inline: var(--cv-s2); }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-quiet) { order: 3; margin-inline-start: var(--cv-s2); }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-quiet + .chat-ask-primary) { margin-inline-start: 4px; }
+  /* v7: Deny is a quiet Button: 32 tall pill, 13/20 500, #bdbdbd, hover #2a2a2a. */
+  .chat-box :global(.chat-ask-quiet) {
+    flex: none;
+    height: 32px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #bdbdbd;
+    font: var(--cv-weight-label) 13px/20px var(--cv-font);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .chat-box :global(.chat-ask-quiet:hover:not(:disabled)) { background: #2a2a2a; color: #ececec; }
+  .chat-box :global(.chat-ask-quiet:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  .chat-box :global(.chat-ask-quiet:disabled) { color: #8c8c8c; cursor: default; }
   .chat-box.has-ask.is-compact > .chat-foot > .chat-ask-pen {
     align-self: stretch;
     width: 40px;
     height: auto;
-    min-height: 44px;
+    min-height: 40px;
     box-sizing: border-box;
     margin-inline-start: var(--cv-s2);
     padding-inline-start: 4px;
@@ -1942,7 +1983,7 @@
   }
   .chat-box.has-ask.is-compact > .chat-ta {
     align-self: stretch;
-    padding-block: 10px;
+    padding-block: 8px;
     padding-inline: var(--cv-s1) var(--cv-s2);
     background: #141414;
   }
@@ -1950,7 +1991,7 @@
     align-self: stretch;
     width: 40px;
     height: auto;
-    min-height: 44px;
+    min-height: 40px;
     padding-inline-end: 4px;
     border-radius: 0 12px 12px 0;
     background: #141414;
@@ -1962,21 +2003,23 @@
   .chat-box.has-ask:not(.is-compact) > .chat-foot > .chat-ask-pen { display: none; }
   /* The ask's primary in the send slot: a 36px pill, #f2f2f2 with dark words; unavailable it
      is #2a2a2a with #a3a3a3 words (v4.2: not dimmer). */
+  /* v7: the ask's primary is the one primary Button: 32 tall pill, 13/20 500, padding 0 14,
+     #f2f2f2 with #141414 words; unavailable #2a2a2a with #8c8c8c. */
   .chat-box :global(.chat-ask-primary) {
     flex: none;
-    height: 36px;
-    padding: 0 var(--cv-s4);
+    height: 32px;
+    padding: 0 14px;
     border: 0;
-    border-radius: 18px;
-    background: var(--cv-t1);
-    color: #121212;
-    font: var(--cv-weight-label) var(--cv-type-ui)/1 var(--cv-font);
+    border-radius: 999px;
+    background: #f2f2f2;
+    color: #141414;
+    font: var(--cv-weight-label) 13px/20px var(--cv-font);
     white-space: nowrap;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-box :global(.chat-ask-primary:hover:not(:disabled)) { background: #ffffff; }
-  .chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: var(--cv-t3); cursor: default; }
+  .chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: #8c8c8c; cursor: default; }
   .chat-box :global(.chat-ask-primary:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow
@@ -1996,10 +2039,9 @@
 
   /* --- keyboard focus -------------------------------------------------------------------------- */
   /* A field reached with the keyboard wears the app's focus ring: 2px of accent, 2px out. */
-  .chat-box.keyboard-focus {
-    outline: var(--cv-focus-width) solid var(--cv-accent);
-    outline-offset: var(--cv-focus-offset);
-  }
+  /* v6: focused (by keyboard too) or expanded, the composer wears one 1px #3a3a3a border and
+     no outer ring. */
+  .chat-box.keyboard-focus, .chat-box:not(.is-compact) { border-color: #3a3a3a; outline: none; }
 
   /* --- popovers -------------------------------------------------------------------------------- */
   /* A menu opens from the control that opened it, as a native dropdown does: anchored on its
@@ -2008,27 +2050,29 @@
      moves it. Their height is capped by the room over the composer (app.css). */
   .chat-box :global(:is(.listbox-picker-panel, .chat-menu)) { z-index: 40; }
   .chat-add { position: relative; }
+  /* v6: every menu opens with its bottom 8px above the composer's top edge, not above its chip:
+     --c2-menu-lift is how far each anchor stands under the composer's top edge (measured). */
   .chat-box .chat-foot :global([data-conversation-model-picker] > .listbox-picker-panel) {
     left: auto;
     right: 0;
-    bottom: calc(100% + 8px);
+    bottom: calc(100% + 8px + var(--c2-menu-lift, 0px));
   }
-  .chat-add-menu { inset-block-end: calc(100% + 8px); inset-inline-start: 0; }
+  .chat-add-menu { inset-block-end: calc(100% + 8px + var(--c2-menu-lift, 0px)); inset-inline-start: 0; }
 
   /* --- pending attachments (§3.9) -------------------------------------------------------------- */
   /* A picture is a 56px square that its thumbnail fills; a file is a 56px tile up to 240px wide
      on the control fill: a 32px glyph tile, its name, and its kind and size in words. */
+  /* v7: a file waiting to go is an attachment card, a Surface (#1c1c1c, a 1px #2a2a2a edge,
+     radius 20); a picture is the picture, radius 12 with the same 1px edge, as in messages. */
   .chat-att {
     height: 56px;
-    border: 0;
-    border-radius: var(--cv-r-md);
-    background: var(--cv-control);
+    border: 1px solid #2a2a2a;
+    border-radius: 20px;
+    background: #1c1c1c;
   }
-  /* v5.2: a picture chip is 76 tall (and square), so it can be recognised. */
-  .chat-att.img { width: 76px; height: 76px; }
-  .chat-att.img img { border-radius: var(--cv-r-md); }
-  /* A picture keeps a hairline frame, so a dark image still reads as a tile. */
-  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--cv-line-strong); pointer-events: none; }
+  .chat-att.img { width: 76px; height: 76px; border: 0; border-radius: 12px; background: #1c1c1c; }
+  .chat-att.img img { border-radius: 12px; }
+  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px #2a2a2a; pointer-events: none; }
   /* Pass 11: a file tile sits on #242424, one step under the #2a2a2a remove circle in its
      corner, so the circle reads as on a picture (on #2a2a2a it vanished and the x floated). */
   /* p12c: a file chip is as tall as a picture chip (76), its content centred. */
@@ -2037,18 +2081,18 @@
     align-items: center;
     gap: 10px;
     max-width: 240px;
-    padding: 0 var(--cv-s3) 0 var(--cv-s3);
-    background: #242424;
+    padding: 0 16px 0 12px;
+    background: #1c1c1c;
   }
   .chat-att.video { max-width: 280px; padding-inline-start: var(--cv-s1); }
   .chat-att-kind {
+    /* v7: the file's 16px icon alone, #bdbdbd, as on the attachment card in the transcript. */
     width: 32px;
     height: 32px;
-    border-radius: var(--cv-r-sm);
-    background: #2a2a2a;
-    color: var(--cv-t3);
+    background: transparent;
+    color: #bdbdbd;
   }
-  .chat-att-kind svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .chat-att-kind svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .chat-att-thumb {
     position: relative; flex: none; display: grid; place-items: center; overflow: hidden;
     width: 64px; height: 48px; border-radius: var(--cv-r-sm); background: var(--cv-raised);
@@ -2060,17 +2104,17 @@
   }
   .chat-att-words { gap: 0; }
   .chat-att-name {
-    color: var(--cv-t1);
+    color: #ececec;
     font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
+    font-size: 14px;
+    line-height: 20px;
     font-weight: var(--cv-weight-label);
   }
   .chat-att-meta {
-    color: var(--cv-t3);
+    color: #b0b0b0;
     font-family: var(--cv-font);
-    font-size: var(--cv-type-caption);
-    line-height: var(--cv-leading-caption);
+    font-size: 13px;
+    line-height: 20px;
     font-variant-numeric: tabular-nums;
   }
   /* A failed upload says so in its own words, in the danger tone, with Retry beside it. */
@@ -2093,24 +2137,25 @@
     background: var(--cv-t2);
     transition: width var(--cv-dur-base) linear;
   }
-  /* Remove (v4.3): one rule for every tile. A 20px circle inside the tile's top-right corner,
-     inset 6px, #2a2a2a with the x in #d9d9d9. Nothing hangs over a tile's edge. It is always
-     there: a control people rely on is never hidden until hover. */
-  .chat-attachments { padding-block-start: var(--cv-s2); }
+  /* v6: the remove button sits outside the tile's corner, centred on it: a 20px #333 circle
+     with a 2px ring in the composer's own fill, so it reads as cut out of the tile and never
+     covers the picture. The row keeps room for it (12px above and right, 16px between tiles). */
+  .chat-attachments { gap: var(--cv-s4); padding-block-start: 12px; padding-inline-end: 12px; }
   .chat-att-x {
-    top: 6px;
-    right: 6px;
+    top: -10px;
+    right: -10px;
     width: 20px;
     height: 20px;
     padding: 0;
     border: 0;
     border-radius: 50%;
-    background: #2a2a2a;
+    background: #333333;
+    box-shadow: 0 0 0 2px #1c1c1c;
     color: #d9d9d9;
     z-index: 1;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { background: #333333; background-image: none; color: var(--cv-t1); }
+  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { background: #3d3d3d; background-image: none; color: var(--cv-t1); }
   .chat-att-x svg {
     display: block;
     width: 20px;
@@ -2119,10 +2164,10 @@
     box-sizing: border-box;
     fill: none;
     stroke: currentColor;
-    stroke-width: 2.2;
+    stroke-width: 1.5;
     stroke-linecap: round;
   }
   .chat-att-x:disabled { color: var(--cv-t3); cursor: default; }
-  /* A file tile keeps its words clear of the circle in its corner (6 + 20 + 6). */
-  .chat-att.file { padding-inline-end: 32px; }
+  /* The circle is outside the tile now, so a file tile's words keep its ordinary edge. */
+  .chat-att.file { padding-inline-end: var(--cv-s3); }
 </style>

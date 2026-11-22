@@ -164,7 +164,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
         unavailableReason: lockedReason ?? snapshotUnavailableReason(candidate, label)
       };
     }),
-    models: withTheShownModel(models.filter(model => !older.has(model)).map(choice), models, modelValue, modelFace),
+    models: models.filter(model => !older.has(model)).map(choice),
     olderModels: models.filter(model => older.has(model)).map(choice),
     emptyReason: models.length ? null : snapshot?.diagnoses[0]
       ?? (snapshot ? `${name} offers no models on this machine.` : `${name} model list is unavailable.`),
@@ -173,21 +173,6 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     defaultReasoningEffort,
 
   };
-}
-
-/** The list always holds the model the closed control names. A catalogue that does not
- *  offer it (stale, disabled since, or not read yet) would otherwise open on a list with
- *  nothing chosen and a model that is not the one running, so it leads the list, as itself. */
-function withTheShownModel(
-  choices: readonly ModelPickerChoice[],
-  offered: readonly BackendModel[],
-  modelValue: string,
-  modelFace: string
-): ModelPickerChoice[] {
-  const offeredAlready = offered.some((model) =>
-    model.model_id === modelValue || model.resolved_model_id === modelValue);
-  if (modelValue === "" || offeredAlready) return [...choices];
-  return [{ value: modelValue, name: modelFace || modelValue }, ...choices];
 }
 
 /** A missing trailing component is zero: 6.1 outranks 6, while 6 equals 6.0. */

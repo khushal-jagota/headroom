@@ -102,10 +102,11 @@
   .c2-bubble {
     min-width: 0;
     max-width: 100%;
-    background: #1f1f1f;
-    color: var(--cv-t1);
+    /* v7: user bubbles #242424, no border, radius 18, padding 12 16, 15/24 #ececec. */
+    background: #242424;
+    color: #ececec;
     border-radius: 18px;
-    padding: 10px var(--cv-s4);
+    padding: 12px 16px;
     font-family: var(--cv-font);
     font-size: var(--cv-type-prose);
     line-height: var(--cv-leading-prose);

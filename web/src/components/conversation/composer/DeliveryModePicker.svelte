@@ -33,6 +33,7 @@
 <span class="delivery-mode-host">
 <ListboxPicker
   chevron="drawn"
+  drawnTick
   items={choices}
   selectedValue={value}
   {disabled}
@@ -65,19 +66,18 @@
   .delivery-mode-host { display: contents; }
   .delivery-mode-face { white-space: nowrap; }
   .delivery-mode-name { white-space: nowrap; }
-  /* Closed, the mode is the one filled chip on the row, because it changes what Send does:
-   * 28px, 8px round, the control fill, the mode in 500 t1 and a drawn chevron. It stands apart
-   * from the model's plain words beside it by its fill and weight; no edge is drawn. */
+  /* Closed, the mode is a 28px chip, 8px round, its name in 500 and a drawn chevron. */
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger) {
     gap: 4px;
     padding-inline: 10px 6px;
-    background: var(--cv-control);
-    color: var(--cv-t1);
+    /* v6: no fill at rest (the words #d9d9d9 and the chevron); hover #2a2a2a; open #3a3a3a. */
+    background: transparent;
+    color: #d9d9d9;
     font-weight: var(--cv-weight-label);
   }
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger:hover:not(:disabled)) {
-    background: var(--cv-control-hover);
-    color: var(--cv-t1);
+    background: #2a2a2a;
+    color: #f2f2f2;
   }
   /* p12c: an open chip is filled #3a3a3a, its words and chevron #f2f2f2, the chevron up. */
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open),
@@ -91,16 +91,17 @@
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open .listbox-picker-chevron-drawn) { color: #f2f2f2; }
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] .listbox-picker-chevron-drawn) {
     display: block;
-    width: 14px;
-    height: 14px;
+    /* v7: the composer control's 12px chevron. */
+    width: 12px;
+    height: 12px;
     color: var(--cv-t3);
   }
-  /* The menu is a native dropdown: anchored on its own chip, right edges aligned, 8px over
-   * it (v5). Its width fits its longest label (min 160). */
+  /* The menu is a native dropdown: anchored on its own chip, right edges aligned; v6: its
+   * bottom 8px above the composer's top edge. Its width fits its longest label (min 160). */
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;
     right: 0;
-    bottom: calc(100% + 8px);
+    bottom: calc(100% + 8px + var(--c2-menu-lift, 0px));
     width: max-content;
     min-width: 160px;
   }

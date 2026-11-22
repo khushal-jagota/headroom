@@ -33,7 +33,6 @@
     keepOpenWhenDisabled = false,
     showUsage = false,
     tonedMark = false,
-    layout = "rail",
     below = false,
     chevron = "typed",
     label = "Model",
@@ -60,10 +59,6 @@
     showUsage?: boolean;
     /** The composer draws the provider mark in its chip's text tone rather than its colours. */
     tonedMark?: boolean;
-    /** Where the panel's tools stand. The setup screens keep Refresh and Reasoning at the foot
-     *  of the rail; the conversation composer puts Refresh and an Effort control in a footer
-     *  under both panes (§3.14), and keeps a model's effort when the new model offers it. */
-    layout?: "rail" | "composer";
     below?: boolean;
     label?: string;
     attributes?: Record<string, string | undefined>;
@@ -134,12 +129,6 @@
         finish(choice.value, null);
         return;
       }
-      // The effort in hand carries over when the new model offers it; the footer's Effort
-      // control changes it in place. Otherwise the model's efforts are asked for here.
-      if (layout === "composer" && currentEffort !== null && efforts.some((effort) => effort.value === currentEffort)) {
-        finish(choice.value, currentEffort);
-        return;
-      }
       pendingModel = choice.value;
       showing = "efforts";
       void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
@@ -174,16 +163,6 @@
     pendingModel = null;
     showing = "efforts";
     void tick().then(() => picker.setActiveValue(currentEffort ?? ""));
-  }
-
-  /** The footer's Effort control: the shown model at another effort, with the panel kept open. */
-  let footEfforts = $derived(view.offersReasoning && displayed.model
-    ? effortOptionsFor(models, displayed.model, backendEffortOptions)
-    : []);
-  function chooseEffort(effort: string): void {
-    if (disabled || effort === currentEffort || !displayed.model) return;
-    feedback = null;
-    onChooseModel(displayed.model, effort);
   }
 
   async function runRefresh(): Promise<void> {
@@ -263,7 +242,6 @@
           {/snippet}
         </PickerRailRow>
       {/each}
-      {#if layout === "rail"}
       <div class="model-picker-tools">
         <PickerRailRow
           disabled={pickerBusy || refreshing}
@@ -295,7 +273,6 @@
         </PickerRailRow>
         {/if}
       </div>
-      {/if}
     </PickerRail>
   {/snippet}
   {#snippet optionContent(choice, selected)}
@@ -310,56 +287,11 @@
     {/if}
   {/snippet}
   {#snippet afterList()}
-    {#if layout === "rail"}
-      {#if foot}
-        <div class="model-picker-foot-rail" data-conversation-picker-feedback>
-          <div class="model-picker-summary-rail" aria-live="polite">{foot}</div>
-        </div>
-      {/if}
-    {:else}
     {#if foot}
-      <div class="model-picker-summary" data-conversation-picker-feedback aria-live="polite">{foot}</div>
-    {/if}
-    <!-- The panel's foot: Refresh at the left, the effort for the shown model at the right. -->
-    <div class="model-picker-foot">
-      <button
-        type="button"
-        class="model-picker-refresh"
-        tabindex="-1"
-        data-listbox-picker-action
-        data-conversation-picker-refresh
-        aria-busy={refreshControl.busy ? "true" : "false"}
-        disabled={pickerBusy || refreshing}
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => void runRefresh()}
-      >
-        {#if refreshing}
-          <span class="model-picker-spin" aria-hidden="true"></span>
-        {:else}
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 3v5h-5" /></svg>
-        {/if}
-        <span>{refreshControl.label}</span>
-      </button>
-      {#if footEfforts.length && showing === "models"}
-        <div class="model-picker-effort-control" role="group" aria-label="Effort" data-conversation-picker-reasoning>
-          {#each footEfforts as effort (effort.value)}
-            <button
-              type="button"
-              class="model-picker-segment"
-              class:on={effort.value === currentEffort}
-              tabindex="-1"
-              data-listbox-picker-action
-              data-conversation-picker-effort={effort.value}
-              aria-pressed={effort.value === currentEffort ? "true" : "false"}
-              disabled={pickerBusy}
-              onmousedown={(event) => event.preventDefault()}
-              onclick={() => chooseEffort(effort.value)}
-            >{effort.name}</button>
-          {/each}
-        </div>
+      <div class="model-picker-foot" data-conversation-picker-feedback>
+        <div class="model-picker-summary" aria-live="polite">{foot}</div>
+      </div>
       {/if}
-    </div>
-    {/if}
   {/snippet}
 </ListboxPicker>
 
@@ -367,81 +299,13 @@
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-default); }
   /* A real space between the model and its effort, so the words read and copy as two. */
   .model-picker-effort { color: var(--text-faint); }
-  /* The setup screens' rail tools (Refresh, Reasoning) at the foot of the rail, as before. */
-  .model-picker-tools { position: relative; margin-top: auto; padding-top: calc(var(--space-1) * 2 + var(--border-hairline)); }
-  .model-picker-tools::before {
-    content: ""; position: absolute; top: var(--space-1); inset-inline: 0;
-    border-top: var(--border-hairline) solid var(--border-color);
-  }
+  .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
-  .model-picker-summary-rail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-picker-foot-rail {
+  .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-picker-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-picker-foot {
     grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);
     background: var(--surface-recessed); color: var(--text-muted); font-size: var(--type-xs);
     line-height: 1.45; padding: var(--space-2) var(--space-3);
   }
-  .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* What a refresh or a failed read had to say, over the foot, in the quiet tone. */
-  .model-picker-summary {
-    grid-column: 1 / -1;
-    padding: var(--cv-s2) var(--cv-s3) 0;
-    color: var(--cv-t3);
-    font-family: var(--cv-font);
-    font-size: var(--cv-type-caption);
-    line-height: var(--cv-leading-caption);
-  }
-  /* The foot is set apart by a step of tone, not a rule: the well under the floating plane. */
-  .model-picker-foot {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: center;
-    gap: var(--cv-s2);
-    margin: 6px;
-    padding: 4px;
-    border-radius: var(--cv-r-md);
-    background: rgb(0 0 0 / 18%);
-  }
-  .model-picker-refresh {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 28px;
-    padding: 0 var(--cv-s2);
-    border: 0;
-    border-radius: var(--cv-r-md);
-    background: none;
-    color: var(--cv-t3);
-    font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    font-weight: var(--cv-weight-label);
-    cursor: pointer;
-  }
-  .model-picker-refresh:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
-  .model-picker-refresh svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-  .model-picker-spin {
-    width: 12px; height: 12px; border-radius: 50%;
-    border: 2px solid rgb(255 255 255 / 22%); border-top-color: var(--cv-t1);
-    animation: model-picker-spin var(--cv-spin) linear infinite;
-  }
-  @keyframes model-picker-spin { to { transform: rotate(360deg); } }
-  /* Effort: a segmented control, the chosen segment on the control fill in the strongest tone. */
-  .model-picker-effort-control { display: inline-flex; gap: 2px; margin-inline-start: auto; }
-  .model-picker-segment {
-    height: 28px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: var(--cv-r-md);
-    background: none;
-    color: var(--cv-t3);
-    font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    font-weight: var(--cv-weight-label);
-    text-transform: capitalize;
-    cursor: pointer;
-  }
-  .model-picker-segment:hover:not(:disabled) { color: var(--cv-t1); }
-  .model-picker-segment.on { background: var(--cv-control); color: var(--cv-t1); }
-  .model-picker-refresh:focus-visible,
-  .model-picker-segment:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: -2px; }
-  @media (prefers-reduced-motion: reduce) { .model-picker-spin { animation: none; } }
 </style>

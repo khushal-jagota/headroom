@@ -18,6 +18,7 @@
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
   import TranscriptStatusRow from '../TranscriptStatusRow.svelte';
+  import { turnHeadAtTop } from '../../../lib/conversation/view/liveEdge';
   import { DOCKED_CREDENTIAL_REQUEST } from '../../../lib/conversation/composer';
   import { TURN_STOPPED_STATUS, ASK_CARD_CONTEXT, askShownByItsCard, backgroundTasksAfterTheTurn, backgroundWorkSentence, type AskCardReading } from '../../../lib/conversation/transcript';
   let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
@@ -97,7 +98,9 @@
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
           // A turn held by the person has no head: the docked ask says so, once.
-          return !(turnWaiting(item) !== null && !activityUncertain)
+          // v6: a live turn's head is the live edge at the end of the transcript, not here.
+          return turnHeadAtTop(item, reader.status)
+              && !(turnWaiting(item) !== null && !activityUncertain)
               && (!item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0);
       // In Full a run of more than one call is drawn as its summary line.
       if (item.kind === 'work_group')
@@ -238,7 +241,9 @@
     <ViewItem itemKey={item.key} rhythm={rhythm.get(slot.key) ?? 'block'}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
+          {#if turnHeadAtTop(item, reader.status)}
           <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          {/if}
         </div>
       {:else if item.kind==='work_group'}
         {@const groupKey = item.key}

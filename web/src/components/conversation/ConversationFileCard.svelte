@@ -63,65 +63,68 @@
     min-inline-size: min(100%, 320px);
     max-inline-size: 100%;
     box-sizing: border-box;
-    padding: 10px var(--cv-s2) 10px 10px;
-    border-radius: var(--cv-r-lg);
-    background: var(--cv-raised);
+    /* v7: an attachment card is a Surface: #1c1c1c, a 1px #2a2a2a edge, radius 20. */
+    padding: 12px 8px 12px 12px;
+    border: 1px solid var(--cv-surface-edge, #2a2a2a);
+    border-radius: var(--cv-surface-radius, 20px);
+    background: var(--cv-surface, #1c1c1c);
     font-family: var(--cv-font);
   }
   .cv-file-tile {
     flex: none;
     display: grid;
     place-items: center;
-    inline-size: 36px;
-    block-size: 36px;
-    border-radius: var(--cv-r-md);
-    background: var(--cv-control);
-    color: var(--cv-t3);
+    inline-size: 32px;
+    block-size: 32px;
+    /* v7: the file's icon alone (16px, #bdbdbd) in a 32px slot; no tile of its own. */
+    background: transparent;
+    color: var(--cv-quiet-ink, #bdbdbd);
   }
   .cv-file-tile svg, .cv-file-download svg {
-    inline-size: 18px;
-    block-size: 18px;
+    inline-size: 16px;
+    block-size: 16px;
     fill: none;
     stroke: currentColor;
-    stroke-width: 1.4;
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .cv-file-download svg { inline-size: 16px; block-size: 16px; stroke-width: 1.6; }
+
   .cv-file-identity { flex: 1; min-width: 0; display: grid; }
   .cv-file-name {
     overflow: hidden;
-    color: var(--cv-t1);
-    font-size: var(--cv-type-ui);
+    color: var(--cv-ink, #ececec);
+    font-size: 14px;
     font-weight: var(--cv-weight-label);
-    line-height: var(--cv-leading-ui);
+    line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .cv-file-meta {
-    color: var(--cv-t3);
-    font-size: var(--cv-type-caption);
-    line-height: var(--cv-leading-caption);
+    color: var(--cv-detail-ink, #b0b0b0);
+    font-size: 13px;
+    line-height: 20px;
     font-variant-numeric: tabular-nums;
   }
   .cv-file-preview, .cv-file-download {
     flex: none;
     display: inline-grid;
     place-items: center;
+    /* v7: Preview and download are quiet buttons: 32 tall pills, #bdbdbd, hover #2a2a2a. */
     block-size: 32px;
-    border-radius: var(--cv-r-md);
-    color: var(--cv-t2);
+    border-radius: 999px;
+    color: var(--cv-quiet-ink, #bdbdbd);
     text-decoration: none;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .cv-file-preview {
-    padding: 0 var(--cv-s3);
-    font-size: var(--cv-type-meta);
+    padding: 0 14px;
+    font-size: 13px;
     font-weight: var(--cv-weight-label);
-    line-height: var(--cv-leading-meta);
+    line-height: 20px;
   }
-  .cv-file-download { inline-size: 32px; color: var(--cv-t3); }
-  .cv-file-preview:hover, .cv-file-download:hover { background: var(--cv-control); color: var(--cv-t1); }
+  .cv-file-download { inline-size: 32px; }
+  .cv-file-preview:hover, .cv-file-download:hover { background: #2a2a2a; color: var(--cv-ink, #ececec); }
   .cv-file-preview:focus-visible, .cv-file-download:focus-visible {
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: var(--cv-focus-offset);

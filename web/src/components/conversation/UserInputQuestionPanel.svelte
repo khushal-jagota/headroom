@@ -69,12 +69,20 @@
     step = 0;
     draft = emptyUserInputDraft();
   });
+  /** v6: the option the primary will pick when nothing is chosen yet. It starts on option 1
+   *  of every question (a 1px accent ring, as Allow once wears), follows a choice, the
+   *  keyboard's arrows and a tile's focus, and "Next" (or "Send answers") picks it. */
+  let focusedOption = $state(0);
+  $effect(() => { step; request.requestId; focusedOption = 0; });
 
   let question = $derived(request.questions[step]);
   let currentAnswers = $derived(
     question === undefined ? [] : userInputAnswerFor(draft, question)
   );
-  let canContinue = $derived(currentAnswers.length > 0);
+  let chosenSomething = $derived(currentAnswers.length > 0);
+  /** The option "Next" would pick when nothing is chosen. */
+  let pickable = $derived(question === undefined || chosenSomething ? null : question.options[focusedOption]?.label ?? null);
+  let canContinue = $derived(chosenSomething || pickable !== null);
   let isLast = $derived(step === request.questions.length - 1);
   let optionsElement = $state<HTMLDivElement | null>(null);
   let composerAnswers = $derived(ownAnswer !== null);
@@ -117,6 +125,13 @@
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
       || (target instanceof HTMLElement && target.isContentEditable)) return;
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && question.options.length > 0) {
+      event.preventDefault();
+      const count = question.options.length;
+      focusedOption = (focusedOption + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+      optionsElement?.querySelectorAll<HTMLButtonElement>("[data-user-input-option]")[focusedOption]?.focus({ preventScroll: true });
+      return;
+    }
     const option = userInputOptionForKey(question, event.key);
     if (option === null) return;
     event.preventDefault();
@@ -126,6 +141,8 @@
   /** A tile chooses (or, where several may be chosen, toggles); the one primary goes on. */
   function choose(option: string): void {
     if (question === undefined || busy || !answerAvailable) return;
+    const at = question.options.findIndex((each) => each.label === option);
+    if (at >= 0) focusedOption = at;
     draft = toggleUserInputChoice(draft, question, option);
   }
 
@@ -157,6 +174,8 @@
 
   function continueOrSubmit(): void {
     if (!canContinue || question === undefined || busy || !answerAvailable) return;
+    // v6: with nothing chosen, the primary picks the focused option.
+    if (!chosenSomething && pickable !== null) draft = toggleUserInputChoice(draft, question, pickable);
     if (composerAnswers && ownWords !== "") onOwnAnswerUsed?.();
     if (!isLast) {
       step += 1;
@@ -223,11 +242,14 @@
           type="button"
           class="cv-ask-row"
           class:is-selected={selected}
+          class:is-focused={!chosenSomething && index === focusedOption}
           data-user-input-option={option.label}
+          data-user-input-option-focused={!chosenSomething && index === focusedOption ? "true" : undefined}
           aria-pressed={selected}
           aria-keyshortcuts={index < 9 ? String(index + 1) : undefined}
           disabled={busy || !answerAvailable}
           onclick={() => choose(option.label)}
+          onfocus={() => { if (!chosenSomething) focusedOption = index; }}
         >
           <span class="cv-ask-key" aria-hidden="true">
             {#if selected}<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></svg>{:else if index < 9}{index + 1}{/if}
@@ -272,6 +294,8 @@
 
 <style>
   .count { flex: none; }
+  /* v6: the focused option (what Next picks): a 1px accent ring at 55%, as Allow once wears. */
+  .options :global(.cv-ask-row.is-focused) { box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
   .options { max-height: 360px; overflow: auto; }
   /* The field: a canvas well inside the raised ask, with a pen where the key would be. */
   .other {

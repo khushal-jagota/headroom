@@ -24,17 +24,19 @@ describe("design v4.1: a tool run's chevron stands right after its label", () =>
 
 describe("design v4.1: surfaces", () => {
   const app = css("../../assets/app.css");
-  it("the model chip wears the Steer chip's fill, a chevron and a middle dot before the effort", () => {
-    expect(app).toMatch(/\[data-conversation-model-picker\] > \.listbox-picker-trigger \{[^}]*background: var\(--cv-control\)/);
+  it("the model chip wears the Steer chip's style (v6: no fill at rest), a chevron and a middle dot before the effort", () => {
+    expect(app).toMatch(/\[data-conversation-model-picker\] > \.listbox-picker-trigger \{[^}]*background: transparent;\s*color: #d9d9d9;/);
     expect(app).toMatch(/\[data-conversation-model-picker\] \.listbox-picker-chevron-drawn \{[^}]*display: block/);
     expect(app).toContain('.model-picker-effort::before { content: "· "; }');
   });
   it("pictures in the conversation carry a 1px white 10% edge", () => {
     expect(app).toContain("[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }");
   });
-  it("an error callout is the one tinted surface", () => {
-    // v5.2: 7% red fill held by a 22% red edge.
-    expect(css("../src/components/conversation/TranscriptStatusRow.svelte")).toContain(".c2-status--callout.c2-status--error { background: rgb(229 132 138 / 7%); box-shadow: inset 0 0 0 1px rgb(229 132 138 / 22%); }");
+  it("v7: the newest error is a Surface (no tint); failure is said by the #f08a7e dot alone", () => {
+    const row = css("../src/components/conversation/TranscriptStatusRow.svelte");
+    expect(row).toMatch(/\.c2-status--callout \{[^}]*border: 1px solid var\(--cv-surface-edge, #2a2a2a\);\s*border-radius: var\(--cv-surface-radius, 20px\);\s*background: var\(--cv-surface, #1c1c1c\);/);
+    expect(row).not.toContain("rgb(229 132 138");
+    expect(row).toContain(".c2-status--error .c2-status-dot { background: #f08a7e; }");
   });
   it("the empty conversation keeps its composer in its normal bottom place", () => {
     const pane = css("../src/components/conversation/ConversationPane.svelte");

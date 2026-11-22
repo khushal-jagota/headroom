@@ -7,6 +7,7 @@
   import { onMount, tick, untrack, setContext, type Snippet } from "svelte";
   import type { ConversationJump } from "./viewportConfiguration";
   import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
+  import LiveEdge from '../view/LiveEdge.svelte';
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import { conversationMotion, CONVERSATION_MOVE_MS } from "../../../lib/conversation/surfaceMotion";
@@ -1241,6 +1242,7 @@
     />
     {/if}
     {#if afterTranscript}{@render afterTranscript()}{/if}
+    {#if reader!==null}<LiveEdge {reader} {activityUncertain} {livenessPulse}/>{/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -1263,14 +1265,15 @@
      content is below the view, a 24px fade above the composer (pass 11). */
   .chat-thread {
     /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
-    padding-bottom: 32px;
+    /* v6/v7: 24 between the transcript's end and the composer. */
+    padding-bottom: 24px;
     margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
     max-width: none;
     /* v5: the header is solid; the thread fades in over 24px starting right at the header's
        bottom edge (no solid band, no hard cut). While newer content sits below the view, the
        bottom edge dissolves over 24px above the composer. */
     --c2-top-fade: transparent 0, #000 24px;
-    --c2-bottom-fade: #000 calc(100% - 24px), transparent 100%;
+    --c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
             mask-image: linear-gradient(to bottom, var(--c2-top-fade));
   }
@@ -1283,12 +1286,12 @@
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
             mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
   }
-  /* One anchoring rule for every state: a conversation shorter than the view reads from the
-     top, under its header, as a page does. Asks are the composer and waiting messages stand
-     in the thread, so nothing at the bottom needs the thread to sink down to it. */
-  .chat-thread-content { margin-block-start: 0; }
-  /* An empty conversation takes the whole view, so its empty state can stand in the middle. */
-  .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
+  /* v6: one anchoring rule for every state: a thread shorter than the view sits against the
+     composer (the thread's 24px bottom edge), and the empty space is at the top, under the
+     header. A long thread scrolls as before. */
+  .chat-thread-content { margin-block-start: auto; }
+  /* v6: an empty conversation's one line sits 24px above the composer, centred. */
+  .chat-thread-content:has(> :global([data-conversation-empty])) { justify-content: flex-end; }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */

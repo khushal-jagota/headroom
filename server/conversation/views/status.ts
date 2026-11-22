@@ -14,7 +14,7 @@ import type {
   ViewRestEvent,
   ViewRestTool,
 } from './contracts.ts';
-import { excerpt } from './logic/rest.ts';
+import { excerpt, narration_sentence } from './logic/rest.ts';
 import {
   _body,
   _body_reference,
@@ -252,6 +252,31 @@ export function read_status(
     const ending = _payload(sql, conversation_id, boundary.sequence);
     failed = ending.kind === 'turn_ended' && ending.ending === 'failed';
   }
+  // v6: what the running turn is saying, as one sentence of its own prose: the text it is
+  // streaming now, or else the last message it said in this turn. Never a tool or command.
+  let live_narration: string | null = null;
+  if (turn_key !== null && running !== false && !stopped) {
+    const streaming = live.output(conversation_id);
+    if (streaming !== null && streaming.byte_count > 0 && streaming.turn_key === turn_key) {
+      live_narration = narration_sentence(
+        live.read_chunk(conversation_id, streaming.reference, 0).text,
+      );
+    }
+    if (live_narration === null) {
+      const said = sql.get<{
+        sequence: number;
+      }>(
+        "SELECT sequence FROM conversation_view_rows WHERE conversation_id=? AND turn_key=? AND row_kind='agent_message' AND removed=0 ORDER BY sequence DESC LIMIT 1",
+        [conversation_id, turn_key],
+      );
+      if (said !== undefined) {
+        const source = _payload(sql, conversation_id, said.sequence);
+        if (source.kind === 'agent_message' || source.kind === 'message_to_owner') {
+          live_narration = narration_sentence(message_content_text(source.content));
+        }
+      }
+    }
+  }
   const background_tasks = sql.all<ViewBackgroundTask>(
     'SELECT task_id,task_description FROM conversation_background_tasks WHERE conversation_id=? ORDER BY rowid',
     [conversation_id],
@@ -290,5 +315,6 @@ export function read_status(
     // Both lenses can hold an opened running tool call, so both hear its progress.
     live_tool_key: live.latest_tool_id(conversation_id),
     live_tool_progress: live.progress(conversation_id),
+    live_narration,
   };
 }

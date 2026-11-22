@@ -52,6 +52,7 @@
     ownSenderLabel = null,
     livenessPulse = 0,
     projectedItems = null,
+    narration = null,
     outgoingMessages = [], onStopDrawingMessage, onSendAgain, acknowledgedMessageIds = new Set<string>()
   }: {
     outgoingMessages?: readonly OutgoingMessage[];
@@ -59,6 +60,9 @@
     onSendAgain?: (id: string) => Promise<void> | void;
     acknowledgedMessageIds?: ReadonlySet<string>;
     projectedItems?: readonly ThreadItem[] | null;
+    /** v6: whether an agent message is the turn's narration (not its final message, or any
+     *  message while the turn is live), when the caller knows its turn. Null: told by toOwner. */
+    narration?: boolean | null;
     activityUncertain?: boolean;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
@@ -196,11 +200,11 @@
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
       <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
     {:else if item.row.kind === "agent_message"}
-      {@const narration = lens === "full" && !item.row.toOwner}
+      {@const isNarration = lens === "full" && (narration ?? !item.row.toOwner)}
       <!-- In Full the agent's own narration sits beside what it said to the person. The
            narration steps back a tone and a size, so a message to the person reads as the
            turn's voice by tone and weight alone, with no rule or label beside it. -->
-      <article class="chat-a" class:chat-a--narration={narration} data-conversation-row="agent_message" data-conversation-to-owner={item.row.toOwner ? "" : undefined} data-conversation-source-key={item.row.key}>
+      <article class="chat-a" class:chat-a--narration={isNarration} data-conversation-row="agent_message" data-conversation-to-owner={item.row.toOwner ? "" : undefined} data-conversation-source-key={item.row.key}>
         <MessagePieces presentationRowKey={item.key} content={item.row.content} {conversationId} />
         <MessageActions content={item.row.content} createdAt={item.row.createdAt} />
       </article>

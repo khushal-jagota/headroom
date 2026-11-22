@@ -67,6 +67,12 @@
     const said = cause.charAt(0).toUpperCase() + cause.slice(1);
     return [said, status.next].filter(Boolean).join(" ");
   });
+  /** v6: an older error says its short cause on one inline row: the first sentence of it. */
+  let shortCause = $derived.by(() => {
+    const cause = status.title.replace(/^Not delivered:\s*/, "").replace(/^The turn stopped because\s*/, "").trim();
+    const said = cause.charAt(0).toUpperCase() + cause.slice(1);
+    return (said.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? said).replace(/[.!?]$/, "");
+  });
   /** v5: only the newest error callout in the conversation keeps the filled primary; older
    *  ones draw every action unfilled. Until it is measured (and on the server) a callout counts
    *  as the newest. */
@@ -98,7 +104,7 @@
     <button type="button" class="cv-button cv-button--ghost cv-button--small c2-status-toggle" aria-expanded={detailsOpen} aria-controls={detailsId}
       data-conversation-status-details onclick={() => (detailsOpen = !detailsOpen)}>
       <span>Details</span>
-      <svg class="c2-status-chevron" class:is-open={detailsOpen} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+      <svg class="c2-status-chevron" class:is-open={detailsOpen} viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
     </button>
   {/if}
 {/snippet}
@@ -120,11 +126,23 @@
   {/if}
 {/snippet}
 
-{#if shownWeight === "callout"}
+{#if shownWeight === "callout" && status.tone === "error" && !newest}
+  <!-- v6: only the newest error is a card with actions. An older one is one inline row: the
+       red dot, "This turn failed: <short cause>", then "Details ›". No tint, no edge, no
+       other actions. -->
+  <div bind:this={root} class="c2-status c2-status--inline c2-status--error" data-conversation-callout-newest="false" data-conversation-error-inline {...attributes}>
+    <span class="c2-status-inline-line">
+      <span class="c2-status-slot" aria-hidden="true"><span class="c2-status-dot"></span></span>
+      <span class="c2-status-inline-words"><span class="c2-status-inline-head">{calloutHeading}</span><span class="c2-status-sep" aria-hidden="true">·</span><span>{shortCause}</span></span>
+      {@render detailsToggle()}
+    </span>
+    {@render details()}
+  </div>
+{:else if shownWeight === "callout"}
   <!-- v4.1: a callout is always the full column width and left-aligned, whatever it belongs
        to; a message's callout says which message by its heading. -->
   <div bind:this={root} class="c2-status c2-status--callout c2-status--{status.tone}" class:is-older={!newest} data-conversation-callout-newest={newest ? "true" : "false"} {...attributes}>
-    <span class="c2-status-line"><span class="c2-status-dot" aria-hidden="true"></span><span class="c2-status-title">{calloutHeading}</span></span>
+    <span class="c2-status-line"><span class="c2-status-slot" aria-hidden="true"><span class="c2-status-dot"></span></span><span class="c2-status-title">{calloutHeading}</span></span>
     {#if calloutReason}<p class="c2-status-reason" data-conversation-status-next>{calloutReason}</p>{/if}
     {#if actions || status.detail || status.action === "choose-model"}
       <div class="c2-status-actions">
@@ -140,10 +158,10 @@
 {:else}
   <div bind:this={root} class="c2-status c2-status--note c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
     <div class="c2-status-body">
-      <!-- The mark rides with the sentence, so a line under a message can end on the
-           message's own edge, mark and all. -->
-      <span class="c2-status-line">{@render glyph()}<span class="c2-status-title">{status.title}</span></span>
-      {#if status.next}<span class="c2-status-next c2-status-indent" data-conversation-status-next>{status.next}</span>{/if}
+      <!-- v7 status line: a 16px icon slot, the label (500 #ececec), then " · " and the
+           detail (400 #b0b0b0). The mark rides with the sentence, so a line under a message
+           ends on the message's own edge, mark and all. -->
+      <span class="c2-status-line"><span class="c2-status-slot">{@render glyph()}</span><span class="c2-status-title">{status.title}</span>{#if status.next}<span class="c2-status-sep" aria-hidden="true">·</span><span class="c2-status-next" data-conversation-status-next>{status.next}</span>{/if}</span>
       {#if actions || status.detail}<div class="c2-status-actions c2-status-actions--note c2-status-indent">{#if actions}{@render actions()}{/if}{@render detailsToggle()}</div>{/if}
       {#if status.detail}<div class="c2-status-indent">{@render details()}</div>{/if}
     </div>
@@ -151,151 +169,144 @@
 {/if}
 
 <style>
+  /* v7: every line here is a Status line (13/20: a 16px icon slot, the label 500 #ececec, then
+     " · " and the detail 400 #b0b0b0), and the newest error is a Surface card. Older errors are
+     one status line with a #f08a7e dot. Actions are Buttons: primary (Resend), secondary
+     (Choose another model), quiet (Details). */
   .c2-status {
     min-width: 0;
     max-width: 100%;
-    color: var(--cv-t3);
+    color: var(--cv-detail-ink, #b0b0b0);
     font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
+    font-size: 13px;
+    line-height: 20px;
     overflow-wrap: anywhere;
   }
+  .c2-status-slot { flex: none; display: inline-grid; place-items: center; width: 16px; height: 20px; }
   .c2-status-mark {
     flex: none;
-    width: 14px;
-    height: 14px;
-    margin-block-start: 3px;
+    width: 16px;
+    height: 16px;
     fill: none;
-    stroke: currentColor;
+    stroke: var(--cv-quiet-ink, #bdbdbd);
     stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
   .c2-status-fill { fill: currentColor; stroke: none; }
   .c2-status-body { display: grid; min-width: 0; }
-  .c2-status-line { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+  .c2-status-line { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+  .c2-status-title { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
+  .c2-status-sep { margin-inline: -2px; color: var(--cv-detail-ink, #b0b0b0); }
+  .c2-status-next { color: var(--cv-detail-ink, #b0b0b0); font-weight: var(--cv-weight-body); }
+  .c2-status-dot { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--cv-detail-ink, #b0b0b0); }
+  .c2-status--error .c2-status-dot { background: #f08a7e; }
 
-  /* Note: one line, its own width, under the bubble or in the turn. */
-  .c2-status--note {
-    align-self: flex-start;
-    display: flex;
-    align-items: flex-start;
-    gap: var(--cv-s2);
-    width: fit-content;
-  }
-  .c2-status--note .c2-status-body { gap: 2px; }
+  /* A note: one status line, its own width, under the bubble or in the turn. */
+  .c2-status--note { align-self: flex-start; display: flex; width: fit-content; }
+  .c2-status--note .c2-status-body { gap: 8px; }
   .c2-status--end { align-self: flex-end; text-align: end; }
   .c2-status--end .c2-status-body { justify-items: end; }
-  .c2-status-indent { padding-inline-start: 20px; }
+  .c2-status-indent { padding-inline-start: 24px; }
   .c2-status--end .c2-status-indent { padding-inline-start: 0; }
-  .c2-status--note .c2-status-title { color: var(--cv-t3); }
-  .c2-status--note.c2-status--error { color: var(--cv-danger); }
-  .c2-status--note.c2-status--error .c2-status-title { color: var(--cv-danger); }
-  .c2-status--note.c2-status--warning { color: var(--cv-caution); }
-  .c2-status--note.c2-status--warning .c2-status-title { color: var(--cv-caution); }
-  .c2-status--note .c2-status-next { color: var(--cv-t3); }
+  /* Failure is said by the #f08a7e mark alone; words stay in the status tones. */
+  .c2-status--note.c2-status--error .c2-status-mark { stroke: #f08a7e; }
 
-  /* Callout (v4.1): one block for every error, always the full column width, left-aligned.
-     Radius 12, padding 16, no edge. An error's block wears a faint red tint, the only tinted
-     surface in the conversation; any other callout stays on #191919. Row 1: the danger dot
-     and what failed, 14 semibold in the first tone. Row 2: the reason in the prose voice.
-     Row 3: its actions, one size: the first one filled, the rest bare, Details last. */
+  /* An older error, inline: dot · "This turn failed" · the short cause, Details after it. */
+  .c2-status--inline { align-self: stretch; display: grid; text-align: start; }
+  .c2-status-inline-line { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
+  .c2-status-inline-words { display: flex; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .c2-status-inline-words > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .c2-status-inline-head { flex: none; color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
+  .c2-status--inline .c2-status-toggle { flex: none; }
+
+  /* The newest error: a Surface (#1c1c1c, a 1px #2a2a2a edge, radius 20), padding 16. Its
+     status line, the reason in the UI voice (15/24 #ececec), then its buttons. */
   .c2-status--callout {
     align-self: stretch;
     display: grid;
-    padding: var(--cv-s4);
-    border-radius: var(--cv-r-lg);
-    background: #191919;
+    padding: 16px;
+    border: 1px solid var(--cv-surface-edge, #2a2a2a);
+    border-radius: var(--cv-surface-radius, 20px);
+    background: var(--cv-surface, #1c1c1c);
     text-align: start;
   }
-  /* v5.2: a faint red fill (7%) held by a 1px red edge (22%). */
-  .c2-status--callout.c2-status--error { background: rgb(229 132 138 / 7%); box-shadow: inset 0 0 0 1px rgb(229 132 138 / 22%); }
-  .c2-status-dot { flex: none; width: 8px; height: 8px; margin-block-start: 6px; border-radius: 50%; background: var(--cv-t3); }
-  .c2-status--error .c2-status-dot { background: #e5848a; }
-  .c2-status--warning .c2-status-dot { background: var(--cv-caution); }
-  .c2-status--callout .c2-status-line { gap: 10px; }
-  .c2-status--callout .c2-status-title {
-    color: var(--cv-t1);
-    font-size: var(--cv-type-ui);
-    line-height: var(--cv-leading-ui);
-    font-weight: var(--cv-weight-title);
-  }
   .c2-status-reason {
-    margin: var(--cv-s1) 0 0;
-    color: var(--cv-t2);
-    font-size: var(--cv-type-prose);
-    line-height: var(--cv-leading-prose);
+    margin: 8px 0 0;
+    color: var(--cv-ink, #ececec);
+    font-size: 15px;
+    line-height: 24px;
   }
   .c2-status--callout .c2-status-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--cv-s2);
-    margin-block-start: var(--cv-s3);
+    gap: 8px;
+    margin-block-start: 16px;
   }
 
-  /* Details is a quiet ghost beside the real next step, never above it. Its chevron sits
-     right after its word. */
-  /* v5: Details is 13px #b0b0b0, quieter than the real actions. */
-  .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t3); font-size: 13px; font-weight: var(--cv-weight-body); }
-  /* The callout's buttons (v4.2), one size, 32 high: the first action wears the one primary
-     style of the conversation (#f2f2f2, #121212 words, radius 18), whether it is Resend or,
-     alone, Choose another model; the others are bare in #d9d9d9. The same in every callout. */
-  :global(.c2-status-main), :global(.c2-status-second) {
+  /* Buttons (v7 part 2): 32 tall pills, 13/20 500, padding 0 14, a 16px icon 6px before
+     its word. Primary #f2f2f2 on #141414; secondary #2a2a2a with #ececec; quiet no fill,
+     #bdbdbd, hover #2a2a2a. */
+  .c2-status-toggle {
+    gap: 6px;
+    height: 32px;
     min-height: 32px;
-    padding: 0 var(--cv-s4);
-    border-radius: 18px;
-    font-size: var(--cv-type-meta);
+    padding: 0 10px 0 14px;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--cv-quiet-ink, #bdbdbd);
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: var(--cv-weight-label);
   }
-  :global(.c2-status-main) { background: #f2f2f2; color: #121212; }
-  :global(.c2-status-main:hover:not(:disabled)) { background: #ffffff; color: #121212; }
-  :global(.c2-status-main:disabled) { background: #2a2a2a; color: var(--cv-t3); }
-  :global(.c2-status-second) { background: transparent; color: var(--cv-t2); }
-  :global(.c2-status-second:hover:not(:disabled)) { background: #2a2a2a; color: var(--cv-t1); }
-  /* With no Resend before it, Choose another model is the first action and takes the primary. */
-  .c2-status-actions > :global(.c2-status-second:first-child) { background: #f2f2f2; color: #121212; }
-  .c2-status-actions > :global(.c2-status-second:first-child:hover:not(:disabled)) { background: #ffffff; color: #121212; }
-  /* v5: an older callout (not the newest error in the conversation) shows all its actions
-     unfilled. */
-  .c2-status--callout.is-older :global(:is(.c2-status-main, .c2-status-second)),
-  .c2-status--callout.is-older .c2-status-actions > :global(.c2-status-second:first-child) { background: transparent; color: var(--cv-t2); }
-  .c2-status--callout.is-older :global(:is(.c2-status-main, .c2-status-second):hover:not(:disabled)) { background: #2a2a2a; color: var(--cv-t1); }
-  /* Unfilled, the first action's words stand on the callout's text edge, not inset by its pad. */
-  .c2-status--callout.is-older .c2-status-actions > :global(:is(.c2-status-main, .c2-status-second):first-child) { margin-inline-start: calc(var(--cv-s4) * -1); }
-  .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { color: var(--cv-t1); }
-  .c2-status-actions > .c2-status-toggle:first-child { margin-inline-start: calc(var(--cv-s2) * -1); }
+  .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { background: #2a2a2a; color: var(--cv-ink, #ececec); }
+  :global(.c2-status-main), :global(.c2-status-second) {
+    height: 32px;
+    min-height: 32px;
+    padding: 0 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: var(--cv-weight-label);
+  }
+  :global(.c2-status-main) { background: #f2f2f2; color: #141414; }
+  :global(.c2-status-main:hover:not(:disabled)) { background: #ffffff; color: #141414; }
+  :global(.c2-status-main:disabled) { background: #2a2a2a; color: #8c8c8c; }
+  :global(.c2-status-second) { background: #2a2a2a; color: var(--cv-ink, #ececec); }
+  :global(.c2-status-second:hover:not(:disabled)) { background: #3a3a3a; color: var(--cv-ink, #ececec); }
   .c2-status-chevron {
     flex: none;
-    width: 12px;
-    height: 12px;
+    width: 16px;
+    height: 16px;
     fill: none;
     stroke: currentColor;
-    stroke-width: 2;
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: transform var(--cv-dur-expand) var(--cv-ease-out);
   }
   .c2-status-chevron.is-open { transform: rotate(90deg); }
 
-  /* The backend's words: a canvas well with its own Copy in the corner. */
-  .c2-status-more { position: relative; min-width: 0; margin-block-start: var(--cv-s2); }
+  /* The backend's words: a code block (#1a1a1a, a 1px #2a2a2a edge, radius 12, 13/20 mono). */
+  .c2-status-more { position: relative; min-width: 0; margin-block-start: 8px; }
   .c2-status-more[hidden] { display: none; }
   .c2-status-detail {
     display: block;
-    padding: var(--cv-s2) 40px var(--cv-s2) var(--cv-s3);
-    border-radius: var(--cv-r-md);
-    background: var(--cv-canvas);
-    color: var(--cv-t3);
+    padding: 12px 48px 12px 16px;
+    border: 1px solid var(--cv-surface-edge, #2a2a2a);
+    border-radius: 12px;
+    background: var(--cv-code-surface, #1a1a1a);
+    color: var(--cv-detail-ink, #b0b0b0);
     font-family: var(--cv-mono);
-    font-size: var(--cv-type-output);
-    line-height: var(--cv-leading-output);
+    font-size: 13px;
+    line-height: 20px;
     white-space: pre-wrap;
     text-align: start;
     user-select: text;
   }
   .c2-status-copy { position: absolute; top: 4px; right: 4px; }
-  .c2-status--note .c2-status-detail { background: var(--cv-well); }
-  .c2-status-actions--note { display: flex; align-items: center; gap: var(--cv-s2); margin-block-start: var(--cv-s1); }
+  .c2-status-actions--note { display: flex; align-items: center; gap: 8px; }
   .c2-status--end .c2-status-actions--note { justify-content: flex-end; }
   @media (prefers-reduced-motion: reduce) { .c2-status-chevron { transition: none; } }
 </style>

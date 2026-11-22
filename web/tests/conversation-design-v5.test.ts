@@ -30,7 +30,8 @@ describe("design v5: empty and header", () => {
     expect(pane).toContain("font: var(--cv-weight-title) 16px/24px var(--cv-font);");
     expect(pane).not.toContain("data-conversation-subtitle");
     expect(pane).toContain('{stateControl.opensIt ? "Open conversation" : "Dock"}');
-    expect(pane).toMatch(/\.chat-head-collapse \{[^}]*height: 32px;[^}]*color: var\(--cv-t2\);/);
+    // v7: Dock is a quiet Button: 32 tall pill, #bdbdbd.
+    expect(pane).toMatch(/\.chat-head-collapse \{[^}]*height: 32px;[^}]*border-radius: 999px;[^}]*color: #bdbdbd;/);
   });
 });
 
@@ -85,9 +86,9 @@ describe("design v5.1: turn timing at the top, Paused under a waiting ask", () =
     return render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: null, livenessPulse: 0 } }).body;
   };
 
-  it("a running turn says Working at its head and draws no Paused line", () => {
+  it("v6: a running turn's top draws nothing (its live line is the live edge) and no Paused line", () => {
     const html = draw({});
-    expect(html).toContain("data-conversation-alive-word");
+    expect(html).not.toContain("data-conversation-alive-word");
     expect(html).not.toContain("data-conversation-paused");
   });
 
@@ -95,18 +96,17 @@ describe("design v5.1: turn timing at the top, Paused under a waiting ask", () =
     const html = draw({ pending_permission: { kind: "permission", request_id: "a1" } });
     expect(html).not.toContain("data-conversation-paused");
     expect(html).not.toContain("data-conversation-alive-word");
+    // v6: no Paused line anywhere; the ask card's own label is the one waiting label.
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
-    expect(composer).toContain('<div class="chat-paused" role="status" data-conversation-paused={pausedFor}>');
-    expect(composer).toMatch(/\.chat-paused \{[^}]*margin-block-end: 12px;/);
-    expect(composer).toContain(':global([data-conversation-state="rest"]) .chat-paused { display: none; }');
+    expect(composer).not.toContain("chat-paused");
   });
 
-  it("p12c: the dock's status row says Paused · waiting for your permission / answer over an ask", () => {
+  it("v6: with the ask card showing under it, the dock's status row is empty on the left", () => {
     const facts = { readOnly: false, activityUncertain: false, waitingForYou: true, waitingFor: "approval" as const, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
-    const draw = (pausedFor: "permission" | "answer") => render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState(facts), askBelow: true, pausedFor } }).body;
-    expect(draw("permission")).toMatch(/data-conversation-rest-paused="permission"[^>]*><span[^>]*><\/span><span class="c2-rest-paused-word[^"]*">Paused<\/span><span aria-hidden="true">·<\/span><span>waiting for your permission/);
-    expect(draw("answer")).toContain("waiting for your answer");
-    expect(draw("answer")).toContain("Open conversation");
+    const html = render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState(facts), askBelow: true } }).body;
+    expect(html).not.toContain("Paused");
+    expect(html).not.toContain("data-conversation-rest-line");
+    expect(html).toContain("Open conversation");
   });
 
   it("p12c: the dock's Working · time is spaced as the transcript's (three parts, 6px apart)", () => {
@@ -116,40 +116,46 @@ describe("design v5.1: turn timing at the top, Paused under a waiting ask", () =
     expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-working { display:inline-flex; align-items:center; gap:6px; }");
   });
 
-  it("the running row is the live tool: a spinner in place of the glyph, no time, a command of at most two lines", () => {
+  it("p13b: the running row keeps the run's static icon (the Working line holds the one spinner); no time; one line, chevron after it", () => {
     const running = { title: "Running", summary: "go test -race ./internal/push/...", summaryIsLiteral: true, sentence: "Running go test" } as unknown as ToolCallPresentation;
     const html = render(ToolRunSummary, { props: { summary: { sentence: "Ran 2 commands", failedCount: 0, running, iconPaths: [] }, callCount: 3, onToggle: () => {} } }).body;
-    expect(html).toContain("data-conversation-run-spinner");
-    expect(html).not.toContain("c2-run-icon");
+    expect(html).not.toContain("data-conversation-run-spinner");
+    expect(html).toContain('data-conversation-run-icon="running"');
+    expect(html).toMatch(/c2-run-verb[^>]*>Running</);
     const summary = source("../src/components/conversation/ToolRunSummary.svelte");
-    expect(summary).toMatch(/\.c2-run-summary\.is-live \.c2-run-line \{[^}]*-webkit-line-clamp: 2;/);
+    expect(summary).not.toContain("line-clamp");
+    expect(summary).not.toContain("c2-run-spin");
+    expect(summary).toContain(".c2-run-summary.is-live .c2-run-verb { margin-inline-end: 2px; color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }");
+    const call = source("../src/components/conversation/ToolCallRow.svelte");
+    expect(call).not.toContain("acp-spin");
+    expect(call).toContain('.acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }');
+    expect(html.indexOf("c2-run-subject")).toBeLessThan(html.indexOf("c2-run-chevron"));
     expect(source("../src/components/conversation/ToolCallRow.svelte")).not.toContain("data-conversation-tool-elapsed");
   });
 
-  it("Working and Paused labels are 13 medium #d9d9d9", () => {
-    expect(source("../src/components/conversation/TurnAnchor.svelte")).toContain(".c2-meta-working { color: var(--cv-t2); font-weight: var(--cv-weight-label); }");
-    expect(source("../src/components/conversation/ConversationComposer.svelte")).toContain(".chat-paused-word { color: var(--cv-t2); font-weight: var(--cv-weight-label); }");
+  it("v7: the Working label is a status label, 13/20 500 #ececec", () => {
+    expect(source("../src/components/conversation/TurnAnchor.svelte")).toContain(".c2-meta-working { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }");
   });
 });
 
 describe("design v5: errors", () => {
   const status = { tone: "error" as const, title: "The turn stopped because the model's rate limit was reached.", detail: "429", next: "Send a message once the limit resets." , action: "choose-model" as const };
-  it("a callout counts as the newest until measured, and an older one draws every action unfilled", () => {
+  it("a callout counts as the newest until measured; v6: an older one is an inline status line", () => {
     const html = render(TranscriptStatusRow, { props: { status } }).body;
     expect(html).toContain('data-conversation-callout-newest="true"');
     const row = source("../src/components/conversation/TranscriptStatusRow.svelte");
     expect(row).toContain("registerCallout(root");
-    expect(row).toMatch(/\.c2-status--callout\.is-older[^{]*\{ background: transparent; color: var\(--cv-t2\); \}/);
+    expect(row).toContain('data-conversation-error-inline');
   });
-  it("Details is 13px #b0b0b0", () => {
-    expect(source("../src/components/conversation/TranscriptStatusRow.svelte")).toContain(".c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t3); font-size: 13px;");
+  it("v7: Details is a quiet Button, 13/20 500 #bdbdbd", () => {
+    expect(source("../src/components/conversation/TranscriptStatusRow.svelte")).toMatch(/\.c2-status-toggle \{[^}]*height: 32px;[^}]*color: var\(--cv-quiet-ink, #bdbdbd\);\s*font-size: 13px;/);
   });
 });
 
 describe("design v5: controls", () => {
   it("v5.4: Jump to latest is a 32px round button straddling the composer's top edge, centred on the column", () => {
     expect(app).toMatch(/\.cv-jump \{[^}]*position: absolute;\s*left: 50%;\s*bottom: -16px;\s*transform: translateX\(-50%\);[^}]*width: 32px;\s*height: 32px;[^}]*border: 1px solid #3a3a3a;\s*border-radius: 50%;\s*background: #262626;\s*color: #d9d9d9;/);
-    expect(app).toContain("[data-conversation-pane]:has(.chat-paused) .cv-jump { bottom: calc(-16px - 30px); }");
+    expect(app).not.toContain(".chat-paused");
     expect(pane).not.toContain("</svg>{jump.label}</button>");
   });
   it("v5.4: it shows only when the newest content is more than one viewport below the visible area", async () => {
@@ -162,9 +168,9 @@ describe("design v5: controls", () => {
     const viewport = source("../src/components/conversation/viewport/ConversationViewport.svelte");
     expect(viewport).toContain("const jumpShown = $derived(newestLineFarBelow || newerHistory || newerThanUnplacedAnchor || latestPending);");
   });
-  it("dropdowns open 8px above their chip and fit their longest label (min 160)", () => {
+  it("dropdowns fit their longest label (min 160); v6: the composer's open 8px above the composer's top edge", () => {
     const mode = source("../src/components/conversation/composer/DeliveryModePicker.svelte");
-    expect(mode).toMatch(/bottom: calc\(100% \+ 8px\);\s*width: max-content;\s*min-width: 160px;/);
+    expect(mode).toMatch(/bottom: calc\(100% \+ 8px \+ var\(--c2-menu-lift, 0px\)\);\s*width: max-content;\s*min-width: 160px;/);
     const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
     expect(held).toMatch(/bottom: calc\(100% \+ 8px\);\s*width: max-content;\s*min-width: 160px;/);
   });
@@ -179,29 +185,31 @@ describe("design v5: controls", () => {
     expect(held).toContain('{#if menuOpenFor === row.key}<path d="m4 10 4-4 4 4" />');
     expect(source("../src/components/conversation/ListboxPicker.svelte")).toContain('{#if open}<path d="M6 15l6-6 6 6" />');
   });
-  it("Stop is #f2f2f2 with a #121212 square; disabled send #242424 with a #737373 arrow", () => {
+  it("Stop is #f2f2f2 with a #121212 square; v6: disabled send #2a2a2a with a #8c8c8c arrow", () => {
     expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #121212; }");
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #242424;\s*color: #737373;/);
+    expect(app).toMatch(/\.chat-send \{[^}]*background: #2a2a2a;\s*color: #8c8c8c;/);
   });
 });
 
 describe("design v5.2: surfaces", () => {
-  it("the dock stands on #161616 with 16px top corners and 12 16 padding, no hairline", () => {
-    expect(app).toMatch(/> \.conversation-layer > \.conversation-column \{\s*box-sizing: border-box;[^}]*padding: 12px 16px;\s*border-radius: 16px 16px 0 0;\s*background: #161616;/);
+  it("v6.1 (27): the dock has no surface of its own; it sits on the canvas with its canvas fade", () => {
+    expect(app).not.toContain("#161616");
+    expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain("background:linear-gradient(to bottom, transparent, var(--cv-canvas));");
   });
   it("a waiting proposal's dock line says Needs your approval", () => {
     const facts = { readOnly: false, activityUncertain: false, waitingForYou: true, waitingFor: "approval" as const, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
     const html = render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState(facts), pageHoldsTheAsk: true } }).body;
     expect(html).toContain("Needs your approval");
   });
-  it("tables: head 13 semibold #d9d9d9, every cell #d9d9d9", () => {
-    expect(app).toContain(".chat-thread .markdown td { color: #d9d9d9; }");
+  it("v6: tables: head 14 semibold #f2f2f2, body 15 regular #d9d9d9", () => {
+    expect(app).toContain(".chat-thread .markdown th { color: #f2f2f2; font-size: 14px; line-height: 20px; }");
+    expect(app).toContain(".chat-thread .markdown td { color: #d9d9d9; font-size: 15px; line-height: 22px; font-weight: var(--cv-weight-body); }");
     expect(app).not.toContain(".chat-thread .markdown td:first-child { color: var(--cv-t1); }");
   });
   it("sent pictures up to 320 tall; composer picture chips 76 tall", () => {
     expect(app).toMatch(/\.chat-u \.file-preview-media > :is\(\.file-preview-image, \.file-preview-video-poster\) \{\s*max-height: 320px;/);
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
-    expect(composer).toContain(".chat-att.img { width: 76px; height: 76px; }");
+    expect(composer).toMatch(/\.chat-att\.img \{ width: 76px; height: 76px;/);
     // p12c: the file chip is as tall, its content centred.
     expect(composer).toMatch(/\.chat-att\.file \{\s*height: 76px;\s*align-items: center;/);
   });

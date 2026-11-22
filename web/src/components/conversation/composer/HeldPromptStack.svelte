@@ -251,7 +251,8 @@
   }
   /* A picture waiting to go is a thumbnail of itself: what it is, not the picture at size. */
   .chat-qrow :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; margin: 0; }
-  .chat-qrow :global(.c2-piece-image-slot img) { width: auto; max-width: 160px; max-height: 96px; object-fit: cover; opacity: .8; border-radius: var(--cv-r-lg); outline: 1px solid rgb(255 255 255 / 12%); outline-offset: -1px; }
+  /* v6: a queued picture wears the queued bubble's frame (1px at 16%), at full strength. */
+  .chat-qrow :global(.c2-piece-image-slot img) { width: auto; max-width: 160px; max-height: 96px; object-fit: cover; border-radius: var(--cv-r-lg); outline: 1px solid rgb(255 255 255 / 16%); outline-offset: -1px; }
   .chat-qrow-meta { display: flex; justify-content: flex-end; }
   .chat-qrow-anchor { position: relative; display: inline-flex; }
   /* The chip: clock, "Queued", chevron, 13 in the meta tone; its hover lifts onto a fill. */
@@ -259,25 +260,27 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 28px;
-    margin-inline-end: calc(var(--cv-s2) * -1);
-    padding: 0 var(--cv-s2);
+    /* v7: the Queued chip is a Composer control: 32 tall, text-only at rest (#d9d9d9, a 16px
+       clock and a 12px chevron), hover #2a2a2a, open #3a3a3a. */
+    height: 32px;
+    margin-inline-end: -10px;
+    padding: 0 8px 0 10px;
     border: 0;
-    border-radius: var(--cv-r-md);
+    border-radius: 999px;
     background: none;
-    color: var(--cv-t3);
-    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    color: #d9d9d9;
+    font: var(--cv-weight-label) 13px/20px var(--cv-font);
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-qrow-chip.is-static { cursor: default; }
-  .chat-qrow-chip:not(.is-static):hover:not(:disabled) { background: var(--cv-raised); color: var(--cv-t1); }
+  .chat-qrow-chip:not(.is-static):hover:not(:disabled) { background: #2a2a2a; color: #ececec; }
   /* p12c: an open chip is filled #3a3a3a, its words #f2f2f2, its chevron pointing up. */
   .chat-qrow-chip[aria-expanded="true"], .chat-qrow-chip[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }
   .chat-qrow-chip:disabled { cursor: default; }
   .chat-qrow-chip:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
-  .chat-qrow-clock { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  .chat-qrow-chevron { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .chat-qrow-clock { width: 16px; height: 16px; fill: none; stroke: #bdbdbd; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .chat-qrow-chevron { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .chat-qrow-spin {
     width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%;
     border: 2px solid rgb(255 255 255 / 22%); border-top-color: var(--cv-t1);
@@ -296,8 +299,11 @@
     min-width: 160px;
     display: grid;
     padding: 6px;
-    border-radius: var(--cv-r-lg);
-    background: var(--cv-float);
+    /* v7: a menu is a Surface (#1c1c1c, a 1px #2a2a2a edge, radius 20) floating with a shadow;
+       its rows are quiet buttons. */
+    border: 1px solid #2a2a2a;
+    border-radius: 20px;
+    background: #1c1c1c;
     box-shadow: var(--cv-shadow-float);
     animation: chat-qrow-pop var(--cv-dur-base) var(--cv-ease-out);
   }
@@ -305,21 +311,21 @@
   .chat-qrow-item {
     display: flex;
     align-items: center;
-    min-height: 36px;
-    padding: 0 var(--cv-s3);
+    min-height: 32px;
+    padding: 0 14px;
     border: 0;
-    border-radius: var(--cv-r-md);
+    border-radius: 999px;
     background: none;
-    color: var(--cv-t1);
-    font: var(--cv-weight-body) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font);
+    color: #ececec;
+    font: var(--cv-weight-label) 13px/20px var(--cv-font);
     text-align: start;
     white-space: nowrap;
     cursor: pointer;
   }
-  .chat-qrow-item:hover:not(:disabled), .chat-qrow-item:focus-visible { background: rgb(255 255 255 / 8%); outline: none; }
+  .chat-qrow-item:hover:not(:disabled), .chat-qrow-item:focus-visible { background: #2a2a2a; outline: none; }
   .chat-qrow-item:disabled { color: var(--cv-t3); cursor: default; }
-  .chat-qrow-x { color: #e5848a; }
-  .chat-qrow-x:hover:not(:disabled) { color: #e5848a; }
+  .chat-qrow-x { color: #ececec; }
+  .chat-qrow-x:hover:not(:disabled) { color: #ececec; }
   @media (prefers-reduced-motion: reduce) {
     .chat-qrow { animation: none; }
     .chat-qrow-spin { animation: none; }

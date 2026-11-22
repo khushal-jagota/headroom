@@ -94,6 +94,7 @@
     conversationState = $bindable(null),
     waitingOnPage = null,
     emptyState,
+    lensHidden = false,
     reader = null,
     acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
@@ -208,6 +209,8 @@
      *  their approval). The dock's line then says the conversation waits on them. */
     waitingOnPage?: "approval" | null;
     emptyState?: Snippet;
+    /** v6: an empty conversation hides the Focus/Full toggle (nothing to switch between). */
+    lensHidden?: boolean;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -462,6 +465,7 @@
     </div>
     <!-- Two named choices rather than one control whose label is the state it is in:
          which lens you are in and which you can move to are both on the screen. -->
+    {#if !lensHidden}
     <div
       class="cv-segmented"
       role="group"
@@ -485,6 +489,7 @@
         onclick={() => (lens = "full")}
       >Full</button>
     </div>
+    {/if}
     <div class="chat-head-right">
       {#if stateControl !== null && conversationState !== "rest"}
         <!-- v5.1: a text button "Dock" with a down chevron, the same style as the dock's
@@ -660,7 +665,6 @@
       waitingTitle={restLine?.waiting ? restWaitingTitle : null}
       pageHoldsTheAsk={waitingOnPage !== null && ask === null && userInput === null && !credentialWaiting}
       askBelow={ask !== null || userInput !== null || credentialWaiting}
-      pausedFor={userInput !== null ? "answer" : ask !== null ? (askShape(ask) === "question" ? "answer" : "permission") : null}
       offline={activityUncertain}
       feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
@@ -772,8 +776,8 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    color: var(--cv-t1);
-    /* v5.2: 16 semibold #f2f2f2. */
+    color: #ececec;
+    /* v7: the header title 16/24 600. */
     font: var(--cv-weight-title) 16px/24px var(--cv-font);
   }
   .cv-state {
@@ -800,41 +804,44 @@
     display: inline-flex;
     align-items: center;
     gap: var(--cv-s1);
+    /* v7: a quiet Button: 32 tall pill, 13/20 500, #bdbdbd, its 16px chevron 6px after. */
+    gap: 6px;
     height: 32px;
-    padding: 0 var(--cv-s2) 0 var(--cv-s3);
+    padding: 0 10px 0 14px;
     border: 0;
-    border-radius: var(--cv-r-md);
+    border-radius: 999px;
     background: transparent;
-    color: var(--cv-t2);
-    font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    color: #bdbdbd;
+    font: var(--cv-weight-label) 13px/20px var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: var(--cv-t1); background-color: var(--cv-control); }
+  .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
-  .chat-head-collapse svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .chat-head-collapse svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
   /* --- Lens: a segmented control. The track is a well; the chosen segment is a control. */
+  /* v7: Focus and Full are two Buttons: the shown lens a secondary (#2a2a2a with #ececec),
+     the other quiet (#bdbdbd, hover #2a2a2a). 32 tall pills, 13/20 500, padding 0 14. No track. */
   .cv-segmented {
     display: inline-flex;
     flex: none;
-    padding: 2px;
-    border-radius: 10px;
-    background: var(--cv-well);
+    gap: 4px;
   }
   .cv-segment {
-    min-height: 28px;
-    padding: var(--cv-s1) var(--cv-s3);
+    min-height: 32px;
+    height: 32px;
+    padding: 0 14px;
     border: 0;
-    border-radius: var(--cv-r-md);
+    border-radius: 999px;
     background: transparent;
-    color: var(--cv-t3);
-    font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    color: #bdbdbd;
+    font: var(--cv-weight-label) 13px/20px var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .cv-segment:hover { color: var(--cv-t1); }
-  .cv-segment[aria-pressed="true"] { background: var(--cv-control); color: var(--cv-t1); }
+  .cv-segment:hover { background: #2a2a2a; color: #ececec; }
+  .cv-segment[aria-pressed="true"] { background: #2a2a2a; color: #ececec; }
   .cv-segment:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   .conversation-read-only {

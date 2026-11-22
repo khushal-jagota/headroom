@@ -21,6 +21,9 @@
   let busy = $state(false);
   const label = $derived(promptLabelFor(row?.senderLabel ?? local?.senderLabel ?? '', ownSenderLabel));
   const content = $derived(row?.content ?? local?.content ?? []);
+  /** v6: a system note's words as one plain line of text (Markdown marks dropped). */
+  const systemText = $derived(content.flatMap(piece => piece.piece === 'text' ? [piece.text] : []).join(' ')
+    .replace(/`([^`]*)`/g, '$1').replace(/(\*\*|__)(.+?)\1/g, '$2').replace(/\s+/g, ' ').trim());
   // A message turned away for a reason sending it again can get past offers Resend, on the
   // message itself and at rest, not on hover: it is the next step its status line names.
   // Once it has gone out again the button goes, so one press is one more message.
@@ -60,19 +63,14 @@
 </script>
 <article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} class:undelivered={row?.kind === 'prompt_refused' || row?.kind === 'prompt_discarded'} class:has-callout={label === null && status?.tone === 'error'} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
   {#if label !== null}
-    <!-- Someone other than the person wrote this (Panels, another agent). v5: a small well,
-         "From Panels" (12 semibold) on line 1 and the words (14) on line 2, both #b0b0b0. -->
-    <div class="c2-system-row">
-      <div class="c2-system-body">
-        <div class="c2-label" data-conversation-prompt-label>From {label}</div>
-        <MessagePieces {presentationRowKey} {content} {conversationId}/>
-      </div>
-    </div>
+    <!-- Someone other than the person wrote this (Panels, another agent). v6: a centred system
+         note with no box: "From Panels · " and the words, 13/20 #b0b0b0, at most two lines. -->
+    <p class="c2-system-note" data-conversation-system-note title={systemText}><span class="c2-label" data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</p>
   {:else}
     <MessagePieces {presentationRowKey} {content} {conversationId} bubble/>
   {/if}
   {#if steered}
-    <TranscriptStatusRow status={{ tone: 'quiet', title: 'Steered into the running turn', detail: null }} mark="steer" align="end" data-conversation-steered=""/>
+    <TranscriptStatusRow status={{ tone: 'quiet', title: 'Steered', next: 'into the running turn', detail: null }} mark="steer" align="end" data-conversation-steered=""/>
   {/if}
   <div class="message-status-window" use:conversationHeight><div class="message-status">
     {#if status}
@@ -111,36 +109,24 @@
   .chat-u :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; }
   .chat-u :global(.conversation-file-card--media) { align-self: flex-end; }
 
-  /* v5: Panels' words stand in a small well (#191919, radius 10, padding 10 14), fitted to
-     them: "From Panels" 12 semibold #b0b0b0 on line 1, the words 14 #b0b0b0 on line 2. */
-  .c2-system-row {
-    align-self: flex-start;
+  /* v6: Panels' words are a centred system note with no box: 13/20 #b0b0b0, "From Panels · "
+     then the words, at most two lines. */
+  .c2-system-note {
+    align-self: center;
     max-width: 100%;
-    box-sizing: border-box;
-    padding: 10px 14px;
-    border-radius: 10px;
-    background: #191919;
+    margin: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
     color: #b0b0b0;
+    font: var(--cv-weight-body) 13px/20px var(--cv-font);
+    text-align: center;
+    overflow-wrap: anywhere;
   }
-  .c2-system-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .c2-label {
-    color: #b0b0b0;
-    font: var(--cv-weight-label) 12px/16px var(--cv-font);
-  }
-  .c2-system-body :global(.markdown) {
-    color: #b0b0b0;
-    font-size: 14px;
-    line-height: 20px;
-  }
-  .c2-system-body :global(.markdown :is(p, ul, ol, blockquote)) { margin-block-end: var(--cv-s2); }
-  .c2-system-body :global(.markdown > :last-child) { margin-block-end: 0; }
-  .c2-system-body :global(.markdown :is(h1, h2, h3, h4, h5, h6)) {
-    margin-block: var(--cv-s2) 0;
-    color: #b0b0b0;
-    font-size: 14px;
-    line-height: 20px;
-  }
-  .c2-system-body :global(.markdown :is(strong, b, h1, h2, h3, h4, h5, h6)) { color: #b0b0b0; }
+  /* v7: it is a status line: the label "From Panels" 500 #ececec, " · ", the words #b0b0b0. */
+  .c2-label { color: #ececec; font-weight: var(--cv-weight-label); }
 
   /* A message that never reached the agent is not drawn as one that did: its bubble steps
      back (the well, the body tone) and (v4.2) a small red "!" stands beside it on the left, as
@@ -148,18 +134,17 @@
      Resend. No edge or rule carries it. */
   .chat-u.undelivered :global(.c2-bubble) {
     position: relative;
-    background: var(--cv-well);
-    color: var(--cv-t2);
   }
   .chat-u.undelivered :global(.c2-bubble)::before {
     content: "";
     position: absolute;
     top: 50%;
-    right: calc(100% + 10px);
-    width: 18px;
-    height: 18px;
-    margin-top: -9px;
-    background: #e5848a;
+    right: calc(100% + 8px);
+    width: 16px;
+    height: 16px;
+    margin-top: -8px;
+    /* v7: failure is #f08a7e; the mark is a 16px icon. */
+    background: #f08a7e;
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
             mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
   }

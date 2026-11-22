@@ -52,47 +52,20 @@
 </button>
 
 <style>
-  /* The rail speaks the interface face at the list's own size, so the two halves of the
-   * panel read as one menu. A part that cannot be chosen now keeps the rows' own tone (6.4:1 on the raised plane), so
-   * it reads as plainly as the rest; its greyed mark and plain cursor say it cannot be taken,
-   * and pressing it says why. */
   .picker-rail-row {
-    display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 32px; background: transparent;
-    border: 0; color: var(--text-muted); cursor: pointer; font-family: var(--font-ui);
-    font-size: var(--type-sm); padding: var(--space-2) var(--space-3); text-align: left; white-space: nowrap;
+    display: flex; align-items: center; gap: var(--space-2); width: 100%; background: transparent;
+    border: 0; color: var(--text-faint); cursor: pointer; font-family: var(--font-mono);
+    font-size: var(--type-xs); padding: var(--space-2) var(--space-3); text-align: left; white-space: nowrap;
   }
   .picker-rail-row-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
   .picker-rail-row-label, .picker-rail-row-detail { overflow: hidden; text-overflow: ellipsis; }
-  .picker-rail-row-detail { max-width: 110px; color: var(--tone-tertiary); font-size: var(--type-small); }
-  .picker-rail-row:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
+  .picker-rail-row-detail { max-width: 110px; color: var(--text-faint); }
+  .picker-rail-row:hover { background-image: var(--interaction-hover); color: var(--text-muted); }
   .picker-rail-row.held { color: var(--text-strong); }
-  .picker-rail-row.on { background: var(--surface-selected); color: var(--text-strong); }
-  .picker-rail-row.dim { color: var(--text-muted); cursor: default; }
-  .picker-rail-row.dim:hover { background-image: none; color: var(--text-muted); }
+  .picker-rail-row.on { background: var(--surface-recessed); color: var(--text-strong); }
+  .picker-rail-row.dim { color: var(--text-faintest); opacity: .45; }
+  .picker-rail-row.dim:hover { background: transparent; color: var(--text-faintest); }
   /* A backend mark is the one coloured icon a row carries. An unavailable part greys it. */
-  .picker-rail-row.dim :global(.model-picker-mark) { filter: grayscale(1); opacity: .8; }
+  .picker-rail-row.dim :global(.model-picker-mark:not(.picture)) { filter: grayscale(1); }
   :global(.listbox-picker-panel[aria-busy="true"]) .picker-rail-row { cursor: progress; opacity: .55; }
-  /* The model picker's providers, in the composer (§3.14): 32px rows on an 8px round, the
-   * provider's mark and name 13/20 in the body tone; the one whose models are showing on the
-   * control fill in the strongest tone, the held one (chosen, its efforts showing) in t1. */
-  :global([data-conversation-composer]) .picker-rail-row {
-    gap: 10px;
-    min-height: 32px;
-    padding: 6px var(--cv-s2);
-    border-radius: var(--cv-r-md);
-    color: var(--cv-t2);
-    font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
-  }
-  :global([data-conversation-composer]) .picker-rail-row:hover { background: var(--cv-control); background-image: none; color: var(--cv-t1); }
-  :global([data-conversation-composer]) .picker-rail-row.held { color: var(--cv-t1); }
-  :global([data-conversation-composer]) .picker-rail-row.on { background: var(--cv-control); color: var(--cv-t1); font-weight: var(--cv-weight-label); }
-  :global([data-conversation-composer]) .picker-rail-row.dim,
-  :global([data-conversation-composer]) .picker-rail-row.dim:hover { background: none; color: var(--cv-t3); }
-  :global([data-conversation-composer]) .picker-rail-row-detail { color: var(--cv-t3); font-size: var(--cv-type-caption); }
-  :global([data-conversation-composer]) .picker-rail-row:focus-visible {
-    outline: var(--cv-focus-width) solid var(--cv-accent);
-    outline-offset: -2px;
-  }
 </style>

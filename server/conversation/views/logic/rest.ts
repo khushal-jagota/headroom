@@ -49,3 +49,26 @@ export function event_has_rest_text(payload: ConversationEventPayload): boolean 
       return false;
   }
 }
+/** v6: the running turn's latest narration sentence, for Focus's live edge. Agent prose
+ *  only: the last sentence of what the agent last said in the turn, as plain words (code
+ *  marks and Markdown emphasis dropped), on one line. Never a tool title or a command. */
+export function narration_sentence(text: string): string | null {
+  const plain = text
+    .replace(/```[\s\S]*?(```|$)/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__|\*|_)(\S[^*_]*?)\1/g, '$2')
+    .replace(/^\s{0,3}(#{1,6}|[-*+]|\d+[.)]|>)\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!plain) {
+    return null;
+  }
+  const sentences = plain.match(/[^.!?…]+(?:[.!?…]+(?=\s|$)|$)/g) ?? [plain];
+  const last = sentences.map((sentence) => sentence.trim()).filter((sentence) => /\w/.test(sentence)).at(-1);
+  if (!last) {
+    return null;
+  }
+  const characters = Array.from(last);
+  return characters.length <= 240 ? last : characters.slice(0, 239).join('').trimEnd() + '…';
+}

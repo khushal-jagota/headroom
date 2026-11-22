@@ -58,13 +58,13 @@ describe("design v4.2: asks", () => {
     expect(shell).toContain(".cv-ask-context :global(.cv-icon-button:disabled) { color: #8c8c8c; }");
   });
 
-  it("the disabled primary pill reads #a3a3a3 on #2a2a2a", () => {
-    expect(composer).toContain(".chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: var(--cv-t3); cursor: default; }");
+  it("v7: the disabled primary pill reads #8c8c8c on #2a2a2a", () => {
+    expect(composer).toContain(".chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: #8c8c8c; cursor: default; }");
   });
 
-  it("the own-answer line sits in a #141414 well, radius 12, 44 high, the pill outside it on the right", () => {
-    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-foot > \.chat-ask-pen \{[^}]*min-height: 44px;[^}]*border-radius: 12px 0 0 12px;[^}]*background: #141414;/);
-    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-ta \{[^}]*padding-block: 10px;[^}]*background: #141414;/);
+  it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid), the pill outside it on the right", () => {
+    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-foot > \.chat-ask-pen \{[^}]*min-height: 40px;[^}]*border-radius: 12px 0 0 12px;[^}]*background: #141414;/);
+    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-ta \{[^}]*padding-block: 8px;[^}]*background: #141414;/);
     expect(composer).toMatch(/\.chat-submit > \.chat-voice-mic\) \{[^}]*border-radius: 0 12px 12px 0;[^}]*background: #141414;/);
     expect(composer).toContain(".chat-box.has-ask.is-compact:not(:has(.chat-voice-mic)) > .chat-ta { border-radius: 0 12px 12px 0; }");
     expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-primary\) \{ order: 3; margin-inline: var\(--cv-s2\); \}/);
@@ -75,12 +75,12 @@ describe("design v4.2: one primary button style", () => {
   it("cv-button--primary is #f2f2f2 with #121212 words, radius 18", () => {
     expect(app).toContain(".cv-button--primary { border-radius: 18px; padding-inline: var(--cv-s4); background: #f2f2f2; color: #121212; }");
   });
-  it("an error callout's first action wears it; the others are bare #d9d9d9", () => {
+  it("v7: an error card's Resend is the primary, Choose another model the secondary, Details quiet", () => {
     const row = source("../src/components/conversation/TranscriptStatusRow.svelte");
-    expect(row).toContain(":global(.c2-status-main) { background: #f2f2f2; color: #121212; }");
-    expect(row).toContain(".c2-status-actions > :global(.c2-status-second:first-child) { background: #f2f2f2; color: #121212; }");
-    expect(row).toContain(":global(.c2-status-second) { background: transparent; color: var(--cv-t2); }");
-    expect(row).toMatch(/:global\(\.c2-status-main\), :global\(\.c2-status-second\) \{[^}]*border-radius: 18px;/);
+    expect(row).toContain(":global(.c2-status-main) { background: #f2f2f2; color: #141414; }");
+    expect(row).toContain(":global(.c2-status-second) { background: #2a2a2a; color: var(--cv-ink, #ececec); }");
+    expect(row).toMatch(/:global\(\.c2-status-main\), :global\(\.c2-status-second\) \{[^}]*height: 32px;[^}]*padding: 0 14px;\s*border-radius: 999px;/);
+    expect(row).toMatch(/\.c2-status-toggle \{[^}]*background: transparent;\s*color: var\(--cv-quiet-ink, #bdbdbd\);/);
   });
 });
 
@@ -90,23 +90,19 @@ describe("design v4.2: messages", () => {
     expect(stack).toMatch(/\.chat-qrow :global\(\.c2-bubble\) \{[^}]*rgb\(255 255 255 \/ 16%\);[^}]*color: var\(--cv-t2\);/);
   });
 
-  it("an undelivered message has the small red ! beside its bubble again", () => {
-    expect(source("../src/components/conversation/UserMessage.svelte")).toMatch(/\.chat-u\.undelivered :global\(\.c2-bubble\)::before \{[^}]*right: calc\(100% \+ 10px\);[^}]*background: #e5848a;/);
+  it("an undelivered message has the small 16px ! beside its bubble, in the failure colour #f08a7e", () => {
+    expect(source("../src/components/conversation/UserMessage.svelte")).toMatch(/\.chat-u\.undelivered :global\(\.c2-bubble\)::before \{[^}]*right: calc\(100% \+ 8px\);\s*width: 16px;\s*height: 16px;[^}]*background: #f08a7e;/);
   });
 
-  it("a message from Panels (v5): a small well, \"From Panels\" on its own line, then the words, #b0b0b0, no arrow", () => {
+  it("a message from Panels (v6): a centred system note with no box, \"From Panels · \" then the words, 13/20 #b0b0b0, two lines at most", () => {
     const row = { key: "e1", kind: "prompt" as const, sequence: 1, createdAt: 1, senderLabel: "Panels", senderMessageId: null,
       content: [{ piece: "text" as const, text: "Continue the Ticket at Stage: Problem understanding." }] };
     const html = render(UserMessage, { props: { row, conversationId: "c", ownSenderLabel: "owner" } }).body;
-    expect(html).toMatch(/data-conversation-prompt-label[^>]*>From Panels</);
-    expect(html).not.toContain("Panels:");
-    const note = html.slice(html.indexOf("c2-system-row"), html.indexOf("message-status-window"));
-    expect(note).not.toContain("<svg");
+    expect(html).toMatch(/<p class="c2-system-note[^"]*" data-conversation-system-note[^>]*><span class="c2-label[^"]*" data-conversation-prompt-label[^>]*>From Panels<\/span><span aria-hidden="true"> · <\/span>Continue the Ticket at Stage: Problem understanding\.<\/p>/);
+    expect(html).not.toContain("c2-system-row");
     const css = source("../src/components/conversation/UserMessage.svelte");
-    expect(css).toMatch(/\.c2-system-body \{[^}]*flex-direction: column;/);
-    expect(css).toMatch(/\.c2-system-row \{[^}]*padding: 10px 14px;[^}]*border-radius: 10px;[^}]*background: #191919;/);
-    expect(css).toMatch(/\.c2-label \{[^}]*color: #b0b0b0;[^}]*font: var\(--cv-weight-label\) 12px\/16px/);
-    expect(css).toMatch(/\.c2-system-body :global\(\.markdown\) \{[^}]*color: #b0b0b0;[^}]*font-size: 14px;/);
+    expect(css).toMatch(/\.c2-system-note \{[^}]*align-self: center;[^}]*-webkit-line-clamp: 2;[^}]*color: #b0b0b0;\s*font: var\(--cv-weight-body\) 13px\/20px var\(--cv-font\);\s*text-align: center;/);
+    expect(css).not.toContain("background: #191919");
   });
 
 
@@ -115,13 +111,13 @@ describe("design v4.2: messages", () => {
 describe("design v4.2: Full view tool rows", () => {
   const closed: Summary = { sentence: "Ran 2 commands", failedCount: 0, running: null, iconPaths: [] };
 
-  it("are quieter than prose: label #a3a3a3, icon #8c8c8c", () => {
+  it("v7: are status lines, detail-only: a 16px #bdbdbd icon, the words #b0b0b0", () => {
     const summary = source("../src/components/conversation/ToolRunSummary.svelte");
-    expect(summary).toMatch(/\.c2-run-icon \{[^}]*stroke: #8c8c8c;/);
-    expect(summary).toMatch(/\.c2-run-verb \{[^}]*color: var\(--cv-t3\);/);
+    expect(summary).toMatch(/\.c2-run-icon \{\s*width: 16px;\s*height: 16px;[^}]*stroke: var\(--cv-quiet-ink, #bdbdbd\);/);
+    expect(summary).toMatch(/\.c2-run-verb \{[^}]*color: var\(--cv-detail-ink, #b0b0b0\);/);
     const call = source("../src/components/conversation/ToolCallRow.svelte");
-    expect(call).toMatch(/\.c2-tool-icon \{[^}]*stroke: #8c8c8c;/);
-    expect(call).toMatch(/\.c2-tool-verb \{[^}]*color: var\(--cv-t3\);/);
+    expect(call).toMatch(/\.c2-tool-icon \{\s*width: 16px;\s*height: 16px;[^}]*stroke: var\(--cv-quiet-ink, #bdbdbd\);/);
+    expect(call).toMatch(/\.c2-tool-verb \{[^}]*color: var\(--cv-detail-ink, #b0b0b0\);/);
   });
 
   it("closed: \"Ran 2 commands\" then the chevron", () => {
@@ -180,15 +176,13 @@ describe("design v4.2: the Working line is always the last thing in the transcri
     return render(ProjectedTranscript, { props: { reader, models: [], ownSenderLabel: null, livenessPulse: 0 } }).body;
   };
 
-  it("v5.1: while the turn runs, Working · time heads the turn, above its running tool row; nothing counts at the tail", () => {
+  it("v6: while the turn runs, its top shows nothing; the live line is the live edge at the end", () => {
     const html = draw(false);
-    const working = html.indexOf("data-conversation-alive-word");
-    const run = html.indexOf("data-conversation-work-group");
-    expect(working).toBeGreaterThan(-1);
-    expect(run).toBeGreaterThan(-1);
-    expect(working).toBeLessThan(run);
-    expect(html).not.toContain("data-conversation-live-tail");
+    expect(html).not.toContain("data-conversation-alive-word");
+    expect(html).toContain("data-conversation-work-group");
     expect(html).not.toContain("data-conversation-tool-elapsed");
+    // Settled, "Worked for" is back at the top of the turn.
+    expect(draw(true)).toContain("data-conversation-turn-settled-head");
   });
 
   it("once settled, the turn's meta line heads the turn again, over its work", () => {
@@ -207,9 +201,9 @@ describe("design v4.3", () => {
   it("inline code is lighter: 6% white fill, radius 4, padding 0 4px, #e0e0e0", () => {
     expect(app).toMatch(/\.chat-thread \.markdown :not\(pre\) > code,\n\.cv-code \{\s*padding: 0 4px;[^}]*border-radius: 4px;[^}]*background: rgb\(255 255 255 \/ 6%\);[^}]*color: #e0e0e0;/);
   });
-  it("an attachment's remove button is a 20px #2a2a2a circle inside the tile's corner, inset 6", () => {
-    expect(composer).toMatch(/\.chat-att-x \{\s*top: 6px;\s*right: 6px;\s*width: 20px;\s*height: 20px;[^}]*border-radius: 50%;\s*background: #2a2a2a;\s*color: #d9d9d9;/);
-    expect(composer).not.toMatch(/\.chat-att-x \{[^}]*top: -/);
+  it("v6: an attachment's remove button sits outside the tile's corner, a 20px #333 circle with a 2px ring", () => {
+    expect(composer).toMatch(/\.chat-att-x \{\s*top: -10px;\s*right: -10px;\s*width: 20px;\s*height: 20px;[^}]*border-radius: 50%;\s*background: #333333;\s*box-shadow: 0 0 0 2px #1c1c1c;/);
+    expect(composer).toMatch(/\.chat-attachments \{ gap: var\(--cv-s4\); padding-block-start: 12px; padding-inline-end: 12px; \}/);
   });
   it("rhythm: 32 between turns, 6 from a meta line to its prose, 12 between paragraphs", () => {
     expect(tokens).toMatch(/--cv-gap-turn: 32px;/);
@@ -224,8 +218,8 @@ describe("pass 11 strict review fixes", () => {
     expect(pane).toContain('<div class="chat-head-identity" data-conversation-head-identity>');
     expect(pane).not.toContain("data-conversation-subtitle");
   });
-  it("a file tile sits on #242424 so the #2a2a2a remove circle reads", () => {
-    expect(composer).toMatch(/\.chat-att\.file \{[^}]*background: #242424;/);
+  it("v7: a file waiting to go is an attachment card, a Surface (#1c1c1c, a 1px #2a2a2a edge, radius 20)", () => {
+    expect(composer).toMatch(/\.chat-att \{\s*height: 56px;\s*border: 1px solid #2a2a2a;\s*border-radius: 20px;\s*background: #1c1c1c;/);
   });
 });
 
@@ -234,8 +228,8 @@ describe("pass 11 manager review of p11b", () => {
   it("v5: under the solid header a 24px fade starts right at its bottom edge", () => {
     expect(viewport).toContain("--c2-top-fade: transparent 0, #000 24px;");
   });
-  it("while newer content is below the view, the bottom edge dissolves over 24px above the composer", () => {
-    expect(viewport).toContain("--c2-bottom-fade: #000 calc(100% - 24px), transparent 100%;");
+  it("p13b: while newer content is below the view, the bottom edge dissolves over 16px above the composer", () => {
+    expect(viewport).toContain("--c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;");
     expect(viewport).toMatch(/\.chat-thread\[data-more-below="true"\] \{[^}]*mask-image: linear-gradient\(to bottom, var\(--c2-top-fade\), var\(--c2-bottom-fade\)\);/);
   });
   it("24px before the lens control", () => {

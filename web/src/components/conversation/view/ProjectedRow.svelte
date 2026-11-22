@@ -31,6 +31,16 @@
   const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
   const dockedCredential = getContext<(() => string | null) | undefined>(DOCKED_CREDENTIAL_REQUEST);
   const row = $derived(body === null ? null : rowForBody(item, body));
+  /** v6: in Full, prose that is not its turn's final message is narration; while the turn is
+   *  live, all of its prose is. */
+  const narration = $derived.by(() => {
+      if (item.row_kind !== 'agent_message' || item.turn_key === null) return null;
+      for (const page of reader.pages)
+          for (const each of page.items)
+              if (each.kind === 'turn' && each.key === item.turn_key)
+                  return !each.settled || each.latest_message_key !== item.key;
+      return null;
+  });
   // A turn's ending and a turn that stopped without one are status lines, drawn in the
   // same family as a message that was not delivered.
   const endingStatus = $derived(row?.kind === 'turn_ended' && row.automaticCompactionResult !== 'not_compacted' ? turnEndingStatus(row.ending, row.errorSummary) : row?.kind === 'turn_stopped' ? TURN_STOPPED_STATUS : null);
@@ -75,7 +85,7 @@
   {#if row.request.request_id !== (dockedCredential?.() ?? null)}<ConversationCredentialRequestCard request={row.request}/>{/if}
 {:else if row!==null}
   {#key presentationAttempt}
-  <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
+  <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} {narration} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
   {/key}
 {:else}
   <div aria-busy={!error} role="status">{error ?? ""}</div>

@@ -78,47 +78,51 @@
   stroke-linejoin: round;
 }
 
-/* In the conversation a code block is the one block shell
- * (design v3 §3.6): the well, a hairline edge, radius 12. The header is not ruled off: its
- * quiet caption and the space under it separate it from the code. */
+/* v7: a code block is a Surface: #1a1a1a, a 1px #2a2a2a edge, radius 12; the code 13/20 in
+ * JetBrains Mono, padded 12 16. Its header holds the language (status detail, 13/20) and Copy,
+ * a quiet button (32 tall pill, 13/20 500, #bdbdbd, a 16px icon 6px before its word). */
 .chat-thread .markdown .markdown-code {
-  border: 1px solid var(--cv-line);
-  border-radius: var(--cv-r-lg);
-  background: var(--cv-well);
+  border: 1px solid var(--cv-surface-edge, #2a2a2a);
+  border-radius: 12px;
+  background: var(--cv-code-surface, #1a1a1a);
 }
 .chat-thread .markdown .markdown-code-head {
-  min-height: 36px;
-  padding: 0 var(--cv-s2) 0 var(--cv-s4);
+  min-height: 40px;
+  padding: 4px 4px 0 16px;
   border-bottom: 0;
-  color: var(--cv-t3);
+  color: var(--cv-detail-ink, #b0b0b0);
   font-family: var(--cv-font);
-  font-size: var(--cv-type-caption);
-  font-weight: var(--cv-weight-label);
-  line-height: var(--cv-leading-caption);
+  font-size: 13px;
+  font-weight: var(--cv-weight-body);
+  line-height: 20px;
 }
 .chat-thread .markdown .markdown-code-copy {
-  height: 28px;
-  border-radius: var(--cv-r-md);
-  color: var(--cv-t3);
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  color: var(--cv-quiet-ink, #bdbdbd);
   font-family: var(--cv-font);
-  font-size: var(--cv-type-meta);
+  font-size: 13px;
+  line-height: 20px;
   font-weight: var(--cv-weight-label);
   transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
 }
+.chat-thread .markdown .markdown-code-copy-glyph { width: 16px; height: 16px; }
 .chat-thread .markdown .markdown-code-copy:hover {
-  background: var(--cv-control);
-  color: var(--cv-t1);
+  background: #2a2a2a;
+  color: var(--cv-ink, #ececec);
 }
 .chat-thread .markdown .markdown-code-copy:focus-visible {
   outline: var(--cv-focus-width) solid var(--cv-accent);
   outline-offset: var(--cv-focus-offset);
 }
 .chat-thread .markdown .markdown-code > pre {
-  padding: var(--cv-s1) var(--cv-s4) var(--cv-s3);
+  padding: 4px 16px 12px;
   color: var(--cv-code-ink);
   font-family: var(--cv-mono);
-  font-size: var(--cv-type-code);
-  line-height: var(--cv-leading-code);
+  font-size: 13px;
+  line-height: 20px;
 }
 .chat-thread .markdown .markdown-code > pre code {
   font-family: inherit;

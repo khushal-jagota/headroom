@@ -1118,6 +1118,7 @@
   onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}
   onNewConversation={() => void newConversation()}
   emptyState={beforeThereIsAConversation}
+  lensHidden={!emptyState && !readOnly && nothingSaidYet && transcriptOutgoingMessages.length === 0 && visibleHeldRows.length === 0}
   showRunPicker={started || emptyState === undefined}
 />
 
@@ -1137,6 +1138,7 @@
 
 <style>
   /* v5.1: one quiet line, 15 px #b0b0b0, centred in the canvas above the composer. */
-  .conversation-empty { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; align-self: stretch; }
+  /* v6: bottom-anchored with the thread, 24px above the composer, centred. */
+  .conversation-empty { display: flex; align-items: flex-end; justify-content: center; flex: none; align-self: stretch; }
   .conversation-empty-said { color: #b0b0b0; font: var(--cv-weight-body) 15px/24px var(--cv-font); text-align: center; }
 </style>

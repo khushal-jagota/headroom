@@ -31,6 +31,7 @@
     docked = false,
     commitLabel = $bindable(""),
     commitReady = $bindable(false),
+    declineAction = $bindable(null),
     onAnswer
   }: {
     ask: {
@@ -53,6 +54,9 @@
     /** What the composer's pill says, and whether it can commit now. */
     commitLabel?: string;
     commitReady?: boolean;
+    /** v7: docked, a declining answer (Deny) is a quiet Button beside the primary pill, not
+     *  an option row. The composer draws it from this. */
+    declineAction?: { label: string; optionId: string } | null;
     onAnswer: (optionId: string) => void;
   } = $props();
 
@@ -61,6 +65,14 @@
     ? askQuestionChoices(ask).map((choice) => ({ ...choice, emphasis: "option" as const, supplied: true }))
     : permissionAnswerRows(ask));
   let detail = $derived(readableConversationDetail(ask.detail));
+  let declineRow = $derived(docked && shape !== "question" ? rows.find((row) => row.emphasis === "decline") ?? null : null);
+  let tiles = $derived(declineRow === null ? rows : rows.filter((row) => row !== declineRow));
+  $effect(() => { declineAction = declineRow === null ? null : { label: declineRow.label === "Decline" ? "Deny" : declineRow.label, optionId: declineRow.optionId }; });
+  /** Answers with the declining option at once, for the composer's quiet Deny button. */
+  export function decline(): void {
+    if (declineRow === null || busy || !answerAvailable) return;
+    onAnswer(declineRow.optionId);
+  }
   // v5: a permission ask says "Needs your permission" (with the shield); a question keeps
   // "Needs your answer". "Needs your approval" belongs to proposals.
   let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your permission");
@@ -100,6 +112,7 @@
       : rows.find((row) => row.shortcutDigit === digit) ?? null;
     if (byDigit === null) return;
     event.preventDefault();
+    if (declineRow !== null && byDigit.optionId === declineRow.optionId) { decline(); return; }
     pick(byDigit.optionId);
   }
 </script>
@@ -123,7 +136,7 @@
     <pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>
   {/if}
   <div class="cv-ask-rows c2-ask-choices" class:after-detail={shape !== "question" && detail} role="group" aria-label="Answers">
-    {#each rows as row, index (row.optionId)}
+    {#each tiles as row, index (row.optionId)}
       <button
         type="button"
         class="cv-ask-row c2-ask-choice"
@@ -171,21 +184,24 @@
 <style>
   /* The command, or the request behind a question: one canvas well inside the raised ask,
      in mono, bounded so the ask stays the composer's size and scrolls inside instead. */
+  /* v7: the command is a code block: #1a1a1a, a 1px #2a2a2a edge, radius 12, 13/20 mono,
+     padding 12 16. */
   .c2-ask-detail {
     margin: 0;
     max-height: 240px;
     overflow: auto;
-    padding: 10px var(--cv-s3);
-    border-radius: var(--cv-r-md);
-    background: var(--cv-canvas);
-    color: var(--cv-t1);
-    font: var(--cv-weight-body) 13px/var(--cv-leading-code) var(--cv-mono);
+    padding: 12px 16px;
+    border: 1px solid var(--cv-surface-edge, #2a2a2a);
+    border-radius: 12px;
+    background: var(--cv-code-surface, #1a1a1a);
+    color: #e0e0e0;
+    font: var(--cv-weight-body) 13px/20px var(--cv-mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
   .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }
-  .c2-ask-choices.after-detail { margin-block-start: var(--cv-s3); }
+  .c2-ask-choices.after-detail { margin-block-start: 16px; }
   .c2-ask-note {
     margin: var(--cv-s3) 0 0;
     color: var(--cv-t3);

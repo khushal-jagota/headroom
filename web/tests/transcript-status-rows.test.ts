@@ -114,7 +114,8 @@ describe("a message that steered a running turn", () => {
   it("says quietly that it joined the turn", () => {
     const html = draw({ ...base, kind: "prompt", mode: "steer", sentAtUnixMilliseconds: 1000 });
     expect(html).toContain("data-conversation-steered");
-    expect(html).toContain("Steered into the running turn");
+    // v7: a status line: the label "Steered", then " · into the running turn".
+    expect(html).toMatch(/c2-status-title[^>]*>Steered<\/span><!--\[0--><span class="c2-status-sep[^"]*" aria-hidden="true">·<\/span><span class="c2-status-next[^"]*"[^>]*>into the running turn</);
   });
 });
 

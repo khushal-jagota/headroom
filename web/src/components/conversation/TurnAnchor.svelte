@@ -108,7 +108,7 @@
           <span data-conversation-turn-label>{foldLabel}</span>
           <span class="c2-meta-sep" aria-hidden="true">·</span>
           <span class="c2-meta-detail">{foldCount}</span>
-          <svg class="c2-meta-chevron" class:is-open={expanded} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+          <svg class="c2-meta-chevron" class:is-open={expanded} viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
         </button>
       {:else}
         <div class="c2-meta" data-conversation-turn-settled-head>
@@ -124,7 +124,7 @@
       >
         <!-- It turns only while frames arrive; when they stop it holds still. Unknown
              activity has no mark, because nothing is known to be running. -->
-        {#if !activityUncertain}<span class="c2-meta-spin" class:is-turning={fresh} aria-hidden="true" data-conversation-live-mark></span>{/if}
+        {#if !activityUncertain}<span class="c2-meta-slot" aria-hidden="true"><span class="c2-meta-spin" class:is-turning={fresh} data-conversation-live-mark></span></span>{/if}
         {#if activityUncertain}
           <span data-conversation-alive-word>Current activity on this machine is unknown.</span>
         {:else}
@@ -142,47 +142,51 @@
 <style>
   .c2-turn { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
   /* One layout for every state: [mark] label · detail [chevron], 13/20 in the meta tone. */
+  /* v7 status line: 13/20, a 16px icon slot, the label 500 #ececec, " · ", the detail 400
+     #b0b0b0. "Worked for 2m 20s" is detail-only: no icon, #b0b0b0. */
   .c2-meta {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
     max-width: 100%;
-    min-height: 24px;
-    color: var(--cv-t3);
+    min-height: 20px;
+    color: var(--cv-detail-ink, #b0b0b0);
     font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
+    font-size: 13px;
+    line-height: 20px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
   .c2-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .c2-meta-sep { color: var(--cv-t4); }
+  .c2-meta-sep { margin-inline: -2px; color: var(--cv-detail-ink, #b0b0b0); }
+  .c2-meta-slot { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; }
   /* The fold is a quiet control: the line itself, with a hover fill that reaches past
      its text so the target is as large as the line, not as small as its words. */
   .c2-meta--fold {
-    margin-inline: calc(var(--cv-s2) * -1);
-    padding: 2px var(--cv-s2);
+    margin-inline: -8px;
+    padding: 0 8px;
+    min-height: 24px;
     border: 0;
-    border-radius: var(--cv-r-md);
+    border-radius: 999px;
     background: transparent;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .c2-meta--fold:hover { background: var(--cv-raised); color: var(--cv-t2); }
+  .c2-meta--fold:hover { background: #2a2a2a; color: var(--cv-ink, #ececec); }
   .c2-meta--fold:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 0; color: var(--cv-t2); }
   .c2-meta-chevron {
     flex: none;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     fill: none;
-    stroke: var(--cv-t4);
-    stroke-width: 1.8;
+    stroke: var(--cv-quiet-ink, #bdbdbd);
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: transform var(--cv-dur-expand) var(--cv-ease-out), stroke var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .c2-meta--fold:hover .c2-meta-chevron, .c2-meta--fold:focus-visible .c2-meta-chevron { stroke: var(--cv-t2); }
+  .c2-meta--fold:hover .c2-meta-chevron, .c2-meta--fold:focus-visible .c2-meta-chevron { stroke: var(--cv-ink, #ececec); }
   .c2-meta-chevron.is-open { transform: rotate(90deg); }
   /* Working has no colour: it is said by motion and by a brighter tone. */
   /* v5.1: a 12px spinner and "Working · 2m 14s" at the top of the live turn, where "Worked
@@ -193,16 +197,17 @@
     width: 12px;
     height: 12px;
     border-radius: var(--cv-r-pill);
-    border: 2px solid rgb(255 255 255 / 22%);
-    border-top-color: var(--cv-t1);
+    /* v6: one spinner in the conversation: the arc #d9d9d9 on a #4a4a4a track. */
+    border: 2px solid #4a4a4a;
+    border-top-color: #d9d9d9;
     transform: rotate(35deg);
   }
   .c2-meta-spin.is-turning { animation: c2-meta-spin var(--cv-spin) linear infinite; }
   @keyframes c2-meta-spin { to { transform: rotate(395deg); } }
   /* v5.2: "Working" 13 medium #d9d9d9, its duration #b0b0b0. "Worked for" 13 regular #b0b0b0. */
-  .c2-meta-working { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  .c2-meta-working { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
   .c2-meta-working.is-alive {
-    background: linear-gradient(90deg, var(--cv-t2) 0%, var(--cv-t2) 35%, var(--cv-t1) 50%, var(--cv-t2) 65%, var(--cv-t2) 100%);
+    background: linear-gradient(90deg, #ececec 0%, #ececec 35%, #ffffff 50%, #ececec 65%, #ececec 100%);
     background-size: 200% 100%;
     -webkit-background-clip: text;
             background-clip: text;
@@ -210,10 +215,10 @@
     animation: c2-meta-shimmer var(--cv-shimmer) linear infinite;
   }
   @keyframes c2-meta-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-  .c2-meta-clock { color: var(--cv-t3); }
+  .c2-meta-clock { color: var(--cv-detail-ink, #b0b0b0); }
   @media (prefers-reduced-motion: reduce) {
     .c2-meta--fold, .c2-meta-chevron { transition: none; }
     .c2-meta-spin.is-turning { animation: none; }
-    .c2-meta-working.is-alive { animation: none; background: none; color: var(--cv-t2); }
+    .c2-meta-working.is-alive { animation: none; background: none; color: #ececec; }
   }
 </style>

@@ -44,16 +44,14 @@
   aria-controls={controls}
   onclick={onToggle}
 >
-  <!-- v5/v5.1: while a call runs, the row is the live tool: a spinner in the glyph's place,
-       "Running", the command (mono, at most 2 lines), the chevron. No time on it: the turn's
+  <!-- v6: while a call runs, the row is the live tool: a spinner in the glyph's place,
+       "Running", the command (mono, one line, ellipsis), the chevron right after it. No time on it: the turn's
        head carries the turn's time. -->
-  {#if live}
-    <span class="c2-run-spin" role="img" aria-label="Running" data-conversation-run-spinner></span>
-  {:else}
-    <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true">
-      {#each summary.iconPaths as path (path)}<path d={path} />{/each}
-    </svg>
-  {/if}
+  <!-- p13b: one live indicator in the transcript, the Working line's spinner. A running row
+       keeps the run's static icon; "Running" in #ececec 500 says it is live. -->
+  <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true" data-conversation-run-icon={live ? "running" : undefined}>
+    {#each summary.iconPaths as path (path)}<path d={path} />{/each}
+  </svg>
   <!-- v4.2: the chevron always ends the row's words: "Ran 2 commands ›", and while a call
        runs "Running <command> ›", the command in mono ellipsizing before the chevron. -->
   <span class="c2-run-line" title={live ? summary.running?.sentence : summary.sentence}>
@@ -64,7 +62,7 @@
     {/if}
     {#if label}<span class="c2-run-status" class:c2-run-status--failed={summary.failedCount > 0} data-conversation-work-status><span class="c2-run-dot" aria-hidden="true">·</span>{label}</span>{/if}
   </span>
-  <svg class="c2-run-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+  <svg class="c2-run-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
 </button>
 
 <style>
@@ -82,17 +80,19 @@
     margin-inline: calc(var(--cv-s2) * -1);
     padding: 0 var(--cv-s2);
     border: 0;
-    border-radius: var(--cv-r-md);
+    /* v7: a status line, 13/20. A settled run is detail-only ("Ran 2 commands", #b0b0b0) after
+       its 16px icon; a running call says "Running" (500 #ececec) and its command. */
+    border-radius: 999px;
     background: transparent;
-    color: var(--cv-t3);
+    color: var(--cv-detail-ink, #b0b0b0);
     font-family: var(--cv-font);
-    font-size: var(--cv-type-ui);
-    line-height: var(--cv-leading-ui);
+    font-size: 13px;
+    line-height: 20px;
     text-align: start;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .c2-run-summary:hover { background-color: var(--cv-raised); }
+  .c2-run-summary:hover { background-color: #2a2a2a; }
   /* Running: the row is as wide as its words up to the column; a long command ellipsizes
      before the chevron, which stays at the row's end. */
   .c2-run-summary > svg { flex: none; }
@@ -102,42 +102,17 @@
   }
   /* v4.2: quieter than prose: the icon #8c8c8c, the label #a3a3a3. */
   .c2-run-icon {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     fill: none;
-    stroke: #8c8c8c;
-    stroke-width: 1.6;
+    stroke: var(--cv-quiet-ink, #bdbdbd);
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .c2-run-spin {
-    flex: none;
-    box-sizing: border-box;
-    width: 12px;
-    height: 12px;
-    margin-inline: 1px;
-    border: 1.5px solid rgb(255 255 255 / 18%);
-    border-top-color: var(--cv-t2);
-    border-radius: 50%;
-    animation: c2-run-spin var(--cv-spin) linear infinite;
-  }
-  @keyframes c2-run-spin { to { transform: rotate(360deg); } }
-  /* Live: the row grows to hold a command of up to two lines; the spinner and the chevron
-     stand on the first line. */
-  .c2-run-summary.is-live { height: auto; min-height: 32px; padding-block: 6px; align-items: flex-start; }
-  .c2-run-summary.is-live > .c2-run-spin { margin-block-start: 4px; }
-  .c2-run-summary.is-live > .c2-run-chevron { margin-block-start: 3px; }
-  .c2-run-summary.is-live .c2-run-line {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    white-space: normal;
-    overflow: hidden;
-    overflow-wrap: anywhere;
-  }
-  .c2-run-summary.is-live .c2-run-verb { margin-inline-end: 8px; }
-  .c2-run-summary.is-live .c2-run-subject { white-space: normal; line-height: 20px; }
+  /* v6: live, the row stays one line: the command ellipsizes, and the chevron stands right
+     after the text, as in "Ran 2 commands ›". */
+  .c2-run-summary.is-live .c2-run-verb { margin-inline-end: 2px; color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
   /* One line, always: the subject gives way with an ellipsis inside the column. */
   .c2-run-line {
     flex: 0 1 auto;
@@ -153,9 +128,8 @@
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    /* v4.2: the label in #a3a3a3, a tone under the agent's #d9d9d9 prose. */
-    color: var(--cv-t3);
-    font-weight: var(--cv-weight-label);
+    color: var(--cv-detail-ink, #b0b0b0);
+    font-weight: var(--cv-weight-body);
   }
   .c2-run-subject {
     flex: 0 1 auto;
@@ -177,23 +151,21 @@
     white-space: nowrap;
     text-align: end;
   }
-  .c2-run-status--failed { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
+  .c2-run-status--failed { color: #f08a7e; font-weight: var(--cv-weight-label); }
   .c2-run-chevron {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     fill: none;
-    stroke: var(--cv-t4);
-    stroke-width: 1.8;
+    stroke: var(--cv-quiet-ink, #bdbdbd);
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: transform var(--cv-dur-expand) var(--cv-ease-out), stroke var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .c2-run-summary:hover .c2-run-verb, .c2-run-summary:focus-visible .c2-run-verb { color: var(--cv-t1); }
-  .c2-run-summary:hover .c2-run-subject, .c2-run-summary:focus-visible .c2-run-subject { color: var(--cv-t3); }
-  .c2-run-summary:hover .c2-run-chevron, .c2-run-summary:focus-visible .c2-run-chevron { stroke: var(--cv-t2); }
+  .c2-run-summary:hover .c2-run-verb, .c2-run-summary:focus-visible .c2-run-verb { color: var(--cv-ink, #ececec); }
+  .c2-run-summary:hover .c2-run-chevron, .c2-run-summary:focus-visible .c2-run-chevron { stroke: var(--cv-ink, #ececec); }
   .c2-run-summary.is-open .c2-run-chevron { transform: rotate(90deg); }
   @media (prefers-reduced-motion: reduce) {
-    .c2-run-spin { animation-duration: 3s; }
     .c2-run-summary, .c2-run-chevron { transition: none; }
   }
 </style>

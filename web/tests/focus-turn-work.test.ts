@@ -73,7 +73,9 @@ describe("Focus is focus: no tool activity at all", () => {
 
   it("draws no running command either", () => {
     const html = draw({ expanded: false, settled: false, running: true });
-    expect(html).toContain("Working");
+    // v6: the running turn's Working line is the live edge at the end of the thread, drawn
+    // by the viewport (LiveEdge), never at the turn's top.
+    expect(html).not.toContain("Working");
     expect(html).not.toContain("git status");
     expect(html).not.toContain("data-conversation-live-activity");
   });

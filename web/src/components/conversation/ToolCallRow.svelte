@@ -120,7 +120,7 @@
   <span class="acp-step-title c2-tool-line">
     <span class="c2-tool-verb">{presentation.title}</span>
   </span>
-  <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+  <svg class="c2-tool-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
   <span class="c2-tool-subject-slot">{#if presentation.summary}<span class="c2-tool-subject" class:c2-tool-subject--literal={presentation.summaryIsLiteral} data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}</span>
   <!-- How it went, in one column at the row's end, so a run of rows reads its outcomes
        straight down. A call that passed says nothing: passing is the ordinary case. -->
@@ -134,10 +134,8 @@
     {:else if activityUncertain}
       <span class="c2-tool-state">Unknown</span>
     {:else}
-      <span class="c2-tool-state c2-tool-state--running">
-        <!-- v5.1: no time on a running row; the turn's head carries the turn's time. -->
-        <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
-      </span>
+      <!-- p13b: no spinner on a running row; the Working line is the one live indicator. -->
+      <span class="c2-tool-state c2-tool-state--running" role="img" aria-label="Running"></span>
     {/if}
   </span>
 {/snippet}
@@ -190,7 +188,7 @@
      exact subject, and how it went at the row's end. */
   .acp-step {
     display: grid;
-    grid-template-columns: 14px minmax(0, max-content) 14px minmax(0, 1fr) minmax(72px, auto);
+    grid-template-columns: 16px minmax(0, max-content) 16px minmax(0, 1fr) minmax(72px, auto);
     align-items: center;
     column-gap: var(--cv-s2);
     width: 100%;
@@ -198,29 +196,30 @@
     height: 32px;
     padding: 0 var(--cv-s2);
     border: 0;
-    border-radius: var(--cv-r-md);
+    /* v7: a status line, 13/20: detail-only words after a 16px icon. */
+    border-radius: 999px;
     background: transparent;
-    color: var(--cv-t3);
+    color: var(--cv-detail-ink, #b0b0b0);
     font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
+    font-size: 13px;
+    line-height: 20px;
     letter-spacing: normal;
     text-align: start;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .acp-step:hover { background-color: var(--cv-raised); }
+  .acp-step:hover { background-color: #2a2a2a; }
   .acp-step:focus-visible {
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: calc(var(--cv-focus-width) * -1);
   }
   /* v4.2: tool rows are quieter than prose: the icon #8c8c8c, the label #a3a3a3. */
   .c2-tool-icon {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     fill: none;
-    stroke: #8c8c8c;
-    stroke-width: 1.6;
+    stroke: var(--cv-quiet-ink, #bdbdbd);
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
@@ -235,7 +234,7 @@
     font-size: inherit;
     letter-spacing: normal;
   }
-  .c2-tool-verb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-t3); font-weight: var(--cv-weight-label); }
+  .c2-tool-verb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-detail-ink, #b0b0b0); font-weight: var(--cv-weight-body); }
   .c2-tool-subject-slot { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
   .c2-tool-subject {
     flex: 0 1 auto;
@@ -248,7 +247,9 @@
      Words about the call ("0 of 5 done") stay in the thread's own face. */
   /* Code in the row is set at the row's own size, so the line reads as one size. */
   .c2-tool-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-meta); }
-  .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-t1); }
+  .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-ink, #ececec); }
+  /* p13b: a running call says so in words ("Running"-style verb, #ececec 500), not a spinner. */
+  .acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
   .c2-tool-outcome { display: flex; justify-content: flex-end; min-width: 0; }
   .c2-tool-state {
     display: inline-flex;
@@ -261,28 +262,19 @@
     white-space: nowrap;
   }
   .c2-tool-state--failed { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
-  .c2-tool-spin {
-    margin: 0;
-    width: 12px;
-    height: 12px;
-    border: 2px solid rgb(255 255 255 / 22%);
-    border-top-color: var(--cv-t1);
-    border-right-color: rgb(255 255 255 / 16%);
-    animation-duration: var(--cv-spin);
-  }
   .c2-tool-chevron {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     fill: none;
-    stroke: var(--cv-t4);
-    stroke-width: 1.8;
+    stroke: var(--cv-quiet-ink, #bdbdbd);
+    stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: stroke var(--cv-dur-fast) var(--cv-ease-out), transform var(--cv-dur-expand) var(--cv-ease-out);
   }
   .acp-step:hover .c2-tool-chevron,
   .acp-step:focus-visible .c2-tool-chevron,
-  .c2-tool.is-open .c2-tool-chevron { stroke: var(--cv-t2); }
+  .c2-tool.is-open .c2-tool-chevron { stroke: var(--cv-ink, #ececec); }
   .c2-tool.is-open .c2-tool-chevron { transform: rotate(90deg); }
   /* The hover fill reaches past the text to the column's edge. */
   .c2-tool { min-width: 0; margin-inline: calc(var(--cv-s2) * -1); }
