@@ -7,6 +7,7 @@ import { refusalSentence } from '../transcript';
 import type { ThreadItem } from '../threadLayout';
 import type { ConversationTaskProgress } from '../taskProgress';
 import { whatThisRowSays, toolCallSentence, restLineBodyFor, type RestLine } from '../restLine';
+import { presentToolCall } from '../toolCallPresentation';
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
 
 export function transcriptHistoryEdges(pages: readonly Pick<ConversationViewPage, 'scope' | 'items' | 'older' | 'newer'>[], items: readonly ConversationViewItem[]): {
@@ -96,12 +97,21 @@ export function happened(event: ViewRestEvent | null, sender: string): {
  * Only a tool call that is still running counts, and only for the turn the status is about:
  * a finished call under a counter that says the turn is working would be news from before.
  * The status names the newest call of the latest turn; nothing is guessed when it does not. */
-export function runningToolSentence(status: ConversationViewStatus | null | undefined, turnKey: string): string | null {
+/** What a running turn is doing now, in the words its tool row uses: the whole sentence,
+ *  and its two halves, so the subject can be set as code when (and only when) it is the
+ *  literal thing the call acts on, as the row sets it. */
+export type RunningToolActivity = { sentence: string; title: string; summary: string | null; summaryIsLiteral: boolean };
+
+export function runningToolSentence(status: ConversationViewStatus | null | undefined, turnKey: string): RunningToolActivity | null {
     if (!status || status.authority !== 'current' || status.turn_running !== true || status.turn_key !== turnKey) return null;
     const tool = status.rest.latest_tool;
     if (tool?.body.kind !== 'inline' || tool.body.value.kind !== 'tool_call' || tool.body.value.status !== 'running') return null;
     const row = rowForBody({ key: 'live', source_sequence: 0, created_at: 0 }, tool.body.value);
-    return row.kind === 'tool_call' ? toolCallSentence(row) || null : null;
+    if (row.kind !== 'tool_call') return null;
+    const sentence = toolCallSentence(row);
+    if (!sentence) return null;
+    const presented = presentToolCall(row);
+    return { sentence, title: presented.title, summary: presented.summary, summaryIsLiteral: presented.summaryIsLiteral };
 }
 export function restFor(status: ConversationViewStatus, sender: string, readThrough: number, progress = progressFor(status)): RestLine | null {
     const facts = status.rest;

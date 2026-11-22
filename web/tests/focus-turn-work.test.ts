@@ -10,7 +10,7 @@ import type {
 } from "../src/lib/conversation/view/contracts";
 import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
 import { executorAnswerSentence } from "../src/lib/conversation/executorEvidence";
-import { toolCallSentence } from "../src/lib/conversation/restLine";
+import { presentTense, toolCallSentence } from "../src/lib/conversation/restLine";
 
 const turn = (settled: boolean): ConversationViewItem => ({
   kind: "turn", key: "turn:e1", order: { sequence: 1, slot: 1 }, changed_through_sequence: 5,
@@ -97,5 +97,19 @@ describe("the rest line's tool sentence", () => {
       key: "e1", kind: "tool_call", sequence: 1, createdAt: 1, toolCallId: "t", title: "bash -lc 'npm test'",
       toolKind: "execute", detail: "ok", startedDetail: "/w", cappedDetailSequence: null, status: "completed", progress: null
     })).toBe("Ran npm test");
+  });
+  it("says a call that is still running as it happens, and an ended one in the past", () => {
+    const row = {
+      key: "e1", kind: "tool_call" as const, sequence: 1, createdAt: 1, toolCallId: "t", title: "bash -lc 'npm test'",
+      toolKind: "execute", detail: null, startedDetail: "/w", cappedDetailSequence: null, progress: null
+    };
+    expect(toolCallSentence({ ...row, status: "running" })).toBe("Running npm test");
+    expect(toolCallSentence({ ...row, status: "failed" })).toBe("Ran npm test");
+    expect(presentTense("Searched for TODO")).toBe("Searching for TODO");
+    expect(presentTense("Read store.ts")).toBe("Reading store.ts");
+    expect(presentTense("Updated to-dos 2 of 5 done")).toBe("Updating to-dos 2 of 5 done");
+    // A title that does not lead with a known verb is left as the backend gave it.
+    expect(presentTense("Bash")).toBe("Bash");
+    expect(presentTense("Reader mode")).toBe("Reader mode");
   });
 });

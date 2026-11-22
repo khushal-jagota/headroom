@@ -25,7 +25,7 @@
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
-      {#if running || backgroundWorking}<span class="c2-mark--running" role="img" aria-label="working"></span>{:else if settingUp && activityKnown}<span class="c2-mark--running" role="img" aria-label="setting up"></span>{:else if settingUp}<svg class="c2-mark--unconfirmed" viewBox="0 0 16 16" role="img" aria-label="setting up, not confirmed" data-unconfirmed><circle cx="8" cy="8" r="6.25" /><path d="M8 4.75v3.75" /><path d="M8 11.1v.15" /></svg>{/if}
+      {#if running || backgroundWorking}<span class="c2-mark--running" role="img" aria-label="working"></span>{:else if settingUp && activityKnown}<span class="c2-mark--running" role="img" aria-label="setting up"></span>{:else if settingUp}<svg class="c2-mark--unconfirmed" viewBox="0 0 16 16" role="img" aria-label="setting up, not confirmed" data-unconfirmed><circle cx="8" cy="8" r="6.25" /><path d="M8 4.75V8l2.25 1.5" /></svg>{/if}
       {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
       {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
     </span>
@@ -36,8 +36,9 @@
   {#if preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
 </button>
 <!-- While the machine cannot say what it is doing, the line under the status is the reason
-     the status above it cannot be trusted: brighter than a note, under the warning mark. -->
-{#if feedback}<div class="c2-rest-feedback" class:is-warning={!activityKnown} role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
+     the status above it cannot be trusted. Setup it cannot confirm is still setup: the
+     reason is a caveat under the status, in from its mark and no brighter than it. -->
+{#if feedback}<div class="c2-rest-feedback" class:is-warning={!activityKnown && !settingUp} class:is-caveat={!activityKnown && settingUp} role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
 
 <style>
   /* Staging's status line in the page's tokens: Small print in the tertiary tone, a 32px row
@@ -69,15 +70,20 @@
   /* A live state looks live even in a still frame: a faint track with one bright arc (the
      transcript's own spinner colours), not a grey ring whose arc is a shade off its track. */
   .c2-mark--running { flex:none; width:var(--space-3); height:var(--space-3);
-    border-radius:var(--radius-pill); border:var(--border-strong) solid color-mix(in srgb, var(--tone-tertiary) 40%, transparent); border-top-color:var(--accent-bright);
+    border-radius:var(--radius-pill); border:var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 28%, transparent);
+    border-top-color:var(--accent-bright); border-right-color:var(--accent-bright);
     animation:spin var(--motion-loop-spin) linear infinite; }
   /* Setup the machine cannot confirm right now is recorded, not seen moving: no ring that
-     could pass for a spinner, but the warning mark the line under it explains. */
-  .c2-mark--unconfirmed { flex:none; width:14px; height:14px; fill:none; stroke:var(--accent-attention); stroke-width:1.5; stroke-linecap:round; }
+     could pass for a spinner, and no warning either, because setting up is normal. A still
+     clock in the line's own tone says "under way"; the caveat under it says why it is still. */
+  .c2-mark--unconfirmed { flex:none; width:14px; height:14px; fill:none; stroke:var(--tone-tertiary); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   /* A warning in this pane is the amber mark, never amber words (as the transcript's own
      warning lines): the reason under it is said a step brighter than a note, in the
      secondary tone, so the colour keeps one meaning and the sentence stays easy to read. */
   .c2-rest-feedback.is-warning { color:var(--tone-secondary); }
+  /* The setup caveat hangs under the status words (in from the 14px mark), in the status's
+     own tone, so it reads as a note on that line rather than a second headline. */
+  .c2-rest-feedback.is-caveat { margin-block-start:calc(var(--space-2) * -1); padding-inline-start:calc(14px + var(--space-2)); }
   @keyframes spin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion:reduce) { .c2-mark--running { animation:none; } .c2-rest-control { transition:none; } }
 </style>

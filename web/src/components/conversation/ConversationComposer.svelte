@@ -30,7 +30,7 @@
 
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
   import {
-    orderedComposerAttachments, attachmentExtension, attachmentByteLabel,
+    orderedComposerAttachments, attachmentExtension, attachmentByteLabel, attachmentKindLabel,
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
@@ -112,7 +112,6 @@
     ask = null,
     userInput = null,
     credentialRequest = null,
-    transcriptOpen = false,
     askNote = null,
     userInputNote = null,
     permissionAvailable = true,
@@ -170,8 +169,6 @@
     /** A key the agent asked for and the person has not yet given or refused. It is asked
      *  where the other asks are, in the composer's place, and the box gives way to it. */
     credentialRequest?: CredentialRequestRowBody | null;
-    /** The conversation is open full height, its transcript (and task pill) over the box. */
-    transcriptOpen?: boolean;
     askNote?: string | null;
     userInputNote?: string | null;
     permissionAvailable?: boolean;
@@ -1022,56 +1019,34 @@
     ".conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label)))";
   let boxElement = $state<HTMLDivElement | null>(null);
 
-  // --- the room a popover opens into -----------------------------------------------------------
+  // --- popovers --------------------------------------------------------------------------------
   /** Every popover the composer opens (add, catalog, model, delivery) opens from the box's top
-   *  edge, at its trigger. Where something that matters stands over the box (the open
-   *  transcript's last lines and task pill, or a queue tray or local send at any height), the
-   *  composer makes room for it there: those step up by the popover's height while it is open,
-   *  so it covers none of them and is never cut off from what opened it. At rest with nothing
-   *  over the box it simply overlays the page above the dock, and the dock does not grow. A
-   *  composer that has had to scroll draws its popovers in its own flow (app.css), and they
-   *  need no room. */
-  const COMPOSER_POPOVERS = ".listbox-picker-panel, .chat-menu, .chat-add-menu";
-  let sectionElement = $state<HTMLElement | null>(null);
-  let openPopoverHeight = $state(0);
-  let somethingOverTheBox = $derived(transcriptOpen || heldPromptRows.length > 0 || localSends.length > 0);
-  let popoverRoom = $derived(somethingOverTheBox ? openPopoverHeight : 0);
-  $effect(() => {
+   *  edge, at its trigger, and floats over whatever stands above the box (the queue tray, the
+   *  task pill, the transcript's last lines) on the raised plane, its ring and shadow setting it
+   *  off. Nothing steps aside for it, so nothing jumps when it opens or closes. A composer that
+   *  has had to scroll draws its popovers in its own flow (app.css). */
+  const DISMISSIBLE_POPOVERS = ".listbox-picker-panel, .chat-add-menu";
+  /** A press outside an open menu only closes it. Its click would otherwise land on whatever the
+   *  menu was floating over (a queued message's Send now, the task pill, the resting dock's
+   *  background that opens the conversation), so that one click is held back. The press is
+   *  noted before the menu's own outside-press handler closes it (window capture runs first),
+   *  and every press or key starts the note again, so a press that never became a click never
+   *  holds back a later one. The catalog is left out: it follows the draft as it is typed. */
+  let swallowNextClick = false;
+  function notePressOutsideAPopover(event: PointerEvent): void {
+    swallowNextClick = false;
     const box = boxElement;
-    const section = sectionElement;
-    if (box === null || section === null) return;
-    let watched: HTMLElement[] = [];
-    const sizes = new ResizeObserver(() => measure());
-    function measure(): void {
-      if (box === null) return;
-      const open = Array.from(box.querySelectorAll<HTMLElement>(COMPOSER_POPOVERS));
-      if (open.length !== watched.length || open.some((panel, index) => panel !== watched[index])) {
-        sizes.disconnect();
-        for (const panel of open) sizes.observe(panel);
-        watched = open;
-      }
-      const floating = open.filter((panel) => getComputedStyle(panel).position === "absolute");
-      const tallest = Math.max(0, ...floating.map((panel) => panel.offsetHeight));
-      const gap = Number.parseFloat(getComputedStyle(box).getPropertyValue("--space-2")) || 8;
-      openPopoverHeight = tallest > 0 ? Math.ceil(tallest + gap) : 0;
-    }
-    const changes = new MutationObserver(measure);
-    changes.observe(box, { childList: true, subtree: true });
-    changes.observe(section, { attributes: true, attributeFilter: ["data-conversation-composer-constrained"] });
-    measure();
-    return () => {
-      changes.disconnect();
-      sizes.disconnect();
-    };
-  });
-
-  /** The room is part of the composer, not the dock's background: a press on it does nothing,
-   *  where a press on the resting dock's background would open the conversation. Listened for
-   *  natively on the element, so it stops before the dock's own listener on its host. */
-  function inertToPresses(node: HTMLElement) {
-    const swallow = (event: Event): void => { event.stopPropagation(); };
-    node.addEventListener("click", swallow);
-    return { destroy: () => node.removeEventListener("click", swallow) };
+    if (box === null || !(event.target instanceof Node)) return;
+    const open = box.querySelector<HTMLElement>(DISMISSIBLE_POPOVERS);
+    const owner = open?.parentElement;
+    if (!open || !owner || owner.contains(event.target)) return;
+    swallowNextClick = true;
+  }
+  function holdBackTheDismissingClick(event: MouseEvent): void {
+    if (!swallowNextClick) return;
+    swallowNextClick = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }
 
   // --- keyboard focus -----------------------------------------------------------------------------
@@ -1277,7 +1252,9 @@
 </script>
 
 <svelte:window
-  onkeydowncapture={inputModality}
+  onkeydowncapture={(event) => { swallowNextClick = false; inputModality(event); }}
+  onpointerdowncapture={notePressOutsideAPopover}
+  onclickcapture={holdBackTheDismissingClick}
   onpointerdown={(event) => {
     inputModality(event);
     if (!addMenuOpen) return;
@@ -1290,8 +1267,6 @@
 <section
   class="c2-composer"
   data-conversation-composer
-  bind:this={sectionElement}
-  style:--composer-popover-room={`${popoverRoom}px`}
 >
   <div class="chat-box-stack">
     {#each localSends as entry (entry.context.messageId)}
@@ -1325,8 +1300,6 @@
       onStopDrawing={onStopDrawingHeldPrompt}
       onSendAgain={onSendHeldPromptAgain}
     />
-    <!-- Where an open popover stands: between what waits over the box and the box itself. -->
-    <div class="chat-popover-room" aria-hidden="true" use:inertToPresses style:height={`${popoverRoom}px`}></div>
 
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -1366,7 +1339,13 @@
           onAnswer={(optionId) => onAnswer?.(optionId)}
         />
       {:else if credentialInTheBox && credentialRequest}
-        <ConversationCredentialRequestCard request={credentialRequest} />
+        <!-- A turn still running while the key is asked for can be ended from here, as it can
+             from a question or a permission ask; a request left by a finished turn has no turn
+             to end, so the card offers only its own answers. -->
+        <ConversationCredentialRequestCard
+          request={credentialRequest}
+          onCancelTurn={running && onCancelTurn ? () => onCancelTurn?.() : undefined}
+        />
       {/if}
 
       {#if !panelTakesTheBox && attachments.length > 0}
@@ -1404,7 +1383,7 @@
                 <span class="chat-att-kind" aria-hidden="true">{attachmentExtension(item.fileName)}</span>
                 <span class="chat-att-words">
                   <span class="chat-att-name">{item.fileName}</span>
-                  <span class="chat-att-meta"><span class="chat-att-type">{item.mediaType}</span><span class="chat-att-size">&nbsp;· {attachmentByteLabel(item.byteCount)}</span></span>
+                  <span class="chat-att-meta"><span class="chat-att-type">{attachmentKindLabel(item.fileName, item.mediaType)}</span><span class="chat-att-size">&nbsp;· {attachmentByteLabel(item.byteCount)}</span></span>
                 </span>
               {/if}
               <button
@@ -1687,7 +1666,6 @@
     position: absolute;
     inset-block-end: calc(100% + var(--space-2));
     inset-inline-start: 0;
-    z-index: 5;
     min-width: 224px;
     display: flex;
     flex-direction: column;
@@ -1875,26 +1853,17 @@
   /* --- popovers ------------------------------------------------------------------------------ */
   /* Every popover the composer opens stands on the one raised plane, opaque, and opens 8px over
      the box's top edge at its own trigger: the add menu from the box's left edge, the catalog
-     across the box, the model and delivery pickers from its right edge. The composer makes room
-     for it (.chat-popover-room), so what waits over the box (the queue tray, the task pill, the
-     transcript's last lines) steps up rather than going under it. A deeper shadow, falling on
-     every side, sets the plane off from anything scrolled up behind it. */
+     across the box, the model and delivery pickers from its right edge. It overlays what stands
+     over the box (the queue tray, the task pill, the transcript's last lines) rather than moving
+     it: it is raised over all of them (z-index), and a ring and a deep shadow falling on every
+     side set its edge off from whatever it covers. Its height is capped by the room over the
+     composer (app.css, --conversation-popup-height), so nothing above cuts it off. */
   .chat-box :global(:is(.listbox-picker-panel, .chat-menu)),
   .chat-add-menu {
+    z-index: 40;
     box-shadow: 0 0 0 var(--border-hairline) rgb(0 0 0 / 40%), 0 10px 32px rgb(0 0 0 / 55%), 0 0 12px rgb(0 0 0 / 35%);
   }
-  .chat-popover-room { display: none; }
-  :global(.conversation-layer) .chat-popover-room { display: block; }
   :global(.conversation-layer) .chat-add { position: static; }
-  /* The room is the composer's own, so the height a popover may take is the room over the
-     composer as it stood before the popover opened (the dock's measure, plus the room). */
-  :global(.conversation-layer) .c2-composer:not([data-conversation-composer-constrained]) .chat-box :global(.listbox-picker-panel),
-  :global(.conversation-layer) .c2-composer:not([data-conversation-composer-constrained]) .chat-add-menu {
-    max-height: max(0px, calc(var(--conversation-popup-height, 100vh) + var(--composer-popover-room, 0px) - var(--space-6)));
-  }
-  :global(.conversation-layer) .c2-composer:not([data-conversation-composer-constrained]) .chat-box :global(.chat-menu) {
-    max-height: min(320px, max(0px, calc(var(--conversation-popup-height, 100vh) + var(--composer-popover-room, 0px) - var(--space-6))));
-  }
   /* The model picker opens from the box's right edge in every state, as it does on the one row. */
   :global(.conversation-layer) .chat-box .chat-foot > :global([data-conversation-model-picker]) { position: static; }
   :global(.conversation-layer) .chat-box .chat-foot > :global([data-conversation-model-picker] > .listbox-picker-panel) {

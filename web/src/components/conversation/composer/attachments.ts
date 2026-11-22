@@ -33,7 +33,26 @@ export function attachmentExtension(name: string): string {
   return (dot < 0 ? "" : name.slice(dot + 1).toUpperCase()).slice(0, 4) || "FILE";
 }
 
+/** A file's size as the sent file card writes it ("692 B", "1.7 KiB", "24 KiB", "3.1 MiB"), so a
+ *  file reads the same waiting in the composer and once it is in the transcript. */
 export function attachmentByteLabel(bytes: number): string {
-  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
-    ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+const TEXT_EXTENSIONS = new Set(["txt", "text", "log", "csv", "tsv", "json", "jsonl", "md", "markdown"]);
+
+/** The kind a file is called by, in words, as the sent file card calls it ("Text", "PDF"),
+ *  never its raw media type: a person reads "Text · 692 B", not "text/plain · 692 B". */
+export function attachmentKindLabel(fileName: string, mediaType = ""): string {
+  const dot = fileName.lastIndexOf(".");
+  const extension = dot < 0 ? "" : fileName.slice(dot + 1).toLowerCase();
+  const type = mediaType.toLowerCase();
+  if (extension === "pdf" || type === "application/pdf") return "PDF";
+  if (TEXT_EXTENSIONS.has(extension) || type.startsWith("text/") || type === "application/json") return "Text";
+  if (type.startsWith("image/")) return "Image";
+  if (type.startsWith("video/")) return "Video";
+  if (type.startsWith("audio/")) return "Audio";
+  return "File";
 }

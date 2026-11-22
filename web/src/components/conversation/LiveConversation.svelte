@@ -27,6 +27,8 @@
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
+  import { ATTACHMENT_NOT_READ_BACK, RESEND_RECORDED_MESSAGE, sentPiecesFromRecorded, type ResendRecordedMessage } from "../../lib/conversation/resendRefused";
+  import type { ComposerRunSelection } from "../../lib/conversation/runControls/contracts";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     heldPromptIsInLens,
@@ -271,6 +273,31 @@
     saysAvailabilityUnknown: (kind, id) => kind === "permission"
       ? ask?.askId === id && permissionNote === EXECUTOR_ASK_UNCERTAIN
       : userInput?.requestId === id && userInputNote === EXECUTOR_ASK_UNCERTAIN
+  });
+  // What the composer has picked, so a refused message sent again from the thread runs
+  // under the model the person is looking at — the one its next step asks them to choose.
+  let composerSelection: ComposerRunSelection | null = null;
+  // Resend on a message the conversation turned away: the same words and kept files, read
+  // back from the conversation, as a new message. Queued behind a running turn, started
+  // otherwise, as the composer would send it.
+  setContext<ResendRecordedMessage>(RESEND_RECORDED_MESSAGE, {
+    available: () => !readOnly,
+    resend: async (recordedIn, content) => {
+      if (readOnly || recordedIn !== openedId) return false;
+      let pieces: SentMessagePiece[];
+      try {
+        pieces = await sentPiecesFromRecorded(recordedIn, content);
+      } catch (error) {
+        errorNote = error instanceof Error ? error.message : ATTACHMENT_NOT_READ_BACK;
+        return false;
+      }
+      return send(pieces, running ? "queue" : "steer", {
+        model: composerSelection?.pickedModel ?? null,
+        reasoningEffort: composerSelection?.pickedReasoningEffort ?? null,
+        backendKey: null,
+        ...(composerSelection?.effortIsSet === undefined ? {} : { effortIsSet: composerSelection.effortIsSet })
+      });
+    }
   });
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
@@ -1016,6 +1043,7 @@
   <p class="executor-answer-status" data-executor-answer-status role="status">{record.sentence}</p>
 {/each}
 <ConversationPane
+  onPreviewRunSelection={(selection) => { composerSelection = selection; }}
   title={title ?? null}
   roleLabel={historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}

@@ -291,7 +291,10 @@ strong {
   .bar-item[aria-current="page"] { color:var(--text-strong); font-weight:var(--weight-title); }
   .bar-item:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:-2px; }
   .bar-item .count-badge { position:static; box-shadow:none; }
-  .bar-caret { color:var(--text-faintest); font-size:var(--type-small); }
+  /* The app's drawn chevron (the conversation head's): it points to where the sheet
+     opens and turns over while it is open. */
+  .bar-caret { flex:none; width:14px; height:14px; color:var(--text-faintest); fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:transform var(--motion-fast) var(--motion-ease); }
+  .bar-item[aria-expanded="true"] .bar-caret { transform:rotate(180deg); }
   .destination-sheet { animation:shell-panel-in var(--motion-base) var(--motion-ease); position:absolute; z-index:14; inset:auto 0 100%; max-height:calc(100dvh - var(--shell-nav-height)); overflow:auto; padding:var(--space-2) var(--space-3) var(--space-5); border-top:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg) var(--radius-lg) 0 0; background:var(--surface-2); box-shadow:var(--shadow-float); }
   .sheet-grab { display:block; }
   .sheet-group { padding:var(--space-2) var(--space-2) var(--space-1); color:var(--text-faintest); font-size:var(--type-xs); letter-spacing:var(--tracking-label); text-transform:uppercase; }
@@ -1562,10 +1565,12 @@ button.list-row:hover .list-row-title {
   flex: none;
   width: var(--space-3);
   height: var(--space-3);
-  /* The live mark every working state uses (head, dock, task pill, tool row): a track
-     that is visible on the page and one bright arc, so it reads as live in a still frame. */
-  border: var(--border-strong) solid color-mix(in srgb, var(--tone-tertiary) 40%, transparent);
+  /* The live mark every working state uses (head, dock, task pill, tool row, the turn's
+     own line): an accent track with half of it lit, so it reads as live in a still frame
+     and never as the grey empty circle of a task that has not started. */
+  border: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 28%, transparent);
   border-top-color: var(--accent-bright);
+  border-right-color: var(--accent-bright);
   border-radius: var(--radius-pill);
   animation: acp-spin var(--motion-loop-spin) linear infinite;
 }
@@ -1637,6 +1642,14 @@ button.list-row:hover .list-row-title {
      name for it — and the aliases resolved from it at the root — lands on the secondary
      here. The ladder in the conversation is strong, primary, secondary; faint is left for
      placeholders and disabled controls. Hierarchy among quiet things is size and weight. */
+  /* Round 4: the quiet tone itself sits a step over the app's secondary here (#b1b1b1:
+     8.7 on the page, 6.7 on the composer's field, 5.7 on a selected row), because the
+     conversation's quiet lines are small and many — turn heads, tool rows, an option's
+     description — and at #a7a7a7 they read as dim beside the prose. Body (#dadada) and
+     strong (#ececec) stay where they are, so the ladder keeps its steps. */
+  --tone-secondary: #b1b1b1;
+  --text-muted: var(--tone-secondary);
+  --text-faint: var(--tone-secondary);
   --tone-tertiary: var(--tone-secondary);
   --text-faintest: var(--tone-secondary);
   --chart-muted: var(--tone-secondary);
@@ -1849,7 +1862,9 @@ button.list-row:hover .list-row-title {
      further out. The newest line keeps a full step of air over the composer, so a draft
      that grows several lines tall never sits against what was last said
      (NEWEST_LINE_BOTTOM_GAP_PIXELS in viewport/viewportConfiguration.ts is this value). */
-  padding: var(--space-5) var(--space-3) var(--space-5);
+  /* The top is a step deeper than the bottom: the first message's time and Copy appear
+     in the space over it, and need clear air under the head's rule. */
+  padding: var(--space-6) var(--space-3) var(--space-5);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
 }
@@ -1901,6 +1916,36 @@ button.list-row:hover .list-row-title {
   background-image: var(--interaction-hover);
   border-color: var(--accent-bright);
   color: var(--text-strong);
+}
+
+/* The thread's rhythm: a turn's head ("Worked for…", "Working for…") and the line that
+ * says how a turn ended belong to what they introduce, so they sit close over it, and the
+ * space between turns stays the larger one. Rows draw through wrappers (the view's item
+ * and, inside it, display: contents transcripts), so the rules name the wrappers:
+ *   head    an item holding a drawn turn head
+ *   marker  an item that draws nothing and gives back its share of the gap
+ *   ending  an item holding a turn's ending or stop line
+ * The pull is a margin on what follows, never on the head, so the head and the last
+ * line under it keep their measured edges for the viewport. */
+[data-conversation-transcript] > [data-conversation-view-key]:has(> div > [data-conversation-turn]) + [data-conversation-view-key]:has(.chat-a, [data-conversation-row="tool_call"], [data-conversation-row="streaming"]),
+[data-conversation-transcript] > [data-conversation-view-key]:has(> div > [data-conversation-turn]) + [data-conversation-view-key]:has(> div:only-child:not(:has(*))) + [data-conversation-view-key]:has(.chat-a, [data-conversation-row="tool_call"], [data-conversation-row="streaming"]),
+[data-conversation-transcript] > [data-conversation-view-key]:has([data-conversation-row="turn_ended"], [data-conversation-row="turn_stopped"]) + [data-conversation-view-key]:has(.chat-a),
+[data-conversation-transcript] > [data-conversation-view-key]:has([data-conversation-row="turn_ended"], [data-conversation-row="turn_stopped"]) + [data-conversation-view-key]:has(> div:only-child:not(:has(*))) + [data-conversation-view-key]:has(.chat-a),
+[data-conversation-transcript] > [data-conversation-turn] + :is(.chat-a, .c2-streaming),
+[data-conversation-transcript] > [data-conversation-row="turn_ended"] + .chat-a {
+  margin-block-start: calc(var(--space-2) - var(--space-5));
+}
+/* And a new turn starts a step further from the one before it. */
+[data-conversation-transcript] > [data-conversation-view-key]:has(.chat-u):not(:first-child),
+[data-conversation-transcript] > [data-conversation-view-key]:has(> div > [data-conversation-turn]):not(:first-child),
+[data-conversation-transcript] > :is(.chat-u, [data-conversation-turn]):not(:first-child) {
+  margin-block-start: var(--space-2);
+}
+/* A head right under the person's message is the same turn: the step goes over the
+   message, not between it and its head. */
+[data-conversation-transcript] > [data-conversation-view-key]:has(.chat-u) + [data-conversation-view-key]:has(> div > [data-conversation-turn]),
+[data-conversation-transcript] > .chat-u + [data-conversation-turn] {
+  margin-block-start: 0;
 }
 
 /* user = the only bubble */
@@ -2329,7 +2374,7 @@ button.list-row:hover .list-row-title {
 
 /* Waiting messages share one tray over the input box: its own card, as wide as the box and on
  * the same edges, 8px clear of it, so the box's rounded corners (and its focus edge) never meet
- * the tray's foot. An open composer popover stands in the room between the two. */
+ * the tray's foot. */
 .chat-box-stack { display: grid; min-width: 0; max-width: 100%; }
 .chat-queue-wrap {
   min-width: 0;

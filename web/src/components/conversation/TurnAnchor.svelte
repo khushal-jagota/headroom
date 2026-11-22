@@ -24,6 +24,7 @@
   } from "../../lib/conversation/transcript";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import type { ConversationTurnEnding } from "../../lib/conversation/wire";
+  import type { RunningToolActivity } from "../../lib/conversation/view/presentation";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
    *  frames, short enough that a stalled backend stops claiming to be alive. */
@@ -66,8 +67,10 @@
     /** Moves whenever a live frame arrives. Only its movement is read. */
     livenessPulse?: number;
     /** What the running turn is doing right now, from the record: the sentence its
-     *  running tool call reads as. Absent when nothing is running that anybody can name. */
-    activity?: string | null;
+     *  running tool call reads as, and its halves, so a literal subject (a command, a path)
+     *  is set as code as its row sets it. Absent when nothing is running that anybody can
+     *  name. */
+    activity?: RunningToolActivity | null;
     /** Opens and closes what this turn did. Absent where the reading already shows it. */
     onToggle?: () => void;
   } = $props();
@@ -196,7 +199,7 @@
       </div>
       {#if activity && waitingSentence === null && !activityUncertain}
         <!-- What it is doing now, in the words its tool row uses. -->
-        <div class="c2-live-activity" data-conversation-live-activity title={activity}>{activity}</div>
+        <div class="c2-live-activity" data-conversation-live-activity title={activity.sentence}>{#if activity.summary === null}{activity.title}{:else}{activity.title} <span class="c2-live-subject" class:c2-live-subject--literal={activity.summaryIsLiteral}>{activity.summary}</span>{/if}</div>
       {/if}
     {/if}
   </div>
@@ -222,13 +225,17 @@
   /* A running turn speaks a step brighter than a finished one: finished heads are history
      in the tertiary tone, the one that is still going is the thread's present. */
   .c2-alive-line .c2-alive:not(.c2-waiting) { color: var(--text-muted); }
+  /* The live mark is the brightest mark on the line and never a grey ring: an accent
+     track with half of it lit, so even held still it reads as a spinner, not as the empty
+     circle of a task that has not started. */
   .c2-live-mark {
     flex: none;
     width: 12px;
     height: 12px;
     border-radius: var(--radius-pill);
-    border: 1.5px solid color-mix(in srgb, var(--text-faintest) 40%, transparent);
+    border: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 28%, transparent);
     border-top-color: var(--accent-bright);
+    border-right-color: var(--accent-bright);
   }
   .c2-live-mark.is-turning { animation: c2-live-spin var(--motion-loop-spin) linear infinite; }
   @keyframes c2-live-spin { to { transform: rotate(360deg); } }
@@ -245,6 +252,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* Only the exact thing the call acts on is set as code, as its tool row sets it. */
+  .c2-live-subject--literal {
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-mono);
   }
   /* Alive recently is said by `live-text-shimmer`, the app's shared way of showing a thing
      is happening now. When frames stop arriving the words go still and the count carries

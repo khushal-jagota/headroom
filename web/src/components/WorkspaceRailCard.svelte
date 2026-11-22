@@ -62,7 +62,7 @@
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={(event) => {if (!(event.relatedTarget instanceof Node) || !event.currentTarget.closest(".identity")?.contains(event.relatedTarget)) input().leave(event);}} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={(event) => input().leave(event)}>
       <span class="item-title">{title}</span>
       {#if waiting && !signal?.message_for_owner}
-        <span class="conversation-signal-marks" data-conversation-signal="waiting" data-conversation-id={conversationId ?? undefined}><StageMark state="needs-me" aria-label="Waiting for you" /></span>
+        <span class="conversation-signal-marks waiting-mark" data-conversation-signal="waiting" data-conversation-id={conversationId ?? undefined}><StageMark state="needs-me" aria-label="Waiting for you" /></span>
       {:else}
         <ConversationSignalMark {signal} {conversationId} />
       {/if}
@@ -114,6 +114,9 @@
   .manager-card.chief .identity:not(:has(:global(.manager-eyebrow))) .item-head { top:0; }
   .item-head { position:relative; top:var(--rail-title-nudge); display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; align-self:start; height:var(--rail-title-line); }
+  /* Waiting for you: the header's dot, 8px in the accent, in a flex box so it stays a dot. */
+  .waiting-mark { display:inline-flex; align-items:center; }
+  .waiting-mark :global(.stage-mark--needs-me) { width:var(--space-2); height:var(--space-2); background:var(--accent-bright); border-color:var(--accent-bright); }
   /* The name leads the block by size and weight (18/600 on a 24px line) and wraps in full.
      It rests dim unless it needs the person (an unread message for them); the pointer on its
      header or its own page open brings it to full brightness. */

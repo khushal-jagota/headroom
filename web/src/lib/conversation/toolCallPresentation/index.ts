@@ -21,6 +21,9 @@ export type ToolCallPresentation = {
   summary: string | null;
   /** The summary as it was given, when shortening it dropped something. */
   summaryInFull: string | null;
+  /** Whether the summary is a literal thing (a command, a path, a pattern, an address)
+   *  rather than words about the call ("0 of 5 done"). Only a literal is set as code. */
+  summaryIsLiteral: boolean;
   /** Both halves as one line, for places with room for a single string. */
   sentence: string;
   detail: string | null;
@@ -45,6 +48,8 @@ type ToolCallLine = {
   title: string;
   summary: string | null;
   summaryInFull?: string | null;
+  /** The summary is the exact thing the call acted on, not a description of it. */
+  literal?: boolean;
   /** What the row opens onto, when that is not the call's raw output. */
   detail?: string | null;
 };
@@ -353,7 +358,11 @@ function toolCallLine(row: ToolCallRow): ToolCallLine {
  * drops its scheme. Anything else keeps its start and says, with an ellipsis, that it
  * was cut. The whole subject stays with the line for anyone who wants it.
  */
-function subjectLine(title: string, subject: string, kind: ToolGlyphKind): ToolCallLine {
+/** The kinds whose subject is the literal thing acted on: a command, a path, a pattern, an
+ *  address. Any other kind's subject is the backend's words about the call. */
+const LITERAL_SUBJECT_KINDS: ReadonlySet<ToolGlyphKind> = new Set(["read", "edit", "delete", "move", "search", "execute", "fetch"]);
+
+function subjectLine(title: string, subject: string, kind: ToolGlyphKind, literal = LITERAL_SUBJECT_KINDS.has(kind)): ToolCallLine {
   const whole = subject.trim();
   let compact = whole;
   if (kind === "read" || kind === "edit" || kind === "delete" || kind === "move") {
@@ -362,7 +371,7 @@ function subjectLine(title: string, subject: string, kind: ToolGlyphKind): ToolC
     compact = whole.replace(/^https?:\/\/(?:www\.)?/i, "");
   }
   const summary = shortened(compact);
-  return { title, summary, summaryInFull: summary === whole ? null : whole };
+  return { title, summary, summaryInFull: summary === whole ? null : whole, literal };
 }
 
 const PATH_SEGMENTS_KEPT = 2;
@@ -438,7 +447,8 @@ function fileChangeLine(row: ToolCallRow, named: string): ToolCallLine {
   return {
     title: `${verb} ${count[1]} files`,
     summary: names.length === 0 ? null : shortened(names.join(", ")),
-    summaryInFull: names.length === 0 ? null : changes.map((change) => change.path).join(", ")
+    summaryInFull: names.length === 0 ? null : changes.map((change) => change.path).join(", "),
+    literal: true
   };
 }
 
@@ -472,7 +482,7 @@ function knownToolLine(row: ToolCallRow, wholeDetail: string | null): ToolCallLi
     }
     case "websearch": {
       const query = named("query");
-      return query === null ? null : subjectLine("Searched the web for", query, "search");
+      return query === null ? null : subjectLine("Searched the web for", query, "search", false);
     }
     case "task":
     case "agent": {
@@ -483,7 +493,7 @@ function knownToolLine(row: ToolCallRow, wholeDetail: string | null): ToolCallLi
       return { title: "Presented a plan", summary: null };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(title);
-  if (mcp) return { title: "Used", summary: shortened(`${mcp[1]} · ${mcp[2]}`) };
+  if (mcp) return { title: "Used", summary: shortened(`${mcp[1]} · ${mcp[2]}`), literal: true };
   return null;
 }
 
@@ -542,6 +552,33 @@ function lineShowsWholeDetail(line: ToolCallLine, detail: string): boolean {
   return addsNothingTo(detail, `${line.title} ${line.summaryInFull ?? line.summary ?? ""}`);
 }
 
+/** The leading verbs a tool call's sentence can begin with, and how each reads while the
+ *  call is still under way. A title that does not begin with one of them (a backend's own
+ *  tool name, say) is left as it was: nothing is guessed. */
+const RUNNING_VERBS: Readonly<Record<string, string>> = {
+  Ran: "Running",
+  Read: "Reading",
+  Edited: "Editing",
+  Created: "Creating",
+  Wrote: "Writing",
+  Deleted: "Deleting",
+  Moved: "Moving",
+  Searched: "Searching",
+  Listed: "Listing",
+  Fetched: "Fetching",
+  Switched: "Switching",
+  Updated: "Updating",
+  Presented: "Presenting",
+  Used: "Using"
+};
+
+export function presentTense(sentence: string): string {
+  const match = /^(\S+)(.*)$/s.exec(sentence);
+  if (match === null) return sentence;
+  const running = RUNNING_VERBS[match[1]!];
+  return running === undefined ? sentence : `${running}${match[2]}`;
+}
+
 export function presentToolCall(row: ToolCallRow): ToolCallPresentation {
   // The renderers receive one coherent decision. Classification cannot choose one icon
   // while a caller independently chooses different wording or disclosure behavior.
@@ -554,12 +591,16 @@ export function presentToolCall(row: ToolCallRow): ToolCallPresentation {
   // that start happens to look like. Reading the prefix instead would let a row whose
   // first line repeats its title refuse to open onto the rest of the output.
   const capped = row.progress === null && typeof row.cappedDetailSequence === "number";
+  // A call still under way says so in its verb ("Running npm test"), beside its spinner;
+  // the past tense is for a call that has ended.
+  const title = row.status === "running" ? presentTense(line.title) : line.title;
   return {
     iconPaths: STEP_ICON_PATHS[toolGlyphKind(namedTool(row))],
-    title: line.title,
+    title,
     summary: line.summary,
     summaryInFull: line.summaryInFull ?? null,
-    sentence: line.summary === null ? line.title : `${line.title} ${line.summary}`,
+    summaryIsLiteral: line.summary !== null && line.literal === true,
+    sentence: line.summary === null ? title : `${title} ${line.summary}`,
     detail,
     canExpand: (capped && line.detail === undefined)
       || (detail !== null && !lineShowsWholeDetail(line, detail)),

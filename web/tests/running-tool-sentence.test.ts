@@ -13,8 +13,16 @@ const status = (over: Partial<ConversationViewStatus> = {}, latest = tool('runni
 
 describe('what a running turn is doing now', () => {
   it('reads the running call in its tool row sentence', () => {
-    const sentence = runningToolSentence(status(), 'turn1');
-    expect(sentence).toContain('go test -race ./internal/push');
+    const activity = runningToolSentence(status(), 'turn1');
+    expect(activity?.sentence).toContain('go test -race ./internal/push');
+  });
+  it('says a call still running in the present tense, beside the live mark', () => {
+    expect(runningToolSentence(status(), 'turn1')?.sentence).toBe('Running go test -race ./internal/push');
+  });
+  it('says whether its subject is a literal command, so the line sets only that as code', () => {
+    expect(runningToolSentence(status(), 'turn1')).toEqual({
+      sentence: 'Running go test -race ./internal/push', title: 'Running', summary: 'go test -race ./internal/push', summaryIsLiteral: true
+    });
   });
   it('says nothing for a finished call, another turn, a stopped turn or unknown activity', () => {
     expect(runningToolSentence(status({}, tool('completed')), 'turn1')).toBeNull();

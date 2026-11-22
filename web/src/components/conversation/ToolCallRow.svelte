@@ -78,7 +78,7 @@
   <!-- The verb never gives way; the subject takes whatever width is left and ends in an
        ellipsis inside the row, with the whole of it in its tooltip. -->
   <span class="acp-step-title c2-tool-line">
-    <span class="c2-tool-verb">{presentation.title}</span>{#if presentation.summary}<span class="c2-tool-subject" data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}
+    <span class="c2-tool-verb">{presentation.title}</span>{#if presentation.summary}<span class="c2-tool-subject" class:c2-tool-subject--literal={presentation.summaryIsLiteral} data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}
   </span>
   <!-- How it went, in one column at the row's end, so a run of rows reads its outcomes
        straight down rather than wherever each line happened to stop. A word that says the
@@ -99,56 +99,48 @@
       <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
     {/if}
   </span>
-  <!-- The chevron's column is kept on every row, open-able or not, so the outcomes above
-       and below it stand in the same place. -->
-  {#if presentation.canExpand}
-    <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
-  {:else}
-    <span class="c2-tool-chevron-slot" aria-hidden="true"></span>
-  {/if}
+  <!-- Every row opens, so a run of rows reads as one list of the same thing: a call that
+       printed nothing opens onto saying so, and onto the whole call when its line was
+       shortened. -->
+  <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
 {/snippet}
 
-{#if presentation.canExpand}
-  <!-- The line and what it opens onto are one thing, not two. The wash sits out here so
-       it covers both, and what opens sits inside the same shape rather than arriving as a
-       second box below it. -->
-  <div class="c2-tool" class:is-open={open} class:is-failed={presentation.outcome === "failed"}>
-    <button
-      type="button"
-      class="acp-step acp-step--expandable"
-      data-conversation-row="tool_call"
-      data-conversation-tool={row.toolCallId}
-      data-conversation-tool-status={row.status}
-      data-conversation-tool-outcome={presentation.outcome}
-      aria-expanded={open}
-      aria-controls={regionId}
-      onclick={openRow}
-    >{@render body()}</button>
-    {#if open}
-      <div id={regionId} class="c2-tool-body">
-        <pre class="c2-tool-output" data-conversation-tool-output>{shownDetail ?? ""}</pre>
-        {#if detailFailed}
-          <p class="c2-tool-detail-failed" data-conversation-tool-detail-failed>
-            {detailExpired ? DIAGNOSTIC_EXPIRED_MESSAGE : "The rest of this output did not load."}
-          </p>
-        {/if}
-      </div>
-    {/if}
-  </div>
-{:else}
-  <div
-    class="acp-step"
+<!-- The line and what it opens onto are one thing, not two. The wash sits out here so
+     it covers both, and what opens sits inside the same shape rather than arriving as a
+     second box below it. -->
+<div class="c2-tool" class:is-open={open} class:is-failed={presentation.outcome === "failed"}>
+  <button
+    type="button"
+    class="acp-step acp-step--expandable"
     data-conversation-row="tool_call"
     data-conversation-tool={row.toolCallId}
     data-conversation-tool-status={row.status}
     data-conversation-tool-outcome={presentation.outcome}
-  >{@render body()}</div>
-{/if}
+    aria-expanded={open}
+    aria-controls={regionId}
+    onclick={openRow}
+  >{@render body()}</button>
+  {#if open}
+    <div id={regionId} class="c2-tool-body">
+      {#if presentation.summaryInFull}<pre class="c2-tool-call" data-conversation-tool-call-in-full>{presentation.summaryInFull}</pre>{/if}
+      {#if shownDetail || row.cappedDetailSequence !== null}
+        <pre class="c2-tool-output" data-conversation-tool-output>{shownDetail ?? ""}</pre>
+      {:else}
+        <p class="c2-tool-empty" data-conversation-tool-no-output>{presentation.outcome === "running" ? "No output yet." : "No output."}</p>
+      {/if}
+      {#if detailFailed}
+        <p class="c2-tool-detail-failed" data-conversation-tool-detail-failed>
+          {detailExpired ? DIAGNOSTIC_EXPIRED_MESSAGE : "The rest of this output did not load."}
+        </p>
+      {/if}
+    </div>
+  {/if}
+</div>
 
 <style>
   /* One line: the kind's glyph, what was done in words, which call it was in the tool
-     voice, and how it went. The words carry the reading; the mono subject is the exact
-     thing, set one step quieter so a run of rows scans by its verbs. */
+     voice, and how it went. The words carry the reading; the subject is the exact thing,
+     set one step quieter so a run of rows scans by its verbs. */
   .acp-step {
     display: flex;
     align-items: center;
@@ -187,13 +179,19 @@
     font-size: inherit;
     letter-spacing: normal;
   }
-  .c2-tool-verb { flex: none; color: var(--text-muted); }
+  /* The verb in the thread's body tone, the subject a step under it: a run of rows scans
+     by its verbs, and both read clearly on the page rather than as a grey block. */
+  .c2-tool-verb { flex: none; color: var(--text-default); }
   .c2-tool-subject {
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--text-faintest);
+    color: color-mix(in srgb, var(--tone-primary) 45%, var(--tone-secondary));
+  }
+  /* Only the exact thing the call acted on (a command, a path, a pattern) is set as code.
+     Words about the call ("0 of 5 done") stay in the thread's own face. */
+  .c2-tool-subject--literal {
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);
@@ -229,14 +227,11 @@
   .c2-tool-spin { margin: 0; }
   /* What opens the row, said where the line ends: there at rest in the quiet mark tone, so
      a row that opens says so before it is pointed at, and brighter when pointed at,
-     focused or open. A row that does not open keeps the column empty. */
-  .c2-tool-chevron,
-  .c2-tool-chevron-slot {
+     focused or open. */
+  .c2-tool-chevron {
     flex: none;
     width: 14px;
     height: 14px;
-  }
-  .c2-tool-chevron {
     fill: none;
     stroke: var(--conversation-mark-quiet);
     stroke-width: 1.8;
@@ -250,7 +245,7 @@
   .c2-tool.is-open .c2-tool-chevron { transform: rotate(90deg); }
   .acp-step--expandable { width: 100%; background: transparent; border: 0; cursor: pointer; }
   .acp-step--expandable:hover .c2-tool-verb { color: var(--text-strong); }
-  .acp-step--expandable:hover .c2-tool-subject { color: var(--text-muted); }
+  .acp-step--expandable:hover .c2-tool-subject { color: var(--text-default); }
   /* One shape for the line and what it opens onto, so opening a row grows it rather than
      putting a second thing underneath it. The wash is on the whole shape, including the
      part that is only there when it is open. */
@@ -292,6 +287,21 @@
     background: color-mix(in srgb, var(--error-surface) 55%, var(--surface-recessed));
     border-inline-start-color: var(--accent-error);
     color: var(--text-default);
+  }
+  /* The whole call, when its line had to shorten it: the exact thing, over what it printed. */
+  .c2-tool-call {
+    margin: 0 0 var(--space-2);
+    color: var(--text-default);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .c2-tool-empty {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--type-small);
   }
   .c2-tool-detail-failed {
     margin: var(--space-1) 0 0;

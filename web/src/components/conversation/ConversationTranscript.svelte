@@ -285,9 +285,13 @@
   .c2-transcript { display: contents; }
   .c2-streaming { color: var(--text-muted); }
   .chat-a { position: relative; }
+  /* The label says whose it is; the rule beside the message only groups it, so it is a
+     quiet tint of the label's colour rather than the label's full strength. A long message
+     cut by the thread's edge then fades out with its words instead of running on as the
+     brightest mark on the screen. */
   .chat-a--to-you {
     padding-inline-start: var(--space-3);
-    border-inline-start: var(--border-strong) solid var(--accent-bright);
+    border-inline-start: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 45%, transparent);
     color: var(--text-strong);
   }
   .c2-to-you {

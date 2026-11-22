@@ -223,26 +223,47 @@ export function turnEndingSentence(
 /** A line in the thread that says what happened to a turn or a message, rather than
  *  anything anybody said. Every one of them is drawn the same way: a mark in its tone, a
  *  plain sentence a person can act on, and, when the backend said something more exact,
- *  that exact text beneath it, quieter, so nothing it said is lost. */
+ *  that exact text beneath it, quieter, so nothing it said is lost.
+ *
+ *  `stopped` is a turn that ended before it finished, by the person's hand or with no
+ *  ending recorded: not a problem, but more than a turn's ordinary metadata. */
 export type TranscriptStatus = {
-  tone: "error" | "warning" | "neutral";
+  tone: "error" | "warning" | "stopped" | "neutral";
   title: string;
   detail: string | null;
+  /** What the person can do now, in plain words, when the product knows a real next step.
+   *  It is said, not offered as a control: only things the person can actually do. */
+  next?: string | null;
+  /** Whether the backend's own words are shown open. They are when the sentence above
+   *  could not name a cause, so the words are the only explanation there is. */
+  detailOpen?: boolean;
 };
 
-/** The plain reason a turn failed, read from the backend's own words. Only causes those
- *  words name are said; anything else is said as an error, and the words stay beneath. */
-const TURN_FAILURE_CAUSES: readonly [RegExp, string][] = [
-  [/rate[ _-]?limit|usage limit|quota|too many requests|\b429\b/i, "The turn stopped because the model's rate limit was reached."],
-  [/unauthori[sz]ed|authenticat|\b401\b|\bapi key\b|not signed in|sign[ -]?in/i, "The turn stopped because the provider would not accept the sign-in."],
-  [/disconnect|connection (?:reset|closed|refused|lost)|network|socket hang up|econnreset|timed out|timeout/i, "The turn stopped because the connection to the model dropped."],
-  [/exited with code|exited unexpectedly|crashed|was killed|\bsignal\b|sigkill|sigterm/i, "The turn stopped because the agent's process exited."]
+/** The plain reason a turn failed, read from the backend's own words, and what the person
+ *  can do about it. Only causes those words name are said; anything else is said as an
+ *  error, and the words stay beneath. */
+const TURN_FAILURE_CAUSES: readonly [RegExp, string, (said: string) => string][] = [
+  [/rate[ _-]?limit|usage limit|quota|too many requests|\b429\b/i, "The turn stopped because the model's rate limit was reached.", rateLimitNextStep],
+  [/unauthori[sz]ed|authenticat|\b401\b|\bapi key\b|not signed in|sign[ -]?in/i, "The turn stopped because the provider would not accept the sign-in.", () => "Sign in to the provider again, then send a message."],
+  [/disconnect|connection (?:reset|closed|refused|lost)|network|socket hang up|econnreset|timed out|timeout/i, "The turn stopped because the connection to the model dropped.", () => "Send a message to try again."],
+  [/exited with code|exited unexpectedly|crashed|was killed|\bsignal\b|sigkill|sigterm/i, "The turn stopped because the agent's process exited.", () => "Send a message to start it again."]
 ];
+const TURN_FAILURE_UNNAMED = "The turn stopped because of an error.";
+
+/** When a limit lifts is the one next step a rate limit has. The provider says it relative
+ *  to the failure ("resets in 41m"), so it is quoted as the provider's, never restated as
+ *  a countdown from now. */
+function rateLimitNextStep(said: string): string {
+  const when = /\bresets? ((?:in|at) [^()\n;,]+?)\s*(?:\)|$|[;,\n]|\.\s)/i.exec(said)?.[1]?.trim();
+  return when
+    ? `The provider said the limit resets ${when}. Send a message after that, or choose another model in the composer.`
+    : "Send a message once the limit resets, or choose another model in the composer.";
+}
 
 export function turnFailureSentence(errorSummary: string | null): string {
   const said = errorSummary?.trim() ?? "";
   for (const [pattern, sentence] of TURN_FAILURE_CAUSES) if (pattern.test(said)) return sentence;
-  return "The turn stopped because of an error.";
+  return TURN_FAILURE_UNNAMED;
 }
 
 /** How a turn's ending is drawn in the thread, or null when it draws nothing. */
@@ -250,22 +271,78 @@ export function turnEndingStatus(
   ending: ConversationTurnEnding,
   errorSummary: string | null
 ): TranscriptStatus | null {
-  if (ending === "failed") return { tone: "error", title: turnFailureSentence(errorSummary), detail: errorSummary?.trim() || null };
-  if (ending === "interrupted") return { tone: "neutral", title: "Turn interrupted", detail: null };
+  if (ending === "failed") {
+    const said = errorSummary?.trim() || null;
+    const cause = TURN_FAILURE_CAUSES.find(([pattern]) => pattern.test(said ?? ""));
+    return {
+      tone: "error",
+      title: cause?.[1] ?? TURN_FAILURE_UNNAMED,
+      detail: said,
+      next: cause ? cause[2](said ?? "") : "Send a message to try again.",
+      detailOpen: cause === undefined
+    };
+  }
+  if (ending === "interrupted") return { tone: "stopped", title: "Turn interrupted", detail: null };
   return null;
 }
 
 /** A turn the record never wrote an ending for, in the same family. */
 export const TURN_STOPPED_STATUS: TranscriptStatus = {
-  tone: "neutral",
+  tone: "stopped",
   title: "Turn stopped before it finished",
   detail: null
 };
 
+/** What the person can do about a message that was turned away, by why it was. A reason
+ *  with nothing the person can do about it says nothing more. */
+const STEER_REFUSED_NEXT_STEP = "Send it again with Queue, so it goes in after this turn.";
+const REFUSAL_NEXT_STEPS: Partial<Record<PromptDeliveryRefusalReason, string>> = {
+  model_resolution_failed: "Choose another model in the composer, then send it again.",
+  backend_rejected_prompt: "Change the message, then send it again.",
+  backend_did_not_start: "Send it again to retry, or choose another model in the composer.",
+  session_did_not_load: "Send it again to retry.",
+  write_to_backend_failed: "Send it again to retry.",
+  no_running_turn_to_steer_into: "The turn had already ended. Send it again to start a new one.",
+  backend_cannot_steer: STEER_REFUSED_NEXT_STEP,
+  running_turn_changed_before_steer: STEER_REFUSED_NEXT_STEP,
+  running_turn_cannot_accept_steer: STEER_REFUSED_NEXT_STEP,
+  message_cannot_be_steered: STEER_REFUSED_NEXT_STEP,
+  backend_rejected_steer: STEER_REFUSED_NEXT_STEP,
+  remote_steer_not_delivered: STEER_REFUSED_NEXT_STEP,
+  command_cannot_join_running_turn: "Send it again after this turn ends."
+};
+
+/** The refusals that sending the same message again can get past: the backend or the
+ *  moment was the problem, not the message or the conversation. Under these the message
+ *  offers Resend, and its next step names that button. */
+const WHILE_A_TURN_RUNS = "Resend it. While a turn is running, it waits for that turn to end.";
+const RESEND_NEXT_STEPS: Partial<Record<PromptDeliveryRefusalReason, string>> = {
+  model_resolution_failed: "Choose another model in the composer, then resend it.",
+  backend_did_not_start: "Resend it, or choose another model in the composer first.",
+  session_did_not_load: "Resend it to retry.",
+  write_to_backend_failed: "Resend it to retry.",
+  no_running_turn_to_steer_into: "The turn had already ended. Resend it to start a new one.",
+  backend_cannot_steer: WHILE_A_TURN_RUNS,
+  running_turn_changed_before_steer: WHILE_A_TURN_RUNS,
+  running_turn_cannot_accept_steer: WHILE_A_TURN_RUNS,
+  message_cannot_be_steered: WHILE_A_TURN_RUNS,
+  backend_rejected_steer: WHILE_A_TURN_RUNS,
+  remote_steer_not_delivered: WHILE_A_TURN_RUNS,
+  command_cannot_join_running_turn: WHILE_A_TURN_RUNS
+};
+
+/** Whether a message refused for this reason offers Resend. */
+export function refusalOffersResend(reason: PromptDeliveryRefusalReason): boolean {
+  return RESEND_NEXT_STEPS[reason] !== undefined;
+}
+
 /** What became of a message the person sent, under the message rather than inside it: the
- *  failure is the system's, and the words above it are still theirs. */
+ *  failure is the system's, and the words above it are still theirs. A refused message
+ *  that offers Resend says so in its next step; one that cannot (its reason, or an
+ *  attachment that cannot go out again) keeps the step that asks the person to send it. */
 export function promptOutcomeStatus(
-  row: { kind: "prompt_refused"; reason: PromptDeliveryRefusalReason; sentence: string } | { kind: "prompt_uncertain" | "prompt_discarded" }
+  row: { kind: "prompt_refused"; reason: PromptDeliveryRefusalReason; sentence: string } | { kind: "prompt_uncertain" | "prompt_discarded" },
+  resendable = false
 ): TranscriptStatus {
   if (row.kind !== "prompt_refused") {
     return row.kind === "prompt_uncertain"
@@ -276,7 +353,8 @@ export function promptOutcomeStatus(
   return {
     tone: "error",
     title: `Not delivered: ${plain}.`,
-    detail: row.sentence.trim() !== "" && row.sentence !== plain ? row.sentence : null
+    detail: row.sentence.trim() !== "" && row.sentence !== plain ? row.sentence : null,
+    next: (resendable ? RESEND_NEXT_STEPS[row.reason] : undefined) ?? REFUSAL_NEXT_STEPS[row.reason] ?? null
   };
 }
 

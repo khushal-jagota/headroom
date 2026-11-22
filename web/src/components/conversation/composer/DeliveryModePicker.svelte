@@ -90,8 +90,8 @@
     height: 14px;
   }
   /* The panel opens from the composer's right edge, 8px above the box, like the model
-   * picker's, and ConversationComposer makes room for it there: the queue tray steps up over
-   * it, so it never covers the queued messages it is choosing between. */
+   * picker's, and floats over the queue tray and the task pill on the raised plane rather than
+   * moving them (ConversationComposer). */
   :global(.chat-box .chat-submit [data-conversation-send-mode]) { position: static; }
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;

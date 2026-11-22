@@ -60,7 +60,7 @@
   {:else if waiting && !signal?.message_for_owner}
     <!-- Waiting for you is not working: the needs-me dot, never the spinner, so the row agrees
          with the conversation's own "Waiting for you". -->
-    <span class="conversation-signal-marks" data-conversation-signal="waiting" data-conversation-id={conversationId ?? undefined}><StageMark state="needs-me" aria-label="Waiting for you" /></span>
+    <span class="conversation-signal-marks waiting-mark" data-conversation-signal="waiting" data-conversation-id={conversationId ?? undefined}><StageMark state="needs-me" aria-label="Waiting for you" /></span>
   {:else if approval === "agent" && !signal?.message_for_owner && !signal?.working}
     <span class="conversation-signal-marks approval-mark approval-mark--agent" role="img" aria-label="Awaiting an agent's approval" data-approval-mark="agent" data-conversation-id={conversationId ?? undefined}><DestinationIcon name="review" /></span>
   {:else}
@@ -102,4 +102,9 @@
   .approval-mark :global(svg) { width:14px; height:14px; stroke-width:1.8; }
   .approval-mark--owner { color:var(--accent-bright); }
   .approval-mark--agent { color:var(--rail-tone-label); }
+  /* The waiting mark: the header's "Waiting for you" dot, 8px in the accent, centred in the mark
+     column. The box is a flex box so the dot keeps its size; an inline box would collapse it
+     into a bar the height of the line. */
+  .waiting-mark { display:inline-flex; align-items:center; justify-content:center; flex:none; }
+  .waiting-mark :global(.stage-mark--needs-me) { width:var(--space-2); height:var(--space-2); background:var(--accent-bright); border-color:var(--accent-bright); }
 </style>

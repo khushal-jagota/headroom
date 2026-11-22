@@ -3,8 +3,14 @@
   import type { CredentialRequestRowBody } from '../../lib/conversation/view/contracts';
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, CredentialRequestDraft, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import { CredentialRequestWireError, mutateCredentialRequest } from '../../lib/conversation/wire';
+  import { CANCEL_TURN_ACTION } from '../../lib/conversation/composer';
 
-  let { request }: { request: CredentialRequestRowBody } = $props();
+  let { request, onCancelTurn }: {
+    request: CredentialRequestRowBody;
+    /** Given where a turn is running while the request waits (the composer passes it when it
+     *  docks the request), so the card ends a turn as the question and the permission ask do. */
+    onCancelTurn?: () => void;
+  } = $props();
   const paneReadOnly = getContext<(() => boolean) | undefined>(CREDENTIAL_REQUEST_READ_ONLY);
   const readOnly = $derived(paneReadOnly?.() ?? false);
   const uid = $props.id();
@@ -48,6 +54,8 @@
     }
   });
   const replacement = $derived(current.replacement !== null);
+  /** Save goes once there is a key to save, as a question's Next goes once there is an answer. */
+  const canSave = $derived(!!draft.secret.trim() && (replacement || !!draft.name.trim()));
   const outcome = $derived(current.state === 'rejected' ? 'Rejected' : current.state === 'replaced' ? 'Replaced' : 'Saved');
   function ownsFocus(): boolean { return !!root?.contains(document.activeElement); }
   async function focusResult(): Promise<void> { await tick(); if (ownsFocus() || document.activeElement === document.body) result?.focus(); }
@@ -152,18 +160,23 @@
       {#if replacement}<p class="replacement-note">Replaces this key everywhere it is used.</p>{/if}
       {#if current.help || current.help_url}
         <div class="help">
-          <button type="button" class="help-toggle" aria-expanded={draft.helpOpen} aria-controls={`${uid}-help`} onclick={() => draft.helpOpen = !draft.helpOpen}>How to get a key</button>
+          <button type="button" class="help-toggle" aria-expanded={draft.helpOpen} aria-controls={`${uid}-help`} onclick={() => draft.helpOpen = !draft.helpOpen}>How to get a key<svg class="help-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
           {#if draft.helpOpen}<div class="key-help" id={`${uid}-help`}>{current.help ?? ''} {#if current.help_url}<a href={current.help_url} target="_blank" rel="noreferrer">{current.provider} guide ↗</a>{/if}</div>{/if}
         </div>
       {/if}
       {#if draft.error}<p id={`${uid}-error`} class="error-note" role="alert">{draft.error}</p>{/if}
       {#if draft.stale}<button bind:this={reviewButton} type="button" class="button button--secondary review" disabled={draft.busy} onclick={() => void action('review')}>Review current key</button>{/if}
       {#if draft.reviewed}<p class="state-note">Current key · updated just now</p>{/if}
-      <!-- THE button (app.css, "Buttons"), in the ask shell's order: the ghost that declines,
-           then the one primary at the right end, as a permission ask ends in Allow once. -->
+      <!-- THE button (app.css, "Buttons"), in the ask shell's order: the way out of a running
+           turn on the left, then the ghost that declines and the one primary at the right end,
+           as a permission ask ends in Deny, Allow once. -->
       <div class="form-footer">
+        {#if onCancelTurn}
+          <button type="button" class="button button--ghost cancel" data-credential-cancel-turn disabled={draft.busy} onclick={() => onCancelTurn?.()}>{CANCEL_TURN_ACTION.label}</button>
+          <span class="spacer" aria-hidden="true"></span>
+        {/if}
         <button type="button" class="button button--ghost reject" disabled={draft.busy} onclick={() => void action('reject')}>Reject</button>
-        {#if !draft.stale}<button type="button" class="button button--primary" disabled={draft.busy} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace' : 'Save'}</button>{/if}
+        {#if !draft.stale}<button type="button" class="button button--primary" data-credential-save disabled={draft.busy || !canSave} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace' : 'Save'}</button>{/if}
       </div>
     </form>
   {/if}
@@ -182,12 +195,12 @@
   .request-head{display:grid;gap:var(--space-1);margin-bottom:var(--space-3)}
   .request-eyebrow{color:var(--accent-bright);font-family:var(--font-ui);font-size:var(--type-xs);font-weight:var(--weight-title);letter-spacing:var(--tracking-label);text-transform:uppercase}
   .request-title{margin:0;font:inherit;font-size:var(--type-md);font-weight:var(--weight-title);line-height:1.4;color:var(--text-strong)}
-  .request-use{margin:0;color:var(--text-muted);line-height:1.5}
+  .request-use{margin:0;color:var(--text-muted);font-size:var(--type-xs);line-height:1.5}
   form{display:grid;gap:var(--space-3);margin:0;min-width:0}
   .stacked-fields{display:grid;gap:var(--space-3)}
   .field{display:grid;gap:var(--space-1);min-width:0}
   .field-label{color:var(--text-muted);font-size:var(--type-xs)}
-  .key-name,.fixed-name{box-sizing:border-box;min-width:0;width:100%;padding:var(--space-2) var(--space-3);min-height:40px;background:transparent;border:var(--border-hairline) solid var(--border-raised);border-radius:var(--radius-md);color:var(--text-strong);font-family:var(--font-mono);font-size:var(--type-code);letter-spacing:var(--tracking-mono);line-height:1.5}
+  .key-name,.fixed-name{box-sizing:border-box;min-width:0;width:100%;padding:var(--space-2) var(--space-3);min-height:var(--button-height);background:transparent;border:var(--border-hairline) solid var(--border-raised);border-radius:var(--radius-md);color:var(--text-strong);font-family:var(--font-mono);font-size:var(--type-code);letter-spacing:var(--tracking-mono);line-height:1.5}
   .key-name::placeholder{color:var(--text-muted)}
   /* A fixed name is a value, not a field: no fill, so it cannot be mistaken for one. */
   .fixed-name{display:flex;align-items:center;overflow-wrap:anywhere;background:transparent;border:0;padding-inline:0;min-height:0}
@@ -195,7 +208,7 @@
   /* The fields are the question's own answer field: a hairline on the composer's fill, since
      the input fill is that fill and drew nothing there. */
   .private-input{min-width:0;display:flex;align-items:center;background:transparent;border:var(--border-hairline) solid var(--border-raised);border-radius:var(--radius-md)}
-  .private-input input{width:100%;min-width:0;box-sizing:border-box;min-height:40px;padding:var(--space-2) var(--space-3);border:0;border-radius:var(--radius-md);background:transparent;color:var(--text-strong);font-family:var(--font-ui);font-size:var(--type-input);line-height:1.5}
+  .private-input input{width:100%;min-width:0;box-sizing:border-box;min-height:var(--button-height);padding:var(--space-2) var(--space-3);border:0;border-radius:var(--radius-md);background:transparent;color:var(--text-strong);font-family:var(--font-ui);font-size:var(--type-row);line-height:1.5}
   .private-input input::placeholder{color:var(--text-muted)}
   .private-input:hover{background:var(--state-step)}
   .quiet-affordance{display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;font:inherit;line-height:1.6;padding:var(--space-1);border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);cursor:pointer}
@@ -203,12 +216,19 @@
   .reveal-button{flex:none;margin-right:var(--space-2)}
   svg{width:var(--space-4);height:var(--space-4);fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
   .help{display:grid;gap:var(--space-2);justify-items:start}
-  .help-toggle{min-height:24px;padding:0;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);font:inherit;font-size:var(--type-xs);text-decoration:underline;text-decoration-color:var(--border-raised);text-underline-offset:3px;cursor:pointer}
-  .help-toggle:hover{color:var(--text-strong)}
+  /* A link, and reads as one: the accent the help's own guide link wears, underlined on hover,
+     with a chevron that turns as the help opens under it. */
+  .help-toggle{display:inline-flex;align-items:center;gap:2px;min-height:24px;padding:0;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--accent-bright);font:inherit;font-size:var(--type-xs);text-decoration:none;text-underline-offset:3px;cursor:pointer}
+  .help-toggle:hover{text-decoration:underline}
+  .help-toggle:focus-visible{outline:var(--focus-width) solid var(--focus-ring);outline-offset:2px}
+  .help-toggle .help-chevron{width:12px;height:12px;stroke-width:2;transition:rotate var(--motion-fast) var(--motion-ease)}
+  .help-toggle[aria-expanded="true"] .help-chevron{rotate:90deg}
+  @media (prefers-reduced-motion:reduce){.help-toggle .help-chevron{transition:none}}
   .form-footer{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;justify-content:flex-end}
   .form-footer .button--ghost:not(:disabled){color:var(--text-default)}
   .form-footer .button--ghost:hover:not(:disabled){color:var(--text-strong)}
-  .form-footer .reject:hover:not(:disabled){color:var(--accent-error)}
+  .form-footer .spacer{flex:1}
+  .form-footer :is(.reject,.cancel):hover:not(:disabled){color:var(--accent-error)}
   .form-footer .button--primary:disabled{background:transparent;box-shadow:inset 0 0 0 var(--border-hairline) var(--border-raised);color:var(--text-muted)}
   .review{justify-self:start;background:var(--state-step)}
   .review:hover:not(:disabled){background:var(--state-step);background-image:var(--interaction-hover)}

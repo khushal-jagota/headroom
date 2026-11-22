@@ -6,6 +6,15 @@ import ToolCallRow from "../src/components/conversation/ToolCallRow.svelte";
 import type { ToolCallRow as ToolCallRowType } from "../src/lib/conversation/transcript";
 
 describe("a turn's head", () => {
+  it("sets only a literal subject of its live line as code", () => {
+    const draw = (summaryIsLiteral: boolean) => render(TurnAnchor, {
+      props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity: { sentence: "Running go test", title: "Running", summary: "go test", summaryIsLiteral } }
+    }).body;
+    expect(draw(true)).toContain("c2-live-subject--literal");
+    expect(draw(true)).toContain("go test");
+    expect(draw(false)).not.toContain("c2-live-subject--literal");
+  });
+
   it("opens onto the work a reading keeps folded, and says how much there is", () => {
     const html = render(TurnAnchor, {
       props: { settled: true, durationSeconds: 420, toolCallCount: 11, onToggle: () => {} }
@@ -49,18 +58,18 @@ describe("a turn's head", () => {
   });
 
   it("says what the running turn is doing now, only while it is working", () => {
-    const activity = "Ran go test -race -count=50 ./internal/push";
+    const activity = { sentence: "Running go test -race -count=50 ./internal/push", title: "Running", summary: "go test -race -count=50 ./internal/push", summaryIsLiteral: true };
     const running = render(TurnAnchor, {
       props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity }
     }).body;
     expect(running).toContain("data-conversation-live-activity");
-    expect(running).toContain(activity);
+    expect(running).toContain(activity.summary);
     const waiting = render(TurnAnchor, {
       props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity, waiting: "question" }
     }).body;
     expect(waiting).not.toContain("data-conversation-live-activity");
     const settled = render(TurnAnchor, { props: { settled: true, durationSeconds: 60, activity } }).body;
-    expect(settled).not.toContain(activity);
+    expect(settled).not.toContain(activity.summary);
   });
 
   it("says the turn is waiting on the person rather than working", () => {
@@ -101,12 +110,32 @@ describe("a tool call row", () => {
     expect(html).toContain("c2-tool-chevron");
   });
 
-  it("keeps its outcome in the column every row shares, opening or not", () => {
-    const closed = draw({ ...base, title: "ls", status: "completed", detail: "" });
-    expect(closed).toContain("c2-tool-outcome");
-    expect(closed).toContain("c2-tool-chevron-slot");
-    expect(closed).not.toContain('class="c2-tool-chevron"');
+  it("keeps its outcome in the column every row shares, and opens like every other row", () => {
+    const silent = draw({ ...base, title: "git rm web/a.ts", status: "completed", detail: "" });
+    expect(silent).toContain("c2-tool-outcome");
+    expect(silent).toMatch(/class="c2-tool-chevron[ "]/);
+    expect(silent).toContain('aria-expanded="false"');
     const failed = draw({ ...base, title: "npm run check", detail: "svelte-check found 1 error" });
     expect(failed.indexOf("Failed")).toBeLessThan(failed.indexOf("c2-tool-chevron"));
+  });
+
+  it("opens a call that printed nothing onto saying so", () => {
+    const row = { ...base, title: "git rm web/a.ts", status: "completed" as const, detail: "" };
+    const html = render(ToolCallRow, {
+      props: { row, conversationId: "c", openRows: new SvelteSet<string>(["t1"]), wholeDetails: new SvelteMap<string, string>() }
+    }).body;
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("data-conversation-tool-no-output");
+    expect(html).toContain("No output.");
+    expect(html).not.toContain("data-conversation-tool-output");
+  });
+
+  it("sets a command as code and words about a call as words", () => {
+    const command = draw({ ...base, title: "git rm web/a.ts", status: "completed", detail: "" });
+    expect(command).toContain("c2-tool-subject--literal");
+    const todos = draw({ ...base, title: "TodoWrite", toolKind: "think", status: "completed", detail: "ok",
+      startedDetail: JSON.stringify({ todos: [{ content: "A", status: "pending" }] }) });
+    expect(todos).toContain("0 of 1 done");
+    expect(todos).not.toContain("c2-tool-subject--literal");
   });
 });

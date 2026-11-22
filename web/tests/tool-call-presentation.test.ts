@@ -126,6 +126,10 @@ describe("a to-do update", () => {
     expect(presented.canExpand).toBe(true);
   });
 
+  it("says its progress in words, not as code", () => {
+    expect(presented.summaryIsLiteral).toBe(false);
+  });
+
   it("has its own glyph, not the pencil of a file edit", () => {
     const edit = presentToolCall(row("Write", "Write", '{"file_path":"/repo/a.ts"}', "ok"));
     expect(presented.iconPaths).not.toEqual(edit.iconPaths);
@@ -157,5 +161,22 @@ describe("a search that found nothing", () => {
   it("leaves every other outcome as the backend reported it", () => {
     expect(presentToolCall(row("rg x", "execute", "/w", "a:1", "completed")).outcome).toBe("completed");
     expect(presentToolCall(row("rg x", "execute", "/w", null, "running")).outcome).toBe("running");
+  });
+});
+
+describe("which summaries are set as code", () => {
+  it("sets a command, a path and a pattern as code", () => {
+    expect(presentToolCall(row("Bash", "execute", '{"command":"git rm web/a.ts"}', "")).summaryIsLiteral).toBe(true);
+    expect(presentToolCall(row("Read", "read", '{"file_path":"/repo/a/b/c.ts"}', "x")).summaryIsLiteral).toBe(true);
+    expect(presentToolCall(row("Grep", "search", '{"pattern":"conversation_events"}', "x")).summaryIsLiteral).toBe(true);
+  });
+
+  it("sets words about a call as words", () => {
+    expect(presentToolCall(row("WebSearch", "search", '{"query":"svelte runes"}', "results")).summaryIsLiteral).toBe(false);
+    expect(presentToolCall(row("Task", "think", '{"description":"Find the flaky test"}', "ok")).summaryIsLiteral).toBe(false);
+  });
+
+  it("is never literal without a summary", () => {
+    expect(presentToolCall(row("TodoWrite", "think", "{}", "ok")).summaryIsLiteral).toBe(false);
   });
 });

@@ -31,6 +31,13 @@ describe("a key request is asked in the composer's place", () => {
     expect(body).not.toContain("data-conversation-add");
   });
 
+  it("ends the running turn from the request, and offers no such end with no turn running", () => {
+    const running = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, running: true, onCancelTurn: () => {} } }).body;
+    expect(running).toMatch(/data-credential-cancel-turn[^>]*>Cancel turn</);
+    const idle = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, onCancelTurn: () => {} } }).body;
+    expect(idle).not.toContain("data-credential-cancel-turn");
+  });
+
   it("waits behind a permission ask, which is answered first", () => {
     const ask = {
       askId: "ask-1",
@@ -45,6 +52,8 @@ describe("a key request is asked in the composer's place", () => {
 
   it("leaves the composer as it was with no request", () => {
     const { body } = render(ComposerWithQueryClient, { props: base });
+    // Popovers overlay what stands over the box; the composer keeps no room that pushes it up.
+    expect(body).not.toContain("chat-popover-room");
     expect(body).not.toContain("Needs your key");
     expect(body).toContain("data-conversation-add");
     expect(body).not.toContain("data-conversation-taken-over");

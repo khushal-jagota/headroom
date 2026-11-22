@@ -49,6 +49,9 @@
     {#if time}<time class="message-time" datetime={time.iso} title={time.full}>{time.short}</time>{/if}
     {#if copyText}
       <button type="button" class="button button--ghost message-action" data-message-copy title="Copy this message" onclick={() => void copy()}>
+        <svg class="message-action-glyph" viewBox="0 0 16 16" aria-hidden="true">
+          {#if copied === "copied"}<path d="m3.5 8.5 3 3 6-7" />{:else}<rect x="5.25" y="5.25" width="8" height="8" rx="1.5" /><path d="M10.75 5.25V4a1.25 1.25 0 0 0-1.25-1.25H4A1.25 1.25 0 0 0 2.75 4v5.5A1.25 1.25 0 0 0 4 10.75h1.25" />{/if}
+        </svg>
         {copied === "copied" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy"}
       </button>
     {/if}
@@ -82,12 +85,28 @@
     opacity: 1;
     pointer-events: auto;
   }
-  /* The shared ghost button, at the thread's quiet size. */
+  /* The shared ghost button, at the thread's quiet size. It is the one thing in the row
+     that acts, so it carries a mark and the body tone; the time beside it is a fact and
+     stays quiet. */
   .message-action {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
     height: 24px;
     padding: 0 var(--space-2);
+    color: var(--text-default);
     font-size: var(--type-small);
     font-weight: var(--weight-body);
+  }
+  .message-action-glyph {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   @media (prefers-reduced-motion: reduce) { .message-actions { transition: none; } }
 </style>

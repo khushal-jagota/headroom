@@ -622,7 +622,6 @@
       {running}
       {ask}
       {credentialRequest}
-      transcriptOpen={conversationState === "opened"}
       {askNote}
     {userInputNote}
     {permissionAvailable}
@@ -730,8 +729,9 @@
   .chat-head-mark { flex: none; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); }
   /* The dock's live mark, the same ring and arc, so working reads the same open or at rest. */
   .chat-head-mark--live {
-    border: var(--border-strong) solid color-mix(in srgb, var(--tone-tertiary) 40%, transparent);
+    border: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 28%, transparent);
     border-top-color: var(--accent-bright);
+    border-right-color: var(--accent-bright);
     animation: chat-head-spin var(--motion-loop-spin) linear infinite;
   }
   .chat-head-mark--attention {

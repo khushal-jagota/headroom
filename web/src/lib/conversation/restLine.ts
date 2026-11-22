@@ -30,7 +30,9 @@ import {
   conversationThreadItemsForLens,
   type ConversationLens
 } from "./lens";
-import { presentToolCall } from "./toolCallPresentation";
+import { presentToolCall, presentTense } from "./toolCallPresentation";
+
+export { presentTense };
 import { messageContentText } from "./wire";
 
 export type RestLine = {
@@ -268,9 +270,11 @@ function senderOf(senderLabel: string, ownSenderLabel: string): string {
 }
 
 /** A tool call as the one string this line has room for — the same sentence the row in
- *  the transcript reads as. */
+ *  the transcript reads as. A call still running is said as it happens ("Running npm
+ *  test"), beside the live mark; the past tense is for a call that has ended. */
 export function toolCallSentence(row: ToolCallRow): string {
-  return oneLine(presentToolCall(row).sentence);
+  const sentence = presentToolCall(row).sentence;
+  return oneLine(sentence);
 }
 
 function newestTurn(items: readonly ThreadItem[]): Extract<ThreadItem, { kind: "turn" }> | null {

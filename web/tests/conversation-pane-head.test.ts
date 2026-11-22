@@ -53,9 +53,17 @@ describe("setting up while the machine cannot be read", () => {
     expect(html).toContain("Setting up · preparing workspace");
     expect(html).toContain("data-unconfirmed");
     expect(html.match(/data-conversation-dock-feedback/g)).toHaveLength(1);
-    // A warning, not a spinner: no moving ring beside it, and the line under it in the warning tone.
+    // Neither a spinner nor a warning: setup is normal, so no moving ring and no amber mark,
+    // and the reason it is unconfirmed is a caveat under the status, not a second headline.
     expect(html).not.toContain("c2-mark--running");
+    expect(html).not.toMatch(/c2-rest-feedback[^"]*is-warning/);
+    expect(html).toMatch(/c2-rest-feedback[^"]*is-caveat/);
+  });
+  it("keeps the warning tone when activity is unknown and nothing is being set up", () => {
+    const html = render(ConversationRestBar, { props: { onOpen: () => {}, activityKnown: false,
+      feedback: uncertainActivityFeedback(false) } }).body;
     expect(html).toMatch(/c2-rest-feedback[^"]*is-warning/);
+    expect(html).not.toContain("is-caveat");
   });
   it("keeps the moving mark while setup is known", () => {
     const html = render(ConversationRestBar, { props: { onOpen: () => {}, workerSetup } }).body;

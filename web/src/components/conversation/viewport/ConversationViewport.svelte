@@ -1249,19 +1249,28 @@
   }
   .chat-jump-arrow { inline-size: 12px; block-size: 12px; flex: none; }
   /* Lines leave the thread softly at both edges, never cut flat against the composer or a
-     docked card. The bottom fade is one depth in every state: the newest line's own clear
-     space under it (NEWEST_LINE_BOTTOM_GAP_PIXELS) at rest, and no deeper with more below,
-     so what the edge cuts (a bullet, a file's name, a chart's bars) stays readable up to
-     the edge instead of dimming into the Latest shelf under it. At the very top nothing is
-     above, so nothing fades there: the first message and the time and Copy over it keep
-     their full tone under the head. */
+     docked card, but only an edge with more beyond it fades. The bottom fade is one depth
+     (NEWEST_LINE_BOTTOM_GAP_PIXELS), and only while there is more below: pinned to the
+     newest line, with no Latest shelf, nothing at the bottom is dimmed, so a chart's bars
+     or a file's name at the end of the thread stand at full tone. The top fade starts
+     clear of the head's rule, so the last sliver of a card scrolled out above never reads
+     as a stray line under it. At the very top nothing is above, so nothing fades there:
+     the first message and the time and Copy over it keep their full tone under the head. */
   .chat-thread {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px, #000 calc(100% - 24px), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px, #000 calc(100% - 24px), transparent 100%);
+  }
+  .chat-thread[data-more-below="false"] {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px);
+            mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px);
   }
   .chat-thread[data-at-top="true"] {
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
             mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+  }
+  .chat-thread[data-at-top="true"][data-more-below="false"] {
+    -webkit-mask-image: none;
+            mask-image: none;
   }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */

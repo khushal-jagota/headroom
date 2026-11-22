@@ -5,6 +5,7 @@ import { conversationFileMediaType, createPendingConversationFiles } from "../sr
 import { resolveModelPicker } from "../src/lib/conversation/modelPicker";
 import { createVoiceCapture, VOICE_LEVEL_HISTORY, type VoiceRecorderLike } from "../src/lib/conversation/voiceCapture";
 import type { BackendModel } from "../src/lib/conversation/wire";
+import { attachmentByteLabel, attachmentKindLabel } from "../src/components/conversation/composer/attachments";
 
 function runInput(overrides: Partial<ComposerRunControlsInput>): ComposerRunControlsInput {
   return {
@@ -108,5 +109,21 @@ describe("voice level bars", () => {
     expect(state.phase === "recording" ? state.levels?.length : -1).toBe(VOICE_LEVEL_HISTORY);
     capture.cancel();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a waiting file reads as the sent file card reads", () => {
+  it("writes its size in the card's units", () => {
+    expect(attachmentByteLabel(692)).toBe("692 B");
+    expect(attachmentByteLabel(1741)).toBe("1.7 KiB");
+    expect(attachmentByteLabel(24 * 1024)).toBe("24 KiB");
+    expect(attachmentByteLabel(3.1 * 1024 * 1024)).toBe("3.1 MiB");
+  });
+
+  it("names its kind in words, never its raw media type", () => {
+    expect(attachmentKindLabel("ci-run-4812.txt", "text/plain")).toBe("Text");
+    expect(attachmentKindLabel("data.json", "application/json")).toBe("Text");
+    expect(attachmentKindLabel("spec.pdf", "application/pdf")).toBe("PDF");
+    expect(attachmentKindLabel("archive.zip", "application/zip")).toBe("File");
   });
 });

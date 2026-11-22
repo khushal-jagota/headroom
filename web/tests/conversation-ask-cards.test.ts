@@ -125,6 +125,24 @@ describe("the credential request", () => {
     expect(body.indexOf(">Reject<")).toBeLessThan(body.indexOf(">Save<"));
   });
 
+  it("holds Save until there is a key, as a question holds Next until there is an answer", () => {
+    const { body } = render(ConversationCredentialRequestCard, { props: { request } });
+    expect(body).toMatch(/<button[^>]*class="button button--primary[^"]*"[^>]*data-credential-save[^>]*disabled[^>]*>Save</);
+  });
+
+  it("offers the help as a link-styled disclosure", () => {
+    const { body } = render(ConversationCredentialRequestCard, { props: { request } });
+    expect(body).toMatch(/class="help-toggle[^"]*"[^>]*aria-expanded="false"[^>]*>How to get a key<svg class="help-chevron/);
+  });
+
+  it("ends a running turn as the other asks do, first in its row, and only when one runs", () => {
+    const running = render(ConversationCredentialRequestCard, { props: { request, onCancelTurn: () => {} } }).body;
+    expect(running).toMatch(/data-credential-cancel-turn[^>]*>Cancel turn</);
+    expect(running.indexOf(">Cancel turn<")).toBeLessThan(running.indexOf(">Reject<"));
+    const settled = render(ConversationCredentialRequestCard, { props: { request } }).body;
+    expect(settled).not.toContain("Cancel turn");
+  });
+
   it("keeps a settled request a quiet line, without the ask label", () => {
     const { body } = render(ConversationCredentialRequestCard, {
       props: { request: { ...request, state: "rejected" } }
