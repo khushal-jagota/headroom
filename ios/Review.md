@@ -28,8 +28,9 @@ no longer holds:
   that says who reviews it now, its actions are off, and Skip or the swipe moves on.
   A move Khushal makes from the card's own Reviewer sheet takes the card away.
 
-A refusal or a move that happens while Khushal is elsewhere just waits for the
-summary screen.
+A card handled here stays hidden until its saved work or the window hides it, so it
+never shows again before then; a refusal brings it back. A refusal or a move that
+happens while Khushal is elsewhere just waits for the summary screen.
 
 Skip is per card and local, like the web. When every card of one Ticket or one
 conversation is skipped, its key goes to the server in `review_skipped_keys`. The

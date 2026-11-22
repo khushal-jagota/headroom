@@ -192,5 +192,8 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertEqual(refusals.map(\.item.id), ["z:plan:9.0:revision:3"])
         XCTAssertEqual(refusals.first?.item.title, "Moved Ticket")
         XCTAssertEqual(refusals.first?.note, "Not sent · moved")
+        // Decided or replaced since: nothing is left to decide, so no card comes back.
+        XCTAssertTrue(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [], title: { _ in nil }, waits: { _ in false }).isEmpty)
+        XCTAssertEqual(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [], title: { _ in nil }, waits: { _ in true }).count, 1)
     }
 }

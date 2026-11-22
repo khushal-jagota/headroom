@@ -249,7 +249,11 @@ struct DecisionGuidance: Sendable, Equatable {
     }
     /// Each proposal whose latest saved decision was refused, as a card. A card in the
     /// window keeps its own facts; one that left takes its Ticket's title from `title`.
-    static func refusals(_ decisions: [OutgoingStore.Summary], live: [ReviewItem], title: (OutgoingStore.Summary) -> String?) -> [ReviewRefusal] {
+    /// One that left is kept only while its proposal may still wait (`waits` is true, or
+    /// nil when the view does not carry the Ticket): a decided or replaced proposal has
+    /// nothing left to decide.
+    static func refusals(_ decisions: [OutgoingStore.Summary], live: [ReviewItem], title: (OutgoingStore.Summary) -> String?,
+                         waits: (ReviewItem) -> Bool? = { _ in nil }) -> [ReviewRefusal] {
         var latest: [String: OutgoingStore.Summary] = [:]
         var order: [String] = []
         for saved in decisions where ["approval", "sendBack"].contains(saved.kind) {
@@ -261,9 +265,12 @@ struct DecisionGuidance: Sendable, Equatable {
         return order.compactMap { key in
             guard let saved = latest[key], saved.refused, let ticket = saved.ticketID, let field = saved.proposalField,
                   let created = saved.proposalCreatedAt else { return nil }
-            let item = live.first { $0.isProposal && decides(saved, $0) }
-                ?? ReviewItem(reviewItemType: "proposal", ticketId: ticket, field: field, title: title(saved) ?? "Proposal",
-                              waitingSince: created, proposalRevision: saved.proposalRevision)
+            if let item = live.first(where: { $0.isProposal && decides(saved, $0) }) {
+                return ReviewRefusal(item: item, note: saved.note, summaryID: saved.id)
+            }
+            let item = ReviewItem(reviewItemType: "proposal", ticketId: ticket, field: field, title: title(saved) ?? "Proposal",
+                                  waitingSince: created, proposalRevision: saved.proposalRevision)
+            guard waits(item) != false else { return nil }
             return ReviewRefusal(item: item, note: saved.note, summaryID: saved.id)
         }
     }

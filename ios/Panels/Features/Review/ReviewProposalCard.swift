@@ -28,6 +28,7 @@ struct ReviewProposalCard: View {
     /// A notice or a refusal of a proposal that no longer waits turns the decision off.
     private var actionable: Bool { notice == nil && decision.ready }
     private var reviewer: String {
+        if let notice { return notice.reviewer }
         guard let ticket = decision.ticket else { return "You" }
         return ticket.ceilingHolder.kind == "owner" ? "You" : ticket.holderLabel(ticket.ceilingHolder)
     }

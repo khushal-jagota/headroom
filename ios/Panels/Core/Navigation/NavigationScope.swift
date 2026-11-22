@@ -187,7 +187,7 @@ extension NavigationPresentation {
     /// Who reviews a proposal now, when the view shows it still waiting on the same
     /// revision but held by someone other than Khushal. Nil when it no longer waits.
     func movedReviewer(for item: ReviewItem, in snapshot: ViewSnapshot) -> String? {
-        guard item.isProposal else { return nil }
+        guard item.isProposal, proposalWaits(item, in: snapshot) == true else { return nil }
         var row: ViewTicketValue?
         var managerTitles: [String: String] = [:]
         for record in snapshot.content.records {
@@ -197,14 +197,25 @@ extension NavigationPresentation {
             default: break
             }
         }
-        guard let row, row.integrityError == nil, !row.isBacklogged, row.ticketStatus == "awaiting_approval",
-              row.proposalCreatedAt == item.waitingSince, item.proposalRevision.map({ $0 == row.proposalRevision }) ?? true,
-              let holder = row.ceilingHolder, holder != ViewPrincipal(kind: "owner", id: "owner") else { return nil }
+        guard let holder = row?.ceilingHolder, holder != ViewPrincipal(kind: "owner", id: "owner") else { return nil }
         switch holder.kind {
         case "chief": return chief?.label ?? "Chief of Staff"
         case "manager": return managerTitles[holder.id] ?? "the Manager"
         default: return "the Worker"
         }
+    }
+}
+
+extension NavigationPresentation {
+    /// Whether this exact proposal still waits for a decision, from anyone. Nil when the
+    /// view does not carry its Ticket.
+    func proposalWaits(_ item: ReviewItem, in snapshot: ViewSnapshot) -> Bool? {
+        guard item.isProposal else { return nil }
+        for case .ticket(let id, let row) in snapshot.content.records where id == item.ticketId {
+            return row.integrityError == nil && !row.isBacklogged && row.ticketStatus == "awaiting_approval"
+                && row.proposalCreatedAt == item.waitingSince && (item.proposalRevision.map { $0 == row.proposalRevision } ?? true)
+        }
+        return nil
     }
 }
 

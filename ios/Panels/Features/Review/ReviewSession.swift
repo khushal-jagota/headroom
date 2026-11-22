@@ -224,12 +224,12 @@ struct ReviewQueue: Equatable, Sendable {
         let server = LocalStore.server(store.baseURL)
         let decided = savedWork.decisions(server)
         live = ReviewSavedWork.cards(store.review?.items ?? [], decisions: decided)
-        refusals = ReviewSavedWork.refusals(decided, live: store.review?.items ?? []) { summary in
-            store.presentation?.ticketsById[summary.ticketID ?? ""]?.title ?? Outbox.shared.work(server, id: summary.id)?.ticketTitle
-        }
-        refusalNotes = Dictionary(refusals.map { ($0.item.id, $0.note) }, uniquingKeysWith: { first, _ in first })
         let view = store.view
         let presentation = store.presentation
+        refusals = ReviewSavedWork.refusals(decided, live: store.review?.items ?? [], title: { summary in
+            presentation?.ticketsById[summary.ticketID ?? ""]?.title ?? Outbox.shared.work(server, id: summary.id)?.ticketTitle
+        }, waits: { item in view.flatMap { presentation?.proposalWaits(item, in: $0) } ?? nil })
+        refusalNotes = Dictionary(refusals.map { ($0.item.id, $0.note) }, uniquingKeysWith: { first, _ in first })
         moved = { item in view.flatMap { presentation?.movedReviewer(for: item, in: $0) } }
         unloadedCount = store.review?.unloadedCount ?? 0
         runningWorkerCount = store.review?.runningWorkerCount ?? 0

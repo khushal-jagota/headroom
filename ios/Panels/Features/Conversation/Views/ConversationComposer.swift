@@ -160,7 +160,8 @@ struct ConversationComposer: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-input-box")
-        .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
+        // In Review's dock the composer spans the row of buttons below it.
+        .padding(.horizontal, reviewReply ? 0 : card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
         .animation(reduceMotion ? nil : ConversationLayout.shapeMotion, value: card)
         .foregroundStyle(PanelsTheme.text)
     }
