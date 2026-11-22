@@ -244,7 +244,8 @@ try {
   const { start_native_server } = await import('../../executor/mac/testing/native_server.ts');
   const { write_credential, credential_path } = await import('../../executor/credential_file.ts');
   const { attempt_path, FileUpdateAttemptStore } = await import('../updates/attempts.ts');
-  const publication = {
+  const { parse_release } = await import('../updates/codec.ts');
+  const publication = parse_release({
     publication_run_id: Number(run.run_id),
     artifact_id: 1,
     proof_artifact_id: 1,
@@ -256,7 +257,7 @@ try {
     },
     archive_sha256: '0'.repeat(64),
     schema_floor: SUPPORTED_UPDATE_SCHEMA_FLOOR,
-    expires_at: null,
+    expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     mac: {
       artifact_id: 1,
       archive_sha256: evidence.archive_sha256,
@@ -277,7 +278,7 @@ try {
         },
       },
     },
-  };
+  });
   server = await start_native_server(undefined, {
     platform,
     expected_protocol: JSON.parse(
