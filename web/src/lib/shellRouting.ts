@@ -1,27 +1,4 @@
-export type ConfigSelection = {
-  roleKind: "index" | "agent" | "skill" | "worker";
-  roleId?: string;
-};
-
-/** The same Config editor selection works under Settings and the Usage Config tab. */
-export function parseConfigSelection(detail: readonly string[]): ConfigSelection | null {
-  if (detail.length === 0) return { roleKind: "index" };
-  if (detail[0] === "chief-of-staff" && detail.length === 1) {
-    return { roleKind: "agent", roleId: "chief_of_staff" };
-  }
-  if (["worker-skill", "manager"].includes(detail[0]) && detail.length === 1) {
-    return {
-      roleKind: "skill",
-      roleId: detail[0] === "worker-skill" ? "panels-worker" : "panels-manager"
-    };
-  }
-  if (detail[0] === "workers" && detail[1] && detail.length === 2) {
-    let roleId = detail[1];
-    try { roleId = decodeURIComponent(roleId); } catch { /* Preserve a malformed segment as before. */ }
-    return { roleKind: "worker", roleId };
-  }
-  return null;
-}
+import { redirectedSettingsPath } from "./settings/address";
 
 /** Resolve supported historical addresses without losing Config detail selections. */
 export function canonicalShellHash(hash: string): string {
@@ -35,13 +12,8 @@ export function canonicalShellHash(hash: string): string {
     return canonicalShellHash(path + "?" + params);
   }
   if (/^#\/backlog(?:\/|$)/.test(path)) return "#/workspace";
-  if (path === "#/vps") return `#/settings/vps${query}`;
-  if (path === "#/notifications") return `#/settings/notifications${query}`;
-  if (/^#\/config(?:\/|$)/.test(path)) return path.replace("#/config", "#/settings/config") + query;
-  if (path === "#/workers") return `#/settings/config${query}`;
-  if (/^#\/workers\//.test(path)) return path.replace("#/workers", "#/settings/config/workers") + query;
-  if (path === "#/agents/worker-skill") return `#/settings/config/worker-skill${query}`;
-  if (/^#\/agents\/workers\/[^/]+$/.test(path)) return path.replace("#/agents", "#/settings/config") + query;
+  const settings = redirectedSettingsPath(path);
+  if (settings !== null) return canonicalShellHash(settings + query);
   if (path === "#/agents/chief-of-staff") return "#/workspace/chief-of-staff";
   if (path === "#/agents") return "#/workspace";
   return hash;

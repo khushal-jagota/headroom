@@ -6,10 +6,8 @@
   import UsageHeader from "../components/usage/UsageHeader.svelte";
   import RecordedUsage from "../components/usage/RecordedUsage.svelte";
   import UsageLimits from "../components/usage/UsageLimits.svelte";
-  import ConfigRoute from "./ConfigRoute.svelte";
-  import type { ConfigSelection } from "../lib/shellRouting";
   import type { UsageTab } from "../lib/usageAddress";
-  import { nestedHref, prefixHref, type UtilityHref } from "../lib/utilityAddress";
+  import { prefixHref, type UtilityHref } from "../lib/utilityAddress";
   import { queries } from "../lib/queryCatalogue";
   import { readUsageLimits, type UsageDays } from "../lib/conversation/recordedUsageWire";
   import { refreshBackendSnapshots } from "../lib/conversation/backendRefresh";
@@ -17,8 +15,8 @@
   import { refreshUsage } from "../lib/usage/usage";
   import { makeWindow } from "../lib/usage/usageFormat";
   import type { ServerProviderUsageLimits } from "../lib/usage/contracts";
-  let { tab = "limits", roleKind = "index", roleId, href = prefixHref("#/backends") }: {
-    tab?: UsageTab; roleKind?: ConfigSelection["roleKind"]; roleId?: string; href?: UtilityHref;
+  let { tab = "limits", href = prefixHref("#/backends") }: {
+    tab?: UsageTab; href?: UtilityHref;
   } = $props();
   const queryClient = useQueryClient();
   const driversQuery = createQuery(() => queries.drivers());
@@ -72,9 +70,6 @@
 <section class="backends-page" data-screen="backends">
   <UsageHeader {tab} {href} {days} {providerKeys} {selectedProviders} busy={refreshing || recorded.isFetching || limits.isFetching} {drivers}
     onDays={selectWindow} onProviders={value => providerSelection = value} onRefresh={() => void refresh()} />
-  {#if tab === "config"}
-    {#key `${roleKind}/${roleId ?? ""}`}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />{/key}
-  {:else}
     {#if refreshError}<p class="error" role="alert">{refreshError}</p>{/if}
     {#if tab === "limits"}
       {#if limits.error}<p class="error" role="alert">Could not refresh limits. Showing the last known values.</p>{/if}
@@ -87,7 +82,6 @@
         {#if summary && drivers !== undefined}<RecordedUsage {summary} input={windowSelection} providers={selectedProviders} metric={tab} {drivers} />{/if}
       </SkeletonRegion>
     {/if}
-  {/if}
 </section>
 <style>
   .backends-page { width:100%; max-width:var(--page-measure); min-width:0; margin-inline:auto; padding-block:var(--page-top) var(--space-7); }.error { color:var(--accent-error); font-size:var(--type-body); }

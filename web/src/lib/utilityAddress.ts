@@ -1,13 +1,9 @@
-import { parseConfigSelection, type ConfigSelection } from "./shellRouting";
-import { parseUsageSelection, type UsageTab } from "./usageAddress";
+import { parseUsageSelection, type UsageSelection } from "./usageAddress";
 
-export type WorkspaceUtility = "usage" | "settings" | "ideas";
+/** The screens that can also open inside the Workspace pane. Settings has its own home. */
+export type WorkspaceUtility = "usage" | "ideas";
 
-export const WORKSPACE_UTILITIES: readonly WorkspaceUtility[] = [
-  "usage",
-  "settings",
-  "ideas"
-];
+export const WORKSPACE_UTILITIES: readonly WorkspaceUtility[] = ["usage", "ideas"];
 
 export function isWorkspaceUtility(value: string): value is WorkspaceUtility {
   return (WORKSPACE_UTILITIES as readonly string[]).includes(value);
@@ -27,17 +23,8 @@ export function prefixHref(prefix: string): UtilityHref {
   return segments => (segments.length === 0 ? prefix : `${prefix}/${segments.join("/")}`);
 }
 
-/** The builder a screen nested inside another screen uses. */
-export function nestedHref(href: UtilityHref, under: string[]): UtilityHref {
-  return segments => href([...under, ...segments]);
-}
-
-export type UsagePlacement = { tab: UsageTab } & ConfigSelection;
-export type SettingsPlacement = { section: string } & ConfigSelection;
-
 export type UtilityPlacement =
-  | { utility: "usage"; usage: UsagePlacement }
-  | { utility: "settings"; settings: SettingsPlacement }
+  | { utility: "usage"; usage: UsageSelection }
   | { utility: "ideas" };
 
 /** The one reading of a utility screen's own path.
@@ -53,16 +40,6 @@ export function parseUtilityPath(
   if (utility === "usage") {
     const usage = parseUsageSelection(path);
     return usage === null ? null : { utility, usage };
-  }
-  if (utility === "settings") {
-    const section = path[0] || "config";
-    if (section !== "config") {
-      // These owner settings share the same addresses in the standalone page and pane.
-      if ((section !== "notifications" && section !== "vps" && section !== "backends" && section !== "machines") || path.length > 1) return null;
-      return { utility, settings: { section, roleKind: "index" } };
-    }
-    const config = parseConfigSelection(path.slice(1));
-    return config === null ? null : { utility, settings: { section, ...config } };
   }
   return path.length === 0 ? { utility } : null;
 }

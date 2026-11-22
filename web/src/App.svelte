@@ -23,6 +23,9 @@
   import { parseShellDestination, type ShellDestination } from "./lib/shellDestination";
   import { SHELL_DESTINATIONS } from "./lib/shellDestinations";
   import { keyTogglesRailFocus, railFocus, setRailFocus } from "./lib/railFocus.svelte";
+  import { rememberPlace } from "./lib/settings/returnPlace";
+  import type { SettingsSection } from "./lib/settings/address";
+  import SettingsRail from "./components/settings/SettingsRail.svelte";
   // VPS lives in Settings (owner): the dock and the More sheet no longer list it; #/vps still opens it.
   const DOCK_DESTINATIONS = SHELL_DESTINATIONS.filter(destination => destination.key !== "vps");
   import DestinationIcon from "./components/DestinationIcon.svelte";
@@ -73,6 +76,7 @@
   function parseRoute(): ShellDestination {
     const destination = parseShellDestination(window.location.hash);
     if (destination.hash !== window.location.hash) window.location.replace(destination.hash);
+    rememberPlace(destination.hash);
     return destination;
   }
   const emptyAddress: WorkspaceAddress = { selection: { kind: "none" }, view: "managers", openFile: null };
@@ -169,7 +173,8 @@
 
 <div class="shell">
   <main class="shell-content" class:update-dimmed={update.dimmed} class:update-in-progress={update.state === "updating"}>
-    <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus} />
+    <BoardRoute address={workspaceRouteAddress} externalPane={route.name === "workspace" ? undefined : destinationPane} railFoot={foot} {railStatus}
+      settingsRail={route.name === "settings" ? settingsRail : undefined} settingsInSection={route.params.chosen === "true"} />
   </main>
   {#if moreOpen}<button type="button" class="compact-scrim" aria-label="Close navigation menu" onclick={closeMore}></button>{/if}
   <nav class="compact-bar workspace-mobile-nav" aria-label="Destinations" bind:this={compactFoot}>
@@ -213,6 +218,11 @@
   </div>
 {/snippet}
 
+<!-- Settings takes the workspace rail's place while it is open. -->
+{#snippet settingsRail()}
+  <SettingsRail section={route.params.section as SettingsSection} />
+{/snippet}
+
 <!-- The desktop card sits between the active work and Settled. Phone has its own above the bar. -->
 {#snippet railStatus()}
   <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={update.state} now={updateClock} />
@@ -229,9 +239,9 @@
         {:else if route.name === "goals"}
           {#await import("./routes/GoalsRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "settings"}
-          {#await import("./routes/SettingsRoute.svelte") then view}<view.default section={route.params.section} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />{:catch error}<ErrorLine {error} />{/await}
+          {#await import("./routes/SettingsRoute.svelte") then view}<view.default section={route.params.section as SettingsSection} detail={route.params.detail ?? null} />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "backends"}
-          {#await import("./routes/BackendsRoute.svelte") then view}<view.default tab={route.params.tab as UsageTab} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />{:catch error}<ErrorLine {error} />{/await}
+          {#await import("./routes/BackendsRoute.svelte") then view}<view.default tab={route.params.tab as UsageTab} />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "preview"}
           {#await import("./routes/FilePreviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else}<div class="quiet-line">no such screen</div>{/if}
