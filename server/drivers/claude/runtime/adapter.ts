@@ -59,7 +59,7 @@ import {
   CLAUDE_CAPABILITIES,
   claude_selection_transition,
   is_live_reasoning_effort,
-} from './selection.ts';
+} from '../models.ts';
 import { selection_target } from '../../../conversation/logic/selection_target.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { TurnInFlight, same_turn, settle_parked_asks, stop_waiting_for_steers } from './turn.ts';

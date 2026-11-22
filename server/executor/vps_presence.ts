@@ -1,3 +1,4 @@
+import type { BackendRequest } from './wire.generated.ts';
 /** The committed lease cache, incarnation fence, contact flush and memory-only stalls. */
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import { isDeepStrictEqual } from 'node:util';
@@ -479,8 +480,12 @@ export class MacPresenceService {
   is_present(): boolean {
     return this.judgement().presence === 'present';
   }
-  supports_backend_controls(): boolean {
-    return this.get_record()?.lease?.backend_controls === true;
+  supports_backend_controls(operation?: BackendRequest['operation']): boolean {
+    const record = this.get_record();
+    return (
+      record?.lease?.backend_controls === true &&
+      (operation !== 'update_backend' || (record.identity?.protocol_version ?? 0) >= 27)
+    );
   }
   current_identity(): ExecutorIdentity | null {
     const record = this.get_record();

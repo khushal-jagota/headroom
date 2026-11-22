@@ -1,3 +1,5 @@
+import { MacPresenceService } from '../executor/vps_presence.ts';
+import { ChangeSignal } from '../core/changes/index.ts';
 import { BackendSnapshotService } from '../conversation/snapshot/service.ts';
 import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
 import { decode_value } from '../executor/protocol.ts';
@@ -306,7 +308,7 @@ test('backend relay admits only the statuses its provider control protocol defin
 });
 
 // Gap: sign-in/allowance relay tests do not prove that an update reaches the machine's
-// account command, retains the established result, or allows its longer command deadline.
+// account command, retains the established result, or preserves its command deadline without an aggregate cutoff.
 // This uses the existing relay boundary and a recording environment, with no browser or host.
 test('provider update crosses the backend relay and executes in the machine account environment', async () => {
   const environment = new RecordingBackendProbeEnvironment();
@@ -344,7 +346,21 @@ test('provider update crosses the backend relay and executes in the machine acco
   });
   let admitted!: BackendRequest;
   const withdraw = vi.fn(async () => false);
-  let wait_seconds = 0;
+  let wait_seconds: number | null | undefined;
+  const database = fixture();
+  const peer_at_version = (protocol_version: number) => {
+    database.write((tx) =>
+      tx.run(
+        "UPDATE mac_executor_presence SET identity_json=json_set(identity_json,'$.protocol_version',?),lease_json=json_set(lease_json,'$.backend_controls',json('true'),'$.identity.protocol_version',?) WHERE machine_id=?",
+        [protocol_version, protocol_version, HOME_MACHINE_ID],
+      ),
+    );
+    return new MacPresenceService(database, {} as never, {
+      machine_id: HOME_MACHINE_ID,
+      changes: new ChangeSignal(),
+    });
+  };
+  let peer = peer_at_version(26);
   const relay = new VpsBackendControlRelay(
     {
       async put_backend_request(request) {
@@ -359,7 +375,7 @@ test('provider update crosses the backend relay and executes in the machine acco
         };
       },
       async wait_result(_id, seconds, options) {
-        wait_seconds = seconds ?? 0;
+        wait_seconds = seconds;
         return {
           command_id: 'update',
           child_outcome: null,
@@ -375,8 +391,24 @@ test('provider update crosses the backend relay and executes in the machine acco
       },
       withdraw_waiting: withdraw,
     },
-    { is_present: () => true, supports_backend_controls: () => true },
+    {
+      is_present: () => peer.is_present(),
+      supports_backend_controls: (operation) => peer.supports_backend_controls(operation),
+    },
   );
+  await expect(
+    relay.request({ backend_key: key, operation: 'update_backend' }),
+  ).rejects.toMatchObject({
+    statusCode: 503,
+    message: 'Update machine code before you update a provider CLI.',
+  });
+  expect(admitted).toBeUndefined();
+  await expect(
+    relay.request({ backend_key: key, operation: 'capabilities' }),
+  ).resolves.toMatchObject({ can_sign_in: false });
+  expect(wait_seconds).toBe(60);
+  expect(environment.commands).toEqual([]);
+  peer = peer_at_version(27);
   const result = decode_machine_update(
     await relay.request({ backend_key: key, operation: 'update_backend' }),
   );
@@ -386,6 +418,6 @@ test('provider update crosses the backend relay and executes in the machine acco
     output_tail: 'machine updated',
   });
   expect(environment.commands).toEqual([command]);
-  expect(wait_seconds).toBeGreaterThan(600);
+  expect(wait_seconds).toBeNull();
   expect(withdraw).toHaveBeenCalledWith('update', 'delivery_withdrawn');
 });

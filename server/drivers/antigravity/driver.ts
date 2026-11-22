@@ -1,4 +1,4 @@
-import { ACP_CHILD_CAPABILITIES } from '../acp/flavor.ts';
+import { ACP_CHILD_CAPABILITIES } from '../core/capabilities.ts';
 import { acp_selection_transition } from '../core/selection.ts';
 /** The Antigravity driver. Its runtime loads only when an instance is created. */
 import { NO_DRIVER_CONFIG } from '../core/driver.ts';

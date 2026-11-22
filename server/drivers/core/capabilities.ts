@@ -9,3 +9,13 @@ export interface BackendCapabilities {
     readonly supportsActiveSteering: boolean;
   };
 }
+
+/**
+ * What every child of the shared ACP base can do. It sets the model and reasoning effort through
+ * session config options in a running session, and it has no steer: a steer is refused with
+ * `backend_cannot_steer` and the message waits for the next prompt.
+ */
+export const ACP_CHILD_CAPABILITIES: BackendCapabilities = {
+  sessions: { supportsModelSwitchInSession: true },
+  turns: { supportsActiveSteering: false },
+};
