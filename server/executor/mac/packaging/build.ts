@@ -14,6 +14,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { create as create_tar } from 'tar';
 import { hash_archive } from '../../../environments/release/archive.ts';
+import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
 import { ARCHIVE_GZIP_LEVEL } from '../../../environments/release/configuration.ts';
 import { path_is_within } from '../../../core/path_containment.ts';
 import { mac_launcher_bundle, MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
@@ -198,6 +199,12 @@ export async function build_mac_package(options: MacPackageOptions) {
   }
   if (expanded > MAX_MAC_RUNTIME_EXPANDED_BYTES)
     throw new Error('Mac runtime exceeds its expanded size limit.');
+  const build_id = await digest_machine_build(runtime);
+  const marker = JSON.parse(await readFile(join(runtime, 'mac-runtime.json'), 'utf8'));
+  await writeFile(
+    join(runtime, 'mac-runtime.json'),
+    JSON.stringify({ ...marker, build_id }) + '\n',
+  );
   const archive = join(output, MAC_RUNTIME_ARCHIVE_NAME);
   // Every top-level entry of the assembled runtime: a driver's release files
   // may add one beside server/, and with none there is no src/ to archive.
@@ -209,6 +216,8 @@ export async function build_mac_package(options: MacPackageOptions) {
     throw new Error('Mac runtime exceeds its archive size limit.');
   const result = {
     application_revision: options.revision,
+    build_id,
+    launcher_sha256: await digest_machine_build(join(runtime, MAC_RUNTIME_LAUNCHER_APP)),
     node_version: version,
     node_sha256: await hash_archive(join(runtime, 'node/bin/node')),
     archive_sha256: await hash_archive(archive),

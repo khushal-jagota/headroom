@@ -167,6 +167,7 @@ export function same_identity(
   if (left === null || right === null) return left === right;
   return (
     left.application_revision === right.application_revision &&
+    left.build_id === right.build_id &&
     left.executor_incarnation === right.executor_incarnation &&
     left.protocol_version === right.protocol_version &&
     left.spool_format_version === right.spool_format_version &&

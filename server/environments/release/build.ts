@@ -129,17 +129,7 @@ async function install_app_dependencies(
   if (await exists(join(root, 'web/package-lock.json')))
     await run('web', ['npm', 'ci', '--prefix', join(root, 'web')]);
   if (await exists(join(root, 'agent_backends/package.json')))
-    await run('agent_backends', [
-      'npm',
-      'install',
-      '--prefix',
-      join(root, 'agent_backends'),
-      '--package-lock=false',
-      '--save=false',
-      ...BUILT_IN_MANIFESTS.flatMap(({ manifest }) => manifest.install?.npm_packages ?? []).map(
-        (name) => `${name}@latest`,
-      ),
-    ]);
+    await run('agent_backends', ['npm', 'ci', '--prefix', join(root, 'agent_backends')]);
   if (await exists(join(root, 'web/package.json')))
     await run('web', ['npm', 'run', 'build', '--prefix', join(root, 'web')]);
   // The server serves web/dist, so browser build tools are no longer needed. Each driver names

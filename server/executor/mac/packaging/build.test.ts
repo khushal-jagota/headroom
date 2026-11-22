@@ -65,13 +65,14 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
       revision: '1'.repeat(40),
       launcher_app,
     };
-    await build_mac_package(options);
+    const built = await build_mac_package(options);
     const manifest = JSON.parse(
       await readFile(join(options.output, 'runtime/mac-runtime.json'), 'utf8'),
     );
     expect(manifest).toEqual({
       schema_version: 1,
       application_revision: options.revision,
+      build_id: expect.stringMatching(/^[a-f0-9]{64}$/),
       architecture: 'arm64',
       platform: 'darwin',
     });
@@ -111,6 +112,12 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
     });
     expect(account.launch_agent).toContain('Owner &amp; Test');
     expect(mac_launcher_bundle().launcher_source).not.toContain('/Users/');
+    const changed_launcher = Buffer.from(native);
+    changed_launcher[16] = 1;
+    await put(join(launcher_app, 'Contents/MacOS/Panels'), changed_launcher);
+    const changed = await build_mac_package({ ...options, output: join(root, 'changed-launcher') });
+    expect(changed.launcher_sha256).not.toBe(built.launcher_sha256);
+    expect(changed.build_id).not.toBe(built.build_id);
     await put(join(node, 'bin/node'), Buffer.from('7f454c4600000000', 'hex'));
     await expect(build_mac_package({ ...options, output: join(root, 'refused') })).rejects.toThrow(
       'Darwin arm64 Mach-O',

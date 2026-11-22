@@ -77,7 +77,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   ```sh
   npm ci --prefix server
   npm ci --prefix web
-  npm install --prefix agent_backends --no-save --no-package-lock
+  npm ci --prefix agent_backends
   ```
 
   An older checkout can have `node_modules` folders that link into
@@ -87,7 +87,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
   ```sh
   scripts/dev npm --prefix web ci
-  scripts/dev npm --prefix agent_backends install
+  scripts/dev npm --prefix agent_backends ci
   scripts/dev npm --prefix server run check
   scripts/dev npm --prefix web run check
   ```

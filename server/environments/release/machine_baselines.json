@@ -1,0 +1,18 @@
+{
+  "linux": {
+    "source_sha": "e71baa53c98350a7b5519b0106e1c3e57a09382d",
+    "run_id": "44332149248",
+    "artifact_id": "14440291876",
+    "zip_sha256": "6aa74dfdbb7149b6031ac6259883f2cecfbb36b2e7e5817a10c43a458ff010e4",
+    "archive_sha256": "6b1ef9bda87e9b8d0d38685233b387e7f3628c608fbca851966db730dbb144ca",
+    "archive_size": 571145210
+  },
+  "darwin": {
+    "source_sha": "e71baa53c98350a7b5519b0106e1c3e57a09382d",
+    "run_id": "44332149248",
+    "artifact_id": "14440850827",
+    "zip_sha256": "4b09249dd32c39944959c1f4c97ec5c2ee3887f9130832625768967a4befe8cf",
+    "archive_sha256": "b535f1f8e6802a3876e81c0ff5e1470f7f779d2f10b1286684868305910ab86c",
+    "archive_size": 222964142
+  }
+}

@@ -19,6 +19,7 @@ export function legacy_machine_id(locale: string): string {
 export interface ExecutorIdentity {
   protocol_version: number;
   application_revision: string;
+  build_id?: string;
   spool_format_version: number;
   executor_incarnation: string;
   connection_generation: number;
@@ -71,6 +72,8 @@ export function validate_identity(
 ): void {
   if (typeof identity.application_revision !== 'string' || !strip(identity.application_revision))
     throw new ProtocolRefused('application revision must be a nonempty diagnostic label');
+  if (identity.build_id !== undefined && !/^[0-9a-f]{64}$/.test(identity.build_id))
+    throw new ProtocolRefused('machine build identity must be a SHA-256 digest');
   if (!valid_uuid(identity.executor_incarnation))
     throw new ProtocolRefused('incarnation must be UUID');
   if (
@@ -111,7 +114,10 @@ export function parse_identity(
   for (const key of ['application_revision', 'executor_incarnation'])
     if (typeof raw[key] !== 'string')
       throw new ProtocolRefused('identity text field has wrong type');
+  if (Object.hasOwn(raw, 'build_id') && typeof raw.build_id !== 'string')
+    throw new ProtocolRefused('machine build identity has wrong type');
   const identity: ExecutorIdentity = {
+    ...(raw.build_id === undefined ? {} : { build_id: raw.build_id as string }),
     protocol_version: raw.protocol_version as number,
     application_revision: raw.application_revision as string,
     spool_format_version: raw.spool_format_version as number,
@@ -120,4 +126,14 @@ export function parse_identity(
   };
   validate_identity(identity, options);
   return identity;
+}
+
+/** Historical runtimes compare revisions until both peers carry content identities. */
+export function same_machine_build(
+  left: { application_revision: string; build_id?: string },
+  right: { application_revision: string; build_id?: string },
+): boolean {
+  return left.build_id !== undefined && right.build_id !== undefined
+    ? left.build_id === right.build_id
+    : left.application_revision === right.application_revision;
 }

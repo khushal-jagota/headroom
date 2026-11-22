@@ -32,6 +32,8 @@ async function fixture() {
     'mac-home.zip',
     'build.zip',
     'mac-home-build.zip',
+    'machine-compatibility-linux.zip',
+    'machine-compatibility-darwin.zip',
   ];
   const artifacts = [];
   for (const [index, name] of names.entries()) {
@@ -142,6 +144,8 @@ test('permanent server publication keeps desktop latest and binds every consumer
       'mac-home.zip',
       'build.zip',
       'mac-home-build.zip',
+      'machine-compatibility-linux.zip',
+      'machine-compatibility-darwin.zip',
       'publication-audit.json',
       'publication-actions.json',
       'publication.json',

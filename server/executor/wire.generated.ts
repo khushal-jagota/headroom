@@ -222,6 +222,7 @@ export type ExecutorHealthRead = {
 };
 export type ExecutorIdentity = {
   application_revision: string;
+  build_id?: string;
   connection_generation?: number;
   executor_incarnation: string;
   protocol_version: number;
@@ -314,6 +315,7 @@ export type MacLocalStatus = {
 export type MacRuntimeManifest = {
   application_revision: string;
   architecture: string;
+  build_id?: string;
   platform: string;
   schema_version: number;
 };
@@ -339,6 +341,7 @@ export type MacUpdatePrefetch = {
   archive_path: string;
   archive_sha256: string;
   archive_size: number;
+  build_id?: string;
 };
 export type MacUpdateReport = {
   application_revision: string;
@@ -359,6 +362,7 @@ export type MacUpdateTarget = {
   archive_path: string;
   archive_sha256: string;
   archive_size: number;
+  build_id?: string;
   mode: UpdateMode;
   request_id: string;
 };
