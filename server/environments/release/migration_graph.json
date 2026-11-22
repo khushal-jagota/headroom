@@ -99,6 +99,9 @@
     "ts_0003_ticket_worker_setups": [
       "ts_0002_project_repository"
     ],
+    "ts_0004_drop_ideas": [
+      "ts_0003_ticket_worker_setups"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

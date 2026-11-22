@@ -73,11 +73,10 @@
     if (managerId) return cachedImport("../components/ManagerWorkspace.svelte", () => import("../components/ManagerWorkspace.svelte"));
     switch (opening.markedUtility) {
       case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
-      case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./IdeasRoute.svelte"));
       default: return null;
     }
   });
-  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" ? "rows" as const : "document" as const);
+  let paneShape = $derived(opening.markedUtility === "usage" ? "rows" as const : "document" as const);
   // The screen's own position, read the same way its standalone page reads it. The
   // address is parsed before it reaches here, so a placement is always present.
   let placement = $derived(
@@ -463,12 +462,6 @@
           {#if placement.utility === "usage"}
             {#await import("./BackendsRoute.svelte") then view}
 <view.default {...placement.usage} href={utilityHref("usage")} />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if placement.utility === "ideas"}
-            {#await import("./IdeasRoute.svelte") then view}
-<view.default />
 {:catch error}
 <ErrorLine {error} />
 {/await}

@@ -14,7 +14,6 @@ import type {
   EmployeeConfigurationSnapshot,
   ManagerPrincipal,
   ManagerChildFilter,
-  IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
   SkillsHomeResponse,
@@ -90,7 +89,6 @@ export const queries = {
       ["tickets", "manager", { principal, filter, offset, limit }],
       `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&manager_kind=${principal.kind}${principal.kind === "manager" ? `&manager_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
     ),
-  ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   managers: () => jsonQuery<ManagersResponse>(["managers"], "/api/managers?detail=full"),
   managerWorkspaceContent: (itemId: string) =>

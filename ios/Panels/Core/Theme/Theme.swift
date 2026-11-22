@@ -146,7 +146,7 @@ enum PanelsTheme {
             case page, usage
             var weight: UIFont.Weight {
                 switch self {
-                case .page: .medium // Ideas, Feedback, VPS and configuration headings: 500.
+                case .page: .medium // Feedback, VPS and configuration headings: 500.
                 case .usage: .semibold // UsageHeader h1: 600.
                 }
             }

@@ -22,7 +22,6 @@ struct MoreView: View {
                 }
             }.listRowBackground(PanelsTheme.raised)
             Section {
-                destination("Ideas", symbol: "lightbulb", route: .ideas)
                 destination("Feedback", symbol: "bubble.left", route: .feedback)
             } header: { Text("Work").panelsSectionHeading(.navigation) }
             Section {

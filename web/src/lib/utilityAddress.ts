@@ -1,9 +1,9 @@
 import { parseUsageSelection, type UsageSelection } from "./usageAddress";
 
 /** The screens that can also open inside the Workspace pane. Settings has its own home. */
-export type WorkspaceUtility = "usage" | "ideas";
+export type WorkspaceUtility = "usage";
 
-export const WORKSPACE_UTILITIES: readonly WorkspaceUtility[] = ["usage", "ideas"];
+export const WORKSPACE_UTILITIES: readonly WorkspaceUtility[] = ["usage"];
 
 export function isWorkspaceUtility(value: string): value is WorkspaceUtility {
   return (WORKSPACE_UTILITIES as readonly string[]).includes(value);
@@ -23,9 +23,7 @@ export function prefixHref(prefix: string): UtilityHref {
   return segments => (segments.length === 0 ? prefix : `${prefix}/${segments.join("/")}`);
 }
 
-export type UtilityPlacement =
-  | { utility: "usage"; usage: UsageSelection }
-  | { utility: "ideas" };
+export type UtilityPlacement = { utility: "usage"; usage: UsageSelection };
 
 /** The one reading of a utility screen's own path.
  *
@@ -37,9 +35,6 @@ export function parseUtilityPath(
   utility: WorkspaceUtility,
   path: readonly string[]
 ): UtilityPlacement | null {
-  if (utility === "usage") {
-    const usage = parseUsageSelection(path);
-    return usage === null ? null : { utility, usage };
-  }
-  return path.length === 0 ? { utility } : null;
+  const usage = parseUsageSelection(path);
+  return usage === null ? null : { utility, usage };
 }
