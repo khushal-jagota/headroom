@@ -68,6 +68,8 @@ test('a scratch folder that cannot be deleted stays in place and fails no stop, 
   const locked = join(old.directory, 'build');
   await mkdir(locked);
   await writeFile(join(locked, 'output.log'), 'busy');
+  // The warning must list a link without walking into it.
+  await symlink(home, join(locked, 'home-link'));
   await chmod(locked, 0o500);
   try {
     const fresh = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes });
@@ -76,17 +78,19 @@ test('a scratch folder that cannot be deleted stays in place and fails no stop, 
     );
     expect(await prune_ticket_scratch('t_test', [basename(old.directory)], home)).toBe(false);
     await old.close();
-    expect(await readdir(locked)).toEqual(['output.log']);
+    expect((await readdir(locked)).sort()).toEqual(['home-link', 'output.log']);
     expect(warn).toHaveBeenCalledTimes(3);
     for (const [message] of warn.mock.calls) {
       expect(message).toContain(old.directory);
       expect(message).toContain(join('build', 'output.log'));
+      expect(message).toContain(join('build', 'home-link'));
+      expect(message).not.toContain(join('home-link', '.pw'));
     }
   } finally {
     await chmod(locked, 0o700);
     warn.mockRestore();
   }
-});
+}, 15_000);
 test('public Ticket files and catalogs hide private checkouts, markers and aliases but keep artifacts', async () => {
   const db = ticket_fixture(),
     ticket = create(db),

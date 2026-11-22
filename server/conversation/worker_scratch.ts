@@ -77,6 +77,24 @@ async function disk_directory(root: string, processes: OwnedChildProcesses): Pro
 const REMOVAL_LIMIT_MS = 1500;
 const REMOVAL_RETRY_MS = 100;
 const LISTED_ENTRIES = 20;
+/** At most one entry past the listed ones, so a huge or linked tree cannot hold a stop. */
+async function remaining_entries(directory: string): Promise<string[]> {
+  const found: string[] = [];
+  const pending = [''];
+  while (pending.length > 0 && found.length <= LISTED_ENTRIES) {
+    const relative = pending.shift()!;
+    const entries = await readdir(join(directory, relative), { withFileTypes: true }).catch(
+      () => [],
+    );
+    for (const entry of entries) {
+      if (found.length > LISTED_ENTRIES) break;
+      const path = join(relative, entry.name);
+      found.push(path);
+      if (entry.isDirectory()) pending.push(path);
+    }
+  }
+  return found;
+}
 /** Disposable storage never fails its caller. A folder that remains stays for the next start or
  * retirement of its Ticket, with one warning that names what remained. */
 async function remove_scratch(directory: string, limit: AbortSignal): Promise<boolean> {
@@ -87,10 +105,9 @@ async function remove_scratch(directory: string, limit: AbortSignal): Promise<bo
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
       if (limit.aborted) {
-        const remaining = await readdir(directory, { recursive: true }).catch(() => []);
+        const remaining = await remaining_entries(directory);
         const listed = remaining.slice(0, LISTED_ENTRIES).join(', ');
-        const more =
-          remaining.length > LISTED_ENTRIES ? ` and ${remaining.length - LISTED_ENTRIES} more` : '';
+        const more = remaining.length > LISTED_ENTRIES ? ' and more' : '';
         console.warn(
           `Worker scratch folder stays in place, because it could not be deleted: ${directory} ` +
             `(${(error as Error).message}). Remaining entries: ${listed || 'none'}${more}`,
@@ -198,7 +215,8 @@ export class WorkerScratch {
       throw error;
     }
   }
-  /** All callers observe actual removal, including callers whose signal expired. */
+  /** All callers observe the removal attempt, including callers whose signal expired. A busy
+   * folder that remains does not reject; the next start or retirement of the Ticket retries it. */
   close(): Promise<void> {
     if (this.closing) return this.closing;
     const attempt = (async () => {
