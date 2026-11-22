@@ -172,7 +172,7 @@ final class ConversationOperationTests: XCTestCase {
             let page = app.scrollViews.firstMatch
             let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
             capture(app, "after-\(name)-\(appearance)-detail")
-            if name == "Orchestrator" && appearance == "dark" {
+            if name == "Orchestrator" && appearance == "light" {
                 // The Manager page actions open the same kind of sheet as the Ticket actions.
                 app.buttons["agent-page-menu"].tap()
                 XCTAssertTrue(app.buttons["agent-action-recap"].waitForExistence(timeout: 5))

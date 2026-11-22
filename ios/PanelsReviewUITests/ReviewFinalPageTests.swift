@@ -312,8 +312,9 @@ final class ReviewFinalPageTests: XCTestCase {
         app.buttons["ticket-actions"].tap()
         let backlog = app.buttons["ticket-action-backlog"]
         XCTAssertTrue(backlog.waitForExistence(timeout: 5)); backlog.tap()
-        XCTAssertTrue(app.activityIndicators.firstMatch.waitForExistence(timeout: 1))
+        // While the server answers, the sheet stays open with a spinner and Cancel disabled.
         XCTAssertTrue(backlog.exists, "The sheet stays open while the server answers")
+        XCTAssertFalse(app.buttons["Cancel"].isEnabled, "Cancel waits for the answer")
         capture(app, "settings-backlog-waiting")
         XCTAssertTrue(backlog.waitForNonExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Backlogged. Automatic work is paused."].waitForExistence(timeout: 8))

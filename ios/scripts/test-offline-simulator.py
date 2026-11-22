@@ -1686,7 +1686,7 @@ def main() -> int:
                 or (path.startswith("/api/tickets/") and path.endswith(("/backlog", "/resume")))
             ):
                 # Rare Ticket settings wait in their sheet: answer slowly enough to see it.
-                time.sleep(1.5)
+                time.sleep(3)
                 with lock:
                     state.setdefault("settings_writes", []).append(dict(path=path, body=body))
                     if path == "/api/recap-requests":
