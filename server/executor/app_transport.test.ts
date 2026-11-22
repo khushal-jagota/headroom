@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { MachineServerLink } from '../server_link/machine.ts';
+import { request } from 'node:http';
 import { expect, test, vi } from 'vitest';
 import { createApp } from '../app.ts';
 import { RealClock } from '../core/clock.ts';
@@ -308,6 +310,7 @@ test('machine code on the home account reaches executor routes, and only those, 
   await app.ready();
   const socket_path = executor_link_socket_path(path);
   const link = await open_executor_link(app.server, socket_path);
+  expect(link).not.toBeNull();
   const identity = {
     protocol_version: PROTOCOL_VERSION,
     application_revision: 'a'.repeat(40),
@@ -315,7 +318,9 @@ test('machine code on the home account reaches executor routes, and only those, 
     executor_incarnation: '11111111-1111-4111-8111-111111111111',
     connection_generation: 0,
   };
-  const client = new MacHttpClient(socket_path, 'test-executor', identity);
+  // The machine's server memory proves its identity probe also goes over the local link.
+  const server_link = new MachineServerLink(join(dirname(path), 'machine'), socket_path);
+  const client = new MacHttpClient(socket_path, 'test-executor', identity, { server_link });
   const lease = {
     identity,
     process_id: 1,
@@ -341,9 +346,29 @@ test('machine code on the home account reaches executor routes, and only those, 
     await client.ensure_credential(join(dirname(path), 'link-credential.json'));
     expect(client.headers['X-Panels-Executor-Credential']).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect('error' in (await client.lease(lease))).toBe(false);
+    expect(server_link.current()).toMatchObject({ server_url: socket_path });
+    expect(server_link.current().server_id).not.toBeNull();
     expect(await refusal('/api/tickets', client.headers)).toBe(
       '403 the local executor link serves executor routes only',
     );
+    // A raw path keeps its `..` segments: the router matches the files route, not the executor one.
+    const raw_status = await new Promise<number | undefined>((resolve, reject) => {
+      const raw = request(
+        {
+          socketPath: socket_path,
+          method: 'PUT',
+          path: '/files/managers/x/../../../api/executor/lease',
+          headers: client.headers,
+        },
+        (response) => {
+          response.resume();
+          resolve(response.statusCode);
+        },
+      );
+      raw.once('error', reject);
+      raw.end();
+    });
+    expect(raw_status).toBe(403);
     expect(
       await refusal('/api/executor/lease', {
         ...client.headers,
@@ -362,7 +387,7 @@ test('machine code on the home account reaches executor routes, and only those, 
     chmodSync(dirname(socket_path), 0o700);
     expect('error' in (await client.lease(lease))).toBe(false);
   } finally {
-    link.close();
+    link?.close();
     await client.stop({ deadline: performance.now() / 1000 + 5 });
     await registry.stop({ deadline: performance.now() / 1000 + 5 });
     await registry.settled();

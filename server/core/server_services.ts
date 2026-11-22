@@ -662,9 +662,9 @@ export class ServerServices {
       app.server,
       executor_link_socket_path(this.config.db_path),
     );
-    this.executor_link = link;
+    this.executor_link = link ?? undefined;
     // The 'HTTP listener' stop closes a published link; a stop that already ran needs this one.
-    if (this.lifetime.isClosing()) link.close();
+    if (this.lifetime.isClosing()) link?.close();
     listening();
     return address;
   }

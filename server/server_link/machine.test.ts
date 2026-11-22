@@ -85,9 +85,36 @@ test('location rejects unsafe addresses and move numbers before persistence', ()
     'https://example.com?query=1',
   ])
     expect(() => validate_server_address(url)).toThrow('HTTPS origin');
+  expect(validate_server_address('/home/user/data/executor-link/server.sock')).toBe(
+    '/home/user/data/executor-link/server.sock',
+  );
+  for (const path of ['/a/../b.sock', '/a/b.sock/', '/a\nb.sock'])
+    expect(() => validate_server_address(path)).toThrow('plain absolute path');
   expect(() => parse_server_location({ ...location(), move_number: -1 })).toThrow('invalid');
   expect(() =>
     parse_server_location({ ...location(), move_number: Number.MAX_SAFE_INTEGER + 1 }),
   ).toThrow('invalid');
   expect(() => parse_server_location(location(1, null, 'moved'))).toThrow('new address');
+});
+
+test('machine code on the local link keeps it while the server is active, and follows a move', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'server-link-local-'));
+  const socket = join(root, 'executor-link', 'server.sock');
+  try {
+    const machine = new MachineServerLink(root, socket);
+    await machine.prepare(async () => location(0, 'https://server.example'));
+    expect(machine.current_url).toBe(socket);
+    await machine.accept(header(location(0, 'https://server.example')), socket, async () =>
+      location(0, 'https://server.example'),
+    );
+    expect(machine.current_url).toBe(socket);
+    await expect(
+      machine.accept(header(location(1, 'https://new.example', 'moved')), socket, async () =>
+        location(1),
+      ),
+    ).rejects.toThrow('The server moved.');
+    expect(machine.current_url).toBe('https://new.example');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

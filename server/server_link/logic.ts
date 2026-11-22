@@ -26,7 +26,9 @@ export function validate_server_address(value: string): string {
   try {
     url = new URL(value);
   } catch {
-    throw new ExecutorValidationError('The server address must be an HTTPS origin or a socket path.');
+    throw new ExecutorValidationError(
+      'The server address must be an HTTPS origin or a socket path.',
+    );
   }
   if (
     url.protocol !== 'https:' ||
@@ -37,7 +39,9 @@ export function validate_server_address(value: string): string {
     url.hash ||
     /\s/u.test(value)
   )
-    throw new ExecutorValidationError('The server address must be an HTTPS origin or a socket path.');
+    throw new ExecutorValidationError(
+      'The server address must be an HTTPS origin or a socket path.',
+    );
   return url.origin;
 }
 export function parse_server_location(value: unknown): ServerLocation {

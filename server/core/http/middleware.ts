@@ -9,6 +9,7 @@ import { MINIMUM_SUPPORTED_BUILD } from '../../ios_compatibility/policy.ts';
 import { TRUSTED_INGRESS_CONFIGURED } from '../authority/identity.ts';
 import type { HttpRequestScope } from './lifetime.ts';
 import { is_executor_link_connection } from './executor_link.ts';
+import { SERVER_LOCATION_PATH } from '../../server_link/contracts.ts';
 export interface WorkspaceAdmission {
   operation(): {
     admitted: boolean;
@@ -75,7 +76,12 @@ export function installMiddleware(
       const executor_link = is_executor_link_connection(request.raw.socket);
       if (executor_link) {
         // The machine credential, checked by the executor routes, says which machine this is.
-        if (!path.startsWith('/api/executor/'))
+        // The matched route decides, because the router does not resolve `..` in a raw path.
+        const route = request.routeOptions.url;
+        if (
+          route === undefined ||
+          !(route.startsWith('/api/executor/') || route === SERVER_LOCATION_PATH)
+        )
           return reject(reply, 'the local executor link serves executor routes only');
         if (request.headers['tailscale-user-login'] !== undefined)
           return reject(reply, 'the local executor link does not accept a Tailscale login');

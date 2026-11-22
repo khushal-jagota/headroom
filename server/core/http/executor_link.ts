@@ -30,10 +30,18 @@ export interface ExecutorLinkListener {
  * Each accepted connection goes to the HTTP server, so its routes, hooks and request
  * lifetime apply unchanged.
  */
+/** The shortest socket path limit of the supported systems: 104 bytes on macOS, with its NUL. */
+const MAX_SOCKET_PATH_BYTES = 103;
+
 export async function open_executor_link(
   http_server: HttpServer,
   socket_path: string,
-): Promise<ExecutorLinkListener> {
+): Promise<ExecutorLinkListener | null> {
+  if (Buffer.byteLength(socket_path) > MAX_SOCKET_PATH_BYTES) {
+    // The link is for machine code on this machine. The rest of the server runs without it.
+    console.warn(`The local executor link is off: its socket path is too long: ${socket_path}`);
+    return null;
+  }
   const folder = dirname(socket_path);
   try {
     mkdirSync(folder, { mode: 0o700 }); // Only the last part: a missing data folder stays an error.
