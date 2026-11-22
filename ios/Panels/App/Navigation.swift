@@ -36,16 +36,19 @@ extension EnvironmentValues {
     @Entry var reviewVisit = 0
 }
 
-/// A NavigationStack whose pushes all go through one page path.
+/// A NavigationStack whose pushes all go through one page path. A page and the full
+/// conversation pushed from it share one conversation model through this stack's shelf.
 struct RouteStack<Root: View>: View {
     @Binding var path: [AppRoute]
     @ViewBuilder let root: () -> Root
+    @State private var conversationModels = ConversationModelShelf()
     var body: some View {
         NavigationStack(path: $path) {
             root()
                 .navigationDestination(for: AppRoute.self) { RouteDestination(route: $0) }
         }
         .environment(\.openRoute, OpenRouteAction { path.append($0) })
+        .environment(\.conversationModels, conversationModels)
     }
 }
 

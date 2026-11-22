@@ -12,6 +12,23 @@ enum ConversationLayout {
     static let surfaceTopPadding: CGFloat = 8
 }
 
+/// Each page's docked conversation model, by owner. The full conversation opened from
+/// that page uses the same model, so the draft, the outbox state, the transcript and
+/// the read point stay one. Held weakly: the page owns its model.
+@MainActor final class ConversationModelShelf {
+    private final class Entry { weak var model: ConversationModel?; init(_ model: ConversationModel) { self.model = model } }
+    private var entries: [ConversationOwner: Entry] = [:]
+    func register(_ model: ConversationModel, for owner: ConversationOwner) {
+        entries = entries.filter { $0.value.model != nil }
+        entries[owner] = Entry(model)
+    }
+    func model(for owner: ConversationOwner) -> ConversationModel? { entries[owner]?.model }
+}
+
+extension EnvironmentValues {
+    @Entry var conversationModels: ConversationModelShelf? = nil
+}
+
 struct ConversationNavigation: ViewModifier {
     let owner: ConversationOwner
     let conversationID: String?
@@ -19,6 +36,7 @@ struct ConversationNavigation: ViewModifier {
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
     @Environment(\.openRoute) private var openRoute
+    @Environment(\.conversationModels) private var conversationModels
     var textEntry: ScreenTextEntryContext? = nil
     /// The docked composer exists only while its page is the top page, so a pushed
     /// page, the full conversation included, never has a second composer under it.
@@ -40,9 +58,11 @@ struct ConversationNavigation: ViewModifier {
                                         model: model, speech: speech, refreshError: refreshError, retry: retry)
                 }
             }
-            .onAppear { pageVisible = true }
+            .onAppear { pageVisible = true; conversationModels?.register(model, for: owner) }
             .onDisappear { pageVisible = false; speech.cancel() }
-            .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
+            .onChange(of: store.baseURL) { _, _ in
+                speech.cancel(); model = ConversationModel(); conversationModels?.register(model, for: owner)
+            }
     }
 
     private func open() {
@@ -56,9 +76,12 @@ struct ConversationScreen: View {
     let conversationID: String?
     /// A link to one exact conversation reads as history once another is current.
     let linked: Bool
-    @State private var model = ConversationModel()
+    /// A linked conversation reads on its own; otherwise the page shares its owner's docked model.
+    @State private var ownModel = ConversationModel()
     @State private var speech = ConversationSpeech()
     @Environment(AppStore.self) private var store
+    @Environment(\.conversationModels) private var conversationModels
+    private var model: ConversationModel { linked ? ownModel : conversationModels?.model(for: owner) ?? ownModel }
 
     var body: some View {
         ScreenTextEntryScope { textEntry in
@@ -68,7 +91,7 @@ struct ConversationScreen: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
-                            Picker("Conversation lens", selection: $model.lens) {
+                            Picker("Conversation lens", selection: Binding(get: { model.lens }, set: { model.lens = $0 })) {
                                 ForEach(ConversationLens.allCases, id: \.self) { lens in
                                     Text(lens.rawValue.capitalized).tag(lens)
                                 }
@@ -84,7 +107,7 @@ struct ConversationScreen: View {
                 }
         }
         .onDisappear { speech.cancel() }
-        .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
+        .onChange(of: store.baseURL) { _, _ in speech.cancel(); ownModel = ConversationModel() }
     }
 }
 
