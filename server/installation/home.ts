@@ -455,7 +455,6 @@ export async function install_home(
       join(root_path, 'data/config.yaml'),
       JSON.stringify({
         server_root: '.',
-        provision_account_skills: false,
         db_path: 'planner.db',
         logs_dir: '../logs',
         backup_dir: 'backups',
