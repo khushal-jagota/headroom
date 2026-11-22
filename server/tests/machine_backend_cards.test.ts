@@ -261,3 +261,37 @@ test('a machine without control support receives no backend command', async () =
   );
   expect(put_backend_request).not.toHaveBeenCalled();
 });
+
+// A machine reply must not turn a failed action into an HTTP success or an invalid status.
+test('backend relay admits only the statuses its provider control protocol defines', async () => {
+  let status = 200;
+  const relay = new VpsBackendControlRelay(
+    {
+      async put_backend_request() {
+        return {
+          command_sequence: 1,
+          command_id: 'error',
+          created_at_vps_ms: 1,
+          child_command: null,
+          model_list_request: null,
+        };
+      },
+      async wait_result() {
+        return {
+          command_id: 'error',
+          child_outcome: null,
+          model_list: null,
+          backend_result: { error: { status, message: 'Provider refused' } },
+        };
+      },
+      async withdraw_waiting() {
+        return false;
+      },
+    },
+    { is_present: () => true, supports_backend_controls: () => true },
+  );
+  const action = () => relay.request({ backend_key: key, operation: 'sign_in_start' });
+  await expect(action()).rejects.toMatchObject({ statusCode: 502 });
+  status = 422;
+  await expect(action()).rejects.toMatchObject({ statusCode: 422 });
+});

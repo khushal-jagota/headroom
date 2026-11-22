@@ -135,28 +135,45 @@ export class MachinePreviews {
     await this.inspector.check(entry.process);
   }
   private async connect(entry: Prepared, stream: Duplex): Promise<void> {
-    await this.check(entry);
-    const socket = new net.Socket();
-    this.sockets.add(socket);
-    this.own(new Promise<void>((resolve) => socket.once('close', () => resolve())));
-    socket.on('error', () => stream.destroy());
-    socket.once('close', () => {
-      this.sockets.delete(socket);
-      stream.destroy();
-    });
-    stream.once('close', () => socket.destroy());
-    socket.setNoDelay();
-    socket.connect({ host: '127.0.0.1', port: entry.process!.port });
-    socket.pause();
+    let socket: net.Socket | undefined;
+    const require_open = (): void => {
+      if (
+        stream.destroyed ||
+        this.closed ||
+        entry.ended ||
+        this.prepared.get(entry.child.ticket_id) !== entry
+      )
+        throw new PreviewError('Preview connection ended.', 410);
+    };
+    // Close can precede any awaited inspection or the creation of the local socket.
+    stream.once('close', () => socket?.destroy(new PreviewError('Preview connection ended.', 410)));
     try {
-      await once(socket, 'connect', { signal: AbortSignal.timeout(CONNECT_SECONDS * 1000) });
-      await this.inspector.connected(entry.process!, socket.localPort!);
+      require_open();
       await this.check(entry);
-      socket.pipe(stream).pipe(socket);
-      socket.resume();
+      require_open();
+      socket = new net.Socket();
+      const connected = socket;
+      this.sockets.add(connected);
+      this.own(new Promise<void>((resolve) => connected.once('close', () => resolve())));
+      connected.on('error', () => stream.destroy());
+      connected.once('close', () => {
+        this.sockets.delete(connected);
+        stream.destroy();
+      });
+      connected.setNoDelay();
+      connected.connect({ host: '127.0.0.1', port: entry.process!.port });
+      connected.pause();
+      await once(connected, 'connect', { signal: AbortSignal.timeout(CONNECT_SECONDS * 1000) });
+      require_open();
+      await this.inspector.connected(entry.process!, connected.localPort!);
+      require_open();
+      await this.check(entry);
+      require_open();
+      connected.pipe(stream).pipe(connected);
+      connected.resume();
     } catch (error) {
-      socket.destroy();
-      this.end(entry);
+      socket?.destroy();
+      stream.destroy();
       throw error;
     }
   }

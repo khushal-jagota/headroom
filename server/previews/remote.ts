@@ -57,10 +57,13 @@ export class RemotePreviews {
       throw new PreviewError('The Ticket no longer runs on this machine.', 410);
   }
   private end(entry: Entry, reason: string): void {
+    if (this.entries.get(entry.record.generation) === entry)
+      this.entries.delete(entry.record.generation);
     entry.record.state = 'ended';
     entry.record.ended_reason = reason;
-    entry.relay?.close();
+    const relay = entry.relay;
     entry.relay = undefined;
+    relay?.close();
   }
   command(ticket_id: string, machine: PreviewMachine, operation: unknown): object {
     this.eligible(ticket_id, machine);
@@ -143,6 +146,10 @@ export class RemotePreviews {
     require_port(port, RESERVED_PANELS_PORT);
     if (!Number.isInteger(port)) throw new PreviewError('Preview port is invalid.');
     this.server.handleUpgrade(request, socket, head, (ws) => {
+      if (this.entries.get(generation) !== entry || entry.record.state !== 'prepared') {
+        ws.terminate();
+        return;
+      }
       entry.record.target_port = port;
       entry.record.state = 'active';
       entry.relay = new PreviewRelay(ws);

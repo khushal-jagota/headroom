@@ -94,7 +94,9 @@ export class VpsBackendControlRelay implements MachineBackendControls {
       const error = result.backend_result.error;
       if (error && typeof error === 'object' && !Array.isArray(error))
         throw new HttpError(
-          typeof error.status === 'number' ? error.status : 503,
+          typeof error.status === 'number' && [409, 422, 503].includes(error.status)
+            ? error.status
+            : 502,
           typeof error.message === 'string' ? error.message : 'Machine request failed.',
         );
       return result.backend_result;
