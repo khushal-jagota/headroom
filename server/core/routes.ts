@@ -1,3 +1,4 @@
+import { client_version_meta } from '../client_versions/meta.ts';
 import type { FastifyInstance } from 'fastify';
 import { Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
@@ -22,7 +23,11 @@ export async function registerCoreRoutes(
   root: string,
   database: Database,
 ): Promise<void> {
-  app.get('/api/meta', async () => ({ test_mode: config.test_mode, app_sha: config.app_sha }));
+  const version_meta = client_version_meta(root, config.app_sha);
+  app.get('/api/meta', async (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return { test_mode: config.test_mode, app_sha: config.app_sha, ...version_meta };
+  });
   app.get('/api/health', async (request, reply) => {
     if (config.app_sha === null) {
       if (config.test_mode) return { ready: true, app_sha: null };

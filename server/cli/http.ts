@@ -1,4 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
+import { CLIENT_IDENTITY_HEADER } from '../client_versions/contracts.ts';
+import { cli_client_identity } from './client_identity.ts';
 import { spawnSync } from 'node:child_process';
 import { delimiter, join } from 'node:path';
 import { checkServerIdentity } from 'node:tls';
@@ -393,6 +395,7 @@ async function request(
         );
     }
     const headers = authentication_headers(env);
+    headers[CLIENT_IDENTITY_HEADER] = JSON.stringify(cli_client_identity(env));
     if (options.json_body !== undefined) headers['Content-Type'] = 'application/json';
     return await read_request(
       url,

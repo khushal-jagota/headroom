@@ -58,6 +58,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     services.workspaceAdmission,
     request_lifetime,
     services.updateBarrier,
+    { database: services.database, clock },
   );
   const configuredRoot = process.env.PLAN_APP_ROOT;
   const root = configuredRoot

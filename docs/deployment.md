@@ -16,6 +16,8 @@ installer unit: stop → snapshot if required → swap folders → start → hea
                                                     └─ not healthy → restore, swap back → resume work → failed
 ```
 
+The server publishes the installed release and its accepted client versions through one metadata answer. Clients identify their installation and software version. The server retains the last reported version for each device. Older installed manifests without a release number or parts omit those fields.
+
 ## What it is made of
 
 The TypeScript Linux builder rebuilds browser assets from source, then removes build tools and unused platform binaries before it seals the archive. The Linux executor uses the same builder. Installation consumes the sealed archive and runs no source build.

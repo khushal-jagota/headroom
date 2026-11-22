@@ -6,6 +6,7 @@
 // connected reaches only the browser and iPhone.
 import { Notification } from 'electron';
 import { serverAddress } from './server_address';
+import { desktopIdentityHeaders } from './client_identity';
 
 type ShownNotification = { title: string; body: string; route: string; tag: string };
 
@@ -38,7 +39,7 @@ async function listen(address: string, signal: AbortSignal, openRoute: (route: s
       // which holds at most six connections to one HTTP/1.1 server. A stream held there for
       // good would take one of them from the screens.
       const response = await fetch(`${address}/api/notifications/desktop`, {
-        headers: { accept: 'text/event-stream' },
+        headers: { accept: 'text/event-stream', ...desktopIdentityHeaders() },
         signal: attempt.signal,
       });
       if (response.ok && response.body)
