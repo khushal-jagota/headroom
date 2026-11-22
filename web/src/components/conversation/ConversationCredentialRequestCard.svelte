@@ -3,15 +3,12 @@
   import type { CredentialRequestRowBody } from '../../lib/conversation/view/contracts';
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, CredentialRequestDraft, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import { CredentialRequestWireError, mutateCredentialRequest } from '../../lib/conversation/wire';
-  import type { Snippet } from 'svelte';
   import AskShell from './AskShell.svelte';
 
-  let { request, framed = true, replyStrip, onStop }: {
+  let { request, framed = true, onStop }: {
     request: CredentialRequestRowBody;
     /** Whether the ask draws its own raised plane (the composer gives up its own for it). */
     framed?: boolean;
-    /** The composer's one-line reply, under the answers. */
-    replyStrip?: Snippet;
     /** Ends the turn that waits on this key, as the ask's last row. */
     onStop?: () => void;
   } = $props();
@@ -152,7 +149,6 @@
       titleId={`${uid}-title`}
       description={current.use}
       {framed}
-      {replyStrip}
       {onStop}
       footerEnd={answers}
     >

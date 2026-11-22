@@ -6,7 +6,6 @@ import { readFileSync } from "node:fs";
 import { SvelteSet } from "svelte/reactivity";
 import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
 
-import { conversationState } from "../src/lib/conversation/dockPresentation";
 
 import type { ConversationViewItem } from "../src/lib/conversation/view/contracts";
 import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
@@ -49,26 +48,6 @@ describe("a docked conversation shows a waiting ask as its composer", () => {
 });
 
 describe("the dock line under which an ask waits", () => {
-  const facts = { readOnly: false, activityUncertain: false, waitingForYou: true, waitingFor: "approval" as const, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
-  const draw = (props: Record<string, unknown>) =>
-    render(ConversationRestBar, { props: { onOpen: () => { }, state: conversationState(facts), waitingTitle: "Upload Wren build 41 to TestFlight", ...props } }).body;
-  it("carries no status text when an ask is the composer under it: only Open conversation", () => {
-    for (const pageHoldsTheAsk of [false, true]) {
-      const html = draw({ askBelow: true, pageHoldsTheAsk, preview: "An unread line" });
-      expect(html).toContain("Open conversation");
-      expect(html).not.toContain("data-conversation-rest-line");
-      expect(html).not.toContain("Needs your approval");
-      expect(html).not.toContain("Waiting for your approval");
-      expect(html).not.toContain("Upload Wren build 41");
-      expect(html).not.toContain("cv-dot");
-      expect(html).not.toContain("An unread line");
-    }
-  });
-  it("keeps its line when no ask is below: a proposal alone says Needs your approval", () => {
-    expect(draw({ pageHoldsTheAsk: true })).toContain("Needs your approval");
-    expect(draw({ pageHoldsTheAsk: true })).not.toContain("Waiting for your approval");
-    expect(draw({})).toContain("Needs your approval");
-  });
   it("the pane says an ask is below whenever a permission ask, a question or a key request waits", () => {
     expect(source("../src/components/conversation/ConversationPane.svelte")).toContain("askBelow={ask !== null || userInput !== null || credentialWaiting}");
   });
@@ -174,24 +153,12 @@ describe("the dock", () => {
   const reader = (lens: "focus" | "full"): ConversationViewReader => ({
     id: "c", lens, pages: [{ scope: { kind: "timeline", key: null }, items: [turn, runningTool] }], status, openTools: new SvelteSet<string>()
   } as unknown as ConversationViewReader);
-  const workingFacts = { readOnly: false, activityUncertain: false, waitingForYou: false, waitingFor: null, running: true, backgroundWorking: false, settingUp: null, elapsed: "2m 14s" };
   it("no narration sentence under the Working line, in the dock or the transcript", () => {
-    const html = render(ConversationRestBar, { props: { onOpen: () => { }, state: conversationState(workingFacts as never) } }).body;
+    const html = render(ConversationRestBar, { props: { onOpen: () => { }, status: { kind: "working", clock: "2m 14s" } } }).body;
     expect(html).not.toContain("narration");
     expect(pane).not.toContain("live_narration");
     expect(render(LiveEdge, { props: { reader: reader("focus") } }).body).not.toContain("narration");
     expect(source("../src/lib/conversation/view/contracts.ts")).not.toContain("live_narration");
-  });
-  it("Open conversation has a 12px up arrow after its label", () => {
-    const html = render(ConversationRestBar, { props: { onOpen: () => { }, state: conversationState(workingFacts as never) } }).body;
-    expect(html).toMatch(/>Open conversation<\/span>[\s\S]*?<svg class="c2-rest-control-arrow[^"]*" viewBox="0 0 16 16" data-conversation-open-arrow=""><path d="m4 10 4-4 4 4"><\/path><\/svg>/);
-    expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-control-arrow { flex:none; width:12px; height:12px;");
-  });
-  it("with a proposal on the page, Needs your approval wears its dot; in #bccbf0 like every ask label", () => {
-    const bar = source("../src/components/conversation/ConversationRestBar.svelte");
-    expect(bar).toContain("[data-conversation-rest-page-waits-row] .c2-rest-label { color:#bccbf0; }");
-    expect(bar).toContain("[data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#bccbf0; }");
-    expect(bar).not.toContain("#a9bbe3");
   });
   it("the edge fades over 180ms: out at the start of opening, in over the end of the return", () => {
     expect(DOCK_EDGE_FADE_MS).toBe(180);
@@ -305,14 +272,20 @@ describe("no Waiting line in the transcript", () => {
   });
 });
 
-describe("the header's Dock button is the r22 filled pill", () => {
-  it("#232323 fill, #d9d9d9 text at rest, #2a2a2a under the pointer, and no later rest rule", () => {
-    const rest = ".chat-head-collapse { background: #232323; color: #d9d9d9; }";
-    const hover = ".chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }";
-    expect(pane).toContain(rest);
-    expect(pane).toContain(hover);
-    expect(pane).not.toContain(".chat-head-collapse { background: transparent");
-    expect(pane.slice(pane.indexOf(rest) + rest.length)).not.toMatch(/\.chat-head-collapse \{[^}]*background/);
+describe("Open and Close are quiet text controls", () => {
+  it("have no fill and no edge at rest, a fill under the pointer, and no later rest rule", () => {
+    const bar = source("../src/components/conversation/ConversationRestBar.svelte");
+    for (const [css, selector, hover] of [
+      [pane, ".chat-head-collapse {", ".chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }"],
+      [bar, ".c2-rest-control {", ".c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {\n    color:#ececec; background-color:#2a2a2a; }"]
+    ] as const) {
+      const at = css.indexOf(`\n  ${selector}`);
+      const rest = css.slice(at, css.indexOf("}", at));
+      expect(rest).toMatch(/background: ?transparent/);
+      expect(rest).toMatch(/border: ?0/);
+      expect(css).toContain(hover);
+      expect(css.split(`\n  ${selector}`)).toHaveLength(2);
+    }
   });
 });
 

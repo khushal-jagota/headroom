@@ -198,20 +198,17 @@
 
 <section inert={disabled || busy || resolved} class="worker-proposal" class:composer-only={composerOnly} data-approval-block data-artifact-origin="proposal" data-mode="pending" data-field={proposal.field}>
   {#if !composerOnly}
-  <!-- The ask shell's eyebrow (AskShell): what it needs from the person in their accent on
-       the left, then the stage and who approves it as quiet facts on the right. The
-       proposal's own first line is the card's title: the thing being decided. -->
+  <!-- The stage and who decides are small print over the card. The proposal's own first line
+       is the card's title: the thing being decided, not the stage's generic name. -->
   <div class="proposal-line">
-    {#if holder.kind === "owner"}<span class="proposal-need"><span class="proposal-dot" aria-hidden="true"></span>Needs your approval</span>
-    {:else}<span class="proposal-need is-other">Waiting for {reviewerLabel(holder)} approval</span>{/if}
-    <span class="proposal-facts">
-      <h2>{fieldLabelFor(lifecycle, proposal.field)}</h2>
-      <span class="proposal-line-sep" aria-hidden="true">·</span>
-      <span class="approver">
-        <span class="approver-label">Approver</span>
-        <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}<svg class="reviewer-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
-      </span>
-    </span>
+    <h2>{fieldLabelFor(lifecycle, proposal.field)}</h2>
+    <!-- What this is, then who approves it, as one pair (owner): 'Design · Approver User ⌄', the
+         reviewer a select with a chevron (the word inside 'For User to approve' read badly). -->
+    <span class="proposal-line-sep" aria-hidden="true">·</span>
+    <div class="approver">
+      <span class="approver-label">Approver</span>
+      <button type="button" class="reviewer" data-reviewer-heading aria-haspopup="listbox" aria-expanded={scopePicker?.expanded ?? false} aria-controls={scopePicker?.controls} onkeydown={(event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); scopePicker?.openReviewer(event.currentTarget); } }} onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}<svg class="reviewer-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></button>
+    </div>
   </div>
   <div class="proposal-prose">
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; onEditedBodyChange?.(raw); }} onCancel={() => proposal.body} />
@@ -235,8 +232,8 @@
         <Button variant="secondary" data-send-back disabled={disabled || !canReturn || busy || resolved || holdDecisions || attachmentReadBusy}
           onclick={() => void sendItBack()}>Send it back</Button>
       {/if}
-      <!-- Approve is the primary decision (owner, round 4), furthest right, as Allow once and Save are. -->
-      <Button variant="primary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
+      <!-- Approve wears Send it back's fill (owner): its place, furthest right, marks it. -->
+      <Button variant="secondary" data-accept aria-haspopup={finalApproval ? undefined : "listbox"} aria-expanded={finalApproval ? undefined : scopePicker?.expanded ?? false} aria-controls={finalApproval ? undefined : scopePicker?.controls}
         onkeydown={(event: KeyboardEvent) => { if (!finalApproval && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); scopePicker?.openApproval(event.currentTarget as HTMLElement); } }} disabled={disabled || busy || resolved || holdDecisions || (!finalApproval && !nextCeiling)}
         onclick={(event) => finalApproval ? void completeScope({ approval:true, holder }) : scopePicker?.openApproval(event.currentTarget as HTMLElement)}>Approve</Button>
     </div>
@@ -249,36 +246,34 @@
   {#if visibleError}<ErrorLine error={visibleError} />{/if}
 </section>
 <style>
-  /* The ask shell (AskShell) on the page: the raised plane of everything the person must act
-     on, its edge, a 16 radius, 16/20 padding. Its actions are the one Button, in one row at
-     the right, the most important furthest right. */
-  .worker-proposal { --decision-button-height:var(--button-main-height); padding:var(--cv-s4) 20px 20px; background:var(--cv-raised); border:1px solid var(--cv-line-strong); border-radius:var(--cv-r-xl); color:var(--cv-t2); font-family:var(--cv-font); }
+  /* THE CARD (page system). Its actions are the one Button, in one row at the card's right:
+     the ghost actions about the queue, 16px, then the decision group (secondary, then primary),
+     the most important furthest right; 8px between buttons. */
+  .worker-proposal { --decision-button-height:var(--button-main-height); padding:var(--page-card-pad); background:var(--page-card-fill); border:var(--border-hairline) solid var(--page-card-edge); border-radius:var(--page-card-radius); }
   /* Standing in for the conversation composer: the note and decisions sit bare, like it does. */
   .worker-proposal.composer-only { padding:0; background:none; border:0; border-radius:0; }
   .worker-proposal.composer-only > .revision { margin-top:0; }
-  .proposal-line { display:flex; align-items:center; flex-wrap:wrap; gap:var(--cv-s1) var(--cv-s3); min-height:28px; font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); color:var(--cv-t3); }
-  .proposal-need { display:inline-flex; align-items:center; gap:var(--cv-s2); color:var(--cv-accent); font-weight:var(--cv-weight-label); }
-  .proposal-need.is-other { color:var(--cv-t3); }
-  .proposal-dot { width:6px; height:6px; border-radius:var(--cv-r-pill); background:var(--cv-accent); }
-  .proposal-facts { display:inline-flex; align-items:center; flex-wrap:wrap; margin-inline-start:auto; min-width:0; }
+  .proposal-line { display:flex; align-items:center; flex-wrap:wrap; min-height:20px; color:var(--tone-secondary); font-size:var(--type-small); font-weight:var(--weight-small); line-height:18px; }
   h2 { margin:0; font:inherit; letter-spacing:0; color:inherit; }
-  .proposal-line-sep { padding-inline:6px; color:var(--cv-t4); }
-  .approver { display:inline-flex; align-items:center; gap:2px; }
-  .approver-label { color:var(--cv-t3); }
-  /* The proposal's first paragraph is the title (16/600 t1); the rest is prose in t2, never
-     wider than the prose measure. */
-  .proposal-prose { max-width:var(--page-prose-measure); margin-top:6px; color:var(--cv-t2); }
-  .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--cv-font); font-size:var(--cv-type-ui); font-weight:var(--cv-weight-body); line-height:22px; color:var(--cv-t2); }
-  .proposal-prose :global(.ed > p:first-child), .proposal-prose :global(.ed > .markdown > p:first-child), .proposal-prose :global(.ed > .markdown:first-child > :first-child:is(p)) { margin-bottom:var(--cv-s3); font-size:16px; font-weight:var(--cv-weight-title); line-height:24px; color:var(--cv-t1); }
+  /* The header: the stage, a dot, then its approver, one pair at the left. */
+  .proposal-line-sep { padding-inline:var(--space-2); color:var(--tone-tertiary); }
+  .approver { display:inline-flex; align-items:baseline; gap:2px; }
+  .approver-label { color:var(--tone-tertiary); }
+  .approver .reviewer { padding:0 var(--space-1) 0 6px; }
+  /* The proposal's first paragraph leads at the section-head size, at 500 so the page title stays the one peak; the rest
+     is body text, all in the primary tone and never wider than the prose measure. */
+  .proposal-prose { max-width:var(--page-prose-measure); margin-top:var(--space-2); color:var(--tone-primary); }
+  .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:var(--type-body); font-weight:var(--weight-body); line-height:var(--leading-body); color:var(--tone-primary); }
+  .proposal-prose :global(.ed > p:first-child), .proposal-prose :global(.ed > .markdown > p:first-child), .proposal-prose :global(.ed > .markdown:first-child > :first-child:is(p)) { margin-bottom:var(--space-3); font-size:var(--type-page-section); font-weight:var(--weight-page-lead); line-height:22px; color:var(--tone-strong); }
   .actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-5); }
   /* The approver is a select: the reviewer's name in the primary tone with a chevron, no fill
      until pointed at, on a 28px target. */
-  .reviewer { display:inline-flex; align-items:center; gap:var(--cv-s1); height:28px; font:inherit; font-weight:var(--cv-weight-label); line-height:1; padding:0 var(--cv-s2) 0 6px; border:0; background:transparent; color:var(--cv-t2); border-radius:var(--cv-r-md); cursor:pointer; }
-  .reviewer:hover, .reviewer[aria-expanded="true"] { background:var(--cv-control); color:var(--cv-t1); }
-  .reviewer-chevron { width:12px; height:12px; flex:none; fill:none; stroke:var(--cv-t4); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
-  .reviewer:focus-visible { outline:var(--cv-focus-width) solid var(--cv-accent); outline-offset:var(--cv-focus-offset); }
-  .return-unavailable { color:var(--cv-t3); font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); margin:var(--cv-s2) 0 0; }
-  .revision { margin-top:var(--cv-s5); min-width:0; }
+  .reviewer { display:inline-flex; align-items:center; gap:var(--space-1); height:28px; font:inherit; font-weight:var(--weight-needs-you); line-height:1; padding:0 var(--space-2); border:0; background:transparent; color:var(--tone-primary); border-radius:var(--radius-md); cursor:pointer; }
+  .reviewer:hover, .reviewer[aria-expanded="true"] { background:var(--wash-hover); color:var(--tone-strong); }
+  .reviewer-chevron { width:12px; height:12px; flex:none; fill:none; stroke:var(--tone-tertiary); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  .reviewer:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:2px; }
+  .return-unavailable { color:var(--tone-tertiary); font-size:var(--type-small); margin:var(--space-2) 0 0; }
+  .revision { margin-top:var(--space-5); min-width:0; }
   /* The decision's own buttons are never smaller than staging's (37px tall, 18px either side). */
   .decision :global(.button) { height:var(--decision-button-height); padding-inline:18px; }
   .context { margin-top:var(--space-4); }
@@ -301,12 +296,6 @@
   .worker-proposal:has(> .revision) > .actions { grid-column:2; margin-top:0; }
   /* Beside the note the decisions are the note's height at rest (44px), so their edges line up. */
   .worker-proposal:has(> .revision) > .actions .decision :global(.button) { height:var(--composer-rest-height, 44px); }
-  /* v4: Approve is the primary pill, as an ask's primary in the composer is: #f2f2f2 with dark
-     words, 36px, radius 18. Send it back stays the quiet secondary beside it, the same height. */
-  .decision :global(.button[data-accept]), .decision :global(.button[data-send-back]) { height:36px !important; border-radius:18px; padding-inline:16px; }
-  .decision :global(.button[data-accept]:not(:disabled)) { background:#f2f2f2; color:#121212; }
-  .decision :global(.button[data-accept]:hover:not(:disabled)) { background:#ffffff; }
-  .worker-proposal:has(> .revision) > .actions { align-self:end; margin-block-end:4px; }
   @media (max-width:720px) {
     .worker-proposal:has(> .revision) > .actions { grid-column:1 / -1; margin-top:var(--space-3); }
   }

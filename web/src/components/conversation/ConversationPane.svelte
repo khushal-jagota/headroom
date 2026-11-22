@@ -5,7 +5,6 @@
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
-  import {happened,progressFor,restFor} from '../../lib/conversation/view/presentation';
   import { tick, setContext, type Snippet } from "svelte";
   import { COMPACT_LAYOUT_MEDIA_QUERY } from "../../lib/compactLayout";
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
@@ -22,14 +21,13 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { awaitsCredential, conversationState as readConversationState, copyText, paneHeadStatus, dockFeedbackFor, dockPreviewText, interruptedFrom, latestUnreadReply, paneFailureFrom, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
+  import { awaitsCredential, conversationState as readConversationState, copyText, dockPreviewText, dockStatusFrom, interruptedFrom, latestUnreadReply, paneFailureFrom, paneHeadStatus, paneTitleFor } from "../../lib/conversation/dockPresentation";
   import type { ConversationJump } from "./viewport/viewportConfiguration";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
   import { fittedTitle } from "../../lib/conversation/titleFit";
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
-  import { restLineFrom, restLineMarksFrom, whatThisRowSays } from "../../lib/conversation/restLine";
-  import { taskProgressFrom } from "../../lib/conversation/taskProgress";
+  import { restLineMarksFrom } from "../../lib/conversation/restLine";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
   import type {
@@ -259,20 +257,6 @@
   let backgroundWorking = $derived(!activityUncertain && hasBackgroundTaskAfterTheTurn(reader?.status));
   // The dock has an activity header. Full conversation has the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
-  // The plan is not drawn in the conversation (owner): the dock's one line reads it only to
-  // say what the turn is on.
-  let taskProgress = $derived(reader?.status ? progressFor(reader.status) : taskProgressFrom(rowsForLens));
-  let restLine = $derived(
-    conversationState === "rest"
-      ? reader?.status ? restFor(reader.status,ownSenderLabel ?? "",ownerReadThroughSequence,taskProgress) : restLineFrom(
-          rows,
-          ownSenderLabel ?? "",
-          { ...taskProgress, turnRunning: running },
-          { visibleRows: rowsForLens, lens },
-          ownerReadThroughSequence
-        )
-      : null
-  );
 
   let turnStartedAt = $derived(reader?.status
     ? reader.status.rest.latest_turn?.started_at_unix_milliseconds ?? null
@@ -322,9 +306,14 @@
   }
   // Said once: the top bar carries only the states the thread has no place for.
   let headStatus = $derived(paneHeadStatus(stateFacts()));
-  let restState = $derived(readConversationState(stateFacts()));
-  /** What the waiting ask is about, for the dock's line ("Needs your approval — Upload build 41"). */
-  let restWaitingTitle = $derived(ask?.title ?? null);
+  /** The dock's line: setting up, working, idle or machine offline. The setup clock leaves the
+   *  setup step out ("Setting up · 1m 35s"). */
+  let dockStatus = $derived(dockStatusFrom({
+    state: readConversationState(stateFacts()).state,
+    offline: activityUncertain,
+    setupClock: headSetupElapsed.seconds === null ? null : formatDuration(headSetupElapsed.seconds),
+    turnClock: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds)
+  }));
   let jump = $state<ConversationJump | null>(null);
   let workspaceCopied = $state(false);
   let workspaceCopiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -355,20 +344,12 @@
    * tiny" the owner reported. A stroked path fills the box it is given. */
   let stateControl = $derived(conversationState === null ? null : {
     opensIt: conversationState === "rest",
-    label: conversationState === "rest" ? "Open the conversation full height" : "Return to the conversation dock"
+    label: conversationState === "rest" ? "Open the conversation full height" : "Close the conversation"
   });
   let unreadPreview = $derived(dockPreviewText(reader?.status
     ? reader.status.rest.latest_owner_message_sequence > ownerReadThroughSequence
       ? reader.status.rest.latest_owner_message_preview : null
     : latestUnreadReply(rows, ownerReadThroughSequence)));
-  let dockFeedback = $derived.by(() => {
-    // The line's own label already says what the person is asked for.
-    if (userInput || credentialWaiting || waitingOnPage !== null) return null;
-    if (restLine?.waiting) return restLine.text;
-    const latest = reader?.status?.rest.latest_happened ?? rows.at(-1);
-    const said = reader?.status ? happened(reader.status.rest.latest_happened, ownSenderLabel ?? "") : latest ? whatThisRowSays(latest as TranscriptRow, ownSenderLabel ?? "") : null;
-    return dockFeedbackFor(latest ?? null, said);
-  });
   let activityKnown = $derived(!activityUncertain && (reader ? typeof reader.status?.turn_running === "boolean" : true));
 
   function closeMenu(): void {
@@ -518,8 +499,7 @@
     </div>
     <div class="chat-head-right">
       {#if stateControl !== null && conversationState !== "rest"}
-        <!-- v8 (14): a text button "Dock", the label alone (no chevron), the same style as
-             the dock's "Open conversation". -->
+        <!-- "Close" returns to the dock: a quiet text button, the label alone. -->
         <button
           type="button"
           class="chat-head-collapse"
@@ -530,9 +510,7 @@
           title={stateControl.label}
           onclick={moveThroughTheStates}
         >
-          <span class="chat-head-collapse-label">{stateControl.opensIt ? "Open conversation" : "Dock"}</span>
-          <!-- v11 (6): no arrow after "Dock" (the pill stays); only the dock's Open
-               conversation keeps its arrow (owner). -->
+          <span class="chat-head-collapse-label">{stateControl.opensIt ? "Open" : "Close"}</span>
         </button>
       {/if}
       {#if !readOnly || historyOwner || pastConversations.length > 0 || workspaceFolder}
@@ -698,14 +676,8 @@
 
   <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
-    <ConversationRestBar preview={unreadPreview} {roleLabel}
-      state={restState}
-      {connectionTrouble}
-      waitingTitle={restLine?.waiting ? restWaitingTitle : null}
-      pageHoldsTheAsk={waitingOnPage !== null && ask === null && userInput === null && !credentialWaiting}
-      askBelow={ask !== null || userInput !== null || credentialWaiting}
-      offline={activityUncertain}
-      feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
+    <ConversationRestBar preview={unreadPreview} status={dockStatus}
+      askBelow={ask !== null || userInput !== null || credentialWaiting} onOpen={moveThroughTheStates} />
   {/if}
 
   <!-- v5: the way back to the newest line is a 36px round icon button at the bottom-right of
@@ -859,27 +831,23 @@
   .cv-state:is([data-conversation-head-status="failed"], [data-conversation-head-status="undelivered"]) { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
   .cv-state[data-conversation-head-status="working"] { color: var(--cv-t3); }
 
-  /* v5.1: "Dock ⌄", the dock's "Open conversation ⌃" style: 32 high, 13 medium #d9d9d9. */
+  /* "Close" is the dock's "Open" without the arrow: a quiet text control, 32 high, 13/20 500
+     #d0d0d0, no fill and no edge at rest, a fill on hover. */
   .chat-head-collapse {
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: var(--cv-s1);
-    /* v7: a quiet Button: 32 tall pill, 13/20 500, #bdbdbd, its 16px chevron 6px after. */
     gap: 6px;
     height: 32px;
     padding: 0 14px;
     border: 0;
     border-radius: 999px;
     background: transparent;
-    color: #bdbdbd;
+    color: #d0d0d0;
     font: var(--cv-weight-label) 13px/20px var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  /* v10 (5): the same resting pill as the dock's Open conversation: #232323, #d9d9d9, hover
-     #2a2a2a. v11 (6): the label alone, no arrow. */
-  .chat-head-collapse { background: #232323; color: #d9d9d9; }
   .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 

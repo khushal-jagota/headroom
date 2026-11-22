@@ -105,6 +105,7 @@
     backendKey = null,
     conversationExists = false,
     running = false,
+    animateAskEntrance = false,
     ask = null,
     userInput = null,
     credentialRequest = null,
@@ -152,6 +153,8 @@
      *  has a live process behind it and cannot be moved to another. */
     conversationExists?: boolean;
     running?: boolean;
+    /** Only an ask that arrives live in the visible pane earns an entrance. */
+    animateAskEntrance?: boolean;
     ask?: {
       askId: string;
       title: string;
@@ -1026,6 +1029,7 @@
       const from = morphFrom;
       morphFrom = null;
       if (box === null || from === null || !box.isConnected) return;
+      if (panelTakesTheBox && !animateAskEntrance) return;
       if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
       morphAnimation?.cancel();
       const to = box.getBoundingClientRect().height;
@@ -1187,6 +1191,7 @@
     const box = boxElement;
     if (box === null || shown === askShownBefore) { askShownBefore = shown; return; }
     askShownBefore = shown;
+    if (shown && !animateAskEntrance) return;
     if (typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const from = heightBeforeTheAsk;
     const to = box.getBoundingClientRect().height;
@@ -1285,6 +1290,7 @@
       class:is-voice={voiceState.phase !== "idle"}
       class:is-compact={compact}
       class:has-ask={panelTakesTheBox}
+      class:has-key-request={credentialInTheBox}
       data-conversation-box
       data-conversation-box-shape={compact ? "line" : "grown"}
       role="group"
@@ -1297,10 +1303,10 @@
       onclick={focusTheFieldFromTheBox}
     >
       <!-- A waiting ask is the composer while it waits: the same frame takes the ask's title,
-           body and answers, and the composer's own line stays under them, so the person can
-           still write (an own answer to a question, or a message that waits for the turn). -->
+           body and answers. Questions and permission asks keep a reply line. Key requests
+           end at their Decline and Save key actions. -->
       {#if panelTakesTheBox}
-      <div class="chat-ask" data-conversation-ask-dock data-conversation-taken-over="true">
+      <div class="chat-ask" class:animate-ask={animateAskEntrance} data-conversation-ask-dock data-conversation-taken-over="true">
         {#if userInput}
           <UserInputQuestionPanel
             bind:this={questionPanel}
@@ -1333,6 +1339,7 @@
         {/if}
       </div>
       {/if}
+      {#if !credentialInTheBox}
       <ComposerAttachments {attachments} {inputDisabled} {videoProgress}
         onChooseAgain={() => fileInput?.click()}
         onRetry={(video) => void transfers.start(video)}
@@ -1436,12 +1443,6 @@
           <!-- v14 (2): an ask has no Stop of its own. Its bottom row is the answer well only (pen,
                draft, microphone, send); while a turn is open the header's "..." menu leads
                with "Stop the agent". -->
-          {#if panelTakesTheBox}
-            <!-- Under an ask the line is where an own answer is written: a pen marks it. -->
-            <span class="chat-ask-pen" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M15.2 5.3a2.1 2.1 0 0 1 3 3L8.6 17.9l-4.1 1.1 1.1-4.1z" /></svg>
-            </span>
-          {/if}
           <ComposerAddMenu bind:open={addMenuOpen} bind:root={addMenuElement}
             disabled={inputDisabled} imageCount={pendingImages.length} fileCount={pendingFiles.length}
             onPicture={() => imageInput?.click()} onFile={() => fileInput?.click()} onCamera={() => cameraInput?.click()}
@@ -1509,6 +1510,7 @@
           {/if}
         {/if}
       </div>
+      {/if}
       <!-- While something is dragged over it, the whole box becomes the place to drop: one
            opaque face over everything in it, so no word of the draft or the controls shows
            through the instruction, and the box keeps its size. -->
@@ -1690,7 +1692,7 @@
   .chat-box.is-compact > .chat-ta { flex: 1 1 0; order: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
   .chat-box.is-compact > .chat-foot { display: contents; }
   .chat-box.is-compact > .chat-foot > :global(*) { order: 2; }
-  .chat-box.is-compact > .chat-foot > :is(:global(.chat-add), .chat-ask-pen) { order: 0; }
+  .chat-box.is-compact > .chat-foot > :global(.chat-add) { order: 0; }
   .chat-box.is-compact > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-start: 0; }
   /* v11 (12): 8px between each control on the right (model, Steer, mic, Send/Stop), on the
      line and grown alike: the model chip adds 4 to the row's 4px gap. */
@@ -1703,12 +1705,11 @@
      composer's own line is its last row: a pen, the draft, the microphone and the ask's
      primary pill in the send slot. No add, no model, no mode chip and no Stop under it. */
   .chat-box.has-ask, .chat-box.has-ask.is-compact { border-radius: 20px; padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
+  .chat-ask:not(.animate-ask) :global(.cv-ask) { animation: none; }
   .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
   .chat-box.has-ask > .chat-foot :is(:global(.chat-add), :global([data-conversation-model-picker])) { display: none; }
-  .chat-ask-pen { flex: none; display: grid; place-items: center; width: 32px; height: 32px; color: var(--cv-quiet-ink, #bdbdbd); }
-  .chat-ask-pen svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   /* v4.2: the ask's own-answer line sits in its own well (#141414, radius 12, 44 high) so it
      reads as an input: the pen, the draft and the microphone share one fill, joined edge to
      edge; the primary pill stands outside it, on its right, 8px off. The send slot gives its
@@ -1716,35 +1717,27 @@
   /* The line stands on the tiles' edges (8px further in than the box's own padding) and as
      far off the box's foot as the tiles are off its sides. */
   .chat-box.has-ask.is-compact { column-gap: 0; padding-block-end: var(--cv-s4); }
+  .chat-box.has-key-request, .chat-box.has-key-request.is-compact { padding-block-end: var(--cv-s4); }
+  .chat-box.has-key-request > .chat-ask { margin-block-end: 0; }
   .chat-box.has-ask.is-compact > .chat-foot > :global(.chat-submit) { display: contents; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > *) { order: 2; }
-  /* v11 (3): the answer well is the composer's line: pen, draft, microphone and the round
+  /* v11 (3): the answer well is the composer's line: draft, microphone and the round
      send all inside it; the send is its last piece (40 wide, the 32 round drawn 4px in from
      the well's edges). The round Stop follows, outside, 8px off. */
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send) { order: 3; }
-  /* v8 (7): the free-text well wears a 1px #333 edge. It is up to four pieces (pen, draft,
+  /* v8 (7): the free-text well wears a 1px #333 edge. It is up to four pieces (draft,
      mic, send), so each draws its share of the edge; the last piece closes it. */
-  .chat-box.has-ask.is-compact > .chat-foot > .chat-ask-pen { box-shadow: inset 1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
-  .chat-box.has-ask.is-compact > .chat-ta { box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333; }
+  .chat-box.has-ask.is-compact > .chat-ta { box-shadow: inset 1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
   .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic, .chat-ask-send)) > .chat-ta { box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic) { box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333; }
   .chat-box.has-ask.is-compact:not(:has(.chat-ask-send)) > .chat-foot :global(.chat-submit > .chat-voice-mic) { box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
   .chat-box.has-ask:not(.is-compact) > .chat-ta { box-shadow: inset 0 0 0 1px #333; }
-  .chat-box.has-ask.is-compact > .chat-foot > .chat-ask-pen {
-    align-self: stretch;
-    width: 40px;
-    height: auto;
-    min-height: 40px;
-    box-sizing: border-box;
-    margin-inline-start: var(--cv-s2);
-    padding-inline-start: 4px;
-    border-radius: 20px 0 0 20px;
-    background: #141414;
-  }
   .chat-box.has-ask.is-compact > .chat-ta {
     align-self: stretch;
     padding-block: 8px;
-    padding-inline: var(--cv-s1) var(--cv-s2);
+    margin-inline-start: var(--cv-s2);
+    padding-inline: var(--cv-s3) var(--cv-s2);
+    border-radius: 20px 0 0 20px;
     background: #141414;
   }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic) {
@@ -1789,7 +1782,6 @@
   :global(.chat-ask-send-round svg) { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   /* A draft that wraps grows the box to two rows: the draft itself is then the well. */
   .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 20px; background: #141414; }
-  .chat-box.has-ask:not(.is-compact) > .chat-foot > .chat-ask-pen { display: none; }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow
      staying lit is the one thing on screen that says the send has not landed yet. */

@@ -74,7 +74,7 @@ describe("messages and asks", () => {
 });
 
 describe("no chevrons on dropdown or expand controls", () => {
-  it("the model, Steer and Queued chips show their label alone; Dock has no arrow, only Open conversation keeps one", () => {
+  it("the model, Steer and Queued chips show their label alone; Close has no arrow, only the dock's Open keeps one", () => {
     expect(source("../src/components/conversation/composer/ComposerRunControls.svelte")).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/DeliveryModePicker.svelte")).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).not.toContain("chat-qrow-chevron");
@@ -82,11 +82,10 @@ describe("no chevrons on dropdown or expand controls", () => {
     const head = pane.slice(pane.indexOf('class="chat-head-collapse"'), pane.indexOf("</button>", pane.indexOf('class="chat-head-collapse"')));
 
     expect(head).not.toContain("<svg");
-    const facts = { readOnly: false, activityUncertain: false, waitingForYou: false, waitingFor: null, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
-    const rest = render(ConversationRestBar, { props: { onOpen: () => { }, state: conversationState(facts) } }).body;
+    const rest = render(ConversationRestBar, { props: { onOpen: () => { }, status: { kind: "working", clock: null } } }).body;
     const control = rest.slice(rest.indexOf("c2-rest-control"));
 
-    expect(control).toMatch(/c2-rest-control-label[^>]*>Open conversation<\/span>[\s\S]*?<svg class="c2-rest-control-arrow/);
+    expect(control).toMatch(/c2-rest-control-label[^>]*>Open<\/span>[\s\S]*?<svg class="c2-rest-control-arrow/);
     // Pager arrows, Details › and Ran 2 commands › are not dropdown marks and stay.
     expect(source("../src/components/conversation/ToolRunSummary.svelte")).toContain('class="c2-run-chevron"');
     expect(source("../src/components/conversation/TranscriptStatusRow.svelte")).toContain("c2-status-chevron");
@@ -209,11 +208,11 @@ describe("asks have no Stop; the header menu leads with Stop the agent", () => {
       { option_id: "allow", label: "Allow once", option_kind: "allow_once" as const },
       { option_id: "deny", label: "Deny", option_kind: "reject_once" as const }]
   };
-  it("an ask's bottom row is the answer well only: pen, draft, microphone, send", () => {
+  it("an ask's bottom row is the answer well only: draft, microphone, send; no pen", () => {
     const body = render(ComposerWithQueryClient, { props: { ...base, running: true, ask, onStop: () => { }, onCancelTurn: () => { } } }).body;
     expect(body).not.toContain("data-conversation-stop");
     expect(body).not.toContain("chat-ask-stop");
-    expect(body).toContain("chat-ask-pen");
+    expect(body).not.toContain("chat-ask-pen");
     expect(body).toMatch(/class="chat-send chat-ask-send/);
     expect(composer).not.toContain("chat-ask-stop");
   });

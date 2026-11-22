@@ -1287,21 +1287,8 @@ a.pv-name:focus-visible { outline:0; }
 /* Inline code: the code face at 0.87em on the control step, in the first tone. In a bubble
  * (the raised step) the control step still stands one level above it. */
 /* One inline-code style everywhere in the conversation: Markdown's `code`, code tokens in plain
- * status words (.cv-code: the task pill, plan steps), and the proposal's summary. The pad is
+ * status words (.cv-code: the task pill, plan steps). The pad is
  * small enough that a comma after it still reads as part of the sentence. */
-.worker-proposal .proposal-prose :not(pre) > code {
-  font-family: var(--cv-mono);
-  font-size: 13px;
-  font-weight: var(--cv-weight-body);
-  line-height: 1;
-  padding: 1px 5px;
-  margin-inline-end: -1px;
-  border-radius: 5px;
-  background: #242424;
-  color: var(--cv-t1);
-  -webkit-box-decoration-break: clone;
-          box-decoration-break: clone;
-}
 .chat-thread .markdown :not(pre) > code,
 .cv-code {
   font-family: var(--cv-mono);

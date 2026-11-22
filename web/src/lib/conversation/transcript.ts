@@ -834,11 +834,13 @@ export const VISIBLE_RUNNING_WORK_ENTRIES = 1;
 /** A length of time, in the one format this pane says them in.
  *
  * Whole seconds throughout: the record keeps integer unix seconds, so a tenth of a second
- * is not a thing anybody here can know. Under a minute is just seconds; past that it is
- * minutes and seconds, with the seconds left off when there are none.
+ * is not a thing anybody here can know. Under a minute is just seconds; under an hour it is
+ * minutes and seconds, with the seconds left off when there are none; from an hour it is
+ * hours and minutes.
  */
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;

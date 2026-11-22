@@ -1,156 +1,66 @@
 <script lang="ts">
-  import type { ConversationStateReading } from "../../lib/conversation/dockPresentation";
-  /** The dock's status line, at rest on a work page: what the conversation is doing (the same
-   * derived state the opened pane's header reads), the way to open it, and the latest unread
-   * message under them. Its words never name a tool or a command, in either lens. */
-  let { preview = null, roleLabel = "Worker", state, connectionTrouble = false,
-    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, askBelow = false, onOpen }: {
-    /** v4.2: an ask (permission, question, key) waits in the conversation and is drawn as the
-     *  composer under this line. The ask already says what waits, so the line carries no status
-     *  text at all (not even a proposal's "Needs your approval") and keeps only
-     *  "Open conversation". */
-    askBelow?: boolean;
-    /** The page above draws the waiting ask itself (a proposal to approve): the dock does not
-     *  say it a second time, and keeps only the way into the conversation. */
-    pageHoldsTheAsk?: boolean;
+  import type { DockStatus } from "../../lib/conversation/dockPresentation";
+  /** The dock's status line, at rest on a work page: what the conversation is doing, the way
+   * to open it, and the latest unread message under them. It always says one of four states
+   * (dockStatusFrom), also while an ask or a proposal waits. */
+  let { preview = null, status, askBelow = false, onOpen }: {
     preview?: string | null;
-    roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
-    /** The conversation's one state (conversationState in dockPresentation). */
-    state: ConversationStateReading;
-    connectionTrouble?: boolean;
-    /** What a waiting ask is about, said after "Needs your approval". */
-    waitingTitle?: string | null;
-    /** The machine cannot be read. Setup still says setup, with one caution chip. */
-    offline?: boolean;
-    /** The newest exceptional thing that happened, in its own words, or the reason the
-     *  machine cannot be read. */
-    feedback?: string | null;
+    status: DockStatus;
+    /** An ask (permission, question, key) is drawn as the composer under this line. The
+     *  unread preview then gives way to it; the status stays. */
+    askBelow?: boolean;
     onOpen: () => void;
   } = $props();
 
-  const ROLE_NAMES = { Worker: "Worker", Manager: "Manager", Chief: "Chief of Staff", Goal: "Goal" } as const;
-  let problem = $derived(state.state === "failed" || state.state === "undelivered");
-  /** The words after the label: what the waiting ask is about, or why it failed. */
-  let detail = $derived(
-    state.state === "waiting" ? waitingTitle
-    : problem || state.state === "interrupted" ? (feedback?.replace(/^not delivered · /, "") || null)
-    : null
-  );
-  /** The setup the machine cannot confirm keeps saying setup; one chip says why it is still. */
-  let offlineChip = $derived(offline && state.state === "setting-up");
-  /** The page above draws the waiting ask (a proposal): v5 has the line say "Needs your
-   *  approval" (the card's own words) with the accent dot, and not repeat the proposal's title. */
-  let pageWaits = $derived(pageHoldsTheAsk && !askBelow && state.state === "waiting");
-  let saysState = $derived(!askBelow);
-  let label = $derived(
-    pageWaits ? "Needs your approval"
-    : state.state === "idle" ? `${ROLE_NAMES[roleLabel]} idle`
-    : state.state === "unknown" ? (feedback ?? state.text)
-    : state.text
-  );
-  /** Working: "Working" in #d9d9d9 and its duration in #a3a3a3, as the transcript's live line
-   *  draws it (pass 11: the dock drew the whole "Working · 2m 14s" in one tone). */
-  let workingClock = $derived.by(() => {
-    if (state.state !== "working" || pageWaits) return null;
-    const at = label.indexOf(" · ");
-    return at < 0 ? null : { word: label.slice(0, at), clock: label.slice(at + 3) };
-  });
-  /** A second line only for news the label does not already carry (a message whose delivery
-   *  is uncertain, one that was discarded). */
-  let aside = $derived(
-    feedback !== null && detail === null && !offline && state.state !== "unknown" ? feedback : null
-  );
+  const LABELS = { "setting-up": "Setting up", working: "Working", idle: "Idle", offline: "Machine offline" } as const;
+  let live = $derived(status.kind === "setting-up" || status.kind === "working");
 </script>
 
 <!-- One row: the state on the left and the way to open the conversation on the right, both
      one button, so the whole line opens it. The unread message sits under it. -->
 <button type="button" class="c2-rest" data-conversation-rest-bar data-conversation-expand data-conversation-state-control
-  data-conversation-rest-state={state.state} data-conversation-rest-ask-below={askBelow || undefined}
-  data-conversation-rest-page-waits-row={pageWaits || undefined}
+  data-conversation-rest-state={status.kind} data-conversation-rest-ask-below={askBelow || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
-    <span class="c2-rest-activity">
-      {#if saysState && state.mark === "spinner"}<span class="cv-spinner" role="img" aria-label={state.state === "setting-up" ? (offline ? "setting up, not confirmed" : "setting up") : "working"} data-unconfirmed={offlineChip || undefined}></span>
-      {:else if saysState && state.mark === "dot"}<span class="cv-dot" aria-hidden="true"></span>
-      {:else if saysState && state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
-      {:else if saysState && state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
-      {:else if saysState && state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
-      {#if saysState || pageWaits}
-      <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined}>
-        {#if workingClock !== null}<span class="c2-rest-working"><span class="c2-rest-label">{workingClock.word}</span><span class="c2-rest-sep" aria-hidden="true">·</span><span class="c2-rest-clock" data-conversation-rest-clock>{workingClock.clock}</span></span>{:else}<span class="c2-rest-label">{label}</span>{/if}{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
+    <span class="c2-rest-line" data-conversation-rest-line>
+      <span class="c2-rest-mark" aria-hidden="true">
+        {#if live}<span class="cv-spinner"></span>{:else}<span class="c2-rest-dot"></span>{/if}
       </span>
-      {/if}
-      {#if saysState && offlineChip}<span class="c2-rest-chip" title={feedback ?? undefined} data-conversation-offline-chip>Machine offline</span>{/if}
-      {#if saysState && connectionTrouble}<svg class="cv-glyph cv-glyph--danger" viewBox="0 0 16 16" role="img" aria-label="Connection trouble"><path d="M2.5 6.2a8 8 0 0 1 11 0" /><path d="M4.6 8.6a5 5 0 0 1 6.8 0" /><path d="M8 11.6v.1" /><path d="m3 3 10 10" /></svg>{/if}
+      <span class="c2-rest-label">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</span>
     </span>
     <span class="c2-rest-control" aria-hidden="true">
-      <span class="c2-rest-control-label">Open conversation</span>
-      <!-- v9 (25, owner): the one exception to the no-chevron rule: a 12px up arrow after the
-           label says the conversation opens upward. -->
+      <span class="c2-rest-control-label">Open</span>
+      <!-- The one exception to the no-chevron rule: a 12px up arrow after the label says the
+           conversation opens upward. -->
       <svg class="c2-rest-control-arrow" viewBox="0 0 16 16" data-conversation-open-arrow><path d="m4 10 4-4 4 4" /></svg>
     </span>
   </span>
-  {#if saysState && preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
+  {#if !askBelow && preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
 </button>
-{#if saysState && aside}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{aside}</div>{/if}
-{#if saysState && offlineChip && feedback}<span class="c2-rest-offline-reason" role="status" data-conversation-dock-feedback>{feedback}</span>{/if}
 
 <style>
-  /* The status line: a 40px row of meta type over the composer, the state on the left and
-     "Open conversation" on the right edge. Space, not a rule, separates it from the page. */
+  /* The status line: a 40px row over the composer, the state on the left and "Open" on the
+     right edge. Space, not a rule, separates it from the page. */
   .c2-rest { position:relative; display:flex; flex:none; flex-direction:column; align-items:stretch; gap:var(--cv-s1);
-    width:100%; min-width:0; border:0; padding:0 0 var(--cv-s2); background:transparent; color:var(--cv-t3);
-    text-align:left; cursor:pointer; font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    width:100%; min-width:0; border:0; padding:0 0 var(--cv-s2); background:transparent; color:#8f8f8f;
+    text-align:left; cursor:pointer; font:var(--cv-weight-body) 13px/20px var(--cv-font);
     font-variant-numeric:tabular-nums; }
   /* A short canvas gradient carries the page into the dock, so a line scrolling under it is
-     covered within a few pixels instead of cut (restored in v6.1: the dock has no surface). */
+     covered within a few pixels instead of cut (the dock has no surface). */
   .c2-rest::before { content:""; position:absolute; left:0; right:0; bottom:100%; height:var(--cv-s5);
     background:linear-gradient(to bottom, transparent, var(--cv-canvas)); pointer-events:none; }
   .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--cv-s3);
     min-width:0; min-height:40px; }
-  .c2-rest-activity { display:flex; align-items:center; gap:var(--cv-s2); min-width:0; }
-  .c2-rest-line { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-  .c2-rest-label { color:var(--cv-t3); }
-  .c2-rest-detail { color:var(--cv-t3); }
-  /* Tone follows the state, never a line: working is the brighter text and its motion,
-     waiting is the accent with its title in t2, a failure is the danger colour. */
-  /* v5.2: a live status label is 13 medium #d9d9d9, its detail #b0b0b0. */
-  /* v7: the dock's line is a Status line: 13/20, a 16px icon slot, the label 500 #ececec,
-     " · ", the detail #b0b0b0. */
-  .c2-rest { font:var(--cv-weight-body) 13px/20px var(--cv-font); }
-  .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph) { flex:none; }
-  [data-conversation-rest-state="working"] .c2-rest-label { color:#ececec; font-weight:var(--cv-weight-label); }
-  .c2-rest-clock { color:var(--cv-t3); }
-  /* v15 (5): the Working timer is #b8b8b8 in the dock too, as in the transcript. */
-  .c2-rest-clock { color:#b8b8b8; }
-  /* p12c: "Working · 2m 14s" spaced exactly as the transcript's live line: three parts 6px apart. */
-  .c2-rest-working { display:inline-flex; align-items:center; gap:6px; }
-  .c2-rest-working .c2-rest-label { color:#ececec; font-weight:var(--cv-weight-label); }
-  .c2-rest-sep { color:var(--cv-t4); }
-  /* v6: "Needs your approval" is said exactly as the card's eyebrow says it: the accent, 13
-     semibold, behind the card's 7px accent dot 8px before it. */
-  [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
-  [data-conversation-rest-state="waiting"] .cv-dot { width:8px; height:8px; margin-inline:4px; background:var(--cv-accent); }
-  /* v9 (10): with a proposal on the page, "Needs your approval" is the card's own label, set
-     identically: the accent, 13/20 500, a 6px dot 8px
-     before it, the dot on the composer's left edge (v9 17). */
-  /* v10 (10): every ask label is #bccbf0, the dock's too. */
-  [data-conversation-rest-page-waits-row] .c2-rest-label { color:#bccbf0; }
-  [data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#bccbf0; }
-  [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
-  :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
-  :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }
-  [data-conversation-rest-state="unknown"] .c2-rest-label { color:var(--cv-t2); }
-  .c2-rest-chip { flex:none; display:inline-flex; align-items:center; height:24px; padding:0 var(--cv-s2);
-    border-radius:var(--cv-r-sm); background:color-mix(in srgb, var(--cv-caution) 12%, transparent); color:var(--cv-caution);
-    font:var(--cv-weight-label) var(--cv-type-caption)/var(--cv-leading-caption) var(--cv-font); }
-  /* v8 (14): "Open conversation" is a quiet Button, the label alone (no chevron): 32 tall
-     pill, #bdbdbd, hover #2a2a2a. */
-  /* v9 (3): a #232323 fill at rest so it reads as a control; hover #2a2a2a. */
-  .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 14px;
-    border-radius:999px; background:#232323; color:#d9d9d9; font-weight:var(--cv-weight-label);
+  /* A system line: 13/20 #8f8f8f, no box, a 16px slot for its mark (a spinner while live,
+     otherwise a 6px dot), 8px before the words. */
+  .c2-rest-line { display:flex; align-items:center; gap:var(--cv-s2); min-width:0; color:#8f8f8f; }
+  .c2-rest-mark { flex:none; display:grid; place-items:center; width:16px; height:16px; }
+  .c2-rest-dot { width:6px; height:6px; border-radius:50%; background:#8f8f8f; }
+  .c2-rest-label { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  /* "Open" is a quiet text control: no fill and no edge at rest, a fill on hover. */
+  .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px;
+    border:0; border-radius:999px; background:transparent; color:#d0d0d0; font-weight:var(--cv-weight-label);
     transition:color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out); }
-  .c2-rest-control { padding-inline-end:12px; }
   .c2-rest-control-arrow { flex:none; width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
     color:#ececec; background-color:#2a2a2a; }
@@ -158,7 +68,4 @@
   /* The unread message keeps the prose measure, never the pane's width. */
   .c2-rest-preview { max-width:var(--page-prose-measure); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden;
     white-space:normal; color:var(--cv-t2); font:var(--cv-weight-body) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font); }
-  .c2-rest-feedback { flex:none; padding-bottom:var(--cv-s2); color:var(--cv-t3); font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); }
-  /* The reason behind the chip, for a screen reader: said once, not drawn twice. */
-  .c2-rest-offline-reason { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 </style>

@@ -79,7 +79,7 @@ describe("the composer's controls row", () => {
     expect(body).not.toContain("data-conversation-ask-primary");
     expect(body).not.toContain("data-conversation-send-mode");
     expect(body).toMatch(/<button[^>]*class="chat-send[^"]*chat-ask-send[^"]*"[^>]*data-conversation-send[^>]*disabled/);
-    expect(body).toContain("chat-ask-pen");
+    expect(body).not.toContain("chat-ask-pen");
     expect(body).not.toContain('data-conversation-ask-action="cancel_turn"');
     expect(body).toContain('placeholder="Or write a reply"');
   });

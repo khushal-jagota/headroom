@@ -26,15 +26,18 @@ describe("a key request is asked in the composer's place", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request } });
     expect(body).toContain("Needs a key");
     expect(body).toMatch(/data-conversation-ask-dock[^>]*data-conversation-taken-over="true"/);
-    // One frame: the ask is inside the box, before the field, never a card above it.
+    // The key card owns the whole frame. Its own actions finish the card.
     const box = body.indexOf("data-conversation-box");
     expect(box).toBeGreaterThan(-1);
     expect(body.indexOf("data-conversation-ask-dock")).toBeGreaterThan(box);
-    expect(body.indexOf("data-conversation-ask-dock")).toBeLessThan(body.indexOf("data-conversation-input"));
     expect(body).toMatch(/class="chat-box[^"]*has-ask/);
-    // The person can still write: the field is there, enabled, on the composer's one line.
-    expect(body).not.toMatch(/<textarea[^>]*hidden/);
-    expect(body).not.toMatch(/<textarea[^>]*disabled/);
+    expect(body).not.toContain("data-conversation-input");
+    expect(body).not.toContain("Or write a reply");
+    expect(body).not.toContain("chat-foot");
+    expect(body).toContain("data-credential-decline");
+    expect(body).toContain("data-credential-save");
+    expect(body.indexOf("data-credential-decline")).toBeLessThan(body.indexOf("data-credential-save"));
+    expect(body.indexOf("aria-label=\"API key\"")).toBeLessThan(body.indexOf("data-credential-decline"));
     expect(body).toMatch(/class="chat-box[^"]*is-compact/);
   });
 
@@ -58,6 +61,8 @@ describe("a key request is asked in the composer's place", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, ask, credentialRequest: request } });
     expect(body).toContain("Needs your permission");
     expect(body).not.toContain("Needs a key");
+    expect(body).toContain("data-conversation-input");
+    expect(body).toContain("Or write a reply");
     // v6: no Paused line above the ask; the card's own label is the one waiting label.
     expect(body).not.toContain("data-conversation-paused");
     expect(body).not.toContain("Paused");

@@ -1,6 +1,6 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
-import { awaitsCredential, conversationState, copyText, type ConversationStateFacts, interruptedFrom, paneFailureFrom, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../src/lib/conversation/dockPresentation";
+import { awaitsCredential, conversationState, copyText, dockStatusFrom, type ConversationStateFacts, type DockStatus, interruptedFrom, paneFailureFrom, paneHeadStatus, paneTitleFor } from "../src/lib/conversation/dockPresentation";
 import type { ConversationViewItem, CredentialRequestRowBody } from "../src/lib/conversation/view/contracts";
 import type { TranscriptRow } from "../src/lib/conversation/transcript";
 import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
@@ -73,52 +73,44 @@ describe("the opened pane's top bar", () => {
 });
 
 describe("the dock's status line", () => {
-  const rest = (facts: Partial<ConversationStateFacts>, props: Record<string, unknown> = {}) =>
-    render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState({ ...quiet, ...facts }), ...props } }).body;
-  it("reads the same derived state the header does", () => {
-    expect(rest({})).toContain("Worker idle");
-    // "Working" in the body tone, its duration in the meta tone (pass 11), the same words.
-    const working = rest({ running: true, elapsed: "2m 14s" });
-    expect(working).toMatch(/class="c2-rest-label[^"]*">Working<\/span><span class="c2-rest-sep[^"]*" aria-hidden="true">·<\/span><span class="c2-rest-clock[^"]*" data-conversation-rest-clock[^>]*>2m 14s</);
-    const waiting = rest({ waitingForYou: true, waitingFor: "approval" }, { waitingTitle: "Upload build 41 to TestFlight" });
-    expect(waiting).toContain("Needs your approval");
-    expect(waiting).toContain(" — Upload build 41 to TestFlight");
-    expect(waiting).toContain('data-conversation-rest-state="waiting"');
-    expect(rest({ failure: "turn_failed" }, { feedback: "rate limit · resets in 41m" })).toContain("Turn failed");
-    expect(rest({ failure: "not_delivered" }, { feedback: "not delivered · the machine is offline" })).toMatch(/ — the machine is offline/);
+  const clocks = { offline: false, setupClock: "1m 35s", turnClock: "2m 14s" };
+  const status = (facts: Partial<ConversationStateFacts>, offline = false) =>
+    dockStatusFrom({ ...clocks, offline, state: conversationState({ ...quiet, ...facts }).state });
+  it("says one of four states, whatever else waits", () => {
+    expect(status({ settingUp: "Setting up · preparing workspace · 1m 35s" })).toEqual({ kind: "setting-up", clock: "1m 35s" });
+    expect(status({ running: true })).toEqual({ kind: "working", clock: "2m 14s" });
+    expect(status({})).toEqual({ kind: "idle", clock: null });
+    // An ask, a proposal, a failure or a stop says itself elsewhere; the dock says Idle.
+    for (const facts of [{ running: true, waitingForYou: true, waitingFor: "answer" as const }, { waitingForYou: true, waitingFor: "approval" as const },
+      { failure: "turn_failed" as const }, { failure: "not_delivered" as const }, { interrupted: true }]) {
+      expect(status(facts)).toEqual({ kind: "idle", clock: null });
+    }
   });
-  it("opens the conversation from the whole line, with its words on a wide screen", () => {
-    const html = rest({});
-    expect(html).toMatch(/<button[^>]*data-conversation-rest-bar/);
-    expect(html).toContain("Open conversation");
+  it("says only Machine offline while the machine cannot be read, setting up or not", () => {
+    expect(status({ activityUncertain: true, settingUp: "Setting up" }, true)).toEqual({ kind: "offline", clock: null });
+    expect(status({ activityUncertain: true, running: true }, true)).toEqual({ kind: "offline", clock: null });
   });
-});
-
-describe("setting up while the machine cannot be read", () => {
-  const workerSetup = "Setting up · preparing workspace";
-  it("stays setup, with one caution chip and no second sentence", () => {
-    expect(uncertainActivityFeedback(true)).toBe("This machine is not connected, so setup progress cannot be confirmed.");
-    expect(uncertainActivityFeedback(false)).toBe("Current activity on this machine is unknown.");
-    const state = conversationState({ ...quiet, activityUncertain: true, settingUp: workerSetup });
-    expect(state.state).toBe("setting-up");
-    const html = render(ConversationRestBar, { props: { onOpen: () => {}, state, offline: true,
-      feedback: uncertainActivityFeedback(true) } }).body;
-    expect(html).toContain("Setting up · preparing workspace");
-    expect(html).toContain("data-unconfirmed");
-    expect(html).toContain("Machine offline");
-    // The reason is the chip's tooltip and a screen reader's status, never a drawn second line.
-    expect(html).not.toContain("c2-rest-feedback");
+  const rest = (status: DockStatus, props: Record<string, unknown> = {}) =>
+    render(ConversationRestBar, { props: { onOpen: () => {}, status, ...props } }).body.replace(/<!--[^]*?-->/g, "");
+  it("draws the state with its clock, a spinner only while live, and Open with its arrow", () => {
+    const working = rest({ kind: "working", clock: "29h 28m" });
+    expect(working).toMatch(/class="cv-spinner[^"]*"/);
+    expect(working).toMatch(/Working · <span data-conversation-rest-clock[^>]*>29h 28m<\/span>/);
+    expect(rest({ kind: "setting-up", clock: "1m 35s" })).toMatch(/Setting up · <span data-conversation-rest-clock[^>]*>1m 35s</);
+    for (const [kind, words] of [["idle", "Idle"], ["offline", "Machine offline"]] as const) {
+      const html = rest({ kind, clock: null });
+      expect(html).toContain(`>${words}</span>`);
+      expect(html).not.toContain("cv-spinner");
+      expect(html).not.toContain("data-conversation-rest-clock");
+    }
+    const open = rest({ kind: "idle", clock: null });
+    expect(open).toMatch(/<button[^>]*data-conversation-rest-bar/);
+    expect(open).toMatch(/c2-rest-control-label[^>]*>Open<\/span>[\s\S]*?<svg class="c2-rest-control-arrow[^"]*" viewBox="0 0 16 16" data-conversation-open-arrow=""><path d="m4 10 4-4 4 4"><\/path><\/svg>/);
   });
-  it("says the activity is unknown once when nothing is being set up", () => {
-    const state = conversationState({ ...quiet, activityUncertain: true });
-    const html = render(ConversationRestBar, { props: { onOpen: () => {}, state, offline: true,
-      feedback: uncertainActivityFeedback(false) } }).body;
-    expect(html.match(/Current activity on this machine is unknown\./g)).toHaveLength(1);
-  });
-  it("keeps the moving mark while setup is known", () => {
-    const html = render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState({ ...quiet, settingUp: workerSetup }) } }).body;
-    expect(html).toContain('aria-label="setting up"');
-    expect(html).not.toContain("data-unconfirmed");
+  it("keeps the state while an ask is the composer under it, and gives the ask the preview's room", () => {
+    const html = rest({ kind: "idle", clock: null }, { askBelow: true, preview: "Ready for review." });
+    expect(html).toContain(">Idle</span>");
+    expect(html).not.toContain("data-conversation-unread-preview");
   });
 });
 

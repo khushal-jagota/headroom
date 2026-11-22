@@ -15,9 +15,9 @@ const permission = source("../src/components/conversation/PermissionAskCard.svel
 const status = source("../src/components/conversation/TranscriptStatusRow.svelte");
 
 describe("asks", () => {
-  it("the own-answer line sits in a #141414 well, radius 12, 40 high; the round send is its last piece, inside it", () => {
-    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-foot > \.chat-ask-pen \{[^}]*min-height: 40px;[^}]*border-radius: 20px 0 0 20px;[^}]*background: #141414;/);
-    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-ta \{[^}]*padding-block: 8px;[^}]*background: #141414;/);
+  it("the own-answer line sits in a #141414 well that the draft opens, with no pen; the round send is its last piece, inside it", () => {
+    expect(composer).not.toContain("chat-ask-pen");
+    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-ta \{[^}]*padding-block: 8px;[^}]*border-radius: 20px 0 0 20px;[^}]*background: #141414;/);
     // The microphone sits in the middle of the well; the send closes it.
     expect(composer).toMatch(/\.chat-submit > \.chat-voice-mic\) \{[^}]*border-radius: 0;[^}]*background: #141414;/);
     expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send:hover:not\(:disabled\)\) \{[^}]*width: 40px;[^}]*border-radius: 0 20px 20px 0;\s*background: #141414;\s*box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;/);

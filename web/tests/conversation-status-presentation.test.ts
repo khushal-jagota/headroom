@@ -5,10 +5,8 @@ import { readFileSync } from "node:fs";
 import ToolRunSummary from "../src/components/conversation/ToolRunSummary.svelte";
 import type { ToolRunSummary as Summary } from "../src/lib/conversation/toolCallPresentation";
 import { SvelteSet } from "svelte/reactivity";
-import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
 import ProjectedTranscript from "../src/components/conversation/view/ProjectedTranscript.svelte";
 
-import { conversationState } from "../src/lib/conversation/dockPresentation";
 import type { ToolCallPresentation } from "../src/lib/conversation/toolCallPresentation";
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope } from "../src/lib/conversation/view/contracts";
 import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
@@ -144,12 +142,6 @@ describe("turn timing at the top, Paused under a waiting ask", () => {
     const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
     expect(composer).not.toContain("chat-paused");
   });
-  it("the dock's Working · time is spaced as the transcript's (three parts, 6px apart)", () => {
-    const facts = { readOnly: false, activityUncertain: false, waitingForYou: false, waitingFor: null, running: true, backgroundWorking: false, settingUp: null, elapsed: "2m 14s" };
-    const html = render(ConversationRestBar, { props: { onOpen: () => { }, state: conversationState(facts as never) } }).body;
-    expect(html).toMatch(/c2-rest-label[^>]*>Working<\/span><span class="c2-rest-sep[^"]*" aria-hidden="true">·<\/span><span class="c2-rest-clock/);
-    expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-working { display:inline-flex; align-items:center; gap:6px; }");
-  });
   it("the Working label is a status label, 13/20 500 #ececec", () => {
     expect(source("../src/components/conversation/TurnAnchor.svelte")).toContain(".c2-meta-working { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }");
   });
@@ -284,7 +276,6 @@ describe("quiet text contrast", () => {
   it("Worked for #c4c4c4, the Working timer #b8b8b8", () => {
     expect(anchor).toContain(":is(.c2-meta--fold, [data-conversation-turn-settled-head]), .c2-meta--fold .c2-meta-sep { color: #c4c4c4; }");
     expect(anchor).toContain(".c2-meta-clock { color: #b8b8b8; }");
-    expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-clock { color:#b8b8b8; }");
   });
 });
 

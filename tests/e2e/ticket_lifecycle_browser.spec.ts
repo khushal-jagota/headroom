@@ -110,7 +110,7 @@ test('test_ticket_backlog_resume_and_settled_discovery', async ({ railServer, ne
   await page.locator('[data-conversation-lens-choice="full"]').click();
   await expect(page.getByText(transcript, { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Return to the conversation dock' }).click();
+  await page.getByRole('button', { name: 'Close the conversation' }).click();
 
   // The final decision crosses the actual protected-write and reactive-read boundary.
   await api.post(server, `/api/tickets/${ticketId}/accept/what_changes`, {

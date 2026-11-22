@@ -32,16 +32,6 @@ export function dockPreviewText(source: string | null | undefined): string | nul
   return text(tree).replace(/\n[ \t]*\n+/g, '\n').trim() || null;
 }
 
-const FEEDBACK_KINDS = ['prompt_refused', 'prompt_uncertain', 'prompt_discarded', 'turn_stopped', 'turn_ended'];
-/** Exceptional dock feedback for the latest thing that happened. Its words are that event's
- * own, never the running turn's line: an earlier ending beside a new running turn must not
- * repeat what the activity line already says. */
-export function dockFeedbackFor(latest: { kind: string; ending?: string } | null, said: { text: string } | null): string | null {
-  if (!latest || !FEEDBACK_KINDS.includes(latest.kind)) return null;
-  if (latest.kind === 'turn_ended' && latest.ending === 'completed') return null;
-  return said?.text || null;
-}
-
 type PaneRole = 'Worker' | 'Manager' | 'Chief' | 'Goal';
 const ROLE_TITLES: Record<PaneRole, string> = { Worker: 'Worker', Manager: 'Manager', Chief: 'Chief of Staff', Goal: 'Goal' };
 /** Who the opened conversation is with, for its top bar: the owner's own name for it when the
@@ -164,13 +154,22 @@ export function paneHeadStatus(facts: ConversationStateFacts): PaneHeadStatus | 
   return HEAD_STATES.has(reading.state) ? reading : null;
 }
 
-/** The dock's line under the status while the machine's own activity cannot be read. Setup
- * is the one state that line would otherwise contradict ("Setting up" beside "unknown"), so
- * it says the two together: the setup is recorded, the machine cannot confirm it now. */
-export function uncertainActivityFeedback(settingUp: boolean): string {
-  return settingUp
-    ? 'This machine is not connected, so setup progress cannot be confirmed.'
-    : 'Current activity on this machine is unknown.';
+/** The dock's status line says one of four things, whatever else waits: the ask, the proposal
+ * and a failure each say themselves on the page, the ask card or the transcript. A machine
+ * Panels cannot read says only that, with no motion and no clock. */
+export type DockStatus =
+  | { kind: 'setting-up' | 'working'; clock: string | null }
+  | { kind: 'idle' | 'offline'; clock: null };
+export function dockStatusFrom(facts: {
+  state: ConversationActivity;
+  offline: boolean;
+  setupClock: string | null;
+  turnClock: string | null;
+}): DockStatus {
+  if (facts.offline) return { kind: 'offline', clock: null };
+  if (facts.state === 'setting-up') return { kind: 'setting-up', clock: facts.setupClock };
+  if (facts.state === 'working') return { kind: 'working', clock: facts.turnClock };
+  return { kind: 'idle', clock: null };
 }
 
 /** Copies a fact (the workspace path) for the person. Says whether it landed, so the control
