@@ -5,8 +5,8 @@ final class TicketTests: XCTestCase {
     func testLinkedArtifactKeepsItsActualOwner() {
         let baseURL = URL(string: "https://ticket-stub.invalid")!
         let link = URL(string: "/files/tickets/t_other/artifacts/proof.html")!
-        XCTAssertEqual(TicketArtifactRoute.linkedDestination(link, baseURL: baseURL, title: "Proof"),
-                       .artifact(owner: ArtifactOwner(kind: .ticket, id: "t_other"), path: "artifacts/proof.html", title: "Proof"))
+        XCTAssertEqual(TicketArtifactRoute.linkedDestination(link, baseURL: baseURL, title: "Proof", conversationOwner: .ticket("t_here")),
+                       .artifact(owner: ArtifactOwner(kind: .ticket, id: "t_other"), path: "artifacts/proof.html", title: "Proof", dock: .conversation(.ticket("t_here"))))
     }
 
     private func ticket() throws -> TicketDetail {

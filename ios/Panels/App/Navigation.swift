@@ -5,6 +5,14 @@ enum AppDestination: Hashable {
     case review, chief, manager(String), settings
 }
 
+/// What sits below an open artifact, chosen by where it was opened from: the composer
+/// of that page's conversation, or the Review card's own note or reply.
+enum ArtifactDock: Hashable {
+    case conversation(ConversationOwner)
+    case reviewProposal(itemID: String)
+    case reviewMessage(itemID: String)
+}
+
 enum AppRoute: Hashable {
     case chief
     case goals, goal(String)
@@ -13,13 +21,13 @@ enum AppRoute: Hashable {
     case conversation(owner: ConversationOwner, id: String?, linked: Bool = true)
     case orchestrator(String)
     case ticket(String)
-    case artifact(owner: ArtifactOwner, path: String, title: String, conversationOwner: ConversationOwner? = nil, showsConversation: Bool = true)
+    case artifact(owner: ArtifactOwner, path: String, title: String, dock: ArtifactDock)
     case ideas, usage, vps, settings
 }
 
 extension AppRoute {
-    static func artifact(_ target: ArtifactTarget, conversationOwner: ConversationOwner? = nil, showsConversation: Bool = true) -> AppRoute {
-        .artifact(owner: target.owner, path: target.path, title: target.title, conversationOwner: conversationOwner, showsConversation: showsConversation)
+    static func artifact(_ target: ArtifactTarget, dock: ArtifactDock) -> AppRoute {
+        .artifact(owner: target.owner, path: target.path, title: target.title, dock: dock)
     }
 }
 
@@ -75,8 +83,8 @@ struct RouteDestination: View {
             }
         case .orchestrator(let id): OrchestratorView(managerID: id, editOwner: goalEdits)
         case .ticket(let id): TicketView(ticketID: id)
-        case .artifact(let owner, let path, let title, let conversationOwner, let showsConversation):
-            ArtifactViewerView(owner: owner, path: path, title: title, showsConversation: showsConversation, conversationOwner: conversationOwner)
+        case .artifact(let owner, let path, let title, let dock):
+            ArtifactViewerView(owner: owner, path: path, title: title, dock: dock)
         case .ideas: IdeasView()
         case .usage: UsageView()
         case .vps: VPSView()

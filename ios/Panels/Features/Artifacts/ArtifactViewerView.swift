@@ -7,8 +7,7 @@ struct ArtifactViewerView: View {
     let owner: ArtifactOwner
     let path: String
     let title: String
-    var showsConversation = true
-    var conversationOwner: ConversationOwner? = nil
+    let dock: ArtifactDock
     @State private var conversationID: String?
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
@@ -32,8 +31,10 @@ struct ArtifactViewerView: View {
     @State private var desktopPreview = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
 
-    private var activeConversationOwner: ConversationOwner {
-        conversationOwner ?? owner.conversationOwner
+    /// The conversation whose composer sits below, when the dock is a conversation's.
+    private var activeConversationOwner: ConversationOwner? {
+        if case .conversation(let owner) = dock { return owner }
+        return nil
     }
 
     private var hasPreview: Bool { document != nil || webReady }
@@ -70,7 +71,7 @@ struct ArtifactViewerView: View {
             }
         }
         .panelsScreen()
-        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, enabled: showsConversation, textEntry: textEntry))
+        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, textEntry: textEntry))
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -98,7 +99,7 @@ struct ArtifactViewerView: View {
             else if let shareURL { ArtifactURLShareSheet(url: shareURL).presentationDetents([.medium, .large]) }
         }
         .task(id: store.baseURL.absoluteString + "|" + String(describing: activeConversationOwner)) {
-            guard showsConversation else { return }
+            guard let activeConversationOwner else { return }
             let generation = store.resources.admissionGeneration
             do {
                 let resolved: String?
@@ -170,7 +171,7 @@ struct ArtifactViewerView: View {
     private func follow(_ url: URL, textEntry: ScreenTextEntryContext) {
         if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
-            if target.id != self.target.id { textEntry.endEditingBeforeNavigation { openRoute(.artifact(target, conversationOwner: activeConversationOwner, showsConversation: showsConversation)) } }
+            if target.id != self.target.id { textEntry.endEditingBeforeNavigation { openRoute(.artifact(target, dock: dock)) } }
         } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
     }
     private func share() async {
@@ -240,12 +241,11 @@ struct ArtifactMediaView: View {
 }
 
 private struct ArtifactConversationSurface: ViewModifier {
-    let owner: ConversationOwner
+    let owner: ConversationOwner?
     let conversationID: String?
-    let enabled: Bool
     let textEntry: ScreenTextEntryContext
     @ViewBuilder func body(content: Content) -> some View {
-        if enabled { content.conversationNavigation(owner: owner, conversationID: conversationID, textEntry: textEntry) }
+        if let owner { content.conversationNavigation(owner: owner, conversationID: conversationID, textEntry: textEntry) }
         else { content }
     }
 }

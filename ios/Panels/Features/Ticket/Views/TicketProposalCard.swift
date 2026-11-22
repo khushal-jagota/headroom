@@ -119,7 +119,7 @@ struct TicketProposalCard: View {
 
     var body: some View {
         DecisionProposalCard(fieldLabel: label, reviewer: presentation.holderLabel(presentation.ticket.ceilingHolder),
-            text: proposal.body, baseURL: store.baseURL) {
+            text: proposal.body, baseURL: store.baseURL, dock: .conversation(.ticket(presentation.ticket.id))) {
                 guard !decision.pending else { return }
                 _ = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
                 decision.sheet = .reviewer

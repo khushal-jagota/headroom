@@ -44,7 +44,7 @@ struct ReviewProposalCard: View {
                 }
                 if let proposal = decision.proposal {
                     DecisionProposalCard(fieldLabel: decision.fieldLabel(item.field), reviewer: reviewer, text: proposal.body,
-                                         baseURL: store.baseURL, reviewerEnabled: actionable && busyAction == nil) {
+                                         baseURL: store.baseURL, dock: .reviewProposal(itemID: item.id), reviewerEnabled: actionable && busyAction == nil) {
                         if actionable && busyAction == nil { sheet = .reviewer }
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }

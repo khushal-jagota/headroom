@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// Proposals and messages share one route for managed file links:
-/// a tap opens the in-app viewer, and other links go to the system.
+/// Proposals, messages and conversations share one route for managed file links:
+/// a tap opens the in-app viewer with the caller's dock, and other links go to the system.
 struct ReviewArtifactLinks: ViewModifier {
+    /// What the viewer docks below the artifact, from the place that shows the link.
+    let dock: ArtifactDock
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
     @Environment(\.openRoute) private var openRoute
@@ -15,7 +17,7 @@ struct ReviewArtifactLinks: ViewModifier {
     private func follow(_ url: URL) {
         if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
-            let route = AppRoute.artifact(target, showsConversation: false)
+            let route = AppRoute.artifact(target, dock: dock)
             if let textEntry { textEntry.endEditingBeforeNavigation { openRoute(route) } }
             else { openRoute(route) }
         }
@@ -24,5 +26,5 @@ struct ReviewArtifactLinks: ViewModifier {
 }
 
 extension View {
-    func reviewArtifactLinks() -> some View { modifier(ReviewArtifactLinks()) }
+    func reviewArtifactLinks(dock: ArtifactDock) -> some View { modifier(ReviewArtifactLinks(dock: dock)) }
 }

@@ -115,7 +115,7 @@ struct PageArtifactNavigation: ViewModifier {
         content.environment(\.openURL, OpenURLAction { url in
             if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return .discarded }
             if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
-                let route = AppRoute.artifact(target, conversationOwner: holder?.conversationOwner)
+                let route = AppRoute.artifact(target, dock: .conversation(holder?.conversationOwner ?? target.owner.conversationOwner))
                 if let textEntry { textEntry.endEditingBeforeNavigation { openRoute(route) } }
                 else { openRoute(route) }
                 return .handled

@@ -42,7 +42,7 @@ struct ReviewMessageCard: View {
                         Text("Message").panelsScaledFont(size: 13, weight: .semibold).foregroundStyle(PanelsTheme.Web.secondary)
                         ForEach(decision.events) { event in
                             if event.id != decision.events.first?.id { Rectangle().fill(Color.white.opacity(0.14)).frame(width: 32, height: 1) }
-                            ReviewMessageContent(pieces: event.payload.pieces, conversationID: item.conversationId ?? "")
+                            ReviewMessageContent(pieces: event.payload.pieces, conversationID: item.conversationId ?? "", dock: .reviewMessage(itemID: item.id))
                                 .accessibilityIdentifier("review.message.\(event.sequence)")
                         }
                         if decision.events.isEmpty { Text("These messages have been read.").foregroundStyle(PanelsTheme.Web.tertiary) }
@@ -134,6 +134,7 @@ struct ReviewMessageCard: View {
 private struct ReviewMessageContent: View {
     let pieces: [ReviewMessageEvent.Piece]
     let conversationID: String
+    let dock: ArtifactDock
     @Environment(AppStore.self) private var store
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
@@ -149,6 +150,6 @@ private struct ReviewMessageContent: View {
                 }
             }
         }
-        .reviewArtifactLinks()
+        .reviewArtifactLinks(dock: dock)
     }
 }

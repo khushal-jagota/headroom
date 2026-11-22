@@ -86,6 +86,8 @@ struct DecisionProposalCard: View {
     let reviewer: String
     let text: String
     let baseURL: URL
+    /// What an artifact linked from the proposal docks below it.
+    let dock: ArtifactDock
     var reviewerEnabled = true
     let onReviewer: () -> Void
     var body: some View {
@@ -107,7 +109,7 @@ struct DecisionProposalCard: View {
         }.padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PanelsTheme.Web.cardFill, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
-            .reviewArtifactLinks()
+            .reviewArtifactLinks(dock: dock)
     }
 }
 

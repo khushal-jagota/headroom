@@ -518,7 +518,7 @@ struct ConversationThread: View {
                 .animation(reduceMotion ? nil : PanelsTheme.Motion.fade, value: scrollPolicy.showLatest)
             }
         }
-        .reviewArtifactLinks()
+        .reviewArtifactLinks(dock: .conversation(owner))
     }
 
     private func distanceFromLatest(_ geometry: ScrollGeometry) -> Double {
