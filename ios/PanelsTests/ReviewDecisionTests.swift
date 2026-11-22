@@ -139,7 +139,6 @@ import XCTest
         XCTAssertEqual(decision.revisionDraft, "Keep this proposal note")
         XCTAssertFalse(decision.resolved)
         XCTAssertTrue(decision.ready)
-        XCTAssertTrue(decision.scopeChange.holdingProposal, "Keep the card visible while the sheet is open, because a reviewer transfer removes the live queue card")
         XCTAssertEqual(ReviewStub.state.scopeTicketReads.count, readCount + 1)
         let readRequest = try XCTUnwrap(ReviewStub.state.scopeTicketReads.last)
         XCTAssertEqual(readRequest.cachePolicy, .reloadIgnoringLocalCacheData)
@@ -148,8 +147,6 @@ import XCTest
         XCTAssertEqual(scopeWrite.httpMethod, "PATCH")
         let scopeBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(scopeWrite.httpBody)) as? [String: Any])
         XCTAssertEqual(Set(scopeBody.keys), Set(["ceiling", "ceiling_holder"]))
-        decision.scopeChange.releasePresentation()
-        XCTAssertFalse(decision.scopeChange.holdingProposal)
         // Changing only the reviewer omits the ceiling.
         let reviewerOnly = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil, holder: Principal(kind: "owner", id: "owner"))
         XCTAssertEqual(reviewerOnly.ceiling, current.ceiling)

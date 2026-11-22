@@ -108,6 +108,8 @@ struct ReviewMessageCard: View {
         sendingPresentation = true
         let accepted = await decision.send()
         if !decision.accepted { sendingPresentation = false }
+        // Leave in the same turn as the save, before the saved work hides the card.
+        else { finishReply() }
         return accepted
     }
     private func finishReply() {

@@ -43,7 +43,7 @@ struct ReviewView: View {
         if savedWork.key?.server != server { Color.clear }
         else if let item = session.shown {
             ReviewCardScreen(item: item, session: session, savedWork: savedWork, isActive: active, cardHeight: $cardHeight)
-                .id(item.id).transition(.identity)
+                .id("\(item.id)#\(session.exits)").transition(.identity)
         } else if session.loaded {
             ReviewSummaryView(summary: session.summary, workingCount: session.runningWorkerCount, isActive: active) {
                 Haptics.selection()
@@ -140,7 +140,7 @@ private struct ReviewCardScreen: View {
         default:
             ReviewProposalCard(item: item, isActive: isActive, savedWork: savedWork, decision: session.decisions.decision(for: item),
                                refusal: session.refusalNotes[item.id], notice: session.notice?.item.id == item.id ? session.notice : nil,
-                               cardHeight: $cardHeight, motion: motion, onSkip: skip, onResolve: resolve)
+                               cardHeight: $cardHeight, motion: motion, onSkip: skip, onHold: { session.resolve(item) }, onResolve: resolve)
         }
     }
 
@@ -154,6 +154,8 @@ private struct ReviewCardScreen: View {
 
     /// Handled here: the card leaves at once, and the next one follows its exit.
     private func resolve(_ afterExit: (() -> Void)?) {
+        // A card already leaving by Skip finishes that exit instead.
+        guard !motion.leaving else { return }
         session.resolve(item)
         motion.leave(swipeWidth: nil) {
             afterExit?()

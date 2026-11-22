@@ -52,18 +52,17 @@ enum NavigationScope {
             window.section == "review" || window.section == "rail_parents" || window.section == "settled"
                 || (window.section == "children" && window.owner?.kind == "chief")
         }
-        let availableRows = rowBudget
         let desired = windows.map(\.limit)
         let stableIndexes = windows.indices.filter { stable(windows[$0]) }
         var fixed = stableIndexes.reduce(0) { $0 + windows[$1].limit }
-        if fixed > availableRows {
+        if fixed > rowBudget {
             for index in stableIndexes { windows[index].limit = 0 }
-            fill(&windows, stableIndexes, desired: desired, available: availableRows)
+            fill(&windows, stableIndexes, desired: desired, available: rowBudget)
             fixed = stableIndexes.reduce(0) { $0 + windows[$1].limit }
         }
         let elastic = windows.indices.filter { !stable(windows[$0]) && windows[$0].limit > 0 }
         for index in elastic { windows[index].limit = 0 }
-        fill(&windows, elastic, desired: desired, available: max(0, availableRows - fixed))
+        fill(&windows, elastic, desired: desired, available: max(0, rowBudget - fixed))
         var next = previous
         next.windows = windows
         next.selected = selected

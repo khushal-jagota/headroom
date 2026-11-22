@@ -133,7 +133,7 @@ struct TicketProposalCard: View {
             .decisionSheets($decision.sheet, ticket: decision.snapshot?.presentation.ticket,
                 manifest: decision.snapshot.map { ReviewWorkerManifest(workflow: $0.presentation.manifest) },
                 note: decision.snapshot?.guidance?.text,
-                onDismiss: { decision.scopeChange.releasePresentation() },
+                onDismiss: {},
                 approve: { ceiling, holder in
                     guard let snapshot = decision.snapshot else { return }
                     try decision.approve(snapshot, ceiling: ceiling, holder: holder)

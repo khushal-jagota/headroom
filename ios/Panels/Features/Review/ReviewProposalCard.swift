@@ -14,6 +14,8 @@ struct ReviewProposalCard: View {
     @Binding var cardHeight: CGFloat
     let motion: ReviewCardMotion
     let onSkip: (CGFloat?) -> Void
+    /// Holds the card from the moment its decision is saved, while a sheet still closes.
+    let onHold: () -> Void
     let onResolve: (_ afterExit: (() -> Void)?) -> Void
     @Environment(AppStore.self) private var store
     @State private var sheet: DecisionSheet?
@@ -84,7 +86,6 @@ struct ReviewProposalCard: View {
         }
         .decisionSheets($sheet, ticket: decision.ticket, manifest: decision.manifest, note: approvalGuidance?.text,
             onDismiss: {
-                decision.scopeChange.releasePresentation()
                 if resolvedAfterDismiss { resolvedAfterDismiss = false; leave() }
             },
             approve: { ceiling, holder in
@@ -99,8 +100,9 @@ struct ReviewProposalCard: View {
                 guard let ticket = decision.ticket else { return }
                 let current = try await decision.scopeChange.save(api: store.client, ticket: ticket, ceiling: nil, holder: holder)
                 decision.acceptScopeRead(current)
-                // Moved to someone else here: the card leaves once the sheet closes.
-                if holder.kind != "owner" { onResolveLater() }
+                // Moved to someone else here: the card leaves once the sheet closes, and
+                // is held until then, so the move reads as Khushal's, not as a notice.
+                if holder.kind != "owner" { onHold(); onResolveLater() }
                 await store.refresh()
             })
     }
@@ -130,7 +132,9 @@ struct ReviewProposalCard: View {
     /// The decision is saved: the card leaves now, or once its sheet has closed.
     private func complete() {
         Haptics.light()
-        if sheet != nil { onResolveLater() ; sheet = nil }
+        // The decision is saved, so the saved work hides the card from now on.
+        onHold()
+        if sheet != nil { onResolveLater(); sheet = nil }
         else { leave() }
     }
     private func onResolveLater() { resolvedAfterDismiss = true }

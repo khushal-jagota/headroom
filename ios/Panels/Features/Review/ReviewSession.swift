@@ -59,8 +59,9 @@ struct ReviewQueue: Equatable, Sendable {
     private(set) var skipped: Set<String> = []
     /// Entries whose every card was skipped, and the entries "Back to review" sends last.
     private(set) var history = ReviewHistory()
-    /// Asks answered here, hidden until the window drops them.
-    private(set) var answered: Set<String> = []
+    /// Cards handled here, hidden until the saved work or the window catches up, so a
+    /// handled card is never shown again before then. A refusal brings it back.
+    private(set) var handled: Set<String> = []
     private(set) var seenRefusals: Set<String> = []
     /// The card on screen when the app went to the background, and the connection
     /// session then. The first fresh window of a later session decides whether it is still there.
@@ -70,7 +71,7 @@ struct ReviewQueue: Equatable, Sendable {
 
     static func == (lhs: ReviewQueue, rhs: ReviewQueue) -> Bool {
         lhs.summary == rhs.summary && lhs.pinned == rhs.pinned && lhs.leaving == rhs.leaving && lhs.notice == rhs.notice
-            && lhs.skipped == rhs.skipped && lhs.history == rhs.history && lhs.answered == rhs.answered
+            && lhs.skipped == rhs.skipped && lhs.history == rhs.history && lhs.handled == rhs.handled
             && lhs.seenRefusals == rhs.seenRefusals && lhs.away?.cardID == rhs.away?.cardID && lhs.away?.session == rhs.away?.session
             && lhs.seenVisit == rhs.seenVisit
     }
@@ -79,7 +80,7 @@ struct ReviewQueue: Equatable, Sendable {
     /// entries "Back to review" returned placed last, as the server places them.
     func cards(_ live: [ReviewItem], refusals: [ReviewRefusal]) -> [ReviewItem] {
         let refusedIDs = Set(refusals.map(\.item.id))
-        let window = live.filter { !answered.contains($0.id) && !refusedIDs.contains($0.id) }
+        let window = live.filter { !handled.contains($0.id) && !refusedIDs.contains($0.id) }
         let returned = Set(history.priority)
         let ordered = window.filter { !returned.contains($0.historyKey) } + window.filter { returned.contains($0.historyKey) }
         var seen: Set<String> = []
@@ -103,7 +104,7 @@ struct ReviewQueue: Equatable, Sendable {
     /// - `freshSession`: the connection session whose first fresh window this is, if any.
     mutating func reconcile(_ live: [ReviewItem], refusals: [ReviewRefusal], moved: (ReviewItem) -> String?, freshSession: Int?) {
         let liveIDs = Set(live.map(\.id))
-        answered.formIntersection(liveIDs)
+        handled.formIntersection(liveIDs)
         let cards = cards(live, refusals: refusals)
         if let away, let freshSession, freshSession > away.session {
             self.away = nil
@@ -138,15 +139,17 @@ struct ReviewQueue: Equatable, Sendable {
     }
 
     private mutating func showSummary() {
-        summary = true; pinned = nil; notice = nil
+        summary = true; pinned = nil; notice = nil; away = nil
     }
 
     /// Skip is per card. When every card of one Ticket or conversation is skipped, its key
     /// joins the skipped history the server is told about.
     mutating func skip(_ item: ReviewItem, in cards: [ReviewItem]) {
         skipped.insert(item.id)
+        away = nil
         let key = item.historyKey
-        if cards.filter({ $0.historyKey == key }).allSatisfy({ skipped.contains($0.id) }), !history.skipped.contains(key) {
+        let entry = cards.filter { $0.historyKey == key }
+        if !entry.isEmpty, entry.allSatisfy({ skipped.contains($0.id) }), !history.skipped.contains(key) {
             history.skipped.append(key)
         }
         if notice?.item.id == item.id { notice = nil }
@@ -156,7 +159,8 @@ struct ReviewQueue: Equatable, Sendable {
     /// Handled here: the card stays only while its exit runs.
     mutating func resolve(_ item: ReviewItem) {
         leaving = item
-        if item.isAsk { answered.insert(item.id) }
+        away = nil
+        handled.insert(item.id)
     }
     /// The exit finished. The next reconcile shows the next card.
     mutating func finishExit() {
@@ -164,16 +168,12 @@ struct ReviewQueue: Equatable, Sendable {
         if let leaving, notice?.item.id == leaving.id { notice = nil }
         leaving = nil
     }
-    /// The action that started the exit failed: the card stays.
-    mutating func cancelExit() {
-        if let leaving, leaving.isAsk { answered.remove(leaving.id) }
-        leaving = nil
-    }
 
     /// "Back to review" and "Review skipped", as the web returns: every skipped card is
     /// offered again, and the skipped entries go last.
     mutating func returnToCards() {
         summary = false
+        away = nil
         skipped = []
         history.priority = history.skipped
         pinned = nil; notice = nil
@@ -209,6 +209,9 @@ struct ReviewQueue: Equatable, Sendable {
     @ObservationIgnored private var refusals: [ReviewRefusal] = []
     @ObservationIgnored private var moved: (ReviewItem) -> String? = { _ in nil }
 
+    /// Counts finished exits. A card that comes back under the same identity, such as a
+    /// refused reply, is a fresh card on screen, not the one that faded out.
+    private(set) var exits = 0
     var shown: ReviewItem? { queue.shown }
     var notice: ReviewNotice? { queue.notice }
     var summary: ReviewSummary { queue.counts(cards, unloaded: unloadedCount) }
@@ -253,9 +256,9 @@ struct ReviewQueue: Equatable, Sendable {
     func finishExit() {
         if let item = queue.leaving, item.isMessage { messageDecisions.drop(item.id) }
         queue.finishExit()
+        exits += 1
         reconcile()
     }
-    func cancelExit() { queue.cancelExit() }
     func returnToCards(store: AppStore) {
         queue.returnToCards()
         for item in cards where item.isMessage { messageDecisions.drop(item.id) }

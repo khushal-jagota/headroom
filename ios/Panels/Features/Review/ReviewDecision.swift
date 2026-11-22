@@ -35,18 +35,11 @@ struct DecisionGuidance: Sendable, Equatable {
 /// A reviewer or ceiling change is not a decision, so it never reaches the Outbox. The sheet
 /// waits for the server and shows a failure inline. The change is a plain set, so a retry is safe.
 @MainActor @Observable final class DecisionScopeChange {
-    /// Keeps the proposal card on screen while the sheet is open, because a reviewer
-    /// transfer takes the proposal out of the live queue.
-    private(set) var holdingProposal = false
-
     func save(api: APIClient, ticket: TicketDetail, ceiling: String?, holder: Principal) async throws -> TicketDetail {
-        holdingProposal = true
         try await api.setTicketApprovalLimit(ticket.id, ceiling: ceiling, holder: holder)
         // APIClient.ticket always uses a network GET with reloadIgnoringLocalCacheData.
         return try await api.ticket(ticket.id)
     }
-
-    func releasePresentation() { holdingProposal = false }
 }
 
 /// A draft belongs to the exact proposal the person read, including its revision.

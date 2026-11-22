@@ -36,13 +36,17 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertEqual(queue.shown?.id, ticketMessage.id)
         queue.finishExit(); reconcile(&queue, [chiefMessage, ask])
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
-        // An answered ask stays hidden until the window drops it.
-        queue.resolve(chiefMessage); queue.finishExit(); reconcile(&queue, [ask])
-        queue.resolve(ask); queue.finishExit(); reconcile(&queue, [ask])
+        // A card handled here stays hidden while nothing else hides it, such as an answered
+        // ask or a message whose run was already read, so it never comes back before then.
+        queue.resolve(chiefMessage); queue.finishExit(); reconcile(&queue, [chiefMessage, ask])
+        XCTAssertEqual(queue.shown?.id, ask.id)
+        queue.resolve(ask); queue.finishExit(); reconcile(&queue, [chiefMessage, ask])
         XCTAssertNil(queue.shown, "After the last card, the summary")
-        XCTAssertEqual(queue.counts(queue.cards([ask], refusals: []), unloaded: 0), ReviewSummary(newCount: 0, skippedCount: 0))
-        reconcile(&queue, [])
-        XCTAssertTrue(queue.answered.isEmpty)
+        XCTAssertEqual(queue.counts(queue.cards([chiefMessage, ask], refusals: []), unloaded: 0), ReviewSummary(newCount: 0, skippedCount: 0))
+        // Once the saved work or the window hides it, a refusal can bring it back.
+        reconcile(&queue, [ask])
+        XCTAssertEqual(queue.handled, [ask.id])
+        XCTAssertEqual(queue.cards([chiefMessage, ask], refusals: []).map(\.id), [chiefMessage.id])
     }
 
     /// Risk: the summary shows at the wrong moments, or a return to the app moves Khushal
@@ -70,6 +74,12 @@ final class ReviewQueueTests: XCTestCase {
         queue.leaveApp(session: 5)
         reconcile(&queue, [proposal], fresh: 6)
         XCTAssertNil(queue.shown, "The card left while away: the summary")
+        // A card handled after the return is not "left while away" when the stream reconnects.
+        queue.returnToCards(); reconcile(&queue, all)
+        queue.leaveApp(session: 6)
+        queue.resolve(proposal); queue.finishExit(); reconcile(&queue, [chiefMessage])
+        reconcile(&queue, [chiefMessage], fresh: 7)
+        XCTAssertEqual(queue.shown?.id, chiefMessage.id)
     }
 
     /// Risk: skip keys and the summary disagree with what the phone shows. Skip is per
