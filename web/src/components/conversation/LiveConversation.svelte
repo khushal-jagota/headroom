@@ -1127,9 +1127,9 @@
   {#if !started && emptyState}
     {@render emptyState()}
   {:else if !emptyState && !readOnly && nothingSaidYet}
-    <!-- v4: an empty conversation is the composer alone, at the top of the column under the
-         header, and nothing else. This marker draws nothing; it tells the pane to put the
-         composer first, and tells a screen reader there is nothing here yet. -->
+    <!-- v4.1: an empty conversation is the composer in its normal bottom place and an empty
+         canvas above it. This marker draws nothing; it tells a screen reader there is nothing
+         here yet. -->
     <div class="conversation-empty" data-conversation-empty data-conversation-empty-bare role="note">
       <span class="conversation-empty-said">No messages yet</span>
     </div>

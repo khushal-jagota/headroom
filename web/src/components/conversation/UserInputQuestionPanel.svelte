@@ -170,9 +170,8 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#snippet position()}
-  {#if question?.header}<span class="topic">{question.header}</span>{/if}
+  <!-- v4.1: no category label; the pager alone, "1 of 2 ‹ ›". -->
   {#if request.questions.length > 1}
-    {#if question?.header}<span class="sep" aria-hidden="true">·</span>{/if}
     <span class="count">{step + 1} of {request.questions.length}</span>
     <button type="button" class="cv-icon-button cv-icon-button--small" data-user-input-back
       aria-label="Previous question" title="Previous question" disabled={busy || step === 0}
@@ -272,8 +271,6 @@
 {/if}
 
 <style>
-  .topic { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sep { color: var(--cv-t4); }
   .count { flex: none; }
   .options { max-height: 360px; overflow: auto; }
   /* The field: a canvas well inside the raised ask, with a pen where the key would be. */

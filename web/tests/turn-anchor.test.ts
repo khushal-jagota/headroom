@@ -98,7 +98,9 @@ describe("a tool call row", () => {
     expect(silent).toMatch(/class="c2-tool-chevron[ "]/);
     expect(silent).toContain('aria-expanded="false"');
     const failed = draw({ ...base, title: "npm run check", detail: "svelte-check found 1 error" });
-    expect(failed.indexOf("Failed")).toBeLessThan(failed.indexOf("c2-tool-chevron"));
+    // v4.1: the chevron stands right after the label; the subject and the outcome follow it.
+    expect(failed.indexOf("c2-tool-verb")).toBeLessThan(failed.indexOf("c2-tool-chevron"));
+    expect(failed.indexOf("c2-tool-chevron")).toBeLessThan(failed.indexOf("Failed"));
   });
 
   it("opens a call that printed nothing onto saying so", () => {

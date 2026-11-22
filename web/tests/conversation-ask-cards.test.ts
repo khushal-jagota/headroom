@@ -37,12 +37,13 @@ describe("the permission ask", () => {
     // No row of big buttons on the composer: rows, each with its number key.
     expect(body).not.toContain("cv-button--primary");
     expect(body).not.toContain("cv-button--outline");
-    // One tile style for every ask; allow once is chosen by default, decline a quieter tone.
+    // One tile style for every ask; allow once is chosen by default. v4.1: Deny is labelled in
+    // the same tone as the others; its words say it declines.
     expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*is-selected[^"]*"[^>]*data-conversation-ask-action="allow"/);
     expect(count(body, "is-selected")).toBe(1);
     expect(body).toMatch(/<button[^>]*(aria-pressed="true"[^>]*data-conversation-ask-action="allow"|data-conversation-ask-action="allow"[^>]*aria-pressed="true")/);
-    expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*is-quiet[^"]*"[^>]*data-conversation-ask-action="deny"/);
-    expect(count(body, "is-quiet")).toBe(1);
+    expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*"[^>]*data-conversation-ask-action="deny"/);
+    expect(count(body, "is-quiet")).toBe(0);
     expect(body).toMatch(/data-conversation-ask-action="allow"[^>]*aria-keyshortcuts="1"/);
     expect(body).toMatch(/data-conversation-ask-action="deny"[^>]*aria-keyshortcuts="3"/);
     // The command is read before the answers.
@@ -55,10 +56,10 @@ describe("the permission ask", () => {
     expect(body).not.toContain("data-conversation-stop");
   });
 
-  it("offers Stop turn as a quiet text button in its header when the waiting turn can be stopped", () => {
+  it("offers Stop turn as a small button (stop square + label) in its header when the waiting turn can be stopped", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, onStop: () => {} } });
     expect(count(body, "data-conversation-stop")).toBe(1);
-    expect(body).toMatch(/class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*>Stop turn</);
+    expect(body).toMatch(/<button type="button" class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*><svg class="cv-ask-stop-mark[^"]*" viewBox="0 0 10 10"[^>]*><rect[^>]*><\/rect><\/svg>Stop turn<\/button>/);
     // In the header row, before the question and the answers.
     expect(body.indexOf("data-conversation-ask-stop")).toBeLessThan(body.indexOf(ask.title));
     expect(body.indexOf("data-conversation-ask-stop")).toBeLessThan(body.indexOf('data-conversation-ask-action="allow"'));
@@ -100,6 +101,9 @@ describe("the question panel", () => {
       }
     });
     expect(body).toContain("1 of 2");
+    // v4.1: no category label beside the pager.
+    expect(body).not.toContain(">Style<");
+    expect(body).not.toContain('class="topic');
     expect(body).toContain("Needs your answer");
     expect(body).toContain("Which illustration direction?");
     // The step control is the header's count and arrows, the forward one unavailable until

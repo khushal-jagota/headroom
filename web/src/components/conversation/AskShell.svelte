@@ -61,10 +61,10 @@
       {#if onStop || context}
         <span class="cv-ask-context">
           {#if onStop}
-            <!-- v4: while the turn waits on the person, stopping it is a quiet text button in
-                 the ask's own header, the one way to stop there is. -->
+            <!-- v4.1: while the turn waits on the person, stopping it is a small real button in
+                 the ask's own header (stop square + "Stop turn"), the one way to stop there is. -->
             <button type="button" class="cv-ask-stop" data-conversation-stop={true} data-conversation-ask-stop
-              title="Stop turn" disabled={stopDisabled} onclick={() => onStop?.()}>Stop turn</button>
+              title="Stop turn" disabled={stopDisabled} onclick={() => onStop?.()}><svg class="cv-ask-stop-mark" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" /></svg>Stop turn</button>
           {/if}
           {#if context}{@render context()}{/if}
         </span>
@@ -149,26 +149,33 @@
     margin-inline-start: auto;
   }
   .cv-ask-reply { padding: 0 var(--cv-s2) var(--cv-s2); }
-  /* Stop turn: a text button, 13 in the meta tone, lifting on hover. */
+  /* Stop turn (v4.1): a small real button, 28px high, #242424, radius 8, a 10px stop square
+     and the label 13 in #d9d9d9. 16px before the pager (the context's 4px gap + 12). */
   .cv-ask-stop {
-    height: 24px;
-    padding: 0 6px;
-    margin-inline-end: var(--cv-s1);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    margin-inline-end: 12px;
     border: 0;
-    border-radius: var(--cv-r-sm);
-    background: none;
-    color: var(--cv-t3);
-    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    border-radius: 8px;
+    background: #242424;
+    color: #d9d9d9;
+    font: var(--cv-weight-body) 13px/18px var(--cv-font);
     cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
+  .cv-ask-stop:last-child { margin-inline-end: 0; }
+  .cv-ask-stop-mark { flex: none; width: 10px; height: 10px; fill: currentColor; }
   .cv-ask-stop:hover:not(:disabled) { color: var(--cv-t1); background: #2a2a2a; }
   .cv-ask-stop:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 1px; }
   .cv-ask-stop:disabled { cursor: default; }
 
   /* --- the one answer tile every ask uses (v4) ------------------------------------------- */
-  /* Tiles 6px apart, radius 12, padding 12 16, on #222 (hover #262626). The chosen one is
-     #2a2a2a with a 1px accent edge, its number chip filled in the accent. A declining answer
-     reads a tone down (.is-quiet). */
+  /* Tiles 6px apart, radius 12, padding 12 16 (v4.1): no fill at rest, #242424 on hover. Only
+     the chosen one is filled, #2a2a2a with a 1px accent edge, its number chip in the accent.
+     Every answer, a declining one too, is labelled in the same tone: its words say it. */
   :global(.cv-ask-rows) { display: grid; gap: 6px; }
   :global(.cv-ask-row) {
     display: flex;
@@ -179,18 +186,17 @@
     padding: var(--cv-s3) var(--cv-s4);
     border: 0;
     border-radius: var(--cv-r-lg);
-    background: #222222;
+    background: transparent;
     color: var(--cv-t1);
     cursor: pointer;
     font: var(--cv-weight-body) var(--cv-type-prose)/var(--cv-leading-ui) var(--cv-font);
     text-align: start;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), box-shadow var(--cv-dur-fast) var(--cv-ease-out);
   }
-  :global(.cv-ask-row:hover:not(:disabled)) { background: #262626; }
+  :global(.cv-ask-row:hover:not(:disabled)) { background: #242424; }
   :global(.cv-ask-row.is-selected), :global(.cv-ask-row.is-selected:hover:not(:disabled)) { background: #2a2a2a; box-shadow: inset 0 0 0 1px rgb(169 187 227 / 55%); }
   :global(.cv-ask-row:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
   :global(.cv-ask-row:disabled) { cursor: default; }
-  :global(.cv-ask-row.is-quiet .cv-ask-label) { color: var(--cv-t3); }
   :global(.cv-ask-key) {
     flex: none;
     display: inline-grid;

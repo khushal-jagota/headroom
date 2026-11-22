@@ -68,7 +68,8 @@ describe("the composer's controls row", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, ask, onStop: () => {}, onCancelTurn: () => {} } });
     // Exactly one way to stop, and it is the ask header's text button, not the composer's round.
     expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
-    expect(body).toMatch(/class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*data-conversation-ask-stop[^>]*>Stop turn</);
+    // v4.1: a small real button: the stop square, then its label.
+    expect(body).toMatch(/class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*data-conversation-ask-stop[^>]*><svg class="cv-ask-stop-mark[^"]*"[^>]*>[\s\S]*?<\/svg>Stop turn</);
     expect(body).not.toContain("chat-send stop");
     // No round Send and no mode chip: the send slot is the ask's primary, Allow (allow once is
     // chosen by default), and the line starts with a pen.

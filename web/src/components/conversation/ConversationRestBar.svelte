@@ -4,7 +4,11 @@
    * derived state the opened pane's header reads), the way to open it, and the latest unread
    * message under them. Its words never name a tool or a command, in either lens. */
   let { preview = null, roleLabel = "Worker", state, connectionTrouble = false,
-    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, onOpen }: {
+    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, proposalBesideAsk = false, onOpen }: {
+    /** Owner, 22 Nov: a proposal waits on the page while an ask (permission, question, key)
+     *  waits in the conversation. The ask is the composer under this line; the line keeps the
+     *  proposal's "Waiting for your approval", quiet, and never stands in for the ask. */
+    proposalBesideAsk?: boolean;
     /** The page above draws the waiting ask itself (a proposal to approve): the dock does not
      *  say it a second time, and keeps only the way into the conversation. */
     pageHoldsTheAsk?: boolean;
@@ -35,7 +39,8 @@
   let offlineChip = $derived(offline && state.state === "setting-up");
   /** The page above draws the waiting ask (a proposal): v4 has the line say "Waiting for your
    *  approval" with the accent dot, and not repeat the proposal's title. */
-  let pageWaits = $derived(pageHoldsTheAsk && state.state === "waiting");
+  let pageWaits = $derived((pageHoldsTheAsk || proposalBesideAsk) && state.state === "waiting");
+  let quietProposal = $derived(proposalBesideAsk && state.state === "waiting");
   let saysState = $derived(true);
   let label = $derived(
     pageWaits ? "Waiting for your approval"
@@ -58,12 +63,12 @@
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
       {#if saysState && state.mark === "spinner"}<span class="cv-spinner" role="img" aria-label={state.state === "setting-up" ? (offline ? "setting up, not confirmed" : "setting up") : "working"} data-unconfirmed={offlineChip || undefined}></span>
-      {:else if saysState && state.mark === "dot"}<span class="cv-dot" aria-hidden="true"></span>
+      {:else if saysState && state.mark === "dot" && !quietProposal}<span class="cv-dot" aria-hidden="true"></span>
       {:else if state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
       {:else if state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
       {:else if state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
       {#if saysState || pageWaits}
-      <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined}>
+      <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined} data-conversation-rest-quiet={quietProposal || undefined}>
         <span class="c2-rest-label">{label}</span>{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
       </span>
       {/if}
@@ -102,6 +107,8 @@
   [data-conversation-rest-state="working"] .c2-rest-label { color:var(--cv-t2); }
   [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
+  /* The proposal's line beside an ask in the composer: quiet, the ask below carries the accent. */
+  [data-conversation-rest-quiet] .c2-rest-label { color:var(--cv-t3); font-weight:var(--cv-weight-body); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }
   [data-conversation-rest-state="unknown"] .c2-rest-label { color:var(--cv-t2); }

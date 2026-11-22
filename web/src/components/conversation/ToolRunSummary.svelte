@@ -49,23 +49,25 @@
   <svg class="c2-run-icon" class:is-live={live} viewBox="0 0 24 24" role={live ? "img" : undefined} aria-label={live ? "Running" : undefined} aria-hidden={live ? undefined : "true"}>
     {#each summary.iconPaths as path (path)}<path d={path} />{/each}
   </svg>
+  <!-- v4.1: the chevron stands right after the label ("Ran 2 commands ›", "Running ›"); a
+       running call's command follows the chevron and ellipsizes at the column edge. -->
   <span class="c2-run-line" title={live ? summary.running?.sentence : summary.sentence}>
     {#if live && summary.running}
-      <span class="c2-run-verb">{summary.running.title}</span>{#if summary.running.summary}<span class="c2-run-subject" class:c2-run-subject--literal={summary.running.summaryIsLiteral}>{summary.running.summary}</span>{/if}
+      <span class="c2-run-verb">{summary.running.title}</span>
     {:else}
       <span class="c2-run-verb">{summary.sentence}</span>
     {/if}
+    {#if label}<span class="c2-run-status" class:c2-run-status--failed={summary.failedCount > 0} data-conversation-work-status><span class="c2-run-dot" aria-hidden="true">·</span>{label}</span>{/if}
   </span>
-  <span class="c2-run-status" class:c2-run-status--failed={summary.failedCount > 0} data-conversation-work-status>{#if label}<span class="c2-run-dot" aria-hidden="true">·</span>{label}{/if}</span>
   <svg class="c2-run-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+  {#if live && summary.running?.summary}<span class="c2-run-subject" class:c2-run-subject--literal={summary.running.summaryIsLiteral}>{summary.running.summary}</span>{/if}
 </button>
 
 <style>
-  /* Glyph, words, status, chevron: as wide as what it says, so the chevron stands right after
-     its label rather than across the column, as the turn's own fold line does. */
+  /* Glyph, words (and a failure), chevron: as wide as what it says, so the chevron stands
+     right after its label, as the turn's own fold line does. */
   .c2-run-summary {
-    display: grid;
-    grid-template-columns: 14px minmax(0, auto) auto 14px;
+    display: flex;
     align-items: center;
     column-gap: var(--cv-s2);
     justify-self: start;
@@ -87,8 +89,9 @@
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .c2-run-summary:hover { background-color: var(--cv-raised); }
-  /* Running: the command runs on to the column's edge and ellipsizes there. */
-  .c2-run-summary.is-live { width: auto; justify-self: stretch; grid-template-columns: 14px minmax(0, 1fr) auto 14px; }
+  /* Running: the command after the chevron runs on to the column's edge and ellipsizes there. */
+  .c2-run-summary.is-live { width: auto; justify-self: stretch; }
+  .c2-run-summary > svg { flex: none; }
   .c2-run-summary:focus-visible {
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: calc(var(--cv-focus-width) * -1);
@@ -106,6 +109,7 @@
   @keyframes c2-run-breathe { 50% { opacity: 0.4; } }
   /* One line, always: the subject gives way with an ellipsis inside the column. */
   .c2-run-line {
+    flex: 0 1 auto;
     display: flex;
     align-items: baseline;
     gap: 6px;
@@ -125,6 +129,7 @@
   }
   .c2-run-subject {
     flex: 0 1 auto;
+    white-space: nowrap;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;

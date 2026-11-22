@@ -667,6 +667,7 @@
       {connectionTrouble}
       waitingTitle={restLine?.waiting ? restWaitingTitle : null}
       pageHoldsTheAsk={waitingOnPage !== null && ask === null && userInput === null && !credentialWaiting}
+      proposalBesideAsk={waitingOnPage !== null && (ask !== null || userInput !== null || credentialWaiting)}
       offline={activityUncertain}
       feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
@@ -739,10 +740,8 @@
 
 <style>
   .conversation-reader { display:flex; flex-direction:column; flex:1; min-height:0; }
-  /* v4: an empty conversation is the composer alone, at the top of the column under the
-     header: the composer comes first and the (empty) transcript after it. */
-  :global(.chat-panel:has([data-conversation-empty-bare]) > .c2-composer) { order: 1; margin-block-start: var(--cv-s2); }
-  :global(.chat-panel:has([data-conversation-empty-bare]) > .conversation-reader) { order: 2; }
+  /* v4.1 (revised): an empty conversation is the composer in its normal bottom place, as in
+     every other state, and an empty canvas above it. No placement of its own. */
   .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side

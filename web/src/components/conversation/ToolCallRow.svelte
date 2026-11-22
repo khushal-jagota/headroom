@@ -118,11 +118,14 @@
   <svg class="c2-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
     {#each presentation.iconPaths as path (path)}<path d={path} />{/each}
   </svg>
-  <!-- The verb never gives way; the subject takes whatever width is left and ends in an
-       ellipsis inside the row, with the whole of it in its tooltip. -->
+  <!-- v4.1: the chevron stands right after the label; the exact subject (a command, a path)
+       follows the chevron and takes whatever width is left, ending in an ellipsis inside the
+       row, with the whole of it in its tooltip. -->
   <span class="acp-step-title c2-tool-line">
-    <span class="c2-tool-verb">{presentation.title}</span>{#if presentation.summary}<span class="c2-tool-subject" class:c2-tool-subject--literal={presentation.summaryIsLiteral} data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}
+    <span class="c2-tool-verb">{presentation.title}</span>
   </span>
+  <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+  <span class="c2-tool-subject-slot">{#if presentation.summary}<span class="c2-tool-subject" class:c2-tool-subject--literal={presentation.summaryIsLiteral} data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}</span>
   <!-- How it went, in one column at the row's end, so a run of rows reads its outcomes
        straight down. A call that passed says nothing: passing is the ordinary case. -->
   <span class="c2-tool-outcome">
@@ -141,7 +144,6 @@
       </span>
     {/if}
   </span>
-  <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
 {/snippet}
 
 <div class="c2-tool" class:is-open={open} class:is-failed={presentation.outcome === "failed"}>
@@ -188,13 +190,13 @@
 </div>
 
 <style>
-  /* One line, 32 tall, on the grid every tool row and run summary shares: the kind's
-     glyph, the verb, the exact subject, how it went, and the chevron slot. */
+  /* One line, 32 tall: the kind's glyph, the verb, the chevron right after it (v4.1), the
+     exact subject, and how it went at the row's end. */
   .acp-step {
     display: grid;
-    grid-template-columns: 14px minmax(0, 1fr) minmax(72px, auto) 14px;
+    grid-template-columns: 14px minmax(0, max-content) 14px minmax(0, 1fr) minmax(72px, auto);
     align-items: center;
-    column-gap: 10px;
+    column-gap: var(--cv-s2);
     width: 100%;
     min-width: 0;
     height: 32px;
@@ -236,7 +238,8 @@
     font-size: inherit;
     letter-spacing: normal;
   }
-  .c2-tool-verb { flex: none; color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  .c2-tool-verb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  .c2-tool-subject-slot { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
   .c2-tool-subject {
     flex: 0 1 auto;
     min-width: 0;

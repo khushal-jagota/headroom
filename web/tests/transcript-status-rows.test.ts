@@ -90,13 +90,18 @@ describe("a message that was not delivered", () => {
     const sentence = "codex app-server exited with code 1 before it accepted the prompt";
     const html = draw({ ...base, kind: "prompt_refused", reason: "backend_did_not_start", sentence });
     const status = html.slice(html.indexOf("data-conversation-message-status"));
-    // The same callout as a failed turn, standing on the bubble's right edge.
-    expect(html).toContain("c2-status--end");
+    // v4.1: the same callout as a failed turn, the full column width and left-aligned; the
+    // message spans the column for it, and no "!" mark stands beside the bubble.
+    expect(html).not.toContain("c2-status--end");
+    expect(html).toMatch(/class="chat-u[^"]*has-callout/);
     expect(html).toContain("c2-status--callout");
     expect(status).toMatch(/c2-status-dot[\s\S]*This message was not delivered/);
     expect(status).toContain("The backend would not start. Send it again to retry");
-    // Its offered next step is a real control, in the callout's second button style.
+    // Its offered next step is a real control. With no Resend before it, it is the callout's
+    // first action, which CSS fills (.c2-status-actions > .c2-status-second:first-child).
     expect(status).toMatch(/class="cv-button c2-status-second c2-status-choose[^"]*"[^>]*data-conversation-status-choose-model/);
+    const actions = status.slice(status.indexOf("c2-status-actions"));
+    expect(actions.replace(/<!--[^>]*-->|\s/g, "")).toMatch(/^c2-status-actions[^"]*">(<[^>]*>)?<buttontype="button"class="cv-buttonc2-status-secondc2-status-choose/);
   });
   it("marks an ordinary message with nothing", () => {
     const html = draw({ ...base, kind: "prompt", mode: "queue", sentAtUnixMilliseconds: 1000 });
@@ -143,7 +148,7 @@ describe("the weight of a status line", () => {
     expect(callout).not.toContain("Copy details</button>");
     const underAMessage = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, align: "end" } }).body;
     expect(underAMessage).toContain("c2-status--callout");
-    expect(underAMessage).toContain("c2-status--end");
+    expect(underAMessage).not.toContain("c2-status--end");
     const note = render(TranscriptStatusRow, { props: { status: { tone: "warning", title: "Delivery not confirmed.", detail: null }, align: "end" } }).body;
     expect(note).toContain("c2-status--note");
   });

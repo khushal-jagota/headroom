@@ -112,7 +112,9 @@
 {/snippet}
 
 {#if shownWeight === "callout"}
-  <div bind:this={root} class="c2-status c2-status--callout c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
+  <!-- v4.1: a callout is always the full column width and left-aligned, whatever it belongs
+       to; a message's callout says which message by its heading. -->
+  <div bind:this={root} class="c2-status c2-status--callout c2-status--{status.tone}" {...attributes}>
     <span class="c2-status-line"><span class="c2-status-dot" aria-hidden="true"></span><span class="c2-status-title">{calloutHeading}</span></span>
     {#if calloutReason}<p class="c2-status-reason" data-conversation-status-next>{calloutReason}</p>{/if}
     {#if actions || status.detail || status.action === "choose-model"}
@@ -184,17 +186,20 @@
   .c2-status--note.c2-status--warning .c2-status-title { color: var(--cv-caution); }
   .c2-status--note .c2-status-next { color: var(--cv-t3); }
 
-  /* Callout (v4): one block for every error. #191919, radius 12, padding 16, no edge and no
-     wash. Row 1: the danger dot and what failed, 14 semibold in the first tone. Row 2: the
-     reason in the prose voice. Row 3: its actions, one size: the main one filled, the other
-     bare. */
+  /* Callout (v4.1): one block for every error, always the full column width, left-aligned.
+     Radius 12, padding 16, no edge. An error's block wears a faint red tint, the only tinted
+     surface in the conversation; any other callout stays on #191919. Row 1: the danger dot
+     and what failed, 14 semibold in the first tone. Row 2: the reason in the prose voice.
+     Row 3: its actions, one size: the first one filled, the rest bare, Details last. */
   .c2-status--callout {
     align-self: stretch;
     display: grid;
     padding: var(--cv-s4);
     border-radius: var(--cv-r-lg);
     background: #191919;
+    text-align: start;
   }
+  .c2-status--callout.c2-status--error { background: rgb(229 132 138 / 8%); }
   .c2-status-dot { flex: none; width: 8px; height: 8px; margin-block-start: 6px; border-radius: 50%; background: var(--cv-t3); }
   .c2-status--error .c2-status-dot { background: #e5848a; }
   .c2-status--warning .c2-status-dot { background: var(--cv-caution); }
@@ -218,8 +223,6 @@
     gap: var(--cv-s2);
     margin-block-start: var(--cv-s3);
   }
-  /* A message's callout stands under that message, on its right edge, as wide as it needs. */
-  .c2-status--callout.c2-status--end { align-self: flex-end; width: fit-content; max-width: 100%; text-align: start; }
 
   /* Details is a quiet ghost beside the real next step, never above it. Its chevron sits
      right after its word. */
@@ -237,6 +240,10 @@
   :global(.c2-status-main:disabled) { color: var(--cv-t3); }
   :global(.c2-status-second) { background: transparent; color: var(--cv-t2); }
   :global(.c2-status-second:hover:not(:disabled)) { background: #2a2a2a; color: var(--cv-t1); }
+  /* The first action is always the filled one: with no Resend before it, Choose another
+     model takes the fill. */
+  .c2-status-actions > :global(.c2-status-second:first-child) { background: #2a2a2a; color: var(--cv-t1); }
+  .c2-status-actions > :global(.c2-status-second:first-child:hover:not(:disabled)) { background: var(--cv-control-hover); }
   .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { color: var(--cv-t1); }
   .c2-status-actions > .c2-status-toggle:first-child { margin-inline-start: calc(var(--cv-s2) * -1); }
   .c2-status-chevron {

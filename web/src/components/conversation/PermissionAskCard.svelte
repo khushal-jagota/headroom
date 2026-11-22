@@ -127,7 +127,6 @@
         type="button"
         class="cv-ask-row c2-ask-choice"
         class:is-selected={docked && chosen?.optionId === row.optionId}
-        class:is-quiet={row.emphasis === "decline"}
         aria-pressed={docked ? chosen?.optionId === row.optionId : undefined}
         data-conversation-ask-choice={row.optionId}
         data-conversation-ask-action={shape === "question" ? undefined : row.optionId}

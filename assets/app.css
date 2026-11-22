@@ -1028,6 +1028,10 @@ strong {
   box-shadow: inset 0 0 0 var(--border-hairline) var(--media-edge);
   pointer-events: none;
 }
+/* v4.1: in the conversation every picture and chart thumbnail carries a 1px white 10% edge,
+ * so a dark image does not dissolve into the #121212 canvas. */
+[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }
+[data-conversation-pane] .markdown img { outline: 1px solid rgb(255 255 255 / 10%); outline-offset: -1px; }
 .file-preview-media:focus { outline: 0; }
 .file-preview-media:focus-visible { outline: var(--focus-width) solid var(--focus-ring); outline-offset: var(--focus-offset); }
 .file-preview-media > .file-preview-image,
@@ -2375,12 +2379,28 @@ button.list-row:hover .list-row-title {
   color: var(--cv-t1);
 }
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:disabled { opacity: 1; color: var(--cv-t4); }
-[data-conversation-composer] .chat-foot .listbox-picker-chevron,
-[data-conversation-composer] .chat-foot [data-conversation-model-picker] .listbox-picker-chevron-drawn { display: none; }
-/* v4: the model chip is one quiet line, icon + "gpt-6.1-sol High", 13 in the meta tone. */
-[data-conversation-composer] .chat-foot .model-picker-face { color: inherit; font-weight: var(--cv-weight-body); }
-[data-conversation-composer] .chat-foot .model-picker-effort { color: inherit; font-weight: var(--cv-weight-body); text-transform: capitalize; }
-[data-conversation-composer] .chat-foot .listbox-picker-trigger:hover .model-picker-face { color: var(--cv-t1); }
+[data-conversation-composer] .chat-foot .listbox-picker-chevron { display: none; }
+/* v4.1: the model chip wears the Steer chip's style: 28px, radius 8, the control fill, the
+   words in 500 t1, "gpt-6.1-sol · High" and a drawn chevron in t3. */
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger {
+  gap: 6px;
+  padding-inline: 10px 6px;
+  background: var(--cv-control);
+  color: var(--cv-t1);
+  font-weight: var(--cv-weight-label);
+}
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger:hover:not(:disabled),
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open { background: var(--cv-control-hover); color: var(--cv-t1); }
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger:disabled { background: var(--cv-control); color: var(--cv-t3); }
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] .listbox-picker-chevron-drawn {
+  display: block;
+  width: 14px;
+  height: 14px;
+  color: var(--cv-t3);
+}
+[data-conversation-composer] .chat-foot .model-picker-face { color: inherit; font-weight: inherit; }
+[data-conversation-composer] .chat-foot .model-picker-effort { color: inherit; font-weight: inherit; text-transform: capitalize; }
+[data-conversation-composer] .chat-foot .model-picker-effort::before { content: "· "; }
 .chat-submit {
   flex: none;
   display: flex;

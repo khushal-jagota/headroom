@@ -58,15 +58,13 @@
   }
   async function resend(): Promise<void> { if (!local || busy) return; busy = true; try { await onSendAgain?.(local.messageId); } finally { busy = false; } }
 </script>
-<article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} class:undelivered={row?.kind === 'prompt_refused' || row?.kind === 'prompt_discarded'} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
+<article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} class:undelivered={row?.kind === 'prompt_refused' || row?.kind === 'prompt_discarded'} class:has-callout={label === null && status?.tone === 'error'} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
   {#if label !== null}
-    <!-- Someone other than the person wrote this (Panels, another agent). It is a quiet
-         system row: an arrow, who sent it, then their words, all in the meta voice. No box:
-         the small size, the quiet tone and the left edge say it is not the person's. -->
+    <!-- Someone other than the person wrote this (Panels, another agent). v4.1: one line in
+         the meta voice, 13 in #a3a3a3, "Panels: <text>". No arrow, no bold, no box. -->
     <div class="c2-system-row">
-      <svg class="c2-system-mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5" /></svg>
       <div class="c2-system-body">
-        <div class="c2-label" data-conversation-prompt-label>{label}</div>
+        <div class="c2-label" data-conversation-prompt-label>{label}:</div>
         <MessagePieces {presentationRowKey} {content} {conversationId}/>
       </div>
     </div>
@@ -114,28 +112,14 @@
   .chat-u :global(.conversation-file-card--media) { align-self: flex-end; }
 
   .c2-system-row {
-    display: grid;
-    grid-template-columns: 14px minmax(0, 1fr);
-    column-gap: var(--cv-s2);
     color: var(--cv-t3);
     font-size: var(--cv-type-meta);
     line-height: var(--cv-leading-meta);
   }
-  .c2-system-mark {
-    inline-size: 14px;
-    block-size: 14px;
-    margin-block-start: 3px;
-    color: var(--cv-t4);
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.6;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
   /* One line in the thread's event voice, like "Steered into the running turn": who sent it,
      then their words running on after it, wrapping under both. */
   .c2-system-body { min-width: 0; display: block; }
-  .c2-label { float: left; margin-inline-end: 6px; color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  .c2-label { float: left; margin-inline-end: 4px; color: var(--cv-t3); font-weight: var(--cv-weight-body); }
   /* The sent words keep their structure but speak in the row's small, quiet voice. */
   .c2-system-body :global(.markdown) {
     color: var(--cv-t3);
@@ -146,33 +130,23 @@
   .c2-system-body :global(.markdown > :last-child) { margin-block-end: 0; }
   .c2-system-body :global(.markdown :is(h1, h2, h3, h4, h5, h6)) {
     margin-block: var(--cv-s2) 0;
-    color: var(--cv-t2);
+    color: var(--cv-t3);
     font-size: var(--cv-type-meta);
     line-height: var(--cv-leading-meta);
   }
-  .c2-system-body :global(.markdown strong) { color: var(--cv-t2); }
+  .c2-system-body :global(.markdown :is(strong, b, h1, h2, h3, h4, h5, h6)) { color: var(--cv-t3); font-weight: var(--cv-weight-body); }
 
   /* A message that never reached the agent is not drawn as one that did: its bubble steps
-     back (the well, the body tone) and a danger mark stands beside it on the left, as a
-     message app marks one that failed to send. The callout under it says why and offers
-     Resend. No edge or rule carries it. */
+     back (the well, the body tone). The callout under it says why and offers Resend; no mark
+     beside the bubble repeats it (v4.1). No edge or rule carries it. */
   .chat-u.undelivered :global(.c2-bubble) {
-    position: relative;
     background: var(--cv-well);
     color: var(--cv-t2);
   }
-  .chat-u.undelivered :global(.c2-bubble)::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    right: calc(100% + 10px);
-    width: 18px;
-    height: 18px;
-    margin-top: -9px;
-    background: var(--cv-danger);
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
-  }
+  /* v4.1: a message with an error callout spans the column so its callout can take the full
+     width, left-aligned; the message's own pieces keep their right edge and 80% measure. */
+  .chat-u.has-callout { align-self: stretch; max-width: none; }
+  .chat-u.has-callout > :global(:not(.message-status-window)) { max-width: 80%; }
 
   .message-status-window { align-self: stretch; margin-block-start: calc(var(--cv-gap-bubble-stack) * -1); }
   .message-status { display: flex; flex-direction: column; }

@@ -198,9 +198,10 @@
   }
   .c2-meta-spin.is-turning { animation: c2-meta-spin var(--cv-spin) linear infinite; }
   @keyframes c2-meta-spin { to { transform: rotate(395deg); } }
-  .c2-meta-working { color: var(--cv-t3); }
+  /* v4.1: "Working" in #d9d9d9, its duration in #a3a3a3. "Worked for" stays #a3a3a3. */
+  .c2-meta-working { color: var(--cv-t2); }
   .c2-meta-working.is-alive {
-    background: linear-gradient(90deg, var(--cv-t3) 0%, var(--cv-t3) 35%, var(--cv-t1) 50%, var(--cv-t3) 65%, var(--cv-t3) 100%);
+    background: linear-gradient(90deg, var(--cv-t2) 0%, var(--cv-t2) 35%, var(--cv-t1) 50%, var(--cv-t2) 65%, var(--cv-t2) 100%);
     background-size: 200% 100%;
     -webkit-background-clip: text;
             background-clip: text;
@@ -212,6 +213,6 @@
   @media (prefers-reduced-motion: reduce) {
     .c2-meta--fold, .c2-meta-chevron { transition: none; }
     .c2-meta-spin.is-turning { animation: none; }
-    .c2-meta-working.is-alive { animation: none; background: none; color: var(--cv-t3); }
+    .c2-meta-working.is-alive { animation: none; background: none; color: var(--cv-t2); }
   }
 </style>
