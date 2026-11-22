@@ -8,7 +8,7 @@
   import { navigationWindow, reviewProposalIdentity } from "../lib/navigation/presentation";
 
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import type { NavigationReviewItem as ReviewItem, NavigationReviewTicketItem, ReviewMessageItem } from "../lib/types";
+  import type { NavigationReviewItem as ReviewItem, NavigationReviewTicketItem, ReviewAskItem, ReviewMessageItem } from "../lib/types";
   import { viewWindow } from "../lib/navigation/views/owner";
   import ResourceState from "../components/ResourceState.svelte";
   import ReviewTicketCard from "../components/ReviewTicketCard.svelte";
@@ -79,8 +79,10 @@
   let layerOpening = $state(0);
 
   function itemKey(item: ReviewItem): string {
-    return item.review_item_type === 'ticket' ? `ticket:${item.ticket_id}` : `${item.review_item_type}:${item.conversation_id}`;
+    return item.review_item_type === 'ticket' ? `ticket:${item.ticket_id}` : item.review_item_type === 'ask' ? `ask:${askKey(item)}` : `message:${item.conversation_id}`;
   }
+  /** One ask, not its conversation: a second ask in the same turn is a new card, not the answered one. */
+  function askKey(ask: ReviewAskItem): string { return `${ask.conversation_id}:${ask.waiting_since}`; }
   /** The messages a card holds. A Manager's or the Chief's ask is a card of its own, with none. */
   function messagesOf(item: ReviewItem): ReviewMessageItem[] {
     return item.review_item_type === 'message' ? [item] : item.review_item_type === 'ticket' ? item.messages : [];
@@ -95,10 +97,10 @@
    *  card with nothing left is gone from the queue. */
   function undecided(item: ReviewItem): ReviewItem | null {
     if (item.review_item_type === 'message') return readMessages[item.conversation_id] ? null : item;
-    if (item.review_item_type === 'ask') return answeredAsks[item.conversation_id] ? null : item;
+    if (item.review_item_type === 'ask') return answeredAsks[askKey(item)] ? null : item;
     const messages=item.messages.filter(message=>!readMessages[message.conversation_id]);
     const proposal=item.proposal && !decidedProposals[reviewProposalIdentity(item.proposal)] ? item.proposal : null;
-    const ask=item.ask && !answeredAsks[item.ask.conversation_id] ? item.ask : null;
+    const ask=item.ask && !answeredAsks[askKey(item.ask)] ? item.ask : null;
     if(!proposal && !messages.length && !ask)return null;
     return messages.length===item.messages.length && proposal===item.proposal && ask===item.ask ? item : {...item,proposal,messages,ask};
   }
@@ -275,21 +277,21 @@
   });
   // An answered ask is hidden until the queue no longer holds its conversation.
   $effect(()=>{
-    const held=new Set((review?.items ?? []).flatMap(item=>item.review_item_type==='ask' ? [item.conversation_id] : item.review_item_type==='ticket' && item.ask ? [item.ask.conversation_id] : []));
+    const held=new Set((review?.items ?? []).flatMap(item=>item.review_item_type==='ask' ? [askKey(item)] : item.review_item_type==='ticket' && item.ask ? [askKey(item.ask)] : []));
     untrack(()=>{
       const gone=Object.keys(answeredAsks).filter(id=>!held.has(id));
       if(gone.length)answeredAsks=Object.fromEntries(Object.entries(answeredAsks).filter(([id])=>held.has(id)));
     });
   });
   /** Nothing waits in the conversation any more. The ask leaves its card, and the card leaves with it if it was all there was. */
-  function askResolved(conversationId:string):void {
+  function askResolved(ask:ReviewAskItem):void {
     const item=currentItem;
-    const leaves=item?.review_item_type==='ask' ? item.conversation_id===conversationId
-      : item?.review_item_type==='ticket' && !item.proposal && item.messages.length===0 && item.ask?.conversation_id===conversationId;
+    const leaves=item?.review_item_type==='ask' ? askKey(item)===askKey(ask)
+      : item?.review_item_type==='ticket' && !item.proposal && item.messages.length===0 && item.ask!==null && askKey(item.ask)===askKey(ask);
     if (heldFile) { deck.layerExit=leaves ? 'left' : 'drop'; artifact.close(); }
     if(item && leaves)advancePast(item);
-    answeredAsks={...answeredAsks,[conversationId]:true};
-    busyConversations={...busyConversations,[conversationId]:false};
+    answeredAsks={...answeredAsks,[askKey(ask)]:true};
+    busyConversations={...busyConversations,[ask.conversation_id]:false};
     void navigation.owner.recover().catch(()=>undefined);
   }
   function messageBusyChanged(busy:boolean,conversationId:string):void {
@@ -475,7 +477,7 @@
             {:else if currentItem.review_item_type === "ask"}
               {@const ask = currentItem}
               {#key itemKey(ask)}
-                <ReviewAskCard item={ask} onSkip={()=>skip(ask)} onResolved={()=>askResolved(ask.conversation_id)}
+                <ReviewAskCard item={ask} onSkip={()=>skip(ask)} onResolved={()=>askResolved(ask)}
                   onBusy={messageBusyChanged} footer={askKeys}/>
               {/key}
             {:else}
@@ -485,7 +487,9 @@
                   {#if ticket.ask}
                     {@const ask = ticket.ask}
                     <div data-deck-part out:deckPartOut={{ deck }}>
-                      <ReviewAskCard item={ask} embedded onSkip={()=>skip(ticket)} onResolved={()=>askResolved(ask.conversation_id)} onBusy={messageBusyChanged}/>
+                      {#key askKey(ask)}
+                        <ReviewAskCard item={ask} embedded onSkip={()=>skip(ticket)} onResolved={()=>askResolved(ask)} onBusy={messageBusyChanged}/>
+                      {/key}
                     </div>
                   {/if}
                   {#if ticket.proposal}
