@@ -109,11 +109,10 @@
     return () => { for (const session of signInSessions.values()) session.leave(); };
   });
 
-  /** The Update button shows while Panels can run an update that may change something. */
+  /** The Update button shows whenever Panels can run the update, as before the redesign:
+   *  an update that is already current can still repair a broken installation. */
   function offersUpdate(snapshot: BackendSnapshot | undefined): boolean {
-    if (!snapshot?.installed || !snapshot.update_advisory?.update_command) return false;
-    const advisory = snapshot.update_advisory;
-    return refreshing || Boolean(refreshError) || advisory.latest_version === null || advisory.update_available;
+    return Boolean(snapshot?.installed && snapshot.update_advisory?.update_command);
   }
 
   function offersSignIn(snapshot: BackendSnapshot | undefined, signInState: SignInPageState): boolean {

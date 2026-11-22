@@ -40,6 +40,6 @@ The Usage label in the shell, at `#/backends`, and the same page inside the Work
 
 ## Code
 
-`server/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`. Settings and sign-in are `web/src/components/conversation/BackendSettings.svelte` and `BackendSignInBlock.svelte`, with the session in `web/src/lib/conversation/backendSignInSession.ts`.
+`server/conversation/usage/` and `web/src/routes/BackendsRoute.svelte`. Settings and sign-in are `web/src/components/settings/BackendSettings.svelte` and `web/src/components/conversation/BackendSignInBlock.svelte`, with the session in `web/src/lib/conversation/backendSignInSession.ts`.
 
 _Last verified: 2026-11-18._

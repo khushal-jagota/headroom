@@ -68,7 +68,8 @@
     if (event.target === event.currentTarget && !grant && !creating) finishAdding();
   }
   function windowKeydown(event: KeyboardEvent) {
-    if (adding && event.key === "Escape" && !creating) { event.preventDefault(); finishAdding(); }
+    // Escape, like the scrim, never closes the join steps: the credential is shown once.
+    if (adding && event.key === "Escape" && !creating && !grant) { event.preventDefault(); finishAdding(); }
   }
   /** Tab stays inside the open sheet. */
   function sheetKeydown(event: KeyboardEvent) {
@@ -206,6 +207,8 @@
 
 <style>
   .machine-mark { flex:none; display:grid; place-items:center; width:var(--space-5); color:var(--machine-color); }
+  /* The rail icons' size (as `.utility svg` in app.css), not the inline text size MachineSymbol uses elsewhere. */
+  .machine-mark :global(svg) { width:18px; height:18px; }
   .machine-away { color:var(--accent-attention); }
   .machine-detail { padding:0 0 var(--space-4) calc(var(--space-5) + var(--space-4)); }
   .machine-detail:empty { display:none; }

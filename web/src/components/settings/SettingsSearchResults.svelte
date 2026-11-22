@@ -3,7 +3,6 @@
 
   /* Search results as rows: the label with the matched words marked, then the section path
      and the current value. The highlighted row follows the arrow keys in the field. */
-  const LIMIT = 40;
   let words = $derived(settingsSearch.query.trim().split(/\s+/).filter(Boolean).map(word => word.toLowerCase()));
 
   function parts(text: string): { text: string; marked: boolean }[] {
@@ -26,7 +25,7 @@
   <p class="settings-search-empty">No settings match “{settingsSearch.query.trim()}”.</p>
 {:else}
   <div class="settings-search-results" role="listbox" aria-label="Search results" data-settings-search-results>
-    {#each settingsSearch.hits.slice(0, LIMIT) as hit, index (`${hit.href}|${hit.label}|${hit.where}`)}
+    {#each settingsSearch.hits as hit, index (`${hit.href}|${hit.label}|${hit.where}`)}
       <a class="settings-search-hit" class:settings-search-hit--highlighted={index === settingsSearch.highlighted} href={hit.href} role="option" aria-selected={index === settingsSearch.highlighted} tabindex="-1"
         onclick={(event) => { event.preventDefault(); openSettingsSearchHit(hit); }}
         onpointerenter={() => (settingsSearch.highlighted = index)}>

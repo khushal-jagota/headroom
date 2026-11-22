@@ -11,11 +11,13 @@
      seven sections in three groups. On a phone this is the first screen. */
   let { section }: { section: SettingsSection } = $props();
 
+  /** The most results shown; the arrow keys move only among these. */
+  const SEARCH_RESULT_LIMIT = 40;
   let field = $state<HTMLInputElement | null>(null);
   let searching = $derived(settingsSearch.query.trim() !== "");
   const entries = useSettingsSearchEntries(() => searching);
   $effect(() => {
-    settingsSearch.hits = searching ? searchSettings(entries.current, settingsSearch.query) : [];
+    settingsSearch.hits = searching ? searchSettings(entries.current, settingsSearch.query).slice(0, SEARCH_RESULT_LIMIT) : [];
   });
 
   function fieldKey(event: KeyboardEvent): void {

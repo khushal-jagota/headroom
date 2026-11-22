@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { untrack } from "svelte";
   import { settingsSearch } from "../../lib/settings/search.svelte";
 
   /* One flat Settings row: label and description on the left, the control on the right.
@@ -21,11 +22,11 @@
   let flashing = $state(false);
   $effect(() => {
     if (!rowId || settingsSearch.flashRowId !== rowId || !element) return;
-    settingsSearch.flashRowId = null;
+    // Clearing the request re-runs this effect, so the flash is not tied to its cleanup.
+    untrack(() => (settingsSearch.flashRowId = null));
     element.scrollIntoView({ block: "center" });
     flashing = true;
-    const timer = setTimeout(() => (flashing = false), 1600);
-    return () => clearTimeout(timer);
+    setTimeout(() => (flashing = false), 1600);
   });
 </script>
 

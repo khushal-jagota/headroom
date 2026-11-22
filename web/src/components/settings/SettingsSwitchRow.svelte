@@ -25,7 +25,7 @@
 
   async function toggle(next: boolean): Promise<void> {
     pending += 1;
-    try { await toggleOptimistically(switchState, next, save, failureText); }
+    try { await toggleOptimistically(switchState, next, save, failureText, () => checked); }
     finally { pending -= 1; }
   }
 </script>

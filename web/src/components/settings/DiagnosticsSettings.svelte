@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { settingsSearch } from "../../lib/settings/search.svelte";
   import VpsPage from "../vps/VpsPage.svelte";
   import SettingsPage from "./SettingsPage.svelte";
@@ -13,11 +14,11 @@
     const key = CSS.escape(rowId.slice("diagnostics:".length));
     const panel = element.querySelector<HTMLElement>(`[data-vps-metric="${key}"], [data-vps-workload="${key}"]`);
     if (!panel) return;
-    settingsSearch.flashRowId = null;
+    // Clearing the request re-runs this effect, so the flash is not tied to its cleanup.
+    untrack(() => (settingsSearch.flashRowId = null));
     panel.scrollIntoView({ block: "center" });
     panel.classList.add("diagnostics-flash");
-    const timer = setTimeout(() => panel.classList.remove("diagnostics-flash"), 1600);
-    return () => { clearTimeout(timer); panel.classList.remove("diagnostics-flash"); };
+    setTimeout(() => panel.classList.remove("diagnostics-flash"), 1600);
   });
 </script>
 

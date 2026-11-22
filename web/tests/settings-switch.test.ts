@@ -9,7 +9,7 @@ describe("a switch that saves at once", () => {
   it("moves at once and stays when the save succeeds", async () => {
     const state = createOptimisticSwitch(false);
     let release!: () => void;
-    const saving = toggleOptimistically(state, true, () => new Promise<void>(resolve => (release = resolve)), failure);
+    const saving = toggleOptimistically(state, true, () => new Promise<void>(resolve => (release = resolve)), failure, () => false);
     expect(state.shown).toBe(true);
     release();
     await saving;
@@ -18,17 +18,27 @@ describe("a switch that saves at once", () => {
 
   it("moves back and says why when the save fails", async () => {
     const state = createOptimisticSwitch(true);
-    await toggleOptimistically(state, false, () => Promise.reject(new Error("offline")), failure);
+    await toggleOptimistically(state, false, () => Promise.reject(new Error("offline")), failure, () => true);
     expect(state).toMatchObject({ shown: true, error: `${failure} offline` });
-    await toggleOptimistically(state, false, () => Promise.resolve(), failure);
+    await toggleOptimistically(state, false, () => Promise.resolve(), failure, () => true);
     expect(state).toMatchObject({ shown: false, error: null });
+  });
+
+  it("moves back to the saved value when two quick presses both fail", async () => {
+    const state = createOptimisticSwitch(false);
+    let rejectFirst!: (error: Error) => void;
+    const first = toggleOptimistically(state, true, () => new Promise((_, reject) => (rejectFirst = reject)), failure, () => false);
+    const second = toggleOptimistically(state, false, () => Promise.reject(new Error("offline")), failure, () => false);
+    rejectFirst(new Error("offline"));
+    await Promise.all([first, second]);
+    expect(state.shown).toBe(false);
   });
 
   it("does not let an older failed press undo a newer one", async () => {
     const state = createOptimisticSwitch(false);
     let rejectFirst!: (error: Error) => void;
-    const first = toggleOptimistically(state, true, () => new Promise((_, reject) => (rejectFirst = reject)), failure);
-    const second = toggleOptimistically(state, false, () => Promise.resolve(), failure);
+    const first = toggleOptimistically(state, true, () => new Promise((_, reject) => (rejectFirst = reject)), failure, () => false);
+    const second = toggleOptimistically(state, false, () => Promise.resolve(), failure, () => false);
     await second;
     rejectFirst(new Error("late"));
     await first;
