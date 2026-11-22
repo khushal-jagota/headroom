@@ -2,6 +2,7 @@
 import { isAbsolute, join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { remove_owned_tree } from '../release/archive.ts';
+import { machine_build_differences } from '../release/machine_identity.ts';
 import { with_publication_entry } from '../release/publication_entry.ts';
 import { publication_json_file, publication_text } from '../release/publication_identity.ts';
 import { validate_app_sha } from '../release/logic/manifest.ts';
@@ -33,9 +34,19 @@ try {
       { ...options, output_directory: repeat_output },
       execution,
     );
-    await remove_owned_tree(repeat_output);
-    if (built.build_id !== repeated.build_id)
+    if (built.build_id !== repeated.build_id) {
+      const differences = await machine_build_differences(
+        join(options.output_directory, 'runtime'),
+        join(repeat_output, 'runtime'),
+      );
+      console.error(
+        'Linux repeat build differences (%d):\n%s',
+        differences.length,
+        differences.slice(0, 30).join('\n'),
+      );
       throw new Error('Independent Linux machine builds produced different identities');
+    }
+    await remove_owned_tree(repeat_output);
     await writeFile(
       join(options.output_directory, 'linux-executor-publication.json'),
       JSON.stringify({

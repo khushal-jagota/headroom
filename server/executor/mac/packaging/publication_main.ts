@@ -5,7 +5,10 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { extract } from 'tar';
 import { hash_archive, remove_owned_tree } from '../../../environments/release/archive.ts';
-import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
+import {
+  digest_machine_build,
+  machine_build_differences,
+} from '../../../environments/release/machine_identity.ts';
 import { with_publication_entry } from '../../../environments/release/publication_entry.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
 import { publication_id } from '../../../environments/release/publication_identity.ts';
@@ -64,9 +67,19 @@ export function publication_main(args: string[]): Promise<0 | 1> {
       production_node_modules: repeat_node_modules,
       output: repeat_output,
     });
-    await remove_owned_tree(repeat_output);
-    if (built.build_id !== repeated.build_id)
+    if (built.build_id !== repeated.build_id) {
+      const differences = await machine_build_differences(
+        join(text('output'), 'runtime'),
+        join(repeat_output, 'runtime'),
+      );
+      console.error(
+        'Darwin repeat build differences (%d):\n%s',
+        differences.length,
+        differences.slice(0, 30).join('\n'),
+      );
       throw new Error('Independent Darwin machine builds produced different identities');
+    }
+    await remove_owned_tree(repeat_output);
     const output = text('output'),
       archive = join(output, 'panels-mac-runtime.tar.gz');
     // Retire the assembly path. All execution below uses a fresh unpack of the sealed bytes.

@@ -23,29 +23,55 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-export async function digest_machine_build(root: string): Promise<string> {
+async function digest_machine_tree(root: string, entries?: Map<string, string>): Promise<string> {
   const digest = createHash('sha256');
   for (const path of await app_tree_paths(root)) {
     const name = relative(root, path).split(sep).join('/'),
       info = await lstat(path);
+    const entry = entries === undefined ? undefined : createHash('sha256');
+    const update = (bytes: string | Buffer) => {
+      digest.update(bytes);
+      entry?.update(bytes);
+    };
     if (info.isSymbolicLink()) {
-      digest.update(JSON.stringify([name, 'symlink', await readlink(path)]) + '\n');
+      update(JSON.stringify([name, 'symlink', await readlink(path)]) + '\n');
     } else if (info.isDirectory()) {
-      digest.update(JSON.stringify([name, 'directory', info.mode & 0o111]) + '\n');
+      update(JSON.stringify([name, 'directory', info.mode & 0o111]) + '\n');
     } else if (info.isFile()) {
       const excluded = provenance_fields[name];
       if (excluded !== undefined) {
         const metadata = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
         for (const key of excluded) delete metadata[key];
-        digest.update(
-          JSON.stringify([name, 'metadata', info.mode & 0o111, canonical(metadata)]) + '\n',
-        );
+        update(JSON.stringify([name, 'metadata', info.mode & 0o111, canonical(metadata)]) + '\n');
       } else {
-        digest.update(JSON.stringify([name, 'file', info.mode & 0o111, info.size]) + '\n');
-        for await (const bytes of createReadStream(path)) digest.update(bytes);
-        digest.update('\n');
+        update(JSON.stringify([name, 'file', info.mode & 0o111, info.size]) + '\n');
+        for await (const bytes of createReadStream(path)) update(bytes);
+        update('\n');
       }
     } else throw new Error(`Unsupported machine payload entry: ${name}`);
+    if (entry !== undefined) entries!.set(name, entry.digest('hex'));
   }
   return digest.digest('hex');
+}
+
+export function digest_machine_build(root: string): Promise<string> {
+  return digest_machine_tree(root);
+}
+
+/** Failure diagnostics bind the same bytes as the identity and expose no payload contents. */
+export async function machine_build_differences(
+  first: string,
+  repeated: string,
+): Promise<string[]> {
+  const left = new Map<string, string>(),
+    right = new Map<string, string>();
+  await digest_machine_tree(first, left);
+  await digest_machine_tree(repeated, right);
+  return [...new Set([...left.keys(), ...right.keys()])]
+    .sort()
+    .filter((name) => left.get(name) !== right.get(name))
+    .map(
+      (name) =>
+        `${name}: first=${left.get(name) ?? 'missing'} repeated=${right.get(name) ?? 'missing'}`,
+    );
 }

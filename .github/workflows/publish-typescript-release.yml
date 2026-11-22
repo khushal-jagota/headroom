@@ -318,6 +318,7 @@ jobs:
   machine-compatibility:
     name: Historical machine compatibility (${{ matrix.platform }})
     needs: [mac, linux-executor]
+    if: always() && (needs.mac.result == 'success' || needs.linux-executor.result == 'success')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
