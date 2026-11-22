@@ -138,7 +138,9 @@
     gap: 2px;
     min-height: 0;
     height: auto;
-    padding: 0;
+    /* A 24 px target on a 20 px line: the extra 2 px above and below take no space. */
+    padding: 2px 0;
+    margin-block: -2px;
     border: 0;
     border-radius: 0;
     background: none;

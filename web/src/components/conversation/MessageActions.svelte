@@ -157,7 +157,7 @@
 </script>
 
 {#if time || copyText}
-  <div class="message-actions" class:is-shown={pointed} class:is-tapped={tapped} hidden={!placed} style:--message-actions-offset="{offset}px" data-message-actions bind:this={actions}>
+  <div class="message-actions" class:is-shown={pointed && placed} class:is-tapped={tapped && placed} class:is-unplaced={!placed} style:--message-actions-offset="{offset}px" data-message-actions bind:this={actions}>
     {#if time}<time class="message-time" datetime={time.iso} title={time.full}>{time.short}</time>{/if}
     {#if copyText}
       {@const label = copied === "copied" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy"}
@@ -195,7 +195,10 @@
     pointer-events: none;
     transition: opacity var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .message-actions[hidden] { display: none; }
+  /* No room under the message: the pointer never shows the row, so it covers nothing. Copy
+     stays in the keyboard's order, and only while it has focus does the row stand on the
+     canvas over what follows. */
+  .message-actions.is-unplaced:focus-within { background: var(--cv-canvas); }
   /* Under the person's bubble the actions keep the bubble's right edge. */
   :global(.chat-u) > .message-actions {
     inset-inline-start: auto;

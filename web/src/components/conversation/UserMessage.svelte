@@ -156,7 +156,9 @@
   .c2-undelivered-reason { margin: 0; color: var(--cv-failure-ink); }
   .c2-undelivered-actions { display: flex; flex-wrap: wrap; gap: var(--cv-s4); margin-block-start: var(--cv-s3); }
   .c2-undelivered-actions button {
-    padding: 0;
+    /* A 24 px target on a 20 px line: the extra 2 px above and below take no space. */
+    padding: 2px 0;
+    margin-block: -2px;
     border: 0;
     background: none;
     color: var(--cv-system-action-ink);
