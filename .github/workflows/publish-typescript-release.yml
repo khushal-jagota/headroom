@@ -381,7 +381,14 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: panels-machine-compatibility-${{ matrix.platform }}
-          path: ${{ runner.temp }}/machine-compatibility/tmp/proof/
+          path: |
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/machine-compatibility-*.json
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/failure.txt
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/server-failure.json
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-stdout.log
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-stderr.log
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-codex.jsonl
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-claude.jsonl
           if-no-files-found: error
           retention-days: 30
 
