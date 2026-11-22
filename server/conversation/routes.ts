@@ -38,6 +38,7 @@ import {
 import { resolve_conversation_start_request } from './logic/conversation_start_resolution.ts';
 import type { SqliteProcessConversationSystem } from './system.ts';
 import type { ConversationViewRuntime } from './views/routes.ts';
+import { pendingCredentialRequestBody } from './publication/coordinator.ts';
 
 export interface ConversationHttpRuntime {
   readonly core: SqliteProcessConversationSystem;
@@ -168,6 +169,9 @@ async function state_json(
       event.payload instanceof UserInputRequestedEventPayload &&
       inputs.has(event.payload.request_id),
   )?.payload;
+  const credential_request = runtime.record.database.read((sql) =>
+    pendingCredentialRequestBody(sql, conversation_id),
+  );
   return {
     conversation_id: record.conversation_id,
     backend_key: record.backend_key,
@@ -222,6 +226,7 @@ async function state_json(
             })),
           }
         : null,
+    pending_credential_request: credential_request,
   };
 }
 function direct_send_body(body: unknown, reply: FastifyReply) {

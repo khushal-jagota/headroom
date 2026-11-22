@@ -51,6 +51,23 @@ export function pendingCredentialConversations(sql: ReadSql, ids: Set<string>): 
   );
 }
 
+/** The newest key request in one conversation that still waits on the owner, as its stored
+ *  row body. The docked conversation reads no transcript, so this is how it learns the key
+ *  request it must show, as it learns a waiting permission ask or question. */
+export function pendingCredentialRequestBody(sql: ReadSql, conversation_id: string): unknown {
+  if (
+    sql.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_requests'") ===
+    undefined
+  )
+    return null;
+  const row = sql.get<{ body: string }>(
+    'SELECT body FROM credential_requests WHERE conversation_id=? ' +
+      "AND json_extract(body,'$.state')='pending' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+    [conversation_id],
+  );
+  return row === undefined ? null : (JSON.parse(row.body) as unknown);
+}
+
 const identity = () => randomUUID().replaceAll('-', '');
 
 function sync<T>(work: () => T): T {

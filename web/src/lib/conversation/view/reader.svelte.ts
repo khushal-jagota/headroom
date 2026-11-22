@@ -303,6 +303,14 @@ export class ConversationViewReader {
         }
         this.accept(page, false);
     }
+    /** A reader that replaces another for the same conversation (the dock opened, the lens or
+     *  the tab changed) starts from what that one last knew, so the asks, the dock's line and
+     *  the header hold still until its own snapshot replaces it. Nothing waiting on the person
+     *  disappears and comes back, which would also replay its entrance. */
+    continueFrom(previous: { id: string; status: ConversationViewStatus | null } | null): void {
+        if (previous === null || previous.id !== this.id || this.receivedSnapshot) return;
+        this.status = previous.status;
+    }
     /** Diagnostics that expired take every body read from them with them. */
     private noteStatus(status: ConversationViewStatus): void {
         if (status.diagnostics_expired && this.status?.diagnostics_expired !== true) this.discardedBodies++;

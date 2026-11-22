@@ -4,6 +4,7 @@ export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from 
 
 import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
+import type { CredentialRequestRowBody } from "./view/contracts";
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
  * Every shape here is exactly what `/api/conversation` serializes, and every call is a
@@ -202,6 +203,8 @@ export type ConversationView = {
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
+  /** The newest key request still waiting on the owner. */
+  pending_credential_request?: CredentialRequestRowBody | null;
 };
 
 /** One earlier conversation of the same owner, as the record lists it.

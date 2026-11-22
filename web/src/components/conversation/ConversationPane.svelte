@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
+  import type { CredentialRequestRowBody } from "../../lib/conversation/view/contracts";
   import { NEWEST_CALLOUTS, createNewestCallouts } from "../../lib/conversation/newestCallout";
   import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
@@ -8,6 +9,7 @@
   import { tick, setContext, type Snippet } from "svelte";
   import { COMPACT_LAYOUT_MEDIA_QUERY } from "../../lib/compactLayout";
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
+  import { AskEntranceTracker } from "../../lib/conversation/askEntrance";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
@@ -21,7 +23,7 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { awaitsCredential, conversationState as readConversationState, copyText, dockPreviewText, dockStatusFrom, interruptedFrom, latestUnreadReply, paneFailureFrom, paneHeadStatus, paneTitleFor } from "../../lib/conversation/dockPresentation";
+  import { conversationState as readConversationState, copyText, dockPreviewText, dockStatusFrom, interruptedFrom, latestUnreadReply, paneFailureFrom, paneHeadStatus, paneTitleFor } from "../../lib/conversation/dockPresentation";
   import type { ConversationJump } from "./viewport/viewportConfiguration";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
@@ -93,6 +95,7 @@
     lens = $bindable("focus"),
     conversationState = $bindable(null),
     waitingOnPage = null,
+    recordedCredentialRequest = null,
     emptyState,
     emptyHint = null,
     reader = null,
@@ -208,6 +211,9 @@
     /** A decision for the person that the page shows above the dock (a proposal awaiting
      *  their approval). The dock's line then says the conversation waits on them. */
     waitingOnPage?: "approval" | null;
+    /** The record's newest key request still waiting on the owner. A docked conversation
+     *  reads no transcript, so this is how it knows the key request it shows. */
+    recordedCredentialRequest?: CredentialRequestRowBody | null;
     emptyState?: Snippet;
     /** v15 (6): the line under a centred empty composer ("You can attach or drop files
      *  here."). Set only while the conversation holds nothing; null keeps the composer at the
@@ -241,8 +247,20 @@
   /** The key request asked in the composer's place: the newest pending one, never in a
    *  read-only pane. The transcript leaves exactly this one out (DOCKED_CREDENTIAL_REQUEST);
    *  settled requests, and any older one still pending, stay inline. */
-  let credentialRequest = $derived(readOnly ? null : pendingCredentialRequest(rows, reader?.pages.flatMap(page => page.items) ?? []));
+  let credentialRequest = $derived(readOnly ? null : pendingCredentialRequest(rows, reader?.pages.flatMap(page => page.items) ?? [], recordedCredentialRequest));
   setContext(DOCKED_CREDENTIAL_REQUEST, () => credentialRequest?.request_id ?? null);
+  /** An ask slides in only when it arrives while the person is looking at this conversation.
+   *  One that is already waiting when the page loads, the person navigates here, the tab comes
+   *  back or the dock opens or closes is shown in place. */
+  const askEntrance = new AskEntranceTracker();
+  let animateAskEntrance = $state(false);
+  $effect(() => {
+    const status = reader?.status;
+    const requestKey = status?.pending_user_input?.request_id
+      ?? status?.pending_permission?.request_id ?? credentialRequest?.request_id ?? null;
+    animateAskEntrance = askEntrance.update({ source: reader, ready: status?.authority === "current",
+      visible: transcriptVisible, mode: conversationState, requestKey });
+  });
   let placementReady = $state(false);
   let entryPresentationPending = $state(true);
   let paneElement = $state<HTMLDivElement | null>(null);
@@ -277,7 +295,7 @@
   const headElapsed = elapsedTurnTime(() => running && !activityUncertain ? turnStartedAt : null);
   const headSetupElapsed = elapsedTurnTime(() => headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
   // A key request blocks on the person as an ask or a question does, so the bar says so too.
-  let credentialWaiting = $derived(!readOnly && awaitsCredential(rows, reader?.pages.flatMap(page => page.items) ?? []));
+  let credentialWaiting = $derived(credentialRequest !== null);
   // A turn that failed, or a message that was not delivered, is said in the bar until the
   // person sends something after it: the same facts the dock's line and the error rows use.
   let headFailure = $derived(outgoingMessages.length > 0 ? null : paneFailureFrom(reader?.status
@@ -711,6 +729,7 @@
       {running}
       {ask}
       {credentialRequest}
+      {animateAskEntrance}
       {askNote}
     {userInputNote}
     {permissionAvailable}

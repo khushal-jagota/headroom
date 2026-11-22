@@ -553,6 +553,8 @@
   }
   /** One cancellable reader per selected lens and visible transcript demand. */
   function attachReader(id:string,transcript=documentIsVisible&&conversationState!=="rest"):ConversationViewReader{
+    // Read before closing: a closed reader forgets its status.
+    const previous=reader===null?null:{id:reader.id,status:reader.status};
     closeStream();
     let lastCoverage=-1;
     const local=new ConversationViewReader(id,lens,transcript,()=>{
@@ -565,6 +567,7 @@
         void reconcileReceipts(local).catch(()=>undefined);
       }
     },viewAnchor,viewFolds,openTools);
+    local.continueFrom(previous);
     reader=local;
     return local;
   }
@@ -1093,6 +1096,7 @@
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState
   {waitingOnPage}
+  recordedCredentialRequest={view?.pending_credential_request ?? null}
   fateNote={visibleFateNote}
   errorNote={errorNote ?? pickerReadError}
   {connectionTrouble}

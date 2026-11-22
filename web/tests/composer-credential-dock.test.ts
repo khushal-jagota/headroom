@@ -109,6 +109,15 @@ describe("which key request is docked", () => {
     expect(pendingCredentialRequest([], [credentialItem(1, 5, saved), credentialItem(1, 1, request)])).toBeNull();
     expect(pendingCredentialRequest([], [credentialItem(1, 1, request)])?.request_id).toBe("r-1");
   });
+
+  it("is the record's pending request while no transcript is read (the dock), until the transcript settles it", () => {
+    // Docked on first load: no rows, no items, only the record's pending request.
+    expect(pendingCredentialRequest([], [], request)?.request_id).toBe("r-1");
+    // The transcript's own version of that request speaks for it, so a stale record does not.
+    expect(pendingCredentialRequest([], [credentialItem(1, 5, { ...request, state: "saved" })], request)).toBeNull();
+    expect(pendingCredentialRequest([credentialRow(1, { ...request, state: "rejected" })], [], request)).toBeNull();
+    expect(pendingCredentialRequest([], [], { ...request, state: "saved" })).toBeNull();
+  });
 });
 
 describe("the transcript leaves the docked request to the composer", () => {

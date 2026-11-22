@@ -2,7 +2,10 @@
 import { expect, test } from 'vitest';
 import { fixture } from './ticket_fixture.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
-import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
+import {
+  pendingCredentialRequestBody,
+  SignalPublicationCoordinator,
+} from '../conversation/publication/coordinator.ts';
 import * as persistence from '../conversation/publication/persistence.ts';
 import { field_mutation } from '../conversation/runtime/save_attempt.ts';
 import { SignalBatch, SignalSnapshot } from '../conversation/contracts.ts';
@@ -165,6 +168,9 @@ test('a pending key request reads as awaiting your answer until it is settled', 
     awaiting_answer: true,
     last_turn_failed: false,
   });
+  // The docked conversation reads no transcript; the record hands it the waiting request.
+  const pending = () => f.database.read((sql) => pendingCredentialRequestBody(sql, 'c'));
+  expect(pending()).toEqual(JSON.parse(card('pending')));
   // A turn starting and ending around it does not answer it.
   const turn = {
     pending_permission_ask_ids: new Set<string>(),
@@ -181,6 +187,7 @@ test('a pending key request reads as awaiting your answer until it is settled', 
     ]);
   });
   expect(f.attention().awaiting_answer).toBe(false);
+  expect(pending()).toBeNull();
 });
 
 // Empty replacements still carry source boundaries. This closes a synthetic-idle-cursor gap.

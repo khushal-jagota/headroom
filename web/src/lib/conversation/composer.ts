@@ -382,13 +382,27 @@ export function recordedMessageFateSentence(
 }
 
 /** The key request the composer asks, in its own place, as it asks a question or a permission
- *  ask: the newest one still pending. Read from the same two sources the dock reads (the
- *  transcript's rows and the live view's items, newest version of each), so the composer and
- *  the transcript always agree on which request is docked: the transcript draws every other
- *  request inline, and never this one. */
+ *  ask: the newest one still pending. Read from the transcript's rows and the live view's items
+ *  (newest version of each), so the composer and the transcript always agree on which request
+ *  is docked: the transcript draws every other request inline, and never this one. A docked
+ *  conversation reads no transcript, so the record's own pending request (`recorded`) stands
+ *  in until the transcript says otherwise about it. */
 export function pendingCredentialRequest(
   rows: readonly TranscriptRow[],
-  items: readonly ConversationViewItem[] = []
+  items: readonly ConversationViewItem[] = [],
+  recorded: CredentialRequestRowBody | null = null
+): CredentialRequestRowBody | null {
+  const fromTranscript = pendingCredentialRequestInTranscript(rows, items);
+  if (fromTranscript !== null || recorded?.state !== "pending") return fromTranscript;
+  const known = rows.some((row) => row.kind === "credential_request" && row.request.request_id === recorded.request_id)
+    || items.some((item) => item.kind === "row" && item.body.kind === "inline"
+      && item.body.value.kind === "credential_request" && item.body.value.request_id === recorded.request_id);
+  return known ? null : recorded;
+}
+
+function pendingCredentialRequestInTranscript(
+  rows: readonly TranscriptRow[],
+  items: readonly ConversationViewItem[]
 ): CredentialRequestRowBody | null {
   const fromRows = rows.findLast((row) => row.kind === "credential_request" && row.request.state === "pending");
   if (fromRows?.kind === "credential_request") return fromRows.request;

@@ -2,7 +2,6 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import type { TranscriptRow } from './transcript';
-import type { ConversationViewItem } from './view/contracts';
 import { messageContentText } from './wire';
 
 /** Only the newest addressed reply supplies the preview, including attachment-only replies. */
@@ -38,28 +37,6 @@ const ROLE_TITLES: Record<PaneRole, string> = { Worker: 'Worker', Manager: 'Mana
  * page gave one, else the role the pane already knows. Never blank, never invented. */
 export function paneTitleFor(title: string | null | undefined, role: PaneRole): string {
   return title?.trim() || ROLE_TITLES[role];
-}
-
-/** Whether a key request in this conversation still waits on the person. Unlike a permission
- * ask or a question it is a row, not a status fact, so it is read from the rows the pane
- * holds: the record's rows, or the view's held items, where the newest version of a row
- * speaks for it. Blocking on the person is the same state whichever card asks. */
-export function awaitsCredential(
-  rows: readonly TranscriptRow[],
-  items: readonly ConversationViewItem[] = []
-): boolean {
-  if (rows.some(row => row.kind === 'credential_request' && row.request.state === 'pending')) return true;
-  const newest = new Map<string, ConversationViewItem & { kind: 'row' }>();
-  for (const item of items) {
-    if (item.kind !== 'row' || item.row_kind !== 'credential_request' || item.body.kind !== 'inline') continue;
-    const held = newest.get(item.key);
-    if (!held || held.changed_through_sequence <= item.changed_through_sequence) newest.set(item.key, item);
-  }
-  for (const item of newest.values()) {
-    const value = item.body.kind === 'inline' ? item.body.value : null;
-    if (value?.kind === 'credential_request' && value.state === 'pending') return true;
-  }
-  return false;
 }
 
 /** What went wrong last, if the last thing that happened went wrong: the newest turn ended

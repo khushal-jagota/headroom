@@ -829,3 +829,20 @@ it('retires an expired saved target without credit and credits only valid newest
   expect(reader.pages.flatMap(page=>page.items).map(item=>item.key)).toEqual(['row:101']);
   expect(reader.pages.flatMap(page=>page.items).length).toBeLessThanOrEqual(300);
 });
+
+it('starts a replacement reader from its predecessor\'s status, so a waiting ask holds still', async () => {
+  const initial = snapshot();
+  initial.status.pending_permission = { kind: 'permission', request_id: 'ask-1', row_key: 'e1', source_sequence: 1 };
+  const previous = await start(initial);
+  // The dock opens, the lens or the tab changes: a new reader replaces this one.
+  const next = new ConversationViewReader('c', 'full', false); readers.push(next);
+  next.continueFrom({ id: previous.id, status: previous.status });
+  expect(next.status?.pending_permission?.request_id).toBe('ask-1');
+  // Another conversation's status is never carried over.
+  const other = new ConversationViewReader('d', 'focus', false); readers.push(other);
+  other.continueFrom({ id: previous.id, status: previous.status });
+  expect(other.status).toBeNull();
+  // Its own snapshot then replaces the carried status.
+  const ready = next.connect(); Source.all.at(-1)!.send('snapshot', viewSnapshot('c', 'full', rows)); await ready;
+  expect(next.status?.pending_permission).toBeNull();
+});

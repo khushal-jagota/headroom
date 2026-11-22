@@ -1,0 +1,24 @@
+/** An existing ask is restored in place. Only a new request on a visible, initialized
+ * reader earns an entrance. Reader, visibility, and dock changes reset that permission. */
+export interface AskEntranceContext {
+  source: object | null;
+  ready: boolean;
+  visible: boolean;
+  mode: string | null;
+  requestKey: string | null;
+}
+export class AskEntranceTracker {
+  private previous: AskEntranceContext | null = null;
+  private animate = false;
+
+  update(current: AskEntranceContext): boolean {
+    const previous = this.previous;
+    const continuous = previous !== null && previous.ready && current.ready
+      && previous.visible && current.visible && previous.source === current.source
+      && previous.mode === current.mode;
+    if (!continuous || current.requestKey === null) this.animate = false;
+    else if (current.requestKey !== previous.requestKey) this.animate = true;
+    this.previous = current;
+    return this.animate;
+  }
+}
