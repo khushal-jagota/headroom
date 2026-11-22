@@ -428,9 +428,9 @@ function todoLine(started: string | null): ToolCallLine {
   };
 }
 
-/** A Codex file change, titled "Change <path>" or "Change N files" with one
+/** A file change, titled "Change <path>" or "Change N files" with one
  *  "<kind> <path>" line per file as its detail. */
-const CODEX_CHANGE_TITLE = /^Change (.+)$/;
+const FILE_CHANGE_TITLE = /^Change (.+)$/;
 
 function fileChangeLine(row: ToolCallRow, named: string): ToolCallLine {
   const changes = (row.startedDetail ?? row.detail ?? "")
@@ -456,7 +456,7 @@ function fileChangeLine(row: ToolCallRow, named: string): ToolCallLine {
 /** Tools whose names say more than their kind, read by the name the backend gave them. */
 function knownToolLine(row: ToolCallRow, wholeDetail: string | null): ToolCallLine | null {
   const title = row.title.trim();
-  const change = CODEX_CHANGE_TITLE.exec(title);
+  const change = FILE_CHANGE_TITLE.exec(title);
   if (change && toolGlyphKind(row.toolKind) === "edit" && callArguments(row.startedDetail ?? "") === null) {
     return fileChangeLine(row, change[1]);
   }
