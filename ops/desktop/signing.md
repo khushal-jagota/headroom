@@ -1,6 +1,6 @@
 # Desktop app signing
 
-The desktop app workflow (`.github/workflows/desktop.yml`) signs the macOS app with a Developer ID, notarizes it, and staples it. It needs two things from the Blue Door Labs Apple team (`FB99BBDJBA`): a Developer ID Application certificate and an App Store Connect API key. Khushal does these steps once. Do them again only when the certificate expires (five years) or a secret is lost.
+The desktop app workflow (`.github/workflows/desktop.yml`) signs the macOS app with a Developer ID, notarizes it, and staples it. It needs two things from the Blue Door Labs Apple team (`FB99BBDJBA`): a Developer ID Application certificate and an App Store Connect API key. An agent on Mac 1 did these steps on 2026-11-22, with Khushal's Apple sign-in. Notarization uses the team key that TestFlight already uses. The certificate expires on 2027-12-22. Do the steps again before that date, or when a secret is lost.
 
 Only the Account Holder can create a Developer ID certificate. Do the steps on a Mac.
 
