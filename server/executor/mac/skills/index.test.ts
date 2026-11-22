@@ -28,7 +28,12 @@ test('publication links into the home skills folder the driver names', async () 
         required_skill_names: ['panels', 'panels-worker'],
         sources: [skill('panels'), skill('panels-worker')],
       },
-      { root: join(root, 'state'), native_home: home, native_skills_directory: 'agent/skills' },
+      {
+        root: join(root, 'state'),
+        native_home: home,
+        native_skills_directory: 'agent/skills',
+        owner_kind: 'ticket',
+      },
     );
   } finally {
     await publisher.stop({ deadline: performance.now() / 1000 + 5 });

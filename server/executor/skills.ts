@@ -6,7 +6,18 @@ import type { CanonicalSkillSnapshot } from './wire.generated.ts';
 function invalid(message: string): never {
   throw new Error(message);
 }
-export function validate_skill_snapshot(snapshot: CanonicalSkillSnapshot): void {
+/** The role skill each child owner must have. A conversation without a role needs none. */
+export const ROLE_SKILL_NAMES = {
+  ticket: 'panels-worker',
+  chief: 'panels-chief-of-staff',
+  manager: 'panels-manager',
+  conversation: null,
+} as const;
+/** The owner's kind, when the caller knows whose child the snapshot is for. */
+export function validate_skill_snapshot(
+  snapshot: CanonicalSkillSnapshot,
+  owner_kind?: keyof typeof ROLE_SKILL_NAMES,
+): void {
   try {
     const names = new Set<string>(),
       folded = new Set<string>();
@@ -31,8 +42,9 @@ export function validate_skill_snapshot(snapshot: CanonicalSkillSnapshot): void 
     }
     const required = snapshot.required_skill_names;
     if (new Set(required).size !== required.length) invalid('duplicate required skill name');
-    // A Worker also needs panels-worker; the Chief and the Managers need their role skill.
     if (!required.includes('panels')) invalid('the base Panels skill is not required');
+    const role = owner_kind === undefined ? null : ROLE_SKILL_NAMES[owner_kind];
+    if (role !== null && !required.includes(role)) invalid(`the ${role} skill is not required`);
     if (required.some((name) => RETIRED_PANELS_SKILL_NAMES.has(name)))
       invalid('required canonical skill is retired');
     if (required.some((name) => !names.has(name))) invalid('required canonical skill is absent');

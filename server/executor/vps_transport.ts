@@ -594,7 +594,7 @@ export class VpsExecutor {
       controller.abort();
       throw new PlannerError('retry_later', 'the read took too long');
     }
-    return agent_response_json(answer.value.statusCode, answer.value.body);
+    return agent_response_json(answer.value.statusCode, answer.value.body, answer.value.headers);
   }
   async live(
     identity: ExecutorIdentity,

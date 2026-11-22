@@ -4,8 +4,15 @@
 import { expect, test, vi } from 'vitest';
 import { performance } from 'node:perf_hooks';
 import { setup } from './conversation_core_fixture.ts';
-import { PromptDeliveryRefused, PromptDeliveryRefusalReason } from '../conversation/contracts.ts';
-import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../conversation/child_custody.ts';
+import {
+  PromptDeliveryRefused,
+  PromptDeliveryRefusalReason,
+  PromptDeliveryStarted,
+} from '../conversation/contracts.ts';
+import {
+  LocalChildCustody,
+  SUPERVISED_CHILD_GENERATION_PREFIX,
+} from '../conversation/child_custody.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 
 const STOPPED = 'the agent started without a supervision record, so Panels stopped it';
@@ -50,5 +57,49 @@ test('a supervised launch whose child reports no record is stopped and its promp
     expect(refusal?.refusal_detail).toBe(STOPPED);
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  }
+});
+
+// Risk: an old server's idle local process still holds a non-Ticket conversation's vendor
+// session when a new turn starts a second child (through machine code) on it. Gap: only a kill
+// or a restart judged the recorded process; a new turn outside a Ticket did not.
+test('outside a Ticket, a new turn starts no child until the recorded process is retired', async () => {
+  const f = setup({ role_actor: 'chief' });
+  await f.start();
+  await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
+  // The old server died with its agent idle and alive, so the record holds a started process.
+  f.database.write((tx) =>
+    tx.run(
+      "UPDATE conversation_child_custody SET generation='old',state='started',pid=4321,birth='1',boot='boot',host='linux:machine' WHERE conversation_id='core'",
+    ),
+  );
+  let stopped = false;
+  vi.spyOn(LocalChildCustody.prototype, 'retirement_row_proven').mockImplementation(
+    async (row) => row.state === 'retired',
+  );
+  const stop = vi
+    .spyOn(LocalChildCustody.prototype, 'stop_recorded_child')
+    .mockImplementation(async () => stopped);
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const restarted = setup({ restart_of: f.database, role_actor: 'chief' });
+  try {
+    expect(await restarted.send('one', 'first')).toEqual(
+      new PromptDeliveryRefused({
+        refusal_reason: PromptDeliveryRefusalReason.backend_did_not_start,
+      }),
+    );
+    expect(restarted.children).toHaveLength(0);
+    // The next turn stops the old process through its record, as a kill does, then starts.
+    stopped = true;
+    expect(await restarted.send('two', 'second')).toBeInstanceOf(PromptDeliveryStarted);
+    expect(stop).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pid: 4321, birth: '1' }),
+      'linux:machine',
+      undefined,
+      false,
+    );
+    expect(restarted.children).toHaveLength(1);
+  } finally {
+    await restarted.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
 });

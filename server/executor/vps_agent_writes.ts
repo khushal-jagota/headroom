@@ -7,7 +7,8 @@ import { IN_PROCESS_REQUEST_CONTEXT } from '../core/authority/identity.ts';
 import { failure_payload } from '../cli/http.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
-import { admitCommand } from '../core/authority/intake.ts';
+import { admitCommand, unidentifiedCommandRefusal } from '../core/authority/intake.ts';
+import { observe_promise } from '../core/promise_observer.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type {
   ConversationSystem,
@@ -49,18 +50,22 @@ import type { JsonValue } from './wire.generated.ts';
 import { require_current_incarnation_in_transaction } from './vps_presence_store.ts';
 import { decode_value, ExecutorValidationError } from './protocol.ts';
 import { now_ms } from './clock.ts';
+import { AGENT_REQUEST_SERVER_LIMIT_SECONDS } from './configuration.ts';
 import { is_record as is_json_object } from './../core/records.ts';
 
 type Json = WireValue<'JsonObject'>;
 /** Any agent write without a transactional operation. The home runs its ordinary route. */
 export const CLI_REQUEST = 'cli.request';
 const RELAYED_WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-/** Saved before the route runs. A home that stops before the route answers leaves this result. */
+/**
+ * Saved before the route runs. It stays when the home stops, or the route runs out of time,
+ * before the route answers.
+ */
 const UNFINISHED_REQUEST: Json = {
   error: {
     code: 'uncertain',
     message:
-      'Home stopped before this request finished, so its effect is unknown. Check the current state before you repeat it.',
+      'Home did not confirm that this request finished, so its effect is unknown. Check the current state before you repeat it.',
     detail: {},
   },
 };
@@ -99,8 +104,23 @@ export function inject_agent_request(
     },
   });
 }
+/** A JSON answer is data. A file is text whatever it holds, as `send_text` reads it locally. */
+function json_answer(headers: Record<string, unknown>): boolean {
+  const media = String(headers['content-type'] ?? '')
+    .split(';')[0]!
+    .trim()
+    .toLowerCase();
+  return (
+    headers['content-disposition'] === undefined &&
+    (media === 'application/json' || /^application\/.+\+json$/.test(media))
+  );
+}
 /** The JSON that the agent's CLI receives, the same as it decodes from the local route. */
-export function agent_response_json(status: number, body: string): Json {
+export function agent_response_json(
+  status: number,
+  body: string,
+  headers: Record<string, unknown>,
+): Json {
   let data: unknown = null;
   let parsed = true;
   try {
@@ -116,7 +136,7 @@ export function agent_response_json(status: number, body: string): Json {
       ? payload
       : (failure_payload(status, { detail: data }, body) as Json);
   }
-  if (!parsed) return { text: body };
+  if (!parsed || !json_answer(headers)) return { text: body };
   return is_json_object(data) ? (data as Json) : { data: data as JsonValue };
 }
 function agent_request(args: Json): AgentRequest {
@@ -226,12 +246,24 @@ export class AgentWrites {
     const write = decode_value(envelope.payload, 'CliWrite');
     if (write.child.conversation_id !== envelope.conversation_id)
       throw new ExecutorValidationError('CLI conversation conflicts with envelope');
-    const principal = await this.runs.authority(write.child);
+    // A generic conversation acts as a local generic agent does: without a Panels identity.
+    const context = agent_request_context(
+      await this.runs.authority(write.child),
+      write.child.conversation_id,
+    );
+    const principal = context.principal;
+    if (write.operation === CLI_REQUEST)
+      return this.relay_request(envelope, write, context, identity, await publish());
+    // Its ordinary routes refuse such a write at the HTTP door. These operations refuse it here.
+    if (principal.kind === 'unidentified') {
+      const refusal = unidentifiedCommandRefusal(
+        write.operation === 'message.send' ? write.arguments.body : null,
+      );
+      if (refusal !== null) throw refusal;
+    }
     const published = await publish();
     if (write.operation === 'message.send')
       return this.deliver_message(envelope, write, principal, identity, published);
-    if (write.operation === CLI_REQUEST)
-      return this.relay_request(envelope, write, principal, identity, published);
     const notices: ReviewTransferNotice[] = [];
     const receipt = this.store.accept(
       envelope,
@@ -285,17 +317,21 @@ export class AgentWrites {
       result = error.toPayload() as Json;
     }
     // Reservation admitted the native delivery. Its known outcome survives replacement.
-    return this.store.database.write((tx) => this.finish_dispatch(tx, envelope, result));
+    return this.store.database.write((tx) =>
+      this.finish_dispatch(tx, envelope, result, delivery_disposition(result)),
+    );
   }
-  /** Exactly one route run per inbox position. A lost answer leaves an uncertain receipt. */
+  /**
+   * Exactly one route run per inbox position. A lost answer, or a route that runs out of time,
+   * leaves an uncertain receipt.
+   */
   private async relay_request(
     envelope: WireValue<'QueuedEnvelope'>,
     write: WireValue<'CliWrite'>,
-    principal: Principal,
+    context: RequestContext,
     identity: ExecutorIdentity,
     published: PublishedFiles | null,
   ): Promise<WireValue<'AcceptanceReceipt'>> {
-    const context = agent_request_context(principal, write.child.conversation_id);
     const reserved = this.store.database.write((tx) => {
       require_current_incarnation_in_transaction(
         tx,
@@ -314,24 +350,34 @@ export class AgentWrites {
         throw new PlannerError('agent_forbidden', 'child assignment changed');
       this.store.require_file_owner(tx, envelope);
       this.store.require_unchanged_files(envelope, published);
-      this.store.write_position(
-        tx,
-        envelope,
-        {
-          sender_id: envelope.sender_id,
-          submission_id: envelope.submission_id,
-          disposition: 'uncertain',
-          accepted_at_vps_ms: now_ms(),
-          result: UNFINISHED_REQUEST,
-        },
-        { dispatching: true },
-      );
-      return { previous: null, request };
+      const unfinished: WireValue<'AcceptanceReceipt'> = {
+        sender_id: envelope.sender_id,
+        submission_id: envelope.submission_id,
+        disposition: 'uncertain',
+        accepted_at_vps_ms: now_ms(),
+        result: UNFINISHED_REQUEST,
+      };
+      this.store.write_position(tx, envelope, unfinished, { dispatching: true });
+      return { previous: unfinished, request };
     });
-    if (reserved.previous !== null) return reserved.previous;
-    const response = await inject_agent_request(this.app, context, reserved.request);
-    const result = agent_response_json(response.statusCode, response.body);
-    return this.store.database.write((tx) => this.finish_dispatch(tx, envelope, result));
+    if (reserved.request === null) return reserved.previous;
+    // The conversation's later items wait for this one, so the route gets a bounded time.
+    const controller = new AbortController();
+    const answer = await observe_promise(
+      inject_agent_request(this.app, context, reserved.request, controller.signal),
+      AGENT_REQUEST_SERVER_LIMIT_SECONDS * 1000,
+    );
+    if (!answer.completed) {
+      // The route may still act. Its receipt stays uncertain, and nothing runs it again.
+      controller.abort();
+      return reserved.previous;
+    }
+    const response = answer.value;
+    const result = agent_response_json(response.statusCode, response.body, response.headers);
+    const disposition = Object.hasOwn(result, 'error') ? 'refused' : 'accepted';
+    return this.store.database.write((tx) =>
+      this.finish_dispatch(tx, envelope, result, disposition),
+    );
   }
   private reserve_dispatch(
     envelope: WireValue<'QueuedEnvelope'>,
@@ -387,6 +433,7 @@ export class AgentWrites {
     tx: TransactionSql,
     envelope: WireValue<'QueuedEnvelope'>,
     result: Json,
+    disposition: WireValue<'AcceptanceReceipt'>['disposition'],
   ): WireValue<'AcceptanceReceipt'> {
     const previous = tx.get<{ result_json: string; submission_id: string; disposition: string }>(
       'SELECT * FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
@@ -398,11 +445,7 @@ export class AgentWrites {
     const receipt: WireValue<'AcceptanceReceipt'> = {
       sender_id: envelope.sender_id,
       submission_id: envelope.submission_id,
-      disposition: Object.hasOwn(result, 'error')
-        ? 'refused'
-        : result.fate === 'uncertain'
-          ? 'uncertain'
-          : 'accepted',
+      disposition,
       result,
       accepted_at_vps_ms: now_ms(),
     };
@@ -436,10 +479,16 @@ export class AgentWrites {
       current.disposition !== 'dispatching'
     )
       return;
-    this.finish_dispatch(tx, envelope, {
+    const result: Json = {
       target: { kind: recipient.kind, id: recipient.id },
       conversation_id,
       ...fate,
-    });
+    };
+    this.finish_dispatch(tx, envelope, result, delivery_disposition(result));
   }
+}
+/** A message's receipt follows its delivery fate. */
+function delivery_disposition(result: Json): WireValue<'AcceptanceReceipt'>['disposition'] {
+  if (Object.hasOwn(result, 'error')) return 'refused';
+  return result.fate === 'uncertain' ? 'uncertain' : 'accepted';
 }

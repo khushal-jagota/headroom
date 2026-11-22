@@ -462,7 +462,8 @@ test('a synced Ticket file is served once its bytes match, and leaves on removal
 });
 
 // Gap: the Ticket case above proves the served layout of a Ticket only. A Manager's paths start
-// inside its artifacts folder, and only the machine of its current conversation may send them.
+// inside its artifacts folder, and only the machine of its current conversation may send them;
+// between a reset and the next conversation the file waits rather than being refused for good.
 test("a synced Manager file lands in the Manager's artifacts folder, only from its machine", async () => {
   const { service, path, database } = world();
   database.write((tx) => {
@@ -498,4 +499,9 @@ test("a synced Manager file lands in the Manager's artifacts folder, only from i
   await service.remove_ticket_file(file, owner(HOME_MACHINE_ID));
   // The emptied folder goes. The artifacts folder itself stays.
   expect(readdirSync(artifacts)).toEqual([]);
+  // After a reset the Manager has no conversation yet. Its machine sends the file again later.
+  database.write((tx) =>
+    tx.run("UPDATE agents SET conversation_id=NULL WHERE agent_key='manager_m_one'"),
+  );
+  await expect(send(owner(HOME_MACHINE_ID))).rejects.toMatchObject({ code: 'retry_later' });
 });

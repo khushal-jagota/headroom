@@ -29,7 +29,8 @@ import { conversation_machine_id } from '../../machines/conversation_machine.ts'
 
 /**
  * File sync: a Manager's artifacts come only from the machine that runs the Manager's current
- * conversation. A Ticket's owner check stays with the Ticket's machine.
+ * conversation. Between a reset and the next conversation there is none, so the file waits.
+ * A Ticket's owner check stays with the Ticket's machine.
  */
 export function require_manager_files_machine(
   sql: ReadSql,
@@ -40,7 +41,9 @@ export function require_manager_files_machine(
     'SELECT a.conversation_id FROM managers m JOIN agents a ON a.agent_key=? WHERE m.id=?',
     [manager_agent_key(manager_id), manager_id],
   )?.conversation_id;
-  if (current == null || conversation_machine_id(sql, current) !== machine_id)
+  if (current === null)
+    throw new PlannerError('retry_later', 'The Manager has no current conversation yet');
+  if (current === undefined || conversation_machine_id(sql, current) !== machine_id)
     throw new PlannerError('agent_forbidden', 'Manager runs on another machine');
 }
 export type TransactionalWriter = (

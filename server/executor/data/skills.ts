@@ -7,15 +7,9 @@ import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { read_all_skill_sources } from '../../skills/data.ts';
 import { WORKER_ONLY_SKILL_NAMES } from '../../skills/native_publication.ts';
 import { workflow_from_row } from '../../worker_types/store.ts';
-import { validate_skill_snapshot } from '../skills.ts';
+import { ROLE_SKILL_NAMES, validate_skill_snapshot } from '../skills.ts';
 import type { CanonicalSkillSnapshot } from '../wire.generated.ts';
 import type { ChildOwner } from './runs.ts';
-/** The role skill each non-Ticket owner must have. A conversation without a role needs none. */
-const ROLE_SKILL_NAMES: Readonly<Record<Exclude<ChildOwner['kind'], 'ticket'>, string | null>> = {
-  chief: 'panels-chief-of-staff',
-  manager: 'panels-manager',
-  conversation: null,
-};
 /** Read the canonical rows in the caller's read or transaction scope, without seeding. */
 export function read_canonical_skill_snapshot(
   sql: ReadSql,
@@ -34,7 +28,7 @@ export function read_canonical_skill_snapshot(
       required_skill_names = [
         ...new Set([
           'panels',
-          'panels-worker',
+          ROLE_SKILL_NAMES.ticket,
           ...(definition.specialist_skill !== null &&
           Object.hasOwn(sources, definition.specialist_skill)
             ? [definition.specialist_skill]
@@ -53,7 +47,7 @@ export function read_canonical_skill_snapshot(
         .map(([skill_name, source_text]) => ({ skill_name, source_text })),
       required_skill_names,
     };
-    validate_skill_snapshot(snapshot);
+    validate_skill_snapshot(snapshot, owner.kind);
     return snapshot;
   } catch (error) {
     if (

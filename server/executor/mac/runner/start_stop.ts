@@ -188,6 +188,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
             root: this.options.paths.root,
             native_home: native_home.path,
             native_skills_directory: native_home.skills_directory,
+            owner_kind: entry.owner.kind,
           },
         );
       } catch (error) {
