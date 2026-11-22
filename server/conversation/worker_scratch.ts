@@ -1,6 +1,7 @@
 /** Disposable disk storage owned by one Worker backend process. */
 import { lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
+import { setTimeout as pause } from 'node:timers/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { OwnedChildProcesses } from '../lifecycle/contracts.ts';
@@ -70,6 +71,36 @@ async function disk_directory(root: string, processes: OwnedChildProcesses): Pro
   if (!kind || ['tmpfs', 'ramfs', 'devfs', 'mfs'].includes(kind))
     throw new Error(`Worker temporary storage must use disk: ${root}`);
 }
+/** Another process can keep writing into a scratch folder after its Worker stops. Node's own
+ * retry repeats at every folder level, so a deep writer holds it past the stop budget. One
+ * pass per attempt keeps the whole wait inside this limit. */
+const REMOVAL_LIMIT_MS = 1500;
+const REMOVAL_RETRY_MS = 100;
+const LISTED_ENTRIES = 20;
+/** Disposable storage never fails its caller. A folder that remains stays for the next start or
+ * retirement of its Ticket, with one warning that names what remained. */
+async function remove_scratch(directory: string, limit: AbortSignal): Promise<boolean> {
+  while (true) {
+    try {
+      await rm(directory, { recursive: true });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+      if (limit.aborted) {
+        const remaining = await readdir(directory, { recursive: true }).catch(() => []);
+        const listed = remaining.slice(0, LISTED_ENTRIES).join(', ');
+        const more =
+          remaining.length > LISTED_ENTRIES ? ` and ${remaining.length - LISTED_ENTRIES} more` : '';
+        console.warn(
+          `Worker scratch folder stays in place, because it could not be deleted: ${directory} ` +
+            `(${(error as Error).message}). Remaining entries: ${listed || 'none'}${more}`,
+        );
+        return false;
+      }
+    }
+    await pause(REMOVAL_RETRY_MS);
+  }
+}
 async function root_exists(home: string): Promise<boolean> {
   try {
     await lstat(join(home, '.pw'));
@@ -86,6 +117,7 @@ async function prune(
   keep?: string,
 ): Promise<boolean> {
   let complete = true;
+  const limit = AbortSignal.timeout(REMOVAL_LIMIT_MS);
   for (const name of names) {
     const directory = join(root, name);
     if (!pattern.test(name) || directory === keep) continue;
@@ -98,7 +130,7 @@ async function prune(
       complete = false;
       continue;
     }
-    await rm(directory, { recursive: true });
+    if (!(await remove_scratch(directory, limit))) complete = false;
   }
   return complete;
 }
@@ -174,7 +206,8 @@ export class WorkerScratch {
         if (error.code === 'ENOENT') return null;
         throw error;
       });
-      if (info && !info.isSymbolicLink()) await rm(this.directory, { recursive: true });
+      if (info && !info.isSymbolicLink())
+        await remove_scratch(this.directory, AbortSignal.timeout(REMOVAL_LIMIT_MS));
     })();
     this.closing = attempt;
     void attempt.catch(() => {

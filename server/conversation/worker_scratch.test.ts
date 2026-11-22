@@ -1,8 +1,8 @@
 import { once } from 'node:events';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
-import { mkdtemp, mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { basename, join, dirname } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { WorkerScratch, snapshot_ticket_scratch, prune_ticket_scratch } from './worker_scratch.ts';
 import { private_ticket_path, resolveFile } from '../files/logic/paths.ts';
@@ -57,6 +57,35 @@ test('Worker run owns private disk scratch, prunes old run, sets all temporary v
   await expect(
     WorkerScratch.create({ PLAN_TICKET_ID: '../escape' }, { home, processes }),
   ).rejects.toThrow();
+});
+// Gap: every existing case deletes freely. On 22 Nov a busy folder failed a stop and every start.
+// A read-only subfolder makes every delete attempt fail; each call waits its 1.5 s limit.
+test('a scratch folder that cannot be deleted stays in place and fails no stop, start or retirement', async () => {
+  const home = await fixture();
+  const processes = new ChildProcesses();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const old = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes });
+  const locked = join(old.directory, 'build');
+  await mkdir(locked);
+  await writeFile(join(locked, 'output.log'), 'busy');
+  await chmod(locked, 0o500);
+  try {
+    const fresh = await WorkerScratch.create({ PLAN_TICKET_ID: 't_test' }, { home, processes });
+    expect((await readdir(join(home, '.pw'))).sort()).toEqual(
+      [basename(old.directory), basename(fresh.directory)].sort(),
+    );
+    expect(await prune_ticket_scratch('t_test', [basename(old.directory)], home)).toBe(false);
+    await old.close();
+    expect(await readdir(locked)).toEqual(['output.log']);
+    expect(warn).toHaveBeenCalledTimes(3);
+    for (const [message] of warn.mock.calls) {
+      expect(message).toContain(old.directory);
+      expect(message).toContain(join('build', 'output.log'));
+    }
+  } finally {
+    await chmod(locked, 0o700);
+    warn.mockRestore();
+  }
 });
 test('public Ticket files and catalogs hide private checkouts, markers and aliases but keep artifacts', async () => {
   const db = ticket_fixture(),
