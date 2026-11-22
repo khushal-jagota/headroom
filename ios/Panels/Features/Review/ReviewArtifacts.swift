@@ -46,8 +46,8 @@ struct ReviewArtifactDock: ViewModifier {
     @State private var sheet: DecisionSheet?
     @State private var busyAction: String?
     @State private var messageActions = ReviewMessageActions()
-    /// The decision is saved and the queue holds the card until it leaves.
-    @State private var held = false
+    /// The card whose decision is saved, held by the queue until it leaves.
+    @State private var held: ReviewItem?
     @State private var left = false
     private var item: ReviewItem? { session?.shown.flatMap { $0.id == itemID ? $0 : nil } }
 
@@ -60,7 +60,7 @@ struct ReviewArtifactDock: ViewModifier {
             .onDisappear {
                 visible = false
                 // Removed under an open sheet after the save: the card still leaves.
-                if held, let session, let item { resolve(item, session: session, afterExit: nil) }
+                if let held, let session { resolve(held, session: session, afterExit: nil) }
             }
             // Also on appear: a page path restored on return can hold a card that has gone.
             .onChange(of: session?.shown?.id, initial: true) { _, shown in
@@ -91,7 +91,7 @@ struct ReviewArtifactDock: ViewModifier {
             }
             ReviewProposalDock(isActive: scenePhase == .active, savedWork: savedWork, decision: decision, refusal: refusal, notice: notice,
                                sheet: $sheet, busyAction: $busyAction, onSkip: { skip(item, session: session) },
-                               onHold: { held = true; session.resolve(item) },
+                               onHold: { held = item; session.resolve(item) },
                                onResolve: { resolve(item, session: session, afterExit: $0) })
         }
     }

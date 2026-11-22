@@ -474,10 +474,10 @@ uses success feedback and reload errors use error feedback. The shared shell
 retains ownership of global navigation feedback and deployment chrome. The route's
 `ArtifactDock` says what sits below the file, chosen by where it was opened, and
 further artifact links keep it. A Ticket, Orchestrator or conversation page docks
-its conversation's composer: the viewer resolves the current conversation ID from
-the owner and uses the owner send door. A full conversation page keeps the model it
-opened with, so the viewer's composer for the same owner leaves its draft, tail and
-read point one. A Review card docks its own controls on the card's decision, so the
+the same native conversation as that page, image previews included: the viewer
+resolves the current conversation ID from the owner and uses the owner send door. A
+full conversation page keeps the model it opened with, so its draft, tail and read
+point stay one when an artifact docks a composer for the same owner. A Review card docks its own controls on the card's decision, so the
 note or reply is the card's draft: the proposal's note, voice, attachments, Skip,
 Return and Approve with its sheet, or the message's `Reply…`, Skip and Mark read, with
 any refusal. Only the top viewer docks them. Acting there, or the card leaving the

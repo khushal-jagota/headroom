@@ -60,8 +60,8 @@ point is a lane. One request runs per lane, so an owner's messages and answers g
 in the order they were saved, from any screen, and at most two run per server.
 
 An item is waiting (it looks done), sent, or failed. A recording is the one item
-that cannot look done: its words come from the server, so it shows "transcribing"
-until they arrive. A failed item leaves its lane, and only it shows a mark:
+that cannot look done: its words come from the server, so it shows "saved" until
+they arrive, and "transcribing" while its request is in flight. A failed item leaves its lane, and only it shows a mark:
 
 - A failed message gets a red mark in its conversation. Tapping it shows the
   reason and Try Again, which sends the same words in the same place: with a new ID
