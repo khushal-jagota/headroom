@@ -540,6 +540,11 @@ import XCTest
         await outbox.drain(api: api)
         XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "The ask still waits: the answer is sent again later, not as a message")
         XCTAssertEqual(outbox.work(server, id: operation)?.state, .waiting)
+        // The view names only the newest waiting ask, which can hide this one: still wait.
+        OfflineProtocol.state.pendingUserInput = "request-2"
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "Another waiting ask may hide this one")
         OfflineProtocol.state.pendingUserInput = nil
         outbox = relaunch()
         await outbox.drain(api: api)
@@ -547,7 +552,7 @@ import XCTest
         outbox = relaunch()
         await outbox.drain(api: api)
         let late = Outbox.lateAnswerMessageID(operationID: operation)
-        XCTAssertEqual(OfflineProtocol.state.answers, [operation, operation])
+        XCTAssertEqual(OfflineProtocol.state.answers, [operation, operation, operation], "Each try reuses the operation ID")
         XCTAssertEqual(OfflineProtocol.state.writes, [late], "One late message, sent once")
         let body = try JSONSerialization.jsonObject(with: XCTUnwrap(OfflineProtocol.state.messageBodies.first?.1)) as! [String: Any]
         XCTAssertEqual(body["conversation_id"] as? String, "conversation")

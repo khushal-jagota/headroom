@@ -433,13 +433,15 @@ import Observation
         } catch { settleFailure(Self.classify(error), id: work.id, server: server) }
     }
 
-    /// Whether the conversation still waits for this ask. An unknown reading counts as waiting.
+    /// Whether the conversation may still wait for this ask. An unknown reading counts as
+    /// waiting. The view names only the newest waiting ask of each kind, so an older ask can
+    /// hide behind it: while any ask of the same kind waits, this answer waits too.
     private static func askStillWaits(_ answer: AskAnswer, api: APIClient) async throws -> Bool {
         let status = try await api.conversationSnapshot(answer.conversationID, lens: .focus, transcript: false).status
         guard status.authority == "current" else { return true }
         switch answer.request {
-        case .permission(let askID, _): return status.pendingPermission?.requestId == askID
-        case .userInput(let requestID): return status.pendingUserInput?.requestId == requestID
+        case .permission: return status.pendingPermission != nil
+        case .userInput: return status.pendingUserInput != nil
         }
     }
 
