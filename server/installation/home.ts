@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { lstat, mkdtemp, readdir, realpath } from 'node:fs/promises';
+import { lstat, mkdtemp, realpath } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
@@ -35,7 +35,6 @@ import {
   symlink_relative,
   unlink_relative,
 } from '../executor/mac/platform.ts';
-import { account_skill_homes, account_skill_provisioning_conflict } from '../skills/account.ts';
 import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 import { shell_quote } from '../conversation/worker_unit/logic.ts';
 import { home_install_request, validate_home_host } from './logic/home.ts';
@@ -438,18 +437,6 @@ export async function install_home(
       throw new Error('First home installation requires a sealed Node version-2 release');
     await deps.admit(app, manifest, deps.execution);
     assert_release_execution(deps.execution);
-    if (!request.isolated_providers) {
-      const source = join(app, 'server/skills/seeds');
-      const names = (await readdir(source, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name);
-      const warning = account_skill_provisioning_conflict(
-        join(root_path, 'data'),
-        account_skill_homes(deps.environment),
-        names,
-      );
-      if (warning) deps.warning(warning);
-    }
     root = await files.create_root(root_path);
     current_directory(root);
     current_directory(temporary);
@@ -473,7 +460,6 @@ export async function install_home(
         backup_dir: 'backups',
         dispatcher_lock_path: 'dispatcher.lock',
         workspace_root: join(root_path, 'workspaces'),
-        provision_account_skills: !request.isolated_providers,
       }) + '\n',
       0o600,
     );

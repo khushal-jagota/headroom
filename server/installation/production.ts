@@ -92,6 +92,5 @@ export async function production_home_dependencies(
       system === 'darwin'
         ? create_darwin_home_service(request, host)
         : create_linux_home_service(request, host),
-    warning: (message) => console.warn(`Warning: ${message}`),
   };
 }

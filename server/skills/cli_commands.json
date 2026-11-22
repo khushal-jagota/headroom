@@ -20,7 +20,6 @@
     "app-build": null,
     "app-identity": null,
     "backup-current": null,
-    "provision-skills": null,
     "restore": null,
     "prepare": null,
     "inspect": null,

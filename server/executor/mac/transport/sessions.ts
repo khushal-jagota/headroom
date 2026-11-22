@@ -6,6 +6,7 @@ import {
   SERVER_LOCATION_HEADER,
   SERVER_LOCATION_PATH,
 } from '../../../server_link/contracts.ts';
+import { local_server_address } from '../../../server_link/logic.ts';
 import https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
@@ -20,7 +21,14 @@ import type {
   ReplyReader,
 } from './contracts.ts';
 import { HttpTimeout } from './errors.ts';
+import { ExecutorLinkAgent } from './executor_link.ts';
+/** Requests to the local link name `localhost`; the agent connects to the socket. */
+function request_origin(address: string): string {
+  return local_server_address(address) === null ? new URL(address).origin : 'http://localhost';
+}
 interface Session {
+  /** The server address this session's agent connects to. */
+  readonly address: string;
   readonly agent: http.Agent;
   readonly sockets: Map<Socket, Promise<void>>;
   readonly requests: Set<ClientRequest>;
@@ -59,14 +67,18 @@ export class HttpSessions {
   private readonly sessions = new Map<MacLoop, Session>();
   private readonly closing = new Set<Promise<void>>();
   private closed = false;
-  private readonly initial_origin: string;
+  private readonly initial_address: string;
+  /** The current server address: an HTTPS origin, or the local link's socket path. */
+  get address(): string {
+    return this.options.server_link?.current_url ?? this.initial_address;
+  }
   get origin(): string {
-    return this.options.server_link?.current_url ?? this.initial_origin;
+    return request_origin(this.address);
   }
   private readonly connectors: ConnectorTable;
   private readonly options: MacHttpOptions;
-  constructor(origin: string, connectors: ConnectorTable, options: MacHttpOptions = {}) {
-    this.initial_origin = new URL(origin).origin;
+  constructor(address: string, connectors: ConnectorTable, options: MacHttpOptions = {}) {
+    this.initial_address = local_server_address(address) ?? new URL(address).origin;
     this.connectors = connectors;
     this.options = options;
   }
@@ -74,7 +86,9 @@ export class HttpSessions {
     if (this.closed) throw new ServerLifecycleError('Mac HTTP transport is stopped.');
     let session = this.sessions.get(loop);
     if (session) return session;
-    const settings = this.connectors[loop],
+    const address = this.address,
+      link_socket = local_server_address(address),
+      settings = this.connectors[loop],
       Agent = this.origin.startsWith('https:') ? https.Agent : http.Agent;
     const agent_options: https.AgentOptions = {
       keepAlive: !settings.force_close,
@@ -85,7 +99,11 @@ export class HttpSessions {
       rejectUnauthorized: true,
     };
     session = {
-      agent: new Agent(agent_options),
+      address,
+      agent:
+        link_socket === null
+          ? new Agent(agent_options)
+          : new ExecutorLinkAgent(link_socket, agent_options),
       sockets: new Map(),
       requests: new Set(),
       actual: new Set(),
@@ -206,9 +224,15 @@ export class HttpSessions {
       throw new ExecutorValidationError('The server authority changed before this request.');
     if (this.closed || session.closing)
       throw new ServerLifecycleError('Machine HTTP session is stopped.');
-    const origin = accepted?.server_url ?? this.origin;
-    const target = new URL(input.path, origin);
-    if (target.origin !== origin) throw new Error('Executor request leaves configured origin.');
+    const origin = accepted?.server_url ?? this.address;
+    if (local_server_address(origin) !== local_server_address(session.address)) {
+      // The address moved between the local link and HTTPS. Fresh sessions get the right agent.
+      void this.reset();
+      throw new ServerLifecycleError('The server address changed; the HTTP sessions restart.');
+    }
+    const target = new URL(input.path, request_origin(origin));
+    if (target.origin !== request_origin(origin))
+      throw new Error('Executor request leaves configured origin.');
     const transport = target.protocol === 'https:' ? https : http;
     const request = transport.request(target, {
       method: input.method,

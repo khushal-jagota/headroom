@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { createApp } from '../app.ts';
@@ -14,6 +14,9 @@ import { create, fixture, fixture_path } from '../tests/ticket_fixture.ts';
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 import { EXECUTOR_HANDOVER_CLOSE_PATH } from './configuration.ts';
 import { VpsExecutorRegistry } from './registry.ts';
+import { executor_link_socket_path, open_executor_link } from '../core/http/executor_link.ts';
+import { MacHttpClient } from './mac/transport/http.ts';
+import { read_bounded } from './mac/transport/sessions.ts';
 
 // A trial's accepted report precedes the supervisor's final keep decision.
 // Inject proves the real route/auth/commit boundary without a new network host.
@@ -266,4 +269,104 @@ test('a machine saves and removes files for its own Ticket only', async () => {
     await registry.settled();
     await app.close();
   }
+});
+
+// The local link replaces the Tailscale login with the socket. The real listener, client
+// and agent prove the swap end to end; inject has no socket to mark.
+test('machine code on the home account reaches executor routes, and only those, over the local link', async () => {
+  const database = fixture(),
+    path = fixture_path(database);
+  const registry = new VpsExecutorRegistry(database, new RealClock(), {
+    db_path: path,
+    changes: new ChangeSignal(),
+    media_signal: new AbortController().signal,
+    original_enabled: true,
+  });
+  database.read((sql) => registry.load(sql));
+  const unexpected = async () => {
+    throw new Error('No conversation work belongs to this proof');
+  };
+  registry.get(ORIGINAL_MAC_MACHINE_ID)!.runs.conversations = {
+    emit_answer: unexpected,
+    retire_replaced_remote_child: unexpected,
+    resume_undelivered_prompt: unexpected,
+    await_late_steer: unexpected,
+    confirm_remote_child_termination: unexpected,
+    confirm_remote_prompt_accepted: unexpected,
+    reconcile_remote_command: unexpected,
+    stop_interrupted_remote_child: unexpected,
+  };
+  const config = loadConfig(undefined, {
+    PLAN_DB_PATH: path,
+    PLAN_TEST_MODE: '1',
+    PLAN_EXECUTOR_ID: 'test-executor',
+    PLAN_TRUSTED_INGRESS_PROVIDER: 'tailscale',
+    PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN: 'owner@example.com',
+    PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN: 'https://localhost',
+  });
+  const app = await createApp(config, { database, executor: registry });
+  await app.ready();
+  const socket_path = executor_link_socket_path(path);
+  const link = await open_executor_link(app.server, socket_path);
+  const identity = {
+    protocol_version: PROTOCOL_VERSION,
+    application_revision: 'a'.repeat(40),
+    spool_format_version: 5,
+    executor_incarnation: '11111111-1111-4111-8111-111111111111',
+    connection_generation: 0,
+  };
+  const client = new MacHttpClient(socket_path, 'test-executor', identity);
+  const lease = {
+    identity,
+    process_id: 1,
+    mac_wall_clock_ms: Date.now(),
+    queue_depth: 0,
+    oldest_item_age_ms: null,
+    waiting_conversations: [],
+    waiting_conversations_truncated: false,
+    working_turns: [],
+    admission_stopped: false,
+    cleanup_uncertainties: [],
+  };
+  const refusal = (url: string, headers: Record<string, string>) =>
+    client.sessions.request(
+      { loop: 'reads', method: 'POST', path: url, timeout: 10, body: Buffer.from('{}') },
+      headers,
+      async (response) => {
+        const body = JSON.parse(String(await read_bounded(response, 64 * 1024)));
+        return `${response.statusCode} ${body.error.message}`;
+      },
+    );
+  try {
+    await client.ensure_credential(join(dirname(path), 'link-credential.json'));
+    expect(client.headers['X-Panels-Executor-Credential']).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect('error' in (await client.lease(lease))).toBe(false);
+    expect(await refusal('/api/tickets', client.headers)).toBe(
+      '403 the local executor link serves executor routes only',
+    );
+    expect(
+      await refusal('/api/executor/lease', {
+        ...client.headers,
+        'Tailscale-User-Login': 'owner@example.com',
+      }),
+    ).toBe('403 the local executor link does not accept a Tailscale login');
+    expect(
+      await refusal('/api/executor/lease', {
+        ...client.headers,
+        'X-Panels-Executor-Credential': 'x'.repeat(43),
+      }),
+    ).toBe('403 Executor credential is required or invalid');
+    // The lease loop opens a fresh connection for each request, so each one checks again.
+    chmodSync(dirname(socket_path), 0o750);
+    await expect(client.lease(lease)).rejects.toThrow('no group or other access');
+    chmodSync(dirname(socket_path), 0o700);
+    expect('error' in (await client.lease(lease))).toBe(false);
+  } finally {
+    link.close();
+    await client.stop({ deadline: performance.now() / 1000 + 5 });
+    await registry.stop({ deadline: performance.now() / 1000 + 5 });
+    await registry.settled();
+    await app.close();
+  }
+  expect(existsSync(socket_path)).toBe(false);
 });

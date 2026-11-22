@@ -67,22 +67,6 @@ async function snapshot_only_refusals(root: string): Promise<unknown> {
       ),
       /OS temp folder/,
     );
-    const provision = await create_production_operator_dependencies(
-      'provision-skills',
-      undefined,
-      snapshot,
-    );
-    assert.equal(provision.expand_path('~'), home);
-    provision.admit_path = record(provision.admit_path);
-    const refused = await operator_commands['provision-skills'].handler(
-      {
-        database_parent: join(root, 'runtime'),
-        codex_home: join(home, 'codex'),
-        claude_home: outside,
-      },
-      provision,
-    );
-    assert('failure_message' in refused && refused.failure_message.includes('OS temp folder'));
     const cleanup = await create_production_operator_dependencies('cleanup', undefined, snapshot);
     assert.equal(cleanup.home, home);
     await assert.rejects(
@@ -100,7 +84,7 @@ async function snapshot_only_refusals(root: string): Promise<unknown> {
       actual_test_mode: false,
       snapshot_test_mode: true,
       home,
-      refused: ['environment-tree', 'provision-home', 'cleanup-legacy-home'],
+      refused: ['environment-tree', 'cleanup-legacy-home'],
       admissions,
     };
   } finally {
@@ -267,34 +251,6 @@ async function operator_probe(root: string): Promise<unknown> {
     ),
     /OS temp folder/,
   );
-  const provision = {
-    database_parent: join(root, 'runtime'),
-    codex_home: join(root, 'test-codex'),
-    claude_home: join(root, 'test-claude'),
-  };
-  const provisioning = await create_production_operator_dependencies(
-    'provision-skills',
-    undefined,
-    environment,
-  );
-  const linked_parent = join(root, 'linked-skill-source');
-  await mkdir(linked_parent);
-  await symlink(outside, join(linked_parent, 'skills'));
-  const linked = await operator_commands['provision-skills'].handler(
-    { ...provision, database_parent: linked_parent },
-    provisioning,
-  );
-  assert('failure_message' in linked && linked.failure_message.includes('OS temp folder'));
-  const linked_home = join(root, 'linked-skill-home');
-  await mkdir(linked_home);
-  await symlink(outside, join(linked_home, 'skills'));
-  const destination = await operator_commands['provision-skills'].handler(
-    { ...provision, codex_home: linked_home },
-    provisioning,
-  );
-  assert(
-    'failure_message' in destination && destination.failure_message.includes('OS temp folder'),
-  );
   const watchdog_args = {
     db: join(root, 'runtime/database.sqlite'),
     state_dir: join(root, 'watchdog'),
@@ -317,7 +273,7 @@ async function operator_probe(root: string): Promise<unknown> {
     watchdog: await operator_commands.watchdog.handler(watchdog_args, {
       run_watchdog: async () => 'recorded watchdog',
     }),
-    unsafe_paths_refused: 4,
+    unsafe_paths_refused: 2,
     snapshot_only_refusals: await snapshot_only_refusals(root),
     invocation_home: paths.expand_path('~'),
     interrupted_status: await interrupted_status(root),
@@ -446,9 +402,7 @@ export async function command_probe(
           ) => Promise<EnvironmentCommandResult>;
           result = await handler(
             call.args,
-            ['backup', 'restore', 'prepare', 'reset', 'remove', 'provision-skills'].includes(
-              call.command,
-            )
+            ['backup', 'restore', 'prepare', 'reset', 'remove'].includes(call.command)
               ? paths
               : undefined,
           );

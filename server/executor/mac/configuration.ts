@@ -2,6 +2,7 @@
 import { isIP } from 'node:net';
 import fs from 'node:fs';
 import { ExecutorValidationError } from '../protocol_errors.ts';
+import { local_server_address } from '../../server_link/logic.ts';
 import { dirname, isAbsolute, join } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { homedir } from 'node:os';
@@ -173,8 +174,10 @@ export function executor_paths(environment: NodeJS.ProcessEnv = process.env): Ex
   return new ExecutorPaths(resolved);
 }
 
-/** Preserve urlsplit's origin validation without WHATWG URL normalization. */
+/** An HTTPS origin, with urlsplit's validation and no WHATWG normalization, or a link path. */
 export function validate_server_url(value: string): string {
+  const local = local_server_address(value);
+  if (local !== null) return local;
   if (/[\u0000-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u.test(value))
     refuse_configuration('executor server URL contains whitespace or control characters');
   const parsed =
@@ -228,7 +231,7 @@ export function validate_server_url(value: string): string {
     parsed[5] ||
     (port_text && Number(port_text) < 1)
   )
-    refuse_configuration('executor server URL must be an HTTPS origin');
+    refuse_configuration('executor server URL must be an HTTPS origin or an absolute socket path');
   return value.replace(/\/+$/u, '');
 }
 export function validate_executor_launch(

@@ -216,6 +216,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
       stages.own('one-shot admission', () => one_shot_children.seal());
       stages.own('HTTP listener', () => {
         services.app.value?.server.close(() => {});
+        services.executor_link?.close();
       });
       stages.own('video timer', () => clearInterval(services.video_cleanup_timer));
       stages.own('normal work release', () => services.stop_normal_work_release());

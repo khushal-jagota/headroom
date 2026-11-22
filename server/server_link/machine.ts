@@ -13,7 +13,12 @@ import { randomUUID } from 'node:crypto';
 import { flock } from '../core/locks/flock.ts';
 import { ExecutorValidationError } from '../executor/protocol_errors.ts';
 import type { MachineServerRecord, ServerLinkAdmission, ServerLocation } from './contracts.ts';
-import { accept_server_location, parse_server_location, validate_server_address } from './logic.ts';
+import {
+  accept_server_location,
+  follows_announced_address,
+  parse_server_location,
+  validate_server_address,
+} from './logic.ts';
 
 export function machine_server_path(root: string): string {
   return join(root, 'server-link.json');
@@ -149,10 +154,7 @@ export class MachineServerLink implements ServerLinkAdmission {
     for (let attempt = 0; attempt < 5; attempt++) {
       const location = parse_server_location(await probe(origin));
       this.update(location, origin);
-      if (
-        location.state === 'active' &&
-        (location.server_url === null || location.server_url === origin)
-      ) {
+      if (location.state === 'active' && !follows_announced_address(location, origin)) {
         const accepted = this.update(location, origin, true);
         this.checked_failure_generation = Math.max(
           this.checked_failure_generation,
@@ -190,8 +192,8 @@ export class MachineServerLink implements ServerLinkAdmission {
   ): Promise<void> {
     const location = this.parse_header(header);
     this.update(location, origin);
-    if (location.server_url !== null && location.server_url !== origin)
-      await this.prepare(probe, location.server_url);
+    if (follows_announced_address(location, origin))
+      await this.prepare(probe, location.server_url!);
     // A target probe can raise the floor above this response. Recheck before consumption.
     this.verify(header, origin);
   }

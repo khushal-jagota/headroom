@@ -8,6 +8,7 @@ import { MAX_CONVERSATION_SEND_REQUEST_BYTES } from '../config.ts';
 import { MINIMUM_SUPPORTED_BUILD } from '../../ios_compatibility/policy.ts';
 import { TRUSTED_INGRESS_CONFIGURED } from '../authority/identity.ts';
 import type { HttpRequestScope } from './lifetime.ts';
+import { is_executor_link_connection } from './executor_link.ts';
 export interface WorkspaceAdmission {
   operation(): {
     admitted: boolean;
@@ -70,6 +71,15 @@ export function installMiddleware(
 ): void {
   app.addHook('onRequest', async (request, reply) => {
     const operation = async () => {
+      const path = new URL(request.url, 'http://localhost').pathname;
+      const executor_link = is_executor_link_connection(request.raw.socket);
+      if (executor_link) {
+        // The machine credential, checked by the executor routes, says which machine this is.
+        if (!path.startsWith('/api/executor/'))
+          return reject(reply, 'the local executor link serves executor routes only');
+        if (request.headers['tailscale-user-login'] !== undefined)
+          return reject(reply, 'the local executor link does not accept a Tailscale login');
+      }
       // Raw headers also reach the streams that hijack or flush their own headers.
       if (request.headers.origin === DESKTOP_APP_ORIGIN) {
         reply.raw.setHeader('access-control-allow-origin', DESKTOP_APP_ORIGIN);
@@ -83,7 +93,6 @@ export function installMiddleware(
           return;
         }
       }
-      const path = new URL(request.url, 'http://localhost').pathname;
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
         const sha = request.headers['x-panels-app-sha'];
         if (sha !== undefined && sha !== config.app_sha) {
@@ -150,9 +159,9 @@ export function installMiddleware(
           });
         return;
       }
-      let login: string | null;
+      let login: string | null = null;
       try {
-        login = trusted_ingress_login(config, raw, request.method);
+        if (!executor_link) login = trusted_ingress_login(config, raw, request.method);
       } catch (error) {
         if (!(error instanceof PlannerError)) throw error;
         reject(reply, error.message);
