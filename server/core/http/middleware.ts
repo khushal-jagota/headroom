@@ -21,6 +21,8 @@ const SEND_PATHS = [
   /^\/api\/managers\/[^/]+\/conversation\/send$/,
   /^\/api\/messages\/send$/,
 ];
+/** The desktop app serves its screens from this origin. Change it here only. */
+export const DESKTOP_APP_ORIGIN = 'panels://app';
 const securityHeaders = new Set(['tailscale-user-login', 'origin']);
 const safe = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE']);
 function rawHeaders(request: FastifyRequest): Map<string, string[]> {
@@ -50,7 +52,8 @@ export function trusted_ingress_login(
   if (
     origin !== undefined &&
     !safe.has(method) &&
-    origin !== config.trusted_ingress_canonical_origin
+    origin !== config.trusted_ingress_canonical_origin &&
+    origin !== DESKTOP_APP_ORIGIN
   )
     refuse('request origin is not allowed');
   const login = raw.get('tailscale-user-login')?.[0]?.trim();
@@ -67,6 +70,19 @@ export function installMiddleware(
 ): void {
   app.addHook('onRequest', async (request, reply) => {
     const operation = async () => {
+      // Raw headers also reach the streams that hijack or flush their own headers.
+      if (request.headers.origin === DESKTOP_APP_ORIGIN) {
+        reply.raw.setHeader('access-control-allow-origin', DESKTOP_APP_ORIGIN);
+        const preflight = request.headers['access-control-request-method'];
+        if (request.method === 'OPTIONS' && preflight !== undefined) {
+          reply.raw.setHeader('access-control-allow-methods', preflight);
+          const headers = request.headers['access-control-request-headers'];
+          if (headers !== undefined) reply.raw.setHeader('access-control-allow-headers', headers);
+          reply.raw.setHeader('access-control-max-age', '600');
+          reply.code(204).send();
+          return;
+        }
+      }
       const path = new URL(request.url, 'http://localhost').pathname;
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
         const sha = request.headers['x-panels-app-sha'];
