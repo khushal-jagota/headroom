@@ -3,6 +3,7 @@
   import { conversationHeight, fadeConversationExit } from "../../../lib/conversation/surfaceMotion";
   let stackElement: HTMLDivElement;
   import MessagePieces from "../MessagePieces.svelte";
+  import SystemLine from "../SystemLine.svelte";
   import {
     heldPromptRowActions,
     heldPromptRowLabel,
@@ -149,18 +150,12 @@
         aria-label={`Not sent yet: ${heldPromptRowLabel(row)}`}
       >
         <MessagePieces content={row.content} conversationId={conversationId ?? ""} bubble />
-        <!-- v11 (4): under the ghost bubble, one status line in the Steered note's style
-             (a 16px clock, "Queued" 500 #ececec, " · " and "1 of 2" in #c4c4c4), then a 28px
-             quiet "more" button that opens its actions. No pill on the note. -->
+        <!-- Under the ghost bubble, one system line (B3), "Queued · 1 of 2", then a 28px
+             quiet "more" button that opens its actions. -->
         <div class="chat-qrow-meta">
-          <span class="chat-qrow-note" data-conversation-held-chip title={reason ?? undefined}>
-            {#if row.state === "in_flight"}
-              <span class="chat-qrow-slot" aria-hidden="true"><span class="chat-qrow-spin"></span></span>
-            {:else}
-              <span class="chat-qrow-slot" aria-hidden="true"><svg class="chat-qrow-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4.2l2.6 1.6" /></svg></span>
-            {/if}
-            <span class="chat-qrow-word">{stateWord(row)}</span>{#if row.state === "held" && heldKeys.includes(row.key)}<span class="chat-qrow-sep" aria-hidden="true">·</span><span class="chat-qrow-detail" data-conversation-held-detail>{heldKeys.indexOf(row.key) + 1} of {heldKeys.length}</span>{/if}
-          </span>
+          <SystemLine align="end" mark={row.state === "in_flight" ? "spinner" : null} data-conversation-held-chip="" title={reason ?? undefined}>
+            {stateWord(row)}{#if row.state === "held" && heldKeys.includes(row.key)}<span aria-hidden="true">{" · "}</span><span data-conversation-held-detail>{heldKeys.indexOf(row.key) + 1} of {heldKeys.length}</span>{/if}
+          </SystemLine>
           {#if row.state !== "in_flight"}
           {@const words = editableWords(row)}
           <span class="chat-qrow-anchor">
@@ -254,8 +249,8 @@
 <style>
   /* Each waiting message is the person's own message, not sent yet: on their side of the
    * thread, a ghost bubble, and under it one chip that opens its actions. */
-  /* v8 (3): the stack's own 40px (a turn's gap) stands under the Working line; the content
-     box's 16px block gap does not add to it, nor stand alone when the stack is empty. */
+  /* Each queued message is the next message, so it stands a turn's gap (32) under what is
+     above it (B9). */
   .chat-queue-slot { flex: none; margin-block-start: 0; }
   .chat-queue-stack {
     display: grid;
@@ -264,12 +259,6 @@
     padding: var(--cv-gap-turn) 0 0;
     list-style: none;
   }
-  /* v13 (8): the first queued bubble stands 24px under the Working line, the same gap as from
-     a Steered note to the Working line. */
-  .chat-queue-stack { padding-block-start: 24px; }
-  /* v13 (8, coordinator): the gap after every status note is 24px, so a "Queued" note stands
-     24px over the next queued bubble, as Steered does over the Working line. */
-  .chat-queue-stack { row-gap: 24px; }
   .chat-qrow {
     display: flex;
     flex-direction: column;
@@ -293,25 +282,10 @@
      the queued bubble is as wide as its widest content. Its edge is the thumbnails' 16%. */
   .chat-qrow :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; margin: 0; }
   .chat-qrow :global(.c2-bubble--attached .c2-piece-image-slot) { justify-content: flex-start; }
-  /* v11 (4): the note under the bubble is a status line, as the Steered note is: 13/20, a 16px
-     icon slot 8px before the label (500 #ececec), then " · " and the detail (#c4c4c4). After it a
-     28px quiet "more" button; the row's right edge is the bubble's. */
-  /* The row is the note's 20px line, as the Steered note's is; the 28px button overhangs it 4px
-     above and below, so both notes stand the same distance under their bubbles. */
+  /* The row is the system line's 20px line; the 28px button overhangs it 4px above and
+     below. The row's right edge is the bubble's. */
   .chat-qrow-meta { display: flex; align-items: center; justify-content: flex-end; gap: 4px; height: 20px; }
   .chat-qrow-anchor { position: relative; display: inline-flex; }
-  .chat-qrow-note {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: #c4c4c4;
-    font: var(--cv-weight-body) 13px/20px var(--cv-font);
-    white-space: nowrap;
-  }
-  .chat-qrow-slot { flex: none; display: inline-grid; place-items: center; width: 16px; height: 20px; }
-  .chat-qrow-word { color: #ececec; font-weight: var(--cv-weight-label); }
-  .chat-qrow-sep { margin-inline: -2px; color: #c4c4c4; }
-  .chat-qrow-detail { color: #c4c4c4; font-variant-numeric: tabular-nums; }
   .chat-qrow-more {
     flex: none;
     display: inline-grid;
@@ -331,26 +305,9 @@
   .chat-qrow-more[aria-expanded="true"], .chat-qrow-more[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }
   .chat-qrow-more:disabled { cursor: default; }
   .chat-qrow-more:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
-  .chat-qrow-clock { width: 16px; height: 16px; fill: none; stroke: #bdbdbd; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .chat-qrow-spin {
-    width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%;
-    border: 2px solid rgb(255 255 255 / 22%); border-top-color: var(--cv-t1);
-    animation: chat-qrow-spin var(--cv-spin) linear infinite;
-  }
-  @keyframes chat-qrow-spin { to { transform: rotate(360deg); } }
-  /* v14 (7): the Queued note is as quiet as the Steered note: icon and label #bdbdbd 500, the
-     detail #a6a6a6, 13/20. v14 (8): the queued bubble's frame is 1px #4a4a4a. */
-  .chat-qrow-word { color: #bdbdbd; }
-  .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #a6a6a6; }
-  .chat-qrow-spin { border-top-color: #bdbdbd; }
+  /* v14 (8): the queued bubble's frame is 1px #4a4a4a. */
   .chat-qrow :global(.c2-bubble) { box-shadow: inset 0 0 0 1px #4a4a4a; }
-  /* v15 (5): the Queued detail is #b8b8b8. */
-  .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #b8b8b8; }
-  /* v16 (12): the Queued detail one step up, #c4c4c4. v16 (10): the "..." button is a 28px
-     target, its icon #c4c4c4, hover #2a2a2a. */
-  .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #c4c4c4; }
-  .chat-qrow-more { width: 28px; height: 28px; color: #c4c4c4; }
-  .chat-qrow-more:hover:not(:disabled) { background: #2a2a2a; }
+  .chat-qrow-more { color: #c4c4c4; }
   /* The dropdown (v4): the float plane anchored on its chip, opening upward from its right
      edge; labels only, 14px on 36px rows. Remove is in the danger ink. */
   .chat-qrow-menu[hidden] { display: none; }
@@ -382,7 +339,7 @@
     border-radius: 999px;
     background: none;
     color: #ececec;
-    font: var(--cv-weight-label) 13px/20px var(--cv-font);
+    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
     text-align: start;
     white-space: nowrap;
     cursor: pointer;
@@ -393,7 +350,6 @@
   .chat-qrow-x:hover:not(:disabled) { color: #ececec; }
   @media (prefers-reduced-motion: reduce) {
     .chat-qrow { animation: none; }
-    .chat-qrow-spin { animation: none; }
     .chat-qrow-menu { animation: none; }
   }
 </style>

@@ -630,17 +630,20 @@
   /* Type: Inter for everything; JetBrains Mono only for code, commands, paths, URLs, output. */
   --cv-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --cv-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --cv-type-prose: 15px;   --cv-leading-prose: 24px;
-  --cv-type-h1: 20px;      --cv-leading-h1: 28px;
-  --cv-type-h2: 18px;      --cv-leading-h2: 26px;
-  --cv-type-h3: 16px;      --cv-leading-h3: 24px;
+  /* Type sizes are staging's (the owner's review, B2): body 14, headings 15, code and
+     controls 12.5. Only the system line keeps 13/20 (B3). Leadings sit on the 4 px grid. */
+  --cv-type-prose: 14px;   --cv-leading-prose: 24px;
+  --cv-type-h1: 15px;      --cv-leading-h1: 24px;
+  --cv-type-h2: 15px;      --cv-leading-h2: 24px;
+  --cv-type-h3: 15px;      --cv-leading-h3: 24px;
   --cv-type-title: 15px;   --cv-leading-title: 24px;
   --cv-type-ui: 14px;      --cv-leading-ui: 20px;
-  --cv-type-meta: 13px;    --cv-leading-meta: 18px;
+  --cv-type-meta: 13px;    --cv-leading-meta: 20px;
+  --cv-type-control: 12.5px; --cv-leading-control: 20px;
   --cv-type-caption: 12px; --cv-leading-caption: 16px;
   --cv-type-code: 12.5px;  --cv-leading-code: 20px;
   --cv-type-output: 12px;  --cv-leading-output: 18px;
-  --cv-type-inline-code: 0.87em;
+  --cv-type-inline-code: 12.5px;
   --cv-weight-body: 400;
   --cv-weight-label: 500;
   --cv-weight-title: 600;
@@ -653,15 +656,34 @@
   --cv-s5: 24px;
   --cv-s6: 32px;
   --cv-s7: 48px;
-  /* Rhythm (margins on the transcript's direct children). */
-  --cv-gap-turn: 32px;   /* v4.3 */
-  --cv-gap-meta: 6px;    /* v4.3: meta line to its prose */
+  /* THE TRANSCRIPT GRID (owner's review, B9). One grid for every element in the thread.
+   *  Horizontal: all text starts at the column's left edge (x = 0): prose, system lines, the
+   *    hover row. A leading mark (spinner or dot) hangs in a 16 px slot at x = -24 to -8, so it
+   *    never pushes the text in. User bubbles and their captions keep the right edge.
+   *  Vertical, steps 4 8 12 16 24 32 only:
+   *    meta   8  a system line ("Worked for") to the content under it
+   *    block 16  blocks inside one turn: paragraph groups, tables, code, tool rows, the
+   *              end-of-turn system line
+   *    turn  32  the end of one turn to the next message
+   *    hover  4 + 24  the hover row (time, copy) sits 4 under its message in a 24 slot inside
+   *              the gap that already follows it. It adds no space; where the next item is
+   *              closer, the row goes under that item's system line, or is not drawn. */
+  --cv-gap-turn: 32px;
+  --cv-gap-meta: 8px;
   --cv-gap-block: 16px;
-  --cv-gap-paragraph: 12px;
+  --cv-gap-paragraph: 16px;
   --cv-gap-heading-above: 24px;
   --cv-gap-heading-below: 8px;
-  --cv-gap-list-item: 6px;
-  --cv-gap-bubble-stack: 8px;
+  --cv-gap-list-item: 8px;
+  --cv-gap-bubble-stack: 12px;
+  /* The system line (B3): Inter 13/20, its ink, its actions, and the one failure red. */
+  --cv-system-ink: #8f8f8f;
+  --cv-system-action-ink: #d0d0d0;
+  --cv-failure-ink: #ff8f85;
+  --cv-hover-row-offset: 4px;
+  --cv-hover-row-height: 24px;
+  --cv-mark-slot: 16px;
+  --cv-mark-hang: 24px;
   --cv-transcript-pad-top: 28px;
   --cv-transcript-pad-bottom: 24px;
 
@@ -720,11 +742,6 @@
   --cv-spinner-track: #4a4a4a;
   --cv-media-edge: rgb(255 255 255 / 16%);
   --cv-answer-link-underline: rgb(236 236 236 / 50%);
-  --cv-type-answer-heading: 19px;
-  --cv-leading-answer-heading: 26px;
-  --cv-type-answer-subheading: 17px;
-  --cv-type-answer-code: 0.85em;
-  --cv-type-narration-code: 0.9em;
   --cv-dur-status-icon: 150ms;
   --cv-ink: #ececec;          /* agent final messages, user words, status labels, secondary ink */
   --cv-quiet-ink: #bdbdbd;    /* quiet buttons, icons, narration */
@@ -735,14 +752,6 @@
   --cv-code-surface: #1a1a1a; /* code blocks: radius 12 */
   --cv-bubble: #242424;
   --cv-danger: #f08a7e;       /* failure only */
-  --cv-type-meta: 13px;   --cv-leading-meta: 20px;
-  --cv-gap-turn: 40px;
-  --cv-gap-meta: 8px;
-  --cv-gap-paragraph: 16px;
-  --cv-gap-list-item: 8px;
-  --cv-gap-bubble-stack: 12px;
-  --cv-gap-heading-above: 24px;
-  --cv-gap-heading-below: 8px;
   --cv-dur-expand: 220ms;
   --cv-dur-fast: 120ms;
 }

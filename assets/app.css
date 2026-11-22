@@ -1261,10 +1261,11 @@ a.pv-name:focus-visible { outline:0; }
   line-height: var(--cv-leading-h3);
 }
 .chat-thread .markdown > :first-child { margin-block-start: 0; }
-/* v6: a heading right after a turn's "Worked for" line gets 12px more space above it. */
-.chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 12px; }
 .chat-thread .markdown > :last-child { margin-block-end: 0; }
 .chat-thread .markdown :is(ul, ol) { padding-inline-start: var(--cv-s5); }
+/* B9: in the agent's prose a top-level list's text starts at x = 0; its markers hang in the
+ * 24 px mark gutter, as a system line's mark does. Nested lists keep their indent. */
+.chat-thread .chat-a .markdown > :is(ul, ol) { padding-inline-start: 0; }
 .chat-thread .markdown li + li { margin-block-start: var(--cv-gap-list-item); }
 .chat-thread .markdown li > :is(ul, ol) { margin-block: var(--cv-gap-list-item) 0; }
 .chat-thread .markdown li > p { margin-block: 0; }
@@ -1292,7 +1293,7 @@ a.pv-name:focus-visible { outline:0; }
 .chat-thread .markdown :not(pre) > code,
 .cv-code {
   font-family: var(--cv-mono);
-  font-size: 13px;
+  font-size: var(--cv-type-inline-code);
   font-weight: var(--cv-weight-body);
   line-height: 1;
   padding: 0 4px;
@@ -1350,7 +1351,7 @@ a.pv-name:focus-visible { outline:0; }
   font-weight: var(--cv-weight-title);
   line-height: 20px;
 }
-.chat-thread .markdown td { color: #d9d9d9; font-size: 15px; line-height: 22px; font-weight: var(--cv-weight-body); }
+.chat-thread .markdown td { color: #d9d9d9; font-size: var(--cv-type-prose); line-height: 22px; font-weight: var(--cv-weight-body); }
 .chat-thread .markdown :is(th, td)[align="right"] { text-align: right; }
 .chat-thread .markdown :is(th, td)[align="center"] { text-align: center; }
 
@@ -1717,20 +1718,6 @@ button.list-row:hover .list-row-title {
   animation: acp-spin var(--cv-spin) linear infinite;
 }
 
-/* A seam in the conversation (context compacted, model changed): one centred quiet line.
-   It is said by its place and tone; no rule is drawn on either side. */
-.acp-compaction {
-  display: flex;
-  justify-content: center;
-  text-align: center;
-  color: var(--cv-t3);
-  font-family: var(--cv-font);
-  font-size: var(--cv-type-caption);
-  line-height: var(--cv-leading-caption);
-  font-variant-numeric: tabular-nums;
-}
-.acp-compaction span { color: inherit; }
-
 /* A backend's own answer to a slash command: the tool voice, kept whole, never a bubble. */
 .acp-command-reply {
   margin: 0;
@@ -2077,6 +2064,10 @@ button.list-row:hover .list-row-title {
      head's rule) and 24 under the newest (NEWEST_LINE_BOTTOM_GAP_PIXELS in
      viewport/viewportConfiguration.ts is this value). */
   padding: var(--cv-transcript-pad-top) var(--space-3) var(--cv-transcript-pad-bottom);
+  /* The scroll box reaches one mark gutter left of the text (B9), so a system line's mark
+     can hang at x = -24 to -8 without being clipped, and the text stays where it was. */
+  margin-inline-start: calc(-1 * var(--cv-mark-hang));
+  padding-inline-start: calc(var(--space-3) + var(--cv-mark-hang));
   /* Its edge fades are ConversationViewport's: only at an edge where something is cut. */
 }
 
@@ -2103,7 +2094,7 @@ button.list-row:hover .list-row-title {
  *   turn   32  between turns: the person's message, a turn's head, the next message
  *   meta    8  a turn's head binds to the first thing in its turn
  *   block  16  prose, a tool run, a callout, an attachment, inside one turn
- *   section 24 two messages of the agent's in a row (Focus): two, not one long one
+ *   section 16 two messages of the agent's in a row: blocks in one turn (B9)
  *   row     0  tool rows stack with no gap; each is its own 32 px line
  * The projected transcript names each item's place with data-rhythm; the plain transcript
  * is read by its elements. */
@@ -2113,12 +2104,12 @@ button.list-row:hover .list-row-title {
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="turn"] { margin-block-start: var(--cv-gap-turn); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] { margin-block-start: var(--cv-gap-meta); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="block"] { margin-block-start: var(--cv-gap-block); }
-.chat-thread-content > [data-conversation-transcript] > [data-rhythm="section"] { margin-block-start: var(--cv-s5); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="section"] { margin-block-start: var(--cv-gap-block); }
 .chat-thread-content > [data-conversation-transcript] > :is([data-rhythm="row"], [data-rhythm="first"], [data-rhythm="none"]) { margin-block-start: 0; }
 /* The plain transcript (no view reader) is read by its elements. */
 .chat-thread-content > [data-conversation-transcript] > :is(.chat-u, .chat-system, [data-conversation-turn]):not(:first-child, [data-rhythm]) { margin-block-start: var(--cv-gap-turn); }
 .chat-thread-content > [data-conversation-transcript] > [data-conversation-turn] + :not([data-rhythm]) { margin-block-start: var(--cv-gap-meta); }
-.chat-thread-content > [data-conversation-transcript] > .chat-a + .chat-a { margin-block-start: var(--cv-s5); }
+.chat-thread-content > [data-conversation-transcript] > .chat-a + .chat-a { margin-block-start: var(--cv-gap-block); }
 /* An item that draws nothing gives nothing, and the item after it keeps its own gap. */
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="none"] { margin-block: 0; }
 
@@ -2380,7 +2371,7 @@ button.list-row:hover .list-row-title {
   border-radius: 999px;
   background: transparent;
   font-family: var(--cv-font);
-  font-size: 13px;
+  font-size: var(--cv-type-control);
   line-height: 20px;
   font-weight: var(--cv-weight-body);
   color: #d9d9d9;
@@ -3958,8 +3949,10 @@ select {
   border-radius: 0;
   box-shadow: none;
 }
-.conversation-layer .chat-thread,
 .conversation-layer .chat-head { padding-inline: 0; }
+/* The thread keeps its mark gutter (see .chat-thread): text on the column's edge, marks in
+ * the 24 px to its left. */
+.conversation-layer .chat-thread { padding-inline: var(--cv-mark-hang) 0; }
 .conversation-layer .chat-head-right { margin-right: calc(var(--space-2) * -1); }
 .conversation-layer .chat-box { margin: 0; }
 .ticket-artifact-slot {
@@ -5510,9 +5503,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child {
   margin-block-start: 0;
 }
-[data-conversation-pane] .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child {
-  margin-block-start: var(--cv-s4);
-}
 [data-conversation-pane] .chat-thread .markdown li + li {
   margin-block-start: var(--cv-s2);
 }
@@ -5538,13 +5528,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
   margin-block-start: 0;
 }
 [data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2) {
-  font-size: var(--cv-type-answer-heading);
-  line-height: var(--cv-leading-answer-heading);
+  font-size: var(--cv-type-h2);
+  line-height: var(--cv-leading-h2);
   font-weight: var(--cv-weight-title);
   color: var(--cv-t1);
 }
 [data-conversation-pane] .chat-thread .chat-a .markdown h3 {
-  font-size: var(--cv-type-answer-subheading);
+  font-size: var(--cv-type-h3);
   line-height: var(--cv-leading-prose);
   font-weight: var(--cv-weight-title);
   color: var(--cv-ink);
@@ -5581,7 +5571,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-thread .markdown :not(pre) > code,
 [data-conversation-pane] .cv-code {
   font-family: var(--cv-mono);
-  font-size: var(--cv-type-answer-code);
+  font-size: var(--cv-type-inline-code);
   line-height: 1;
   margin-inline-end: 0;
   color: var(--cv-inline-code-ink);
@@ -5601,7 +5591,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 [data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code {
   font-family: var(--cv-mono);
-  font-size: var(--cv-type-narration-code);
+  font-size: var(--cv-type-inline-code);
   line-height: inherit;
   padding: 0;
   border-radius: 0;

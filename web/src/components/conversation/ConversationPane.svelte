@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import type { CredentialRequestRowBody } from "../../lib/conversation/view/contracts";
-  import { NEWEST_CALLOUTS, createNewestCallouts } from "../../lib/conversation/newestCallout";
   import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
@@ -97,7 +96,6 @@
     waitingOnPage = null,
     recordedCredentialRequest = null,
     emptyState,
-    emptyHint = null,
     reader = null,
     acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
@@ -215,10 +213,6 @@
      *  reads no transcript, so this is how it knows the key request it shows. */
     recordedCredentialRequest?: CredentialRequestRowBody | null;
     emptyState?: Snippet;
-    /** v15 (6): the line under a centred empty composer ("You can attach or drop files
-     *  here."). Set only while the conversation holds nothing; null keeps the composer at the
-     *  foot as in every other state. */
-    emptyHint?: string | null;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -240,7 +234,6 @@
     onNewConversation?: () => void;
   } = $props();
 
-  setContext(NEWEST_CALLOUTS, createNewestCallouts());
   setContext(CREDENTIAL_REQUEST_READ_ONLY, () => readOnly);
   const credentialDrafts = $derived.by(() => { conversationId; return new Map() as CredentialRequestDrafts; });
   setContext(CREDENTIAL_REQUEST_DRAFTS, () => credentialDrafts);
@@ -283,12 +276,6 @@
   // The opened pane's top bar says who the conversation is with and what it is doing. At rest
   // the bar is not drawn: the dock's status line says the same there.
   let headTitle = $derived(paneTitleFor(title, roleLabel));
-  /** v15 (6): the empty, full-width conversation centres its composer. Never at rest (the
-   *  dock's line keeps its place), never read only, and only while nothing has been said. */
-  let emptyStart = $derived(
-    typeof emptyHint === "string" && emptyHint !== "" && !readOnly && conversationState !== "rest"
-      && rows.length === 0 && outgoingMessages.length === 0
-  );
     /** v5: the header carries the title alone, in every state. The composer's placeholder
    *  ("Message <role>") already names who does the work. */
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
@@ -459,9 +446,7 @@
 
 <div
   class="chat-panel"
-  class:is-empty-start={emptyStart}
   data-conversation-pane
-  data-conversation-empty-start={emptyStart ? "true" : undefined}
   data-conversation-id={conversationId}
   data-conversation-read-only={readOnly ? "true" : undefined}
   data-conversation-read-only-boundary={readOnly ? "true" : undefined}
@@ -764,9 +749,6 @@
       {onSendHeldPromptAgain}
       onFieldChosen={openForWritingOnAPhone}
     />
-    {#if emptyStart}
-      <div class="cv-empty-foot"><p class="cv-empty-hint" data-conversation-empty-hint>{emptyHint}</p></div>
-    {/if}
   {/if}
 </div>
 
@@ -775,19 +757,6 @@
   /* v4.1 (revised): an empty conversation is the composer in its normal bottom place, as in
      every other state, and an empty canvas above it. No placement of its own. */
   .conversation-reader[hidden] { display:none; }
-  /* v15 (6): an empty conversation that has the page's width (not the dock at rest) holds its
-     composer in the vertical centre of the column: the reader above it (the heading at its
-     foot, 20px over the composer) and the hint's band under it share the room equally. The
-     first send takes the hint away and the composer goes back to the foot. */
-  .chat-panel.is-empty-start > .conversation-reader { flex: 1 1 0; }
-  .cv-empty-foot { flex: 1 1 0; min-height: 0; }
-  .cv-empty-hint {
-    margin: 12px 0 0;
-    /* v16 (12): one step up, #b8b8b8. */
-    color: #b8b8b8;
-    font: var(--cv-weight-body, 400) 13px/20px var(--cv-font);
-    text-align: center;
-  }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* v19 (1): while a question or a permission ask is open, a transcript shorter than the room
      above the card sits at the foot of that room, its last item 32px over the card (the
@@ -864,7 +833,7 @@
     border-radius: 999px;
     background: transparent;
     color: #d0d0d0;
-    font: var(--cv-weight-label) 13px/20px var(--cv-font);
+    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
@@ -893,7 +862,7 @@
     border-radius: 8px;
     background: transparent;
     color: #bdbdbd;
-    font: var(--cv-weight-label) 13px/20px var(--cv-font);
+    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }

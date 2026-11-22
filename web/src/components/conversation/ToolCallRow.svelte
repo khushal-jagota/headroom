@@ -193,7 +193,9 @@
     grid-template-columns: 16px minmax(0, max-content) 16px minmax(0, 1fr) minmax(72px, auto);
     align-items: center;
     column-gap: var(--cv-s2);
-    width: 100%;
+    /* B9: the glyph hangs in the mark gutter (x = -24 to -8), the words start at x = 0. */
+    width: calc(100% + var(--cv-mark-hang));
+    margin-inline-start: calc(-1 * var(--cv-mark-hang));
     min-width: 0;
     height: 32px;
     padding: 0 var(--cv-s2);
@@ -203,7 +205,7 @@
     background: transparent;
     color: var(--cv-detail-ink, #b0b0b0);
     font-family: var(--cv-font);
-    font-size: 13px;
+    font-size: var(--cv-type-control);
     line-height: 20px;
     letter-spacing: normal;
     text-align: start;
@@ -248,7 +250,7 @@
   /* Only the exact thing the call acted on (a command, a path, a pattern) is set as code.
      Words about the call ("0 of 5 done") stay in the thread's own face. */
   /* Code in the row is set at the row's own size, so the line reads as one size. */
-  .c2-tool-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-meta); }
+  .c2-tool-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-control); }
   .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-ink, #ececec); }
   /* p13b: a running call says so in words ("Running"-style verb, #ececec 500), not a spinner. */
   .acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }

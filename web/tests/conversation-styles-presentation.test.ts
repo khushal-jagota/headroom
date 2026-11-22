@@ -36,21 +36,23 @@ const inlineCode = `${pane} .chat-thread .markdown :not(pre) > code,\n${pane} .c
 describe("final conversation style contracts", () => {
   it("keeps answer prose, heading levels, and inline chips distinct from Full narration", () => {
     expect(declarations(`${pane} .chat-a .markdown`)).toMatchObject({
-      "font-size": "15px", "line-height": "24px", color: "#ececec"
+      "font-size": "14px", "line-height": "24px", color: "#ececec"
     });
+    // B2: staging's sizes. Answers 14, headings 15, inline code 12.5.
     expect(declarations(`${pane} .chat-thread .chat-a .markdown :is(h1, h2)`)).toMatchObject({
-      "font-size": "19px", "line-height": "26px", color: "#f2f2f2", "font-weight": "600"
+      "font-size": "15px", "line-height": "24px", color: "#f2f2f2", "font-weight": "600"
     });
     expect(declarations(`${pane} .chat-thread .chat-a .markdown h3`)).toMatchObject({
-      "font-size": "17px", "line-height": "24px", color: "#ececec"
+      "font-size": "15px", "line-height": "24px", color: "#ececec"
     });
     expect(declarations(inlineCode)).toMatchObject({
-      "font-size": "0.85em", padding: "1px 4px", "border-radius": "4px", background: "#232323"
+      "font-size": "12.5px", padding: "1px 4px", "border-radius": "4px", background: "#232323"
     });
     expect(declarations(`${pane} .chat-thread .chat-a .markdown :is(h1, h2, h3)`)).toMatchObject({ margin: "24px 0 8px" });
     expect(declarations(`${pane} .chat-thread .chat-a .markdown > :is(h1, h2, h3):first-child`)).toMatchObject({ "margin-block-start": "0" });
-    expect(declarations(`${pane} .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child`)).toMatchObject({ "margin-block-start": "16px" });
-    expect(declarations('.chat-thread-content > [data-conversation-transcript] > [data-rhythm="turn"]')).toMatchObject({ "margin-block-start": "40px" });
+    // B9: 32 between turns, 8 under a system line, 16 between blocks in a turn.
+    expect(declarations('.chat-thread-content > [data-conversation-transcript] > [data-rhythm="turn"]')).toMatchObject({ "margin-block-start": "32px" });
+    expect(declarations('.chat-thread-content > [data-conversation-transcript] > [data-rhythm="section"]')).toMatchObject({ "margin-block-start": "16px" });
     expect(declarations('.chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"]')).toMatchObject({ "margin-block-start": "8px" });
     expect(declarations(`${markdown} :is(p, ul, ol, blockquote)`)).toMatchObject({ "margin-block-end": "16px" });
     const userStyle = parse(read("../src/components/conversation/UserMessage.svelte").split("<style>")[1]!.split("</style>")[0]!);
@@ -62,7 +64,7 @@ describe("final conversation style contracts", () => {
       "font-size": "14px", "line-height": "24px", color: "#c4c4c4", "text-wrap": "pretty"
     });
     expect(declarations(`${pane}[data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code`)).toMatchObject({
-      "font-size": "0.9em", "line-height": "inherit", padding: "0", background: "none", color: "#dcdcdc"
+      "font-size": "12.5px", "line-height": "inherit", padding: "0", background: "none", color: "#dcdcdc"
     });
   });
 

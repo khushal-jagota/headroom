@@ -76,10 +76,11 @@
     column-gap: var(--cv-s2);
     justify-self: start;
     width: fit-content;
-    max-width: calc(100% + var(--cv-s2) * 2);
+    /* B9: the glyph hangs in the mark gutter (x = -24 to -8), the words start at x = 0. */
+    max-width: calc(100% + var(--cv-mark-hang) + var(--cv-s2) * 2);
     min-width: 0;
     height: 32px;
-    margin-inline: calc(var(--cv-s2) * -1);
+    margin-inline: calc(-1 * (var(--cv-mark-hang) + var(--cv-s2))) calc(var(--cv-s2) * -1);
     padding: 0 var(--cv-s2);
     border: 0;
     /* v7: a status line, 13/20. A settled run is detail-only ("Ran 2 commands", #b0b0b0) after
@@ -88,7 +89,7 @@
     background: transparent;
     color: var(--cv-detail-ink, #b0b0b0);
     font-family: var(--cv-font);
-    font-size: 13px;
+    font-size: var(--cv-type-control);
     line-height: 20px;
     text-align: start;
     cursor: pointer;
@@ -152,7 +153,7 @@
     color: var(--cv-t3);
   }
   /* Code in the line is set at the line's own size, so it reads as one line, not a smaller one. */
-  .c2-run-subject--literal { font-family: var(--cv-mono); font-size: 13px; }
+  .c2-run-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-control); }
   .c2-run-status {
     display: inline-flex;
     gap: 6px;

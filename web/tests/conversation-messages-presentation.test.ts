@@ -32,24 +32,6 @@ describe("messages", () => {
     const stack = source("../src/components/conversation/composer/HeldPromptStack.svelte");
     expect(stack).toMatch(/\.chat-qrow :global\(\.c2-bubble\) \{[^}]*rgb\(255 255 255 \/ 16%\);[^}]*color: var\(--cv-t2\);/);
   });
-  it("an undelivered message has the small 16px ! beside its bubble, in the failure colour #f08a7e", () => {
-    expect(source("../src/components/conversation/UserMessage.svelte")).toMatch(/\.chat-u\.undelivered :global\(\.c2-bubble\)::before \{[^}]*right: calc\(100% \+ 8px\);\s*width: 16px;\s*height: 16px;[^}]*background: #f08a7e;/);
-  });
-  it("a message from Panels uses a compact system note", () => {
-    const row = {
-      key: "e1", kind: "prompt" as const, sequence: 1, createdAt: 1, senderLabel: "Panels", senderMessageId: null,
-      content: [{ piece: "text" as const, text: "Continue the Ticket at Stage: Problem understanding." }]
-    };
-    const html = render(UserMessage, { props: { row, conversationId: "c", ownSenderLabel: "owner" } }).body;
-    expect(html).toMatch(/<p class="c2-system-note[^"]*" data-conversation-system-note[^>]*>(<!--[^>]*-->)*<span class="c2-system-words[^"]*"><span class="c2-label[^"]*" data-conversation-prompt-label[^>]*>From Panels<\/span><span aria-hidden="true"> · <\/span>Continue the Ticket at Stage: Problem understanding\.<\/span><\/p>/);
-    expect(html).not.toContain("c2-system-row");
-    const css = source("../src/components/conversation/UserMessage.svelte");
-    expect(css).toMatch(/\.c2-system-note \{[^}]*padding: 8px 12px;\s*border-radius: 10px;\s*background: #1a1a1a;[^}]*font: var\(--cv-weight-body\) 13px\/20px var\(--cv-font\);/);
-    expect(css).toMatch(/\.c2-system-words \{[^}]*-webkit-line-clamp: 2;/);
-    expect(css).toContain(".c2-label { color: #bdbdbd; font-weight: var(--cv-weight-label); }");
-    expect(html).not.toContain("<img");
-    expect(css).not.toContain("c2-system-mark");
-  });
   it("another sender's note wears the same well", () => {
     const row = {
       key: "e2", kind: "prompt" as const, sequence: 1, createdAt: 1, senderLabel: "Chief of Staff", senderMessageId: null,
@@ -180,22 +162,11 @@ describe("thread pieces", () => {
   it("a one-picture bubble is as wide as its picture", () => {
     expect(pieces).toContain(".c2-bubble--one-image :global(.file-preview-media > :is(.file-preview-image, .file-preview-video-poster)) { max-width: 320px; }");
   });
-  it("the first queued bubble stands 24px under the Working line", () => {
-    expect(held).toContain(".chat-queue-stack { padding-block-start: 24px; }");
-    expect(held).toContain(".chat-queue-stack { row-gap: 24px; }");
-  });
-  it("the From Panels note is centred", () => {
-    expect(user).toContain(".c2-system-note { align-self: center; }");
-  });
 });
 
 describe("secondary text contrast", () => {
-  it("option descriptions, attachment meta, the empty hint, From Panels, queued and steered details", () => {
+  it("option descriptions and attachment meta", () => {
     expect(shell).toContain(":global([data-conversation-pane] .cv-ask-sub) { color: #c4c4c4; }");
     expect(composer).toContain(".chat-att-meta { color: #b8b8b8;");
-    expect(pane).toMatch(/\.cv-empty-hint \{[^}]*color: #b8b8b8;/);
-    expect(user).toContain(".c2-system-note { color: #c4c4c4; }");
-    expect(held).toContain(".chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #c4c4c4; }");
-    expect(status).toContain(".c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #c4c4c4; }");
   });
 });

@@ -25,14 +25,13 @@
 {/if}
 
 <style>
-  /* v8 (3): it ends the running turn's content, so it stands 24px under it (a block gap
-     inside the turn), not a turn's 40. */
+  /* It ends the running turn's content, so it stands a block's gap (16) under it (B9). */
   .c2-live-edge {
     flex: none;
     display: flex;
     flex-direction: column;
     align-items: stretch;
     min-width: 0;
-    margin-block-start: 24px;
+    margin-block-start: var(--cv-gap-block);
   }
 </style>

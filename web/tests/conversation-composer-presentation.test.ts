@@ -129,14 +129,13 @@ describe("queued notes", () => {
       ...overrides
     } as HeldPromptRow;
   }
-  it("a status line (no pill): clock, Queued #ececec 500, ' · ' and 'n of m' #c4c4c4, then a 28px more button", () => {
+  it("one system line, 'Queued · n of m', then a 28px more button", () => {
     const html = render(HeldPromptStack, { props: { rows: [row(), row({ key: "h2", heldPromptId: "hp-2" })], onEdit: () => { } } }).body;
     expect(html).toContain("1 of 2");
     expect(html).toContain("2 of 2");
     expect(html.match(/data-conversation-held-more/g)?.length).toBe(2);
-    expect(html).toMatch(/<span class="chat-qrow-note[^"]*" data-conversation-held-chip/);
-    expect(held).toContain(".chat-qrow-word { color: #ececec; font-weight: var(--cv-weight-label); }");
-    expect(held).toContain(".chat-qrow-detail { color: #c4c4c4;");
+    expect(html).toMatch(/data-conversation-system-line="end"[^>]*data-conversation-held-chip/);
+    expect(html).toMatch(/Queued(<!--[^>]*-->)*<span aria-hidden="true"> · <\/span><span data-conversation-held-detail="">1 of 2</);
     expect(held).toMatch(/\.chat-qrow-more \{[^}]*width: 28px;\s*height: 28px;[^}]*background: none;/);
   });
   it("the menu offers Send now, Edit and Remove, in that order", () => {
@@ -274,8 +273,8 @@ describe("the mode menu fits its content", () => {
 
 describe("the queued more button", () => {
   it("is a 28px target, icon #c4c4c4, hover #2a2a2a", () => {
-    expect(held).toContain(".chat-qrow-more { width: 28px; height: 28px; color: #c4c4c4; }");
-    expect(held).toContain(".chat-qrow-more:hover:not(:disabled) { background: #2a2a2a; }");
+    expect(held).toContain(".chat-qrow-more { color: #c4c4c4; }");
+    expect(held).toContain(".chat-qrow-more:hover:not(:disabled) { background: #2a2a2a;");
   });
 });
 

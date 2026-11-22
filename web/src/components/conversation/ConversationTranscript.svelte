@@ -16,6 +16,7 @@
   import TurnAnchor from "./TurnAnchor.svelte";
   import WorkGroup from "./WorkGroup.svelte";
   import TranscriptStatusRow from "./TranscriptStatusRow.svelte";
+  import SystemLine from "./SystemLine.svelte";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
   import {
@@ -256,24 +257,18 @@
         {/if}
       </div>
     {:else if item.row.kind === "model_changed"}
-      <div class="acp-compaction" role="separator" data-conversation-row="model_changed">
-        <span>{runValuesLine(item.row.model, item.row.reasoningEffort)}</span>
-      </div>
+      <SystemLine role="separator" data-conversation-row="model_changed">{runValuesLine(item.row.model, item.row.reasoningEffort)}</SystemLine>
     {:else if item.row.kind === "context_compacted"}
       <!-- The seam the old pane drew for the same thing, in the same stylesheet. What was
            before it has gone from the agent's memory, and a thread that just stopped
            mentioning it would read as an agent that forgot. -->
-      <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
-        <span>{CONTEXT_COMPACTED_SENTENCE}</span>
-      </div>
+      <SystemLine role="separator" data-conversation-row="context_compacted">{CONTEXT_COMPACTED_SENTENCE}</SystemLine>
     {:else if item.row.kind === "command_reply"}
       <!-- The backend answered a slash command itself. Its words are kept whole, quiet and
            in the tool voice, because they are the backend's output rather than the agent's. -->
       <p class="acp-command-reply" data-conversation-row="command_reply">{item.row.replyText}</p>
     {:else if item.row.kind === "turn_ended" && item.row.automaticCompactionResult === "not_compacted"}
-      <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
-        {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}
-      </div>
+      <SystemLine role="status" data-conversation-row="turn_ended">{AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}</SystemLine>
     {:else if item.row.kind === "turn_ended" && turnEndingStatus(item.row.ending, item.row.errorSummary) !== null}
       <TranscriptStatusRow status={turnEndingStatus(item.row.ending, item.row.errorSummary)!} role={item.row.ending === "failed" ? "alert" : "status"} data-conversation-row="turn_ended"/>
     {:else if item.row.kind === "turn_stopped"}
