@@ -10,6 +10,8 @@
  * storage on the app's own scheme survives them, and a server change drops it.
  */
 import { createServer } from 'node:net';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 import { WAIT_MS, api, captureSuccess, cli, expect, proposeAsWorker, stopServer, test } from '../support/fixtures.ts';
 import { launchDesktopApp, waitForScreens } from '../support/desktop.ts';
@@ -23,6 +25,13 @@ async function closedAddress(): Promise<string> {
   const { port } = listener.address() as { port: number };
   await new Promise<void>((done) => listener.close(() => done()));
   return `http://127.0.0.1:${port}`;
+}
+
+/** First launch always requires the person's explicit choice. */
+async function connectLocal(page: Page, address: string): Promise<void> {
+  await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
+  await page.fill('#address', address);
+  await page.click('#connect');
 }
 
 function newTicket(title: string) {
@@ -66,10 +75,11 @@ test('the screens reach the server through the app, and links leave it', async (
     })
   ).id as string;
 
-  // A server answers at the local address, so the app opens the screens at once.
+  // Even when a local server answers, the app asks the person first.
   const desktop = await launchDesktopApp({ localServerAddress: server.base });
   try {
     const page = desktop.window;
+    await connectLocal(page, server.base);
     await waitForScreens(page, WORKSPACE);
     expect(await pageUrl(page)).toMatch(/^panels:\/\/app\//);
     const preferences = await desktop.app.evaluate(({ BrowserWindow }) => {
@@ -135,13 +145,25 @@ test('the screens reach the server through the app, and links leave it', async (
     ]);
     expect(await pageUrl(page)).toMatch(/^panels:\/\/app\//);
 
-    // The bridge's address calls refuse the screens, and so any artifact inside them.
-    const bridgeAnswer = await page.evaluate(() =>
-      (window as unknown as { panels: { useServerAddress(address: string): Promise<unknown> } }).panels
-        .useServerAddress('http://127.0.0.1:1')
-        .then(() => 'answered', () => 'refused'),
-    );
-    expect(bridgeAnswer).toBe('refused');
+    // A same-origin artifact reaches the parent's exposed bridge. The IPC sender is
+    // the top app frame, so only the separate setup origin prevents a server change.
+    const artifactDirectory = join(server.root, 'files', 'tickets', ticketId, 'artifacts');
+    mkdirSync(artifactDirectory, { recursive: true });
+    writeFileSync(join(artifactDirectory, 'bridge.html'), '<h1>Artifact</h1>');
+    await page.evaluate((src) => new Promise<void>((resolve) => {
+      const frame = document.createElement('iframe');
+      frame.name = 'artifact';
+      frame.src = src;
+      frame.onload = () => resolve();
+      document.body.append(frame);
+    }), `/files/tickets/${ticketId}/artifacts/bridge.html`);
+    const bridgeAnswer = await page.frame({ name: 'artifact' })!.evaluate((address) =>
+      (parent as unknown as { panels: { useServerAddress(address: string): Promise<unknown> } }).panels
+        .useServerAddress(address).then(() => 'answered', (error: Error) => error.message), server.base);
+    expect(bridgeAnswer).toContain('Only the address page can change the server address.');
+    // The explicit authorization error proves refusal before validation, storage and navigation.
+    expect(await page.evaluate(() => (window as unknown as { panels: { storedServerAddress(): Promise<string> } }).panels.storedServerAddress())).toBe(server.base);
+    expect(await pageUrl(page)).toMatch(/^panels:\/\/app\//);
 
     // With the server gone, a request fails as a network error, so live streams reconnect.
     await stopServer(server);
@@ -162,6 +184,8 @@ test('the app takes an address when no local server answers, and keeps it and it
   const place = { x: 120, y: 80, width: 1000, height: 700 };
   try {
     const page = first.window;
+    await expect(page.getByRole('heading', { name: 'Where will Panels live?' })).toBeVisible({ timeout: WAIT_MS });
+    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
     await page.waitForSelector('#address-form', { timeout: WAIT_MS * 2 });
     expect(await pageUrl(page)).toBe('panels://setup/');
 
@@ -214,6 +238,7 @@ test('the native side shows a notification from the server, and a click opens it
         shown.push(this);
       };
     });
+    await connectLocal(page, server.base);
     await waitForScreens(page, WORKSPACE);
 
     // In the app, Settings says that the Mac gets the notifications, not that Web Push is missing.
@@ -262,6 +287,7 @@ test('the app reopens with the last session, marks it until the server replaces 
 
   const first = await launchDesktopApp({ localServerAddress: server.base });
   try {
+    await connectLocal(first.window, server.base);
     await waitForScreens(first.window, WORKSPACE);
     await first.window.evaluate((id) => (location.hash = `#/workspace/${id}`), ticketId);
     await expect(title(first.window)).toHaveText('Saved ticket before the change', { timeout: WAIT_MS });
@@ -300,6 +326,14 @@ test('the app reopens with the last session, marks it until the server replaces 
 
     // Another server has other Tickets, so nothing of the last session shows under it.
     await third.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.loadURL('panels://setup/'));
+    await page.getByRole('button', { name: 'Return to current server' }).click();
+    await expect(title(page)).toHaveText('Saved ticket after the change', { timeout: WAIT_MS });
+    await expect(page.locator('[data-desktop-offline]')).toBeVisible({ timeout: WAIT_MS });
+    await expect(page.locator('[data-desktop-offline]')).toContainText(server.base);
+    await captureSuccess(page, 'desktop-cannot-reach-server.png');
+    await page.getByRole('link', { name: 'Change server', exact: true }).click();
+    await expect.poll(() => pageUrl(page)).toBe('panels://setup/');
+    await page.getByRole('button', { name: 'On this Mac', exact: false }).click();
     await page.waitForSelector('#address-form', { timeout: WAIT_MS });
     await page.fill('#address', other.base);
     await page.click('#connect');

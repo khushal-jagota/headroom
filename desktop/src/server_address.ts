@@ -37,7 +37,9 @@ function normalize(typed: string): string | null {
   if (!text) return null;
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return null;
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
     return url.origin;
   } catch {
     return null;

@@ -15,4 +15,3 @@ rmSync(packed, { recursive: true, force: true });
 cpSync(join(repository, 'web/dist'), join(packed, 'web/dist'), { recursive: true });
 cpSync(join(repository, 'assets'), join(packed, 'assets'), { recursive: true });
 cpSync(join(repository, 'static'), join(packed, 'static'), { recursive: true });
-cpSync(join(desktop, 'address_page'), join(packed, 'address_page'), { recursive: true });
