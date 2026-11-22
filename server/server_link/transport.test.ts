@@ -48,8 +48,14 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
     owners: HttpSessions[] = [];
   let old_origin = '',
     new_origin = '',
-    mode: 'announce' | 'moved' | 'foreign' | 'stale' | 'unavailable' | 'probe_unavailable' =
-      'announce';
+    mode:
+      | 'announce'
+      | 'moved'
+      | 'foreign'
+      | 'stale'
+      | 'unavailable'
+      | 'probe_unavailable'
+      | 'proxy_unavailable' = 'announce';
   let release_late: (() => void) | undefined;
   let late_entered: (() => void) | undefined;
   let old_work = 0,
@@ -67,6 +73,11 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
   async function listen(old: boolean): Promise<string> {
     const server = createServer(tls, (request, response) => {
       const origin = old ? old_origin : new_origin;
+      if (mode === 'proxy_unavailable') {
+        request.resume();
+        response.writeHead(503).end('<html>Server restarting</html>');
+        return;
+      }
       let location = active(origin);
       if (old && mode === 'moved') location = { ...active(new_origin), state: 'moved' };
       if (!old && mode === 'foreign') location = { ...location, server_id: 'foreign' };
@@ -224,6 +235,10 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
     mode = 'probe_unavailable';
     const waiting_link = new MachineServerLink(join(root, 'restart-machine'), old_origin);
     const waiting_owner = make_owner(waiting_link);
+    await expect(request(waiting_owner)).rejects.toMatchObject({ status: 503 });
+    mode = 'moved';
+    expect(await request(waiting_owner)).toBe('work');
+    mode = 'proxy_unavailable';
     await expect(request(waiting_owner)).rejects.toMatchObject({ status: 503 });
     mode = 'moved';
     expect(await request(waiting_owner)).toBe('work');

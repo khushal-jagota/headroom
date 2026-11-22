@@ -5,6 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { request as ipc_request } from '../ipc_client.ts';
+import { executor_link_socket_path } from '../../../core/http/executor_link.ts';
 import { local_server_address } from '../../../server_link/logic.ts';
 import { MacService } from '../host/service.ts';
 import { production_bindings } from '../host/entry.ts';
@@ -57,6 +58,11 @@ const input = JSON.parse(await readFile(process.argv[2], 'utf8'));
 // These values come from the parent's bound fixture, before MacService can open a root or HTTP session.
 const local = local_server_address(input.origin);
 const origin = local === null ? new URL(input.origin) : null;
+if (local !== null) {
+  assert.ok(input.fixture_database_path.startsWith(input.fixture_root + '/'));
+  assert.ok(input.root.startsWith(input.fixture_root + '/'));
+  assert.equal(local, executor_link_socket_path(input.fixture_database_path));
+}
 if (origin !== null) {
   assert.equal(origin.protocol, 'https:');
   assert.equal(origin.hostname, '127.0.0.1');

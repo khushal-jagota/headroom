@@ -374,6 +374,14 @@ export class HttpSessions {
         response = incoming;
         if ((incoming.statusCode ?? 0) >= 400) note_failure();
         consumer = (async () => {
+          // A proxy can answer while the server is down. This is no authority to consume
+          // work, but its temporary availability status must remain retryable.
+          if (
+            link &&
+            incoming.headers[SERVER_LOCATION_HEADER] === undefined &&
+            [502, 503, 504].includes(incoming.statusCode ?? 0)
+          )
+            throw http_error(incoming.statusCode!, await read_bounded(incoming, 16384));
           if (link) {
             await link.accept(incoming.headers[SERVER_LOCATION_HEADER], origin, probe);
             link.verify(incoming.headers[SERVER_LOCATION_HEADER], origin);

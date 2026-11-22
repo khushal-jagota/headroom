@@ -15,7 +15,7 @@ import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { start_native_server } from '../executor/mac/testing/native_server.ts';
 import { executor_link_socket_path } from '../core/http/executor_link.ts';
 import { credential_path, write_credential } from '../executor/credential_file.ts';
-import type { JsonObject } from '../executor/wire.generated.ts';
+import type { JsonObject, ItemBatch, ItemBatchReply } from '../executor/wire.generated.ts';
 
 async function until<T>(read: () => Promise<T>, accepts: (value: T) => boolean): Promise<T> {
   const signal = AbortSignal.timeout(40_000);
@@ -89,8 +89,19 @@ test.each(['socket', 'https'] as const)(
             (response) => {
               if (drop) {
                 expect(response.statusCode).toBe(200);
-                response.resume();
+                const chunks: Buffer[] = [];
+                response.on('data', (chunk: Buffer) => chunks.push(chunk));
                 response.once('end', () => {
+                  const request_body = JSON.parse(body.toString()) as ItemBatch;
+                  const submission = request_body.items.find((item) =>
+                    JSON.stringify(item).includes('Created despite lost reply'),
+                  )!.envelope.submission_id;
+                  const receipt_body = JSON.parse(
+                    Buffer.concat(chunks).toString(),
+                  ) as ItemBatchReply;
+                  expect(
+                    receipt_body.receipts.find((receipt) => receipt.submission_id === submission),
+                  ).toMatchObject({ disposition: 'accepted' });
                   lost_replies++;
                   outgoing.destroy();
                 });
@@ -164,6 +175,8 @@ test.each(['socket', 'https'] as const)(
           fixture_origin: origin,
           allocated_port: address.port,
           ca_path: tls_cert,
+          fixture_root: root,
+          fixture_database_path: database,
           root: state_root,
           revision: 'restart-proof',
           environment,
@@ -254,6 +267,7 @@ test.each(['socket', 'https'] as const)(
       });
       await command('emit', { kind: 'completed', text: 'plain answer' });
       await pause(35_000);
+      const offline_seconds = (performance.now() - stopped_at) / 1000;
       expect(read_finished).toBe(false);
       expect(write_finished).toBe(false);
       const offline = await command('state');
@@ -339,7 +353,7 @@ test.each(['socket', 'https'] as const)(
       console.log(
         JSON.stringify({
           transport,
-          pause_seconds: (performance.now() - stopped_at) / 1000,
+          offline_seconds,
           elapsed_seconds: (performance.now() - started) / 1000,
           original_child,
           original_turn,
