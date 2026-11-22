@@ -139,6 +139,9 @@
     overflow: hidden;
   }
   .c2-label { color: #bdbdbd; font-weight: var(--cv-weight-label); }
+  /* v13 (10): the note stands centred in the column, same well and type. */
+  .c2-system-note { align-self: center; }
+  .chat-system { align-items: center; }
 
   /* A message that never reached the agent is not drawn as one that did: its bubble steps
      back (the well, the body tone) and (v4.2) a small red "!" stands beside it on the left, as

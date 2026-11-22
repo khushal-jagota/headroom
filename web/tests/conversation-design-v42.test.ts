@@ -60,19 +60,19 @@ describe("design v4.2: asks", () => {
 
   it("v10 (4): asks have no confirm pill; the well's round send is the composer's own send (v11 (8): disabled #333333/#bdbdbd)", () => {
     expect(composer).not.toContain("chat-ask-primary");
-    expect(app).toMatch(/v11 \(8\): disabled is #333333 with a #bdbdbd arrow\. \*\/\s*background: #333333;\s*color: #bdbdbd;/);
-    expect(composer).toMatch(/:global\(\.chat-ask-send-round\) \{[^}]*background: #333333;\s*color: #bdbdbd;/);
+    expect(app).toMatch(/v13 \(3\): disabled everywhere is #262626 with a #7a7a7a arrow\. \*\/\s*background: #262626;\s*color: #7a7a7a;/);
+    expect(composer).toMatch(/:global\(\.chat-ask-send-round\) \{[^}]*background: #262626;\s*color: #7a7a7a;/);
   });
 
   it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid); v11 (3): the round send is its last piece, inside it", () => {
-    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-foot > \.chat-ask-pen \{[^}]*min-height: 40px;[^}]*border-radius: 12px 0 0 12px;[^}]*background: #141414;/);
+    expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-foot > \.chat-ask-pen \{[^}]*min-height: 40px;[^}]*border-radius: 20px 0 0 20px;[^}]*background: #141414;/);
     expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-ta \{[^}]*padding-block: 8px;[^}]*background: #141414;/);
     // The microphone sits in the middle of the well; the send closes it.
     expect(composer).toMatch(/\.chat-submit > \.chat-voice-mic\) \{[^}]*border-radius: 0;[^}]*background: #141414;/);
-    expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send:hover:not\(:disabled\)\) \{[^}]*width: 40px;[^}]*border-radius: 0 12px 12px 0;\s*background: #141414;\s*box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;/);
+    expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send:hover:not\(:disabled\)\) \{[^}]*width: 40px;[^}]*border-radius: 0 20px 20px 0;\s*background: #141414;\s*box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;/);
     expect(composer).toContain(".chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send) { order: 3; }");
-    // The round Stop stands after the well, 8px off, its right edge on the rows' edge.
-    expect(composer).toContain(".chat-box.has-ask > .chat-foot > .chat-ask-stop { flex: none; order: 4; align-self: center; margin-inline: var(--cv-s2); }");
+    // v13 (2): Stop is the well's closing piece, its right edge on the rows' edge.
+    expect(composer).toMatch(/\.chat-box\.has-ask > \.chat-foot > \.chat-ask-stop \{[^}]*order: 4;[^}]*margin: 0 var\(--cv-s2\) 0 0;[^}]*border-radius: 0 20px 20px 0;/);
   });
 });
 

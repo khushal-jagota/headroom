@@ -1138,6 +1138,8 @@
 <style>
   /* v5.1: one quiet line, 15 px #b0b0b0, centred in the canvas above the composer. */
   /* v8: centred in the canvas. */
-  .conversation-empty { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; align-self: stretch; }
+  /* v13 (12): the hint sits just above the composer, centred, 24px over its top edge (the
+     thread's own end gap), not in the middle of the canvas. */
+  .conversation-empty { display: flex; align-items: flex-end; justify-content: center; flex: 1 0 auto; align-self: stretch; }
   .conversation-empty-said { color: #b0b0b0; font: var(--cv-weight-body) 15px/24px var(--cv-font); text-align: center; }
 </style>

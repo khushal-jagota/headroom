@@ -25,6 +25,7 @@
   import type { ConversationJump } from "./viewport/viewportConfiguration";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
+  import { fittedTitle } from "../../lib/conversation/titleFit";
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
   import { restLineFrom, restLineMarksFrom, whatThisRowSays } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
@@ -450,7 +451,7 @@
   <div class="chat-head">
     <div class="chat-head-identity" data-conversation-head-identity>
       <span class="chat-head-name">
-        <span class="chat-head-title" data-conversation-title title={headTitle}>{headTitle}</span>
+        <span class="chat-head-title" data-conversation-title title={headTitle} use:fittedTitle={headTitle}>{headTitle}</span>
       </span>
       {#if headStatus}
         <!-- One derived state (conversationState), the same the dock's line reads. -->

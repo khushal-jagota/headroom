@@ -1538,12 +1538,11 @@
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
           {#if panelTakesTheBox && running && onStop}
-            <!-- v11 (3): one Stop everywhere: under an ask the same 32px round Stop as the
-                 composer's, at the right end of the bottom row, after the answer well. v12 (3):
-                 there it is secondary (#2a2a2a, #ececec square); the composer's Stop while
-                 working stays #f2f2f2. -->
-            <button type="button" class="chat-send stop chat-ask-stop" data-conversation-stop={true} data-conversation-ask-stop
-              title="Stop turn" aria-label="Stop turn" disabled={disabled} onclick={() => onStop?.()}><span class="chat-send-fill" aria-hidden="true"></span></button>
+            <!-- v13 (2): under an ask Stop is the answer well's last control, after send: a 28px
+                 ghost round (no fill, a 1px #3a3a3a ring, a 10px #ececec square), 8px after the
+                 send round. The composer's own Stop while working stays the #f2f2f2 round. -->
+            <button type="button" class="chat-ask-stop" data-conversation-stop={true} data-conversation-ask-stop
+              title="Stop the agent" aria-label="Stop the agent" disabled={disabled} onclick={() => onStop?.()}><span class="chat-ask-stop-round" aria-hidden="true"><span class="chat-send-fill"></span></span></button>
           {/if}
           {#if panelTakesTheBox}
             <!-- Under an ask the line is where an own answer is written: a pen marks it. -->
@@ -1951,15 +1950,45 @@
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
   .chat-box.has-ask > .chat-foot :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
-  /* v11 (3): under an ask the one Stop is the composer's own round (32, #f2f2f2, a #141414
-     square) at the right end of the bottom row, 8px after the answer well, its right edge on
-     the option rows' right edge. */
-  .chat-box.has-ask > .chat-foot > .chat-ask-stop { flex: none; order: 4; align-self: center; margin-inline: var(--cv-s2); }
-  /* v12 (3): Stop inside an ask is secondary: #2a2a2a with a #ececec square. */
-  .chat-send.stop.chat-ask-stop { background: #2a2a2a; color: #ececec; }
-  .chat-send.stop.chat-ask-stop:hover:not(:disabled) { background: #333333; }
-  .chat-ask-stop:disabled { background: #333333; color: #bdbdbd; }
-  .chat-ask-stop:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  /* v13 (2): under an ask Stop is inside the answer well, its last control after send: the
+     well's closing piece (its fill and closing edge), with a 28px ghost round drawn in it: no
+     fill, a 1px #3a3a3a ring and a 10px #ececec square. 8px from the send round (2 + 6), 6px
+     from the well's ends, so the round is centred in the 40px well. Its right edge, like the
+     pen's left, stands on the option rows' edge. */
+  .chat-box.has-ask > .chat-foot > .chat-ask-stop {
+    flex: none;
+    order: 4;
+    align-self: stretch;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    min-height: 40px;
+    margin: 0 var(--cv-s2) 0 0;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 0 20px 20px 0;
+    background: #141414;
+    box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;
+    color: #ececec;
+    cursor: pointer;
+  }
+  /* Grown to two rows the draft is the well; the send and Stop stand on their own. */
+  .chat-box.has-ask:not(.is-compact) > .chat-foot > .chat-ask-stop { align-self: center; width: 28px; min-height: 28px; padding: 0; margin-inline-start: var(--cv-s2); border-radius: 50%; background: none; box-shadow: none; }
+  .chat-ask-stop-round {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px #3a3a3a;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .chat-ask-stop-round > .chat-send-fill { display: block; width: 10px; height: 10px; border-radius: 2.5px; background: currentColor; }
+  .chat-ask-stop:hover:not(:disabled) .chat-ask-stop-round { background: #2a2a2a; }
+  .chat-ask-stop:disabled { color: #7a7a7a; cursor: default; }
+  .chat-ask-stop:focus-visible { outline: none; }
+  .chat-ask-stop:focus-visible .chat-ask-stop-round { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 1px; }
   .chat-ask-pen { flex: none; display: grid; place-items: center; width: 32px; height: 32px; color: var(--cv-quiet-ink, #bdbdbd); }
   .chat-ask-pen svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   /* v4.2: the ask's own-answer line sits in its own well (#141414, radius 12, 44 high) so it
@@ -1991,7 +2020,7 @@
     box-sizing: border-box;
     margin-inline-start: var(--cv-s2);
     padding-inline-start: 4px;
-    border-radius: 12px 0 0 12px;
+    border-radius: 20px 0 0 20px;
     background: #141414;
   }
   .chat-box.has-ask.is-compact > .chat-ta {
@@ -2008,9 +2037,9 @@
     border-radius: 0;
     background: #141414;
   }
-  .chat-box.has-ask.is-compact:not(:has(.chat-ask-send)) > .chat-foot :global(.chat-submit > .chat-voice-mic) { width: 40px; padding-inline-end: 4px; border-radius: 0 12px 12px 0; }
+  .chat-box.has-ask.is-compact:not(:has(.chat-ask-send)) > .chat-foot :global(.chat-submit > .chat-voice-mic) { width: 40px; padding-inline-end: 4px; border-radius: 0 20px 20px 0; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic:hover:not(:disabled)) { background: #141414; color: var(--cv-t1); }
-  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic, .chat-ask-send)) > .chat-ta { border-radius: 0 12px 12px 0; }
+  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic, .chat-ask-send)) > .chat-ta { border-radius: 0 20px 20px 0; }
   /* The send, the well's last piece: the well's fill and its closing edge; the round inside. */
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send),
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send:hover:not(:disabled)) {
@@ -2018,11 +2047,21 @@
     width: 40px;
     height: auto;
     min-height: 40px;
-    margin: 0;
+    margin: 0 var(--cv-s2) 0 0;
     padding: 0 4px 0 0;
-    border-radius: 0 12px 12px 0;
+    border-radius: 0 20px 20px 0;
     background: #141414;
     box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;
+  }
+  /* v13 (2): with Stop after it, the send is a middle piece: no closing edge, no end margin,
+     its round 2px in from each side (36 wide). */
+  .chat-box.has-ask.is-compact:has(.chat-ask-stop) > .chat-foot :global(.chat-submit > .chat-ask-send),
+  .chat-box.has-ask.is-compact:has(.chat-ask-stop) > .chat-foot :global(.chat-submit > .chat-ask-send:hover:not(:disabled)) {
+    width: 36px;
+    margin: 0;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333;
   }
   /* Grown to two rows, the draft is the well and the send stands on its own. */
   .chat-box.has-ask:not(.is-compact) :global(.chat-ask-send) { background: none; }
@@ -2032,15 +2071,16 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: #333333;
-    color: #bdbdbd;
+    /* v13 (3): disabled send everywhere: #262626 with a #7a7a7a arrow. */
+    background: #262626;
+    color: #7a7a7a;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   :global(.chat-ask-send.on .chat-ask-send-round) { background: #f2f2f2; color: #121212; }
   :global(.chat-ask-send.on:hover:not(:disabled) .chat-ask-send-round) { background: #ffffff; }
   :global(.chat-ask-send-round svg) { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   /* A draft that wraps grows the box to two rows: the draft itself is then the well. */
-  .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 12px; background: #141414; }
+  .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 20px; background: #141414; }
   .chat-box.has-ask:not(.is-compact) > .chat-foot > .chat-ask-pen { display: none; }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow
@@ -2192,4 +2232,15 @@
   .chat-att-x:disabled { color: var(--cv-t3); cursor: default; }
   /* v10 (11): the circle is inside the tile's corner, so a file tile's words stop short of it. */
   .chat-att.file { padding-inline-end: 32px; }
+  /* v13 (6): the picture chip and the file chip are one shape: 76 high, radius 10, the remove
+     circle 6px inside the top-right corner of both. A file chip is as wide as its words plus
+     the circle: the words stop 8px before the circle (6 + 20 + 8 = 34), no wide empty end.
+     A picture crops from its top, so a chart's or a screen's title shows. */
+  .chat-att, .chat-att.img, .chat-att.file { height: 76px; border-radius: 10px; }
+  .chat-att.img img, .chat-att.img::after { border-radius: 10px; }
+  .chat-att.img img { object-position: left top; }
+  .chat-att.file { padding-inline-end: 34px; }
+  /* The file chip's 1px edge is part of its box: its circle sits 5px inside the edge, so it is
+     6px from the chip's outer corner, as on the picture (which has no edge). */
+  .chat-att.file > .chat-att-x { top: 5px; right: 5px; }
 </style>

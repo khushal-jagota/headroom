@@ -159,4 +159,11 @@
      part in its width (0 wide, at least the full line), so they wrap to it. */
   .c2-bubble--one-image { min-width: 240px; }
   .c2-bubble--one-image > .c2-bubble-words { width: 0; min-width: 100%; }
+  /* v13 (7): the bubble is as wide as its picture. A percentage cap counts as no cap when the
+     bubble measures its content, so a wide picture capped at 200 high asked for its 200-high
+     width (wider than the 320 it is drawn at) and the bubble stood wider than the picture. The
+     cap in pixels makes the measured width the drawn one; the picture fills the content width
+     and the bubble's 8px padding is equal on every side. */
+  .c2-bubble--one-image :global(.file-preview-media),
+  .c2-bubble--one-image :global(.file-preview-media > :is(.file-preview-image, .file-preview-video-poster)) { max-width: 320px; }
 </style>

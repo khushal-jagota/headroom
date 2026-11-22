@@ -179,7 +179,18 @@
       return;
     }
     const answers = completeUserInputAnswers(draft, request.questions);
-    if (answers !== null) onSubmit?.(answers);
+    if (answers !== null) { onSubmit?.(answers); return; }
+    // A question was passed over with the pager: go back to the first one still unanswered.
+    const open = request.questions.findIndex((each) => userInputAnswerFor(draft, each).length === 0);
+    if (open >= 0) step = open;
+  }
+
+  /** v13 (5): the pager's forward arrow moves to the next question (answered or not); it is
+   *  unavailable only on the last one. Back is unavailable only on the first. */
+  function goForward(): void {
+    if (busy || isLast) return;
+    if (canContinue && composerAnswers && ownWords !== "") onOwnAnswerUsed?.();
+    step += 1;
   }
 </script>
 
@@ -193,8 +204,8 @@
       aria-label="Previous question" title="Previous question" disabled={busy || step === 0}
       onclick={() => (step -= 1)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4" /></svg></button>
     <button type="button" class="cv-icon-button cv-icon-button--small" data-user-input-forward
-      aria-label="Next question" title="Next question" disabled={busy || isLast || !canContinue}
-      onclick={continueOrSubmit}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
+      aria-label="Next question" title="Next question" disabled={busy || isLast}
+      onclick={goForward}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
   {/if}
 {/snippet}
 

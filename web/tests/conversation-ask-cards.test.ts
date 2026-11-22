@@ -109,11 +109,12 @@ describe("the question panel", () => {
     expect(body).not.toContain('class="topic');
     expect(body).toContain("Needs your answer");
     expect(body).toContain("Which illustration direction?");
-    // v10 (4): no confirm pill, standing alone or docked; no row is pre-highlighted, and the
-    // forward arrow waits for an answer (a chosen row moves on by itself).
+    // v10 (4): no confirm pill, standing alone or docked; no row is pre-highlighted. v13 (5):
+    // back is unavailable on the first question; forward moves on (unavailable on the last).
     expect(body).not.toContain("data-user-input-continue");
     expect(body).not.toContain("cv-button--primary");
-    expect(body).toMatch(/data-user-input-forward[^>]*disabled/);
+    expect(body).toMatch(/data-user-input-back[^>]*disabled/);
+    expect(body).not.toMatch(/data-user-input-forward[^>]*disabled/);
     expect(body).not.toContain("is-focused");
     expect(body).not.toContain("is-selected");
     // The options are the one ask row, the same as a permission ask's answers.

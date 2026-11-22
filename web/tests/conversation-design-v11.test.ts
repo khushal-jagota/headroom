@@ -97,8 +97,8 @@ describe("v11 (4): queued notes", () => {
 });
 
 describe("v11 (3, 8, 12): the composer", () => {
-  it("disabled send #333333 with a #bdbdbd arrow", () => {
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #333333;\s*color: #bdbdbd;/);
+  it("disabled send (v13 (3): #262626 with a #7a7a7a arrow)", () => {
+    expect(app).toMatch(/\.chat-send \{[^}]*background: #262626;\s*color: #7a7a7a;/);
   });
   it("8px between each control on the right (model, Steer, mic, Send/Stop)", () => {
     expect(composer).toContain(".chat-box:not(.has-ask) > .chat-foot > :global(.chat-submit) { gap: var(--cv-s2); }");

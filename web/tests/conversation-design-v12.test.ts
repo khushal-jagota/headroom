@@ -29,15 +29,10 @@ describe("v12 (2): narration in Full is flush left", () => {
   });
 });
 
-describe("v12 (3): Stop inside an ask is secondary", () => {
-  it("the ask's round Stop is #2a2a2a with a #ececec square; the composer's Stop stays #f2f2f2", () => {
-    expect(composer).toContain(".chat-send.stop.chat-ask-stop { background: #2a2a2a; color: #ececec; }");
-    expect(composer).toContain(".chat-send.stop.chat-ask-stop:hover:not(:disabled) { background: #333333; }");
+describe("v12 (3): Stop inside an ask (replaced by v13 (2))", () => {
+  it("the composer's own Stop while working stays #f2f2f2; the ask's Stop is no longer a separate secondary round", () => {
     expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #141414; }");
-  });
-  it("it is still the same 32px round button with the stop square, at the end of the bottom row", () => {
-    expect(composer).toMatch(/class="chat-send stop chat-ask-stop" data-conversation-stop=\{true\} data-conversation-ask-stop\s+title="Stop turn" aria-label="Stop turn"[^\n]*<span class="chat-send-fill"/);
-    expect(composer).toMatch(/\.chat-box\.has-ask > \.chat-foot > \.chat-ask-stop \{[^}]*order: 4;/);
+    expect(composer).not.toContain(".chat-send.stop.chat-ask-stop");
     expect(ConversationComposer).toBeTruthy();
   });
 });

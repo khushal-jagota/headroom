@@ -38,7 +38,7 @@ describe("v8 layout (items 1, 11, 12, 13)", () => {
     expect(viewport).toContain(".chat-thread-content { margin-block-start: 0; }");
     expect(viewport).toContain(".chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }");
     const live = source("../src/components/conversation/LiveConversation.svelte");
-    expect(live).toContain(".conversation-empty { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; align-self: stretch; }");
+    expect(live).toContain(".conversation-empty { display: flex; align-items: flex-end; justify-content: center; flex: 1 0 auto; align-self: stretch; }");
     expect(live).not.toContain("lensHidden");
     expect(source("../src/components/conversation/ConversationPane.svelte")).not.toContain("lensHidden");
   });

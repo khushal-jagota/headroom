@@ -51,7 +51,7 @@ describe("v7 the five parts", () => {
   it("2 Button: v10 (4) asks draw no confirm pill and no decline button; Deny is an option row; v11 (3): Stop is the composer's round", () => {
     expect(composer).not.toContain("chat-ask-primary");
     expect(composer).not.toContain("chat-ask-quiet");
-    expect(composer).toContain('class="chat-send stop chat-ask-stop"');
+    expect(composer).toContain('class="chat-ask-stop"');
     const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
     expect(controls).not.toContain("data-conversation-ask-primary");
     expect(controls).not.toContain("data-conversation-ask-decline");

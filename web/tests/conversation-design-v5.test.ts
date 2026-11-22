@@ -190,7 +190,7 @@ describe("design v5: controls", () => {
   });
   it("Stop is #f2f2f2 with a #121212 square; v11 (8): disabled send #333333 with a #bdbdbd arrow", () => {
     expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #141414; }");
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #333333;\s*color: #bdbdbd;/);
+    expect(app).toMatch(/\.chat-send \{[^}]*background: #262626;\s*color: #7a7a7a;/);
   });
 });
 

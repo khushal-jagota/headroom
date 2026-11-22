@@ -264,6 +264,12 @@
     padding: var(--cv-gap-turn) 0 0;
     list-style: none;
   }
+  /* v13 (8): the first queued bubble stands 24px under the Working line, the same gap as from
+     a Steered note to the Working line. */
+  .chat-queue-stack { padding-block-start: 24px; }
+  /* v13 (8, coordinator): the gap after every status note is 24px, so a "Queued" note stands
+     24px over the next queued bubble, as Steered does over the Working line. */
+  .chat-queue-stack { row-gap: 24px; }
   .chat-qrow {
     display: flex;
     flex-direction: column;

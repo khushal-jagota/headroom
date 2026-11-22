@@ -2455,9 +2455,10 @@ button.list-row:hover .list-row-title {
   border: 0;
   border-radius: 50%;
   /* v6: #2a2a2a with a #8c8c8c arrow while there is nothing to send; #f2f2f2 with a
-   * #121212 arrow once there is. v11 (8): disabled is #333333 with a #bdbdbd arrow. */
-  background: #333333;
-  color: #bdbdbd;
+   * #121212 arrow once there is. v11 (8): disabled is #333333 with a #bdbdbd arrow.
+   * v13 (3): disabled everywhere is #262626 with a #7a7a7a arrow. */
+  background: #262626;
+  color: #7a7a7a;
   cursor: pointer;
   line-height: 1;
   display: grid;
@@ -5675,3 +5676,18 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #ececec; text-decoration-color: rgb(236 236 236 / 50%); }
 [data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #ffffff; text-decoration-color: #ececec; }
 /* (13, owner) Agent answer bubbles: withdrawn by v12 (1). Answers are plain text, flush left. */
+
+/* ==========================================================================================
+ * v13 (22 Nov, after round 19) — finish and consistency. Scoped to the conversation pane.
+ * ========================================================================================== */
+/* (1) Inline code is one style everywhere: #232323, radius 4, padding 1px 4px. In narration the
+ * chip's text is #b4b4b4 at the narration size (13px); narration itself is #b0b0b0, 13/20. */
+[data-conversation-pane] .chat-thread .markdown :not(pre) > code,
+[data-conversation-pane] .cv-code { padding: 1px 4px; border-radius: 4px; background: #232323; }
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { color: #b0b0b0; }
+[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-size: 13px; line-height: 1; padding: 1px 4px; border-radius: 4px; background: #232323; color: #b4b4b4; }
+/* (3) Disabled send everywhere: #262626 with a #7a7a7a arrow (.chat-send above, and the ask
+ * well's round in ConversationComposer). Enabled (.on) stays as built. */
+/* (9) Table head in answers: #ececec 600 14/20 over a #3a3a3a rule (body rules as built). */
+[data-conversation-pane] .chat-thread .markdown th { color: #ececec; font-size: 14px; line-height: 20px; font-weight: 600; border-block-end: 1px solid #3a3a3a; }

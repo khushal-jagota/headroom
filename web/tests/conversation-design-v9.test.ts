@@ -98,10 +98,10 @@ describe("v9 (5, 8, 9, 15, 21, 22): measures", () => {
     expect(app).toContain("[data-conversation-pane] .chat-thread .markdown th { padding-block-start: 0; color: #f2f2f2; font-size: 14px; line-height: 20px; font-weight: 600; border-block-end-color: #3a3a3a; }");
   });
   it("v11 (8): disabled send #333333/#bdbdbd; disabled pager #a6a6a6", () => {
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #333333;\s*color: #bdbdbd;/);
+    expect(app).toMatch(/\.chat-send \{[^}]*background: #262626;\s*color: #7a7a7a;/);
     const shell = source("../src/components/conversation/AskShell.svelte");
     expect(shell).toMatch(/:global\(\[data-conversation-pane\]\) \.cv-ask-stop \{[^}]*background: #2a2a2a;\s*color: #ececec;/);
-    expect(shell).toContain(":global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }");
+    expect(shell).toContain(":global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #5a5a5a; background: none; cursor: default; pointer-events: none; }");
   });
   it("narration in Full is 14/22; v12 (1): the column is 640", () => {
     expect(app).toMatch(/\[data-conversation-pane\] \.c2-streaming \.markdown \{\s*font-family: var\(--cv-font\);\s*font-size: 14px;\s*line-height: 22px;\s*color: #b4b4b4;/);
@@ -187,7 +187,7 @@ describe("v9 (11, 12, 19, 20): thread pieces", () => {
   });
   it("v11 (3): every ask's Stop is the composer's round Stop, after the well at the row's right end", () => {
     expect(composer).toContain('{#if panelTakesTheBox && running && onStop}');
-    expect(composer).toMatch(/class="chat-send stop chat-ask-stop" data-conversation-stop=\{true\} data-conversation-ask-stop/);
+    expect(composer).toMatch(/class="chat-ask-stop" data-conversation-stop=\{true\} data-conversation-ask-stop/);
     expect(composer).toMatch(/\.chat-box\.has-ask > \.chat-foot > \.chat-ask-stop \{[^}]*order: 4;/);
     const question = composer.slice(composer.indexOf("<UserInputQuestionPanel"), composer.indexOf("/>", composer.indexOf("<UserInputQuestionPanel")));
     expect(question).toContain("onStop={undefined}");
