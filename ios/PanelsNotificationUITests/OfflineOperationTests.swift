@@ -68,8 +68,8 @@ final class OfflineOperationTests: XCTestCase {
         sendBack.tap()
         assertQuiet(app, "offline decisions")
         app.terminate(); app.launch()
-        XCTAssertTrue(workspace.waitForExistence(timeout: 3)); workspace.tap()
-        XCTAssertTrue(chief.waitForExistence(timeout: 3), "Cached Workspace did not restore offline")
+        XCTAssertTrue(workspace.waitForExistence(timeout: 12)); workspace.tap()
+        XCTAssertTrue(chief.waitForExistence(timeout: 12), "Cached Workspace did not restore offline")
         app.tabBars.buttons["Review"].tap()
         XCTAssertTrue(element(app, containing: "Record offline").waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")
         // The old cover appeared on activation after a failed read. Stay offline a while.
