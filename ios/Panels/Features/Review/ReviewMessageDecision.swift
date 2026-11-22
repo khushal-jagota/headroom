@@ -156,8 +156,10 @@ extension APIClient {
            (try? JSONEncoder().encode(composer.attachments)) == (try? JSONEncoder().encode(message.content.filter { $0.piece != "text" })) {
             clearAcceptedDraft()
         }
-        // Outbox content remains the authority if the app closed during a send.
-        if let saved, saved.state != .failed, let message = saved.message {
+        // Outbox content remains the authority if the app closed during a send, and a
+        // refused reply brings its words back to an empty composer.
+        if let saved, let message = saved.message,
+           saved.state != .failed || (composer.draft.isEmpty && composer.attachments.isEmpty) {
             composer.draft = message.content.compactMap(\.text).joined(separator: "\n")
             composer.attachments = message.content.filter { $0.piece != "text" }
         }
