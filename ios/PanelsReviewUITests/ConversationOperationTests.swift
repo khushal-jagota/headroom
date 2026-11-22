@@ -41,7 +41,9 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertEqual(input.value as? String, "Keep this selection draft")
         app.buttons["Add attachment or command"].tap()
         let command = app.buttons["Command"]
-        XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        capture(app, "attach-sheet")
+        command.tap()
         XCTAssertEqual(input.value as? String, "/")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Command must still request input focus")
         capture(app, "focus-review-command-and-input")

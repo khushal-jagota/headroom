@@ -39,7 +39,7 @@ struct TicketWorkerSetup: View {
                     }
                 }
                 if let error { Text(error).foregroundStyle(PanelsTheme.error) }
-            }.disabled(busy).panelsScreen().navigationTitle("Worker setup").navigationBarTitleDisplayMode(.inline)
+            }.disabled(busy).navigationTitle("Worker setup").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
                     ToolbarItem(placement: .confirmationAction) {

@@ -48,9 +48,10 @@ opens the in-app viewer, and other links open in the system. Only linked photos 
 videos also show inline. Approval carries the exact proposal revision that was
 read. If the proposal changes, Review keeps the unsent note and requires a reload.
 
-The approval sheet shows How far as a list of gates and Who reviews as a native
-segmented picker. The suggested next gate and current holder are selected first.
-Nothing is written until Approve until <Stage> is pressed. The Ticket's saved workflow supplies the available gates; Review does not assume
+The approval sheet is a standard grouped Form with Cancel, a title and Approve.
+Approved until is a checkmark list and Then reviews is a native segmented control.
+The suggested next gate and current holder are selected first. Nothing is written
+until Approve is pressed. The Ticket's saved workflow supplies the available gates; Review does not assume
 coding stages or read controls from the current Worker preset.
 
 Swipe left past 30% of the screen to skip, or use the Skip button. The swipe never

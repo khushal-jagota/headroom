@@ -158,17 +158,14 @@ Review and Ticket share a recessed, read-only proposal card and a pinned note
 with Send it back and Approve. Review keeps dictation and adds Open ticket.
 An empty send-back note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
-How far precedes Who reviews. A later stage submits a protected approval. An earlier
-or current stage changes the ceiling and reviewer and leaves the proposal waiting.
-Consequences remains a review boundary and an approval-ceiling choice. Done is
-not an approval ceiling. The approval-limit control remains available during
-Consequences. When the next stage is Done, Approve takes one tap. The approver
-in the card opens reviewer-only choices. Scope and reviewer changes use the existing PATCH route
-only while online. They never enter the Outbox or retry automatically. A fresh Ticket
-read compares the absolute ceiling and reviewer with the choice after an uncertain
-answer. The sheet keeps the choice and states that nothing was approved. A
-check-only action reads current settings without another PATCH. These changes have
-no operation receipt. Approve and Send it back retain protected operations and
+Approve opens a standard grouped Form sheet. Approved until lists only the stages
+after the waiting one, and Then reviews is a segmented control. Done is not an
+approval ceiling. When the next stage is Done, Approve takes one tap. The approver
+in the card opens a Reviewer sheet with one tap to choose. Both sheets are shared by
+Review and the Ticket page (`DecisionSheets.swift`) and wait for the server inside
+the sheet. A failure shows inline. A reviewer change uses the existing PATCH route.
+It never enters the Outbox and has no operation receipt. The approval limit of a
+Ticket with no proposal waiting changes in its own sheet. Approve and Send it back retain protected operations and
 saved-work recovery. Proposal text, approved steps, and Ticket titles have no phone
 edit controls.
 

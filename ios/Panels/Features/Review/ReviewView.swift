@@ -247,7 +247,7 @@ private struct ReviewCardView: View {
     @Environment(\.screenTextEntry) private var textEntry
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var sheet: ReviewSheet?
+    @State private var sheet: DecisionSheet?
     @State private var drag: CGFloat = 0
     @State private var crossedThreshold = false
     @State private var leaving = false
@@ -258,7 +258,6 @@ private struct ReviewCardView: View {
     /// Parts fading out while the rest of the card stays.
     @State private var exiting: Set<String> = []
     @State private var messageStates: [String: ReviewMessageSection.Activity] = [:]
-    private enum ReviewSheet: String, Identifiable { case approve, reviewer; var id: String { rawValue } }
     private var proposal: ReviewItem? { parts.first { !$0.isMessage } }
     private var messages: [ReviewItem] { parts.filter(\.isMessage) }
     private var messagesLocked: Bool { messages.contains { messageStates[$0.id]?.locked == true } }
@@ -273,7 +272,7 @@ private struct ReviewCardView: View {
                     if let proposal, let decision {
                         ReviewProposalSection(isActive: isActive, item: proposal, decision: decision, cardHeight: $cardHeight,
                                               canReload: sheet == nil && busyAction == nil && drag == 0,
-                                              onReviewer: { if decision.ready && !leaving && busyAction == nil { decision.approvalFlow = DecisionApprovalFlow(); sheet = .reviewer } })
+                                              onReviewer: { if decision.ready && !leaving && busyAction == nil { sheet = .reviewer } })
                             .opacity(exiting.contains(proposal.id) ? 0 : busyAction != nil ? 0.4 : 1)
                     }
                     ForEach(messages) { message in
@@ -325,37 +324,26 @@ private struct ReviewCardView: View {
         // A part that left and comes back, such as a proposal whose saved decision
         // found it changed, shows again.
         .onChange(of: parts.map(\.id)) { _, ids in exiting.formIntersection(ids) }
-        .sheet(item: $sheet, onDismiss: {
-            decision?.scopeChange.releasePresentation()
-            if resolvedAfterDismiss { resolvedAfterDismiss = false; resolveProposal() }
-        }) { selected in
-            if let decision, let ticket = decision.ticket {
-                DecisionApprovalSheet(stages: decision.approvalStages, nextStage: decision.nextStage ?? "",
-                                      holder: ticket.ceilingHolder, managerID: ticket.managerId,
-                                      reviewerOnly: selected == .reviewer,
-                                      checkCurrent: decision.scopeChange.needsCheck ? {
-                                          let current = try await decision.scopeChange.check(online: Outbox.shared.networkAvailable && !store.serverUnreachable)
-                                          decision.acceptScopeRead(current)
-                                          await store.refresh()
-                                      } : nil,
-                                      confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil }, flow: decision.approvalFlow) { ceiling, holder in
-                    if selected == .reviewer || ceiling.map({ decision.manifest?.selectionApprovesPending(ceiling: $0, waitingStage: ticket.stage) == false }) == true {
-                        let current = try await decision.scopeChange.save(api: store.client, ticket: ticket,
-                            ceiling: selected == .reviewer ? nil : ceiling, holder: holder,
-                            online: Outbox.shared.networkAvailable && !store.serverUnreachable)
-                        decision.acceptScopeRead(current)
-                        await store.refresh()
-                    } else if let ceiling {
-                        busyAction = "approve"
-                        if await decision.approve(api: store.client, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
-                        else {
-                            busyAction = nil
-                            throw APIError(status: 0, message: decision.error ?? "The decision could not be saved.")
-                        }
-                    }
+        .decisionSheets($sheet, ticket: decision?.ticket, manifest: decision?.manifest, note: approvalGuidance?.text,
+            onDismiss: {
+                decision?.scopeChange.releasePresentation()
+                if resolvedAfterDismiss { resolvedAfterDismiss = false; resolveProposal() }
+            },
+            approve: { ceiling, holder in
+                guard let decision else { return }
+                busyAction = "approve"
+                if await decision.approve(api: store.client, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
+                else {
+                    busyAction = nil
+                    throw APIError(status: 0, message: decision.error ?? "The decision could not be saved.")
                 }
-            }
-        }
+            },
+            setReviewer: { holder in
+                guard let decision, let ticket = decision.ticket else { return }
+                let current = try await decision.scopeChange.save(api: store.client, ticket: ticket, ceiling: nil, holder: holder)
+                decision.acceptScopeRead(current)
+                await store.refresh()
+            })
     }
 
     @MainActor private func refresh() async {
@@ -402,7 +390,7 @@ private struct ReviewCardView: View {
                 if await decision.approve(api: store.client, guidance: approvalGuidance) { complete() }
                 else { busyAction = nil; ReviewStyle.error() }
             }
-        } else { decision.approvalFlow = DecisionApprovalFlow(); sheet = .approve }
+        } else { sheet = .approve }
     }
     private func complete() {
         Haptics.light()
@@ -512,7 +500,7 @@ private struct ReviewDecisionDock: View {
             if voice.phase != .idle { voiceStatus.padding(.horizontal, 20).padding(.top, 8).background(PanelsTheme.Web.surface) }
             DecisionNoteActions(note: $decision.revisionDraft, showsSendBack: decision.proposal?.field != "brief",
                                 canReturn: decision.canReturn, ready: ready && decision.ready,
-                                busyAction: busyAction, error: decision.error ?? voice.error ?? decision.scopeChange.message,
+                                busyAction: busyAction, error: decision.error ?? voice.error,
                                 noteEnabled: voice.phase == .idle,
                                 accessory: AnyView(Button {
                                     Haptics.light(); blurRequest += 1

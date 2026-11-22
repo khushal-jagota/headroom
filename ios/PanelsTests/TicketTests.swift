@@ -41,7 +41,7 @@ final class TicketTests: XCTestCase {
         try await client.setTicketApprovalLimit(ticket.id, ceiling: nil, holder: Principal(kind: "chief", id: "chief"))
         try await client.setTicketApprovalLimit(ticket.id, ceiling: "done", holder: Principal(kind: "owner", id: "owner"))
         let delivery = try await client.requestTicketRecap(ticket.id)
-        XCTAssertEqual(delivery.note, "Delivery uncertain · do not resend")
+        XCTAssertNil(delivery.note)
     }
 
     func testConsequencesRemainsAReviewBoundary() throws {

@@ -3,7 +3,6 @@ import Observation
 
 /// Both pieces of the Ticket decision share the exact proposal and saved note.
 @MainActor @Observable final class TicketDecisionState {
-    var approvalFlow = DecisionApprovalFlow()
     var scopeChange = DecisionScopeChange()
     var guidance = "" {
         didSet {
@@ -11,8 +10,7 @@ import Observation
             LocalStore.shared.saveDraft(guidance, server: server, id: identity + ":guidance")
         }
     }
-    var approvalOpen = false
-    var reviewerOpen = false
+    var sheet: DecisionSheet?
     var busyAction: String?
     var error: String?
     var savedDecision: OutgoingStore.Summary?
@@ -124,8 +122,7 @@ struct TicketProposalCard: View {
             text: proposal.body, baseURL: store.baseURL) {
                 guard !decision.pending else { return }
                 _ = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
-                decision.approvalFlow = DecisionApprovalFlow()
-                decision.reviewerOpen = true
+                decision.sheet = .reviewer
             }
             .opacity(decision.pending ? 0.4 : 1)
             .task(id: identity) { decision.load(presentation: presentation, proposal: proposal, api: store.client) }
@@ -133,46 +130,19 @@ struct TicketProposalCard: View {
                 decision.refresh(presentation: presentation, proposal: proposal)
                 if ["sent", "failed"].contains(decision.savedDecision?.state ?? "") { Task { await refresh() } }
             }
-            .sheet(isPresented: $decision.approvalOpen, onDismiss: { decision.scopeChange.releasePresentation() }) {
-                if let snapshot = decision.snapshot {
-                    DecisionApprovalSheet(stages: ReviewWorkerManifest(workflow: snapshot.presentation.manifest).approvalBoundaries,
-                        nextStage: snapshot.presentation.manifest.advance?[snapshot.presentation.ticket.stage] ?? "done",
-                        holder: snapshot.presentation.ticket.ceilingHolder, managerID: snapshot.presentation.ticket.managerId,
-                        checkCurrent: decision.scopeChange.needsCheck ? {
-                            _ = try await decision.scopeChange.check(online: Outbox.shared.networkAvailable && !store.serverUnreachable)
-                            await refresh()
-                        } : nil,
-                        confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil },
-                        flow: decision.approvalFlow) { ceiling, holder in
-                            guard let ceiling else { return }
-                            let lifecycle = ReviewWorkerManifest(workflow: snapshot.presentation.manifest)
-                            if lifecycle.selectionApprovesPending(ceiling: ceiling, waitingStage: snapshot.presentation.ticket.stage) {
-                                try decision.approve(snapshot, ceiling: ceiling, holder: holder)
-                            } else {
-                                _ = try await decision.scopeChange.save(api: snapshot.api, ticket: snapshot.presentation.ticket,
-                                    ceiling: ceiling, holder: holder, online: Outbox.shared.networkAvailable && !store.serverUnreachable)
-                                await refresh()
-                            }
-                        }
-                }
-            }
-            .sheet(isPresented: $decision.reviewerOpen, onDismiss: { decision.scopeChange.releasePresentation() }) {
-                if let snapshot = decision.snapshot {
-                    DecisionApprovalSheet(stages: ReviewWorkerManifest(workflow: snapshot.presentation.manifest).approvalBoundaries,
-                        nextStage: snapshot.presentation.manifest.advance?[snapshot.presentation.ticket.stage] ?? "done",
-                        holder: snapshot.presentation.ticket.ceilingHolder, managerID: snapshot.presentation.ticket.managerId, reviewerOnly: true,
-                        checkCurrent: decision.scopeChange.needsCheck ? {
-                            _ = try await decision.scopeChange.check(online: Outbox.shared.networkAvailable && !store.serverUnreachable)
-                            await refresh()
-                        } : nil,
-                        confirmation: { decision.scopeChange.holdingProposal ? decision.scopeChange.message : nil },
-                        flow: decision.approvalFlow) { _, holder in
-                            _ = try await decision.scopeChange.save(api: snapshot.api, ticket: snapshot.presentation.ticket,
-                                ceiling: nil, holder: holder, online: Outbox.shared.networkAvailable && !store.serverUnreachable)
-                            await refresh()
-                        }
-                }
-            }
+            .decisionSheets($decision.sheet, ticket: decision.snapshot?.presentation.ticket,
+                manifest: decision.snapshot.map { ReviewWorkerManifest(workflow: $0.presentation.manifest) },
+                note: decision.snapshot?.guidance?.text,
+                onDismiss: { decision.scopeChange.releasePresentation() },
+                approve: { ceiling, holder in
+                    guard let snapshot = decision.snapshot else { return }
+                    try decision.approve(snapshot, ceiling: ceiling, holder: holder)
+                },
+                setReviewer: { holder in
+                    guard let snapshot = decision.snapshot else { return }
+                    _ = try await decision.scopeChange.save(api: snapshot.api, ticket: snapshot.presentation.ticket, ceiling: nil, holder: holder)
+                    await refresh()
+                })
     }
 }
 
@@ -186,7 +156,7 @@ struct TicketDecisionDock: View {
     var body: some View {
         DecisionNoteActions(note: $decision.guidance, showsSendBack: proposal.field != "brief",
             canReturn: presentation.ticket.conversationId != nil, ready: nextStage != nil && !decision.pending && decision.matches(presentation: presentation, proposal: proposal, api: store.client),
-            busyAction: decision.busyAction, error: decision.error ?? decision.scopeChange.message,
+            busyAction: decision.busyAction, error: decision.error,
             noteEnabled: !decision.pending && decision.matches(presentation: presentation, proposal: proposal, api: store.client),
             onApprove: {
                 let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
@@ -194,8 +164,7 @@ struct TicketDecisionDock: View {
                     do { try decision.approve(snapshot) }
                     catch { decision.error = error.localizedDescription }
                 } else {
-                    decision.approvalFlow = DecisionApprovalFlow()
-                    decision.approvalOpen = true
+                    decision.sheet = .approve
                 }
             }, onSendBack: {
                 let snapshot = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
