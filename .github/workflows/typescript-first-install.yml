@@ -26,7 +26,6 @@ jobs:
       run:
         shell: bash
     env:
-      FIRST_INSTALL_ROOT: ${{ runner.temp }}/first-install-proof
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
@@ -44,6 +43,8 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          FIRST_INSTALL_ROOT="$RUNNER_TEMP/first-install-proof"
+          echo "FIRST_INSTALL_ROOT=$FIRST_INSTALL_ROOT" >> "$GITHUB_ENV"
           mkdir -p "$FIRST_INSTALL_ROOT"/{build,evidence,tmp,inputs,build-home}
           echo "TMPDIR=$FIRST_INSTALL_ROOT/tmp/" >> "$GITHUB_ENV"
           selected_node=$(node -p 'require("node:fs").realpathSync(process.execPath)')
