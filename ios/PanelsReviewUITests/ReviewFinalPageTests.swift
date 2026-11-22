@@ -16,8 +16,8 @@ final class ReviewFinalPageTests: XCTestCase {
         defer { app.terminate() }
         @MainActor func launchReview() {
             app.launch()
-            let review = app.tabBars.buttons["Review"]
-            XCTAssertTrue(review.waitForExistence(timeout: 10)); review.tap()
+            // Review is the root at launch.
+            XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
             XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 8))
         }
         @MainActor func oracle(_ stage: String, pending: Bool, count: Int) async throws -> [[String: Any]] {
@@ -55,23 +55,6 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual(first.first?["next_ceiling"] as? String, "needs_consequences")
         app.terminate()
 
-        // Consequences retains its settings before the worker proposes the result.
-        app.launch()
-        let workspace = app.tabBars.buttons["Workspace"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
-        let ticket = app.descendants(matching: .any).matching(identifier: "workspace-ticket-offline-1").firstMatch
-        XCTAssertTrue(ticket.waitForExistence(timeout: 8)); ticket.tap()
-        let limit = app.buttons["ticket-approval-limit"]
-        XCTAssertTrue(limit.waitForExistence(timeout: 8)); limit.tap()
-        let picker = app.descendants(matching: .any).matching(identifier: "ticket-ceiling-picker").firstMatch
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Consequences"].exists)
-        XCTAssertFalse(picker.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Done")).firstMatch.exists)
-        capture(app, "consequences-ticket-approval-limit")
-        app.buttons["Cancel"].tap()
-        XCTAssertTrue(limit.waitForExistence(timeout: 5))
-        app.terminate()
-
         // Model the worker's next proposal explicitly; approval never manufactures it.
         try await proof(base, "consequences-review/proposal")
         launchReview()
@@ -80,8 +63,8 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(app.buttons["review.sendBack"].exists)
         XCTAssertTrue(app.buttons["review.approve"].exists)
         capture(app, "consequences-ticket-decision-controls")
-        app.buttons["detail-back"].tap()
-        app.tabBars.buttons["Review"].tap()
+        // Open ticket pushes the Ticket on Review, so Back returns to the card.
+        app.backButton.tap()
         let note = app.descendants(matching: .any).matching(identifier: "review.revision").firstMatch
         let sendBack = app.buttons["review.sendBack"]
         XCTAssertTrue(sendBack.waitForExistence(timeout: 8)); sendBack.tap()
@@ -106,76 +89,8 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "consequences-approved-done")
     }
 
-    /// One-off repeat of the first Chief Back tap and the reported Workspace composer.
-    /// The existing loopback host exercises real navigation and focus; model tests cannot.
-    @MainActor func testChiefFirstBackAndWorkspaceComposer() async throws {
-        continueAfterFailure = false
-        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
-        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
-        let app = XCUIApplication()
-        app.launchArguments = ["--conversation-stub", base]
-        app.launch()
-        defer { app.terminate() }
-        let workspace = app.tabBars.buttons["Workspace"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
-        let chief = app.buttons.matching(NSPredicate(format: "label == %@", "Chief of Staff")).firstMatch
-        let chiefScreen = app.descendants(matching: .any).matching(identifier: "chief-screen").firstMatch
-        let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
-        let keyboard = app.keyboards.firstMatch
-
-        for mode in ["empty", "draft-dismissed", "keyboard-open"] {
-            XCTAssertTrue(chief.waitForExistence(timeout: 8)); chief.tap()
-            XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8))
-            XCTAssertTrue(input.waitForExistence(timeout: 5))
-            if mode == "empty" {
-                // Run this review first on the fresh lane; never delete a restored draft.
-                XCTAssertTrue(["", "Message"].contains(input.value as? String ?? "missing"),
-                              "The empty-composer case requires a fresh app store")
-            } else {
-                input.tap()
-                input.typeText(mode == "draft-dismissed" ? "Keep this Chief Back draft" : " with keyboard open")
-                XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
-                if mode == "draft-dismissed" {
-                    // Use the conversation's known inert gutter, not selectable Chief prose.
-                    app.buttons["conversation-line"].tap()
-                    let thread = app.scrollViews["conversation-thread"]
-                    XCTAssertTrue(thread.waitForExistence(timeout: 8))
-                    input.tap()
-                    XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
-                    thread.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5)).tap()
-                    XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
-                    app.buttons["detail-back"].tap()
-                    XCTAssertTrue(chiefScreen.waitForExistence(timeout: 5))
-                    XCTAssertFalse(keyboard.exists)
-                    XCTAssertEqual(input.value as? String, "Keep this Chief Back draft")
-                }
-            }
-            capture(app, "chief-first-back-" + mode + "-before")
-            let back = app.buttons["detail-back"]
-            XCTAssertTrue(back.isHittable)
-            back.tap() // Exactly one Chief Back tap. Do not retry a refused navigation.
-            let returned = NSPredicate { _, _ in
-                MainActor.assumeIsolated {
-                    workspace.exists && workspace.isHittable && !chiefScreen.exists && !input.exists
-                }
-            }
-            let result = await XCTWaiter.fulfillment(of: [XCTNSPredicateExpectation(predicate: returned, object: nil)], timeout: 5)
-            capture(app, "chief-first-back-" + mode + "-after")
-            if result != .completed {
-                let tree = XCTAttachment(string: app.debugDescription)
-                tree.name = "chief-first-back-" + mode + "-failure-tree"
-                tree.lifetime = .keepAlways
-                add(tree)
-            }
-            XCTAssertEqual(result, .completed, "One Chief Back tap must reveal Workspace without a composer (\(mode))")
-            XCTAssertTrue(workspace.isHittable)
-            XCTAssertFalse(chiefScreen.exists)
-            XCTAssertFalse(input.exists, "The detail composer must not remain on Workspace")
-        }
-    }
-
     /// One-off proof of real Markdown links, URL-based HTML, native Share and navigation.
-    /// Reuses the existing loopback host; model tests cannot prove WebKit loads or tab visibility.
+    /// Reuses the existing loopback host; model tests cannot prove WebKit loads or bar visibility.
     @MainActor func testArtifactLinksOpenOnlyAfterTap() async throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
@@ -184,9 +99,8 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        let review = app.tabBars.buttons["Review"]
-        XCTAssertTrue(review.waitForExistence(timeout: 10))
-        review.tap()
+        // Review is the root at launch.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
         let link = app.links["Migration verification"]
         XCTAssertTrue(link.waitForExistence(timeout: 8), "The authored link text must remain in its paragraph")
         let photo = app.descendants(matching: .any).matching(identifier: "inline-artifact-image").firstMatch
@@ -204,20 +118,20 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(content.waitForExistence(timeout: 8), "A tap must open the existing artifact viewer")
         let openedReads = try await artifactReads(base)
         XCTAssertEqual(openedReads["text"], 1)
-        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        XCTAssertFalse(app.sidebarButton.exists, "A pushed artifact shows Back, not the Sidebar button")
         capture(app, "review-text-artifact-after-tap")
-        app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        XCTAssertTrue(review.isHittable)
+        app.backButton.tap()
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.sidebarButton.isHittable)
 
         let html = app.links["HTML preview"]
         XCTAssertTrue(html.waitForExistence(timeout: 5)); html.tap()
         let firstPreview = app.webViews.staticTexts["Merged HTML preview 1"]
         XCTAssertTrue(firstPreview.waitForExistence(timeout: 8), "HTML must load from its managed URL")
-        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
+        XCTAssertFalse(app.sidebarButton.exists)
         let htmlReads = try await artifactReads(base)
         XCTAssertEqual(htmlReads["html"], 1)
-        capture(app, "merged-html-url-preview-tabs-hidden")
+        capture(app, "merged-html-url-preview-sidebar-hidden")
         app.buttons["Artifact actions"].tap()
         app.buttons["Reload"].tap()
         XCTAssertTrue(app.webViews.staticTexts["Merged HTML preview 2"].waitForExistence(timeout: 8))
@@ -244,9 +158,8 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        let review = app.tabBars.buttons["Review"]
-        XCTAssertTrue(review.waitForExistence(timeout: 10))
-        XCTAssertTrue(review.isSelected, "A normal launch must open Review")
+        // A normal launch opens Review as the root; its fixture cards follow.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
         try skipFixtureCards(app)
         let caughtUp = app.staticTexts["You’re caught up."]
         XCTAssertTrue(caughtUp.waitForExistence(timeout: 8))
@@ -282,22 +195,21 @@ final class ReviewFinalPageTests: XCTestCase {
 
         // A fresh process reads the same durable Chief words and attachments.
         app.terminate(); app.launch()
-        XCTAssertTrue(review.waitForExistence(timeout: 10))
-        XCTAssertTrue(review.isSelected)
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         XCTAssertEqual(input.value as? String, "Shared Chief draft")
         XCTAssertTrue(attachment.waitForExistence(timeout: 5))
-        app.tabBars.buttons["Workspace"].tap()
-        let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
-        XCTAssertTrue(chief.waitForExistence(timeout: 8)); chief.tap()
+        app.openDestination("sidebar-chief", timeout: 8)
+        let chiefScreen = app.descendants(matching: .any)["chief-screen"]
+        XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8))
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         XCTAssertEqual(input.value as? String, "Shared Chief draft")
         XCTAssertTrue(attachment.waitForExistence(timeout: 5))
         input.tap(); input.typeText(" from Chief")
         let changedDraft = try XCTUnwrap(input.value as? String)
         XCTAssertTrue(changedDraft.contains(" from Chief"))
-        app.buttons["detail-back"].tap()
-        XCTAssertTrue(review.waitForExistence(timeout: 5)); review.tap()
+        app.openDestination("sidebar-review", timeout: 8)
+        XCTAssertTrue(chiefScreen.waitForNonExistence(timeout: 5))
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         XCTAssertEqual(input.value as? String, changedDraft)
         capture(app, "review-final-chief-shared-draft")
@@ -337,9 +249,8 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        let review = app.tabBars.buttons["Review"]
-        XCTAssertTrue(review.waitForExistence(timeout: 10))
-        XCTAssertTrue(review.isSelected)
+        // Review is the root at launch.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
         let originalMessage = app.staticTexts["First unread message"]
         XCTAssertTrue(originalMessage.waitForExistence(timeout: 8))
         let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
@@ -353,7 +264,7 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(input.waitForNonExistence(timeout: 3))
         XCTAssertTrue(originalMessage.exists, "Replacement must retain the displayed unread run")
         XCTAssertFalse(app.staticTexts["Arrived after display"].exists, "Replacement must not expand the displayed read boundary")
-        XCTAssertTrue(review.isSelected, "Historical status must update without navigation")
+        XCTAssertTrue(app.sidebarButton.exists, "Historical status must update without navigation")
         capture(app, "review-card-after-replacement")
         let writes = try await recordedWrites(base)
         XCTAssertTrue(writes.isEmpty)
@@ -409,9 +320,8 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         capture(app, "design-ticket-pinned")
         XCTAssertEqual(note.value as? String, "Keep this proposal note")
-        app.buttons["detail-back"].tap()
-        // Open ticket uses Workspace's existing navigation stack.
-        app.tabBars.buttons["Review"].tap()
+        // Open ticket pushes the Ticket on Review, so Back returns to the card.
+        app.backButton.tap()
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         // Capture the real app at the largest accessibility category, including its safe-area edge.
         app.terminate()
@@ -459,248 +369,6 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(next.waitForExistence(timeout: 8))
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
-    }
-
-    /// One connected proof for adjacent native targets, interactive sheets and scoped windows.
-    /// Reuses the DESIGN_REVIEW server; screenshots are review artifacts, not pixel assertions.
-    @MainActor func testWorkspaceSidebarParity() async throws {
-        continueAfterFailure = false
-        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
-        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
-        try await proof(base, "workspace-fixture")
-        let app = XCUIApplication()
-        app.launchArguments = ["--conversation-stub", base, "-panels.goals-sidebar-rows", "NO"]
-        app.launch()
-        defer { app.terminate() }
-        let workspace = app.tabBars.buttons["Workspace"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
-        let wren = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
-            .matching(NSPredicate(format: "label CONTAINS %@", "Wren release")).firstMatch
-        let science = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
-            .matching(NSPredicate(format: "label CONTAINS %@", "Science site")).firstMatch
-        let tag = app.descendants(matching: .any).matching(identifier: "workspace-goal-status-release").firstMatch
-        let notes = app.descendants(matching: .any).matching(identifier: "workspace-ticket-notes").firstMatch
-        XCTAssertTrue(tag.waitForExistence(timeout: 10))
-        let workspaceTree = XCTAttachment(string: app.debugDescription)
-        workspaceTree.name = "workspace-parity-initial-accessibility-tree"
-        workspaceTree.lifetime = .keepAlways; add(workspaceTree)
-        XCTAssertTrue(wren.exists); XCTAssertTrue(science.exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-weekly").firstMatch.exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-onboarding").firstMatch.exists)
-        XCTAssertTrue(notes.exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-testers").firstMatch.exists, "Focus must retain unread Agent work")
-        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-ticket-build").firstMatch.exists)
-        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-ticket-article").firstMatch.exists)
-        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "workspace-goal-release").firstMatch.exists, "Ordinary goal rows start off")
-        XCTAssertFalse(app.buttons["Focus"].exists); XCTAssertFalse(app.switches["Focus"].exists)
-        XCTAssertTrue(app.tabBars.buttons["Review"].exists)
-        XCTAssertTrue(app.tabBars.buttons["More"].exists)
-        XCTAssertTrue(workspace.isSelected)
-        capture(app, "workspace-parity-default")
-
-        tag.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["goal-screen"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["goal-check-first"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.descendants(matching: .any)["orchestrator-screen"].exists)
-        app.buttons["detail-back"].tap()
-        XCTAssertTrue(wren.waitForExistence(timeout: 8)); wren.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
-        app.buttons["detail-back"].tap()
-        XCTAssertTrue(notes.waitForExistence(timeout: 8))
-        wren.press(forDuration: 1)
-        let done = app.buttons["Done"]
-        XCTAssertTrue(done.waitForExistence(timeout: 8))
-        let firstCheck = app.buttons["goal-check-first"]
-        XCTAssertTrue(firstCheck.waitForExistence(timeout: 8))
-        let previewTree = XCTAttachment(string: app.debugDescription)
-        previewTree.name = "workspace-parity-preview-accessibility-tree"
-        previewTree.lifetime = .keepAlways; add(previewTree)
-        XCTAssertEqual(app.buttons.matching(identifier: "goal-check-first").count, 1,
-                       "The preview must expose one checkbox, with no retained detail duplicate")
-        if !firstCheck.isHittable { app.swipeUp() }
-        let checkboxReady = NSPredicate { _, _ in
-            MainActor.assumeIsolated { firstCheck.exists && firstCheck.isHittable }
-        }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: checkboxReady, object: nil)], timeout: 5), .completed,
-                       "Wait for the sheet's expansion/scroll gesture to finish before tapping")
-        firstCheck.tap()
-        XCTAssertTrue(app.staticTexts["Explain the change."].waitForExistence(timeout: 8))
-        capture(app, "workspace-parity-interactive-checklist")
-        let goalWrites = try await recordedWrites(base)
-        XCTAssertEqual(goalWrites.count, 1, "Preview must only perform the requested checklist write")
-        let goalWrite = try XCTUnwrap(goalWrites.first as? [String: Any])
-        XCTAssertEqual(goalWrite["path"] as? String, "/api/goals/release")
-        let goalBody = try XCTUnwrap(goalWrite["body"] as? [String: Any])
-        XCTAssertEqual(Set(goalBody.keys), ["page", "expected_revision"])
-        XCTAssertEqual(goalBody["expected_revision"] as? Int, 1)
-        let page = try XCTUnwrap(goalBody["page"] as? [String: Any])
-        let blocks = try XCTUnwrap(page["blocks"] as? [[String: Any]])
-        let items = try XCTUnwrap(blocks.first?["items"] as? [[String: Any]])
-        XCTAssertEqual(items.first?["id"] as? String, "first")
-        XCTAssertEqual(items.first?["state"] as? String, "done")
-        XCTAssertEqual(items.last?["state"] as? String, "blocked")
-
-        try await proof(base, "workspace-update")
-        // The existing loopback stream emits each second. Admit two frames while held.
-        try await Task.sleep(for: .milliseconds(2200))
-        XCTAssertTrue(done.exists, "A structural snapshot must not tear down the open preview")
-        XCTAssertTrue(app.buttons["Open"].isHittable, "The held preview remains interactive")
-        done.tap()
-        XCTAssertTrue(wren.waitForNonExistence(timeout: 8), "The removed holder leaves only after the preview is dismissed")
-        capture(app, "workspace-parity-after-preview-release")
-        try await proof(base, "workspace-restore")
-        XCTAssertTrue(wren.waitForExistence(timeout: 8))
-
-        XCTAssertTrue(science.exists)
-        if !science.isHittable { app.swipeUp() }
-        science.press(forDuration: 1)
-        XCTAssertTrue(done.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.descendants(matching: .any)["goal-chart-words"].waitForExistence(timeout: 8))
-        capture(app, "workspace-parity-chart-preview")
-        done.tap()
-
-        try await proof(base, "workspace-pages")
-        let next = app.buttons["Next"].firstMatch
-        XCTAssertTrue(next.waitForExistence(timeout: 8))
-        if !next.isHittable { app.swipeUp() }
-        XCTAssertTrue(next.isHittable); next.tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "workspace-ticket-page-two").firstMatch.waitForExistence(timeout: 8))
-        let (requestsData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/workspace-requests")!)
-        let requests = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestsData) as? [[String: Any]])
-        XCTAssertTrue(requests.contains { request in
-            let owner = request["owner"] as? [String: Any]
-            return request["section"] as? String == "rail_tickets" && owner?["kind"] as? String == "manager"
-                && owner?["id"] as? String == "wren" && request["anchor"] as? String == "workspace-next"
-        })
-        app.descendants(matching: .any).matching(identifier: "workspace-settled").firstMatch.tap()
-        let settled = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Previous release")).firstMatch
-        XCTAssertTrue(settled.waitForExistence(timeout: 8)); settled.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
-        app.buttons["detail-back"].tap()
-        let reopen = app.buttons["Reopen Previous release"]
-        XCTAssertTrue(reopen.waitForExistence(timeout: 8)); reopen.tap()
-        XCTAssertTrue(reopen.waitForNonExistence(timeout: 8))
-        let writes = try await recordedWrites(base)
-        XCTAssertEqual(writes.count, 2)
-        let reopening = try XCTUnwrap(writes.last as? [String: Any])
-        XCTAssertEqual(reopening["path"] as? String, "/api/managers/settled-one/settled")
-        let reopeningBody = try XCTUnwrap(reopening["body"] as? [String: Any])
-        XCTAssertEqual(Set(reopeningBody.keys), ["settled"])
-        XCTAssertEqual(reopeningBody["settled"] as? Bool, false)
-        capture(app, "workspace-parity-settled-dock")
-
-        // One-off visual review in the same host, using the existing standard text-size argument.
-        app.terminate()
-        try await proof(base, "workspace-fixture")
-        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
-        app.launch()
-        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
-        XCTAssertTrue(tag.waitForExistence(timeout: 8))
-        capture(app, "workspace-parity-accessibility-text")
-        if !wren.isHittable { app.swipeUp() }
-        XCTAssertTrue(wren.isHittable); wren.press(forDuration: 1)
-        XCTAssertTrue(done.waitForExistence(timeout: 8))
-        capture(app, "workspace-parity-accessibility-preview")
-        XCTAssertTrue(done.isHittable)
-        done.tap()
-        // System Reduce Motion is reviewed separately in the parent's admitted lane window.
-        app.terminate()
-        try await proof(base, "workspace-reset")
-    }
-
-    /// One-off explicit-Open and real system Reduce Motion review; no new test host.
-    @MainActor func testWorkspacePreviewOpenAndSystemMotion() async throws {
-        continueAfterFailure = false
-        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
-        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
-        try await proof(base, "workspace-fixture")
-        let app = XCUIApplication()
-        app.launchArguments = ["--conversation-stub", base, "-panels.goals-sidebar-rows", "NO"]
-        defer { app.terminate() }
-        let wren = app.descendants(matching: .any).matching(identifier: "workspace-orchestrator")
-            .matching(NSPredicate(format: "label CONTAINS %@", "Wren release")).firstMatch
-
-        try await configureSystemReduceMotion(false)
-        app.launch()
-        let workspace = app.tabBars.buttons["Workspace"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
-        XCTAssertTrue(wren.waitForExistence(timeout: 8)); wren.press(forDuration: 1)
-        let open = app.buttons["Open"]
-        XCTAssertTrue(open.waitForExistence(timeout: 8))
-        XCTAssertFalse(app.descendants(matching: .any)["orchestrator-screen"].exists,
-                       "Long press must leave the rail under the sheet")
-        XCTAssertEqual(app.buttons.matching(identifier: "goal-check-first").count, 1)
-        capture(app, "workspace-explicit-open-before")
-        open.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["orchestrator-screen"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["Done"].waitForNonExistence(timeout: 8))
-        capture(app, "workspace-explicit-open-destination")
-        app.buttons["detail-back"].tap()
-        XCTAssertTrue(wren.waitForExistence(timeout: 8))
-
-        for reduced in [false, true] {
-            if reduced {
-                app.terminate()
-                try await configureSystemReduceMotion(true)
-                app.launch()
-                XCTAssertTrue(workspace.waitForExistence(timeout: 10)); workspace.tap()
-                XCTAssertTrue(wren.waitForExistence(timeout: 8))
-            }
-            let mode = reduced ? "reduced" : "normal"
-            // Settings is the preference authority; this app was relaunched after the change.
-            // The UI-test runner's UIKit getter is not the Panels process's environment.
-            capture(app, "workspace-motion-" + mode + "-before")
-            try await proof(base, "start/workspace-motion-" + mode)
-            try await proof(base, "workspace-update")
-            XCTAssertTrue(wren.waitForNonExistence(timeout: 8))
-            capture(app, "workspace-motion-" + mode + "-removed")
-            try await proof(base, "workspace-restore")
-            XCTAssertTrue(wren.waitForExistence(timeout: 8))
-            capture(app, "workspace-motion-" + mode + "-restored")
-            try await proof(base, "stop")
-        }
-        app.terminate()
-        try await configureSystemReduceMotion(false)
-        try await proof(base, "workspace-reset")
-    }
-
-    @MainActor private func configureSystemReduceMotion(_ enabled: Bool) async throws {
-        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
-        settings.launch()
-        defer { settings.terminate() }
-        let reduceMotion = settings.switches["Reduce Motion"]
-        if !reduceMotion.exists {
-            let motion = settings.descendants(matching: .any)
-                .matching(NSPredicate(format: "label == %@", "Motion")).firstMatch
-            if !motion.exists {
-                let accessibility = settings.descendants(matching: .any)
-                    .matching(NSPredicate(format: "label == %@", "Accessibility")).firstMatch
-                for _ in 0..<4 where !accessibility.isHittable { settings.swipeUp() }
-                XCTAssertTrue(accessibility.waitForExistence(timeout: 5)); accessibility.tap()
-            }
-            XCTAssertTrue(motion.waitForExistence(timeout: 5)); motion.tap()
-        }
-        XCTAssertTrue(reduceMotion.waitForExistence(timeout: 5))
-        let switchBefore = XCTAttachment(string: "Before toggle: value=\(reduceMotion.value ?? "nil"); frame=\(reduceMotion.frame)\n" + settings.debugDescription)
-        switchBefore.name = enabled ? "workspace-system-motion-on-before-tree" : "workspace-system-motion-off-before-tree"
-        switchBefore.lifetime = .keepAlways; add(switchBefore)
-        let expectedValue = enabled ? "1" : "0"
-        if reduceMotion.value as? String != expectedValue {
-            // Settings exposes the labelled row as a Switch; touch its trailing thumb.
-            reduceMotion.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        }
-        let actualPreference = NSPredicate { _, _ in
-            MainActor.assumeIsolated {
-                reduceMotion.value as? String == expectedValue
-            }
-        }
-        let preferenceResult = await XCTWaiter.fulfillment(of: [XCTNSPredicateExpectation(predicate: actualPreference, object: nil)], timeout: 5)
-        let preferenceEvidence = XCTAttachment(string: "Settings Reduce Motion switch=\(reduceMotion.value ?? "nil"); frame=\(reduceMotion.frame); expected=\(enabled); UI-test runner UIKit getter=\(UIAccessibility.isReduceMotionEnabled) (diagnostic only; not the Panels process)")
-        preferenceEvidence.name = enabled ? "workspace-system-motion-on-values" : "workspace-system-motion-off-values"
-        preferenceEvidence.lifetime = .keepAlways; add(preferenceEvidence)
-        capture(settings, enabled ? "workspace-system-reduce-motion-on" : "workspace-system-reduce-motion-off")
-        XCTAssertEqual(preferenceResult, .completed,
-                       "The actual Settings switch must confirm system Reduce Motion before relaunching Panels")
     }
 
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {

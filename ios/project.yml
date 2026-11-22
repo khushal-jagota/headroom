@@ -59,7 +59,7 @@ targets:
   PanelsNotificationUITests:
     type: bundle.ui-testing
     platform: iOS
-    sources: [PanelsNotificationUITests]
+    sources: [PanelsNotificationUITests, PanelsUITestSupport]
     dependencies:
       - target: Panels
     settings:
@@ -71,7 +71,7 @@ targets:
   PanelsReviewUITests:
     type: bundle.ui-testing
     platform: iOS
-    sources: [PanelsReviewUITests]
+    sources: [PanelsReviewUITests, PanelsUITestSupport]
     dependencies:
       - target: Panels
     settings:

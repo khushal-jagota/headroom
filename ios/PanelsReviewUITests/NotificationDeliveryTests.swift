@@ -11,8 +11,7 @@ final class NotificationDeliveryTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         defer { app.terminate() }
         app.launch()
-        app.tabBars.buttons["More"].tap()
-        app.buttons["Settings"].tap()
+        app.openDestination("sidebar-settings")
         app.segmentedControls.buttons["Notifications"].tap()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let allow = app.buttons["allow-notifications"]

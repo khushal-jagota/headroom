@@ -24,7 +24,7 @@ struct ArtifactViewerView: View {
     @State private var isLoading = true
     @State private var showLoading = false
     @State private var sharePresented = false
-    @State private var linkedArtifact: ArtifactTarget?
+    @Environment(\.openRoute) private var openRoute
     @State private var loadVersion = 0
     @State private var renderVersion = 0
     @State private var htmlReloadSignal = 0
@@ -42,7 +42,6 @@ struct ArtifactViewerView: View {
 
     var body: some View {
         ScreenTextEntryScope { textEntry in artifactContent(textEntry: textEntry) }
-            .toolbar(.hidden, for: .tabBar)
     }
 
     private func artifactContent(textEntry: ScreenTextEntryContext) -> some View {
@@ -97,9 +96,6 @@ struct ArtifactViewerView: View {
         .sheet(isPresented: $sharePresented) {
             if let shareDocument { ArtifactShareSheet(document: shareDocument).presentationDetents([.medium, .large]) }
             else if let shareURL { ArtifactURLShareSheet(url: shareURL).presentationDetents([.medium, .large]) }
-        }
-        .navigationDestination(item: $linkedArtifact) { target in
-            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: showsConversation, conversationOwner: activeConversationOwner)
         }
         .task(id: store.baseURL.absoluteString + "|" + String(describing: activeConversationOwner)) {
             guard showsConversation else { return }
@@ -174,7 +170,7 @@ struct ArtifactViewerView: View {
     private func follow(_ url: URL, textEntry: ScreenTextEntryContext) {
         if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
-            if target.id != self.target.id { textEntry.endEditingBeforeNavigation { linkedArtifact = target } }
+            if target.id != self.target.id { textEntry.endEditingBeforeNavigation { openRoute(.artifact(target, conversationOwner: activeConversationOwner, showsConversation: showsConversation)) } }
         } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
     }
     private func share() async {

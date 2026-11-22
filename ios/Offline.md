@@ -1,8 +1,8 @@
 # Saved data and interrupted connections
 
-The phone keeps recently read Workspace, Review, Ticket, Manager, Chief, and
-conversation display in one SwiftData database in Application Support. Workspace
-and Review restore admitted navigation display, including reduced patches.
+The phone keeps recently read Review, Ticket, Manager, Chief, and
+conversation display in one SwiftData database in Application Support. The
+navigation view restores admitted display, including reduced patches.
 Conversation display retains bounded history. Saved display remains stale and
 supplies neither stream coverage nor read credit. Fresh streams establish their
 own authority. Navigation and conversation owners checkpoint during updates and
@@ -35,7 +35,7 @@ The store has one schema, in the `PanelsPhoneStore` folder. At launch the app
 deletes the older `PanelsPhone` folder with its store and recordings, so drafts and
 unsent work from builds before this one are dropped once.
 
-Conversation text, Review edits, send-back guidance and Ideas text are saved as
+Conversation text, Review notes and Ideas text are saved as
 they change. A Review draft belongs to the exact ticket, field, proposal time and
 revision. A failed local save is shown in the app; a send cannot clear its composer
 until the outgoing work and the composer clear have committed together.

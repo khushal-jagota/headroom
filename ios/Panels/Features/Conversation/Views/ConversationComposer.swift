@@ -196,14 +196,6 @@ struct ConversationComposer: View {
             }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).padding(.vertical, 4)
                 .frame(minHeight: 30).overlay(Capsule().stroke(PanelsTheme.border))
         }.accessibilityLabel("Choose model")
-        Menu {
-            if model.supportsSteer { Button("Steer") { model.deliveryMode = "steer"; Haptics.selection() } }
-            Button("Queue") { model.deliveryMode = "queue"; Haptics.selection() }
-            Button("Send now") { model.deliveryMode = "send_now"; Haptics.selection() }
-        } label: {
-            Text(model.deliveryMode == "send_now" ? "Send now" : model.deliveryMode.capitalized)
-                .font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).frame(minHeight: 44)
-        }
     }
 
     private var field: some View {

@@ -4,7 +4,7 @@ import Foundation
 /// The phone's request is their union, bounded the way the web bounds it.
 enum NavigationScope {
     static let reviewWindowLimit = 30
-    /// Review is always in scope: it drives the tab badge and opens without a wait.
+    /// Review is always in scope: it drives the Sidebar badge and opens without a wait.
     static var baseWindows: [ViewWindowRequest] { [ViewWindowRequest(section: "review", limit: reviewWindowLimit)] }
     static let rowBudget = 256
     /// A detail page's children window, whose members key its reloads. A manager's
@@ -30,8 +30,8 @@ enum NavigationScope {
             else { position[window.identity] = windows.count; windows.append(window) }
         }
         func stable(_ window: ViewWindowRequest) -> Bool {
-            // Review is always mounted on the phone, beside any other screen; its page
-            // keeps its size rather than shrinking as Workspace cards appear.
+            // Review and the Sidebar's lists are always in scope on the phone; their pages
+            // keep their size rather than shrinking as other screens add windows.
             window.section == "review" || window.section == "rail_parents" || window.section == "settled"
                 || (window.section == "children" && window.owner?.kind == "chief")
         }

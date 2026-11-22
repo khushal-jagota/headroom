@@ -140,26 +140,26 @@ import UIKit
         func record(_ id: String) throws -> GoalRecord {
             try APIClient.decoder().decode(GoalRecord.self, from: Data(Self.goalWire.replacingOccurrences(of: "\"id\":\"g\"", with: "\"id\":\"\(id)\"").utf8))
         }
-        let records = try ["text", "manual", "pending", "clean"].map(record)
+        // "g" is the fixture's served goal, so its checklist save reaches the server and is refused.
+        let records = try ["g", "pending", "clean"].map(record)
         let active = sessions.update(records, api: api, resources: resources)
-        active[0].textDrafts["title"] = GoalTextDraft(text: "Unfinished title", revision: 5)
+        await active[0].updateBlock("chosen", revision: 5, update: Self.tickFirst)
+        XCTAssertTrue(active[0].hasPendingEdit, "The refused checklist save stays unfinished")
         let block = GoalJSON.object(["measure_id": .string("m"), "manual": .object(["model": .string("daily_quota")])])
-        active[1].manual(block).draft = "12"
-        let command = active[2].manual(block)
+        let command = active[1].manual(block)
         command.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(GoalProtocolState.manualState.utf8)))
-        await command.write(value: 12)
+        await command.write(delta: 7)
         XCTAssertNotNil(command.pending, "The fixture retains an uncertain manual command")
         sessions.update([], api: api, resources: resources)
-        for id in ["text", "manual", "pending"] { XCTAssertNotNil(sessions.session(id, server: api.baseURL)) }
+        for id in ["g", "pending"] { XCTAssertNotNil(sessions.session(id, server: api.baseURL)) }
         XCTAssertNil(sessions.session("clean", server: api.baseURL))
         let returned = sessions.update([records[0]], api: api, resources: resources)
         XCTAssertTrue(returned[0] === active[0])
-        XCTAssertEqual(returned[0].textDrafts["title"]?.text, "Unfinished title")
+        XCTAssertTrue(returned[0].hasPendingEdit)
         sessions.update([], api: api, resources: resources)
-        active[0].textDrafts = [:]; active[1].manual(block).draft = nil
+        await active[0].discard()
         sessions.prune()
-        XCTAssertNil(sessions.session("text", server: api.baseURL))
-        XCTAssertNil(sessions.session("manual", server: api.baseURL))
+        XCTAssertNil(sessions.session("g", server: api.baseURL))
         XCTAssertNotNil(sessions.session("pending", server: api.baseURL), "Membership never discards an unresolved command")
     }
     /// Replaceable child views ask their parent route for the same edit owner.
@@ -169,32 +169,34 @@ import UIKit
         let api = client(), resources = ResourceOwner(api: client()), route = PageSessionRoute()
         var child: PageSession? = route.goal("g", api: api, resources: resources)
         weak var retained = child
-        child?.textDrafts["title"] = GoalTextDraft(text: "Unfinished", revision: 5)
         let block = try json(#"{"measure_id":"m","manual":{"model":"daily_quota"}}"#)
         let editor = try XCTUnwrap(child).manual(block)
-        editor.draft = "12"
         editor.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(GoalProtocolState.manualState.utf8)))
-        await editor.write(value: 12)
-        await child?.save(["title": .string("Unfinished")], revision: 5)
+        await editor.write(delta: 7)
+        await child?.updateBlock("chosen", revision: 5, update: Self.tickFirst)
         child = nil // The old document view and its local state disappear.
         let replacement = route.goal("g", api: api, resources: resources)
         XCTAssertTrue(replacement === retained)
-        XCTAssertEqual(replacement.textDrafts["title"]?.text, "Unfinished")
         XCTAssertTrue(replacement.hasPendingEdit)
         XCTAssertTrue(replacement.manual(block) === editor)
         XCTAssertNotNil(editor.pending)
         let holder = route.holder(.manager("holder-test"), api: api, resources: resources)
-        holder.textDrafts["block"] = GoalTextDraft(text: "Holder draft", revision: 4)
+        await holder.updateBlock("chosen", revision: 3, update: Self.tickFirst)
+        XCTAssertTrue(holder.hasPendingEdit, "The holder page is at revision 4, so this save is refused")
         XCTAssertTrue(route.holder(.manager("holder-test"), api: api, resources: resources) === holder)
         let otherAPI = APIClient(baseURL: URL(string: "https://other.example")!)
         let other = route.goal("g", api: otherAPI, resources: ResourceOwner(api: otherAPI))
         XCTAssertFalse(other === replacement)
         XCTAssertTrue(route.goal("g", api: api, resources: resources) === replacement)
         XCTAssertEqual(route.retainedCount, 2, "Only the two dirty sessions survive selection changes")
-        replacement.textDrafts = [:]; await replacement.discard(); await editor.discard()
-        holder.textDrafts = [:]
+        await replacement.discard(); await editor.discard()
+        await holder.discard()
         route.prune()
         XCTAssertEqual(route.retainedCount, 1, "Clean inactive sessions do not accumulate")
+    }
+    /// The checklist tick GoalChecklist sends: the first item becomes done.
+    nonisolated private static func tickFirst(_ block: GoalJSON) -> GoalJSON {
+        block.setting("items", .array(block["items"].array.map { $0.id == "one" ? $0.setting("state", .string("done")) : $0 }))
     }
     /// An accepted document can advance before its separate readings endpoint succeeds.
     /// Preserve the prior projection through both the revision gap and a failed refresh.
@@ -229,89 +231,13 @@ import UIKit
         XCTAssertFalse(session.readingsAreStale)
         XCTAssertNil(session.readError)
     }
-    func testIndependentRefreshCannotClearSubmittedTextAndConfirmedSavePreservesNewerTyping() async throws {
-        GoalProtocol.state.reset(try goal()); GoalProtocol.state.acceptGoalWrites()
-        let session = PageSession(id: "g", api: client(), goal: try goal())
-        let key = "header:title"
-        session.textDrafts[key] = GoalTextDraft(text: "Submitted", revision: 5)
-        let first = Task {
-            await session.save(["title": .string("Submitted")], revision: 5,
-                textSubmission: GoalTextSubmission(key: key, text: "Submitted", revision: 5))
-        }
-        for _ in 0..<100 {
-            if !GoalProtocol.state.writes().isEmpty { break }
-            try await Task.sleep(for: .milliseconds(1))
-        }
-        await session.refresh()
-        XCTAssertEqual(session.goal?.revision, 6)
-        XCTAssertEqual(session.textDrafts[key]?.text, "Submitted", "A new accepted revision is not this save's receipt")
-        session.textDrafts[key]?.text = "Newer typing"
-        await first.value
-        XCTAssertNil(session.saveError)
-        XCTAssertEqual(session.textDrafts[key]?.text, "Newer typing")
-        XCTAssertEqual(session.textDrafts[key]?.revision, 6)
-        await session.save(["title": .string("Newer typing")], revision: 6,
-            textSubmission: GoalTextSubmission(key: key, text: "Newer typing", revision: 6))
-        XCTAssertNil(session.saveError)
-        XCTAssertNil(session.textDrafts[key], "Only confirmed acceptance clears the unchanged submitted text")
-    }
-    /// The child-only test keeps its route alive. This checks the app-session owner
-    /// used by RouteDestination after the route itself leaves and returns.
-    func testConflictingTextRetryKeepsCapturedRevisionAndDiscardUsesAcceptedGoal() async throws {
-        GoalProtocol.state.reset(try goal())
-        let api = client()
-        let store = AppStore(baseURL: api.baseURL, session: api.session)
-        var route: PageSessionRoute? = store.goalEdits
-        var session: PageSession? = route?.goal("g", api: store.client, resources: store.resources)
-        await session?.refresh()
-        session?.textDrafts["title"] = GoalTextDraft(text: "Draft", revision: 5)
-        GoalProtocol.state.conflictGoal()
-        await session?.save(["title": .string("Draft")], revision: 5,
-            textSubmission: GoalTextSubmission(key: "title", text: "Draft", revision: 5))
-        XCTAssertNotNil(session?.saveError)
-        await session?.refresh()
-        weak var retained = session
-        session = nil
-        route = nil // Pop destroys the destination's references to the edit owner.
-        let replacement = store.goalEdits.goal("g", api: store.client, resources: store.resources)
-        XCTAssertTrue(replacement === retained)
-        XCTAssertEqual(replacement.textDrafts["title"]?.text, "Draft")
-        XCTAssertEqual(replacement.textDrafts["title"]?.revision, 5)
-        XCTAssertTrue(replacement.hasPendingEdit)
-        XCTAssertNotNil(replacement.saveError)
-        XCTAssertEqual(replacement.goal?.revision, 9)
-        XCTAssertEqual(replacement.goal?.title, "Other editor")
-        await replacement.retry()
-        let writes = GoalProtocol.state.writes()
-        XCTAssertEqual(writes.count, 2)
-        XCTAssertEqual(writes[0]["expected_revision"].number, 5)
-        XCTAssertEqual(writes[0], writes[1])
-        let freshStore = AppStore(baseURL: api.baseURL, session: api.session)
-        let fresh = freshStore.goalEdits.goal("g", api: freshStore.client, resources: freshStore.resources)
-        XCTAssertTrue(fresh.textDrafts.isEmpty, "Unsaved edits do not survive a new app session")
-        XCTAssertFalse(fresh.hasPendingEdit)
-        await replacement.discard()
-        XCTAssertNil(replacement.saveError)
-        XCTAssertNil(replacement.textDrafts["title"])
-        XCTAssertEqual(replacement.goal?.revision, 9)
-        XCTAssertEqual(replacement.goal?.title, "Other editor")
-    }
     func testUncertainManualWriteRetriesExactIdentityAndDoesNotRegressState() async throws {
         GoalProtocol.state.reset(try goal())
         let editor = GoalManualEditor(measureID: "m", cumulative: true, api: client())
         await editor.refresh()
-        editor.beginEditing(); editor.draft = "invalid"
-        let prepared = await editor.prepare()
-        XCTAssertFalse(prepared)
-        XCTAssertTrue(GoalProtocol.state.manualWrites().isEmpty)
-        editor.beginEditing()
-        XCTAssertEqual(editor.draft, "5", "A whole reading opens without a decimal")
-        let changed = GoalProtocolState.manualState.replacingOccurrences(of: "\"write_revision\":1", with: "\"write_revision\":2")
-        editor.accept(try APIClient.decoder().decode(GoalManualState.self, from: Data(changed.utf8)))
-        await editor.write(value: 12)
+        await editor.write(delta: 7)
         XCTAssertNotNil(editor.error)
         XCTAssertNotNil(editor.pending)
-        XCTAssertEqual(editor.pending?.expectedWriteRevision, 1)
         await editor.retry()
         XCTAssertNil(editor.error)
         XCTAssertEqual(editor.state?.value(cumulative: true), 12)

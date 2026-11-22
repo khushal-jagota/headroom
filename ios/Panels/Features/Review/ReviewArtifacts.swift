@@ -5,21 +5,19 @@ import SwiftUI
 struct ReviewArtifactLinks: ViewModifier {
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
-    @State private var selected: ArtifactTarget?
+    @Environment(\.openRoute) private var openRoute
     @Environment(\.screenTextEntry) private var textEntry
 
     func body(content: Content) -> some View {
         content
             .environment(\.openURL, OpenURLAction { url in follow(url); return .handled })
-            .navigationDestination(item: $selected) { target in
-                ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: false)
-            }
     }
     private func follow(_ url: URL) {
         if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
-            if let textEntry { textEntry.endEditingBeforeNavigation { selected = target } }
-            else { selected = target }
+            let route = AppRoute.artifact(target, showsConversation: false)
+            if let textEntry { textEntry.endEditingBeforeNavigation { openRoute(route) } }
+            else { openRoute(route) }
         }
         else { openURL(url) }
     }

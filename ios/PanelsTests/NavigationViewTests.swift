@@ -96,7 +96,6 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertEqual(ticket.project, "Project", "A Ticket's Project joins through its parent")
         XCTAssertEqual(presentation.managers.first?.updatedAt, 11)
         XCTAssertTrue(presentation.managers.first?.recap.hasPrefix("Full parent recap.") == true)
-        XCTAssertNil(WorkspaceGrouping.section(for: ticket.summary), "Blocked work stays out of the rail")
 
         let agentApproval = sourceTicket(["stage": "done", "terminal": true, "ticket_status": "awaiting_approval", "ceiling_holder": ["kind": "owner", "id": "another"]])
         let parked = try XCTUnwrap(NavigationPresentation(try snapshot([agentApproval]).content.records).tickets.first)
@@ -104,9 +103,6 @@ final class NavigationViewTests: XCTestCase {
         XCTAssertNil(parked.agentState, "No conversation record: unknown, never idle")
         XCTAssertEqual(parked.summary.agentState, "idle")
 
-        let consequences = sourceTicket(["conversation_id": NSNull(), "gating_field": "consequences"])
-        let closing = try XCTUnwrap(NavigationPresentation(try snapshot([consequences, sourceManager, project("project", "Project")]).content.records).tickets.first)
-        XCTAssertEqual(WorkspaceGrouping.section(for: closing.summary), .other)
     }
 
     func testTicketLocaleSurvivesDecodeAndMappingBeforeRuntimeMark() throws {

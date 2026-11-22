@@ -32,18 +32,6 @@ extension APIClient {
         struct Body: Encodable { let settled: Bool }
         try await writeAgentFields("/api/managers/\(id)/settled", method: "PATCH", body: Body(settled: settled))
     }
-    func saveManagerGoal(_ id: String, goal: String) async throws {
-        struct Body: Encodable { let goal: String }
-        try await writeAgentFields("/api/managers/\(id)", method: "PATCH", body: Body(goal: goal))
-    }
-    func saveAgentRecap(target: Principal, recap: String) async throws {
-        struct Body: Encodable { let recap: String }
-        let chief = target.kind == "chief"
-        try await writeAgentFields(chief ? "/api/workers/chief-of-staff/recap" : "/api/managers/\(target.id)", method: chief ? "PUT" : "PATCH", body: Body(recap: recap))
-    }
-    func setWorkerBacklog(_ id: String, backlogged: Bool) async throws {
-        try await writeAgentFields("/api/tickets/\(id)/\(backlogged ? "backlog" : "resume")", method: "POST", body: [String: String]())
-    }
     private func writeAgentFields<Body: Encodable>(_ path: String, method: String, body: Body) async throws {
         var request = try self.request(try url(path))
         request.httpMethod = method; request.timeoutInterval = 25

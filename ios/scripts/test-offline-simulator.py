@@ -367,7 +367,6 @@ def main() -> int:
         "writes": [],
         "messages": [],
         "recording": None,
-        "goal_patch_attempts": 0,
         "chief_conversation": "stub",
         "tail_requests": [],
         # Delivery faults for OfflineOperationTests, armed per kind (message, decision,
@@ -1181,13 +1180,6 @@ def main() -> int:
                     state["slow"] = False
                 elif name == "fast":
                     state["slow"] = False
-                elif name == "goal-conflict" and GOALS_SMOKE:
-                    with lock:
-                        goals["words"]["revision"] += 1
-                        goals["words"]["why"] = "Newer server explanation."
-                elif name == "goal-state" and GOALS_SMOKE:
-                    self.respond(dict(goal=goals["words"], attempts=state["goal_patch_attempts"]))
-                    return
                 elif name == "writes":
                     self.respond(state["writes"])
                     return
@@ -1475,7 +1467,7 @@ def main() -> int:
                     state["artifact_reads"]["photo" if photo else "text"] += 1
                 content = (
                     (
-                        ROOT / "ios/Panels/Features/Workspace/Resources/workspace-chief.png"
+                        ROOT / "ios/Panels/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
                     ).read_bytes()
                     if photo
                     else b"Migration verification body must appear only after a tap."
@@ -1644,7 +1636,6 @@ def main() -> int:
                 return
             with lock:
                 goal = goals[path.split("/")[3]]
-                state["goal_patch_attempts"] += 1
                 wire_body = copy.deepcopy(body)
                 if body.pop("expected_revision") != goal["revision"]:
                     self.respond(dict(error=dict(message="This goal changed.")), 409)

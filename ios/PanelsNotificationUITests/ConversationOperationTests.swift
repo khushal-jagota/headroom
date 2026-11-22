@@ -57,7 +57,7 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertTrue(sent.waitForExistence(timeout: 8))
         let reply = thread.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "I’ll keep the conversation steady as messages arrive.")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 8), "The server did not accept the send and return its reply")
-        app.buttons["detail-back"].tap()
+        app.backButton.tap()
         XCTAssertTrue(line.waitForExistence(timeout: 5))
     }
 
