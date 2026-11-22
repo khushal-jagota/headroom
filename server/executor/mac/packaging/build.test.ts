@@ -49,6 +49,8 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
       '#define NODE_MAJOR_VERSION 24\n#define NODE_MINOR_VERSION 1\n#define NODE_PATCH_VERSION 0\n',
     );
     await put(join(modules, '.package-lock.json'), '{"packages":{}}');
+    await put(join(modules, 'better-sqlite3/build/Makefile'), '/scratch/first/native');
+    await put(join(modules, 'better-sqlite3/build/config.gypi'), '{"prefix":"/scratch/first"}');
     for (const [name, version] of Object.entries(dependencies))
       await put(join(modules, name, 'package.json'), JSON.stringify({ name, version }));
     await put(join(modules, 'better-sqlite3/prebuilds/darwin-arm64.node'), native);
@@ -90,6 +92,7 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
         'launcher/Panels TypeScript.app/Contents/Info.plist',
         'launcher/Panels TypeScript.app/Contents/MacOS/Panels',
         'node/bin/node',
+        'server/node_modules/better-sqlite3/prebuilds/darwin-arm64.node',
         'server/executor/mac/entrypoint.ts',
         'server/executor/wire.generated.ts',
         'server/executor/wire.schema.json',
@@ -102,6 +105,12 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
     ).toBe(wire_schema);
     expect(Buffer.concat(archived_schema).toString()).toBe(wire_schema);
     expect(members).not.toEqual(expect.arrayContaining(['server/executor/mac/service.test.ts']));
+    expect(members).not.toContain('server/node_modules/better-sqlite3/build/Makefile');
+    expect(members).not.toContain('server/node_modules/better-sqlite3/build/config.gypi');
+    await put(join(modules, 'better-sqlite3/build/Makefile'), '/scratch/repeated/native');
+    await put(join(modules, 'better-sqlite3/build/config.gypi'), '{"prefix":"/scratch/repeated"}');
+    const repeated = await build_mac_package({ ...options, output: join(root, 'repeated') });
+    expect(repeated.build_id).toBe(built.build_id);
     // The account appears only in the files a join writes on the machine.
     const account = mac_installation_assets({
       home: '/Users/Owner & Test',

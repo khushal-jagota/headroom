@@ -370,7 +370,12 @@ jobs:
           const root = process.env.RUNNER_TEMP;
           writeFileSync(root + '/machine-compatibility/request.json', JSON.stringify({candidate_zip:root + '/machine-compatibility/candidate.zip', output_directory:root + '/machine-compatibility/tmp/proof', cache_directory:root + '/machine-baseline-cache'}));
           REQUEST
-          node server/environments/release/machine_compatibility_main.ts "$RUNNER_TEMP/machine-compatibility/request.json"
+          if [ "$RUNNER_OS" = Linux ]; then
+            systemd-run --user --scope --quiet -p Delegate=yes -- \
+              node server/environments/release/machine_compatibility_main.ts "$RUNNER_TEMP/machine-compatibility/request.json"
+          else
+            node server/environments/release/machine_compatibility_main.ts "$RUNNER_TEMP/machine-compatibility/request.json"
+          fi
       - name: Preserve compatibility evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

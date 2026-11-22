@@ -10,6 +10,11 @@ const driver_files_under = (prefix: string) =>
 export const DRIVER_SOURCE_FILES = DRIVER_RELEASE_FILES.filter(
   (path) => !path.startsWith('agent_backends/') && !path.startsWith('server/'),
 );
+/** node-gyp writes installation paths here. These build inputs are not runtime files. */
+export const PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES: readonly string[] = [
+  'better-sqlite3/build/Makefile',
+  'better-sqlite3/build/config.gypi',
+];
 export const APP_FORMAT = 'panels-app-v1' as const;
 export const APP_ARCHIVE_NAME = 'panels-app.tar.gz';
 export const PUBLICATION_RECEIPT_NAME = 'publication.json';

@@ -15,7 +15,10 @@ import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { create as create_tar } from 'tar';
 import { hash_archive } from '../../../environments/release/archive.ts';
 import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
-import { ARCHIVE_GZIP_LEVEL } from '../../../environments/release/configuration.ts';
+import {
+  ARCHIVE_GZIP_LEVEL,
+  PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES,
+} from '../../../environments/release/configuration.ts';
 import { path_is_within } from '../../../core/path_containment.ts';
 import { mac_launcher_bundle, MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
 import {
@@ -139,6 +142,7 @@ export async function build_mac_package(options: MacPackageOptions) {
   await cp(modules, join(runtime, 'server/node_modules'), {
     recursive: true,
     verbatimSymlinks: true,
+    filter: (path) => !PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES.includes(relative(modules, path)),
   });
   await mkdir(join(runtime, 'node/bin'), { recursive: true });
   await cp(join(node, 'bin/node'), join(runtime, 'node/bin/node'));

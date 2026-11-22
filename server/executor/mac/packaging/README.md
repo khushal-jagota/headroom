@@ -1,7 +1,9 @@
 # Mac runtime package producer
 
 `build.ts` assembles an exported source tree, a supplied Darwin arm64 Node distribution,
-complete production dependencies from `npm ci --omit=dev`, and a signed launcher app. It downloads and executes none of them.
+production dependencies from `npm ci --omit=dev`, and a signed launcher app.
+The payload omits only node-gyp’s generated `better-sqlite3/build/Makefile` and `config.gypi`.
+These build inputs contain installation paths. Runtime native addons remain in the payload and content identity. It downloads and executes none of them.
 It writes a new output directory and leaves any failed partial output for inspection.
 
 `runtime/` is the release payload. Its `mac-runtime.json` identifies the revision, target, and machine content build.
