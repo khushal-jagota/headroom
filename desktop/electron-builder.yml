@@ -4,9 +4,9 @@ files:
   - build/**
   - package.json
 publish:
-  provider: github
-  owner: khushal-jagota
-  repo: headroom
+  - provider: github
+    owner: khushal-jagota
+    repo: headroom
 mac:
   # Each desktop release carries this ZIP and its matching latest-mac.yml.
   artifactName: Panels-mac-${arch}.${ext}
