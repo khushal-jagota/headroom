@@ -29,6 +29,7 @@ test('machine remembers its server and refuses stale, foreign, and late replies 
       highest_move_number: 2,
       server_url: 'https://new.example',
     });
+    restart.request_failed();
     await expect(restart.prepare(async () => location(1))).rejects.toThrow('older move number');
     await expect(
       restart.prepare(async () => ({ ...location(3), server_id: 'copy' })),

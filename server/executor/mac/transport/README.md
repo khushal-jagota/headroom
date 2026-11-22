@@ -44,8 +44,11 @@ The file worker hashes each file. A failed file is logged and the other files st
 
 The shared machine host keeps its server address, identity, and highest accepted move number in
 `server-link.json` under the executor root. The service URL is the initial address only.
-Every request first probes the address over HTTPS without credentials. It then sends the pinned
-identity and move number. Responses must pass the same fence before any work reaches a consumer.
+The first contact checks the address over HTTPS without credentials. Normal requests use the saved
+address and send the pinned identity and move number. The server checks these values before work.
+Responses must pass the same fence before any work reaches a consumer. A failed request causes an
+anonymous address check before the next request. An address that a response announces also receives
+that check. Normal requests and restarts do not add a separate check.
 A moved server supplies a pointer. The machine checks the active target before it sends work.
 Address changes survive restart and apply to file transfers, updates, and new provider children.
 `panels executor server-address --url https://server.example` checks and saves a manual change.

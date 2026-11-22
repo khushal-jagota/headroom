@@ -25,7 +25,7 @@ Each extra machine has its own credential, presence, command mailbox, and curren
                                             Tickets and conversation record
 ```
 
-Each machine saves the server address, its durable identity, and the highest move number that it accepts. The link checks the server before it sends credentials or work. A different identity or an older move number refuses. A normal answer can supply another HTTPS address, which the machine checks before use. The saved address survives service and runtime restarts on Linux and Apple Silicon.
+Each machine saves the server address, its durable identity, and the highest move number that it accepts. The first contact checks the server. Normal requests use the saved address and identity without a separate check. After a failed request, the next request checks the server again. The server refuses a different identity or move number before work. The machine refuses work from a different identity or an older move number. A normal answer can supply another HTTPS address, which the machine checks before use. The saved address survives service and runtime restarts on Linux and Apple Silicon.
 
 A moved server opens only an address responder. It does not initialize the conversation record, recover updates, or start work services. The separate move coordinator owns the stop and record transition. This link supplies no operation that changes the move number or the moved state. Panels accepts and checks an HTTPS address. The owner supplies the network route and certificate.
 

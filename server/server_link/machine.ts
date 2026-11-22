@@ -21,6 +21,8 @@ export function machine_server_path(root: string): string {
 export class MachineServerLink implements ServerLinkAdmission {
   private readonly root: string;
   private readonly initial_url: string;
+  private failed_request_generation = 0;
+  private checked_failure_generation = 0;
   constructor(root: string, initial_url: string) {
     this.root = root;
     this.initial_url = initial_url;
@@ -60,11 +62,23 @@ export class MachineServerLink implements ServerLinkAdmission {
   current(): MachineServerRecord {
     return this.read();
   }
+  request_failed(): void {
+    this.failed_request_generation++;
+  }
   private update(
     location: ServerLocation,
     origin: string,
     accept_address = false,
   ): MachineServerRecord {
+    const current = this.read();
+    const candidate = accept_server_location(current, location, origin);
+    const address = accept_address ? validate_server_address(origin) : current.server_url;
+    if (
+      candidate.server_id === current.server_id &&
+      candidate.highest_move_number === current.highest_move_number &&
+      address === current.server_url
+    )
+      return current;
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     const lock = openSync(join(this.root, 'server-link.lock'), 'a', 0o600);
     if (flock(lock, 'exclusive') !== 0) {
@@ -116,15 +130,30 @@ export class MachineServerLink implements ServerLinkAdmission {
     probe: (origin: string) => Promise<unknown>,
     manual_url?: string,
   ): Promise<MachineServerRecord> {
-    let origin = manual_url === undefined ? this.current_url : validate_server_address(manual_url);
+    const current = this.read();
+    const failure_generation = this.failed_request_generation;
+    if (
+      manual_url === undefined &&
+      current.server_id !== null &&
+      failure_generation === this.checked_failure_generation
+    )
+      return current;
+    let origin =
+      manual_url === undefined ? current.server_url : validate_server_address(manual_url);
     for (let attempt = 0; attempt < 5; attempt++) {
       const location = parse_server_location(await probe(origin));
       this.update(location, origin);
       if (
         location.state === 'active' &&
         (location.server_url === null || location.server_url === origin)
-      )
-        return this.update(location, origin, true);
+      ) {
+        const accepted = this.update(location, origin, true);
+        this.checked_failure_generation = Math.max(
+          this.checked_failure_generation,
+          failure_generation,
+        );
+        return accepted;
+      }
       origin = location.server_url!;
     }
     throw new ExecutorValidationError('The server address did not reach the active server.');
@@ -158,8 +187,6 @@ export class MachineServerLink implements ServerLinkAdmission {
     if (location.server_url !== null && location.server_url !== origin)
       await this.prepare(probe, location.server_url);
     // A target probe can raise the floor above this response. Recheck before consumption.
-    this.update(location, origin);
-    if (location.state !== 'active')
-      throw new ExecutorValidationError('The server moved. The next request uses its new address.');
+    this.verify(header, origin);
   }
 }

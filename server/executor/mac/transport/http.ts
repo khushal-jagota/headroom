@@ -1,4 +1,5 @@
 /** Protocol-22 Mac client. Each request retains its loop's independent session owner. */
+import type { ServerLinkAdmission } from '../../../server_link/contracts.ts';
 import type { WorkerSetupReport } from '../../wire.generated.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
@@ -94,6 +95,7 @@ function granted_credential(body: Uint8Array): string {
 }
 export class MacHttpClient {
   readonly sessions: HttpSessions;
+  readonly server_link: ServerLinkAdmission | undefined;
   private readonly initial_server_url: string;
   get server_url(): string {
     return this.sessions.origin;
@@ -106,6 +108,7 @@ export class MacHttpClient {
     identity: ExecutorIdentity,
     options: MacHttpOptions = {},
   ) {
+    this.server_link = options.server_link;
     this.initial_server_url = settings.validate_server_url(server_url).replace(/\/$/, '');
     this.identity = { ...identity };
     this.request_headers = Object.freeze({

@@ -148,11 +148,21 @@ export class HttpSessions {
       resolve = yes;
       reject = no;
     });
+    let failure_marked = false;
+    const note_failure = () => {
+      if (!failure_marked && !this.closed && !session.closing && !request.signal?.aborted) {
+        failure_marked = true;
+        this.options.server_link?.request_failed();
+      }
+    };
     const operation = this.retain(
       session,
-      this.perform(session, request, headers, consume, resolve, reject),
+      this.perform(session, request, headers, consume, resolve, reject, note_failure),
     );
-    void operation.then(resolve, reject);
+    void operation.then(resolve, (error: unknown) => {
+      note_failure();
+      reject(error);
+    });
     return reply;
   }
   private async perform<T>(
@@ -162,6 +172,7 @@ export class HttpSessions {
     consume: ReplyReader<T>,
     resolve: (value: T) => void,
     reject: (error: unknown) => void,
+    note_failure: () => void,
   ): Promise<T> {
     const probe = async (origin: string): Promise<unknown> => {
       // A separate retained session avoids a limit-one lease reply blocking its own probe.
@@ -223,6 +234,7 @@ export class HttpSessions {
       total: ReturnType<typeof setTimeout> | undefined,
       stall: ReturnType<typeof setTimeout> | undefined;
     const fail = (error: Error) => {
+      note_failure();
       // An early response can already resolve result while its producer waits.
       // Reject the public waiter independently of that inner response promise.
       reject(error);
@@ -273,11 +285,15 @@ export class HttpSessions {
         socket.once('timeout', read_timeout);
       }
     });
-    request.once('error', reject);
+    request.once('error', (error) => {
+      note_failure();
+      reject(error);
+    });
     const result = new Promise<T>((resolve, reject) => {
       request.once('error', reject);
       request.once('response', (incoming) => {
         response = incoming;
+        if ((incoming.statusCode ?? 0) >= 400) note_failure();
         consumer = (async () => {
           if (link) {
             await link.accept(incoming.headers[SERVER_LOCATION_HEADER], origin, probe);

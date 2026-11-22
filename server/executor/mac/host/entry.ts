@@ -42,10 +42,7 @@ export function production_bindings(
         session_factory: () =>
           create_update_session(context.client.server_url, {
             ...configuration.http,
-            server_link: new MachineServerLink(
-              configuration.paths.root,
-              configuration.panels_server_url,
-            ),
+            server_link: context.client.server_link,
           }),
         request_exit: () => {
           replacing();

@@ -1,4 +1,4 @@
-/** Real TLS proves that authority checks precede upload and response consumption. */
+/** Real TLS proves saved-link reuse and authority refusal before effects or work consumption. */
 import { test, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:https';
@@ -8,7 +8,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MachineServerLink } from './machine.ts';
 import type { ServerLocation } from './contracts.ts';
-import { SERVER_LOCATION_HEADER, SERVER_LOCATION_PATH } from './contracts.ts';
+import {
+  SERVER_LOCATION_HEADER,
+  SERVER_LOCATION_PATH,
+  SERVER_ID_HEADER,
+  MOVE_NUMBER_HEADER,
+} from './contracts.ts';
 import { HttpSessions, read_bounded } from '../executor/mac/transport/sessions.ts';
 import { CONNECTORS } from '../executor/mac/transport/http.ts';
 
@@ -43,13 +48,15 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
     owners: HttpSessions[] = [];
   let old_origin = '',
     new_origin = '',
-    mode: 'announce' | 'moved' | 'foreign' | 'stale' = 'announce';
+    mode: 'announce' | 'moved' | 'foreign' | 'stale' | 'unavailable' = 'announce';
   let release_late: (() => void) | undefined;
   let late_entered: (() => void) | undefined;
   let old_work = 0,
     new_work = 0,
     probe_credentials = 0,
-    consumed = 0;
+    consumed = 0,
+    probes = 0,
+    refused = 0;
   const active = (origin: string, move_number = 1): ServerLocation => ({
     server_id: 'server',
     move_number,
@@ -64,12 +71,32 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
       if (!old && mode === 'foreign') location = { ...location, server_id: 'foreign' };
       if (!old && mode === 'stale') location = active(origin, 0);
       if (request.url === SERVER_LOCATION_PATH) {
+        probes++;
         if (request.headers.authorization || request.headers['x-panels-executor-credential'])
           probe_credentials++;
         response.writeHead(location.state === 'moved' ? 503 : 200, {
           'content-type': 'application/json',
         });
         response.end(JSON.stringify(location));
+        return;
+      }
+      response.setHeader(
+        SERVER_LOCATION_HEADER,
+        Buffer.from(JSON.stringify(location)).toString('base64url'),
+      );
+      if (
+        location.state === 'moved' ||
+        request.headers[SERVER_ID_HEADER] !== location.server_id ||
+        request.headers[MOVE_NUMBER_HEADER] !== String(location.move_number)
+      ) {
+        refused++;
+        request.resume();
+        response.writeHead(location.state === 'moved' ? 503 : 409).end('refused');
+        return;
+      }
+      if (!old && mode === 'unavailable') {
+        request.resume();
+        response.writeHead(503).end('unavailable');
         return;
       }
       if (old) old_work++;
@@ -124,26 +151,52 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
         },
         { 'X-Panels-Executor-Credential': 'private' },
         async (response) => {
-          consumed++;
+          if (response.statusCode === 200) consumed++;
           return (await read_bounded(response, 1024)).toString();
         },
       );
     expect(await request(make_owner())).toBe('work');
     expect(link.current_url).toBe(new_origin);
+    const bootstrap_probes = probes;
+    expect(await request(make_owner())).toBe('work');
+    expect(probes).toBe(bootstrap_probes);
+    const restarted_link = new MachineServerLink(join(root, 'machine'), old_origin);
+    expect(await request(make_owner(restarted_link))).toBe('work');
+    expect(probes).toBe(bootstrap_probes);
+    expect(new_work).toBe(2);
     mode = 'foreign';
     await expect(request(make_owner())).rejects.toThrow('another server');
-    expect(new_work).toBe(0);
+    expect(new_work).toBe(2);
+    expect(probes).toBe(bootstrap_probes);
     mode = 'stale';
     await expect(request(make_owner())).rejects.toThrow('older move number');
-    expect(new_work).toBe(0);
+    expect(new_work).toBe(2);
+    // The failed known-link request causes one anonymous recheck, with no replay.
+    expect(probes).toBe(bootstrap_probes + 1);
     mode = 'moved';
+    expect(await request(make_owner())).toBe('work');
+    expect(probes).toBe(bootstrap_probes + 2);
+    expect(new_work).toBe(3);
+    const before_steady = probes;
+    expect(await request(make_owner())).toBe('work');
+    expect(probes).toBe(before_steady);
+
     const fresh = new MachineServerLink(join(root, 'fresh-machine'), old_origin);
     expect(await request(make_owner(fresh))).toBe('work');
     expect(fresh.current_url).toBe(new_origin);
     expect(old_work).toBe(1);
-    expect(new_work).toBe(1);
-    expect(consumed).toBe(2);
+    expect(new_work).toBe(5);
+    expect(consumed).toBe(6);
+    expect(refused).toBe(1);
     expect(probe_credentials).toBe(0);
+    mode = 'unavailable';
+    const before_failure = probes;
+    expect(await request(make_owner())).toBe('unavailable');
+    expect(probes).toBe(before_failure);
+    mode = 'moved';
+    expect(await request(make_owner())).toBe('work');
+    expect(probes).toBe(before_failure + 1);
+    expect(consumed).toBe(7);
     const entered = new Promise<void>((resolve) => {
       late_entered = resolve;
     });
@@ -156,10 +209,10 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
       },
     );
     await entered;
-    await link.prepare(async () => active(new_origin, 2));
+    await link.prepare(async () => active(new_origin, 2), new_origin);
     release_late!();
     await expect(late).rejects.toThrow('older move number');
-    expect(consumed).toBe(2);
+    expect(consumed).toBe(7);
     const restart = new MachineServerLink(join(root, 'fresh-machine'), old_origin);
     expect(restart.current_url).toBe(new_origin);
   } finally {
