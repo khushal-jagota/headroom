@@ -104,6 +104,8 @@ describe("the dock's status line", () => {
       expect(html).not.toContain("cv-spinner");
       expect(html).not.toContain("data-conversation-rest-clock");
     }
+    // The line's text is exactly its words, with nothing before them.
+    expect(rest({ kind: "idle", clock: null })).toMatch(/data-conversation-rest-line[^>]*><span class="c2-rest-mark[^>]*>(<span[^>]*><\/span>)+<\/span><span class="c2-rest-label[^>]*>Idle</);
     const open = rest({ kind: "idle", clock: null });
     expect(open).toMatch(/<button[^>]*data-conversation-rest-bar/);
     expect(open).toMatch(/c2-rest-control-label[^>]*>Open<\/span>[\s\S]*?<svg class="c2-rest-control-arrow[^"]*" viewBox="0 0 16 16" data-conversation-open-arrow=""><path d="m4 10 4-4 4 4"><\/path><\/svg>/);

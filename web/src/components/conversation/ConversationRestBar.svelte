@@ -22,12 +22,8 @@
   data-conversation-rest-state={status.kind} data-conversation-rest-ask-below={askBelow || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
-    <span class="c2-rest-line" data-conversation-rest-line>
-      <span class="c2-rest-mark" aria-hidden="true">
-        {#if live}<span class="cv-spinner"></span>{:else}<span class="c2-rest-dot"></span>{/if}
-      </span>
-      <span class="c2-rest-label">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</span>
-    </span>
+    <!-- No whitespace between the mark and the words: the line's text is exactly its words. -->
+    <span class="c2-rest-line" data-conversation-rest-line><span class="c2-rest-mark" aria-hidden="true">{#if live}<span class="cv-spinner"></span>{:else}<span class="c2-rest-dot"></span>{/if}</span><span class="c2-rest-label">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</span></span>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open</span>
       <!-- The one exception to the no-chevron rule: a 12px up arrow after the label says the
