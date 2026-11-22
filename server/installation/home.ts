@@ -436,6 +436,7 @@ export async function install_home(
     rename_relative(temporary.fd, 'app', root.fd, 'app');
     for (const name of ['data', 'logs', 'workspaces'])
       await files.ensure_directory(join(root_path, name));
+    await files.ensure_directory(join(root_path, 'data/secrets'));
     if (request.isolated_providers)
       for (const { manifest } of BUILT_IN_MANIFESTS)
         if (manifest.home)
@@ -445,6 +446,11 @@ export async function install_home(
     await files.file(
       join(root_path, 'data/config.yaml'),
       JSON.stringify({
+        server_root: '.',
+        db_path: 'planner.db',
+        logs_dir: '../logs',
+        backup_dir: 'backups',
+        dispatcher_lock_path: 'dispatcher.lock',
         workspace_root: join(root_path, 'workspaces'),
         provision_account_skills: !request.isolated_providers,
       }) + '\n',

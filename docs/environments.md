@@ -22,6 +22,16 @@ Live and staging are registered environments. Headroom validates them together: 
 
 Each development checkout installs its own Node dependencies with `npm ci`, separate from the installed release. Backend CLIs still resolve current versions.
 
+## The server state folder
+
+The server state is one folder, normally `data/`. It holds the database, its credential key, served files, skill files, and private push and update secrets. Database rows also hold managed skill text. Disk copies of that text can accompany their supporting files.
+
+Settings describe the machine and are written again after a move. The state inventory excludes settings, provider logins, locks, sockets, process records, updates, metrics, caches, transfer uploads, and old backups. Private Ticket worktrees stay outside the served-file inventory. The server clears abandoned transfer uploads before its first transfer service starts, while it holds exclusive runtime ownership.
+
+An explicit `server_root` resolves from the settings file. Server file paths resolve from that folder. An absolute `PLAN_DB_PATH` selects its parent as the root unless `PLAN_SERVER_ROOT` also specifies one. This lets an isolated command select its own state. The database stays directly inside the root so every database-adjacent file owner agrees on the folder.
+
+Full-state checks use the same SHA256 file hashes and exact file-list comparison as ordinary backups. The full check requires a stopped, checkpointed database. The [backup page](backups.md) describes the smaller nightly scope. Installation and recovery procedures live in [the operator guide](../ops/panels-environments/README.md).
+
 ## The operating-system boundary
 
 The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
@@ -136,4 +146,4 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 
 Named execution destinations and physical workspace identity are separate. A Ticket’s `machine_id` selects home execution or the original executor. `WorkspaceIdentity.machine_id` identifies one local physical data tree. Workspace registration binds its folder to the conversation on that destination. A display edit never rotates either identity.
 
-_Last verified: 2026-11-18._
+_Last verified: 2026-11-22._

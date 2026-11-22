@@ -1,3 +1,4 @@
+import { clear_abandoned_executor_uploads } from '../executor/upload_cleanup.ts';
 import { writeSync } from 'node:fs';
 import type { AreaLoopOptions } from '../areas.ts';
 import type { VpsExecutorRegistry } from '../executor/registry.ts';
@@ -347,6 +348,7 @@ export async function startServer(options: ServerOptions = {}): Promise<StartedS
   // Publish setup custody before a factory can reenter shutdown.
   const setting_up = Promise.resolve().then(async () => {
     try {
+      if (!config.test_mode) await clear_abandoned_executor_uploads(config.db_path);
       return await services.setup();
     } finally {
       try {
