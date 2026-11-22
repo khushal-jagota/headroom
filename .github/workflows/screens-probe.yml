@@ -1,0 +1,107 @@
+name: Screens probe (research only)
+# PROBE ONLY. Research ticket "Prove server-delivered app screens". Runs only on pushes to
+# probe/ branches. It builds the desktop app signed and notarized, then runs the screens
+# probe in it: screens from the data folder, a swap at a reload, a way back. No Release.
+on:
+  push:
+    branches: ['probe/t_52277k5g-**']
+permissions:
+  contents: read
+jobs:
+  probe:
+    name: Signed probe (fuses ${{ matrix.fuses }})
+    runs-on: macos-15
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        fuses: [off, on]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci --prefix web
+          npm ci --prefix desktop
+      - name: Build the screens
+        run: cd web && node node_modules/vite/bin/vite.js build
+      - name: Build, sign, notarize and staple
+        env:
+          CSC_LINK: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_API_KEY_P8: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          export APPLE_API_KEY="$RUNNER_TEMP/notary-key.p8"
+          umask 077
+          printf '%s\n' "$APPLE_NOTARY_API_KEY_P8" > "$APPLE_API_KEY"
+          extra=()
+          if [ "${{ matrix.fuses }}" = on ]; then
+            extra=(-c.electronFuses.enableEmbeddedAsarIntegrityValidation=true -c.electronFuses.onlyLoadAppFromAsar=true -c.electronFuses.runAsNode=false -c.electronFuses.grantFileProtocolExtraPrivileges=false)
+          fi
+          npm --prefix desktop run build:mac -- -c.extraMetadata.version="0.0.${{ github.run_number }}" "${extra[@]}"
+          rm -f "$APPLE_API_KEY"
+      - name: Unpack and check signature, notarization, Gatekeeper and fuses
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/evidence"; mkdir -p "$out"
+          check="$RUNNER_TEMP/check"; mkdir "$check"
+          ditto -x -k desktop/dist/*.zip "$check"
+          app="$check/Panels.app"
+          echo "APP=$app" >> "$GITHUB_ENV"
+          codesign --verify --deep --strict --verbose=2 "$app" 2>&1 | tee "$out/codesign-verify-before.txt"
+          codesign -dv --verbose=2 "$app" > "$out/codesign.txt" 2>&1
+          codesign -d --entitlements :- "$app" > "$out/entitlements.plist" 2>&1 || true
+          xcrun stapler validate "$app" 2>&1 | tee "$out/stapler.txt"
+          spctl --assess --type execute --verbose=4 "$app" 2>&1 | tee "$out/spctl.txt"
+          npx --yes @electron/fuses@1 read --app "$app" > "$out/fuses.txt" 2>&1 || true
+          /usr/libexec/PlistBuddy -c Print "$app/Contents/Info.plist" > "$out/info-plist.txt"
+          sw_vers > "$out/macos.txt"; uname -a >> "$out/macos.txt"
+          xattr -lr "$app" | head -20 > "$out/app-xattrs.txt" || true
+          cat "$out/codesign.txt" "$out/fuses.txt"
+      - name: Run the probe in the signed app
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/evidence"
+          python3 desktop/probe/make_payloads.py "$RUNNER_TEMP/srv" desktop/build/packed > "$out/payloads.txt"
+          python3 -m http.server 18765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/srv" > "$out/payload-server.log" 2>&1 &
+          server=$!
+          sleep 2
+          export UD="$HOME/Library/Application Support/Panels" SERVER=http://127.0.0.1:18765
+          mkdir -p "$UD"
+          started=$(date '+%Y-%m-%d %H:%M:%S')
+          desktop/probe/run_probe.sh perl -e "alarm 180; exec @ARGV" "$APP/Contents/MacOS/Panels" > "$out/app-direct.log" 2>&1
+          # A cold start through LaunchServices, as a Dock click does: run 2 again.
+          printf '{"server":"%s","run":2,"noStore":true}\n' "$SERVER" > "$UD/screens-probe.json"
+          mv "$UD/probe-report-run2-nostore.json" "$UD/probe-report-run2-nostore-direct.json" || true
+          # Run 2 tampered with the current copy. Undo the change, so that this run starts clean.
+          python3 - "$UD" <<'PY'
+          import json, os, sys
+          ud = sys.argv[1]; s = json.load(open(os.path.join(ud, 'screens', 'state.json')))
+          f = os.path.join(ud, 'screens', s['current'], 'web/dist/index.html')
+          t = open(f).read(); open(f, 'w').write(t.replace('\n<!-- tampered -->\n', ''))
+          print('state before LaunchServices run', s)
+          PY
+          perl -e "alarm 180; exec @ARGV" open -W -n "$APP" > "$out/app-open.log" 2>&1; echo "open exit $?" >> "$out/app-open.log"
+          kill "$server"
+          log show --start "$started" --style compact --predicate 'process == "syspolicyd" OR subsystem == "com.apple.syspolicy" OR subsystem == "com.apple.syspolicy.exec" OR (process == "kernel" AND eventMessage CONTAINS "Panels")' > "$out/syspolicy-log.txt" 2>&1 || true
+          grep -i -E "panels|screens" "$out/syspolicy-log.txt" > "$out/syspolicy-log-panels.txt" || true
+          codesign --verify --deep --strict --verbose=2 "$APP" > "$out/codesign-verify-after.txt" 2>&1; echo "exit $?" >> "$out/codesign-verify-after.txt"
+          spctl --assess --type execute --verbose=4 "$APP" > "$out/spctl-after.txt" 2>&1
+          cp "$UD"/probe-report-*.json "$out/" || true
+          cp -R "$UD/probe-shots" "$out/" || true
+          (cd "$UD/screens" && ls -la && cat state.json && for d in */; do echo "== $d"; xattr -lr "$d" | head -10; done) > "$out/screens-folder.txt" 2>&1 || true
+          python3 desktop/probe/summary.py "$out" | tee "$out/summary.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: screens-probe-fuses-${{ matrix.fuses }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 30

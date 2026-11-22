@@ -18,6 +18,20 @@ export const ADDRESS_PAGE_URL = `panels://${ADDRESS_PAGE_HOST}/`;
 /** The packed bundle: `web/dist`, `assets` and `static`, and the address page. */
 const PACKED = join(__dirname, 'packed');
 
+// PROBE ONLY (research ticket "Prove server-delivered app screens"). When set, the screens
+// come from this folder in the data folder instead of the bundle. It holds the same layout
+// as PACKED: web/dist, assets and static. The address page always comes from the bundle.
+let screensRoot: string | null = null;
+export function setScreensRoot(root: string | null): void {
+  screensRoot = root;
+}
+// PROBE ONLY. When true, screens files carry `cache-control: no-store`, so that a reload
+// after a swap cannot reuse a file of the previous copy from Chromium's cache.
+let screensNoStore = false;
+export function setScreensNoStore(value: boolean): void {
+  screensNoStore = value;
+}
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -55,9 +69,9 @@ export function handleAppScheme(): void {
     const url = new URL(request.url);
     if (url.host === SCREENS_HOST) {
       if (isForwarded(url)) return forward(request, url);
-      return packedFile(url.pathname, screensFile);
+      return packedFile(url.pathname, screensFile, screensRoot ?? PACKED);
     }
-    if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, addressPageFile);
+    if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, addressPageFile, PACKED);
     return notFound();
   });
   refuseWritesFromOtherSites();
@@ -95,7 +109,11 @@ function addressPageFile(pathname: string): string | null {
 }
 
 /** Serve one file of the packed bundle. A path that climbs, even encoded, is refused. */
-async function packedFile(pathname: string, choose: (decoded: string) => string | null): Promise<Response> {
+async function packedFile(
+  pathname: string,
+  choose: (decoded: string) => string | null,
+  root: string,
+): Promise<Response> {
   let decoded: string;
   try {
     decoded = decodeURIComponent(pathname);
@@ -105,13 +123,13 @@ async function packedFile(pathname: string, choose: (decoded: string) => string 
   if (decoded.includes('\\') || decoded.split('/').includes('..')) return notFound();
   const relative = choose(decoded);
   if (relative === null) return notFound();
-  const file = normalize(join(PACKED, relative));
-  if (!file.startsWith(PACKED + sep)) return notFound();
+  const file = normalize(join(root, relative));
+  if (!file.startsWith(root + sep)) return notFound();
   try {
     const body = await readFile(file);
-    return new Response(body, {
-      headers: { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' },
-    });
+    const headers: Record<string, string> = { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' };
+    if (screensNoStore) headers['cache-control'] = 'no-store';
+    return new Response(body, { headers });
   } catch {
     return notFound();
   }

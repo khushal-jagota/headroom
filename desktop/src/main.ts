@@ -27,6 +27,7 @@ import { keepLastSessionFor, lastScreenUrl, rememberLastScreen } from './last_se
 import { holdNotificationStream } from './notifications';
 import { checkServerAddress, loadStoredServerAddress, localServerAddress, serverAddress, storeServerAddress } from './server_address';
 import { rememberWindowPlace, savedWindowBounds } from './window_place';
+import { chooseAtStart, probeConfig, runProbe } from './screens_probe';
 
 // Tests give each run its own data folder, so runs share no stored address or window place.
 if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PANELS_DESKTOP_USER_DATA);
@@ -193,6 +194,13 @@ void app.whenReady().then(async () => {
   handleAppScheme();
   answerBridgeCalls();
   Menu.setApplicationMenu(applicationMenu());
+  // PROBE ONLY: research ticket "Prove server-delivered app screens".
+  const probe = probeConfig();
+  if (probe) {
+    const atStart = chooseAtStart();
+    void runProbe(openWindow(SCREENS_URL), probe, atStart);
+    return;
+  }
   openWindow(await firstPage());
   holdNotificationStream(openRoute);
   // A Mac app stays open with no window. A click on its Dock icon brings the window back.
