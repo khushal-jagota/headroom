@@ -69,8 +69,8 @@ until they arrive. A failed item leaves its lane, and only it shows a mark:
   same; after a refusal it sends the card's corrected words. A refused photo message puts its draft
   back in the composer.
 - A refused approval or send-back brings its proposal card back to the front of
-  Review with the server's note and the saved note, even when the proposal no
-  longer waits for Khushal.
+  Review with the server's note and the saved note, even when the proposal now
+  waits for someone else.
 - A recording that cannot be transcribed shows a red mark and offers Retry.
 
 Sent items expire after a day, and so do refused decisions, reads and ask answers,

@@ -22,8 +22,9 @@ no longer holds:
 
 - its own exit, while the card fades after Khushal handled it here;
 - a refused decision, which comes back to the front with the server's reason and
-  the saved note, even when its proposal no longer waits for Khushal. Each refusal
-  comes forward once; Skip moves on;
+  the saved note, even when its proposal now waits for someone else. A proposal the
+  view shows decided or replaced has nothing left to decide and does not come back.
+  Each refusal comes forward once; Skip moves on;
 - a proposal that moved to another reviewer while on screen. It stays as a notice
   that says who reviews it now, its actions are off, and Skip or the swipe moves on.
   A move Khushal makes from the card's own Reviewer sheet takes the card away.
