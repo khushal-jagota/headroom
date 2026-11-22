@@ -12,10 +12,15 @@ import XCTest
         for code in [URLError.timedOut, .networkConnectionLost, .cancelled, .secureConnectionFailed, .badServerResponse] {
             XCTAssertFalse(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
         }
-        // The app shows no connection state: no transport failure leaves a note.
-        for code in [URLError.timedOut, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet] {
+        // The app shows no connection state: a passing transport failure leaves no note.
+        for code in [URLError.timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .notConnectedToInternet] {
             XCTAssertNil(ServerReadFailure.note(URLError(code)), "\(code)")
             XCTAssertNil(ServerReadFailure.note(NSError(domain: NSURLErrorDomain, code: code.rawValue)), "\(code)")
+        }
+        // A failure that will not pass by itself shows on a screen with nothing loaded.
+        for code in [URLError.secureConnectionFailed, .serverCertificateUntrusted, .clientCertificateRequired,
+                     .appTransportSecurityRequiresSecureConnection, .badURL, .unsupportedURL, .badServerResponse, .cannotDecodeRawData] {
+            XCTAssertNotNil(ServerReadFailure.note(NSError(domain: NSURLErrorDomain, code: code.rawValue)), "\(code)")
         }
         let failure = ServerReadFailure(APIError(status: 503, message: "Request failed on the reachable server."))
         XCTAssertFalse(failure.isServerUnreachable)

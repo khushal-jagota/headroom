@@ -13,12 +13,22 @@ struct APIError: LocalizedError, Sendable {
 /// A failed request is not proof that the server itself cannot be reached.
 struct ServerReadFailure: LocalizedError, Sendable {
     let isServerUnreachable: Bool
-    /// Any transport failure: no route, a dropped connection or a timeout.
+    /// A passing transport failure: no network, a dropped connection, a timeout or a
+    /// cancel. TLS, ATS and malformed URL or response errors do not pass by themselves.
     let cannotReach: Bool
     let message: String
     /// What a screen may say about a failed read. The app shows no connection
     /// state, so a read that could not reach the server says nothing.
     var note: String? { cannotReach ? nil : message }
+    /// The host lookups are here too: the server is reached over Tailscale, and when
+    /// Tailscale drops, its MagicDNS name stops resolving. That is the same as offline.
+    static let passingCodes: Set<URLError.Code> = [.notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff,
+        .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .cancelled]
+    static func isPassing(_ error: any Error) -> Bool {
+        if error is CancellationError { return true }
+        let error = error as NSError
+        return error.domain == NSURLErrorDomain && passingCodes.contains(URLError.Code(rawValue: error.code))
+    }
     var errorDescription: String? { message }
     static func note(_ error: any Error) -> String? { ServerReadFailure(error).note }
 
@@ -29,7 +39,7 @@ struct ServerReadFailure: LocalizedError, Sendable {
         } else {
             isServerUnreachable = false
         }
-        cannotReach = (error as NSError).domain == NSURLErrorDomain
+        cannotReach = Self.isPassing(error)
         message = error.localizedDescription
     }
 }
