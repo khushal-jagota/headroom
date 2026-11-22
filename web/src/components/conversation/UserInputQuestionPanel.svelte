@@ -291,7 +291,7 @@
     align-items: center;
     margin-block-start: var(--cv-s2);
   }
-  .other svg { position: absolute; left: 13px; width: 14px; height: 14px; fill: none; stroke: var(--cv-t4); stroke-width: 1.5; stroke-linejoin: round; pointer-events: none; }
+  .other svg { position: absolute; left: 13px; width: 14px; height: 14px; fill: none; stroke: var(--cv-t3); stroke-width: 1.5; stroke-linejoin: round; pointer-events: none; }
   .other input {
     width: 100%;
     box-sizing: border-box;
@@ -305,7 +305,7 @@
   }
   .other input::placeholder { color: var(--cv-placeholder); }
   .other input:focus { outline: none; border-color: var(--cv-accent-line); }
-  .other input:disabled { cursor: default; color: var(--cv-t4); }
+  .other input:disabled { cursor: default; color: var(--cv-t3); }
   .note { margin: var(--cv-s3) 0 0; color: var(--cv-danger); font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); }
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>

@@ -73,7 +73,7 @@
     display: grid;
     min-width: 0;
     max-width: 100%;
-    color: var(--cv-system-ink, #8f8f8f);
+    color: var(--cv-system-ink);
     font-family: var(--cv-font);
     font-size: var(--cv-type-meta);
     line-height: var(--cv-leading-meta);
@@ -110,15 +110,15 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--cv-system-ink, #8f8f8f);
+    background: var(--cv-system-ink);
   }
-  .cv-system-line-dot.is-failure { background: var(--cv-failure-ink, #ff8f85); }
+  .cv-system-line-dot.is-failure { background: var(--cv-failure-ink); }
   .cv-system-line-spinner {
     box-sizing: border-box;
     width: 12px;
     height: 12px;
     border-radius: var(--cv-r-pill);
-    border: 2px solid var(--cv-spinner-track, #4a4a4a);
+    border: 2px solid var(--cv-spinner-track);
     border-top-color: #d9d9d9;
     transform: rotate(35deg);
   }
@@ -144,17 +144,17 @@
     border: 0;
     border-radius: 0;
     background: none;
-    color: var(--cv-system-action-ink, #d0d0d0);
+    color: var(--cv-system-action-ink);
     font: inherit;
     cursor: pointer;
   }
-  .cv-system-line-actions :global(button:hover:not(:disabled)) { background: none; color: var(--cv-hover-ink, #ffffff); }
+  .cv-system-line-actions :global(button:hover:not(:disabled)) { background: none; color: var(--cv-hover-ink); }
   .cv-system-line-actions :global(button:focus-visible) {
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: 2px;
     border-radius: var(--cv-r-sm);
   }
-  .cv-system-line-actions :global(button:disabled) { color: var(--cv-system-ink, #8f8f8f); cursor: default; }
+  .cv-system-line-actions :global(button:disabled) { color: var(--cv-system-ink); cursor: default; }
   @media (prefers-reduced-motion: reduce) {
     .cv-system-line-spinner.is-turning { animation: none; }
   }

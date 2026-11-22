@@ -46,7 +46,7 @@ Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on
 
 ## Code
 
-`assets/tokens.css` holds shared values, including conversation roles. Conversation rules in `assets/app.css` are grouped by purpose, and their tests follow components and behaviors.
+`assets/tokens.css` holds shared values, including the conversation's `--cv-*` roles. Conversation rules sit in one section at the end of `assets/app.css`, one rule set per purpose; a conversation component's own markup is styled in its scoped `<style>` block. Their tests follow components and behaviors.
 
 `assets/tokens.css`, `assets/app.css`, and `web/src/components/` for the kit, including `ScreenHeader`, `ListRow`, `StageMark`, `Button`, `SkeletonRegion`, `Disclosure`, and `conversation/`. The goal page kit is in `web/src/components/pageKit/`.
 

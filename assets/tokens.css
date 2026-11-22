@@ -572,36 +572,34 @@
 
 
 
-/* === Conversation system v3 (--cv-*; notes/design-direction.md section 2) ==========
-   The conversation pane uses only these. Older names stay for the rest of the app, but
-   no conversation selector references them. Contrast is WCAG 2.x on each surface. */
+/* === The conversation system (--cv-*) ===================================================
+   Conversation styles take their values from these names only. :root holds the shared values,
+   which the Markdown code blocks and charts also read wherever they render; the
+   [data-conversation-pane] block below holds the values that differ inside the conversation
+   pane. Contrast is WCAG 2.x on each surface. */
 :root {
   /* Surfaces: four levels plus one floating plane. A container never sits on its own level. */
   --cv-canvas: #121212;  /* page, transcript, header, dock; the command well inside an ask */
   --cv-well: #191919;    /* block shell: code, chart, tool detail, callout, task pill, segment track */
-  --cv-raised: #212121;  /* what the person wrote or must act on: bubble, composer, ask, file card */
-  --cv-control: #2a2a2a; /* secondary button, selected segment/option, inline code in prose */
+  --cv-raised: #212121;  /* what the person must act on: the drop face over the composer */
+  --cv-control: #2a2a2a; /* secondary button, selected segment/option */
   --cv-control-hover: #333333;
   --cv-float: #262626;   /* popovers, menus, tooltips: the only planes with a shadow */
   --cv-line: rgb(255 255 255 / 7%);
   --cv-line-strong: rgb(255 255 255 / 12%);
   --cv-shadow-float: 0 12px 32px rgb(0 0 0 / 50%);
 
-  /* Text: four tones (on canvas / well / raised / control / float). */
+  /* Text: three tones and the placeholder (contrast on canvas / well / raised / control / float). */
   --cv-t1: #f2f2f2; /* 16.7 15.7 14.4 12.8 13.5 titles, user text, bold, links, active */
   --cv-t2: #d9d9d9; /* 13.3 12.5 11.4 10.2 10.7 agent prose, verbs, ghost labels */
-  --cv-t3: #a3a3a3; /*  7.4  7.0  6.4  5.7  6.0 meta, targets, descriptions, headers */
-  --cv-t4: #a3a3a3; /* v4: nothing in the conversation is dimmer than #a3a3a3 but a placeholder */
-  --cv-placeholder: #8c8c8c; /* placeholders only (v4) */
+  --cv-t3: #a3a3a3; /*  7.4  7.0  6.4  5.7  6.0 meta, targets, descriptions, headers, disabled */
+  --cv-placeholder: #8c8c8c;
 
   /* One accent ("needs you"), two status colours. Working has no colour. */
   --cv-accent: #a9bbe3;
   --cv-accent-wash: rgb(169 187 227 / 12%);
   --cv-accent-line: rgb(169 187 227 / 45%);
-  --cv-accent-halo: rgb(169 187 227 / 10%);
   --cv-danger: #ec8a83;
-  --cv-danger-line: rgb(236 138 131 / 30%);
-  --cv-danger-wash: rgb(236 138 131 / 7%);
   --cv-caution: #dcb069;
 
   /* Primary button: the one action that commits in a decision area. */
@@ -611,13 +609,8 @@
   /* Links: t1 with a soft underline. */
   --cv-link-underline: rgb(255 255 255 / 35%);
 
-  /* Data colours: charts only. Same luminance band, different hues. */
-  --cv-data-1: #a9bbe3;
-  --cv-data-2: #d9b98c;
-  --cv-data-3: #8fc1b0;
-  --cv-data-4: #c9a3d6;
+  /* Charts: the grid under the plot. */
   --cv-chart-grid: rgb(255 255 255 / 6%);
-  --cv-chart-baseline: rgb(255 255 255 / 14%);
 
   /* Syntax: code only, all at least 5.2:1 on the well. */
   --cv-code-ink: #cfcfcf;
@@ -627,28 +620,24 @@
   --cv-syntax-type: #92bbd8;
   --cv-syntax-comment: #8c8c8c;
 
-  /* Type: Inter for everything; JetBrains Mono only for code, commands, paths, URLs, output. */
+  /* Type: Inter for everything; JetBrains Mono only for code, commands, paths, URLs, output.
+     Body 14, headings 15, code and controls 12.5, the system line 13. Leadings sit on the 4px
+     grid. */
   --cv-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --cv-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  /* Type sizes are staging's (the owner's review, B2): body 14, headings 15, code and
-     controls 12.5. Only the system line keeps 13/20 (B3). Leadings sit on the 4 px grid. */
-  --cv-type-prose: 14px;   --cv-leading-prose: 24px;
-  --cv-type-h1: 15px;      --cv-leading-h1: 24px;
-  --cv-type-h2: 15px;      --cv-leading-h2: 24px;
-  --cv-type-h3: 15px;      --cv-leading-h3: 24px;
-  --cv-type-title: 15px;   --cv-leading-title: 24px;
-  --cv-type-ui: 14px;      --cv-leading-ui: 20px;
-  --cv-type-meta: 13px;    --cv-leading-meta: 20px;
+  --cv-type-prose: 14px;     --cv-leading-prose: 24px;
+  --cv-type-heading: 15px;   --cv-leading-heading: 24px;
+  --cv-type-ui: 14px;        --cv-leading-ui: 20px;
+  --cv-type-meta: 13px;      --cv-leading-meta: 20px;
   --cv-type-control: 12.5px; --cv-leading-control: 20px;
-  --cv-type-caption: 12px; --cv-leading-caption: 16px;
-  --cv-type-code: 12.5px;  --cv-leading-code: 20px;
-  --cv-type-output: 12px;  --cv-leading-output: 18px;
-  --cv-type-inline-code: 12.5px;
+  --cv-type-caption: 12px;   --cv-leading-caption: 16px;
+  --cv-type-code: 12.5px;    --cv-leading-code: 20px;
+  --cv-type-output: 12px;    --cv-leading-output: 18px;
   --cv-weight-body: 400;
   --cv-weight-label: 500;
   --cv-weight-title: 600;
 
-  /* Spacing scale: 4 8 12 16 24 32 48, nothing else in conversation CSS. */
+  /* Spacing scale: 4 8 12 16 24 32 48. */
   --cv-s1: 4px;
   --cv-s2: 8px;
   --cv-s3: 12px;
@@ -656,18 +645,24 @@
   --cv-s5: 24px;
   --cv-s6: 32px;
   --cv-s7: 48px;
-  /* THE TRANSCRIPT GRID (owner's review, B9). One grid for every element in the thread.
+
+  /* THE TRANSCRIPT GRID. One grid for every element in the thread.
    *  Horizontal: all text starts at the column's left edge (x = 0): prose, system lines, the
-   *    hover row. A leading mark (spinner or dot) hangs in a 16 px slot at x = -24 to -8, so it
-   *    never pushes the text in. User bubbles and their captions keep the right edge.
-   *  Vertical, steps 4 8 12 16 24 32 only:
-   *    meta   8  a system line ("Worked for") to the content under it
-   *    block 16  blocks inside one turn: paragraph groups, tables, code, tool rows, the
-   *              end-of-turn system line
-   *    turn  32  the end of one turn to the next message
-   *    hover  4 + 24  the hover row (time, copy) sits 4 under its message in a 24 slot inside
-   *              the gap that already follows it. It adds no space; where the next item is
-   *              closer, the row goes under that item's system line, or is not drawn. */
+   *    hover row, tool rows. A leading mark (a spinner, a dot, a tool's glyph, a list marker)
+   *    hangs in the mark gutter, a 16px slot at x = -24 to -8, so it never pushes the text in.
+   *    The thread's scroll box reaches one gutter left of the text so a hung mark is not
+   *    clipped. User bubbles and their captions keep the right edge.
+   *  Vertical: every gap is a margin on the item below it, in steps of 4 8 12 16 24 32 only.
+   *    turn     32  the end of one turn to the next message, and between waiting messages
+   *    meta      8  a system line ("Worked for") to the content under it
+   *    block    16  blocks inside one turn: paragraph groups, tables, code, tool rows, the
+   *                 end-of-turn system line, two agent messages in a row
+   *    row       0  tool rows stack with no gap; each is its own 32px line
+   *    hover   4 + 24  the hover row (time, copy) sits 4 under its message in a 24 slot inside
+   *                 the gap that already follows it. It adds no space; where the next item is
+   *                 closer, the row goes under that item's system line, or is not drawn.
+   *  The thread pads 28 over its first line (room for that line's hover row) and 32 under its
+   *  newest (NEWEST_LINE_BOTTOM_GAP_PIXELS in viewport/viewportConfiguration.ts is that value). */
   --cv-gap-turn: 32px;
   --cv-gap-meta: 8px;
   --cv-gap-block: 16px;
@@ -676,19 +671,18 @@
   --cv-gap-heading-below: 8px;
   --cv-gap-list-item: 8px;
   --cv-gap-bubble-stack: 12px;
-  /* The system line (B3): Inter 13/20, its ink, its actions, and the one failure red. */
-  --cv-system-ink: #8f8f8f;
-  --cv-system-action-ink: #d0d0d0;
-  --cv-failure-ink: #ff8f85;
   --cv-hover-row-offset: 4px;
   --cv-hover-row-height: 24px;
   --cv-mark-slot: 16px;
   --cv-mark-hang: 24px;
   --cv-transcript-pad-top: 28px;
-  --cv-transcript-pad-bottom: 24px;
+  --cv-transcript-pad-bottom: 32px;
+  /* The system line: Inter 13/20, its ink, its actions, and the one failure red. */
+  --cv-system-ink: #8f8f8f;
+  --cv-system-action-ink: #d0d0d0;
+  --cv-failure-ink: #ff8f85;
 
-  /* Layout */
-  /* Opened transcript, header, composer, and asks share this reading column. */
+  /* Layout: the opened transcript, header, composer, and asks share this reading column. */
   --cv-col: 760px;
 
   /* Radii */
@@ -698,7 +692,7 @@
   --cv-r-xl: 16px;
   --cv-r-pill: 999px;
 
-  /* Focus: 2px accent ring, offset 2 (the composer uses the accent line and a halo). */
+  /* Focus: 2px accent ring, offset 2. */
   --cv-focus-width: 2px;
   --cv-focus-offset: 2px;
 
@@ -707,51 +701,48 @@
   --cv-dur-base: 180ms;
   --cv-dur-expand: 220ms;
   --cv-ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
-  --cv-ease-in: cubic-bezier(0.4, 0, 1, 1);
   --cv-spin: 1s;
   --cv-shimmer: 2s;
 }
 
-/* v5: inside the conversation (transcript, composer, header, dock) quiet text is #b0b0b0 and
-   placeholders #999999. Scoped to the pane so the page around it (the proposal card, the work
-   page) keeps its own tones. */
+/* Inside the conversation pane (transcript, composer, header, dock) the accent, the quiet tone
+   and the placeholder are a step lighter, and the pane's own roles are named. Pages around the
+   pane (the proposal card, a ticket's document) keep the :root values. */
 [data-conversation-pane] {
-  /* v5.2: the "needs you" accent is #bccbf0 everywhere in the conversation. */
   --cv-accent: #bccbf0;
   --cv-accent-wash: rgb(188 203 240 / 12%);
   --cv-accent-line: rgb(188 203 240 / 45%);
-  --cv-accent-halo: rgb(188 203 240 / 10%);
-  /* v5.2: chat charts draw their two series in the accent and #e0b36b. */
-  --cv-data-1-strong: #bccbf0;
-  --cv-data-2-strong: #e0b36b;
-  --cv-t3: #b0b0b0;
-  --cv-t4: #b0b0b0;
-  --cv-placeholder: #9e9e9e; /* v15 (5) */
+  --cv-danger: #f08a7e;       /* failure only */
+  --cv-t3: #b0b0b0;          /* also status details and descriptions */
+  --cv-placeholder: #9e9e9e;
 
-  /* v7, one system: two voices, five parts, one set of measures (8px grid). */
-  /* Final presentation roles shared by conversation rules. */
+  /* Ink */
+  --cv-ink: #ececec;          /* agent final messages, user words, status labels, secondary ink */
+  --cv-hover-ink: #ffffff;
+  --cv-quiet-ink: #bdbdbd;    /* quiet buttons, icons */
   --cv-narration-ink: #c4c4c4;
   --cv-narration-code-ink: #dcdcdc;
   --cv-narration-compact-ink: #b4b4b4;
   --cv-leading-narration-compact: 22px;
+  --cv-list-marker: #8f8f8f;
   --cv-inline-code-surface: #232323;
   --cv-inline-code-ink: #e0e0e0;
-  --cv-control-edge: #3a3a3a;
-  --cv-hover-ink: #ffffff;
-  --cv-list-marker: #8f8f8f;
-  --cv-spinner-track: #4a4a4a;
-  --cv-media-edge: rgb(255 255 255 / 16%);
   --cv-answer-link-underline: rgb(236 236 236 / 50%);
-  --cv-dur-status-icon: 150ms;
-  --cv-ink: #ececec;          /* agent final messages, user words, status labels, secondary ink */
-  --cv-quiet-ink: #bdbdbd;    /* quiet buttons, icons, narration */
-  --cv-detail-ink: #b0b0b0;   /* status details, descriptions */
-  --cv-surface: #1c1c1c;      /* part 1: composer, ask, newest error, attachment cards, chart */
+
+  /* Surfaces: the composer, an ask, the newest error, attachment cards and charts are one
+     Surface; code blocks sit on their own. */
+  --cv-surface: #1c1c1c;
+  --cv-bubble: #242424;       /* the person's message */
   --cv-surface-edge: #2a2a2a;
   --cv-surface-radius: 20px;
-  --cv-code-surface: #1a1a1a; /* code blocks: radius 12 */
-  --cv-bubble: #242424;
-  --cv-danger: #f08a7e;       /* failure only */
-  --cv-dur-expand: 220ms;
-  --cv-dur-fast: 120ms;
+  --cv-code-surface: #1a1a1a;
+  --cv-control-edge: #3a3a3a;
+  --cv-media-edge: rgb(255 255 255 / 16%);
+  --cv-spinner-track: #4a4a4a;
+
+  /* Charts draw their two series in the accent and a warm amber. */
+  --cv-data-1: #bccbf0;
+  --cv-data-2: #e0b36b;
+
+  --cv-dur-status-icon: 150ms;
 }

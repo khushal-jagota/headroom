@@ -383,7 +383,7 @@
 </div>
 
 <style>
-  /* The reply strip (§3.8): the ask's shell is its frame, so the field draws none of its own.
+  /* The reply strip: the ask's shell is its frame, so the field draws none of its own.
      One 48px row: the words at the ask's inset in the body face, the controls at the right. */
   .composer-field.is-reply-strip {
     min-height: 48px;
@@ -404,6 +404,6 @@
   .composer-field.is-reply-strip :global(.composer-field-tool) { color: var(--cv-t3); border-radius: var(--cv-r-md); }
   .composer-field.is-reply-strip :global(.composer-field-tool:hover:not(:disabled)) { color: var(--cv-t1); background: var(--cv-control); background-image: none; }
   .composer-field.is-reply-strip :global(.composer-field-tool svg) { width: 18px; height: 18px; stroke-width: 1.6; }
-  .composer-field.is-reply-strip :global(.composer-field-send) { background-color: var(--cv-control); color: var(--cv-t4); }
+  .composer-field.is-reply-strip :global(.composer-field-send) { background-color: var(--cv-control); color: var(--cv-t3); }
   .composer-field.is-reply-strip :global(.composer-field-send.on) { background-color: var(--cv-primary-fill); color: var(--cv-primary-ink); }
 </style>

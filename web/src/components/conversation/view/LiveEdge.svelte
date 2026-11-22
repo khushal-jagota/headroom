@@ -25,7 +25,7 @@
 {/if}
 
 <style>
-  /* It ends the running turn's content, so it stands a block's gap (16) under it (B9). */
+  /* It ends the running turn's content, so it stands a block's gap under it. */
   .c2-live-edge {
     flex: none;
     display: flex;

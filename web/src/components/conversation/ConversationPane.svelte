@@ -754,14 +754,14 @@
 
 <style>
   .conversation-reader { display:flex; flex-direction:column; flex:1; min-height:0; }
-  /* v4.1 (revised): an empty conversation is the composer in its normal bottom place, as in
-     every other state, and an empty canvas above it. No placement of its own. */
+  /* An empty conversation is the composer in its normal bottom place, as in every other
+     state, and an empty canvas above it. */
   .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
-  /* v19 (1): while a question or a permission ask is open, a transcript shorter than the room
-     above the card sits at the foot of that room, its last item 32px over the card (the
-     thread's bottom padding); the empty space goes above the first message. A taller
-     transcript fills the room and scrolls as before. In the dock the reader is hidden. */
+  /* While a question or a permission ask is open, a transcript shorter than the room above the
+     card sits at the foot of that room, its last item a bottom pad over the card; the empty
+     space goes above the first message. A taller transcript fills the room and scrolls as
+     before. In the dock the reader is hidden. */
   .conversation-transcript-region[data-conversation-ask-open] :global(.chat-thread-content) { margin-block-start: auto; }
   /* The component measures itself, not the window. The same pane is narrow in a side
      panel on a wide screen, and a host that names no container of its own — the Chief
@@ -770,7 +770,7 @@
     container-type: inline-size;
     container-name: conversation-pane;
   }
-  /* The stack under the transcript (status slot, composer) has one gap: 8. */
+  /* The stack under the transcript (status slot, composer) has no gap of its own. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),
@@ -779,18 +779,17 @@
   }
 
   /* --- Header: title, state, lens, collapse, options. 56 tall; space, not a rule, sets it
-     off from the transcript (the transcript's own 16px fade takes what scrolls under it). */
-  /* Pass 11: at least 24px between the title (or role) and the Focus/Full control. */
+     off from the transcript. The title keeps at least 24px from the lens control. */
   .chat-head-identity {
     display: flex;
     flex: 1 1 auto;
-    margin-inline-end: 12px;
+    margin-inline-end: var(--cv-s3);
     align-items: center;
     gap: var(--cv-s3);
     min-width: 0;
     overflow: hidden;
   }
-  /* v5: the ticket's title alone, one line, ellipsized. No role beside it. */
+  /* The ticket's title alone, one line, ellipsized, 17/24: answer headings are smaller. */
   .chat-head-name { display: flex; align-items: baseline; min-width: 0; flex: 0 1 auto; }
   .chat-head-title {
     flex: 0 1 auto;
@@ -798,8 +797,7 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    color: #ececec;
-    /* v10 (7): the header title 17/24 600 (answer headings are 17 at most). */
+    color: var(--cv-ink);
     font: var(--cv-weight-title) 17px/24px var(--cv-font);
   }
   .cv-state {
@@ -818,10 +816,9 @@
      when something failed, quiet meta for everything moving or past. */
   .cv-state[data-conversation-head-status="waiting"] { color: var(--cv-accent); font-weight: var(--cv-weight-label); }
   .cv-state:is([data-conversation-head-status="failed"], [data-conversation-head-status="undelivered"]) { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
-  .cv-state[data-conversation-head-status="working"] { color: var(--cv-t3); }
 
-  /* "Close" is the dock's "Open" without the arrow: a quiet text control, 32 high, 13/20 500
-     #d0d0d0, no fill and no edge at rest, a fill on hover. */
+  /* "Close" is the dock's "Open" without the arrow: a quiet text control, 32 high, no fill and
+     no edge at rest, a fill on hover. */
   .chat-head-collapse {
     flex: none;
     display: inline-flex;
@@ -830,39 +827,38 @@
     height: 32px;
     padding: 0 14px;
     border: 0;
-    border-radius: 999px;
+    border-radius: var(--cv-r-pill);
     background: transparent;
     color: #d0d0d0;
-    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
+    font: var(--cv-weight-label) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
+  .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: var(--cv-ink); background-color: var(--cv-control); }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
-  /* --- Lens: Focus and Full. No track and no fill at rest: only the shown lens has a fill
-     (#424242, #ffffff 500). The other lens is #d0d0d0 400 text, with a #242424 fill on hover.
-     Segments are 28 tall, radius 8, padding 0 12, 2 px apart. */
+  /* --- Lens: Focus and Full. No track and no fill at rest: only the shown lens has a fill.
+     Segments are 28 tall, radius 8, padding 0 12, 2px apart. */
   .cv-segmented {
     display: inline-flex;
     flex: none;
     gap: 2px;
     padding: 2px;
-    margin-inline-end: 4px;
+    margin-inline-end: var(--cv-s1);
   }
   .cv-segment {
     min-height: 28px;
     height: 28px;
-    padding: 0 12px;
+    padding: 0 var(--cv-s3);
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cv-r-md);
     background: transparent;
     color: #d0d0d0;
-    font: 400 var(--cv-type-control)/20px var(--cv-font);
+    font: var(--cv-weight-body) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .cv-segment:hover { background: #242424; color: #ececec; }
+  .cv-segment:hover { background: #242424; color: var(--cv-ink); }
   .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #424242; color: #ffffff; font-weight: var(--cv-weight-label); }
   .cv-segment:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 

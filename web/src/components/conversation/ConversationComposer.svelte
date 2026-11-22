@@ -1537,7 +1537,7 @@
   /* --- the stack ----------------------------------------------------------------------------- */
   .c2-composer { display: grid; gap: var(--cv-s2); }
 
-  /* --- one button set (§2.7), for the few buttons the composer draws itself ------------------ */
+  /* --- the few buttons the composer draws itself -------------------------------------------- */
   :global(.c2-composer .cv-btn) {
     display: inline-flex;
     align-items: center;
@@ -1556,7 +1556,7 @@
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   :global(.c2-composer .cv-btn--small) { height: 28px; padding: 0 10px; }
-  /* v4.2: the conversation's one primary style. */
+  /* The conversation's one primary style (app.css, .cv-button--primary). */
   :global(.c2-composer .cv-btn--primary) { border-radius: 18px; background: #f2f2f2; color: #121212; }
   :global(.c2-composer .cv-btn--primary:hover) { background: #ffffff; }
   :global(.c2-composer .cv-btn--secondary) { background: var(--cv-control); color: var(--cv-t1); }
@@ -1575,7 +1575,7 @@
   }
 
   /* A message only this browser holds (a video still uploading, a send to be checked): a quiet
-     raised note over the composer, its words in the body tone, its state a step quieter. */
+     note over the composer, its words in the body tone, its state a step quieter. */
   .chat-local-send {
     display: grid;
     gap: var(--cv-s1);
@@ -1591,10 +1591,10 @@
   .chat-local-send-file { color: var(--cv-t2); }
   .chat-local-send-actions { display: flex; flex-wrap: wrap; gap: var(--cv-s1); margin: var(--cv-s1) 0 0 calc(var(--cv-s3) * -1); }
 
-  /* --- drag over (§3.13): the whole shell becomes the place to drop -------------------------- */
+  /* --- drag over: the whole shell becomes the place to drop ---------------------------------- */
   /* The shell takes the accent wash and the words "Drop to attach" stand alone in its middle;
-     what was in it is covered, at the same size, so nothing moves and no edge changes colour. */
-  .chat-box.drag { border-color: transparent; box-shadow: none; }
+     what it holds is covered, at the same size, so nothing moves and no edge changes colour. */
+  .chat-box.drag { border-color: transparent; }
   .chat-drop-label {
     inset: -1px;
     gap: var(--cv-s2);
@@ -1618,7 +1618,7 @@
     stroke-linejoin: round;
   }
 
-  /* --- a voice take (§3.13): level and clock on the draft's row, Cancel and Stop on the controls' */
+  /* --- a voice take: level and clock on the draft's row, Cancel and Stop on the controls' ---- */
   .chat-voice-line {
     display: flex;
     align-items: center;
@@ -1675,71 +1675,65 @@
   }
 
   /* --- one line, two rows, an ask: the box's three shapes ------------------------------------ */
-  /* At rest the composer is one line: add, the draft, the run chips, the microphone and
-     send/stop on a single row inside the one frame. Its foot gives its controls to that row
-     (display: contents), so nothing is drawn twice and nothing is re-made between shapes. */
+  /* At rest the composer is one line, 52 tall (9 + 32 + 9 inside its 1px edge): add, the
+     draft, the run chips, the microphone and send/stop on a single row inside the one frame.
+     Its foot gives its controls to that row (display: contents), so nothing is drawn twice and
+     nothing is re-made between shapes. Grown to two rows, or wearing the keyboard's focus, the
+     box has the lighter edge and no outer ring. */
   .chat-box.is-compact {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
     column-gap: var(--cv-s1);
-    /* v7: a 52px Surface line: 9 + 32 + 9 inside the 1px edge, radius 20 like every Surface. */
     min-height: 52px;
     box-sizing: border-box;
     padding: 9px;
-    border-radius: 20px;
   }
+  .chat-box.keyboard-focus, .chat-box:not(.is-compact) { border-color: var(--cv-control-edge); outline: none; }
   .chat-box.is-compact > .chat-ta { flex: 1 1 0; order: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
   .chat-box.is-compact > .chat-foot { display: contents; }
   .chat-box.is-compact > .chat-foot > :global(*) { order: 2; }
   .chat-box.is-compact > .chat-foot > :global(.chat-add) { order: 0; }
   .chat-box.is-compact > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-start: 0; }
-  /* v11 (12): 8px between each control on the right (model, Steer, mic, Send/Stop), on the
+  /* 8px between each control on the right (model, delivery, microphone, send/stop), on the
      line and grown alike: the model chip adds 4 to the row's 4px gap. */
   .chat-box:not(.has-ask) > .chat-foot > :global(.chat-submit) { gap: var(--cv-s2); }
   .chat-box:not(.has-ask) > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-end: var(--cv-s1); }
   .chat-box.is-compact .chat-ta::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* An ask is the composer while it waits (v4): the same object, grown upward, radius 20.
-     The ask's header, question and tiles stand in the frame on a 16px inset, and the
-     composer's own line is its last row: a pen, the draft, the microphone and the ask's
-     primary pill in the send slot. No add, no model, no mode chip and no Stop under it. */
-  .chat-box.has-ask, .chat-box.has-ask.is-compact { border-radius: 20px; padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
+  /* An ask is the composer while it waits: the same object, grown upward. The ask's header,
+     question and tiles stand in the frame on a 16px inset, and the composer's own line is its
+     last row: a pen, the draft, the microphone and the ask's send in the send slot. No add, no
+     model, no mode chip and no Stop under it. */
+  .chat-box.has-ask, .chat-box.has-ask.is-compact { padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
   .chat-ask:not(.animate-ask) :global(.cv-ask) { animation: none; }
   .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
   .chat-box.has-ask > .chat-foot :is(:global(.chat-add), :global([data-conversation-model-picker])) { display: none; }
-  /* v4.2: the ask's own-answer line sits in its own well (#141414, radius 12, 44 high) so it
-     reads as an input: the pen, the draft and the microphone share one fill, joined edge to
-     edge; the primary pill stands outside it, on its right, 8px off. The send slot gives its
-     two pieces to the line (display: contents) so the microphone can sit inside the well. */
-  /* The line stands on the tiles' edges (8px further in than the box's own padding) and as
-     far off the box's foot as the tiles are off its sides. */
+  /* The ask's own-answer line is one well (#141414, radius 20, at least 40 high) that reads as
+     an input: the draft, the microphone and the round send share its fill, joined edge to
+     edge, each drawing its share of the well's 1px edge and the last piece closing it. The send
+     slot gives its pieces to the line (display: contents) so they sit inside the well; the
+     send is its last piece (40 wide, the 32 round drawn 4px in from the well's edges). The line
+     stands on the tiles' edges (8px further in than the box's own padding) and as far off the
+     box's foot as the tiles are off its sides. */
   .chat-box.has-ask.is-compact { column-gap: 0; padding-block-end: var(--cv-s4); }
   .chat-box.has-key-request, .chat-box.has-key-request.is-compact { padding-block-end: var(--cv-s4); }
   .chat-box.has-key-request > .chat-ask { margin-block-end: 0; }
   .chat-box.has-ask.is-compact > .chat-foot > :global(.chat-submit) { display: contents; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > *) { order: 2; }
-  /* v11 (3): the answer well is the composer's line: draft, microphone and the round
-     send all inside it; the send is its last piece (40 wide, the 32 round drawn 4px in from
-     the well's edges). The round Stop follows, outside, 8px off. */
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send) { order: 3; }
-  /* v8 (7): the free-text well wears a 1px #333 edge. It is up to four pieces (draft,
-     mic, send), so each draws its share of the edge; the last piece closes it. */
-  .chat-box.has-ask.is-compact > .chat-ta { box-shadow: inset 1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
-  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic, .chat-ask-send)) > .chat-ta { box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
-  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic) { box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333; }
-  .chat-box.has-ask.is-compact:not(:has(.chat-ask-send)) > .chat-foot :global(.chat-submit > .chat-voice-mic) { box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
-  .chat-box.has-ask:not(.is-compact) > .chat-ta { box-shadow: inset 0 0 0 1px #333; }
   .chat-box.has-ask.is-compact > .chat-ta {
     align-self: stretch;
-    padding-block: 8px;
+    padding-block: var(--cv-s2);
     margin-inline-start: var(--cv-s2);
     padding-inline: var(--cv-s3) var(--cv-s2);
     border-radius: 20px 0 0 20px;
     background: #141414;
+    box-shadow: inset 1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;
   }
+  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic, .chat-ask-send)) > .chat-ta { border-radius: 0 20px 20px 0; box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic) {
     align-self: stretch;
     width: 32px;
@@ -1747,11 +1741,10 @@
     min-height: 40px;
     border-radius: 0;
     background: #141414;
+    box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333;
   }
-  .chat-box.has-ask.is-compact:not(:has(.chat-ask-send)) > .chat-foot :global(.chat-submit > .chat-voice-mic) { width: 40px; padding-inline-end: 4px; border-radius: 0 20px 20px 0; }
+  .chat-box.has-ask.is-compact:not(:has(.chat-ask-send)) > .chat-foot :global(.chat-submit > .chat-voice-mic) { width: 40px; padding-inline-end: var(--cv-s1); border-radius: 0 20px 20px 0; box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic:hover:not(:disabled)) { background: #141414; color: var(--cv-t1); }
-  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic, .chat-ask-send)) > .chat-ta { border-radius: 0 20px 20px 0; }
-  /* The send, the well's last piece: the well's fill and its closing edge; the round inside. */
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send),
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send:hover:not(:disabled)) {
     align-self: stretch;
@@ -1759,29 +1752,28 @@
     height: auto;
     min-height: 40px;
     margin: 0 var(--cv-s2) 0 0;
-    padding: 0 4px 0 0;
+    padding: 0 var(--cv-s1) 0 0;
     border-radius: 0 20px 20px 0;
     background: #141414;
     box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;
   }
-  /* Grown to two rows, the draft is the well and the send stands on its own. */
+  /* Grown to two rows, the draft itself is the well and the send stands on its own. */
+  .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 20px; background: #141414; box-shadow: inset 0 0 0 1px #333; }
   .chat-box.has-ask:not(.is-compact) :global(.chat-ask-send) { background: none; }
+  /* The ask's send round: the composer's send, with nothing to send a quiet control fill. */
   :global(.chat-ask-send-round) {
     display: grid;
     place-items: center;
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    /* v14 (4): disabled send everywhere: #2a2a2a with a #9a9a9a arrow. */
-    background: #2a2a2a;
+    background: var(--cv-control);
     color: #9a9a9a;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   :global(.chat-ask-send.on .chat-ask-send-round) { background: #f2f2f2; color: #121212; }
   :global(.chat-ask-send.on:hover:not(:disabled) .chat-ask-send-round) { background: #ffffff; }
   :global(.chat-ask-send-round svg) { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  /* A draft that wraps grows the box to two rows: the draft itself is then the well. */
-  .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 20px; background: #141414; }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow
      staying lit is the one thing on screen that says the send has not landed yet. */
@@ -1798,26 +1790,16 @@
     line-height: var(--cv-leading-caption);
   }
 
-  /* --- keyboard focus -------------------------------------------------------------------------- */
-  /* A field reached with the keyboard wears the app's focus ring: 2px of accent, 2px out. */
-  /* v6: focused (by keyboard too) or expanded, the composer wears one 1px #3a3a3a border and
-     no outer ring. */
-  .chat-box.keyboard-focus, .chat-box:not(.is-compact) { border-color: #3a3a3a; outline: none; }
-
   /* --- popovers -------------------------------------------------------------------------------- */
-  /* A menu opens from the control that opened it, as a native dropdown does: anchored on its
-     own button, 8px off it (v5), its edge on the button's edge (the add menu from +'s left, the
-     model and delivery pickers from their chips' right). It overlays what is above and never
-     moves it. Their height is capped by the room over the composer (app.css). */
+  /* A menu opens from the control that opened it, as a native dropdown does: its bottom 8px
+     above the composer's top edge (--c2-menu-lift is how far each anchor stands under that
+     edge, measured), its edge on the button's edge (the add menu from +'s left, the model and
+     delivery pickers from their chips' right). It overlays what is above and never moves it.
+     Their height is capped by the room over the composer (app.css, the dock). */
   .chat-box :global(:is(.listbox-picker-panel, .chat-menu)) { z-index: 40; }
-  /* v6: every menu opens with its bottom 8px above the composer's top edge, not above its chip:
-     --c2-menu-lift is how far each anchor stands under the composer's top edge (measured). */
   .chat-box .chat-foot :global([data-conversation-model-picker] > .listbox-picker-panel) {
     left: auto;
     right: 0;
-    bottom: calc(100% + 8px + var(--c2-menu-lift, 0px));
+    bottom: calc(100% + var(--cv-s2) + var(--c2-menu-lift, 0px));
   }
-
-  /* Grown drafts keep equal top and bottom padding. */
-  .chat-box:not(.is-compact, .has-ask) { padding-block-end: var(--cv-s3); }
 </style>

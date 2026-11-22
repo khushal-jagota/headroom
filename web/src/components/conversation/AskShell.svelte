@@ -85,6 +85,9 @@
 </section>
 
 <style>
+  /* An ask is a Surface: the composer's fill and edge, radius 20. Its eyebrow is a status line
+     (the 8px accent dot in a 16px slot, the label in the accent); its title and description
+     are the question; the answers are tiles; the footer holds the decision. */
   .cv-ask {
     min-width: 0;
     width: 100%;
@@ -95,9 +98,9 @@
     animation: cv-ask-in var(--cv-dur-base) var(--cv-ease-out);
   }
   .cv-ask.is-framed {
-    background: var(--cv-raised);
-    border: 1px solid var(--cv-line-strong);
-    border-radius: var(--cv-r-xl);
+    background: var(--cv-surface);
+    border: 1px solid var(--cv-surface-edge);
+    border-radius: var(--cv-surface-radius);
   }
   .cv-ask-body { padding: var(--cv-s4) 20px 0; min-width: 0; }
   .cv-ask-eyebrow {
@@ -105,35 +108,36 @@
     align-items: center;
     gap: var(--cv-s2);
     min-width: 0;
+    min-height: 32px;
     color: var(--cv-accent);
-    font: var(--cv-weight-title) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    font: var(--cv-weight-label) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
   }
-  .cv-ask-dot { flex: none; width: 7px; height: 7px; border-radius: var(--cv-r-pill); background: var(--cv-accent); }
+  .cv-ask-dot { flex: none; width: 8px; height: 8px; margin-inline: var(--cv-s1); border-radius: var(--cv-r-pill); background: var(--cv-accent); }
   .cv-ask-need { flex: none; }
+  /* The pager: "1 of 2" is status detail; its arrows are the pane's quiet icon buttons. An
+     arrow that cannot go further takes no pointer at all. */
   .cv-ask-context {
     display: inline-flex;
     align-items: center;
-    gap: var(--cv-s1);
+    gap: 0;
     min-width: 0;
     margin-inline-start: auto;
     color: var(--cv-t3);
     font-weight: var(--cv-weight-body);
     font-variant-numeric: tabular-nums;
   }
-  /* v4.2: the pager's arrows stay in the meta tone, #a3a3a3, even when one cannot go further. */
-  .cv-ask-context :global(.cv-icon-button) { color: var(--cv-t3); }
-  /* v5.1: a pager arrow that cannot go further; v9 (22): #a6a6a6. */
-  .cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }
-  .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { color: var(--cv-t1); }
+  .cv-ask-context :global(.cv-icon-button) { width: 32px; height: 32px; }
+  .cv-ask-context :global(.cv-icon-button:disabled) { color: #7a7a7a; cursor: default; pointer-events: none; }
+  .cv-ask-context :global(.count) { margin-inline: 0 var(--cv-s1); }
   .cv-ask-title {
-    margin: 6px 0 0;
-    color: var(--cv-t1);
+    margin: var(--cv-s2) 0 0;
+    color: var(--cv-ink);
     font: var(--cv-weight-title) var(--cv-type-ui)/24px var(--cv-font);
   }
   .cv-ask-description {
-    margin: var(--cv-s1) 0 0;
+    margin: var(--cv-s2) 0 0;
     color: var(--cv-t3);
-    font: var(--cv-weight-body) var(--cv-type-ui)/22px var(--cv-font);
+    font: var(--cv-weight-body) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
   }
   .cv-ask-content { margin-block-start: var(--cv-s4); min-width: 0; }
   /* The ghost on the left lines its words up with the body's 20px edge (8 + its 12). */
@@ -155,56 +159,59 @@
     margin-inline-start: auto;
   }
   .cv-ask-reply { padding: 0 var(--cv-s2) var(--cv-s2); }
-  /* Stop turn (v4.1): a small real button, 28px high, #242424, radius 8, a 10px stop square
-     and the label 13 in #d9d9d9. 16px before the pager (the context's 4px gap + 12). */
+  /* Stop turn, while the turn waits on the person: a secondary button, a 32 tall pill with a
+     16px stop mark 6px before its word, 8px before the pager. Its pill's right edge stands on
+     the option rows' right edge when nothing follows it. */
   .cv-ask-stop {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 28px;
-    padding: 0 10px;
-    margin-inline-end: 12px;
+    height: 32px;
+    padding: 0 14px 0 10px;
+    margin-inline-end: var(--cv-s2);
     border: 0;
-    border-radius: 8px;
-    background: #242424;
-    color: #d9d9d9;
-    font: var(--cv-weight-body) var(--cv-type-control)/18px var(--cv-font);
+    border-radius: var(--cv-r-pill);
+    background: var(--cv-control);
+    color: var(--cv-ink);
+    font: var(--cv-weight-label) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .cv-ask-stop:last-child { margin-inline-end: 0; }
-  .cv-ask-stop-mark { flex: none; width: 10px; height: 10px; fill: currentColor; }
-  .cv-ask-stop:hover:not(:disabled) { color: var(--cv-t1); background: #2a2a2a; }
+  .cv-ask-stop-mark { flex: none; width: 16px; height: 16px; fill: currentColor; }
+  .cv-ask-stop:hover:not(:disabled) { background: var(--cv-control-hover); color: var(--cv-ink); }
   .cv-ask-stop:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 1px; }
   .cv-ask-stop:disabled { cursor: default; }
 
-  /* --- the one answer tile every ask uses (v4) ------------------------------------------- */
-  /* Tiles 6px apart, radius 12, padding 12 16 (v5): filled #262626 at rest on the #1c1c1c
-     composer so they read as clickable, #2c2c2c on hover. The chosen one is #2e2e2e with a 1px
-     accent edge, its number chip in the accent; the others' keycaps are #333333 with a #d9d9d9
-     number. Every answer, a declining one too, is labelled in the same tone. */
-  :global(.cv-ask-rows) { display: grid; gap: 6px; }
-  :global(.cv-ask-row) {
+  /* --- the one answer tile every ask uses ------------------------------------------------ */
+  /* Rows 48 tall at least, 8px apart, radius 12, padding 12 16, on the control fill with a 1px
+     inner edge (drawn inside, so the row keeps its size); a 24px keycap and the label in the
+     ink, its description a step quieter. A row is the action: under the pointer or
+     keyboard focus, and once chosen, it is a step lighter with the accent edge and an accent
+     keycap. Nothing is lit when the pointer is not on it; the accent edge is the focus mark. */
+  :global([data-conversation-pane] .cv-ask-rows) { display: grid; gap: var(--cv-s2); }
+  :global([data-conversation-pane] .cv-ask-row) {
     display: flex;
     align-items: center;
     gap: var(--cv-s3);
     width: 100%;
+    min-height: 48px;
     box-sizing: border-box;
     padding: var(--cv-s3) var(--cv-s4);
     border: 0;
     border-radius: var(--cv-r-lg);
-    background: #262626;
+    background: var(--cv-control);
+    box-shadow: inset 0 0 0 1px #363636;
     color: var(--cv-t1);
     cursor: pointer;
-    font: var(--cv-weight-body) var(--cv-type-prose)/var(--cv-leading-ui) var(--cv-font);
+    font: var(--cv-weight-body) var(--cv-type-ui)/22px var(--cv-font);
     text-align: start;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), box-shadow var(--cv-dur-fast) var(--cv-ease-out);
   }
-  :global(.cv-ask-row:hover:not(:disabled)) { background: #2c2c2c; }
-  :global(.cv-ask-row.is-selected), :global(.cv-ask-row.is-selected:hover:not(:disabled)) { background: #2e2e2e; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
-  :global(.cv-ask-row:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
-  :global(.cv-ask-row:disabled) { cursor: default; }
-  :global(.cv-ask-key) {
+  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
+  :global([data-conversation-pane] .cv-ask-row:focus-visible) { outline: none; }
+  :global([data-conversation-pane] .cv-ask-row:disabled) { cursor: default; }
+  :global([data-conversation-pane] .cv-ask-key) {
     flex: none;
     display: inline-grid;
     place-items: center;
@@ -212,79 +219,19 @@
     height: 24px;
     box-sizing: border-box;
     border-radius: var(--cv-r-sm);
-    background: #333333;
-    color: #d9d9d9;
-    font: var(--cv-weight-label) var(--cv-type-caption)/1 var(--cv-font);
-    font-variant-numeric: tabular-nums;
+    background: var(--cv-control-edge);
+    color: var(--cv-t2);
+    font: var(--cv-weight-label) var(--cv-type-control)/1 var(--cv-font);
   }
-  :global(.cv-ask-row.is-selected .cv-ask-key) { background: var(--cv-accent); color: #121212; }
-  :global(.cv-ask-key svg) { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  :global(.cv-ask-words) { display: grid; gap: 2px; flex: 1; min-width: 0; }
-  :global(.cv-ask-label) { overflow-wrap: anywhere; color: var(--cv-t1); }
-  :global(.cv-ask-sub) {
-    color: var(--cv-t3);
-    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: var(--cv-primary-ink); }
+  :global([data-conversation-pane] .cv-ask-key svg) { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  :global([data-conversation-pane] .cv-ask-words) { display: grid; gap: 2px; flex: 1; min-width: 0; }
+  :global([data-conversation-pane] .cv-ask-label) { overflow-wrap: anywhere; color: var(--cv-ink); }
+  :global([data-conversation-pane] .cv-ask-sub) {
+    color: #c4c4c4;
+    font: var(--cv-weight-body) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
     overflow-wrap: anywhere;
   }
-  /* ---- v7, inside the conversation pane only (the proposal card on the page keeps its own) ---- */
-  /* Standing alone, an ask is a Surface: #1c1c1c, a 1px #2a2a2a edge, radius 20. */
-  :global([data-conversation-pane]) .cv-ask.is-framed { background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 20px; }
-  /* The eyebrow is a Status line: a 16px icon slot (the 8px accent dot, on every ask), the
-     label 13/20 500 in the accent. */
-  :global([data-conversation-pane]) .cv-ask-eyebrow { min-height: 32px; font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font); }
-  :global([data-conversation-pane]) .cv-ask-dot { width: 8px; height: 8px; margin-inline: 4px; }
-  /* The pager: "1 of 2" is status detail (#b0b0b0); its arrows are quiet Buttons (32 round,
-     #bdbdbd, hover #2a2a2a). */
-  :global([data-conversation-pane]) .cv-ask-context { gap: 0; color: #b0b0b0; }
-  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button) { width: 32px; height: 32px; border-radius: 999px; color: #bdbdbd; }
-  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button svg) { width: 16px; height: 16px; }
-  /* v13 (5): an unavailable pager arrow (back on the first question, forward on the last)
-     takes no pointer at all (no hover, no pointer cursor). v14 (4): it is #6e6e6e. */
-  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #6e6e6e; background: none; cursor: default; pointer-events: none; }
-  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { background: #2a2a2a; color: #ececec; }
-  :global([data-conversation-pane]) .cv-ask-context :global(.count) { margin-inline: 0 4px; }
-  :global([data-conversation-pane]) .cv-ask-title { margin-block-start: 8px; color: #ececec; }
-  :global([data-conversation-pane]) .cv-ask-description { margin-block-start: 8px; color: #b0b0b0; font: var(--cv-weight-body) var(--cv-type-control)/20px var(--cv-font); }
-  /* v9 (9): Stop turn is a secondary Button: 32 tall pill, #2a2a2a, #ececec, hover #333,
-     13/20 500, a 16px stop icon 6px before its word. */
-  :global([data-conversation-pane]) .cv-ask-stop {
-    height: 32px;
-    padding: 0 14px 0 10px;
-    margin-inline-end: 8px;
-    border-radius: 999px;
-    background: #2a2a2a;
-    color: #ececec;
-    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
-  }
-  :global([data-conversation-pane]) .cv-ask-stop:hover:not(:disabled) { background: #333333; color: #ececec; }
-  /* Its pill's right edge stands on the option rows' right edge. */
-  :global([data-conversation-pane]) .cv-ask-stop:last-child { margin-inline-end: 0; }
-  :global([data-conversation-pane]) .cv-ask-stop-mark { width: 16px; height: 16px; }
-  /* Option rows (part 5): min 48, #242424, radius 12, padding 12 16, 8px apart; a 24px #2e2e2e
-     keycap (radius 6, 13 500); the title 15/22 #ececec and its description 13/20 #b0b0b0. The
-     focused (and chosen) row: a 1px #bccbf0 edge at 55% and an accent keycap with a #141414
-     digit. */
-  :global([data-conversation-pane] .cv-ask-rows) { gap: 8px; }
-  :global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424; font: var(--cv-weight-body) var(--cv-type-ui)/22px var(--cv-font); }
-  /* v11 (2): on the #1c1c1c ask a row is #2a2a2a with a 1px #363636 edge (drawn inside, so the
-     row keeps its size); hover and keyboard focus #303030 with the accent edge. */
-  :global([data-conversation-pane] .cv-ask-row) { background: #2a2a2a; box-shadow: inset 0 0 0 1px #363636; }
-  /* v10 (4): a row is the action. Under the pointer or keyboard focus (and a question's
-     answer already chosen) it is #2c2c2c with the accent edge and an accent keycap. Nothing is
-     lit when the pointer is not on it; the accent edge is the focus mark (no extra ring). */
-  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
-  :global([data-conversation-pane] .cv-ask-row:focus-visible) { outline: none; }
-  /* v14 (3): no row is lit at rest (v13 (4) withdrawn); every keycap is the neutral #3a3a3a.
-     Hover and keyboard focus keep their style. */
-  :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #3a3a3a; color: #d9d9d9; font: var(--cv-weight-label) var(--cv-type-control)/1 var(--cv-font); }
-  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
-  :global([data-conversation-pane] .cv-ask-label) { color: #ececec; }
-  :global([data-conversation-pane] .cv-ask-sub) { color: #b0b0b0; font: var(--cv-weight-body) var(--cv-type-control)/20px var(--cv-font); }
-  /* v15 (5): option descriptions are #b8b8b8; an unavailable pager arrow is #7a7a7a. */
-  :global([data-conversation-pane] .cv-ask-sub) { color: #b8b8b8; }
-  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #7a7a7a; }
-  /* v16 (12): option descriptions one step up, #c4c4c4. */
-  :global([data-conversation-pane] .cv-ask-sub) { color: #c4c4c4; }
   @keyframes cv-ask-in { from { opacity: 0; transform: translateY(4px); } }
   @media (prefers-reduced-motion: reduce) { .cv-ask { animation: none; } }
   @media (max-width: 560px) {

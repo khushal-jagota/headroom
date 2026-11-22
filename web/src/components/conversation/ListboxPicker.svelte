@@ -645,47 +645,42 @@
   .listbox-picker-tick:has(svg) { display: grid; place-items: center; width: 14px; min-height: 1em; }
   .listbox-picker-tick svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-  /* v6.1: in the conversation composer only the Steer menu (a compact list) stands on the
-   * floating plane: no edge, 12px round, the float shadow, 6px of padding; labels only, 14px
-   * on 36px rows, the chosen row marked by a drawn check at its right. The model picker keeps
-   * the base picker's look and behaviour (rail, list, Reasoning), sized to its content. */
-  /* v7: the menu is a Surface (#1c1c1c, a 1px #2a2a2a edge, radius 20) with the float shadow;
-     its rows are quiet Buttons (32 tall pills, 13/20 500). */
+  /* In the conversation composer the delivery menu (the one compact list there) is a Surface
+     floating with the float shadow; its rows are quiet buttons, 32 tall pills, labels only,
+     the chosen row marked by a drawn check at its right. */
   :global([data-conversation-composer]) .listbox-picker-panel.compact {
     padding: 6px;
-    background: #1c1c1c;
-    border: 1px solid #2a2a2a;
-    border-radius: 20px;
+    background: var(--cv-surface);
+    border: 1px solid var(--cv-surface-edge);
+    border-radius: var(--cv-surface-radius);
     box-shadow: var(--cv-shadow-float);
     animation: listbox-picker-in var(--cv-dur-base) var(--cv-ease-out);
   }
   @keyframes listbox-picker-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-  :global([data-conversation-composer]) .compact > .listbox-picker-list { padding: 0; }
   :global([data-conversation-composer]) .compact .listbox-picker-option {
     min-height: 32px;
-    gap: var(--cv-s3);
-    padding: 6px 14px;
-    border-radius: 999px;
-    color: #bdbdbd;
+    gap: var(--cv-s4);
+    padding: 6px var(--cv-s3);
+    border-radius: var(--cv-r-pill);
+    color: #e0e0e0;
     font-family: var(--cv-font);
     font-size: var(--cv-type-control);
     font-weight: var(--cv-weight-label);
-    line-height: 20px;
+    line-height: var(--cv-leading-control);
   }
-  :global([data-conversation-composer]) .compact .listbox-picker-option:hover { background: #2a2a2a; background-image: none; color: #ececec; }
-  :global([data-conversation-composer]) .compact .listbox-picker-option.cursor { background: #2a2a2a; color: #ececec; }
-  :global([data-conversation-composer]) .compact .listbox-picker-option.on { color: #ececec; }
+  :global([data-conversation-composer]) .compact .listbox-picker-option:hover { background: #2a2a2a; background-image: none; color: var(--cv-ink); }
+  :global([data-conversation-composer]) .compact .listbox-picker-option.cursor { background: #2a2a2a; color: var(--cv-ink); }
+  :global([data-conversation-composer]) .compact .listbox-picker-option.on { color: var(--cv-ink); }
   :global([data-conversation-composer]) .compact .listbox-picker-list:focus-visible .listbox-picker-option.cursor {
     box-shadow: inset 0 0 0 var(--cv-focus-width) var(--cv-accent);
   }
-  :global([data-conversation-composer]) .compact .listbox-picker-tick { color: #ececec; width: 16px; }
+  :global([data-conversation-composer]) .compact .listbox-picker-tick { color: var(--cv-ink); width: 16px; }
   :global([data-conversation-composer]) .compact .listbox-picker-tick svg { width: 16px; height: 16px; stroke-width: 1.5; }
-  /* v6.1 (26): the composer's model picker is only as wide as its content: the rail fits the
-   * longest backend name, the list the longest model or effort name, plus row padding. */
+  /* The composer's model picker is only as wide as its content: the rail fits the longest
+     backend name, the list the longest model or effort name, plus row padding. */
   :global([data-conversation-composer]) .listbox-picker-panel.rail {
     grid-template-columns: max-content max-content;
     width: max-content;
-    max-width: calc(100vw - var(--space-4) * 2);
   }
   @media (prefers-reduced-motion: reduce) {
     :global([data-conversation-composer]) .listbox-picker-panel.compact { animation: none; }

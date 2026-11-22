@@ -39,8 +39,8 @@
   /* The status line: a 40px row over the composer, the state on the left and "Open" on the
      right edge. Space, not a rule, separates it from the page. */
   .c2-rest { position:relative; display:flex; flex:none; flex-direction:column; align-items:stretch; gap:var(--cv-s1);
-    width:100%; min-width:0; border:0; padding:0 0 var(--cv-s2); background:transparent; color:#8f8f8f;
-    text-align:left; cursor:pointer; font:var(--cv-weight-body) 13px/20px var(--cv-font);
+    width:100%; min-width:0; border:0; padding:0 0 var(--cv-s2); background:transparent; color:var(--cv-system-ink);
+    text-align:left; cursor:pointer; font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
     font-variant-numeric:tabular-nums; }
   /* A short canvas gradient carries the page into the dock, so a line scrolling under it is
      covered within a few pixels instead of cut (the dock has no surface). */
@@ -54,7 +54,7 @@
     transition:color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out); }
   .c2-rest-control-arrow { flex:none; width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
-    color:#ececec; background-color:#2a2a2a; }
+    color:var(--cv-ink); background-color:var(--cv-control); }
   .c2-rest:focus-visible { outline:var(--cv-focus-width) solid var(--cv-accent); outline-offset:var(--cv-focus-offset); border-radius:var(--cv-r-md); }
   /* The unread message keeps the prose measure, never the pane's width. */
   .c2-rest-preview { max-width:var(--page-prose-measure); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden;

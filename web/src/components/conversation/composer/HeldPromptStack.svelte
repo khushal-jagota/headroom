@@ -248,10 +248,10 @@
 
 <style>
   /* Each waiting message is the person's own message, not sent yet: on their side of the
-   * thread, a ghost bubble, and under it one chip that opens its actions. */
-  /* Each queued message is the next message, so it stands a turn's gap (32) under what is
-     above it (B9). */
-  .chat-queue-slot { flex: none; margin-block-start: 0; }
+     thread, a ghost of the bubble it will become, and under it one chip that opens its
+     actions. Each stands a turn's gap under what is above it. The slot ends the transcript
+     and takes no rhythm gap of its own: the stack pads itself. */
+  .chat-queue-slot { flex: none; min-width: 0; margin-block-start: 0; }
   .chat-queue-stack {
     display: grid;
     gap: var(--cv-gap-turn);
@@ -269,22 +269,20 @@
     animation: chat-qrow-in var(--cv-dur-base) var(--cv-ease-out);
   }
   @keyframes chat-qrow-in { from { opacity: 0; } to { opacity: 1; } }
-  /* v4.2: not sent yet, at a glance: a ghost of the bubble it will become. No fill and a 1px
-     frame where the bubble's edge will be; the frame and the Queued chip say "not sent", so
-     the words stay readable in #d9d9d9. */
+  /* Not sent yet, at a glance: no fill and a 1px frame where the bubble's edge will be. The
+     frame and the chip say "not sent", so the words stay readable in the second tone. */
   .chat-qrow :global(.c2-bubble) {
     background: transparent;
-    /* v5.2: the frame at 16% so it holds against the canvas. */
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+    box-shadow: inset 0 0 0 1px #4a4a4a;
     color: var(--cv-t2);
   }
-  /* v11 (5): a queued picture is the size a sent one is (app.css, .chat-qrow .file-preview-media);
-     the queued bubble is as wide as its widest content. Its edge is the thumbnails' 16%. */
+  /* A waiting picture is the size a sent one is (app.css, prose media); the bubble is as wide
+     as its widest content. */
   .chat-qrow :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; margin: 0; }
   .chat-qrow :global(.c2-bubble--attached .c2-piece-image-slot) { justify-content: flex-start; }
   /* The row is the system line's 20px line; the 28px button overhangs it 4px above and
      below. The row's right edge is the bubble's. */
-  .chat-qrow-meta { display: flex; align-items: center; justify-content: flex-end; gap: 4px; height: 20px; }
+  .chat-qrow-meta { display: flex; align-items: center; justify-content: flex-end; gap: var(--cv-s1); height: 20px; }
   .chat-qrow-anchor { position: relative; display: inline-flex; }
   .chat-qrow-more {
     flex: none;
@@ -294,38 +292,32 @@
     height: 28px;
     padding: 0;
     border: 0;
-    border-radius: 999px;
+    border-radius: var(--cv-r-pill);
     background: none;
-    color: #bdbdbd;
+    color: #c4c4c4;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-qrow-more svg { width: 16px; height: 16px; fill: currentColor; }
-  .chat-qrow-more:hover:not(:disabled) { background: #2a2a2a; color: #ececec; }
-  .chat-qrow-more[aria-expanded="true"], .chat-qrow-more[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }
+  .chat-qrow-more:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-ink); }
+  .chat-qrow-more[aria-expanded="true"], .chat-qrow-more[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: var(--cv-control-edge); color: var(--cv-t1); }
   .chat-qrow-more:disabled { cursor: default; }
   .chat-qrow-more:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
-  /* v14 (8): the queued bubble's frame is 1px #4a4a4a. */
-  .chat-qrow :global(.c2-bubble) { box-shadow: inset 0 0 0 1px #4a4a4a; }
-  .chat-qrow-more { color: #c4c4c4; }
-  /* The dropdown (v4): the float plane anchored on its chip, opening upward from its right
-     edge; labels only, 14px on 36px rows. Remove is in the danger ink. */
+  /* The menu: a Surface floating with a shadow, anchored on its chip, opening upward with its
+     right edge on the chip's; its rows are quiet buttons. */
   .chat-qrow-menu[hidden] { display: none; }
   .chat-qrow-menu {
     position: absolute;
     z-index: 30;
-    /* v9 (4): the menu's right edge on its own chip's right edge. */
     right: 0;
-    bottom: calc(100% + 8px);
+    bottom: calc(100% + var(--cv-s2));
     width: max-content;
     min-width: 160px;
     display: grid;
     padding: 6px;
-    /* v7: a menu is a Surface (#1c1c1c, a 1px #2a2a2a edge, radius 20) floating with a shadow;
-       its rows are quiet buttons. */
-    border: 1px solid #2a2a2a;
-    border-radius: 20px;
-    background: #1c1c1c;
+    border: 1px solid var(--cv-surface-edge);
+    border-radius: var(--cv-surface-radius);
+    background: var(--cv-surface);
     box-shadow: var(--cv-shadow-float);
     animation: chat-qrow-pop var(--cv-dur-base) var(--cv-ease-out);
   }
@@ -336,18 +328,16 @@
     min-height: 32px;
     padding: 0 14px;
     border: 0;
-    border-radius: 999px;
+    border-radius: var(--cv-r-pill);
     background: none;
-    color: #ececec;
-    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
+    color: var(--cv-ink);
+    font: var(--cv-weight-label) var(--cv-type-control)/var(--cv-leading-control) var(--cv-font);
     text-align: start;
     white-space: nowrap;
     cursor: pointer;
   }
-  .chat-qrow-item:hover:not(:disabled), .chat-qrow-item:focus-visible { background: #2a2a2a; outline: none; }
+  .chat-qrow-item:hover:not(:disabled), .chat-qrow-item:focus-visible { background: var(--cv-control); outline: none; }
   .chat-qrow-item:disabled { color: var(--cv-t3); cursor: default; }
-  .chat-qrow-x { color: #ececec; }
-  .chat-qrow-x:hover:not(:disabled) { color: #ececec; }
   @media (prefers-reduced-motion: reduce) {
     .chat-qrow { animation: none; }
     .chat-qrow-menu { animation: none; }

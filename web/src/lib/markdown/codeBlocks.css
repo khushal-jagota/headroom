@@ -1,8 +1,6 @@
-/* A fenced code block: one recessed frame holding a quiet header (language, Copy) over the
- * code, which scrolls sideways inside the frame instead of widening anything around it. */
 :root {
-  /* Syntax colour (design v3 §2.3): one family of muted hues, each at least 5.2:1 on the
-   * conversation's well and above 4.5:1 on --surface-recessed. A light theme overrides these. */
+  /* Syntax colour: one family of muted hues, each at least 5.2:1 on the conversation's well
+   * and above 4.5:1 on --surface-recessed. A light theme overrides these. */
   --code-syntax-comment: var(--cv-syntax-comment);
   --code-syntax-keyword: var(--cv-syntax-keyword);
   --code-syntax-string: var(--cv-syntax-string);
@@ -14,38 +12,49 @@
   --code-syntax-deleted: var(--cv-danger);
 }
 
+/* A code block is a Surface: one frame holding a quiet header (the language, Copy) over the
+ * code, which scrolls sideways inside the frame instead of widening anything around it. Its
+ * gaps are the prose's block gaps (app.css). */
 .chat-thread .markdown .markdown-code {
   min-width: 0;
   max-width: 100%;
-  margin: 0 0 var(--space-3);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--surface-recessed);
+  border: 1px solid var(--cv-surface-edge);
+  border-radius: var(--cv-r-lg);
+  background: var(--cv-code-surface);
   overflow: hidden;
 }
 
-.chat-thread .markdown .markdown-code:last-child { margin-bottom: 0; }
-
 .chat-thread .markdown .markdown-code > pre {
   margin: 0;
+  padding: var(--cv-s1) var(--cv-s4) var(--cv-s3);
   border-radius: 0;
   background: transparent;
+  color: var(--cv-code-ink);
+  font-family: var(--cv-mono);
+  font-size: var(--cv-type-code);
+  line-height: var(--cv-leading-code);
   white-space: pre;
   overflow-wrap: normal;
 }
+.chat-thread .markdown .markdown-code > pre code {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
 
+/* The header: the language in the detail tone and Copy, a quiet button. */
 .chat-thread .markdown .markdown-code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2);
-  min-height: 32px;
-  padding: 0 var(--space-1) 0 var(--space-3);
-  border-bottom: var(--border-hairline) solid var(--border-color);
-  color: var(--tone-tertiary);
-  font-family: var(--font-ui);
-  font-size: var(--type-small);
-  line-height: 1;
+  gap: var(--cv-s2);
+  min-height: 40px;
+  padding: var(--cv-s1) var(--cv-s1) 0 var(--cv-s4);
+  color: var(--cv-t3);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-code);
+  font-weight: var(--cv-weight-body);
+  line-height: var(--cv-leading-code);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -57,77 +66,37 @@
   white-space: nowrap;
 }
 
-/* The shared ghost button (.button--ghost), at the header's size: a glyph and its word. */
 .chat-thread .markdown .markdown-code-copy {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  height: 24px;
-  padding: 0 var(--space-2);
-  font-size: var(--type-small);
-  font-weight: var(--weight-body);
-}
-.chat-thread .markdown .markdown-code-copy-glyph {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-/* v7: a code block is a Surface: #1a1a1a, a 1px #2a2a2a edge, radius 12; the code 13/20 in
- * JetBrains Mono, padded 12 16. Its header holds the language (status detail, 13/20) and Copy,
- * a quiet button (32 tall pill, 13/20 500, #bdbdbd, a 16px icon 6px before its word). */
-.chat-thread .markdown .markdown-code {
-  border: 1px solid var(--cv-surface-edge, #2a2a2a);
-  border-radius: 12px;
-  background: var(--cv-code-surface, #1a1a1a);
-}
-.chat-thread .markdown .markdown-code-head {
-  min-height: 40px;
-  padding: 4px 4px 0 16px;
-  border-bottom: 0;
-  color: var(--cv-detail-ink, #b0b0b0);
-  font-family: var(--cv-font);
-  font-size: var(--cv-type-code);
-  font-weight: var(--cv-weight-body);
-  line-height: 20px;
-}
-.chat-thread .markdown .markdown-code-copy {
   gap: 6px;
   height: 32px;
   padding: 0 14px;
-  border-radius: 999px;
-  color: var(--cv-quiet-ink, #bdbdbd);
+  border-radius: var(--cv-r-pill);
+  color: var(--cv-quiet-ink);
   font-family: var(--cv-font);
   font-size: var(--cv-type-code);
-  line-height: 20px;
   font-weight: var(--cv-weight-label);
+  line-height: var(--cv-leading-code);
   transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
 }
-.chat-thread .markdown .markdown-code-copy-glyph { width: 16px; height: 16px; }
 .chat-thread .markdown .markdown-code-copy:hover {
-  background: #2a2a2a;
-  color: var(--cv-ink, #ececec);
+  background: var(--cv-control);
+  color: var(--cv-ink);
 }
 .chat-thread .markdown .markdown-code-copy:focus-visible {
   outline: var(--cv-focus-width) solid var(--cv-accent);
   outline-offset: var(--cv-focus-offset);
 }
-.chat-thread .markdown .markdown-code > pre {
-  padding: 4px 16px 12px;
-  color: var(--cv-code-ink);
-  font-family: var(--cv-mono);
-  font-size: var(--cv-type-code);
-  line-height: 20px;
-}
-.chat-thread .markdown .markdown-code > pre code {
-  font-family: inherit;
-  font-size: inherit;
-  color: inherit;
+.chat-thread .markdown .markdown-code-copy-glyph {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-thread .markdown .markdown-code-copy { transition: none; }

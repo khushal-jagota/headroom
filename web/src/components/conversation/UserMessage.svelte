@@ -142,7 +142,7 @@
     overflow: hidden;
   }
 
-  /* B5: inside the bubble, under the words: a 1 px rule 10 below them, "Not delivered ·
+  /* Not delivered: inside the bubble, under the words, a 1px rule 10 below them, "Not delivered ·
      <reason>" 10 under the rule in the failure red, then one row of text actions. */
   .c2-undelivered {
     margin-block-start: 10px;

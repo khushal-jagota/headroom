@@ -66,44 +66,14 @@
   .delivery-mode-host { display: contents; }
   .delivery-mode-face { white-space: nowrap; }
   .delivery-mode-name { white-space: nowrap; }
-  /* Closed, the mode is a 28px chip, 8px round, its name in 500 and a drawn chevron. */
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger) {
-    gap: 4px;
-    /* v8 (14): the label alone is the control (no chevron). v9 (3): a 32px pill with a
-       #232323 fill at rest (#d9d9d9), hover #2a2a2a, open #3a3a3a. */
-    padding-inline: 12px;
-    background: #232323;
-    color: #d9d9d9;
-    font-weight: var(--cv-weight-label);
-  }
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger:hover:not(:disabled)) {
-    background: #2a2a2a;
-    color: #f2f2f2;
-  }
-  /* p12c: an open chip is filled #3a3a3a, its words and chevron #f2f2f2, the chevron up. */
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open),
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open:hover:not(:disabled)) {
-    background: #3a3a3a;
-    color: #f2f2f2;
-    /* Above its own menu, so the menu's float shadow does not darken the open chip. */
-    position: relative;
-    z-index: 41;
-  }
-  /* The menu is a native dropdown: anchored on its own chip, right edges aligned; v6: its
-   * bottom 8px above the composer's top edge. Its width fits its longest label (min 160). */
+  /* The chip is one of the composer's run chips (app.css). Its menu is a native dropdown:
+     anchored on its own chip, right edges aligned, its bottom 8px above the composer's top
+     edge, as wide as its longest label (its rows: ListboxPicker). */
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;
     right: 0;
-    bottom: calc(100% + 8px + var(--c2-menu-lift, 0px));
+    bottom: calc(100% + var(--cv-s2) + var(--c2-menu-lift, 0px));
     width: max-content;
     min-width: 0;
   }
-  /* v16 (9): the menu fits its content, as the model picker does: 12px label padding, 16px from
-     the label to the check. Unselected items are #e0e0e0. */
-  :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact .listbox-picker-option) {
-    gap: 16px;
-    padding-inline: 12px;
-    color: #e0e0e0;
-  }
-  :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact .listbox-picker-option:is(.on, .cursor, :hover)) { color: #ececec; }
 </style>

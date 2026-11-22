@@ -52,7 +52,9 @@
 
 <style>
   .conversation-file-card { min-width: 0; }
-  /* The person's things share the raised step; the card is a quiet row, not a document. */
+  /* A file is a quiet row on the Surface, not a document: the file's icon alone in a 32px
+     slot, its name and size, and Preview and download as quiet pill buttons. It also stands
+     in a review card outside the pane, so the Surface names keep their values as fallbacks. */
   .cv-file {
     display: flex;
     align-items: center;
@@ -63,7 +65,6 @@
     min-inline-size: min(100%, 320px);
     max-inline-size: 100%;
     box-sizing: border-box;
-    /* v7: an attachment card is a Surface: #1c1c1c, a 1px #2a2a2a edge, radius 20. */
     padding: 12px 8px 12px 12px;
     border: 1px solid var(--cv-surface-edge, #2a2a2a);
     border-radius: var(--cv-surface-radius, 20px);
@@ -76,7 +77,6 @@
     place-items: center;
     inline-size: 32px;
     block-size: 32px;
-    /* v7: the file's icon alone (16px, #bdbdbd) in a 32px slot; no tile of its own. */
     background: transparent;
     color: var(--cv-quiet-ink, #bdbdbd);
   }
@@ -94,14 +94,14 @@
   .cv-file-name {
     overflow: hidden;
     color: var(--cv-ink, #ececec);
-    font-size: var(--cv-type-title);
+    font-size: var(--cv-type-heading);
     font-weight: var(--cv-weight-label);
     line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .cv-file-meta {
-    color: var(--cv-detail-ink, #b0b0b0);
+    color: var(--cv-t3);
     font-size: var(--cv-type-control);
     line-height: 20px;
     font-variant-numeric: tabular-nums;
@@ -110,7 +110,6 @@
     flex: none;
     display: inline-grid;
     place-items: center;
-    /* v7: Preview and download are quiet buttons: 32 tall pills, #bdbdbd, hover #2a2a2a. */
     block-size: 32px;
     border-radius: 999px;
     color: var(--cv-quiet-ink, #bdbdbd);

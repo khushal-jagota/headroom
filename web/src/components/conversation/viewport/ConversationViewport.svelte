@@ -1274,23 +1274,15 @@
 </div>
 
 <style>
-  /* The thread's top edge: the header above is a solid canvas, and while anything is scrolled
-     up under it the thread fades in over a short distance from the header's bottom edge, so a
-     line passing under it is drawn out softly, never sliced and never ruled off. At the top
-     there is nothing beyond the edge and it stands sharp. At the bottom, only while newer
-     content is below the view, a 24px fade above the composer (pass 11). */
+  /* The thread's edges. The header above is a solid canvas: while anything is scrolled up under
+     it, the thread fades in over 40px from the header's bottom edge, so a line or a card edge
+     passing under it is drawn out softly, never sliced and never ruled off. At the top there is
+     nothing beyond the edge and it stands sharp. At the bottom, only while newer content is
+     below the view, the last 16px above the composer dissolve. The thread reaches over its
+     scrollbar's gutter so the column's text stays put (the gutter is measured into
+     --cv-scrollbar-gutter). */
   .chat-thread {
-    /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
-    /* v6/v7: 24 between the transcript's end and the composer. v17 (8): at least 32, at any
-       scroll position. */
-    padding-bottom: 32px;
     margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
-    max-width: none;
-    /* v5: the header is solid; the thread fades in over 24px starting right at the header's
-       bottom edge (no solid band, no hard cut). While newer content sits below the view, the
-       bottom edge dissolves over 24px above the composer. */
-    /* v9 (5): the header's fade is 40px from the canvas, starting at its bottom edge, so a
-       line or a card edge scrolling under it dissolves before it reaches the header. */
     --c2-top-fade: transparent 0, rgb(0 0 0 / 0.35) 16px, #000 40px;
     --c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
@@ -1305,13 +1297,9 @@
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
             mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
   }
-  /* v8: one anchoring rule for every state: a conversation shorter than the view reads from
-     the top, under its header, as a page does. */
-  .chat-thread-content { margin-block-start: 0; }
-  /* v8: an empty conversation takes the whole view, so its one line stands in the middle. */
+  /* An empty conversation takes the whole view, so its one line stands in the middle. */
   .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
-  /* The browser keeps the reader's place when history arrives above them. Nothing
-     here competes with it, so it is left on. */
-  /* Answer room is not content and never shrinks to make room for content. */
+  /* Answer room is not content and never shrinks to make room for content. The browser keeps
+     the reader's place when history arrives above them; nothing here competes with it. */
   .c2-reserved { flex: none; overflow-anchor: none; }
 </style>

@@ -86,40 +86,37 @@
 {/if}
 
 <style>
-  /* Pending files and pictures share the final 76px tile geometry. */
+  /* Pending files and pictures: 76px tiles on the Surface, a picture filling its tile under a
+     light edge and a top shade for its remove button, a file its icon, name and size. */
+  .chat-attachments { padding-block-start: 0; padding-inline-end: 0; }
   .chat-att {
     height: 76px;
-    border: 1px solid #2a2a2a;
+    border: 1px solid var(--cv-surface-edge);
     border-radius: 10px;
-    background: #1c1c1c;
+    background: var(--cv-surface);
   }
-  .chat-att.img { width: 76px; height: 76px; border: 0; border-radius: 10px; background: #1c1c1c; }
+  .chat-att.img { width: 76px; border: 0; }
   .chat-att.img img { border-radius: 10px; object-position: left top; }
-  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); pointer-events: none; background: linear-gradient(rgb(0 0 0 / 55%), transparent) top / 100% 28px no-repeat; }
+  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--cv-media-edge); pointer-events: none; background: linear-gradient(rgb(0 0 0 / 55%), transparent) top / 100% 28px no-repeat; }
   .chat-att.file {
-    height: 76px;
-    align-items: center;
     gap: 10px;
     max-width: 240px;
-    padding: 0 16px 0 12px;
-    background: #1c1c1c;
-    padding-inline: 12px 40px;
+    padding: 0 40px 0 var(--cv-s3);
   }
   .chat-att.video { max-width: 280px; }
-  .chat-att-kind { width: 32px; height: 32px; background: transparent; color: #bdbdbd; }
+  .chat-att-kind { width: 32px; height: 32px; background: transparent; color: var(--cv-quiet-ink); }
   .chat-att.file > .chat-att-kind { width: 16px; }
   .chat-att-kind svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .chat-att-thumb { position: relative; flex: none; display: grid; place-items: center; overflow: hidden; width: 64px; height: 48px; border-radius: var(--cv-r-sm); background: var(--cv-raised); }
   .chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .chat-att-thumb svg { position: relative; width: 20px; height: 20px; padding: 4px; fill: var(--cv-primary-ink); border-radius: 50%; background: var(--cv-primary-fill); }
   .chat-att-words { gap: 0; }
-  .chat-att-name { color: #ececec; font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: 20px; font-weight: var(--cv-weight-label); }
-  .chat-att-meta { color: #b8b8b8; font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: 20px; font-variant-numeric: tabular-nums; }
+  .chat-att-name { color: var(--cv-ink); font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: var(--cv-leading-control); font-weight: var(--cv-weight-label); }
+  .chat-att-meta { color: #b8b8b8; font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: var(--cv-leading-control); font-variant-numeric: tabular-nums; }
   .chat-att.failed .chat-att-meta { color: var(--cv-danger); }
   .chat-att-again { flex: none; margin-inline-start: auto; }
   .chat-att-progress { position: absolute; inset: auto var(--cv-s2) 4px var(--cv-s2); height: 2px; border-radius: 1px; background: rgb(255 255 255 / 10%); overflow: hidden; }
   .chat-att-progress::after { content: ""; display: block; width: var(--chat-att-progress, 0%); height: 100%; background: var(--cv-t2); transition: width var(--cv-dur-base) linear; }
-  .chat-attachments { gap: var(--cv-s2); padding-block-start: 0; margin-block-start: 0; padding-inline-end: 0; }
   .chat-att-x {
     top: 6px;
     right: 6px;
@@ -130,11 +127,10 @@
     border-radius: 50%;
     background: rgb(20 20 20 / 85%);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 24%);
-    color: #ececec;
+    color: var(--cv-ink);
     z-index: 1;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { background: rgb(20 20 20 / 85%); background-image: none; color: #ececec; }
   .chat-att-x:hover:not(:disabled) { background: rgb(36 36 36 / 92%); color: #ffffff; }
   .chat-att-x svg { display: block; width: 20px; height: 20px; padding: 5px; box-sizing: border-box; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
   .chat-att-x:disabled { color: var(--cv-t3); cursor: default; }

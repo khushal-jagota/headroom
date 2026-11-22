@@ -152,38 +152,31 @@
 </AskShell>
 
 <style>
-  /* The command, or the request behind a question: one canvas well inside the raised ask,
-     in mono, bounded so the ask stays the composer's size and scrolls inside instead. */
-  /* v7: the command is a code block: #1a1a1a, a 1px #2a2a2a edge, radius 12, 13/20 mono,
-     padding 12 16. */
+  /* The command, or the request behind a question: a code block inside the ask, bounded so
+     the ask stays the composer's size and scrolls inside instead. It wraps only at spaces (each
+     word is one unbreakable piece), so a long command stays on one line with room to the
+     right, and a single word wider than the block scrolls inside it instead of breaking. */
   .c2-ask-detail {
     margin: 0;
     max-height: 240px;
     overflow: auto;
-    padding: 12px 16px;
-    /* v11 (8): the command block's edge is #3a3a3a. */
-    border: 1px solid #3a3a3a;
-    border-radius: 12px;
-    background: var(--cv-code-surface, #1a1a1a);
+    padding: var(--cv-s3) var(--cv-s4);
+    border: 1px solid var(--cv-control-edge);
+    border-radius: var(--cv-r-lg);
+    background: var(--cv-code-surface);
     color: #e0e0e0;
-    font: var(--cv-weight-body) var(--cv-type-code)/20px var(--cv-mono);
+    font: var(--cv-weight-body) var(--cv-type-code)/var(--cv-leading-code) var(--cv-mono);
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
   }
-  /* v17 (7): the command wraps only at spaces (each word is one unbreakable piece). A single
-     word wider than the block scrolls inside it instead of breaking. v18 (5): 16px side padding
-     again, and mono 12.5/20, so a 74-character command stays on one line with room to the right. */
-  .c2-ask-detail { padding-inline: 16px; font-size: var(--cv-type-code); line-height: 20px; overflow-wrap: normal; }
   .c2-ask-word { white-space: pre; }
   .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
   .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }
-  .c2-ask-choices.after-detail { margin-block-start: 16px; }
-  /* v11 (2): in a permission ask the declining row's label is the failure tone. v18 (4): the
-     same red as the "This turn failed" title, #ff8f85. */
-  .c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #ff8f85; }
-  /* v19 (3): the first option's label (Allow once) is #ffffff 500; the others stay 400. Nothing
-     is preselected: the row itself looks like every other row. */
-  .c2-ask-choice[data-conversation-ask-emphasis="primary"] :global(.cv-ask-label) { color: #ffffff; font-weight: 500; }
+  .c2-ask-choices.after-detail { margin-block-start: var(--cv-s4); }
+  /* The declining row's label is the failure red; the first option's label (Allow once) is
+     white and 500. Nothing is preselected: the row itself looks like every other row. */
+  .c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: var(--cv-failure-ink); }
+  .c2-ask-choice[data-conversation-ask-emphasis="primary"] :global(.cv-ask-label) { color: #ffffff; font-weight: var(--cv-weight-label); }
   .c2-ask-note {
     margin: var(--cv-s3) 0 0;
     color: var(--cv-t3);

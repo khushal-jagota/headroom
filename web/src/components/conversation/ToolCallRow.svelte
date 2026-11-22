@@ -186,43 +186,41 @@
 </div>
 
 <style>
-  /* One line, 32 tall: the kind's glyph, the verb, the chevron right after it (v4.1), the
-     exact subject, and how it went at the row's end. */
+  /* One status line, 32 tall: the kind's glyph hanging in the mark gutter, the verb, the
+     chevron right after it, the exact subject, and how it went at the row's end. The row's
+     hover fill reaches past the text to the column's edge. */
   .acp-step {
     display: grid;
     grid-template-columns: 16px minmax(0, max-content) 16px minmax(0, 1fr) minmax(72px, auto);
     align-items: center;
-    column-gap: var(--cv-s2);
-    /* B9: the glyph hangs in the mark gutter (x = -24 to -8), the words start at x = 0. */
+    gap: var(--cv-s2);
     width: calc(100% + var(--cv-mark-hang));
     margin-inline-start: calc(-1 * var(--cv-mark-hang));
     min-width: 0;
     height: 32px;
     padding: 0 var(--cv-s2);
     border: 0;
-    /* v7: a status line, 13/20: detail-only words after a 16px icon. */
-    border-radius: 999px;
+    border-radius: var(--cv-r-pill);
     background: transparent;
-    color: var(--cv-detail-ink, #b0b0b0);
+    color: var(--cv-t3);
     font-family: var(--cv-font);
     font-size: var(--cv-type-control);
-    line-height: 20px;
+    line-height: var(--cv-leading-control);
     letter-spacing: normal;
     text-align: start;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .acp-step:hover { background-color: #2a2a2a; }
+  .acp-step:hover { background-color: var(--cv-control); }
   .acp-step:focus-visible {
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: calc(var(--cv-focus-width) * -1);
   }
-  /* v4.2: tool rows are quieter than prose: the icon #8c8c8c, the label #a3a3a3. */
   .c2-tool-icon {
     width: 16px;
     height: 16px;
     fill: none;
-    stroke: var(--cv-quiet-ink, #bdbdbd);
+    stroke: var(--cv-quiet-ink);
     stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -233,12 +231,14 @@
     gap: 6px;
     min-width: 0;
     overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     color: inherit;
     font-size: inherit;
     letter-spacing: normal;
   }
-  .c2-tool-verb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-detail-ink, #b0b0b0); font-weight: var(--cv-weight-body); }
+  .acp-step:hover .c2-tool-line { color: var(--cv-ink); }
+  .c2-tool-verb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-t3); font-weight: var(--cv-weight-body); }
   .c2-tool-subject-slot { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
   .c2-tool-subject {
     flex: 0 1 auto;
@@ -247,23 +247,22 @@
     text-overflow: ellipsis;
     color: var(--cv-t3);
   }
-  /* Only the exact thing the call acted on (a command, a path, a pattern) is set as code.
-     Words about the call ("0 of 5 done") stay in the thread's own face. */
-  /* Code in the row is set at the row's own size, so the line reads as one size. */
+  /* Only the exact thing the call acted on (a command, a path, a pattern) is set as code, at
+     the row's own size, so the line reads as one size. Words about the call ("0 of 5 done")
+     stay in the thread's own face. */
   .c2-tool-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-control); }
-  .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-ink, #ececec); }
-  /* p13b: a running call says so in words ("Running"-style verb, #ececec 500), not a spinner. */
-  .acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
-  /* v14 (6): the live row's "Running" is #c4c4c4 500, not white, so only the Working line reads
-     as the live status. Under the pointer it lights as every row does. */
-  .acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: #c4c4c4; }
-  .acp-step[data-conversation-tool-status="running"]:is(:hover, :focus-visible) .c2-tool-verb { color: var(--cv-ink, #ececec); }
+  .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-ink); }
+  /* A running call says so in words ("Running", 500), not a spinner, and a step under white,
+     so only the Working line reads as the live status. Under the pointer it lights as every
+     row does. */
+  .acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: #c4c4c4; font-weight: var(--cv-weight-label); }
+  .acp-step[data-conversation-tool-status="running"]:is(:hover, :focus-visible) .c2-tool-verb { color: var(--cv-ink); }
   .c2-tool-outcome { display: flex; justify-content: flex-end; min-width: 0; }
   .c2-tool-state {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    color: var(--cv-t4);
+    color: var(--cv-t3);
     font-size: var(--cv-type-caption);
     line-height: var(--cv-leading-caption);
     font-variant-numeric: tabular-nums;
@@ -274,7 +273,7 @@
     width: 16px;
     height: 16px;
     fill: none;
-    stroke: var(--cv-quiet-ink, #bdbdbd);
+    stroke: var(--cv-quiet-ink);
     stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -282,9 +281,8 @@
   }
   .acp-step:hover .c2-tool-chevron,
   .acp-step:focus-visible .c2-tool-chevron,
-  .c2-tool.is-open .c2-tool-chevron { stroke: var(--cv-ink, #ececec); }
+  .c2-tool.is-open .c2-tool-chevron { stroke: var(--cv-ink); }
   .c2-tool.is-open .c2-tool-chevron { transform: rotate(90deg); }
-  /* The hover fill reaches past the text to the column's edge. */
   .c2-tool { min-width: 0; margin-inline: calc(var(--cv-s2) * -1); }
   /* What it printed: a block of its own, starting under the verb. */
   .c2-tool-body { padding: var(--cv-s1) var(--cv-s2) var(--cv-s2) 34px; }
@@ -355,7 +353,7 @@
     scrollbar-width: thin;
     scrollbar-color: transparent transparent;
   }
-  .c2-tool-output:hover { scrollbar-color: var(--cv-t4) transparent; }
+  .c2-tool-output:hover { scrollbar-color: var(--cv-t3) transparent; }
   .c2-tool-output.is-whole { max-height: none; }
   .c2-tool-problem { color: var(--cv-danger); }
   /* The whole call, when its line had to shorten it: the exact thing, over what it printed. */

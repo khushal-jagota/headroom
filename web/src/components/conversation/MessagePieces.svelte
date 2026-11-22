@@ -141,14 +141,13 @@
 {/if}
 
 <style>
-  /* The person's words, and only their words, in the thread's one bubble: the raised step,
-     the first tone, no edge (design v3 §3.2). */
+  /* The person's words, and only their words, in the thread's one bubble: no edge, radius 18,
+     padding 12 16, in the ink. */
   .c2-bubble {
     min-width: 0;
     max-width: 100%;
-    /* v7: user bubbles #242424, no border, radius 18, padding 12 16, #ececec. */
-    background: #242424;
-    color: #ececec;
+    background: var(--cv-bubble);
+    color: var(--cv-ink);
     border-radius: 18px;
     padding: 12px 16px;
     font-family: var(--cv-font);
@@ -157,24 +156,25 @@
     overflow-wrap: anywhere;
   }
   .c2-bubble :global(.markdown) { color: inherit; }
-  /* B5: a message that was not delivered keeps its bubble and wears a 1 px failure outline,
-     drawn inside the edge so the bubble does not move. */
+  /* A message that is not delivered keeps its bubble and wears a 1px failure outline, drawn
+     inside the edge so the bubble does not move. */
   .c2-bubble.is-failed { outline: 1px solid rgb(255 143 133 / 55%); outline-offset: -1px; }
-  /* v8 (6): padding 8 around the attachments, 12 16 around the words (8 + 4 8). Inside, the
-     attachments' corners follow the bubble's (18 - 8 = 10). */
+  /* With attachments, the bubble holds them above its words: padding 8 around the attachments,
+     12 16 around the words (8 + 4 8). Inside, the attachments' corners follow the bubble's
+     (18 - 8 = 10). */
   .c2-bubble--attached { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
   .c2-bubble-attachments { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
   .c2-bubble-words { padding: 4px 8px; min-width: 0; }
   .c2-bubble.c2-bubble--attached :global(.c2-piece-image-slot) { display: flex; justify-content: flex-start; max-width: 100%; margin: 0; }
   .c2-bubble.c2-bubble--attached :global(.file-preview-media) { border-radius: 10px; }
   .c2-bubble.c2-bubble--attached :global(.conversation-file-card) { margin: 0; border-radius: 10px; }
-  /* v9 (19): file cards stretch to the bubble's inner width. */
+  /* File cards stretch to the bubble's inner width. */
   .c2-bubble-attachments > :global(.conversation-file-card) { align-self: stretch; width: auto; max-width: none; }
-  /* v9 (19): one image: the bubble takes the image's width (at least 240); the words take no
-     part in its width (0 wide, at least the full line), so they wrap to it. */
+  /* One image: the bubble takes the image's width (at least 240); the words take no part in
+     its width (0 wide, at least the full line), so they wrap to it. */
   .c2-bubble--one-image { min-width: 240px; }
   .c2-bubble--one-image > .c2-bubble-words { width: 0; min-width: 100%; }
-  /* v13 (7): the bubble is as wide as its picture. A percentage cap counts as no cap when the
+  /* The bubble is as wide as its picture. A percentage cap counts as no cap when the
      bubble measures its content, so a wide picture capped at 200 high asked for its 200-high
      width (wider than the 320 it is drawn at) and the bubble stood wider than the picture. The
      cap in pixels makes the measured width the drawn one; the picture fills the content width

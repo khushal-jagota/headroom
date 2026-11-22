@@ -26,16 +26,16 @@
 </div>
 
 <style>
-  /* A code block (#1a1a1a, a 1px #2a2a2a edge, radius 12, 13/20 mono), 8 under its line. */
+  /* A backend's own words: a code block, 8 under its line, with Copy in its corner. */
   .c2-backend-words { position: relative; min-width: 0; margin-block-start: var(--cv-s2); text-align: start; }
   .c2-backend-words[hidden] { display: none; }
   .c2-backend-words-text {
     display: block;
     padding: 12px 48px 12px 16px;
-    border: 1px solid var(--cv-surface-edge, #2a2a2a);
-    border-radius: 12px;
-    background: var(--cv-code-surface, #1a1a1a);
-    color: var(--cv-detail-ink, #b0b0b0);
+    border: 1px solid var(--cv-surface-edge);
+    border-radius: var(--cv-r-lg);
+    background: var(--cv-code-surface);
+    color: var(--cv-t3);
     font-family: var(--cv-mono);
     font-size: var(--cv-type-code);
     line-height: var(--cv-leading-code);

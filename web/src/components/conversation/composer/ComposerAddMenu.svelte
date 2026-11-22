@@ -92,18 +92,21 @@
 </div>
 
 <style>
-  /* --- the add menu (§3.14): the floating plane, upward from the + ---------------------------- */
+  /* --- the add menu: a Surface floating with a shadow, upward from the +, its left edge on the
+     +'s and its bottom 8px above the composer's top edge; its rows are quiet pill buttons. */
   .chat-add { position: relative; display: inline-flex; }
   .chat-add-menu {
     position: absolute;
     z-index: 40;
+    inset-block-end: calc(100% + var(--cv-s2) + var(--c2-menu-lift, 0px));
+    inset-inline-start: 0;
     min-width: 220px;
     display: flex;
     flex-direction: column;
     padding: 6px;
-    background: #1c1c1c;
-    border: 1px solid #2a2a2a;
-    border-radius: 20px;
+    background: var(--cv-surface);
+    border: 1px solid var(--cv-surface-edge);
+    border-radius: var(--cv-surface-radius);
     box-shadow: var(--cv-shadow-float);
     animation: chat-pop-in var(--cv-dur-base) var(--cv-ease-out);
   }
@@ -120,18 +123,19 @@
     padding: 6px 14px;
     background: none;
     border: none;
-    border-radius: 999px;
-    color: #bdbdbd;
+    border-radius: var(--cv-r-pill);
+    color: var(--cv-quiet-ink);
     font-family: var(--cv-font);
     font-size: var(--cv-type-control);
     font-weight: var(--cv-weight-label);
-    line-height: 20px;
+    line-height: var(--cv-leading-control);
     text-align: left;
     cursor: pointer;
   }
   .chat-add-item:hover:not(:disabled),
-  .chat-add-item:focus-visible { color: #ececec; background: #2a2a2a; }
-  .chat-add-item:disabled { color: var(--cv-t4); cursor: default; }
+  .chat-add-item:focus-visible { color: var(--cv-ink); background: #2a2a2a; }
+  .chat-add-item:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  .chat-add-item:disabled { color: var(--cv-t3); cursor: default; }
   .chat-add-item svg {
     width: 16px;
     height: 16px;
@@ -141,17 +145,14 @@
     stroke-width: 1.5;
     stroke-linecap: round;
     stroke-linejoin: round;
-    color: #bdbdbd;
+    color: var(--cv-quiet-ink);
   }
-  .chat-add-item:hover svg { color: #ececec; }
+  .chat-add-item:hover svg { color: var(--cv-ink); }
   .chat-add-count {
     margin-inline-start: auto;
     font-size: var(--cv-type-caption);
     font-variant-numeric: tabular-nums;
     color: var(--cv-t3);
   }
-
-  .chat-add-menu { inset-block-end: calc(100% + 8px + var(--c2-menu-lift, 0px)); inset-inline-start: 0; }
-  .chat-add-item:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
   @media (prefers-reduced-motion: reduce) { .chat-add-menu { animation: none; } }
 </style>
