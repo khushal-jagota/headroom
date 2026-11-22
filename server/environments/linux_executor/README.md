@@ -13,3 +13,9 @@ The existing files worker accepts the expected target for retained reads and ext
 The shared install recipe selects the TypeScript publisher only for Linux joins. It checks host Node and the sealed executor role before credential input, then passes the credential through private JSON stdin. Home installation and Mac join branches keep their existing paths. `machine join-command NAME --home URL` issues a machine credential and prints the release-pinned bootstrap command. The credential stays outside that command.
 
 The publication receipt admits the optional Linux artifact only after a successful native build and matching GitHub artifact identity. Linux archive preparation shares the existing process owner, runs only for registered Linux machines, and does not block home or Mac offers. Permanent byte failures stay rejected until restart. Transient failures retry after 60 seconds. The cache retains two Linux archives, and shutdown waits for actual inspection cleanup.
+
+The URL in the unit bootstraps the shared machine link. After a successful HTTPS contact, the
+executor root keeps `server-link.json` with the server identity, highest move number, and current
+address. That address takes precedence over the unit argument after restart. The shared command
+`panels executor server-address --url https://server.example` checks and saves another address
+without a service-file edit or a reset of the identity and move number.

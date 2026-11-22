@@ -99,7 +99,9 @@ export function create_mac_adapter_host(options: MacAdapterOptions): MacAdapterH
     executor: driver.executor,
     host: {
       environment,
-      panels_server_url: options.panels_server_url,
+      get panels_server_url() {
+        return options.panels_server_url;
+      },
       child_processes: options.child_processes,
       one_shot_children: options.one_shot_children,
       worker_supervision: options.worker_supervision,

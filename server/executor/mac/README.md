@@ -165,3 +165,8 @@ The TypeScript default state directory is `~/Library/Application Support/Panels/
 Explicit configuration refuses the earlier executor root, `~/Library/Application Support/Panels/executor`, and its descendants, including symlink aliases.
 `packaging/build.ts` produces the runtime archive and unsigned app and LaunchAgent assets.
 The [installation document](../../../ops/mac-executor/typescript-installation.md) records the exact paths and owner procedure.
+
+The Apple Silicon job URL bootstraps the shared machine link. The executor root keeps the current
+address, server identity, and highest move number outside the versioned runtime. A restart uses
+that saved address. The shared `executor server-address --url` command checks and saves a manual
+address change. See [the transport seam](transport/README.md) for authority checks and move behavior.

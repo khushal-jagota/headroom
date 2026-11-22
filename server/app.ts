@@ -1,3 +1,5 @@
+import { initialize_server_location, read_server_location } from './server_link/data.ts';
+import { install_server_link } from './server_link/http.ts';
 import { install_slow_task_logging } from './core/slow_tasks.ts';
 import Fastify from 'fastify';
 import type { UpdateBarrier } from './environments/update_barrier.ts';
@@ -51,7 +53,9 @@ export async function createApp(config: Config, services: AppServices): Promise<
   const clock = services.clock ?? buildClock(config);
   const request_lifetime = install_request_lifetime(app, services.request_lifetime);
   const changes = services.changes ?? new ChangeSignal();
+  initialize_server_location(services.database);
   installCompatibility(app);
+  install_server_link(app, () => services.database.read((sql) => read_server_location(sql)!));
   installMiddleware(
     app,
     config,

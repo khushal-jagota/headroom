@@ -1,4 +1,5 @@
 /** CLI ownership around the fixed supervisor or its versioned Mac host child. */
+import { MachineServerLink } from '../../server_link/machine.ts';
 import { fileURLToPath } from 'node:url';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
@@ -15,15 +16,19 @@ import { supervise } from './runtime/supervisor.ts';
 export async function run_executor(invocation: Invocation): Promise<CommandResult> {
   const executor_id = invocation.values.executor_id as string;
   const revision = invocation.values.application_revision as string;
-  const panels_server_url = invocation.values.panels_server_url as string;
+  const paths = executor_paths(invocation.environment);
+  let panels_server_url: string;
   try {
+    panels_server_url = new MachineServerLink(
+      paths.root,
+      invocation.values.panels_server_url as string,
+    ).current_url;
     validate_executor_launch(executor_id, revision, panels_server_url);
   } catch (error) {
-    if (!(error instanceof ExecutorValidationError)) throw error;
+    if (!(error instanceof ExecutorValidationError) && !(error instanceof SyntaxError)) throw error;
     throw new CliFailure(human_error(invocation.command, error.message));
   }
   const runtime = mac_runtime_settings(invocation.environment);
-  const paths = executor_paths(invocation.environment);
   if (runtime.child)
     return {
       exit_code: await run_mac_service(

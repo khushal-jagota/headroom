@@ -394,6 +394,9 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     argument('submission_id', '<SUBMISSION_ID>', text, {}),
     option('as_json', '--json', boolean, { default: false }),
   ]);
+  command('executor server-address', 'Check and save the HTTPS address of this machine’s server.', [
+    option('url', '--url <URL>', text, { required: true }),
+  ]);
   command('executor run', '', [
     option('executor_id', '--executor-id <TEXT>', text, { required: true }),
     option('application_revision', '--application-revision <TEXT>', text, { required: true }),

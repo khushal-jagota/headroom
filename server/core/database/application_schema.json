@@ -96,6 +96,7 @@
     "CREATE TABLE notification_web_push_identity (\n          singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),\n          private_key TEXT NOT NULL,\n          public_key  TEXT NOT NULL,\n          created_at  INTEGER NOT NULL\n        )",
     "CREATE TABLE \"projects\" (id         TEXT PRIMARY KEY, name       TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, summary TEXT NOT NULL DEFAULT '', folder_path TEXT, repository_url TEXT, default_branch TEXT)",
     "CREATE TABLE resource_source_versions (\n        source_kind TEXT NOT NULL, source_id TEXT NOT NULL, revision INTEGER NOT NULL,\n        PRIMARY KEY(source_kind,source_id)\n    )",
+    "CREATE TABLE server_link (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), server_id TEXT NOT NULL, move_number INTEGER NOT NULL CHECK(move_number >= 0 AND move_number <= 9007199254740991), server_url TEXT, state TEXT NOT NULL CHECK(state IN ('active','moved')), CHECK(state != 'moved' OR server_url IS NOT NULL))",
     "CREATE TABLE signal_publication_associations (sequence INTEGER PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE signal_publication_dirty (conversation_id TEXT PRIMARY KEY)",
     "CREATE TABLE signal_publication_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1),scope TEXT NOT NULL,runtime_epoch TEXT NOT NULL,sequence INTEGER NOT NULL)",
@@ -368,5 +369,5 @@
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_legacy_machine AFTER INSERT ON tickets WHEN NEW.locale='macos' AND NEW.machine_id='75a49e78-97de-4e28-8dc5-79646761c46f' BEGIN UPDATE tickets SET machine_id='ee17b608-a449-4966-a808-a791ba7df1c7' WHERE id=NEW.id; END"
   ],
-  "alembicRevision": "ts_0004_drop_ideas"
+  "alembicRevision": "ts_0005_server_link"
 }
