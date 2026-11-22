@@ -27,14 +27,14 @@ If you still have the `.p8` file of the TestFlight API key, you can use it and s
 
 ## 3. Give them to CI
 
-Run these commands in a terminal on your Mac. They store the values as GitHub secrets of `khushal-jagota/panels`. Nobody can read a secret back, and pull requests from forks do not receive them.
+Run these commands in a terminal on your Mac. They store the values as GitHub secrets of `khushal-jagota/headroom`. Nobody can read a secret back, and pull requests from forks do not receive them.
 
 ```sh
-base64 -i DeveloperID.p12 | gh secret set MAC_DEVELOPER_ID_P12_BASE64 -R khushal-jagota/panels
-gh secret set MAC_DEVELOPER_ID_P12_PASSWORD -R khushal-jagota/panels      # paste the .p12 password
-gh secret set APPLE_NOTARY_API_KEY_P8 -R khushal-jagota/panels < AuthKey_XXXXXXXXXX.p8
-gh secret set APPLE_NOTARY_API_KEY_ID -R khushal-jagota/panels            # paste the Key ID
-gh secret set APPLE_NOTARY_API_ISSUER_ID -R khushal-jagota/panels         # paste the Issuer ID
+base64 -i DeveloperID.p12 | gh secret set MAC_DEVELOPER_ID_P12_BASE64 -R khushal-jagota/headroom
+gh secret set MAC_DEVELOPER_ID_P12_PASSWORD -R khushal-jagota/headroom      # paste the .p12 password
+gh secret set APPLE_NOTARY_API_KEY_P8 -R khushal-jagota/headroom < AuthKey_XXXXXXXXXX.p8
+gh secret set APPLE_NOTARY_API_KEY_ID -R khushal-jagota/headroom            # paste the Key ID
+gh secret set APPLE_NOTARY_API_ISSUER_ID -R khushal-jagota/headroom         # paste the Issuer ID
 ```
 
 Then delete `DeveloperID.p12` and the `.p8` from Downloads. Keep copies in your password manager.
