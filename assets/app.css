@@ -893,11 +893,6 @@ strong {
   background: var(--surface-recessed);
 }
 
-.chat-thread .markdown th {
-  background: none;
-  border-block-end-color: var(--border-hover);
-}
-
 .markdown img {
   max-width: 100%;
   height: auto;
@@ -1294,12 +1289,7 @@ a.pv-name:focus-visible { outline:0; }
 /* One inline-code style everywhere in the conversation: Markdown's `code`, code tokens in plain
  * status words (.cv-code: the task pill, plan steps), and the proposal's summary. The pad is
  * small enough that a comma after it still reads as part of the sentence. */
-.chat-thread .markdown :not(pre) > code,
-.worker-proposal .proposal-prose :not(pre) > code,
-.cv-code {
-  /* v4: one inline-code style everywhere, file refs included: mono 13 on #242424, radius 5,
-     1px 5px. The chip's own right pad is pulled back a little, so a full stop or comma
-     after it sits against the code as it would against a word. */
+.worker-proposal .proposal-prose :not(pre) > code {
   font-family: var(--cv-mono);
   font-size: 13px;
   font-weight: var(--cv-weight-body);
@@ -1312,18 +1302,21 @@ a.pv-name:focus-visible { outline:0; }
   -webkit-box-decoration-break: clone;
           box-decoration-break: clone;
 }
-/* On a control-filled surface (the task pill on hover) the code keeps one step of lift. */
-.cv-code { background: rgb(255 255 255 / 8%); }
-/* v4.3: in the conversation inline code is lighter, so a sentence with five code spans still
- * reads as a sentence: mono 13 in #e0e0e0 on a 6% white fill, radius 4, padding 0 4px. */
 .chat-thread .markdown :not(pre) > code,
 .cv-code {
+  font-family: var(--cv-mono);
+  font-size: 13px;
+  font-weight: var(--cv-weight-body);
+  line-height: 1;
   padding: 0 4px;
   margin-inline-end: 0;
   border-radius: 4px;
   background: rgb(255 255 255 / 6%);
   color: #e0e0e0;
+  -webkit-box-decoration-break: clone;
+          box-decoration-break: clone;
 }
+/* A code span before punctuation or at a list edge retains the text alignment. */
 /* v5.1: a code chip followed by closing punctuation keeps 1px of its right pad, so the comma
  * or full stop sits against the code as against a word; a chip that opens a list item hangs
  * its left pad outside the item's text edge, so the code's first letter stands on that edge. */
@@ -1359,18 +1352,17 @@ a.pv-name:focus-visible { outline:0; }
   border: 0;
   border-block-end: 1px solid var(--cv-line);
 }
+/* v6: the head row 14 semibold #f2f2f2; body cells 15 regular #d9d9d9. */
 .chat-thread .markdown th {
+  background: none;
+  border-block-end-color: var(--cv-line-strong);
   padding-block-start: 0;
   padding-block-end: var(--cv-s2);
-  /* The head is a step up in weight and tone from a caption, so it reads as the table's
-     head and not as one more grey row. */
-  color: #d9d9d9;
-  font-size: 13px;
+  color: #f2f2f2;
+  font-size: 14px;
   font-weight: var(--cv-weight-title);
-  border-block-end-color: var(--cv-line-strong);
+  line-height: 20px;
 }
-/* v6: the head row 14 semibold #f2f2f2; body cells 15 regular #d9d9d9. */
-.chat-thread .markdown th { color: #f2f2f2; font-size: 14px; line-height: 20px; }
 .chat-thread .markdown td { color: #d9d9d9; font-size: 15px; line-height: 22px; font-weight: var(--cv-weight-body); }
 .chat-thread .markdown :is(th, td)[align="right"] { text-align: right; }
 .chat-thread .markdown :is(th, td)[align="center"] { text-align: center; }
@@ -2454,11 +2446,8 @@ button.list-row:hover .list-row-title {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  /* v6: #2a2a2a with a #8c8c8c arrow while there is nothing to send; #f2f2f2 with a
-   * #121212 arrow once there is. v11 (8): disabled is #333333 with a #bdbdbd arrow.
-   * v13 (3): disabled everywhere is #262626 with a #7a7a7a arrow. */
-  background: #262626;
-  color: #7a7a7a;
+  background: #2a2a2a;
+  color: #9a9a9a;
   cursor: pointer;
   line-height: 1;
   display: grid;
@@ -2477,8 +2466,8 @@ button.list-row:hover .list-row-title {
 }
 .chat-send.on { background: #f2f2f2; color: #121212; }
 .chat-send.on:hover:not(:disabled) { background: #ffffff; }
-/* v5.2: Stop while running is the enabled send's look: #f2f2f2 with a #121212 square. */
-.chat-send.stop { background: #f2f2f2; color: #141414; } /* v11 (3): a #141414 square */
+/* Stop is the one white control while the agent works. */
+.chat-send.stop { background: #ececec; box-shadow: none; color: #141414; }
 .chat-send.stop:hover { background: #ffffff; }
 .chat-send .chat-send-fill {
   width: 10px;
@@ -2487,6 +2476,7 @@ button.list-row:hover .list-row-title {
   background: currentColor;
   display: block;
 }
+.chat-send.stop .chat-send-fill { width: 10px; height: 10px; border-radius: 2px; }
 .chat-send:disabled { cursor: default; }
 .chat-send.on:disabled { opacity: 1; }
 
@@ -5447,10 +5437,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
   top: 0;
   /* Across the content column only, the same edges as the page's text and the composer. */
   left: 50%;
+  right: auto;
   width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
   transform: translateX(-50%);
-  height: var(--border-hairline);
-  background: var(--border-color);
+  height: 1px;
+  background: rgb(255 255 255 / 16%);
   opacity: var(--conversation-dock-line, 1);
   pointer-events: none;
 }
@@ -5513,242 +5504,258 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-machine-color="lime"] { --machine-color:var(--machine-lime); }
 [data-machine-color="stone"] { --machine-color:var(--machine-stone); }
 
-/* v6.1 (27): the docked conversation has no surface of its own (the v5.2 dock surface is
- * gone): it sits on the page canvas with the fade it had before v5.2. The 1px hairline that
- * stood over the zone before v5.2 stays off (owner: no lines that signify things); the
- * canvas fades carry the page into the dock. */
-/* v9 (14, owner): the dock may have an edge, never a surface colour. The dock zone wears a
- * 1px rgba(255,255,255,0.08) top edge across the dock's column only (the composer's left and
- * right, the page text's edges), no fill, the canvas fade above it kept. It belongs to the dock: it rides the zone's top when the ask grows the composer, and it
- * fades with the dock's move (--conversation-dock-line, driven by dock.ts over 180ms: out at
- * the start of opening, in over the last 180ms of the return so it lands with the dock). */
-:is(.manager-page, .ticket-page) > .conversation-layer::after {
-  left: 50%;
-  right: auto;
-  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
-  transform: translateX(-50%);
-  height: 1px;
-  background: rgba(255, 255, 255, 0.16); /* v11 (8) */
-  opacity: var(--conversation-dock-line, 1);
-}
-:is(.manager-page, .ticket-page)[data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer::after { opacity: 0; }
+/* --- Conversation presentation -------------------------------------------------
+ * Pane-scoped refinements keep page and artifact styles independent. */
 
-/* ==========================================================================================
- * v7 — one system (design-v4.md "v7"; v8: one agent face, Inter). Everything is quiet UI in
- * Inter built from five parts:
- * Surface, Button, Composer control, Status line, Option row. One set of measures, 8px grid.
- * Scoped to the conversation pane; the page, the proposal card and the sidebar keep theirs.
- * ========================================================================================== */
-
-/* v8: one agent face. All agent prose is Inter 15/24 (the v7 answer voice is gone). The final
- * message is #ececec; headings keep the Inter scale (20/28, 18/26, 16/24 600), 24 above, 8 below. */
+/* Prose, headings, and rhythm */
 [data-conversation-pane] .chat-a .markdown {
   font-family: var(--cv-font);
-  font-size: 15px;
-  line-height: 24px;
-  font-weight: 400;
+  font-size: var(--cv-type-prose);
+  line-height: var(--cv-leading-prose);
+  font-weight: var(--cv-weight-body);
   color: var(--cv-ink);
 }
-[data-conversation-pane] .chat-a:not(.chat-a--narration):not(.c2-streaming) .markdown :is(strong, b) { color: var(--cv-ink); font-weight: 600; }
-[data-conversation-pane] .chat-a .markdown :is(h1, h2, h3, h4, h5, h6) { margin: 24px 0 8px; font-family: var(--cv-font); font-weight: 600; letter-spacing: 0; }
-[data-conversation-pane] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 0; }
-/* v6 (14), on the 8px grid: a heading right after "Worked for" gets 16px more above it. */
-[data-conversation-pane] .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 16px; }
-[data-conversation-pane] .chat-thread .markdown li + li { margin-block-start: 8px; }
-[data-conversation-pane] .chat-thread .markdown li::marker { color: #8f8f8f; }
-[data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote) { margin-block-end: 16px; }
-[data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote):last-child { margin-block-end: 0; }
+[data-conversation-pane] .chat-a .markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--cv-gap-heading-above) 0 var(--cv-gap-heading-below);
+  font-family: var(--cv-font);
+  font-weight: var(--cv-weight-title);
+  letter-spacing: 0;
+}
+[data-conversation-pane] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-block-start: 0;
+}
+[data-conversation-pane] .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-block-start: var(--cv-s4);
+}
+[data-conversation-pane] .chat-thread .markdown li + li {
+  margin-block-start: var(--cv-s2);
+}
+[data-conversation-pane] .chat-thread .markdown li::marker {
+  color: var(--cv-list-marker);
+}
+[data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote) {
+  margin-block-end: var(--cv-s4);
+}
+[data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote):last-child {
+  margin-block-end: 0;
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h4, h5, h6) {
+  font-size: var(--cv-type-h3);
+  line-height: var(--cv-leading-prose);
+  font-weight: var(--cv-weight-title);
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2, h3) {
+  margin: var(--cv-gap-heading-above) 0 var(--cv-gap-heading-below);
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown > :is(h1, h2, h3):first-child { margin-block-start: 0; }
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2, h3) + * {
+  margin-block-start: 0;
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2) {
+  font-size: var(--cv-type-answer-heading);
+  line-height: var(--cv-leading-answer-heading);
+  font-weight: var(--cv-weight-title);
+  color: var(--cv-t1);
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown h3 {
+  font-size: var(--cv-type-answer-subheading);
+  line-height: var(--cv-leading-prose);
+  font-weight: var(--cv-weight-title);
+  color: var(--cv-ink);
+}
 
-/* v8: narration (non-final prose in Full) is the same face, one tone back: #b4b4b4.
- * v9 (15): and smaller, 14/22; final answers stay 15/24 #ececec. */
+/* Narration and inline code */
+[data-conversation-pane] .chat-a:not(.chat-a--narration):not(.c2-streaming) .markdown :is(strong, b) {
+  color: var(--cv-ink);
+  font-weight: var(--cv-weight-title);
+}
 [data-conversation-pane] .chat-a--narration,
 [data-conversation-pane] .chat-a--narration .markdown,
 [data-conversation-pane] .c2-streaming .markdown {
   font-family: var(--cv-font);
-  font-size: 14px;
-  line-height: 22px;
-  color: #b4b4b4;
+  font-size: var(--cv-type-ui);
+  line-height: var(--cv-leading-narration-compact);
+  color: var(--cv-narration-compact-ink);
 }
-[data-conversation-pane] .chat-a--narration .markdown :is(strong, b) { color: #d9d9d9; }
-
-/* Code: inline 0.85em JetBrains Mono on #262626, radius 5, padding 1px 5px. */
+[data-conversation-pane] .chat-a--narration .markdown :is(strong, b) {
+  color: var(--cv-t2);
+}
+[data-conversation-pane] .chat-thread .markdown :not(pre) > code.cv-code-before-punctuation {
+  padding-inline-end: 1px;
+}
+[data-conversation-pane] .chat-thread .markdown li > code.cv-code-leads {
+  margin-inline-start: calc(-1 * var(--cv-s1));
+}
+[data-conversation-pane] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code {
+  color: var(--cv-narration-compact-ink);
+}
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown :is(strong, b) {
+  color: var(--cv-quiet-ink);
+}
 [data-conversation-pane] .chat-thread .markdown :not(pre) > code,
 [data-conversation-pane] .cv-code {
   font-family: var(--cv-mono);
-  font-size: 0.85em;
+  font-size: var(--cv-type-answer-code);
   line-height: 1;
-  padding: 1px 5px;
   margin-inline-end: 0;
-  border-radius: 5px;
-  background: #262626;
-  color: #e0e0e0;
+  color: var(--cv-inline-code-ink);
+  padding: 1px var(--cv-s1);
+  border-radius: var(--cv-s1);
+  background: var(--cv-inline-code-surface);
 }
-[data-conversation-pane] .chat-thread .markdown :not(pre) > code.cv-code-before-punctuation { padding-inline-end: 1px; }
-[data-conversation-pane] .chat-thread .markdown li > code.cv-code-leads { margin-inline-start: -5px; }
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown :is(p, li) {
+  text-wrap: pretty;
+}
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown {
+  text-wrap: pretty;
+  font-size: var(--cv-type-ui);
+  line-height: var(--cv-leading-prose);
+  color: var(--cv-narration-ink);
+}
+[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code {
+  font-family: var(--cv-mono);
+  font-size: var(--cv-type-narration-code);
+  line-height: inherit;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--cv-narration-code-ink);
+}
 
-/* Tables in answers use the UI voice. v9 (8): head 14/20 600 #f2f2f2 over a 1px #3a3a3a rule;
- * body 15/24 #d9d9d9 with 1px #2a2a2a between rows; 40px rows. */
-[data-conversation-pane] .chat-thread .markdown table { font-family: var(--cv-font); font-size: 15px; line-height: 24px; font-variant-numeric: normal; }
-[data-conversation-pane] .chat-thread .markdown :is(th, td) { height: 40px; padding: 8px 16px 8px 0; border: 0; border-block-end: 1px solid #2a2a2a; vertical-align: middle; }
-[data-conversation-pane] .chat-thread .markdown th { padding-block-start: 0; color: #f2f2f2; font-size: 14px; line-height: 20px; font-weight: 600; border-block-end-color: #3a3a3a; }
-[data-conversation-pane] .chat-thread .markdown td { color: #d9d9d9; font-size: 15px; line-height: 24px; font-weight: 400; }
-[data-conversation-pane] .chat-thread .markdown tr:last-child > td { border-block-end: 0; }
+/* Links and tables */
+[data-conversation-pane] .chat-thread .markdown table {
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-prose);
+  line-height: var(--cv-leading-prose);
+  font-variant-numeric: normal;
+}
+[data-conversation-pane] .chat-thread .markdown :is(th, td) {
+  height: 40px;
+  padding: var(--cv-s2) var(--cv-s4) var(--cv-s2) 0;
+  border: 0;
+  border-block-end: 1px solid var(--cv-surface-edge);
+  vertical-align: middle;
+}
+[data-conversation-pane] .chat-thread .markdown td {
+  color: var(--cv-t2);
+  font-size: var(--cv-type-prose);
+  line-height: var(--cv-leading-prose);
+  font-weight: var(--cv-weight-body);
+}
+[data-conversation-pane] .chat-thread .markdown tr:last-child > td {
+  border-block-end: 0;
+}
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) {
+  color: var(--cv-ink);
+  text-decoration-color: var(--cv-answer-link-underline);
+}
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover {
+  color: var(--cv-hover-ink);
+  text-decoration-color: var(--cv-ink);
+}
+[data-conversation-pane] .chat-thread .markdown th {
+  padding-block-start: 0;
+  color: var(--cv-ink);
+  font-size: var(--cv-type-ui);
+  line-height: var(--cv-leading-ui);
+  font-weight: var(--cv-weight-title);
+  border-block-end: 1px solid var(--cv-control-edge);
+}
 
-/* v7 icon buttons in the conversation (the header's more menu, copy, pager): quiet Buttons,
- * 32 round, a 16px icon at 1.5 stroke in #bdbdbd, hover #2a2a2a. */
-[data-conversation-pane] .cv-icon-button { border-radius: 999px; color: #bdbdbd; }
-[data-conversation-pane] .cv-icon-button svg { width: 16px; height: 16px; stroke-width: 1.5; }
+/* Icon controls and status motion */
+[data-conversation-pane] .cv-icon-button {
+  border-radius: var(--cv-r-pill);
+  color: var(--cv-quiet-ink);
+}
+[data-conversation-pane] .cv-icon-button svg {
+  width: var(--cv-s4);
+  height: var(--cv-s4);
+  stroke-width: 1.5;
+}
 [data-conversation-pane] .cv-icon-button:hover:not(:disabled),
-[data-conversation-pane] .cv-icon-button[aria-expanded="true"] { color: #ececec; background: #2a2a2a; }
-/* One icon set: every stroked icon in the conversation draws its line at 1.5px whatever its
- * drawing grid, so a 24-unit and a 16-unit icon read as one family. */
-[data-conversation-pane] :is(button, a, [role="img"], [aria-hidden="true"]) > svg:not(.recharts-surface) :is(path, circle, rect, line, polyline, polygon) { vector-effect: non-scaling-stroke; }
-
-/* v7: the conversation's one spinner: a 12px #d9d9d9 arc on a #4a4a4a track, in a 16px slot. */
-[data-conversation-pane] .cv-spinner { width: 12px; height: 12px; margin: 2px; border: 2px solid #4a4a4a; border-top-color: #d9d9d9; }
-
-/* v7: a chart in an answer stands in a Surface frame (#1c1c1c, a 1px #2a2a2a edge, radius 20,
- * padding 16); its title, key and axis labels are the UI voice (13/20). v8 (10): its two
- * series are #bccbf0 and #e0b36b, so they are easy to tell apart. */
-[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host {
-  --accent-bright: #bccbf0;
-  --chart-compare-second: #e0b36b;
-  --chart-axis: #b0b0b0;
-  --chart-legend: #b0b0b0;
+[data-conversation-pane] .cv-icon-button[aria-expanded="true"] {
+  color: var(--cv-ink);
+  background: var(--cv-surface-edge);
 }
-[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host .metric-card {
-  padding: 16px;
-  border: 1px solid #2a2a2a;
-  border-radius: 20px;
-  background: #1c1c1c;
+[data-conversation-pane] :is(button, a, [role="img"], [aria-hidden="true"]) > svg:not(.recharts-surface) :is(path, circle, rect, line, polyline, polygon) {
+  vector-effect: non-scaling-stroke;
 }
-[data-conversation-pane] .chat-thread .chat-a .markdown .chat-chart .goal-chart-host .metric-top h2 { margin: 0; font: 600 13px/20px var(--cv-font); color: #f2f2f2; }
-[data-conversation-pane] .chat-thread .chat-a .markdown .chat-chart .goal-chart-host .snapshot-legend { margin: 8px 0 16px; padding: 0; color: #b0b0b0; font-size: 13px; line-height: 20px; gap: 8px 16px; }
-[data-conversation-pane] .chat-thread .chat-a .markdown .chat-chart .goal-chart-host .snapshot-legend li { margin: 0; line-height: 20px; font-family: var(--cv-font); }
-[data-conversation-pane] .chat-thread .chat-chart .metric-top { min-height: 0; }
-[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host .caption { margin-top: 8px; color: #b0b0b0; font-size: 13px; line-height: 20px; }
-
-/* v7: pictures in messages: a 1px #2a2a2a edge, radius 12. */
-[data-conversation-pane] .file-preview-media { border-radius: 12px; }
-[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px #2a2a2a; }
-
-/* v7: Jump to latest is a secondary Button, 32 round: #2a2a2a with an #ececec arrow. */
-[data-conversation-pane] .cv-jump { border: 0; background: #2a2a2a; color: #ececec; }
-[data-conversation-pane] .cv-jump:hover { background: #3a3a3a; color: #ececec; }
-[data-conversation-pane] .cv-jump svg { width: 16px; height: 16px; stroke-width: 1.5; }
-
-/* v7 motion: a status line's icon fades in over 150 ms when it changes (spinner, dot, icon). */
+[data-conversation-pane] .cv-spinner {
+  width: var(--cv-s3);
+  height: var(--cv-s3);
+  margin: 2px;
+  border: 2px solid var(--cv-spinner-track);
+  border-top-color: var(--cv-t2);
+}
+[data-conversation-pane] .cv-jump {
+  border: 0;
+  background: var(--cv-surface-edge);
+  color: var(--cv-ink);
+}
+[data-conversation-pane] .cv-jump:hover {
+  background: var(--cv-control-edge);
+  color: var(--cv-ink);
+}
+[data-conversation-pane] .cv-jump svg {
+  width: var(--cv-s4);
+  height: var(--cv-s4);
+  stroke-width: 1.5;
+}
 @keyframes cv-status-icon-in { from { opacity: 0; } }
-[data-conversation-pane] :is(.c2-meta-slot, .c2-status-slot, .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph)) { animation: cv-status-icon-in 150ms ease-out; }
+[data-conversation-pane] :is(.c2-meta-slot, .c2-status-slot, .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph)) {
+  animation: cv-status-icon-in var(--cv-dur-status-icon) ease-out;
+}
 @media (prefers-reduced-motion: reduce) {
   [data-conversation-pane] :is(.c2-meta-slot, .c2-status-slot, .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph)) { animation: none; }
 }
 
-/* ==========================================================================================
- * v10 (22 Nov, after round 16) — clearance. Scoped to the conversation pane.
- * ========================================================================================== */
-/* (7) Headings in answers: h1/h2 17/24 600, h3 and smaller 16/24 600 (the header title is 17/24). */
-[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2) { font-size: 17px; line-height: 24px; font-weight: 600; }
-[data-conversation-pane] .chat-thread .chat-a .markdown :is(h3, h4, h5, h6) { font-size: 16px; line-height: 24px; font-weight: 600; }
-/* (8) Links in answers: #bccbf0 with an underline at 40%. */
-[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #bccbf0; text-decoration-color: rgb(188 203 240 / 40%); }
-[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #bccbf0; text-decoration-color: #bccbf0; }
-/* (9) Thumbnails (pictures in messages) wear a 1px rgba(255,255,255,0.12) edge. */
-[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); }
-/* (12) Inline code: #232323, padding 1px 4px; in narration the chip's text is #b4b4b4. */
-[data-conversation-pane] .chat-thread .markdown :not(pre) > code,
-[data-conversation-pane] .cv-code { padding: 1px 4px; background: #232323; }
-[data-conversation-pane] .chat-thread .markdown li > code.cv-code-leads { margin-inline-start: -4px; }
-[data-conversation-pane] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { color: #b4b4b4; }
-
-/* ==========================================================================================
- * v11 (22 Nov, after round 17) — clearance. Scoped to the conversation pane.
- * ========================================================================================== */
-/* (1) Narration in Full is activity: 13/20 #a6a6a6. v12 (2): flush left, no indent. Inline code
- * in it is the same 13px, #a6a6a6, no fill. Final answers stay flush left 15/24 #ececec. */
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { font-size: 13px; line-height: 20px; color: #a6a6a6; }
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown :is(strong, b) { color: #bdbdbd; }
-[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-size: 13px; line-height: 20px; padding: 0; border-radius: 0; background: none; color: #a6a6a6; }
-/* (9) Tables: head 14/20 500 #bdbdbd. */
-[data-conversation-pane] .chat-thread .markdown th { color: #bdbdbd; font-weight: 500; }
-/* (10) Links in answers: #ececec with a 50% underline (the accent means "needs you" only). */
-[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #ececec; text-decoration-color: rgb(236 236 236 / 50%); }
-[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #ffffff; text-decoration-color: #ececec; }
-/* (13, owner) Agent answer bubbles: withdrawn by v12 (1). Answers are plain text, flush left. */
-
-/* ==========================================================================================
- * v13 (22 Nov, after round 19) — finish and consistency. Scoped to the conversation pane.
- * ========================================================================================== */
-/* (1) Inline code is one style everywhere: #232323, radius 4, padding 1px 4px. In narration the
- * chip's text is #b4b4b4 at the narration size (13px); narration itself is #b0b0b0, 13/20. */
-[data-conversation-pane] .chat-thread .markdown :not(pre) > code,
-[data-conversation-pane] .cv-code { padding: 1px 4px; border-radius: 4px; background: #232323; }
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { color: #b0b0b0; }
-[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-size: 13px; line-height: 1; padding: 1px 4px; border-radius: 4px; background: #232323; color: #b4b4b4; }
-/* (3) Disabled send everywhere: #262626 with a #7a7a7a arrow (.chat-send above, and the ask
- * well's round in ConversationComposer). Enabled (.on) stays as built. */
-/* (9) Table head in answers: #ececec 600 14/20 over a #3a3a3a rule (body rules as built). */
-[data-conversation-pane] .chat-thread .markdown th { color: #ececec; font-size: 14px; line-height: 20px; font-weight: 600; border-block-end: 1px solid #3a3a3a; }
-
-/* ==========================================================================================
- * v14 (22 Nov, after round 20) — scoped to the conversation where it says so.
- * ========================================================================================== */
-/* (1) One Stop style everywhere: a 32px round, no fill, a 1px #4a4a4a ring and a 10px #ececec
- * square (radius 2); hover fills it #2a2a2a. It stands in Send's place while the agent works.
- * The active Send stays #f2f2f2. */
-.chat-send.stop { background: none; box-shadow: inset 0 0 0 1px #4a4a4a; color: #ececec; }
-.chat-send.stop:hover { background: #2a2a2a; }
-.chat-send.stop .chat-send-fill { width: 10px; height: 10px; border-radius: 2px; }
-/* (4) Disabled send everywhere: #2a2a2a with a #9a9a9a arrow (the ask well's round matches in
- * ConversationComposer). Enabled (.on) stays as built. */
-.chat-send { background: #2a2a2a; color: #9a9a9a; }
-/* (5) Narration in Full: 14/24 #bdbdbd, flush left, wrapped so no line ends on one word. Its
- * inline code is the answers' chip (#232323, radius 4, padding 0 4px) at 0.85em in #c8c8c8; the
- * 24px line keeps the chips of two lines clear of each other. */
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { font-size: 14px; line-height: 24px; color: #bdbdbd; text-wrap: pretty; }
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown :is(p, li) { text-wrap: pretty; }
-[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-size: 0.85em; line-height: 1; padding: 0 4px; border-radius: 4px; background: #232323; color: #c8c8c8; }
-/* (11) Chart legend: its left edge on the chart title's. The chart library insets the key to the
- * plot by an inline style; in the conversation the key starts where the title starts. */
-[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host .snapshot-legend { padding-inline-start: 0 !important; }
-
-/* ==========================================================================================
- * v15 (22 Nov, after round 21) — scoped to the conversation pane.
- * ========================================================================================== */
-/* (3) Narration in Full: 14/24 #c4c4c4. Its inline code has no fill: monospace at 0.9em in
- * #dcdcdc (v14's dark chips withdrawn there). Answers keep their chips. */
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { font-size: 14px; line-height: 24px; color: #c4c4c4; }
-[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-family: var(--cv-mono); font-size: 0.9em; line-height: inherit; padding: 0; border-radius: 0; background: none; color: #dcdcdc; }
-/* (8) Headings in answers: h1, h2 and h3 are one style, 17/24 600 #ececec, 24px above and 8px
- * below, so one level looks the same whatever mark the source used. */
-[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2, h3) { margin: 24px 0 8px; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: 0; color: #ececec; }
-[data-conversation-pane] .chat-thread .chat-a .markdown > :is(h1, h2, h3):first-child { margin-block-start: 0; }
-[data-conversation-pane] .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3):first-child { margin-block-start: 16px; }
-/* What follows a heading starts 8px under it (a table or a picture's own top margin would
- * otherwise widen the gap to 16). */
-[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2, h3) + * { margin-block-start: 0; }
-
-/* ==========================================================================================
- * v16 (22 Nov, after round 22) — scoped to the conversation pane.
- * ========================================================================================== */
-/* (1) Inline code: reverted to v15 by v17 (1). Answers keep their chips; Full narration has no
- * fill (mono 0.9em #dcdcdc). See the v15 block above. */
-/* (7) Headings in answers: h1 and h2 19/26 600 #f2f2f2; h3 17/24 600 #ececec. Spacing as v15
- * (24 above, 8 below). The table head keeps its own style. */
-[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2) { font-size: 19px; line-height: 26px; font-weight: 600; color: #f2f2f2; }
-[data-conversation-pane] .chat-thread .chat-a .markdown h3 { font-size: 17px; line-height: 24px; font-weight: 600; color: #ececec; }
-/* (8) Links in answers: reverted to v15 by v18 (3), #ececec with a 50% underline (v11 (10) above). */
-/* (5) Disabled send: reverted to v14 by v17 (2), #2a2a2a fill and a #9a9a9a arrow (above). */
-
-/* ==========================================================================================
- * v19 (22 Nov, after round 25).
- * ========================================================================================== */
-/* (2) Stop in the composer: a 32px round filled #ececec with a 10px #141414 square (radius 2).
- * It is the only white control while the agent works; the disabled send stays #2a2a2a/#9a9a9a. */
-.chat-send.stop { background: #ececec; box-shadow: none; color: #141414; }
-.chat-send.stop:hover { background: #ffffff; }
-.chat-send.stop .chat-send-fill { width: 10px; height: 10px; border-radius: 2px; }
+/* Charts and media */
+[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host {
+  --accent-bright: var(--cv-data-1-strong);
+  --chart-compare-second: var(--cv-data-2-strong);
+  --chart-axis: var(--cv-detail-ink);
+  --chart-legend: var(--cv-detail-ink);
+}
+[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host .metric-card {
+  padding: var(--cv-s4);
+  border: 1px solid var(--cv-surface-edge);
+  border-radius: var(--cv-surface-radius);
+  background: var(--cv-surface);
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown .chat-chart .goal-chart-host .metric-top h2 {
+  margin: 0;
+  font: var(--cv-weight-title) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+  color: var(--cv-t1);
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown .chat-chart .goal-chart-host .snapshot-legend {
+  margin: var(--cv-s2) 0 var(--cv-s4);
+  padding: 0;
+  color: var(--cv-detail-ink);
+  font-size: var(--cv-type-meta);
+  line-height: var(--cv-leading-ui);
+  gap: var(--cv-s2) var(--cv-s4);
+}
+[data-conversation-pane] .chat-thread .chat-a .markdown .chat-chart .goal-chart-host .snapshot-legend li {
+  margin: 0;
+  line-height: var(--cv-leading-ui);
+  font-family: var(--cv-font);
+}
+[data-conversation-pane] .chat-thread .chat-chart .metric-top {
+  min-height: 0;
+}
+[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host .caption {
+  margin-top: var(--cv-s2);
+  color: var(--cv-detail-ink);
+  font-size: var(--cv-type-meta);
+  line-height: var(--cv-leading-ui);
+}
+[data-conversation-pane] .file-preview-media {
+  border-radius: var(--cv-s3);
+}
+[data-conversation-pane] .file-preview-media::after {
+  box-shadow: inset 0 0 0 1px var(--cv-media-edge);
+}
+[data-conversation-pane] .chat-thread .chat-chart .goal-chart-host .snapshot-legend {
+  padding-inline-start: 0 !important;
+}
