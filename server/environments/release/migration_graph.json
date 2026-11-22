@@ -108,6 +108,9 @@
     "ts_0006_machine_backend_state": [
       "ts_0005_server_link"
     ],
+    "ts_0007_conversation_machine": [
+      "ts_0006_machine_backend_state"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

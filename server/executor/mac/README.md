@@ -22,7 +22,7 @@ Once the job is absent, these cleanup notices never fence stop or restart.
 Historical PID records still require exact incarnation evidence. A changed birth retires an old PID record even if its numeric existence probe returns EPERM.
 Cross-user birth checks use `KERN_PROC_PID`. A different owner alone does not prove absence.
 Startup runs the one-time legacy cleanup pass before modern reconciliation and a cleanup snapshot.
-Starts serialize per Ticket before inspection, and unresolved cleanup fences only the affected Ticket.
+Starts serialize per owner: each Ticket, the Chief, each Manager, and each other conversation. Cleanup inspection and its fence apply only to a Ticket's start, and unresolved cleanup fences only the affected Ticket.
 Explicit cleanup commands check the exact historical source. Leases copy the cached evidence.
 The slow lease maintenance task refreshes that evidence without delaying a lease request.
 It reads local Ticket states in pages of 64 and uses the earliest returned home clock for cleanup.
@@ -30,6 +30,7 @@ Shutdown retains this task until its filesystem work settles.
 
 Managed starts use the shared Ticket workspace preparation and repository selector.
 An unmapped executor-default start creates a plain work folder.
+The Chief and each Manager start in their own home: the server's `data/files/chief` and `data/files/sprint-items/<id>` on the server's own machine code, otherwise `chief/` and `managers/<id>/` under the executor root. A Manager's home always has `artifacts/`, and outside the server's folder it gets the same home files the server writes. Any other conversation keeps the workspace its start names.
 The runner registers the physical identity before provider creation and checks that identity again under the workspace lock.
 Registration waits release that lock so another Ticket can prepare its own folder.
 Cleanup uses the same lock and the shared `stop_and_publish` owner before physical retirement.

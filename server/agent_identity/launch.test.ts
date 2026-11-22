@@ -1,3 +1,4 @@
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { reset_agent_conversation } from '../runtime/conversation_start.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
@@ -31,7 +32,7 @@ function setup() {
     }),
   });
   database.write((tx) => {
-    ensure_started_conversation_record(tx, start, { created_at: 1 });
+    ensure_started_conversation_record(tx, start, { created_at: 1, machine_id: HOME_MACHINE_ID });
     tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?)", [
       start.conversation_id,
     ]);
@@ -73,7 +74,12 @@ test('native restarts rotate only the transient launch and forward child methods
   await child.stop();
   expect(stop).toHaveBeenCalledOnce();
   expect(() =>
-    database.write((tx) => ensure_started_conversation_record(tx, starts[1]!, { created_at: 1 })),
+    database.write((tx) =>
+      ensure_started_conversation_record(tx, starts[1]!, {
+        created_at: 1,
+        machine_id: HOME_MACHINE_ID,
+      }),
+    ),
   ).toThrow('launch tokens are transient');
   await reset_agent_conversation(new InMemoryConversationSystem(), database, 'chief_of_staff');
   expect(database.read((sql) => authenticate_launch_token(sql, token(starts[1]!)))).toBeNull();

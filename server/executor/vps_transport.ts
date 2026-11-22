@@ -6,8 +6,6 @@ import type { Clock } from '../core/clock.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { ChangeSignal } from '../core/changes/index.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { IN_PROCESS_REQUEST_CONTEXT } from '../core/authority/identity.ts';
-import { IncomingMessage } from 'node:http';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
@@ -16,6 +14,7 @@ import { retained_open_runs } from '../conversation/runtime/remote.ts';
 import { admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import { recover_conversations } from '../conversation/deploy_interruptions/coordinator.ts';
+import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
@@ -25,7 +24,13 @@ import { SqliteCommandMailbox } from './vps_mailbox.ts';
 import { MacPresenceService } from './vps_presence.ts';
 import { MacRuns } from './vps_runs.ts';
 import { MacInbox } from './vps_inbox.ts';
-import { InboxStore } from './data/inbox.ts';
+import {
+  agent_request_context,
+  agent_response_json,
+  inject_agent_request,
+} from './vps_agent_writes.ts';
+import { InboxStore, require_manager_files_machine } from './data/inbox.ts';
+import { current_agent_owner } from './data/child_custody.ts';
 import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
 import { VpsBackendControlRelay } from './backend_control_relay.ts';
@@ -52,16 +57,6 @@ import {
   MAX_LIVE_EVENTS_PER_BATCH,
 } from './configuration.ts';
 
-const READABLE_PATHS = [
-  '/api/tickets',
-  '/api/managers',
-  '/api/sprint',
-  '/api/projects',
-  '/api/worker-types',
-  '/api/skills',
-  '/files/sprint-items/',
-  '/files/managers/',
-];
 const LIVE_METHODS = new Set([
   'agent_message_delta',
   'model_thinking_happened',
@@ -148,6 +143,7 @@ export class VpsExecutor {
   ): void {
     this.bind_conversations(conversations);
     this.app = app;
+    this.inbox.agent_writes.app = app;
     this.update_barrier = update_barrier;
     this.mailbox.start_admission = conversations.start_admission;
     this.presence.returned = async () => {
@@ -161,13 +157,15 @@ export class VpsExecutor {
     };
   }
   private async recover_waiting_turns(conversations: SqliteProcessConversationSystem) {
+    // A Ticket's turn follows its Ticket's machine; the Chief's, a Manager's or any other
+    // conversation's turn follows the machine its conversation records.
     const conversation_ids = this.database.read((sql) =>
       sql
         .all<{ conversation_id: string }>(
-          "SELECT DISTINCT d.source_conversation_id AS conversation_id FROM deploy_interruptions d JOIN tickets t ON d.owner_kind='ticket' AND t.id=d.owner_id WHERE t.machine_id=? AND d.recovery_state='awaiting_action'",
-          [this.machine_id],
+          "SELECT DISTINCT d.source_conversation_id AS conversation_id FROM deploy_interruptions d WHERE d.recovery_state='awaiting_action'",
         )
-        .map((row) => row.conversation_id),
+        .map((row) => row.conversation_id)
+        .filter((id) => conversation_machine_id(sql, id) === this.machine_id),
     );
     if (conversation_ids.length === 0) return;
     await recover_conversations(conversations, this.database, {
@@ -475,7 +473,9 @@ export class VpsExecutor {
           identity.executor_incarnation,
           this.machine_id,
         );
-        this.require_ticket_owner(sql, manifest.owner_id);
+        if (manifest.scope === 'manager')
+          require_manager_files_machine(sql, manifest.owner_id, this.machine_id);
+        else this.require_ticket_owner(sql, manifest.owner_id);
       });
   }
   save_ticket_file(
@@ -555,12 +555,16 @@ export class VpsExecutor {
     });
     if (read.path === '/api/executor/capabilities') {
       this.runs.authority(read.child);
-      return { ticket_send_back: true };
+      return { ticket_send_back: true, cli_request: true };
     }
-    if (!READABLE_PATHS.some((prefix) => read.path.startsWith(prefix)))
-      throw new PlannerError('validation', 'unsupported executor read');
-    const principal = this.runs.authority(read.child);
-    const params = new URLSearchParams();
+    if (!read.path.startsWith('/') || read.path.startsWith('//'))
+      throw new PlannerError('validation', 'an executor read path must be a server path');
+    // Ordinary route authority judges the read, as for a local agent.
+    this.runs.authority(read.child);
+    const principal = this.database.read((sql) => current_agent_owner(sql, read.child));
+    const target = new URL(read.path, 'http://executor');
+    // The path can carry its own query, as `panels api` sends it.
+    const params = new URLSearchParams(target.search);
     for (const [name, value] of Object.entries(read.params)) {
       const values = Array.isArray(value) ? value : [value];
       for (const element of values)
@@ -577,35 +581,22 @@ export class VpsExecutor {
                   : JSON.stringify(element),
         );
     }
-    const target = new URL(read.path, 'http://executor');
     target.search = params.toString();
     const controller = new AbortController();
     const answer = await observe_promise(
-      this.app.inject({
-        method: 'GET',
-        url: target.pathname + target.search,
-        signal: controller.signal,
-        Request: class extends IncomingMessage {
-          get [IN_PROCESS_REQUEST_CONTEXT]() {
-            return { principal, conversationId: read.child.conversation_id };
-          }
-        },
-      }),
+      inject_agent_request(
+        this.app,
+        agent_request_context(principal, read.child.conversation_id),
+        { method: 'GET', url: target.pathname + target.search, body: null },
+        controller.signal,
+      ),
       LIVE_READ_SERVER_LIMIT_SECONDS * 1000,
     );
     if (!answer.completed) {
       controller.abort();
       throw new PlannerError('retry_later', 'the read took too long');
     }
-    const response = answer.value;
-    try {
-      const value = JSON.parse(response.rawPayload.toString('utf8'));
-      return value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? (value as WireValue<'JsonObject'>)
-        : { data: value };
-    } catch {
-      return { text: response.body };
-    }
+    return agent_response_json(answer.value.statusCode, answer.value.body, answer.value.headers);
   }
   async live(
     identity: ExecutorIdentity,

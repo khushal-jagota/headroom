@@ -8,8 +8,11 @@ export interface ItemRow {
   payload_json: Buffer;
   receipt_json: Buffer | null;
 }
-export interface TicketFileRow {
-  ticket_id: string;
+/** The folders whose `artifacts/` the file sync sends to the home: a Ticket's and a Manager's. */
+export type SyncedFileScope = 'ticket' | 'manager';
+/** One file version that the home confirmed for a Ticket or a Manager. */
+export interface HomeFileRow {
+  owner_id: string;
   relative_path: string;
   byte_count: number;
   modified_ns: bigint;

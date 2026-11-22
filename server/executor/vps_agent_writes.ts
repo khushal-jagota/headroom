@@ -1,9 +1,14 @@
 /** Bind canonical agent mutations and native message dispatch to one inbox position. */
+import { IncomingMessage } from 'node:http';
+import type { FastifyInstance, InjectOptions } from 'fastify';
 import type { Clock } from '../core/clock.ts';
-import type { Principal } from '../core/contracts.ts';
+import type { Principal, RequestContext } from '../core/contracts.ts';
+import { IN_PROCESS_REQUEST_CONTEXT } from '../core/authority/identity.ts';
+import { failure_payload } from '../cli/http.ts';
 import { PlannerError } from '../core/contracts.ts';
-import type { TransactionSql } from '../core/database/contracts.ts';
-import { admitCommand } from '../core/authority/intake.ts';
+import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
+import { admitCommand, unidentifiedCommandRefusal } from '../core/authority/intake.ts';
+import { observe_promise } from '../core/promise_observer.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type {
   ConversationSystem,
@@ -36,17 +41,125 @@ import { file_current_proposal } from '../tickets/data/index.ts';
 import { ticket_json } from '../tickets/views.ts';
 import { notify_review_transfers } from '../tickets/review_transfer.ts';
 import type { ReviewTransferNotice } from '../tickets/contracts.ts';
-import { open_child_assignment } from './data/child_custody.ts';
+import { current_agent_owner } from './data/child_custody.ts';
 import { InboxStore } from './data/inbox.ts';
 import type { PublishedFiles } from './data/inbox.ts';
 import type { InboxRuns, PublishFiles } from './vps_inbox.ts';
 import type { WireValue } from './contracts.ts';
+import type { JsonValue } from './wire.generated.ts';
 import { require_current_incarnation_in_transaction } from './vps_presence_store.ts';
 import { decode_value, ExecutorValidationError } from './protocol.ts';
 import { now_ms } from './clock.ts';
+import { AGENT_REQUEST_SERVER_LIMIT_SECONDS } from './configuration.ts';
 import { is_record as is_json_object } from './../core/records.ts';
 
 type Json = WireValue<'JsonObject'>;
+/** Any agent write without a transactional operation. The home runs its ordinary route. */
+export const CLI_REQUEST = 'cli.request';
+const RELAYED_WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+/**
+ * Saved before the route runs. It stays when the home stops, or the route runs out of time,
+ * before the route answers.
+ */
+const UNFINISHED_REQUEST: Json = {
+  error: {
+    code: 'uncertain',
+    message:
+      'Home did not confirm that this request finished, so its effect is unknown. Check the current state before you repeat it.',
+    detail: {},
+  },
+};
+interface AgentRequest {
+  readonly method: string;
+  readonly url: string;
+  readonly body: Json | null;
+}
+/** A local generic agent has no launch identity, so its relayed requests have none either. */
+export function agent_request_context(
+  principal: { readonly kind: string; readonly id: string },
+  conversation_id: string,
+): RequestContext {
+  return principal.kind === 'conversation'
+    ? { principal: { kind: 'unidentified', id: 'unidentified' }, conversationId: null }
+    : { principal: principal as Principal, conversationId: conversation_id };
+}
+/** Inside the write: the child still acts for the principal that its request was judged as. */
+function require_same_agent_owner(
+  sql: ReadSql,
+  child: WireValue<'ChildReference'>,
+  principal: Principal,
+): void {
+  const current = agent_request_context(current_agent_owner(sql, child), '').principal;
+  if (current.kind !== principal.kind || current.id !== principal.id)
+    throw new PlannerError('agent_forbidden', 'child assignment changed');
+}
+/** Run one route in this process as the agent. Ordinary route authority decides. */
+export function inject_agent_request(
+  app: FastifyInstance,
+  context: RequestContext,
+  request: AgentRequest,
+  signal?: AbortSignal,
+) {
+  return app.inject({
+    method: request.method as InjectOptions['method'],
+    url: request.url,
+    signal,
+    ...(request.body === null
+      ? {}
+      : { payload: JSON.stringify(request.body), headers: { 'content-type': 'application/json' } }),
+    Request: class extends IncomingMessage {
+      get [IN_PROCESS_REQUEST_CONTEXT]() {
+        return context;
+      }
+    },
+  });
+}
+/** A JSON answer is data. A file is text whatever it holds, as `send_text` reads it locally. */
+function json_answer(headers: Record<string, unknown>): boolean {
+  const media = String(headers['content-type'] ?? '')
+    .split(';')[0]!
+    .trim()
+    .toLowerCase();
+  return (
+    headers['content-disposition'] === undefined &&
+    (media === 'application/json' || /^application\/.+\+json$/.test(media))
+  );
+}
+/** The JSON that the agent's CLI receives, the same as it decodes from the local route. */
+export function agent_response_json(
+  status: number,
+  body: string,
+  headers: Record<string, unknown>,
+): Json {
+  let data: unknown = null;
+  let parsed = true;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    parsed = false;
+  }
+  const refused = is_json_object(data) && Object.hasOwn(data, 'error');
+  if (status < 200 || status >= 300 || refused) {
+    const payload = failure_payload(status, data, body) as Json;
+    // A receipt and an IPC error carry an error object, never bare text.
+    return is_json_object(payload.error)
+      ? payload
+      : (failure_payload(status, { detail: data }, body) as Json);
+  }
+  if (!parsed || !json_answer(headers)) return { text: body };
+  return is_json_object(data) ? (data as Json) : { data: data as JsonValue };
+}
+function agent_request(args: Json): AgentRequest {
+  const { method, path, body } = args;
+  if (typeof method !== 'string' || !RELAYED_WRITE_METHODS.has(method))
+    throw new PlannerError('validation', 'an agent request needs a write method');
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//'))
+    throw new PlannerError('validation', 'an agent request path must be a server path');
+  if (body !== null && !is_json_object(body))
+    throw new PlannerError('validation', 'an agent request body must be a JSON object or null');
+  const target = new URL(path, 'http://executor');
+  return { method, url: target.pathname + target.search, body };
+}
 /** Effects use the caller's writer. Canonical domain writers own all mutation rules. */
 export function write_ticket_mutation(
   tx: TransactionSql,
@@ -129,6 +242,7 @@ export class AgentWrites {
   readonly clock: Clock;
   readonly runs: InboxRuns;
   conversations!: ConversationSystem;
+  app!: FastifyInstance;
   constructor(store: InboxStore, clock: Clock, runs: InboxRuns) {
     this.store = store;
     this.clock = clock;
@@ -142,7 +256,22 @@ export class AgentWrites {
     const write = decode_value(envelope.payload, 'CliWrite');
     if (write.child.conversation_id !== envelope.conversation_id)
       throw new ExecutorValidationError('CLI conversation conflicts with envelope');
-    const principal = await this.runs.authority(write.child);
+    // A generic conversation acts as a local generic agent does: without a Panels identity.
+    await this.runs.authority(write.child);
+    const context = agent_request_context(
+      this.store.database.read((sql) => current_agent_owner(sql, write.child)),
+      write.child.conversation_id,
+    );
+    const principal = context.principal;
+    if (write.operation === CLI_REQUEST)
+      return this.relay_request(envelope, write, context, identity, await publish());
+    // Its ordinary routes refuse such a write at the HTTP door. These operations refuse it here.
+    if (principal.kind === 'unidentified') {
+      const refusal = unidentifiedCommandRefusal(
+        write.operation === 'message.send' ? write.arguments.body : null,
+      );
+      if (refusal !== null) throw refusal;
+    }
     const published = await publish();
     if (write.operation === 'message.send')
       return this.deliver_message(envelope, write, principal, identity, published);
@@ -150,9 +279,7 @@ export class AgentWrites {
     const receipt = this.store.accept(
       envelope,
       (tx) => {
-        const assignment = open_child_assignment(tx, write.child);
-        if (assignment?.[0] !== principal.kind || assignment[1] !== principal.id)
-          throw new PlannerError('agent_forbidden', 'child assignment changed');
+        require_same_agent_owner(tx, write.child, principal);
         return write_ticket_mutation(tx, write, principal, this.clock, notices);
       },
       now_ms(),
@@ -199,7 +326,61 @@ export class AgentWrites {
       result = error.toPayload() as Json;
     }
     // Reservation admitted the native delivery. Its known outcome survives replacement.
-    return this.store.database.write((tx) => this.finish_dispatch(tx, envelope, result));
+    return this.store.database.write((tx) =>
+      this.finish_dispatch(tx, envelope, result, delivery_disposition(result)),
+    );
+  }
+  /**
+   * Exactly one route run per inbox position. A lost answer, or a route that runs out of time,
+   * leaves an uncertain receipt.
+   */
+  private async relay_request(
+    envelope: WireValue<'QueuedEnvelope'>,
+    write: WireValue<'CliWrite'>,
+    context: RequestContext,
+    identity: ExecutorIdentity,
+    published: PublishedFiles | null,
+  ): Promise<WireValue<'AcceptanceReceipt'>> {
+    const reserved = this.store.database.write((tx) => {
+      require_current_incarnation_in_transaction(
+        tx,
+        identity.executor_incarnation,
+        this.store.machine_id,
+      );
+      const previous = this.store.prior_receipt(tx, envelope, identity);
+      if (previous !== null) return { previous, request: null };
+      const request = agent_request(write.arguments);
+      require_same_agent_owner(tx, write.child, context.principal);
+      this.store.require_file_owner(tx, envelope);
+      this.store.require_unchanged_files(envelope, published);
+      const unfinished: WireValue<'AcceptanceReceipt'> = {
+        sender_id: envelope.sender_id,
+        submission_id: envelope.submission_id,
+        disposition: 'uncertain',
+        accepted_at_vps_ms: now_ms(),
+        result: UNFINISHED_REQUEST,
+      };
+      this.store.write_position(tx, envelope, unfinished, { dispatching: true });
+      return { previous: unfinished, request };
+    });
+    if (reserved.request === null) return reserved.previous;
+    // The conversation's later items wait for this one, so the route gets a bounded time.
+    const controller = new AbortController();
+    const answer = await observe_promise(
+      inject_agent_request(this.app, context, reserved.request, controller.signal),
+      AGENT_REQUEST_SERVER_LIMIT_SECONDS * 1000,
+    );
+    if (!answer.completed) {
+      // The route may still act. Its receipt stays uncertain, and nothing runs it again.
+      controller.abort();
+      return reserved.previous;
+    }
+    const response = answer.value;
+    const result = agent_response_json(response.statusCode, response.body, response.headers);
+    const disposition = Object.hasOwn(result, 'error') ? 'refused' : 'accepted';
+    return this.store.database.write((tx) =>
+      this.finish_dispatch(tx, envelope, result, disposition),
+    );
   }
   private reserve_dispatch(
     envelope: WireValue<'QueuedEnvelope'>,
@@ -221,6 +402,7 @@ export class AgentWrites {
       );
       const previous = this.store.prior_receipt(tx, envelope, identity);
       if (previous !== null) return { previous, recipient: principal, message: '', mode: 'queue' };
+      require_same_agent_owner(tx, write.child, principal);
       const body = write.arguments.body;
       if (!is_json_object(body))
         throw new PlannerError('validation', 'message body must be an object');
@@ -255,6 +437,7 @@ export class AgentWrites {
     tx: TransactionSql,
     envelope: WireValue<'QueuedEnvelope'>,
     result: Json,
+    disposition: WireValue<'AcceptanceReceipt'>['disposition'],
   ): WireValue<'AcceptanceReceipt'> {
     const previous = tx.get<{ result_json: string; submission_id: string; disposition: string }>(
       'SELECT * FROM mac_inbox_positions WHERE sender_id=? AND conversation_id=?',
@@ -266,11 +449,7 @@ export class AgentWrites {
     const receipt: WireValue<'AcceptanceReceipt'> = {
       sender_id: envelope.sender_id,
       submission_id: envelope.submission_id,
-      disposition: Object.hasOwn(result, 'error')
-        ? 'refused'
-        : result.fate === 'uncertain'
-          ? 'uncertain'
-          : 'accepted',
+      disposition,
       result,
       accepted_at_vps_ms: now_ms(),
     };
@@ -304,10 +483,16 @@ export class AgentWrites {
       current.disposition !== 'dispatching'
     )
       return;
-    this.finish_dispatch(tx, envelope, {
+    const result: Json = {
       target: { kind: recipient.kind, id: recipient.id },
       conversation_id,
       ...fate,
-    });
+    };
+    this.finish_dispatch(tx, envelope, result, delivery_disposition(result));
   }
+}
+/** A message's receipt follows its delivery fate. */
+function delivery_disposition(result: Json): WireValue<'AcceptanceReceipt'>['disposition'] {
+  if (Object.hasOwn(result, 'error')) return 'refused';
+  return result.fate === 'uncertain' ? 'uncertain' : 'accepted';
 }

@@ -1,3 +1,6 @@
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
+import { VpsExecutorRegistry } from '../executor/registry.ts';
+import type { MacRemoteChild } from '../executor/vps_remote_child.ts';
 import { read_server_location } from '../server_link/data.ts';
 import { SERVER_LOCATION_HEADER, SERVER_LOCATION_PATH } from '../server_link/contracts.ts';
 import * as worker_skill_startup from '../worker_settings/startup.ts';
@@ -258,6 +261,14 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   vi.stubEnv('PLAN_TEST_MODE', '0');
   vi.stubEnv('PLAN_DISPATCH_ENABLED', 'true');
   const registry = new ScriptedBackendRegistry();
+  // Production runs these conversations through the home's machine code, which the fixture
+  // marks present. This lifecycle proof keeps its scripted children in that code's place.
+  vi.spyOn(VpsExecutorRegistry.prototype, 'create').mockImplementation(
+    (options) =>
+      registry.registry
+        .require_live(options.resolved_start.backend_key)
+        .child_factory(options) as unknown as MacRemoteChild,
+  );
   const broken = create(f.database, { title: 'Broken saved Ticket' });
   f.database.write((tx) =>
     tx.run("UPDATE tickets SET stage='no-such-stage' WHERE id=?", [broken.id]),
@@ -299,7 +310,10 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   );
   // Add immutable pre-start capture and upload inputs to this existing host.
   f.database.write((tx) => {
-    ensure_started_conversation_record(tx, chief_start, { created_at: 0 });
+    ensure_started_conversation_record(tx, chief_start, {
+      created_at: 0,
+      machine_id: HOME_MACHINE_ID,
+    });
     tx.run(
       'INSERT INTO agents(agent_key,conversation_id) VALUES (?,?) ' +
         'ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id ' +

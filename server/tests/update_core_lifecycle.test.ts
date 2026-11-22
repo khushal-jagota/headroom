@@ -216,8 +216,12 @@ async function owned_server(
         registry.bind_runtime(value.worker_supervision);
         return new SqliteProcessConversationSystem({
           store: value.record.store,
-          delivery_model_refusal: (backend, model, ticket_id) =>
-            new BackendStateStore(value.database).delivery_model_refusal(backend, model, ticket_id),
+          delivery_model_refusal: (backend, model, conversation_id) =>
+            new BackendStateStore(value.database).delivery_model_refusal(
+              backend,
+              model,
+              conversation_id,
+            ),
           execution_refusal: (id) =>
             value.database.read((sql) =>
               conversation_execution_refusal(sql, id, canonical_ticket_execution_refusal),

@@ -239,7 +239,7 @@ export type FileManifest = {
   scope: FileScope;
   sha256: string;
 };
-export type FileScope = 'ticket' | 'conversation';
+export type FileScope = 'ticket' | 'conversation' | 'manager';
 export type FileSnapshot = { local_path: string; manifest: FileManifest };
 export type FileUploadRequest = { child: ChildReference; manifest: FileManifest };
 export type IpcOperation = 'read' | 'write' | 'retry' | 'health' | 'quiesce' | 'preview';

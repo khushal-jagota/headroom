@@ -243,7 +243,7 @@ test('a restart retains the delivery deadline and a failed backend event after c
 
 test('an old waiting item hands its files to the file sync, and old file copies go', async () => {
   const { spool, store } = await fixture();
-  const held = { ticket_id: 'ticket', byte_count: 1, modified_ns: 5n };
+  const held = { owner_id: 'ticket', byte_count: 1, modified_ns: 5n };
   const waiting = { relative_path: 'artifacts/waiting.txt', sha256: 'a'.repeat(64) };
   const delivered = { relative_path: 'artifacts/delivered.txt', sha256: 'b'.repeat(64) };
   const row = store.append(
@@ -256,8 +256,8 @@ test('an old waiting item hands its files to the file sync, and old file copies 
     ),
     () => {},
   );
-  store.record_home_file({ ...held, ...waiting });
-  store.record_home_file({ ...held, ...delivered });
+  store.record_home_file('ticket', { ...held, ...waiting });
+  store.record_home_file('ticket', { ...held, ...delivered });
   await store.stop(deadline());
   // An older runtime leaves this state: the item still owns a file that never reached the home.
   const old = new BetterSqlite3(join(spool, DATABASE_NAME));
@@ -270,11 +270,11 @@ test('an old waiting item hands its files to the file sync, and old file copies 
 
   const reopened = await OutboxStore.open(spool, clock, deadline(), () => {});
   stores.push(reopened);
-  expect(reopened.home_files('ticket')).toEqual([{ ...held, ...delivered }]);
+  expect(reopened.home_files('ticket', 'ticket')).toEqual([{ ...held, ...delivered }]);
   expect(row_envelope(reopened.sender_id, reopened.pending()[0]!).file_dependencies).toEqual([]);
   expect(readdirSync(join(spool, 'blobs'))).toEqual([]);
-  reopened.forget_home_file('ticket', delivered.relative_path);
-  expect(reopened.home_files('ticket')).toEqual([]);
+  reopened.forget_home_file('ticket', 'ticket', delivered.relative_path);
+  expect(reopened.home_files('ticket', 'ticket')).toEqual([]);
 });
 
 test('real file-worker loss seals writes and a failed database close retains the main lock until retry', async () => {

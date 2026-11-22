@@ -36,11 +36,11 @@ The host stops the sender before it closes the store and file transport.
 
 Known limit: the inherited directory walk lacks a retry owner if an intermediate ancestor close fails.
 
-`MacTicketFileSync` sends each Ticket's `artifacts/` folder to the home, apart from every item.
-A Ticket's item, or a restart, requests a pass. One pass runs for a Ticket, and at most one waits.
+`MacArtifactSync` sends each Ticket's, and on another instance each Manager's, `artifacts/` folder to the home, apart from every item. A Manager's paths are relative to its `artifacts/` folder. On the server's own machine code both folders are the served folders, and neither sync runs.
+An owner's item, or a restart, requests a pass. One pass runs for an owner, and at most one waits.
 A pass compares the folder with the versions the home confirmed. It sends each new or changed file once and removes each file the folder no longer has.
-It removes nothing when a folder is absent or unreadable. Symlinks and all other Ticket folders stay local.
-The file worker hashes each file. A failed file is logged and the other files still go. The Ticket's next pass retries it after a capped delay. A file the home refuses, or one that cannot be read, waits until it changes.
+It removes nothing when a folder is absent or unreadable. Symlinks and all other folders of the owner stay local.
+The file worker hashes each file. A failed file is logged and the other files still go. The owner's next pass retries it after a capped delay. A file the home refuses, or one that cannot be read, waits until it changes.
 
 The shared machine host keeps its server address, identity, and highest accepted move number in
 `server-link.json` under the executor root. The service URL is the initial address only.

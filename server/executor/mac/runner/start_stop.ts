@@ -24,9 +24,11 @@ import { MacChildAdmissionRefused, MacPermissionDenied } from './contracts.ts';
 import { remember_model_catalog_failure } from '../../../conversation/backends/catalog_cleanup.ts';
 import { workspace_identity } from '../../../ticket_workspaces/filesystem.ts';
 import { same_workspace } from './workspaces.ts';
+import { child_owner, child_owner_start_key, child_ticket_id } from './logic/child_owner.ts';
+import type { MacChildOwner } from './logic/child_owner.ts';
 interface Entry {
   reference: ChildReference;
-  ticket_id: string;
+  owner: MacChildOwner;
   retiring: boolean;
   stopped: boolean;
   started: boolean;
@@ -38,7 +40,8 @@ interface Entry {
 export class MacNativeChildren implements MacNativeChildrenContract {
   private readonly options: MacNativeChildrenOptions;
   private readonly entries = new Map<string, Entry>();
-  private readonly ticket_start_locks = new Map<string, { lock: FifoLock; users: number }>();
+  /** Keyed by `child_owner_start_key`, so each Ticket, the Chief and each Manager start alone. */
+  private readonly owner_start_locks = new Map<string, { lock: FifoLock; users: number }>();
   private readonly starts = new Set<Promise<MacRunningChild>>();
   private closed = false;
   private cleanup: Promise<void> | undefined;
@@ -91,24 +94,22 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     invoking: () => void,
   ): Promise<MacRunningChild> {
     if (this.closed) return Promise.reject(new MacChildAdmissionRefused('executor is quiescing'));
-    const ticket_id = new Map(
-      input.resolved_start.role_materials?.identity_environment_variables ?? [],
-    ).get('PLAN_TICKET_ID');
-    if (!ticket_id)
-      return Promise.reject(new BackendSpawnFailed('Mac runs require a Ticket identity'));
-    let holder = this.ticket_start_locks.get(ticket_id);
+    const owner = child_owner(input.resolved_start);
+    const ticket_id = child_ticket_id(owner);
+    const key = child_owner_start_key(owner);
+    let holder = this.owner_start_locks.get(key);
     if (!holder) {
       holder = { lock: new FifoLock(), users: 0 };
-      this.ticket_start_locks.set(ticket_id, holder);
+      this.owner_start_locks.set(key, holder);
     }
     holder.users++;
     const acquired = holder;
     const task = acquired.lock
       .run(async () => {
-        await this.options.worker_cleanup.refresh(ticket_id);
+        if (ticket_id !== null) await this.options.worker_cleanup.refresh(ticket_id);
         for (let attempt = 0; ; attempt++) {
           try {
-            return await this.start_admitted(reference, input, invoking, ticket_id);
+            return await this.start_admitted(reference, input, invoking, owner);
           } catch (error) {
             if (!(error instanceof BackendInitializationTimeout) || attempt === 2) throw error;
             await pause(BACKEND_START_RETRY_DELAY_SECONDS * 1000);
@@ -116,8 +117,8 @@ export class MacNativeChildren implements MacNativeChildrenContract {
         }
       })
       .finally(() => {
-        if (--acquired.users === 0 && this.ticket_start_locks.get(ticket_id) === acquired)
-          this.ticket_start_locks.delete(ticket_id);
+        if (--acquired.users === 0 && this.owner_start_locks.get(key) === acquired)
+          this.owner_start_locks.delete(key);
         this.starts.delete(task);
       });
     this.starts.add(task);
@@ -127,18 +128,22 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     reference: ChildReference,
     input: StartRun,
     invoking: () => void,
-    ticket_id: string,
+    owner: MacChildOwner,
   ): Promise<MacRunningChild> {
     if (this.closed) return Promise.reject(new MacChildAdmissionRefused('executor is quiescing'));
     if (this.entries.has(reference.child_id))
       return Promise.reject(new BackendSpawnFailed('child identity already has a native start'));
     if (input.resolved_start.conversation_id !== reference.conversation_id)
       return Promise.reject(new Error('child conversation mismatch'));
-    if ([...this.entries.values()].some((entry) => entry.ticket_id === ticket_id))
+    const ticket_id = child_ticket_id(owner);
+    if (
+      ticket_id !== null &&
+      [...this.entries.values()].some((entry) => child_ticket_id(entry.owner) === ticket_id)
+    )
       return Promise.reject(new BackendSpawnFailed('Ticket already has a retained source child'));
     const entry: Entry = {
       reference,
-      ticket_id,
+      owner,
       retiring: false,
       stopped: false,
       started: false,
@@ -159,11 +164,13 @@ export class MacNativeChildren implements MacNativeChildrenContract {
     invoking: () => void,
   ): Promise<MacRunningChild> {
     const capability = randomBytes(32).toString('base64url');
-    // This machine declares its setup to the home server. Reports go in order and never hold
+    const ticket_id = child_ticket_id(entry.owner);
+    // This machine declares a Worker's setup to the home server. Reports go in order and never hold
     // the start back. The home server ignores a report after this start settles, and an
     // older home server refuses the route, so a failed report only costs the display.
     let reports = Promise.resolve();
     const report_setup = (step: WorkerSetupReport['step']) => {
+      if (ticket_id === null) return;
       reports = reports
         .then(() => this.options.report_worker_setup(entry.reference, step))
         .catch((error: unknown) => console.warn(`Worker setup report (${step}) failed`, error));
@@ -181,6 +188,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
             root: this.options.paths.root,
             native_home: native_home.path,
             native_skills_directory: native_home.skills_directory,
+            owner_kind: entry.owner.kind,
           },
         );
       } catch (error) {
@@ -190,7 +198,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
       }
       const prepared = await this.options.workspace_lock.run(async () => {
         this.assert_start(entry);
-        if (this.options.worker_cleanup.uncertain(entry.ticket_id))
+        if (ticket_id !== null && this.options.worker_cleanup.uncertain(ticket_id))
           throw new BackendSpawnFailed('Previous Worker cleanup is not proven for this Ticket');
         const localized_start = await localize_start(
           input,
@@ -204,11 +212,12 @@ export class MacNativeChildren implements MacNativeChildrenContract {
         );
         this.assert_start(entry);
         const managed =
+          ticket_id !== null &&
           new Map(input.resolved_start.role_materials?.identity_environment_variables ?? []).get(
             'PLAN_TICKET_WORKSPACE_MANAGED',
           ) === '1';
         const workspace = managed
-          ? workspace_identity(join(this.options.paths.artifacts, entry.ticket_id))
+          ? workspace_identity(join(this.options.paths.artifacts, ticket_id))
           : null;
         return { localized_start, workspace };
       });
@@ -227,7 +236,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
         if (
           prepared.workspace !== null &&
           !same_workspace(
-            workspace_identity(join(this.options.paths.artifacts, entry.ticket_id)),
+            workspace_identity(join(this.options.paths.artifacts, ticket_id!)),
             prepared.workspace,
           )
         )
@@ -242,7 +251,7 @@ export class MacNativeChildren implements MacNativeChildrenContract {
           reference: entry.reference,
           capability,
           native,
-          ticket_id: entry.ticket_id,
+          owner: entry.owner,
           launch_input: input,
           localized_start,
           workspace: prepared.workspace,

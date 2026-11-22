@@ -1,4 +1,3 @@
-import { worker_ticket_id } from '../../worker_supervision/logic/worker_launch.ts';
 import { is_memory_notice_sender_message_id } from '../../runtime/worker_memory.ts';
 /** A local prompt crosses the provider boundary once, then settles only its record. */
 import {
@@ -49,6 +48,7 @@ import { ConversationRecord } from '../record/contracts.ts';
 import { wait_for_item } from '../../executor/item_budget.ts';
 import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../child_custody.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
+import { is_ticket_conversation } from '../record/data/child_custody.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
   return {
@@ -74,6 +74,34 @@ function owned(host: DeliveryServices, state: ConversationState, reservation: Re
     throw new DeliveryCancelled();
   }
 }
+/**
+ * A process that the server started before the switch to machine code can still hold the
+ * conversation's vendor session. A Ticket's cleanup recheck guards a Worker. Any other
+ * conversation starts no child until that process record is proven retired.
+ */
+function waits_for_recorded_source(
+  host: Pick<DeliveryServices, 'options'>,
+  state: ConversationState,
+): boolean {
+  return (
+    !state.local_child_retirement_proven &&
+    !state.local_preparation_cancelled &&
+    !host.options.store.start_admission_database.read((sql) =>
+      is_ticket_conversation(sql, state.record.conversation_id),
+    )
+  );
+}
+/** Before a new turn opens, retire an idle recorded process, as a kill does. */
+async function retire_recorded_source(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+): Promise<void> {
+  if (state.child !== null) return;
+  await host.ensure_local_custody(state);
+  if (state.child_is_quarantined || !waits_for_recorded_source(host, state)) return;
+  if (await host.options.store.retire_idle_recorded_source(state.record.conversation_id))
+    state.local_child_retirement_proven = true;
+}
 async function ensure_child(
   host: DeliveryServices,
   state: ConversationState,
@@ -86,6 +114,10 @@ async function ensure_child(
       'The agent stopped after an earlier failure and was not replaced yet.',
     );
   if (state.child !== null) return state.child;
+  if (waits_for_recorded_source(host, state))
+    throw new BackendSpawnFailed(
+      'An agent process that the server started earlier is not proven ended. Select Stop to end it, then send your message again.',
+    );
   const previous = state.record.resolved_start();
   const target = selection_target(message, previous);
   const resolved = new ResolvedConversationStart({
@@ -210,7 +242,7 @@ export async function deliver_prompt(
       : host.options.delivery_model_refusal(
           state.record.backend_key,
           requested,
-          worker_ticket_id(state.record.resolved_start()),
+          state.record.conversation_id,
         );
   if (refusal !== null) {
     return result({
@@ -698,6 +730,7 @@ export async function reserve_turn(
   automatic_compaction = false,
   sender_message_ids: readonly (string | null)[] = [],
 ): Promise<ReservedTurn> {
+  await retire_recorded_source(host, state);
   const requests = host.start_admission.requests_for(sender_message_ids);
   let number: number;
   try {

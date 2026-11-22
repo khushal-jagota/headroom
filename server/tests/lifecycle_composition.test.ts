@@ -816,11 +816,11 @@ test('startServer reconciles before core construction and a route collision star
           };
           return new SqliteProcessConversationSystem({
             store: context.record.store,
-            delivery_model_refusal: (backend, model, ticket_id) =>
+            delivery_model_refusal: (backend, model, conversation_id) =>
               new BackendStateStore(context.database).delivery_model_refusal(
                 backend,
                 model,
-                ticket_id,
+                conversation_id,
               ),
             execution_refusal: (id) =>
               context.database.read((sql) =>
@@ -887,11 +887,11 @@ test('startServer closes both services after a background start failure while re
           return new SqliteProcessConversationSystem({
             store: context.record.store,
             message_files: new ConversationMessageFiles(path),
-            delivery_model_refusal: (backend, model, ticket_id) =>
+            delivery_model_refusal: (backend, model, conversation_id) =>
               new BackendStateStore(context.database).delivery_model_refusal(
                 backend,
                 model,
-                ticket_id,
+                conversation_id,
               ),
             execution_refusal: (id) =>
               context.database.read((sql) =>

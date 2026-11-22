@@ -57,7 +57,7 @@ export async function start_conversation(
       )
         throw new Error('Ticket workspace admission is closed for retirement.');
       // The record is the first effect, before an in-memory identity can exist.
-      const record = host.options.store.create_conversation(resolved);
+      const record = host.options.store.create_conversation(resolved, request.machine_id);
       if (!host.conversations.has(record.conversation_id)) {
         const state = new ConversationState(record);
         state.local_child_retirement_proven = true;

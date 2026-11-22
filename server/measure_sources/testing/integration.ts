@@ -57,7 +57,7 @@ export async function run(spec: Spec) {
   const store = new ConversationStore(database, { integer_now: () => 50 });
   const system = {
     async start_conversation(request: ConversationStartRequest) {
-      store.create_conversation(resolve_conversation_start_request(request));
+      store.create_conversation(resolve_conversation_start_request(request), request.machine_id);
     },
     async send(
       id: string,

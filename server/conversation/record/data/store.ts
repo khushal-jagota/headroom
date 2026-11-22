@@ -1,5 +1,6 @@
 import { LAUNCH_TOKEN_ENVIRONMENT_NAME } from '../../../agent_identity/contracts.ts';
 import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
+import { conversation_machine_id } from '../../../machines/conversation_machine.ts';
 import { write_bindings } from '../../start_admission/index.ts';
 import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
 import type { LocalChildIdentity } from '../../local_child_contracts.ts';
@@ -183,7 +184,10 @@ export class ConversationStorePrimitives {
     this.integer_now = options.integer_now ?? (() => Math.floor(Date.now() / 1000));
     this.transaction_participant = options.transaction_participant ?? null;
   }
-  create_conversation(start: ResolvedConversationStart): ConversationRecord {
+  create_conversation(
+    start: ResolvedConversationStart,
+    machine_id: string = HOME_MACHINE_ID,
+  ): ConversationRecord {
     const value = record_from_start(start, this.integer_now());
     try {
       this.database.write((tx) => {
@@ -192,7 +196,7 @@ export class ConversationStorePrimitives {
             'workspace_path_policy,role_text,identity_environment_variables,access,vendor_session_cursor,' +
             'composer_catalog,latest_sequence,latest_agent_activity_at,latest_agent_activity_sequence,' +
             'automatically_compacted_through_sequence,automatic_compaction_attempted_through_sequence,' +
-            'owner_read_through_sequence,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'owner_read_through_sequence,created_at,machine_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
           [
             value.conversation_id,
             value.backend_key,
@@ -212,6 +216,7 @@ export class ConversationStorePrimitives {
             value.automatic_compaction_attempted_through_sequence,
             value.owner_read_through_sequence,
             value.created_at,
+            machine_id,
           ],
         );
         custody.write_never_started(tx, value.conversation_id);
@@ -256,17 +261,14 @@ export class ConversationStorePrimitives {
     return this.database;
   }
   automatic_start_request(identity: string, conversation_id: string): StartRequest {
-    return this.database.read((sql) => {
-      const row = sql.get<{ machine_id: string }>(
-        'SELECT machine_id FROM tickets WHERE conversation_id=?',
-        [conversation_id],
-      );
-      return {
-        identity,
-        work_class: row ? 'worker' : 'supervisor',
-        destination: row?.machine_id ?? HOME_MACHINE_ID,
-      };
-    });
+    return this.database.read((sql) => ({
+      identity,
+      work_class:
+        sql.get('SELECT 1 FROM tickets WHERE conversation_id=?', [conversation_id]) === undefined
+          ? 'supervisor'
+          : 'worker',
+      destination: conversation_machine_id(sql, conversation_id) ?? HOME_MACHINE_ID,
+    }));
   }
   reserve_turn(conversation_id: string, requests: readonly StartRequest[] = []): number {
     return this.database.write(
@@ -1493,10 +1495,10 @@ export class ConversationStore
         'SELECT conversation_id,title,machine_id FROM tickets WHERE conversation_id IS NOT NULL',
       ))
         result.set(row.conversation_id, [row.title, row.machine_id]);
-      for (const row of sql.all<{ conversation_id: string; title: string }>(
-        "SELECT a.conversation_id,m.title FROM agents a JOIN managers m ON a.agent_key='manager_' || m.id WHERE a.conversation_id IS NOT NULL",
+      for (const row of sql.all<{ conversation_id: string; title: string; machine_id: string }>(
+        "SELECT a.conversation_id,m.title,c.machine_id FROM agents a JOIN managers m ON a.agent_key='manager_' || m.id JOIN conversations c ON c.conversation_id=a.conversation_id",
       ))
-        result.set(row.conversation_id, [row.title, HOME_MACHINE_ID]);
+        result.set(row.conversation_id, [row.title, row.machine_id]);
       return result;
     });
   }
@@ -1713,7 +1715,7 @@ export class ConversationStore
 export function ensure_started_conversation_record(
   tx: TransactionSql,
   start: ResolvedConversationStart,
-  options: { created_at: number },
+  options: { created_at: number; machine_id: string },
 ): void {
   const identity = identity_environment_json(
     start.role_materials?.identity_environment_variables ?? [],
@@ -1725,11 +1727,12 @@ export function ensure_started_conversation_record(
     start.role_materials?.role_text ?? null,
     identity,
     start.access,
+    options.machine_id,
   ];
   tx.run(
     'INSERT OR IGNORE INTO conversations (conversation_id,backend_key,model,reasoning_effort,' +
-      'workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access,created_at) ' +
-      'VALUES (?,?,?,?,?,?,?,?,?,?)',
+      'workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access,created_at,machine_id) ' +
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     [
       start.conversation_id,
       start.backend_key,
@@ -1741,6 +1744,7 @@ export function ensure_started_conversation_record(
       identity,
       start.access,
       options.created_at,
+      options.machine_id,
     ],
   );
   const row = tx.get<
@@ -1752,9 +1756,9 @@ export function ensure_started_conversation_record(
       | 'role_text'
       | 'identity_environment_variables'
       | 'access'
-    >
+    > & { machine_id: string }
   >(
-    'SELECT backend_key,workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access ' +
+    'SELECT backend_key,workspace_folder,workspace_path_policy,role_text,identity_environment_variables,access,machine_id ' +
       'FROM conversations WHERE conversation_id=?',
     [start.conversation_id],
   );
@@ -1768,6 +1772,7 @@ export function ensure_started_conversation_record(
           row.role_text,
           row.identity_environment_variables,
           row.access,
+          row.machine_id,
         ];
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(

@@ -872,7 +872,9 @@ try {
     ),
   );
   output.after_rewrite = snapshot();
-  output.skills = database.read((sql) => read_canonical_skill_snapshot(sql, spec.ticket));
+  output.skills = database.read((sql) =>
+    read_canonical_skill_snapshot(sql, { kind: 'ticket', id: spec.ticket }),
+  );
   const choices: string[] = [];
   const local: BackendChildFactory = () => {
     choices.push('local');

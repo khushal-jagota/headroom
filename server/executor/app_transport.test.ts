@@ -434,7 +434,7 @@ test('machine code on the home account reaches executor routes, and only those, 
     );
     const child = {
       reference: child_reference,
-      ticket_id: ticket.id,
+      owner: { kind: 'ticket', id: ticket.id },
       workspace: { machine_id: ORIGINAL_MAC_MACHINE_ID, workspace_id: 'fixture-workspace' },
       localized_start: { workspace_folder: ticket_home },
     } as unknown as MacRunningChild;

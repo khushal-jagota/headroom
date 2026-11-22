@@ -113,8 +113,12 @@ export function create_production_conversation_core(
     store: context.record.store,
     backend_registry: current.registry,
     execution_refusal: current.execution_refusal,
-    delivery_model_refusal: (backend, model, ticket_id) =>
-      new BackendStateStore(context.database).delivery_model_refusal(backend, model, ticket_id),
+    delivery_model_refusal: (backend, model, conversation_id) =>
+      new BackendStateStore(context.database).delivery_model_refusal(
+        backend,
+        model,
+        conversation_id,
+      ),
     message_files: new ConversationMessageFiles(context.config.db_path),
     unix_time_now: () => context.clock.nowUnix(),
     require_runtime_ownership: context.require_runtime_ownership,

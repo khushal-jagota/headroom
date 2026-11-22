@@ -1,4 +1,4 @@
-/** Every Ticket child runs through its machine's code. Recovery never allocates a local child. */
+/** Every conversation's child runs through its machine's code. Recovery never allocates a local child. */
 import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import { machine_can_run, machine_driver_kinds } from './machine_drivers.ts';
 import type {
@@ -10,7 +10,7 @@ import type {
   RetainedBackendRun,
 } from '../conversation/backends/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
-import { canonical_principal } from '../agent_identity/data.ts';
+import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import { authenticated_local_child } from '../agent_identity/launch.ts';
 
 export class LocaleBackendChildFactory {
@@ -37,19 +37,14 @@ export class LocaleBackendChildFactory {
   }
   create(options: Parameters<BackendChildFactory>[0]): BackendChild {
     const driver_kinds = this.database.read((sql) => {
-      const principal = canonical_principal(sql, options.resolved_start.conversation_id);
-      const row =
-        principal?.kind === 'ticket'
-          ? sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
-              principal.id,
-            ])
-          : undefined;
-      return row === undefined ? null : machine_driver_kinds(sql, row.machine_id);
+      const machine_id = conversation_machine_id(sql, options.resolved_start.conversation_id);
+      return machine_id === null ? null : machine_driver_kinds(sql, machine_id);
     });
+    // Only a start without a conversation record has no machine. It keeps the local child.
     const remote = driver_kinds !== null;
     if (remote && !machine_can_run(driver_kinds, options.resolved_start.backend_key))
       throw new BackendSpawnFailed(
-        `The Ticket's machine cannot run the ${options.resolved_start.backend_key} backend`,
+        `The conversation's machine cannot run the ${options.resolved_start.backend_key} backend`,
       );
     const child = (remote ? this.remote_factory : this.local_factory)(options);
     return remote ? child : authenticated_local_child(child, this.database);

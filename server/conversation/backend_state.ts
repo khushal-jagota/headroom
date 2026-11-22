@@ -9,6 +9,7 @@ import {
   legacy_machine_id,
 } from '../execution_identity.ts';
 import { snapshot_for_wire } from '../executor/backend_snapshot.ts';
+import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import type { BackendSnapshot } from './snapshot/contracts.ts';
 import type {
   BackendUsageResult,
@@ -114,20 +115,20 @@ export class BackendStateStore {
   model_is_enabled(backend_key: BackendInstanceId, model_id: string): boolean {
     return this.database.read((sql) => model_is_enabled(sql, backend_key, model_id));
   }
+  /** The model is checked against the list of the machine that runs the conversation. */
   delivery_model_refusal(
     backend_key: BackendInstanceId,
     model_id: string,
-    ticket_id: string | null,
+    conversation_id: string,
   ): string | null {
-    return this.database.read((sql) => {
-      const row =
-        ticket_id === null
-          ? undefined
-          : sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [
-              ticket_id,
-            ]);
-      return model_refusal(sql, backend_key, model_id, row?.machine_id ?? HOME_MACHINE_ID);
-    });
+    return this.database.read((sql) =>
+      model_refusal(
+        sql,
+        backend_key,
+        model_id,
+        conversation_machine_id(sql, conversation_id) ?? HOME_MACHINE_ID,
+      ),
+    );
   }
   keep_vps_model_list(snapshot: BackendSnapshot): void {
     this.database.write((tx) => save_machine_model_list(tx, HOME_MACHINE_ID, snapshot));

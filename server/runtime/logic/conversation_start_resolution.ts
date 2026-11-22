@@ -56,6 +56,8 @@ export interface ConversationStartValues extends ConversationStartConfiguration 
   workspace_folder: string;
   access: ConversationAccess;
   workspace_path_policy: WorkspacePathPolicy;
+  /** The machine whose code runs the new conversation. */
+  machine_id: string;
 }
 export function worker_conversation_role_materials(ticket_id: string): ConversationRoleMaterials {
   return new ConversationRoleMaterials({
@@ -118,6 +120,7 @@ export function resolve_manager_conversation_start(o: {
   overrides?: ConversationStartOverrides;
   workspace_folder: string;
   shared_workspace_folder: string;
+  machine_id: string;
 }): ConversationStartValues {
   return {
     ...with_overrides(o.launch_configuration, o.overrides ?? NO_CONVERSATION_START_OVERRIDES),
@@ -125,6 +128,7 @@ export function resolve_manager_conversation_start(o: {
     workspace_folder: o.workspace_folder,
     access: FLOOR_DEFAULT_ACCESS,
     workspace_path_policy: 'home_relative',
+    machine_id: o.machine_id,
   };
 }
 export function resolve_worker_conversation_start(o: {
@@ -134,6 +138,7 @@ export function resolve_worker_conversation_start(o: {
   overrides?: ConversationStartOverrides;
   workspace_folder: string;
   workspace_path_policy?: WorkspacePathPolicy;
+  machine_id: string;
 }): ConversationStartValues {
   return {
     ...with_overrides(
@@ -144,6 +149,7 @@ export function resolve_worker_conversation_start(o: {
     workspace_folder: o.workspace_folder,
     workspace_path_policy: o.workspace_path_policy ?? 'home_relative',
     access: FLOOR_DEFAULT_ACCESS,
+    machine_id: o.machine_id,
   };
 }
 export function resolve_agent_conversation_start(o: {
@@ -151,6 +157,7 @@ export function resolve_agent_conversation_start(o: {
   overrides?: ConversationStartOverrides;
   workspace_folder: string;
   shared_workspace_folder: string;
+  machine_id: string;
 }): ConversationStartValues {
   return {
     ...with_overrides(o.chief_launch_defaults, o.overrides ?? NO_CONVERSATION_START_OVERRIDES),
@@ -158,5 +165,6 @@ export function resolve_agent_conversation_start(o: {
     workspace_folder: o.workspace_folder,
     access: FLOOR_DEFAULT_ACCESS,
     workspace_path_policy: 'home_relative',
+    machine_id: o.machine_id,
   };
 }

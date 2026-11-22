@@ -5,6 +5,7 @@ import { ticket_worker_setups_step } from './ts_0003_ticket_worker_setups.ts';
 import { drop_ideas_step } from './ts_0004_drop_ideas.ts';
 import { machine_backend_state_step } from './ts_0006_machine_backend_state.ts';
 import { server_link_step } from './ts_0005_server_link.ts';
+import { conversation_machine_step } from './ts_0007_conversation_machine.ts';
 
 /** One statement at a time, through the same statement allowlist as the write door. */
 export interface SchemaTransaction {
@@ -34,6 +35,7 @@ export const SCHEMA_STEPS: readonly SchemaStep[] = [
   drop_ideas_step,
   server_link_step,
   machine_backend_state_step,
+  conversation_machine_step,
 ];
 
 /** The steps a database at `current` still needs to reach `head`. */

@@ -120,12 +120,10 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
     else if (event instanceof BackgroundTaskEnded) child.background_task_ids.delete(event.task_id);
     else if (event instanceof BackendStreamEnded) child.background_task_ids.clear();
     const [method, arguments_] = encode_backend_event(event);
-    const ticket_id =
+    const files_can_differ =
       method === 'agent_message_completed' ||
       method === 'tool_call_finished' ||
-      method === 'turn_ended'
-        ? child.ticket_id
-        : undefined;
+      method === 'turn_ended';
     await this.dependencies.publication.add(
       {
         conversation_id: reference.conversation_id,
@@ -135,7 +133,7 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
           'BackendEvent',
         ),
       },
-      ticket_id === undefined ? undefined : { ticket_id },
+      files_can_differ ? { owner: child.owner } : undefined,
     );
   }
 }

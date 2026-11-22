@@ -1,6 +1,6 @@
 # Mac outbox storage seam
 
-`OutboxStore` keeps the existing SQLite outbox format. Items carry no files. The file sync in `transport/ticket_files.ts` sends Ticket files apart from them.
+`OutboxStore` keeps the existing SQLite outbox format. Items carry no files. The file sync in `transport/artifact_sync.ts` sends Ticket and Manager files apart from them.
 It does not validate complete wire shapes, construct delivery batches, or send HTTP.
 The shared generated types own the wire contract. The later host still needs runtime codecs.
 
@@ -26,8 +26,8 @@ Serialization occurs outside the writer. The allocated sequence width completes 
 The required synchronous validator still performs the host's complete wire validation before commit.
 A repeated submission ID returns the held row.
 
-`note_ticket_activity(ticket)` tells the file sync that a Ticket's files can differ.
-`ticket_files` records the file versions that the home confirmed. `home_files`, `record_home_file`, and `forget_home_file` read and change it for the file sync.
+`note_ticket_activity(ticket)` and `note_manager_activity(manager)` tell the file sync that an owner's files can differ.
+`ticket_files` and `manager_files` record the file versions that the home confirmed. Every open adds `manager_files` when it is missing; an older executor ignores it, so the format stays 5. `home_files`, `record_home_file`, and `forget_home_file` read and change them for the file sync, by scope.
 A recent modification time keeps the `-1` marker, so the next pass hashes that file again.
 At startup, a file that still waited on an item from an older runtime leaves that record, so the file sync sends it. The old `blobs` copies are deleted.
 

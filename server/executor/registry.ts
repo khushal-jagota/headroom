@@ -22,7 +22,7 @@ import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
 import type { CleanupResult } from '../worker_supervision/contracts.ts';
 import { cleanup_result } from '../worker_supervision/inspection.ts';
-import { worker_ticket_id } from '../worker_supervision/logic/worker_launch.ts';
+import { conversation_machine_id } from '../machines/conversation_machine.ts';
 import type { MacRemoteChild } from './vps_remote_child.ts';
 import { VpsExecutor } from './vps_transport.ts';
 import type { MachineBackendControls } from './backend_control_relay.ts';
@@ -267,12 +267,11 @@ export class VpsExecutorRegistry {
 
   create(options: Parameters<BackendChildFactory>[0]): MacRemoteChild {
     this.admit();
-    const ticket_id = worker_ticket_id(options.resolved_start);
-    const row = this.database.read((sql) =>
-      sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [ticket_id]),
+    const machine_id = this.database.read((sql) =>
+      conversation_machine_id(sql, options.resolved_start.conversation_id),
     );
-    const owner = row ? this.get(row.machine_id) : null;
-    if (!owner) throw new BackendSpawnFailed('Ticket executor is unavailable');
+    const owner = machine_id === null ? null : this.get(machine_id);
+    if (!owner) throw new BackendSpawnFailed("The conversation's machine code is unavailable");
     return owner.runs.create(options);
   }
 

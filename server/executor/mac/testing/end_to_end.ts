@@ -39,6 +39,7 @@ import type { ResolvedConversationStart } from '../../../conversation/contracts.
 import { WorkerSupervisor } from '../../../worker_supervision/service.ts';
 import { RECORD_ROOT_ENV } from '../../../worker_supervision/config.ts';
 import { worker_ticket_id } from '../../../worker_supervision/logic/worker_launch.ts';
+import { child_ticket_id } from '../runner/logic/child_owner.ts';
 import type { AcceptanceReceipt, QueuedEnvelope } from '../../wire.generated.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
 import { create_claude_backend_child_factory } from '../../../drivers/claude/runtime/adapter.ts';
@@ -323,7 +324,7 @@ async function state() {
     children: service.runner.native_children.retained_children().map((child) => ({
       reference: child.reference,
       capability: child.capability,
-      ticket_id: child.ticket_id,
+      ticket_id: child_ticket_id(child.owner),
     })),
     pending: service.outbox
       .pending()
@@ -435,12 +436,12 @@ async function publish_edit(recap: string, submission_id: string) {
   return service.gateway_outbox.add(
     {
       operation: 'ticket.edit',
-      arguments: { ticket_id: child.ticket_id, body: { recap } },
+      arguments: { ticket_id: child_ticket_id(child.owner), body: { recap } },
       child: child.reference,
       turn: turn ?? null,
     },
     submission_id,
-    child.ticket_id,
+    child_ticket_id(child.owner),
   );
 }
 async function publish_refusals() {
@@ -470,12 +471,12 @@ async function publish_refusals() {
       turn: null,
     },
     randomUUID(),
-    child.ticket_id,
+    child_ticket_id(child.owner),
   );
   const assigned = await service.gateway_outbox.add(
     { operation: 'ticket.unsupported', arguments: {}, child: child.reference, turn: null },
     randomUUID(),
-    child.ticket_id,
+    child_ticket_id(child.owner),
   );
   await emit('ask');
   const following = published.at(-1)!;

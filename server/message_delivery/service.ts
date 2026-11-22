@@ -229,7 +229,7 @@ export async function send_message(
               employee_launch_reasoning_effort: resolved.reasoning_effort,
             };
             if (explicit_choice)
-              database.read((sql) => validate_launch_configuration(sql, configuration));
+              database.read((sql) => validate_launch_configuration(sql, configuration, item.id));
             const result = await conversation_start.send_to_agent_conversation(
               conversations,
               database,

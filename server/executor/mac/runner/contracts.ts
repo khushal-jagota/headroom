@@ -20,11 +20,12 @@ import type { FilesService } from '../files.ts';
 import type { MacSkillsPublisher } from '../skills/index.ts';
 import type { FifoLock } from '../../../conversation/runtime/state.ts';
 import type { WorkspaceIdentity, WorkspaceOptions } from '../../../ticket_workspaces/contracts.ts';
+import type { MacChildOwner } from './logic/child_owner.ts';
 export interface MacRunningChild {
   readonly reference: ChildReference;
   readonly capability: string;
   readonly native: BackendChild;
-  readonly ticket_id: string;
+  readonly owner: MacChildOwner;
   readonly launch_input: StartRun;
   readonly localized_start: ResolvedConversationStart;
   readonly workspace: WorkspaceIdentity | null;
@@ -63,6 +64,7 @@ export interface MacNativeChildrenOptions {
   readonly files: Pick<FilesService, 'open_directory' | 'close_directory'>;
   /** This owner closes publication before it joins native starts during shutdown. */
   readonly skills: Pick<MacSkillsPublisher, 'install_native_skill_snapshot' | 'stop' | 'settled'>;
+  /** Ticket starts only. */
   readonly worker_cleanup: {
     refresh(ticket_id: string): Promise<void>;
     uncertain(ticket_id: string): boolean;

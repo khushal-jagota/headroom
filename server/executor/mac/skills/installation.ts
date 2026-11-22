@@ -230,7 +230,7 @@ export async function install_native_skill_snapshot(
   input: SkillInstallation,
   signal: AbortSignal,
 ): Promise<string> {
-  validate_skill_snapshot(input.snapshot);
+  validate_skill_snapshot(input.snapshot, input.owner_kind);
   let root_fd: number | undefined,
     parent: number | undefined,
     lock: number | undefined,

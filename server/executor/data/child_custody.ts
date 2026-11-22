@@ -4,6 +4,8 @@ import type { ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import type { ChildReference } from '../../conversation/backends/contracts.ts';
 import type { WireValue } from '../contracts.ts';
 import { ExecutorValidationError } from '../protocol.ts';
+import { canonical_principal } from '../../agent_identity/data.ts';
+import { PlannerError } from '../../core/contracts.ts';
 
 export function open_child_assignment(
   sql: ReadSql,
@@ -15,6 +17,31 @@ export function open_child_assignment(
     [child.executor_incarnation, child.child_id, child.conversation_id],
   );
   return row ? [row.principal_kind, row.principal_id] : null;
+}
+/**
+ * The owner that an agent request acts for. A local agent's launch token is revoked when its
+ * owner moves to a new conversation. So a child acts for its owner only while the child's
+ * conversation is still that owner's current conversation.
+ */
+export function current_agent_owner(
+  sql: ReadSql,
+  child: ChildReference,
+): { readonly kind: string; readonly id: string } {
+  const assignment = open_child_assignment(sql, child);
+  if (assignment === null)
+    throw new PlannerError('agent_forbidden', 'child has no open assignment');
+  const [kind, id] = assignment;
+  const current = canonical_principal(sql, child.conversation_id);
+  const still_current =
+    kind === 'conversation'
+      ? current === null && id === child.conversation_id
+      : current?.kind === kind && current.id === id;
+  if (!still_current)
+    throw new PlannerError(
+      'agent_forbidden',
+      "this agent's conversation is no longer its owner's current conversation",
+    );
+  return { kind, id };
 }
 export function prepare_command_in_transaction(
   tx: TransactionSql,

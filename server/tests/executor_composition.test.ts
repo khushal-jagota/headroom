@@ -1,5 +1,7 @@
 import { parse_backend_instance_id } from '../drivers/core/identity.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { agent_machine_id } from '../machines/conversation_machine.ts';
+import { read_canonical_skill_snapshot } from '../executor/data/skills.ts';
 import {
   drivers_of_factories,
   for_every_built_in_backend,
@@ -614,7 +616,7 @@ test("a remote Ticket start follows its machine's advertised driver kinds, or th
     store_lease(['hermes', 'codex']);
     // A machine that still advertises a driver this build lacks cannot run it.
     expect(() => start_remote('hermes')).toThrow(
-      "The Ticket's machine cannot run the hermes backend",
+      "The conversation's machine cannot run the hermes backend",
     );
     start_remote('codex');
     expect(remote).toHaveBeenCalledTimes(1);
@@ -623,6 +625,83 @@ test("a remote Ticket start follows its machine's advertised driver kinds, or th
     expect(() => start_remote('claude')).toThrow(BackendSpawnFailed);
     expect(remote).toHaveBeenCalledTimes(1);
     expect(local).not.toHaveBeenCalled();
+  } finally {
+    database.close();
+  }
+});
+
+// Gap: only a Ticket's child crossed to machine code. The Chief, a Manager and a generic
+// conversation took a local child, and a new Chief conversation had no machine to keep.
+test("a non-Ticket conversation's child runs on its recorded machine, which its successor keeps", () => {
+  const database = fixture();
+  try {
+    const start = (conversation_id: string, identity: [string, string][]) =>
+      new ResolvedConversationStart({
+        conversation_id,
+        backend_key: parse_backend_instance_id('codex'),
+        model: 'model',
+        reasoning_effort: null,
+        role_materials: new ConversationRoleMaterials({
+          role_text: 'Synthetic',
+          identity_environment_variables: identity,
+        }),
+        workspace_folder: '/tmp',
+        access: 'full',
+      });
+    const chief = start('chief-conversation', [['PLAN_ACTOR', 'chief']]);
+    const generic = start('generic-conversation', []);
+    const store = new ConversationStore(database, { integer_now: () => 100 });
+    store.create_conversation(chief, ORIGINAL_MAC_MACHINE_ID);
+    store.create_conversation(generic, ORIGINAL_MAC_MACHINE_ID);
+    database.write((tx) => {
+      tx.run("INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?)", [
+        chief.conversation_id,
+      ]);
+      accept_lease_in_transaction(
+        tx,
+        {
+          identity: {
+            protocol_version: PROTOCOL_VERSION,
+            application_revision: 'synthetic',
+            spool_format_version: 5,
+            executor_incarnation: incarnation,
+          },
+          process_id: 4242,
+          mac_wall_clock_ms: 0,
+          queue_depth: 0,
+          oldest_item_age_ms: null,
+          waiting_conversations: [],
+          waiting_conversations_truncated: false,
+          working_turns: [],
+          admission_stopped: false,
+          cleanup_uncertainties: [],
+          driver_kinds: ['codex'],
+        },
+        0,
+        ORIGINAL_MAC_MACHINE_ID,
+      );
+    });
+    const local = vi.fn(),
+      remote = Object.assign(vi.fn(), { recover: () => null, retained_runs: () => [] });
+    const factory = new LocaleBackendChildFactory(database, local, remote);
+    for (const resolved_start of [chief, generic])
+      factory.create({
+        resolved_start,
+        event_sink: { async report() {} },
+        message_files: {} as never,
+      });
+    expect(remote).toHaveBeenCalledTimes(2);
+    expect(local).not.toHaveBeenCalled();
+    database.write((tx) =>
+      tx.run("UPDATE agents SET conversation_id=NULL WHERE agent_key='chief_of_staff'"),
+    );
+    database.read((sql) => {
+      expect(agent_machine_id(sql, { kind: 'chief' })).toBe(ORIGINAL_MAC_MACHINE_ID);
+      expect(agent_machine_id(sql, { kind: 'manager', id: 'never-started' })).toBe(HOME_MACHINE_ID);
+      expect(
+        read_canonical_skill_snapshot(sql, { kind: 'chief', id: 'chief' }).required_skill_names,
+      ).toEqual(['panels', 'panels-chief-of-staff']);
+    });
   } finally {
     database.close();
   }

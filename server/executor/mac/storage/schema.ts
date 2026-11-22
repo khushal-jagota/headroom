@@ -1,4 +1,4 @@
-/** Outbox format 5, unchanged from the Python executor. */
+/** Outbox format 5, unchanged from the Python executor except for the added Manager file table. */
 export const DATABASE_NAME = 'outbox.sqlite3';
 export { SPOOL_FORMAT_VERSION } from '../../wire.generated.ts';
 export const FORMAT_REFUSAL = 'unsupported outbox format; preserve the spool for compatible Panels';
@@ -26,3 +26,12 @@ export const OUTBOX_SCHEMA = [
     PRIMARY KEY(ticket_id,relative_path)
   ) WITHOUT ROWID`,
 ] as const;
+/**
+ * Added after format 5. An older executor ignores the table, so the format number stays, and
+ * every open makes the table when it is missing.
+ */
+export const MANAGER_FILES_TABLE = `CREATE TABLE IF NOT EXISTS manager_files (
+    manager_id TEXT NOT NULL, relative_path TEXT NOT NULL, byte_count INTEGER NOT NULL,
+    modified_ns INTEGER NOT NULL, sha256 TEXT NOT NULL,
+    PRIMARY KEY(manager_id,relative_path)
+  ) WITHOUT ROWID`;

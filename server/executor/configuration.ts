@@ -14,6 +14,8 @@ export const MAX_COMMAND_OUTCOMES_PER_REPORT = 32;
 export const MAX_COMMAND_OUTCOME_REPORT_BYTES = 4 * 1024 * 1024;
 export const MAX_ITEM_BATCH_BYTES = 4 * 1024 * 1024;
 export const LIVE_READ_SERVER_LIMIT_SECONDS = 20;
+/** Below MAC_ITEM_RETRY_LATER_SECONDS, so a relayed agent write that runs out still answers its item. */
+export const AGENT_REQUEST_SERVER_LIMIT_SECONDS = 15;
 export const LIVE_EVENT_SERVER_LIMIT_SECONDS = 5;
 export const MAX_LIVE_EVENTS_PER_BATCH = 64;
 export const MAX_MAC_UPDATE_RESPONSE_BYTES = 64 * 1024;
