@@ -46,33 +46,7 @@ describe("v17 (4): the error card", () => {
   });
 });
 
-describe("v17 (5): the header's Dock button", () => {
-  it("has no fill at rest, #d0d0d0 500, and fills #2a2a2a under the pointer (the rest rule comes first)", () => {
-    const rest = ".chat-head-collapse { background: transparent; color: #d0d0d0; font-weight: 500; }";
-    const hover = ".chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }";
-    expect(pane).toContain(rest);
-    expect(pane).toContain(hover);
-    expect(pane.indexOf(rest)).toBeLessThan(pane.indexOf(hover));
-    expect(pane.slice(pane.indexOf(hover))).not.toMatch(/\.chat-head-collapse \{[^}]*background/);
-  });
-});
-
-describe("v17 (6): the Waiting line", () => {
-  it("shows while an ask waits, outside the dock, and not while activity is unknown", () => {
-    expect(pane).toMatch(/let waitingLineShown = \$derived\(conversationState !== "rest" && !activityUncertain && !readOnly\s*&& \(ask !== null \|\| userInput !== null \|\| credentialWaiting \|\| waitingOnPage !== null\)\);/);
-  });
-  it("ends the transcript, before the queued messages: the accent dot, then Waiting for you", () => {
-    const snippet = pane.slice(pane.indexOf("{#snippet waitingMessages()}"));
-    expect(snippet.indexOf("data-conversation-waiting-line")).toBeGreaterThan(-1);
-    expect(snippet.indexOf("data-conversation-waiting-line")).toBeLessThan(snippet.indexOf("<HeldPromptStack"));
-    expect(snippet).toContain('<span class="c2-waiting-word">Waiting for you</span>');
-  });
-  it("is in the Working line's format: 24px above, 16px slot, 8px gap, 8px accent dot, 14/20 #c4c4c4", () => {
-    expect(pane).toMatch(/\.c2-waiting-edge \{[^}]*gap: 8px;[^}]*margin-block-start: 24px;[^}]*color: #c4c4c4;[^}]*font: 400 14px\/20px var\(--cv-font\);/);
-    expect(pane).toContain(".c2-waiting-slot { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; }");
-    expect(pane).toContain(".c2-waiting-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--cv-accent); }");
-  });
-});
+/* v17 (5) (quiet Dock button) and v17 (6) (Waiting line) are reverted by v18 (1, 2); see conversation-design-v18.test.ts. */
 
 describe("v17 (7): the command block in asks", () => {
   const ask = {
@@ -86,9 +60,9 @@ describe("v17 (7): the command block in asks", () => {
     const words = [...body.matchAll(/<span class="c2-ask-word[^"]*">([^<]*)<\/span>/g)].map((match) => match[1]);
     expect(words).toEqual(["xcrun", "altool", "--upload-app", "-f", "build/Wren-41.ipa", "-t", "ios"]);
     expect(permission).toContain(".c2-ask-word { white-space: pre; }");
-    expect(permission).toContain(".c2-ask-detail { padding-inline: 12px; overflow-wrap: normal; }");
+    expect(permission).toMatch(/\.c2-ask-detail \{[^}]*overflow-wrap: normal;/);
   });
-  it("stays mono 13/20", () => {
+  it("the base rule is mono 13/20 (v18 (5) sets 12.5/20 after it)", () => {
     expect(permission).toMatch(/\.c2-ask-detail \{[^}]*font: var\(--cv-weight-body\) 13px\/20px var\(--cv-mono\);/);
   });
 });

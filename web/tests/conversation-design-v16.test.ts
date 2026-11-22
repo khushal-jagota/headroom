@@ -87,10 +87,9 @@ describe("v16 (7): answer headings", () => {
   });
 });
 
-describe("v16 (8): links in answers", () => {
-  it("the accent #bccbf0 with a 1px 40% underline 3px down; full colour on hover", () => {
-    expect(app).toContain("[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #bccbf0; text-decoration-line: underline; text-decoration-thickness: 1px; text-decoration-color: rgb(188 203 240 / 40%); text-underline-offset: 3px; }");
-    expect(app).toContain("[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #bccbf0; text-decoration-color: #bccbf0; }");
+describe("v16 (8): links in answers, reverted by v18 (3)", () => {
+  it("the v16 link rule is gone (see conversation-design-v18.test.ts)", () => {
+    expect(app).not.toContain("text-decoration-line: underline; text-decoration-thickness: 1px; text-decoration-color: rgb(188 203 240 / 40%)");
     expect(app).not.toContain("9db4ff");
   });
 });

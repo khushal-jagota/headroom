@@ -170,16 +170,17 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  /* v17 (7): mono 13/20; 12px inline padding gives the line its widest measure in the card, and
-     the command wraps only at spaces (each word is one unbreakable piece). A single word wider
-     than the block scrolls inside it instead of breaking. */
-  .c2-ask-detail { padding-inline: 12px; overflow-wrap: normal; }
+  /* v17 (7): the command wraps only at spaces (each word is one unbreakable piece). A single
+     word wider than the block scrolls inside it instead of breaking. v18 (5): 16px side padding
+     again, and mono 12.5/20, so a 74-character command stays on one line with room to the right. */
+  .c2-ask-detail { padding-inline: 16px; font-size: 12.5px; line-height: 20px; overflow-wrap: normal; }
   .c2-ask-word { white-space: pre; }
   .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
   .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }
   .c2-ask-choices.after-detail { margin-block-start: 16px; }
-  /* v11 (2): in a permission ask the declining row's label is the failure tone. */
-  .c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #f08a7e; }
+  /* v11 (2): in a permission ask the declining row's label is the failure tone. v18 (4): the
+     same red as the "This turn failed" title, #ff8f85. */
+  .c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #ff8f85; }
   .c2-ask-note {
     margin: var(--cv-s3) 0 0;
     color: var(--cv-t3);

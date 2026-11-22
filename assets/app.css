@@ -5741,8 +5741,5 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * (24 above, 8 below). The table head keeps its own style. */
 [data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2) { font-size: 19px; line-height: 26px; font-weight: 600; color: #f2f2f2; }
 [data-conversation-pane] .chat-thread .chat-a .markdown h3 { font-size: 17px; line-height: 24px; font-weight: 600; color: #ececec; }
-/* (8) Links in answers: the conversation accent #bccbf0, a 1px underline at 40% of the same
- * colour, 3px under the baseline; under the pointer the underline is full colour. */
-[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #bccbf0; text-decoration-line: underline; text-decoration-thickness: 1px; text-decoration-color: rgb(188 203 240 / 40%); text-underline-offset: 3px; }
-[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #bccbf0; text-decoration-color: #bccbf0; }
+/* (8) Links in answers: reverted to v15 by v18 (3), #ececec with a 50% underline (v11 (10) above). */
 /* (5) Disabled send: reverted to v14 by v17 (2), #2a2a2a fill and a #9a9a9a arrow (above). */

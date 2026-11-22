@@ -41,11 +41,11 @@ describe("v11 (2): option rows", () => {
   const ask = { askId: "a", title: "Upload build 41", detail: "xcrun altool --upload-app", options: [
     { option_id: "allow", label: "Allow once", option_kind: "allow_once" as const },
     { option_id: "deny", label: "Deny", option_kind: "reject_once" as const }] };
-  it("the Deny row of a permission ask is marked as the declining row, its label #f08a7e", () => {
+  it("the Deny row of a permission ask is marked as the declining row, its label in the failure red (v18 (4): #ff8f85)", () => {
     const html = render(PermissionAskCard, { props: { ask, docked: true, onAnswer: () => {} } }).body;
     expect(html).toMatch(/data-conversation-ask-choice="deny"[^>]*data-conversation-ask-emphasis="decline"/);
     const card = source("../src/components/conversation/PermissionAskCard.svelte");
-    expect(card).toContain('.c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #f08a7e; }');
+    expect(card).toContain('.c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #ff8f85; }');
   });
   it("v11 (8): the command block's edge is #3a3a3a", () => {
     expect(source("../src/components/conversation/PermissionAskCard.svelte")).toMatch(/\.c2-ask-detail \{[^}]*border: 1px solid #3a3a3a;/);
