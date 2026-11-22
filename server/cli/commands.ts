@@ -1149,10 +1149,19 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     argument('name', '<NAME>', text, {}),
     option('as_json', '--json', boolean, { default: false }),
   ]);
-  command('machine join-command', 'Register a machine and print its private join command.', [
-    argument('name', '<NAME>', text, {}),
-    option('home_url', '--home <TEXT>', text, { required: true }),
-  ]);
+  command(
+    'machine join-command',
+    "Register a machine and print its private join command. With --server-machine, issue the home identity to the machine code on the server's own machine instead.",
+    [
+      argument('name', '[NAME]', text, {}),
+      option('home_url', '--home <TEXT>', text, { required: true }),
+      option('server_machine', '--server-machine', boolean, {
+        default: false,
+        description:
+          "Join the machine code on the server's own machine with the home identity. Use the local executor link socket as --home. This replaces the earlier home credential, so machine code that holds it is cut off until it gets the new one.",
+      }),
+    ],
+  );
   command(
     'machine replace-credential',
     'Revoke the old credential and print its replacement once.',

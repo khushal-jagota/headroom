@@ -25,6 +25,7 @@ import { test, vi } from 'vitest';
 import type { AppManifest } from '../environments/release/contracts.ts';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { install_home, check_home_port } from './home.ts';
 import type {
   HomeInstallDependencies,
@@ -258,7 +259,9 @@ test('fresh database initialization closes its child before activation and faile
           registered?.credential_sha256,
           createHash('sha256').update(credential).digest('hex'),
         );
-        assert.equal(registered?.is_home, 0);
+        // The first machine is the server's own machine, with the home identity.
+        assert.equal(identity.machine_id, HOME_MACHINE_ID);
+        assert.equal(registered?.is_home, 1);
       });
     } finally {
       reader.close();

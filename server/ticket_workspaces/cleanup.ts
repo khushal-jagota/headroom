@@ -47,6 +47,23 @@ function custody_retired(
     ) === undefined
   );
 }
+/** Machine code retires the workspaces that it registered, also in the server's own folder. */
+function machine_code_owns(sql: ReadSql, identity: WorkspaceIdentity): boolean {
+  return (
+    sql.get(
+      'SELECT 1 FROM ticket_workspace_conversations w JOIN executor_child_assignments a USING(conversation_id) WHERE w.machine_id=? AND w.workspace_id=? LIMIT 1',
+      [identity.machine_id, identity.workspace_id],
+    ) !== undefined
+  );
+}
+function owned_by_machine_code(db_path: string, identity: WorkspaceIdentity): boolean {
+  const reader = createReadAccess(db_path);
+  try {
+    return reader.read((sql) => machine_code_owns(sql, identity));
+  } finally {
+    reader.close();
+  }
+}
 export async function clean_for_database(
   db_path: string,
   now: number,
@@ -67,6 +84,8 @@ export async function clean_for_database(
     reader.close();
   }
   async function granted(expected: WorkspaceState, identity: WorkspaceIdentity): Promise<boolean> {
+    // The retry pass reads every record in the shared retired folder. Machine code finishes its own.
+    if (owned_by_machine_code(db_path, identity)) return false;
     function requires_registration(): boolean {
       const retired = join(dirname(filesRoot(db_path, 'ticket')), '.ticket-retired');
       try {
@@ -180,12 +199,15 @@ export async function clean_for_database(
     ...options,
     mirror_root: git_mirror_root(db_path),
     active_ticket_ids: snapshot.active,
+    // Checked before the server stops any conversation of the workspace.
     retire: (path, state, identity, checkout_only) =>
-      options.retire_local_children
-        ? options.retire_local_children(state.ticket_id, identity, () =>
-            detach(path, state, identity, checkout_only),
-          )
-        : detach(path, state, identity, checkout_only),
+      owned_by_machine_code(db_path, identity)
+        ? { reason: 'Machine code owns this workspace' }
+        : options.retire_local_children
+          ? options.retire_local_children(state.ticket_id, identity, () =>
+              detach(path, state, identity, checkout_only),
+            )
+          : detach(path, state, identity, checkout_only),
     retirement_is_committed: granted,
   });
 }

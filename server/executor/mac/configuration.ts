@@ -110,8 +110,11 @@ export const MAC_RUNTIME_MANIFEST_NAME = 'mac-runtime.json';
 /** Persistent paths only. Construction opens neither a journal nor an outbox. */
 export class ExecutorPaths {
   readonly root: string;
-  constructor(root: string) {
+  /** The server's own Ticket folder, when machine code reaches the server over the local link. */
+  readonly server_tickets: string | null;
+  constructor(root: string, server_tickets: string | null = null) {
     this.root = root;
+    this.server_tickets = server_tickets;
   }
   get workspace(): string {
     return join(this.root, 'workspace');
@@ -120,7 +123,7 @@ export class ExecutorPaths {
     return join(this.root, 'spool');
   }
   get artifacts(): string {
-    return join(this.root, 'artifacts', 'tickets');
+    return this.server_tickets ?? join(this.root, 'artifacts', 'tickets');
   }
   get message_files_anchor(): string {
     return join(this.root, 'artifacts', 'message-files.db');

@@ -13,6 +13,7 @@ import { scalar_text as scalar } from './text.ts';
 import { ticket_argument } from './parser.ts';
 import { recap_preview } from '../tickets/logic/recap.ts';
 import { join_command, require_released_revision } from '../installation/join_command.ts';
+import { HOME_MACHINE_ID } from '../execution_identity.ts';
 
 type Body = Record<string, any>;
 const quote = (value: string, slash = false): string => {
@@ -652,7 +653,11 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       } catch (error) {
         return fail_validation(inv, (error as Error).message);
       }
-      const grant = await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
+      if (v.server_machine === (v.name != null))
+        return fail_validation(inv, 'Give a machine name or --server-machine, not both');
+      const grant = v.server_machine
+        ? await send(inv, 'POST', `/api/machines/${quote(HOME_MACHINE_ID)}/credential`)
+        : await send(inv, 'POST', '/api/machines', { json_body: { name: v.name } });
       const credential = grant.credential;
       let command: string;
       try {

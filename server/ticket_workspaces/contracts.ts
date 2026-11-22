@@ -42,6 +42,8 @@ export interface WorkspaceOptions {
   prune_ticket_scratch?: (ticket_id: string, names: readonly string[]) => MaybePromise<boolean>;
 }
 export interface WorkspaceCleanupOptions extends WorkspaceOptions {
+  /** Where the pass writes its report. Defaults to beside the Ticket folder. */
+  report_path?: string;
   measure_size?: boolean;
   extra_roots?: readonly string[];
   active_ticket_ids?: ReadonlySet<string>;

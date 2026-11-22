@@ -241,6 +241,7 @@ export class MacService {
     this.lease = new MacLeaseLoop({
       client: this.client,
       workspace_root: configuration.paths.artifacts,
+      workspace_root_is_shared: configuration.paths.server_tickets !== null,
       presence: this.presence,
       outbox,
       journal,
@@ -394,7 +395,8 @@ export class MacService {
         this.controller.signal.throwIfAborted();
         this.updates.start();
         this.sender.start();
-        this.file_sync.start();
+        // On the local link, the Ticket folder is the served folder, so there is nothing to send.
+        if (this.configuration.paths.server_tickets === null) this.file_sync.start();
         this.lease.start();
       });
     })();

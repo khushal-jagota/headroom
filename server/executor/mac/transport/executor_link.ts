@@ -5,6 +5,16 @@ import { connect } from 'node:net';
 import { dirname } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { ExecutorValidationError } from '../../protocol.ts';
+import { filesRoot } from '../../../files/logic/paths.ts';
+
+/**
+ * Machine code on the local link works in the server's own Ticket folder. The work folder
+ * and the served folder are then one folder, so a Ticket's files are stored once.
+ */
+export function executor_link_ticket_root(socket_path: string): string {
+  // The socket's folder sits in the server folder, and filesRoot reads only that parent.
+  return filesRoot(dirname(socket_path), 'ticket');
+}
 
 /**
  * Only the server's account can make this folder and socket, so a socket that passes is

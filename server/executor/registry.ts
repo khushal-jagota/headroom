@@ -16,7 +16,7 @@ import type { Clock } from '../core/clock.ts';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
-import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { ServerLifecycleError } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
@@ -92,8 +92,7 @@ export class VpsExecutorRegistry {
       'SELECT machine_id FROM machine_executor_credentials WHERE credential_sha256 IS NOT NULL OR (machine_id=? AND ?)',
       [ORIGINAL_MAC_MACHINE_ID, this.original_enabled ? 1 : 0],
     )) {
-      if (machine_id !== HOME_MACHINE_ID && !this.owners.has(machine_id))
-        this.owners.set(machine_id, this.new_owner(machine_id));
+      if (!this.owners.has(machine_id)) this.owners.set(machine_id, this.new_owner(machine_id));
     }
   }
 
@@ -112,8 +111,7 @@ export class VpsExecutorRegistry {
       const registered = this.database.read((sql) =>
         sql.get('SELECT 1 FROM machine_executor_credentials WHERE machine_id=?', [machine_id]),
       );
-      if (!registered || machine_id === HOME_MACHINE_ID)
-        throw new Error('Unknown executor destination');
+      if (!registered) throw new Error('Unknown executor destination');
       const owner = this.new_owner(machine_id);
       if (this.started) await owner.start();
       this.admit();
@@ -273,7 +271,7 @@ export class VpsExecutorRegistry {
     const row = this.database.read((sql) =>
       sql.get<{ machine_id: string }>('SELECT machine_id FROM tickets WHERE id=?', [ticket_id]),
     );
-    const owner = row && row.machine_id !== HOME_MACHINE_ID ? this.get(row.machine_id) : null;
+    const owner = row ? this.get(row.machine_id) : null;
     if (!owner) throw new BackendSpawnFailed('Ticket executor is unavailable');
     return owner.runs.create(options);
   }
