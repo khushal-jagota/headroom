@@ -126,6 +126,13 @@ final class ReviewQueueTests: XCTestCase {
         queue.skip(gone, in: queue.cards([chiefMessage, ask], refusals: [refusal]))
         reconcile(&queue, [chiefMessage, ask], refusals: [refusal])
         XCTAssertEqual(queue.shown?.id, chiefMessage.id, "Each refusal comes forward once")
+        // A refusal that lands while a card's exit runs comes forward once the exit ends.
+        queue.resolve(chiefMessage)
+        let late = ReviewRefusal(item: gone, note: "Not sent · changed.", summaryID: "op-3")
+        reconcile(&queue, [ask], refusals: [late])
+        XCTAssertEqual(queue.shown?.id, chiefMessage.id)
+        queue.finishExit(); reconcile(&queue, [ask], refusals: [late])
+        XCTAssertEqual(queue.shown?.id, gone.id)
         // A refused card still in the window moves to the front and is listed once.
         let liveRefusal = ReviewRefusal(item: ask, note: "Refused", summaryID: "op-2")
         XCTAssertEqual(queue.cards([chiefMessage, ask], refusals: [liveRefusal]).map(\.id), [ask.id, chiefMessage.id])

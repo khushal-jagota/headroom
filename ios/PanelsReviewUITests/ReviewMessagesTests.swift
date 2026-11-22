@@ -125,7 +125,7 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(app.buttons["sidebar-chief"].waitForExistence(timeout: 20))
         let sidebar = XCTAttachment(screenshot: app.screenshot()); sidebar.name = "live-sidebar"; sidebar.lifetime = .keepAlways; add(sidebar)
         app.buttons["sidebar-review"].tap()
-        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["You’re caught up."].exists)
+        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["review.summary.headline"].exists)
         let review = XCTAttachment(screenshot: app.screenshot()); review.name = "live-review-read-only"; review.lifetime = .keepAlways; add(review)
         app.openDestination("sidebar-chief", timeout: 15)
         let line = app.buttons["conversation-line"]

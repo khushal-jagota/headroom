@@ -105,14 +105,16 @@ struct ReviewQueue: Equatable, Sendable {
         let liveIDs = Set(live.map(\.id))
         answered.formIntersection(liveIDs)
         let cards = cards(live, refusals: refusals)
-        let newRefusal = refusals.first { !seenRefusals.contains($0.summaryID) }
-        seenRefusals.formUnion(refusals.map(\.summaryID))
         if let away, let freshSession, freshSession > away.session {
             self.away = nil
             // A card that left while the app was away gives way to the summary.
             if !summary && !cards.contains(where: { $0.id == away.cardID }) { showSummary() }
         }
-        if summary || leaving != nil { return }
+        // A refusal that lands during an exit comes forward once the exit ends.
+        if leaving != nil { return }
+        let newRefusal = refusals.first { !seenRefusals.contains($0.summaryID) }
+        seenRefusals.formUnion(refusals.map(\.summaryID))
+        if summary { return }
         if let newRefusal {
             notice = nil
             pinned = newRefusal.item
