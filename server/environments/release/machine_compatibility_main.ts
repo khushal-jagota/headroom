@@ -173,6 +173,7 @@ let server:
   | undefined;
 let active: ReturnType<ChildProcesses['spawn']> | undefined;
 let active_closed: Promise<unknown> | undefined;
+let proof_error: unknown;
 const wait = async (read: () => unknown | Promise<unknown>) => {
   for (;;) {
     lifetime.throwIfAborted();
@@ -309,7 +310,6 @@ try {
   });
   target = server.address;
   const start_machine = async (runtime: string, revision: string, label: string) => {
-    const prior_incarnation = server!.endpoint.presence.current_identity()?.executor_incarnation;
     const state = join(root, label + '-state');
     await mkdir(state, { recursive: true });
     await write_credential(credential_path(state), server!.credential);
@@ -371,21 +371,31 @@ try {
     active.stderr!.pipe(createWriteStream(join(root, label + '-stderr.log')));
     active_closed = once(active, 'close');
     void active_closed.catch(() => {});
-    await wait(
-      () =>
-        server!.endpoint.presence.current_identity()?.application_revision === revision &&
-        server!.endpoint.presence.current_identity()?.executor_incarnation !== prior_incarnation &&
-        server!.endpoint.presence.is_present(),
-    );
     return state;
   };
+  console.info('Machine compatibility: start previous published runtime');
+  const prior_incarnation = server.endpoint.presence.current_identity()?.executor_incarnation;
   await start_machine(previous, baseline.previous.source_sha, 'previous');
-  const turn = await server.create_turn('codex');
+  await wait(
+    () =>
+      server!.endpoint.presence.current_identity()?.application_revision ===
+        baseline.previous.source_sha &&
+      server!.endpoint.presence.current_identity()?.executor_incarnation !== prior_incarnation &&
+      server!.endpoint.presence.is_present(),
+  );
+  console.info('Machine compatibility: previous published runtime leased');
+  // Historical Linux releases put bundled tools ahead of HOME/.local/bin.
+  // Claude's supported explicit executable setting selects the scripted provider.
+  const turn = await server.create_turn('claude');
   await server.turn_result(turn.conversation_id);
+  console.info(
+    'Machine compatibility: previous published runtime delivered the scripted turn result',
+  );
   await server.stop_turn(turn.conversation_id);
   await stop_machine();
-  const state = await start_machine(oldest, baseline.oldest.source_sha, 'oldest');
+  console.info('Machine compatibility: previous runtime stopped');
   await service!.prepare(publication);
+  console.info('Machine compatibility: candidate archive prepared through the real update service');
   const attempts = new FileUpdateAttemptStore(attempt_path(join(root, 'server/data')), () => {});
   const now = new Date().toISOString();
   attempts.create({
@@ -406,7 +416,30 @@ try {
     mac_attempt_id: 'compatibility-machine',
     extra: {},
   });
+  console.info(
+    'Machine compatibility: candidate activated on the server, start oldest supported runtime',
+  );
+  // An old protocol can receive its update in a refused lease. Accepted old work is not required.
+  const state = await start_machine(oldest, baseline.oldest.source_sha, 'oldest');
+  console.info(
+    'Machine compatibility: oldest runtime started, await candidate supervisor confirmation',
+  );
   await wait(async () => {
+    const status = service!.status();
+    if (
+      status?.request_id === 'compatibility-machine' &&
+      (status.phase === 'failed' || status.phase === 'reverted')
+    )
+      throw new Error(`Historical runtime update ${status.phase}: ${status.detail ?? 'No detail'}`);
+    try {
+      const failure = JSON.parse(await readFile(join(state, 'updates/failure.json'), 'utf8'));
+      if (is_record(failure) && failure.request_id === 'compatibility-machine')
+        throw new Error(
+          `Historical supervisor refused the candidate: ${String(failure.detail ?? failure.phase)}`,
+        );
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
     const identity = server!.endpoint.presence.current_identity();
     if (identity?.application_revision !== run.source_sha) return false;
     try {
@@ -419,6 +452,9 @@ try {
       throw error;
     }
   });
+  console.info(
+    'Machine compatibility: candidate leased, supervisor kept it, and current report reached the server',
+  );
   const without_path = ({ archive_path: _path, ...value }: MachineBaseline) => value;
   const proof: MachineCompatibilityProof = {
     version: 1,
@@ -447,6 +483,7 @@ try {
     JSON.stringify(proof, null, 2) + '\n',
   );
 } catch (error) {
+  proof_error = error;
   if (server)
     await writeFile(
       join(root, 'server-failure.json'),
@@ -455,14 +492,36 @@ try {
   await writeFile(join(root, 'failure.txt'), String((error as Error).stack ?? error));
   throw error;
 } finally {
-  await stop_machine();
-  if (server) await server.stop();
-  owner.seal();
-  owner.force_kill(performance.now() / 1000 + 30);
-  await owner.settled();
-  proxy.closeAllConnections();
-  if (proxy.listening)
-    await new Promise<void>((resolve, reject) =>
-      proxy.close((error) => (error ? reject(error) : resolve())),
+  const cleanup_errors: unknown[] = [];
+  try {
+    await stop_machine();
+  } catch (error) {
+    cleanup_errors.push(error);
+  }
+  try {
+    owner.seal();
+    owner.force_kill(performance.now() / 1000 + 30);
+    await owner.settled();
+  } catch (error) {
+    cleanup_errors.push(error);
+  }
+  try {
+    proxy.closeAllConnections();
+    if (proxy.listening)
+      await new Promise<void>((resolve, reject) =>
+        proxy.close((error) => (error ? reject(error) : resolve())),
+      );
+  } catch (error) {
+    cleanup_errors.push(error);
+  }
+  try {
+    if (server) await server.stop();
+  } catch (error) {
+    cleanup_errors.push(error);
+  }
+  if (cleanup_errors.length)
+    throw new AggregateError(
+      proof_error === undefined ? cleanup_errors : [proof_error, ...cleanup_errors],
+      'Machine compatibility cleanup failed',
     );
 }

@@ -24,6 +24,14 @@ function definitions(schema: unknown): Record<string, unknown> {
     throw new Error('Invalid executor wire schema');
   return schema.$defs;
 }
+const channel_roots = [
+  'MacUpdateCheck',
+  'MacUpdateReport',
+  'MacRuntimeManifest',
+  'ExecutorIdentity',
+  'LeaseReply',
+  'LeaseRefused',
+] as const;
 function channel_closure(schema: unknown): Record<string, unknown> {
   const defs = definitions(schema),
     kept: Record<string, unknown> = {};
@@ -61,15 +69,7 @@ function channel_closure(schema: unknown): Record<string, unknown> {
     };
     walk(definition);
   };
-  for (const name of [
-    'MacUpdateCheck',
-    'MacUpdateReport',
-    'MacRuntimeManifest',
-    'ExecutorIdentity',
-    'LeaseReply',
-    'LeaseRefused',
-  ])
-    visit(name);
+  for (const name of channel_roots) visit(name);
   return kept;
 }
 export function check_machine_wire(
@@ -78,6 +78,16 @@ export function check_machine_wire(
   channel_version: number,
 ): void {
   if (channel_version !== 1) throw new Error('Machine update channel must remain version 1');
+  if (
+    !is_record(previous) ||
+    !is_record(candidate) ||
+    !Array.isArray(previous.roots) ||
+    !Array.isArray(candidate.roots)
+  )
+    throw new Error('Invalid machine wire roots');
+  for (const name of channel_roots)
+    if (previous.roots.includes(name) && !candidate.roots.includes(name))
+      throw new Error('Machine update channel root was removed: ' + name);
   if (!additive({ $defs: channel_closure(previous) }, { $defs: channel_closure(candidate) }))
     throw new Error('Machine update channel changed non-additively');
   if (

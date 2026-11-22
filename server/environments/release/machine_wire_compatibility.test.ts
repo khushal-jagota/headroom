@@ -48,5 +48,8 @@ test('protocol increase never permits update-channel or lease-offer restrictions
   candidate.$defs.MacUpdateCheck = structuredClone(before.$defs.MacUpdateCheck);
   delete (candidate.$defs.LeaseRefused.properties as Record<string, unknown>).update;
   expect(() => check_machine_wire(before, candidate, 1)).toThrow('update offer');
+  candidate.$defs.LeaseRefused = structuredClone(before.$defs.LeaseRefused);
+  before.roots.push('LeaseReply');
+  expect(() => check_machine_wire(before, candidate, 1)).toThrow('channel root');
   expect(() => check_machine_wire(before, before, 2)).toThrow('version 1');
 });
