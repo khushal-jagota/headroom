@@ -2025,6 +2025,8 @@
   }
   :global(.chat-ask-send.on .chat-ask-send-round) { background: #f2f2f2; color: #121212; }
   :global(.chat-ask-send.on:hover:not(:disabled) .chat-ask-send-round) { background: #ffffff; }
+  /* v16 (5): disabled send everywhere has no fill, a #8a8a8a arrow (Stop keeps its ring). */
+  :global(.chat-ask-send:not(.on) .chat-ask-send-round) { background: none; color: #8a8a8a; }
   :global(.chat-ask-send-round svg) { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   /* A draft that wraps grows the box to two rows: the draft itself is then the well. */
   .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 20px; background: #141414; }
@@ -2210,6 +2212,17 @@
   .chat-att.file > .chat-att-kind { width: 16px; }
   /* v15 (7): 16px between an ask's last option and its answer well (options stay 8 apart). */
   .chat-box.has-ask > .chat-ask { margin-block-end: var(--cv-s4); }
+  /* v16 (4): the v15 circle stays. A picture gets a 28px scrim at its top, inside the thumbnail
+     (under the circle, over the picture), so the button never sits on chart detail. The file
+     chip's right padding is 40px, so its words stay 12px or more from the button (6 + 20 + 12
+     = 38, rounded to 40). */
+  .chat-att.img::after { background: linear-gradient(rgb(0 0 0 / 55%), transparent) top / 100% 28px no-repeat; }
+  .chat-att.file { padding-inline-end: 40px; }
+  /* v16 (12): attachment meta ("Text · 692 B") one step up, #b8b8b8. */
+  .chat-att-meta { color: #b8b8b8; }
+  /* v16 (11): grown (attachments or several lines), the composer's bottom padding equals its top
+     (12px), so the foot's buttons sit as far from the bottom edge as the first row from the top. */
+  .chat-box:not(.is-compact, .has-ask) { padding-block-end: var(--cv-s3); }
   /* v15 (1): in the grown composer (attachments or several lines) the chips and the draft start at
      the composer's inner left padding, the add button's left edge (v14 (10) withdrawn). The
      one-line composer keeps the add button, then the draft. */

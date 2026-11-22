@@ -89,7 +89,8 @@ describe("v15 (6): the empty conversation centres its composer", () => {
     expect(live).toContain('<h2 class="conversation-empty-said">What should we work on?</h2>');
     expect(live).toContain(".conversation-empty-said { margin: 0 0 -4px; color: #ececec; font: 600 20px/28px var(--cv-font);");
     expect(live).toContain('emptyHint={!emptyState && !readOnly && nothingSaidYet ? "You can attach or drop files here." : null}');
-    expect(pane).toMatch(/\.cv-empty-hint \{[^}]*margin: 12px 0 0;[^}]*color: #a6a6a6;[^}]*13px\/20px/);
+    // v16 (12): the hint is #b8b8b8.
+    expect(pane).toMatch(/\.cv-empty-hint \{[^}]*margin: 12px 0 0;[^}]*color: #b8b8b8;[^}]*13px\/20px/);
     expect(pane).toContain(".cv-empty-foot { flex: 1 1 0; min-height: 0; }");
     expect(pane).toContain(".chat-panel.is-empty-start > .conversation-reader { flex: 1 1 0; }");
   });

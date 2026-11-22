@@ -215,6 +215,8 @@
   .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #a6a6a6; }
   /* v15 (5): the Steered detail ("into the running turn") is #b8b8b8. */
   .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #b8b8b8; }
+  /* v16 (12): the Steered detail one step up, #c4c4c4. */
+  .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #c4c4c4; }
 
   /* A note: one status line, its own width, under the bubble or in the turn. */
   .c2-status--note { align-self: flex-start; display: flex; width: fit-content; }
@@ -249,6 +251,10 @@
      rgba(240,138,126,0.35) edge, "This turn failed" in #f08a7e. No fill tint. */
   .c2-status--callout.c2-status--error { border-color: rgb(240 138 126 / 35%); }
   .c2-status--callout.c2-status--error .c2-status-title { color: #f08a7e; }
+  /* v16 (13): one red signal less: the card's edge is neutral #3a3a3a, the red dot stays, and
+     the title "This turn failed" is the brighter #ff8f85. */
+  .c2-status--callout.c2-status--error { border-color: #3a3a3a; }
+  .c2-status--callout.c2-status--error .c2-status-title { color: #ff8f85; }
   .c2-status-reason {
     margin: 8px 0 0;
     color: var(--cv-ink, #ececec);

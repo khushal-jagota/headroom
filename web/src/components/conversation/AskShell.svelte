@@ -56,12 +56,8 @@
 <section class="cv-ask" class:is-framed={framed} data-ask-shell data-ask-kind={kind} {...rest}>
   <div class="cv-ask-body">
     <div class="cv-ask-eyebrow">
-      {#if kind === "permission"}
-        <!-- v5: a permission ask leads with a 12px shield in the accent, not the dot. -->
-        <svg class="cv-ask-shield" data-ask-shield viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.75 13.25 3.7v3.8c0 3.3-2.2 5.5-5.25 6.75C4.95 13 2.75 10.8 2.75 7.5V3.7z" /></svg>
-      {:else}
-        <span class="cv-ask-dot" aria-hidden="true"></span>
-      {/if}
+      <!-- v16 (2): every waiting ask (permission, question, proposal) leads with the same 8px accent dot. -->
+      <span class="cv-ask-dot" aria-hidden="true"></span>
       <span class="cv-ask-need">{eyebrow}</span>
       {#if onStop || context}
         <span class="cv-ask-context">
@@ -113,7 +109,6 @@
     font: var(--cv-weight-title) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
   }
   .cv-ask-dot { flex: none; width: 7px; height: 7px; border-radius: var(--cv-r-pill); background: var(--cv-accent); }
-  .cv-ask-shield { flex: none; width: 12px; height: 12px; fill: none; stroke: var(--cv-accent); stroke-width: 1.3; stroke-linejoin: round; }
   .cv-ask-need { flex: none; }
   .cv-ask-context {
     display: inline-flex;
@@ -234,11 +229,10 @@
   /* ---- v7, inside the conversation pane only (the proposal card on the page keeps its own) ---- */
   /* Standing alone, an ask is a Surface: #1c1c1c, a 1px #2a2a2a edge, radius 20. */
   :global([data-conversation-pane]) .cv-ask.is-framed { background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 20px; }
-  /* The eyebrow is a Status line: a 16px icon slot (the 8px accent dot, or the 16px shield), the
+  /* The eyebrow is a Status line: a 16px icon slot (the 8px accent dot, on every ask), the
      label 13/20 500 in the accent. */
   :global([data-conversation-pane]) .cv-ask-eyebrow { min-height: 32px; font: var(--cv-weight-label) 13px/20px var(--cv-font); }
   :global([data-conversation-pane]) .cv-ask-dot { width: 8px; height: 8px; margin-inline: 4px; }
-  :global([data-conversation-pane]) .cv-ask-shield { width: 16px; height: 16px; stroke-width: 1.5; }
   /* The pager: "1 of 2" is status detail (#b0b0b0); its arrows are quiet Buttons (32 round,
      #bdbdbd, hover #2a2a2a). */
   :global([data-conversation-pane]) .cv-ask-context { gap: 0; color: #b0b0b0; }
@@ -289,6 +283,8 @@
   /* v15 (5): option descriptions are #b8b8b8; an unavailable pager arrow is #7a7a7a. */
   :global([data-conversation-pane] .cv-ask-sub) { color: #b8b8b8; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #7a7a7a; }
+  /* v16 (12): option descriptions one step up, #c4c4c4. */
+  :global([data-conversation-pane] .cv-ask-sub) { color: #c4c4c4; }
   @keyframes cv-ask-in { from { opacity: 0; transform: translateY(4px); } }
   @media (prefers-reduced-motion: reduce) { .cv-ask { animation: none; } }
   @media (max-width: 560px) {

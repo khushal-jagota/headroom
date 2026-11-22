@@ -96,6 +96,14 @@
     right: 0;
     bottom: calc(100% + 8px + var(--c2-menu-lift, 0px));
     width: max-content;
-    min-width: 160px;
+    min-width: 0;
   }
+  /* v16 (9): the menu fits its content, as the model picker does: 12px label padding, 16px from
+     the label to the check. Unselected items are #e0e0e0. */
+  :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact .listbox-picker-option) {
+    gap: 16px;
+    padding-inline: 12px;
+    color: #e0e0e0;
+  }
+  :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact .listbox-picker-option:is(.on, .cursor, :hover)) { color: #ececec; }
 </style>

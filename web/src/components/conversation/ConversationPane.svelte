@@ -788,7 +788,8 @@
   .cv-empty-foot { flex: 1 1 0; min-height: 0; }
   .cv-empty-hint {
     margin: 12px 0 0;
-    color: #a6a6a6;
+    /* v16 (12): one step up, #b8b8b8. */
+    color: #b8b8b8;
     font: var(--cv-weight-body, 400) 13px/20px var(--cv-font);
     text-align: center;
   }
@@ -907,6 +908,10 @@
      #a6a6a6 400 text (hover keeps the #242424 fill and #ececec). */
   .cv-segment { color: #a6a6a6; font-weight: 400; }
   .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #363636; color: #f2f2f2; font-weight: 500; }
+  /* v16 (3): more contrast both ways. The other lens is #d0d0d0 400; the shown one is a #424242
+     segment with #ffffff 500 text. The track keeps its fill. */
+  .cv-segment { color: #d0d0d0; }
+  .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #424242; color: #ffffff; }
 
   .conversation-read-only {
     flex: none;

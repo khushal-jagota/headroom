@@ -5731,3 +5731,25 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* What follows a heading starts 8px under it (a table or a picture's own top margin would
  * otherwise widen the gap to 16). */
 [data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2, h3) + * { margin-block-start: 0; }
+
+/* ==========================================================================================
+ * v16 (22 Nov, after round 22) — scoped to the conversation pane.
+ * ========================================================================================== */
+/* (1) Inline code is one style in answers and in Full narration: mono 0.9em #e0e0e0 on #2a2a2a,
+ * radius 4, padding 0 4px. No vertical padding, so chips on two 14/24 lines never touch. */
+[data-conversation-pane] .chat-thread .markdown :not(pre) > code,
+[data-conversation-pane] .cv-code,
+[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-family: var(--cv-mono); font-size: 0.9em; line-height: 1; padding: 0 4px; border-radius: 4px; background: #2a2a2a; color: #e0e0e0; }
+[data-conversation-pane] .chat-thread .markdown :not(pre) > code.cv-code-before-punctuation { padding-inline-end: 4px; }
+/* (7) Headings in answers: h1 and h2 19/26 600 #f2f2f2; h3 17/24 600 #ececec. Spacing as v15
+ * (24 above, 8 below). The table head keeps its own style. */
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2) { font-size: 19px; line-height: 26px; font-weight: 600; color: #f2f2f2; }
+[data-conversation-pane] .chat-thread .chat-a .markdown h3 { font-size: 17px; line-height: 24px; font-weight: 600; color: #ececec; }
+/* (8) Links in answers: the conversation accent #bccbf0, a 1px underline at 40% of the same
+ * colour, 3px under the baseline; under the pointer the underline is full colour. */
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #bccbf0; text-decoration-line: underline; text-decoration-thickness: 1px; text-decoration-color: rgb(188 203 240 / 40%); text-underline-offset: 3px; }
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #bccbf0; text-decoration-color: #bccbf0; }
+/* (5) Disabled send everywhere: no fill, a #8a8a8a arrow (the ask well's round matches in
+ * ConversationComposer). Stop keeps its v14 ring, so the two no longer look alike. Enabled
+ * (.on) stays as built. */
+.chat-send:not(.on, .stop) { background: none; color: #8a8a8a; }

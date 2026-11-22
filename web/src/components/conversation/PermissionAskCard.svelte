@@ -59,7 +59,7 @@
   let detail = $derived(readableConversationDetail(ask.detail));
   /** v9 (2): Deny is an option row (the last one), never a separate button. */
   let tiles = $derived(rows);
-  // v5: a permission ask says "Needs your permission" (with the shield); a question keeps
+  // v5: a permission ask says "Needs your permission" (v16: with the dot); a question keeps
   // "Needs your answer". "Needs your approval" belongs to proposals.
   let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your permission");
   let rawOpen = $state(false);

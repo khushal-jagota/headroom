@@ -50,6 +50,8 @@
   <!-- p13b: one live indicator in the transcript, the Working line's spinner. A running row
        keeps the run's static icon; "Running" in #c4c4c4 500 (v14 (6)) says it is live. -->
   <!-- v9 (1): the Working line holds the one spinner in every view. -->
+  <!-- v16 (6), revised: only the Working line has a spinner. A running row keeps the run's icon,
+       lit #ececec; a settled row's icon stays quiet. -->
   <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true" data-conversation-run-icon={live ? "running" : undefined}>
     {#each summary.iconPaths as path (path)}<path d={path} />{/each}
   </svg>
@@ -120,6 +122,11 @@
      status. Under the pointer it lights as every row does. */
   .c2-run-summary.is-live .c2-run-verb { color: #c4c4c4; }
   .c2-run-summary.is-live:is(:hover, :focus-visible) .c2-run-verb { color: var(--cv-ink, #ececec); }
+  /* v16 (6): live, the icon is #ececec, "Running" #ececec 500 and its command #c4c4c4. Only the
+     Working line has a spinner. A settled row keeps its quieter icon and its #c4c4c4 sentence. */
+  .c2-run-summary.is-live .c2-run-icon { stroke: #ececec; }
+  .c2-run-summary.is-live .c2-run-verb { color: #ececec; font-weight: var(--cv-weight-label); }
+  .c2-run-summary.is-live .c2-run-subject { color: #c4c4c4; }
   /* One line, always: the subject gives way with an ellipsis inside the column. */
   .c2-run-line {
     flex: 0 1 auto;

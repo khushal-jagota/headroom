@@ -141,6 +141,8 @@
   .c2-label { color: #bdbdbd; font-weight: var(--cv-weight-label); }
   /* v13 (10): the note stands centred in the column, same well and type. */
   .c2-system-note { align-self: center; }
+  /* v16 (12): the note's words (after "From Panels") one step up, #c4c4c4. */
+  .c2-system-note { color: #c4c4c4; }
   .chat-system { align-items: center; }
 
   /* A message that never reached the agent is not drawn as one that did: its bubble steps

@@ -346,6 +346,11 @@
   .chat-qrow :global(.c2-bubble) { box-shadow: inset 0 0 0 1px #4a4a4a; }
   /* v15 (5): the Queued detail is #b8b8b8. */
   .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #b8b8b8; }
+  /* v16 (12): the Queued detail one step up, #c4c4c4. v16 (10): the "..." button is a 28px
+     target, its icon #c4c4c4, hover #2a2a2a. */
+  .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #c4c4c4; }
+  .chat-qrow-more { width: 28px; height: 28px; color: #c4c4c4; }
+  .chat-qrow-more:hover:not(:disabled) { background: #2a2a2a; }
   /* The dropdown (v4): the float plane anchored on its chip, opening upward from its right
      edge; labels only, 14px on 36px rows. Remove is in the danger ink. */
   .chat-qrow-menu[hidden] { display: none; }

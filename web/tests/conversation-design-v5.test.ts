@@ -51,14 +51,14 @@ describe("design v5: tones and accent, scoped to the conversation", () => {
 });
 
 describe("design v5: asks", () => {
-  it("a permission ask says Needs your permission behind a 12px accent shield; a question keeps the dot", () => {
+  it("a permission ask says Needs your permission behind the accent dot (v16 (2): the shield is gone); a question keeps the dot", () => {
     const permission = render(AskShell, { props: { kind: "permission", eyebrow: "Needs your permission", title: "Upload" } }).body;
-    expect(permission).toContain("data-ask-shield");
-    expect(permission).not.toContain("cv-ask-dot");
+    expect(permission).not.toContain("data-ask-shield");
+    expect(permission).toContain("cv-ask-dot");
     const question = render(AskShell, { props: { kind: "question", eyebrow: "Needs your answer", title: "Which?" } }).body;
     expect(question).toContain("cv-ask-dot");
     expect(question).not.toContain("data-ask-shield");
-    expect(source("../src/components/conversation/AskShell.svelte")).toMatch(/\.cv-ask-shield \{[^}]*width: 12px;[^}]*stroke: var\(--cv-accent\);/);
+    expect(source("../src/components/conversation/AskShell.svelte")).not.toContain("cv-ask-shield");
   });
 
   it("number keycaps are #333333 with a #d9d9d9 number", () => {
@@ -117,7 +117,7 @@ describe("design v5.1: turn timing at the top, Paused under a waiting ask", () =
     expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-working { display:inline-flex; align-items:center; gap:6px; }");
   });
 
-  it("v9 (1): the running run keeps its static icon and says Running; the Working line has the one spinner; one line, chevron after it", () => {
+  it("v16 (6): the running run keeps its icon (lit) and says Running; the Working line has the one spinner; one line, chevron after it", () => {
     const running = { title: "Running", summary: "go test -race ./internal/push/...", summaryIsLiteral: true, sentence: "Running go test" } as unknown as ToolCallPresentation;
     const html = render(ToolRunSummary, { props: { summary: { sentence: "Ran 2 commands", failedCount: 0, running, iconPaths: [] }, callCount: 3, onToggle: () => {} } }).body;
     expect(html).not.toContain("data-conversation-run-spinner");
@@ -170,9 +170,9 @@ describe("design v5: controls", () => {
     const viewport = source("../src/components/conversation/viewport/ConversationViewport.svelte");
     expect(viewport).toContain("const jumpShown = $derived(newestLineFarBelow || newerHistory || newerThanUnplacedAnchor || latestPending);");
   });
-  it("dropdowns fit their longest label (min 160); v6: the composer's open 8px above the composer's top edge", () => {
+  it("dropdowns fit their longest label (min 160; v16 (9): the mode menu has no minimum); v6: the composer's open 8px above the composer's top edge", () => {
     const mode = source("../src/components/conversation/composer/DeliveryModePicker.svelte");
-    expect(mode).toMatch(/bottom: calc\(100% \+ 8px \+ var\(--c2-menu-lift, 0px\)\);\s*width: max-content;\s*min-width: 160px;/);
+    expect(mode).toMatch(/bottom: calc\(100% \+ 8px \+ var\(--c2-menu-lift, 0px\)\);\s*width: max-content;\s*min-width: 0;/);
     const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
     expect(held).toMatch(/bottom: calc\(100% \+ 8px\);\s*width: max-content;\s*min-width: 160px;/);
   });
