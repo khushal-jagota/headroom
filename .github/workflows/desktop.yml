@@ -2,7 +2,7 @@ name: Desktop app
 # Builds the desktop app from desktop/ with the web/ screens packed inside, and
 # drives it with Playwright under a virtual display against a test server. On a
 # push or a manual run, a Mac also signs, notarizes and staples it. A push to main
-# publishes it as a GitHub Release. A manual run makes a draft Release instead.
+# publishes it as a GitHub Release. A manual run makes two private proof builds.
 on:
   pull_request:
     branches: [staging]
@@ -11,14 +11,18 @@ on:
     branches: [staging, main]
     paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   workflow_dispatch:
+    inputs:
+      private_feed_url:
+        description: Private generic feed for both signed proof builds (no release is published)
+        required: true
+        default: http://127.0.0.1:18769/
+        type: string
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   # Pushes do not cancel each other, so that a slow notarization can finish.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
-env:
-  DESKTOP_VERSION: 0.0.${{ github.run_number }}
 jobs:
   app-checks:
     name: Desktop app checks (Linux, Node 22)
@@ -45,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix desktop run check
+          npm --prefix desktop run test:updates
           npm --prefix tests/e2e run check
       - name: Build the screens and the app
         run: |
@@ -73,6 +78,10 @@ jobs:
     runs-on: macos-15
     # Apple's notary service can take long for a team's first submissions.
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["proof-a", "proof-b"]' || '["release"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -87,6 +96,14 @@ jobs:
           npm ci --prefix desktop
       - name: Build the screens
         run: cd web && node node_modules/vite/bin/vite.js build
+      - name: Select the build version
+        env:
+          BUILD_KIND: ${{ matrix.build }}
+        run: |
+          set -euo pipefail
+          offset=0
+          if [ "$BUILD_KIND" = proof-b ]; then offset=1; fi
+          echo "DESKTOP_VERSION=0.0.$((GITHUB_RUN_NUMBER * 2 + offset))" >> "$GITHUB_ENV"
       - name: Build, sign, notarize and staple
         env:
           CSC_LINK: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
@@ -95,17 +112,18 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           DEBUG: electron-notarize*,electron-osx-sign*
+          PRIVATE_FEED_URL: ${{ inputs.private_feed_url }}
         run: |
           set -euo pipefail
           export APPLE_API_KEY="$RUNNER_TEMP/notary-key.p8"
           umask 077
           printf '%s\n' "$APPLE_NOTARY_API_KEY_P8" > "$APPLE_API_KEY"
-          npm --prefix desktop run build:mac -- -c.extraMetadata.version="$DESKTOP_VERSION"
+          node desktop/scripts/build_signed.mjs "$DESKTOP_VERSION" "$RUNNER_TEMP/desktop" "$PRIVATE_FEED_URL"
           rm -f "$APPLE_API_KEY"
       - name: Check the signature, notarization and Gatekeeper
         run: |
           set -euo pipefail
-          zip=$(ls desktop/dist/*.zip)
+          zip=$(ls "$RUNNER_TEMP"/desktop/dist/*.zip)
           check="$RUNNER_TEMP/check"
           mkdir "$check"
           ditto -x -k "$zip" "$check"
@@ -120,18 +138,23 @@ jobs:
           grep -q 'source=Notarized Developer ID' "$RUNNER_TEMP/spctl.txt"
           test "$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString)" = "$DESKTOP_VERSION"
           shasum -a 256 "$zip"
+          test -s "$RUNNER_TEMP/desktop/dist/latest-mac.yml"
+          node desktop/scripts/check_update_artifacts.mjs "$RUNNER_TEMP/desktop/dist" "$DESKTOP_VERSION"
       - name: Upload the signed app
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-desktop-mac
-          path: desktop/dist/*.zip
+          name: panels-desktop-mac-${{ matrix.build }}
+          path: |
+            ${{ runner.temp }}/desktop/dist/*.zip
+            ${{ runner.temp }}/desktop/dist/*.blockmap
+            ${{ runner.temp }}/desktop/dist/latest-mac.yml
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
   publish:
     name: Publish the Mac app as a GitHub Release
     needs: [app-checks, signed-mac-app]
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -139,16 +162,15 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: panels-desktop-mac
-          path: dist
+          name: panels-desktop-mac-release
+          path: ${{ runner.temp }}/desktop-release
       - name: Create the Release
         env:
           GH_TOKEN: ${{ github.token }}
-          # A manual run makes a draft, which is not public, to check this job.
-          DRAFT: ${{ github.event_name == 'workflow_dispatch' && '--draft' || '' }}
         run: |
           set -euo pipefail
-          gh release create "desktop-v$DESKTOP_VERSION" dist/Panels-mac-arm64.zip \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" $DRAFT \
+          DESKTOP_VERSION="0.0.$((GITHUB_RUN_NUMBER * 2))"
+          gh release create "desktop-v$DESKTOP_VERSION" "$RUNNER_TEMP"/desktop-release/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Panels for Mac $DESKTOP_VERSION" \
             --notes "The Panels desktop app for Apple silicon Macs, signed and notarized. Built from $GITHUB_SHA."

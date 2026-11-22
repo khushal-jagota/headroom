@@ -27,6 +27,8 @@ import { keepLastSessionFor, lastScreenUrl, rememberLastScreen } from './last_se
 import { holdNotificationStream } from './notifications';
 import { checkServerAddress, loadStoredServerAddress, localServerAddress, serverAddress, storeServerAddress } from './server_address';
 import { rememberWindowPlace, savedWindowBounds } from './window_place';
+import { startShellUpdates } from './updates';
+import type { ShellUpdates } from './updates/contracts';
 
 // Tests give each run its own data folder, so runs share no stored address or window place.
 if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PANELS_DESKTOP_USER_DATA);
@@ -34,6 +36,7 @@ if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PA
 registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
+let shellUpdates: ShellUpdates | undefined;
 
 function createWindow(): BrowserWindow {
   const { bounds, maximized } = savedWindowBounds();
@@ -49,6 +52,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   });
+  shellUpdates?.windowChanged();
   if (maximized) window.maximize();
   window.once('ready-to-show', () => window.show());
   rememberWindowPlace(window);
@@ -56,6 +60,7 @@ function createWindow(): BrowserWindow {
   sendLinksToTheBrowser(window);
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
+    shellUpdates?.windowChanged();
   });
   return window;
 }
@@ -97,6 +102,7 @@ async function switchServer(typed: string): Promise<ServerAddressResult> {
     return { ok: false, problem: 'The app could not clear the data it kept for the last server.' };
   }
   storeServerAddress(result.address);
+  shellUpdates?.serverChanged();
   return result;
 }
 
@@ -195,6 +201,7 @@ void app.whenReady().then(async () => {
   Menu.setApplicationMenu(applicationMenu());
   openWindow(await firstPage());
   holdNotificationStream(openRoute);
+  if (app.isPackaged && process.platform === 'darwin') shellUpdates = startShellUpdates(serverAddress);
   // A Mac app stays open with no window. A click on its Dock icon brings the window back.
   app.on('activate', () => {
     if (!mainWindow) openWindow(serverAddress() ? lastScreenUrl() : ADDRESS_PAGE_URL);
@@ -204,3 +211,5 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+app.on('before-quit', () => shellUpdates?.stop());

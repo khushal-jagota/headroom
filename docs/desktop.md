@@ -43,6 +43,14 @@ A saved copy from another build of the screens is not used, because response sha
 
 The app has the standard Mac menus. The window opens where it was last left, at the same size. Closing the window does not quit the app; a click on its Dock icon brings the window back.
 
+## App updates
+
+The native side uses electron-updater to download the newest stable desktop release quietly. It selects desktop release tags explicitly, so a server release cannot become an app update. A ready update installs when the app quits, or after the app remains without a window. A reopened window cancels that delay. A failed check or download leaves the installed app usable.
+
+The main process owns the restart dialog when new screens require a newer shell. The dialog offers a restart after the update is ready. It adds no bridge action for artifact pages.
+
+The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its ZIP and matching updater metadata on GitHub Releases. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
+
 ## Notifications
 
 The native side holds a live stream to the server, `/api/notifications/desktop`, while the app runs, also with its window closed. Each event on it is one notification that the server's [notification rules](notifications.md) allowed, with the same words as on the other devices. The native side shows it through macOS, and a newer one for the same Ticket, Manager or Chief replaces the older one. A click brings the app forward and opens that place in the window, and opens the window if it was closed. When the app quits, the stream ends and the Mac gets no more notifications. The stream reconnects by itself after the server comes back, and it moves to the new server after "Change Server…". The switches in Settings are the server's, the same for every device. In the app, the device row says that the Mac gets the notifications, and macOS Settings control banners and sounds.
@@ -55,6 +63,6 @@ Artifact HTML runs at the screens' own origin, so a script in an artifact can re
 
 ## Where the code lives
 
-`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/bridge.ts` (the bridge type), and the address page. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
+`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native update checks and installation), `src/bridge.ts` (the bridge type), and the address page. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
 _Last verified: 2026-11-22._
