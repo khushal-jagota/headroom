@@ -105,92 +105,11 @@ struct DecisionProposalCard: View {
                     .accessibilityLabel("Reviewer, \(reviewer)")
                     .accessibilityIdentifier("decision.reviewer")
             }.panelsScaledFont(size: 13, weight: .medium)
-            DecisionMarkdown(source: text, baseURL: baseURL)
+            PanelsMarkdown(source: text, baseURL: baseURL, emphasizesFirstParagraph: true)
         }.padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PanelsTheme.Web.cardFill, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
             .reviewArtifactLinks(dock: dock)
-    }
-}
-
-/// Proposal Markdown keeps code and tables readable without widening the page.
-struct DecisionMarkdown: View {
-    let source: String
-    let baseURL: URL
-    var emphasizesFirstParagraph = true
-    @ScaledMetric(relativeTo: .body) private var codeSize: CGFloat = 12.5
-    @ScaledMetric(relativeTo: .body) private var bodyLineSpacing: CGFloat = 5
-    @ScaledMetric(relativeTo: .body) private var firstParagraphLineSpacing: CGFloat = 4
-    private var blocks: [ArtifactMarkdownBlock] { ArtifactMarkdownBlock.parse(source) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(blocks) { block in
-                switch block.kind {
-                case .rule: Divider().overlay(PanelsTheme.Web.border)
-                case .code:
-                    ScrollView(.horizontal) {
-                        Text(block.text).font(.system(size: codeSize, design: .monospaced)).textSelection(.enabled)
-                            .padding(12).fixedSize(horizontal: true, vertical: false)
-                    }.background(PanelsTheme.Web.code, in: RoundedRectangle(cornerRadius: 8))
-                case .heading:
-                    inline(block.text).panelsScaledFont(size: 15, weight: .semibold)
-                        .foregroundStyle(PanelsTheme.Web.strong).accessibilityAddTraits(.isHeader)
-                case .quote:
-                    HStack(alignment: .top, spacing: 12) {
-                        Rectangle().fill(PanelsTheme.Web.tertiary).frame(width: 2)
-                        inline(block.text).panelsScaledFont(size: 14).foregroundStyle(PanelsTheme.Web.secondary)
-                    }.fixedSize(horizontal: false, vertical: true)
-                case .paragraph, .list:
-                    if let rows = table(block.text) {
-                        ScrollView(.horizontal) {
-                            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                                ForEach(Array(rows.enumerated()), id: \.offset) { index, cells in
-                                    GridRow {
-                                        ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                                            inline(cell).panelsScaledFont(size: 14, weight: index == 0 ? .semibold : .regular)
-                                                .fixedSize().padding(8)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                                .background(index == 0 ? PanelsTheme.Web.surface : Color.clear)
-                                                .overlay(Rectangle().stroke(PanelsTheme.Web.border, lineWidth: 1))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        inline(block.text).panelsScaledFont(size: emphasizesFirstParagraph && block.id == blocks.first?.id && block.kind == .paragraph ? 15 : 14,
-                                                           weight: emphasizesFirstParagraph && block.id == blocks.first?.id && block.kind == .paragraph ? .medium : .regular)
-                            .foregroundStyle(emphasizesFirstParagraph && block.id == blocks.first?.id && block.kind == .paragraph ? PanelsTheme.Web.strong : PanelsTheme.Web.text)
-                            .lineSpacing(emphasizesFirstParagraph && block.id == blocks.first?.id && block.kind == .paragraph ? firstParagraphLineSpacing : bodyLineSpacing)
-                    }
-                }
-            }
-            ArtifactInlineMediaPreviews(source: source, baseURL: baseURL)
-        }.lineSpacing(bodyLineSpacing).frame(maxWidth: .infinity, alignment: .leading)
-    }
-    private func inline(_ text: String) -> some View {
-        var value = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: baseURL)) ?? AttributedString(text)
-        for run in value.runs {
-            if run.inlinePresentationIntent?.contains(.code) == true {
-                value[run.range].font = .system(size: codeSize, design: .monospaced)
-                value[run.range].backgroundColor = PanelsTheme.Web.code
-            }
-            if run.link != nil {
-                value[run.range].foregroundColor = PanelsTheme.Web.strong
-                value[run.range].underlineStyle = .single
-            }
-        }
-        return Text(value).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-    }
-    private func table(_ text: String) -> [[String]]? {
-        let lines = text.components(separatedBy: .newlines)
-        guard lines.count > 1, lines[0].contains("|"),
-              lines[1].range(of: #"^\s*\|?\s*:?-{3,}"#, options: .regularExpression) != nil else { return nil }
-        return ([lines[0]] + Array(lines.dropFirst(2))).map { line in
-            var cells = line.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-            if cells.first == "" { cells.removeFirst() }; if cells.last == "" { cells.removeLast() }
-            return cells
-        }
     }
 }
 
