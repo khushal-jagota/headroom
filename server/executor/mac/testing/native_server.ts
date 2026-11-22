@@ -153,8 +153,7 @@ export async function start_native_server() {
         ),
       );
       assert.ok(identity);
-      assert.equal(JSON.parse(identity.identity_json).protocol_version, 26);
-      assert.equal(PROTOCOL_VERSION, 26);
+      assert.equal(JSON.parse(identity.identity_json).protocol_version, PROTOCOL_VERSION);
       return endpoint.health_payload();
     },
     async create_turn(
