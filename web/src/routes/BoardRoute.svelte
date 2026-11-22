@@ -373,6 +373,9 @@
     enterHover({ target, title:worker.title, kicker:"Worker", worker }, immediate);
   }
 
+  // Settings replaces the rail's rows, so a preview opened from one of them has nothing left to point at.
+  $effect(() => { if (settingsRail) untrack(() => dismissHover()); });
+
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
     busyItem = item.id; settleError = ""; dismissHover();
     try {

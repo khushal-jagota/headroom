@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { correctedWorkspaceAddress, parseWorkspaceAddress, whatTheAddressOpens, workspaceAddress } from "../src/lib/workspaceAddress";
 
 describe("workspace utility addresses", () => {
-  it.each(["usage", "settings", "ideas"] as const)(
+  it.each(["usage", "ideas"] as const)(
     "round trips %s as a selected workspace utility",
     (utility) => {
       const href = workspaceAddress({ kind: "utility", utility, path: [] });
@@ -22,10 +22,7 @@ describe("workspace utility addresses", () => {
 describe("a position inside a utility the pane is showing", () => {
   it.each([
     ["#/workspace/utility/usage/tokens", "usage", ["tokens"]],
-    ["#/workspace/utility/usage/config/workers/coding", "usage", ["config", "workers", "coding"]],
-    ["#/workspace/utility/settings/backends", "settings", ["backends"]],
-    ["#/workspace/utility/settings/notifications", "settings", ["notifications"]],
-    ["#/workspace/utility/settings/config/chief-of-staff", "settings", ["config", "chief-of-staff"]]
+    ["#/workspace/utility/usage/cost", "usage", ["cost"]]
   ] as const)("round trips %s, so a reload or a paste lands where the click did", (href, utility, path) => {
     const address = parseWorkspaceAddress(href);
     expect(address?.selection).toEqual({ kind: "utility", utility, path: [...path] });
@@ -47,8 +44,8 @@ describe("a position inside a utility the pane is showing", () => {
   it.each([
     "#/workspace/utility/usage/unknown",
     "#/workspace/utility/usage/tokens/detail",
-    "#/workspace/utility/settings/unknown",
-    "#/workspace/utility/settings/notifications/detail",
+    "#/workspace/utility/settings",
+    "#/workspace/utility/usage/config",
     "#/workspace/utility/ideas/anything",
     "#/workspace/utility/feedback/anything"
   ])("refuses an address no screen has a position for: %s", (href) => {

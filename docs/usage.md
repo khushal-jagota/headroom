@@ -4,11 +4,10 @@ Usage is where Khushal sees what the agents on this host can still spend, and wh
 
 ## What it is made of
 
-Four tabs: Limits, Tokens, Cost, and Config.
+Three tabs: Limits, Tokens, and Cost.
 
 - **Limits** is allowance: how much each provider says is left.
 - **Tokens and Cost** are recorded spend: what the agents have used.
-- **Config** is the same editor as Settings, so model availability and skill text sit next to the limits they affect. [Skills](skills.md) owns the editor.
 
 The two numbers come from different places and do not mix. Recorded usage comes from one local server. The browser calculates its totals and charts directly from that server's summary.
 
@@ -31,7 +30,7 @@ Codex totals also include automatic compactions from matched response records. C
 
 ## Backend setup
 
-Backend cards read the tools installed on this host. Settings → VPS backends lists, in the server's order, each backend whose versions Panels checks (today Codex, Claude, then Antigravity), and any other backend Panels can sign in. A backend whose driver can sign in from Panels (today, Codex and Antigravity) offers sign-in there when its account is signed out or a sign-in is under way; a signed-in account shows no sign-in. Codex sign-in shows a code and link. Antigravity's opens Google's page and takes the address Google returns to in a paste box, so it works from any device. Claude keeps its own login command. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table; Antigravity's models and thinking levels come from agy's own lists. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
+Backend cards read the tools installed on this host. Settings → Backends lists, in the server's order, each backend whose versions Panels checks (today Codex, Claude, then Antigravity), and any other backend Panels can sign in. A backend whose driver can sign in from Panels (today, Codex and Antigravity) offers sign-in there when its account is signed out or a sign-in is under way; a signed-in account shows no sign-in. Codex sign-in shows a code and link. Antigravity's opens Google's page and takes the address Google returns to in a paste box, so it works from any device. Claude keeps its own login command. Claude supplies its model list through its CLI, and Headroom keeps no Claude model table; Antigravity's models and thinking levels come from agy's own lists. Each machine reads its own lists. See [Executor](executor.md). Panels saves each complete list it reads, one for each machine, and model checks read the saved list. Until a machine has a complete saved list for a backend, its models are not checked against it, and the backend decides.
 
 The catalog also lets models be enabled or disabled. A disabled model is refused wherever a Ticket or message would use it. When a model leaves every saved complete list, its switch-off is deleted, because the model is refused as not offered. [Conversations](conversations.md) describes the picker and those refusals.
 

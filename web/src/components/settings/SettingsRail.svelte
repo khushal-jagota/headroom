@@ -12,8 +12,8 @@
   let { section }: { section: SettingsSection } = $props();
 
   let field = $state<HTMLInputElement | null>(null);
-  const entries = useSettingsSearchEntries();
   let searching = $derived(settingsSearch.query.trim() !== "");
+  const entries = useSettingsSearchEntries(() => searching);
   $effect(() => {
     settingsSearch.hits = searching ? searchSettings(entries.current, settingsSearch.query) : [];
   });

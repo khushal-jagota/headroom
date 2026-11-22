@@ -24,6 +24,7 @@
   import { SHELL_DESTINATIONS } from "./lib/shellDestinations";
   import { keyTogglesRailFocus, railFocus, setRailFocus } from "./lib/railFocus.svelte";
   import { rememberPlace } from "./lib/settings/returnPlace";
+  import { clearSettingsSearch } from "./lib/settings/search.svelte";
   import type { SettingsSection } from "./lib/settings/address";
   import SettingsRail from "./components/settings/SettingsRail.svelte";
   // VPS lives in Settings (owner): the dock and the More sheet no longer list it; #/vps still opens it.
@@ -154,6 +155,7 @@
     syncCompact();
     media.addEventListener("change", syncCompact);
     const onHash = () => {
+      clearSettingsSearch();
       route = parseRoute();
       closeMore();
     };

@@ -10,8 +10,13 @@ export const settingsSearch = $state<{
 }>({ query: "", highlighted: 0, hits: [], flashRowId: null });
 
 export function openSettingsSearchHit(hit: SettingsSearchHit): void {
-  settingsSearch.query = "";
-  settingsSearch.highlighted = 0;
+  clearSettingsSearch();
   settingsSearch.flashRowId = hit.rowId;
   window.location.hash = hit.href;
+}
+
+/** Any move to another address ends a search, so a section opened from the rail shows itself. */
+export function clearSettingsSearch(): void {
+  settingsSearch.query = "";
+  settingsSearch.highlighted = 0;
 }
