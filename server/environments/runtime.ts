@@ -130,7 +130,7 @@ export async function createEnvironmentRuntime(
     mac_updates: mac.service,
     update_barrier,
     recover_update_barrier() {
-      if (!update_barrier.frozen) return;
+      if (!update_barrier.frozen || update_barrier.move_hold !== null) return;
       const generation = update_barrier.generation;
       const attempt_id = attempts.read()?.attempt_id ?? '';
       if (updates.owns_preparation(attempt_id)) return;

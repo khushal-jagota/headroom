@@ -282,6 +282,7 @@ export type LeaseReply = {
   accepted_at_vps_ms: number;
   away_after_seconds: number;
   mailbox_high_sequence: number;
+  server_move?: ServerMoveNotice | null;
   update: MacUpdateCheck;
 };
 export type LeaseRequest = {
@@ -445,6 +446,7 @@ export type ServerLocation = {
   server_url: string | null;
   state: 'active' | 'moved';
 };
+export type ServerMoveNotice = { move_id: string };
 export type StartRun = {
   canonical_skill_snapshot: CanonicalSkillSnapshot;
   kind?: 'start';

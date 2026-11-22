@@ -37,6 +37,11 @@ function sync_directory(path: string): void {
 export class UpdateBarrier {
   readonly path: string;
   frozen: boolean;
+  /**
+   * The server move that holds this barrier closed, or null. Update recovery never reopens a
+   * barrier that a move holds. Only the move that set it clears it.
+   */
+  move_hold: string | null = null;
   private current_generation = 0;
   private durable_generation = 0;
   private active = 0;
