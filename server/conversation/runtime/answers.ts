@@ -34,6 +34,67 @@ interface PendingAnswer {
     answer_id: string | null,
   ): PermissionAnsweredEventPayload | UserInputAnsweredEventPayload;
 }
+type AnswerRow = PermissionAnsweredEventPayload | UserInputAnsweredEventPayload;
+/** What an answer says, so a repeat with the same operation ID can be told from a different answer. */
+const permission_content = (ask_id: string, option_id: string): string =>
+  JSON.stringify(['permission', ask_id, option_id]);
+const user_input_content = (request_id: string, answers: readonly UserInputAnswer[]): string =>
+  JSON.stringify([
+    'user_input',
+    request_id,
+    answers
+      .map((answer) => [answer.question_id, answer.answers])
+      .sort((a, b) => (a[0]! < b[0]! ? -1 : 1)),
+  ]);
+const row_content = (row: AnswerRow): string =>
+  row.kind === 'permission_answered'
+    ? permission_content(row.ask_id, row.option_id)
+    : user_input_content(row.request_id, row.answers);
+/**
+ * With an operation ID, an answer happens once. A repeat returns the saved row's fate, and a repeat
+ * that arrives while the first is still being written waits for it. A refusal saves no row, so a
+ * repeat of a refused answer is judged again.
+ */
+async function answer_once(
+  host: SqliteProcessConversationSystem,
+  state: ConversationState,
+  operation_id: string | null,
+  content: string,
+  answer: () => Promise<AnswerFate>,
+): Promise<AnswerFate> {
+  if (operation_id === null) return answer();
+  const different = () => new Error('operation_id already names a different answer');
+  const running = state.answers_in_flight.get(operation_id);
+  if (running) {
+    if (running.content !== content) throw different();
+    return running.fate;
+  }
+  const saved = host.options.store.answer_operation_outcome(
+    state.record.conversation_id,
+    operation_id,
+  );
+  if (saved) {
+    const row = saved.payload as AnswerRow;
+    if (row_content(row) !== content) throw different();
+    return row.fate;
+  }
+  const fate = answer();
+  state.answers_in_flight.set(operation_id, { content, fate });
+  try {
+    return await fate;
+  } finally {
+    state.answers_in_flight.delete(operation_id);
+  }
+}
+/** The saved fate of an answer by its operation ID, or null when none was saved. */
+export function answer_receipt(
+  host: SqliteProcessConversationSystem,
+  conversation_id: string,
+  operation_id: string,
+): AnswerFate | null {
+  const saved = host.options.store.answer_operation_outcome(conversation_id, operation_id);
+  return saved ? (saved.payload as AnswerRow).fate : null;
+}
 async function answer_request(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
@@ -133,8 +194,14 @@ export function answer_permission_ask(
   state: ConversationState,
   ask_id: string,
   option_id: string,
+  operation_id: string | null = null,
 ): Promise<AnswerFate> {
-  return answer_request(host, state, (running, child) => {
+  return answer_once(host, state, operation_id, permission_content(ask_id, option_id), () =>
+    answer_request(host, state, permission_selector(ask_id, option_id, operation_id)),
+  );
+}
+function permission_selector(ask_id: string, option_id: string, operation_id: string | null) {
+  return (running: RunningTurn, child: BackendChild): PendingAnswer | null => {
     if (!running.pending_permission_ask_ids.has(ask_id)) return null;
     const provider_id = running.permission_provider_ids.get(ask_id)!;
     const remaining = new Set(running.pending_permission_ask_ids);
@@ -155,17 +222,27 @@ export function answer_permission_ask(
         child.answer_permission_ask(provider_id, option_id, { answer_id, turn_token }),
       write_failed: (error) => error instanceof PermissionAnswerWriteFailed,
       row: (fate, answer_id) =>
-        new PermissionAnsweredEventPayload({ ask_id, option_id, fate, answer_id }),
+        new PermissionAnsweredEventPayload({ ask_id, option_id, fate, answer_id, operation_id }),
     };
-  });
+  };
 }
 export function answer_user_input(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   request_id: string,
   answers: readonly UserInputAnswer[],
+  operation_id: string | null = null,
 ): Promise<AnswerFate> {
-  return answer_request(host, state, (running, child) => {
+  return answer_once(host, state, operation_id, user_input_content(request_id, answers), () =>
+    answer_request(host, state, user_input_selector(request_id, answers, operation_id)),
+  );
+}
+function user_input_selector(
+  request_id: string,
+  answers: readonly UserInputAnswer[],
+  operation_id: string | null,
+) {
+  return (running: RunningTurn, child: BackendChild): PendingAnswer | null => {
     const questions = running.pending_user_input_questions.get(request_id);
     if (!questions) return null;
     const ordered = ordered_user_input_answers(questions, answers);
@@ -189,9 +266,15 @@ export function answer_user_input(
         child.answer_user_input(provider_id, ordered, { answer_id, turn_token }),
       write_failed: (error) => error instanceof UserInputAnswerWriteFailed,
       row: (fate, answer_id) =>
-        new UserInputAnsweredEventPayload({ request_id, answers: ordered, fate, answer_id }),
+        new UserInputAnsweredEventPayload({
+          request_id,
+          answers: ordered,
+          fate,
+          answer_id,
+          operation_id,
+        }),
     };
-  });
+  };
 }
 
 export async function emit_answer(

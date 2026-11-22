@@ -609,21 +609,33 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
     conversation_id: string,
     ask_id: string,
     option_id: string,
+    operation_id: string | null = null,
   ): Promise<AnswerFate> {
     const state = this.conversation_state(conversation_id);
     return state
-      ? own_settlement(state, answers.answer_permission_ask(this, state, ask_id, option_id))
+      ? own_settlement(
+          state,
+          answers.answer_permission_ask(this, state, ask_id, option_id, operation_id),
+        )
       : AnswerFate.refused;
   }
   async answer_user_input(
     conversation_id: string,
     request_id: string,
     values: readonly import('./events.ts').UserInputAnswer[],
+    operation_id: string | null = null,
   ): Promise<AnswerFate> {
     const state = this.conversation_state(conversation_id);
     return state
-      ? own_settlement(state, answers.answer_user_input(this, state, request_id, values))
+      ? own_settlement(
+          state,
+          answers.answer_user_input(this, state, request_id, values, operation_id),
+        )
       : AnswerFate.refused;
+  }
+  /** The saved fate of an answer sent with this operation ID, or null if none was saved. */
+  answer_receipt(conversation_id: string, operation_id: string): AnswerFate | null {
+    return answers.answer_receipt(this, conversation_id, operation_id);
   }
   pending_permission_ask_ids(conversation_id: string): Promise<ReadonlySet<string>> {
     return queries.pending_permission_ask_ids(this, conversation_id);

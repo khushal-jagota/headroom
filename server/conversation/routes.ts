@@ -257,6 +257,29 @@ function send_error(error: unknown): never {
     throw new HttpError(422, error.message);
   throw error;
 }
+/** An answer's operation ID is optional. Without one, the answer has no receipt. */
+function answer_operation_id(fields: Fields): string | null {
+  const value = fields.text('operation_id', false, false);
+  if (value === '') {
+    fields.issue(
+      'string_too_short',
+      ['operation_id'],
+      'String should have at least 1 character',
+      value,
+    );
+    return null;
+  }
+  return value;
+}
+async function answer_error<T>(answer: () => Promise<T>): Promise<T> {
+  try {
+    return await answer();
+  } catch (error) {
+    if (error instanceof Error && error.message === 'operation_id already names a different answer')
+      throw new HttpError(422, error.message);
+    throw error;
+  }
+}
 export function createConversationRoutes(
   runtime: ConversationHttpRuntime,
 ): FastifyPluginAsync<AreaServices> {
@@ -496,15 +519,19 @@ export function createConversationRoutes(
         const fields = body_fields(request.body);
         const ask_id = fields.text('ask_id');
         const option_id = fields.text('option_id');
-        fields.extras(['ask_id', 'option_id']);
+        const operation_id = answer_operation_id(fields);
+        fields.extras(['ask_id', 'option_id', 'operation_id']);
         fields.finish();
         requireOwner(services.identity(request));
         mutable_conversation(runtime, request.params.conversation_id);
         return {
-          fate: await runtime.core.answer_permission_ask(
-            request.params.conversation_id,
-            ask_id!,
-            option_id!,
+          fate: await answer_error(() =>
+            runtime.core.answer_permission_ask(
+              request.params.conversation_id,
+              ask_id!,
+              option_id!,
+              operation_id,
+            ),
           ),
         };
       },
@@ -545,16 +572,34 @@ export function createConversationRoutes(
             }
             fields.issues.push(...nested.issues);
           }
-        fields.extras(['request_id', 'answers']);
+        const operation_id = answer_operation_id(fields);
+        fields.extras(['request_id', 'answers', 'operation_id']);
         fields.finish();
         requireOwner(services.identity(request));
         mutable_conversation(runtime, request.params.conversation_id);
         return {
-          fate: await runtime.core.answer_user_input(
-            request.params.conversation_id,
-            request_id!,
-            answers,
+          fate: await answer_error(() =>
+            runtime.core.answer_user_input(
+              request.params.conversation_id,
+              request_id!,
+              answers,
+              operation_id,
+            ),
           ),
+        };
+      },
+    );
+    app.get<{ Params: { conversation_id: string; operation_id: string } }>(
+      '/conversations/:conversation_id/answer-receipts/:operation_id',
+      async (request) => {
+        requireOwner(services.identity(request));
+        require_conversation(runtime, request.params.conversation_id);
+        const fate = runtime.core.answer_receipt(
+          request.params.conversation_id,
+          request.params.operation_id,
+        );
+        return {
+          receipt: fate === null ? null : { operation_id: request.params.operation_id, fate },
         };
       },
     );
