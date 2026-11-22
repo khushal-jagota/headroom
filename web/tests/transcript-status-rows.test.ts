@@ -19,6 +19,7 @@ describe("a turn that failed", () => {
       detail: raw,
       next: "The provider said the limit resets in 41m. Send a message after that, or choose another model.",
       action: "choose-model",
+      brief: "The model's rate limit was reached. It resets in 41m.",
       detailOpen: false
     });
     expect(turnFailureSentence("codex app-server exited with code 1")).toBe("The turn stopped because the agent's process exited.");
@@ -35,7 +36,11 @@ describe("a turn that failed", () => {
     const raw = "stream disconnected before completion: rate limit reached for gpt-6.1-sol (resets in 41m)";
     const html = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, role: "alert" } }).body;
     expect(html).toContain("data-conversation-status-next");
-    expect(html).toContain("resets in 41m. Send a message after that");
+    // v9 (7): the card says the cause and when it lifts; its button says the rest.
+    expect(html).toContain(">The model's rate limit was reached. It resets in 41m.</p>");
+    expect(html).not.toContain("Send a message after that");
+    // v9 (7): with no other action, Choose another model is the card's one primary.
+    expect(html).toMatch(/class="cv-button c2-status-choose c2-status-main"/);
     // The backend's words wait behind a Details toggle, closed, beside the real next step.
     expect(html).toMatch(/data-conversation-status-details[^>]*|aria-expanded="false"[^>]*data-conversation-status-details/);
     expect(html).toMatch(/<div class="c2-status-more[^"]*"[^>]*\bhidden\b/);
@@ -99,11 +104,9 @@ describe("a message that was not delivered", () => {
     // v8 (9): the card says only the cause; Choose another model (a button) says the rest.
     expect(status).toContain("The backend did not start.</p>");
     expect(status).not.toContain("Send it again to retry");
-    // Its offered next step is a real control. With no Resend before it, it is the callout's
-    // first action, which CSS fills (.c2-status-actions > .c2-status-second:first-child).
-    expect(status).toMatch(/class="cv-button c2-status-second c2-status-choose[^"]*"[^>]*data-conversation-status-choose-model/);
-    const actions = status.slice(status.indexOf("c2-status-actions"));
-    expect(actions.replace(/<!--[^>]*-->|\s/g, "")).toMatch(/^c2-status-actions[^"]*">(<[^>]*>)?<buttontype="button"class="cv-buttonc2-status-secondc2-status-choose/);
+    // Its offered next step is a real control. Under a message (whose actions may hold
+    // Resend, the primary) it is secondary (v9 7: one primary per surface).
+    expect(status).toMatch(/class="cv-button c2-status-choose c2-status-second"[^>]*data-conversation-status-choose-model/);
   });
   it("marks an ordinary message with nothing", () => {
     const html = draw({ ...base, kind: "prompt", mode: "queue", sentAtUnixMilliseconds: 1000 });

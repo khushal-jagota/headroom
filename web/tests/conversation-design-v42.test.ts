@@ -53,13 +53,13 @@ describe("design v4.2: asks", () => {
     expect(shell).toContain("background: #2e2e2e; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%);");
   });
 
-  it("the pager's arrows are the meta tone; a disabled one is #8c8c8c (v5.1)", () => {
+  it("the pager's arrows are the meta tone; a disabled one is #a6a6a6 (v9 22)", () => {
     expect(shell).toContain(".cv-ask-context :global(.cv-icon-button) { color: var(--cv-t3); }");
-    expect(shell).toContain(".cv-ask-context :global(.cv-icon-button:disabled) { color: #8c8c8c; }");
+    expect(shell).toContain(".cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }");
   });
 
-  it("v7: the disabled primary pill reads #8c8c8c on #2a2a2a", () => {
-    expect(composer).toContain(".chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: #8c8c8c; cursor: default; }");
+  it("v9 (9): the disabled primary pill reads #a6a6a6 on #2e2e2e", () => {
+    expect(composer).toContain(".chat-box :global(.chat-ask-primary:disabled) { background: #2e2e2e; color: #a6a6a6; cursor: default; }");
   });
 
   it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid), the pill outside it on the right", () => {
@@ -94,14 +94,14 @@ describe("design v4.2: messages", () => {
     expect(source("../src/components/conversation/UserMessage.svelte")).toMatch(/\.chat-u\.undelivered :global\(\.c2-bubble\)::before \{[^}]*right: calc\(100% \+ 8px\);\s*width: 16px;\s*height: 16px;[^}]*background: #f08a7e;/);
   });
 
-  it("a message from Panels (v6): a centred system note with no box, \"From Panels · \" then the words, 13/20 #b0b0b0, two lines at most", () => {
+  it("a message from Panels (v9 11): a left-aligned system note with no box, \"From Panels · \" then the words, 13/20 #b0b0b0, two lines at most", () => {
     const row = { key: "e1", kind: "prompt" as const, sequence: 1, createdAt: 1, senderLabel: "Panels", senderMessageId: null,
       content: [{ piece: "text" as const, text: "Continue the Ticket at Stage: Problem understanding." }] };
     const html = render(UserMessage, { props: { row, conversationId: "c", ownSenderLabel: "owner" } }).body;
     expect(html).toMatch(/<p class="c2-system-note[^"]*" data-conversation-system-note[^>]*><span class="c2-label[^"]*" data-conversation-prompt-label[^>]*>From Panels<\/span><span aria-hidden="true"> · <\/span>Continue the Ticket at Stage: Problem understanding\.<\/p>/);
     expect(html).not.toContain("c2-system-row");
     const css = source("../src/components/conversation/UserMessage.svelte");
-    expect(css).toMatch(/\.c2-system-note \{[^}]*align-self: center;[^}]*-webkit-line-clamp: 2;[^}]*color: #b0b0b0;\s*font: var\(--cv-weight-body\) 13px\/20px var\(--cv-font\);\s*text-align: center;/);
+    expect(css).toMatch(/\.c2-system-note \{[^}]*align-self: flex-start;[^}]*-webkit-line-clamp: 2;[^}]*color: #b0b0b0;\s*font: var\(--cv-weight-body\) 13px\/20px var\(--cv-font\);\s*text-align: start;/);
     expect(css).not.toContain("background: #191919");
   });
 
@@ -194,8 +194,10 @@ describe("design v4.2: the Working line is always the last thing in the transcri
 
 describe("design v4.3", () => {
   const tokens = source("../../assets/tokens.css");
-  it("the opened conversation is one 680px column; docked at rest it keeps the page's column", () => {
-    expect(tokens).toContain("--cv-col: 680px;");
+  it("v9 (21): the full conversation is one 640px column; docked on a work page it keeps the page's column", () => {
+    expect(tokens).toContain("--cv-col: 640px;");
+    expect(app).not.toMatch(/\n\.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\)/);
+    expect(app).toMatch(/\.ticket-head,\n\.ticket-col,\n\.conversation-column,\n\.manager-column \{\s*width: min\(var\(--page-measure\), calc\(100% - 2 \* var\(--space-5\)\)\);/);
     expect(app).toMatch(/\[data-conversation-dock-state="opened"\] > \.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\), calc\(100% - 2 \* var\(--space-5\)\)\);/);
   });
   it("inline code is lighter: 6% white fill, radius 4, padding 0 4px, #e0e0e0", () => {
@@ -225,8 +227,8 @@ describe("pass 11 strict review fixes", () => {
 
 describe("pass 11 manager review of p11b", () => {
   const viewport = source("../src/components/conversation/viewport/ConversationViewport.svelte");
-  it("v8 (12): under the solid header a 16px fade starts right at its bottom edge", () => {
-    expect(viewport).toContain("--c2-top-fade: transparent 0, #000 16px;");
+  it("v9 (5): under the solid header a 40px fade starts right at its bottom edge", () => {
+    expect(viewport).toContain("--c2-top-fade: transparent 0, rgb(0 0 0 / 0.35) 16px, #000 40px;");
   });
   it("p13b: while newer content is below the view, the bottom edge dissolves over 16px above the composer", () => {
     expect(viewport).toContain("--c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;");

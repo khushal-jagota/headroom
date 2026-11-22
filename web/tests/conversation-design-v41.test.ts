@@ -24,8 +24,8 @@ describe("design v4.1: a tool run's chevron stands right after its label", () =>
 
 describe("design v4.1: surfaces", () => {
   const app = css("../../assets/app.css");
-  it("the model chip wears the Steer chip's style (v6: no fill at rest), v8: no chevron, and a middle dot before the effort", () => {
-    expect(app).toMatch(/\[data-conversation-model-picker\] > \.listbox-picker-trigger \{[^}]*background: transparent;\s*color: #d9d9d9;/);
+  it("the model chip wears the Steer chip's style (v9: #232323 at rest), v8: no chevron, and a middle dot before the effort", () => {
+    expect(app).toMatch(/\[data-conversation-model-picker\] > \.listbox-picker-trigger \{[^}]*background: #232323;\s*color: #d9d9d9;/);
     expect(app).not.toContain("[data-conversation-model-picker] .listbox-picker-chevron-drawn");
     expect(app).toContain('.model-picker-effort::before { content: "· "; }');
   });

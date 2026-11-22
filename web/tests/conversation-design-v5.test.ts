@@ -116,22 +116,19 @@ describe("design v5.1: turn timing at the top, Paused under a waiting ask", () =
     expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-working { display:inline-flex; align-items:center; gap:6px; }");
   });
 
-  it("v8 (4): the running run carries the one spinner in its icon's place; no time; one line, chevron after it", () => {
+  it("v9 (1): the running run keeps its static icon and says Running; the Working line has the one spinner; one line, chevron after it", () => {
     const running = { title: "Running", summary: "go test -race ./internal/push/...", summaryIsLiteral: true, sentence: "Running go test" } as unknown as ToolCallPresentation;
     const html = render(ToolRunSummary, { props: { summary: { sentence: "Ran 2 commands", failedCount: 0, running, iconPaths: [] }, callCount: 3, onToggle: () => {} } }).body;
-    expect(html).toContain("data-conversation-run-spinner");
-    expect(html).toContain('data-conversation-run-icon="running"');
-    // Opened, the run's own running row carries the spinner instead.
-    const opened = render(ToolRunSummary, { props: { open: true, summary: { sentence: "Ran 2 commands", failedCount: 0, running, iconPaths: [] }, callCount: 3, onToggle: () => {} } }).body;
-    expect(opened).not.toContain("data-conversation-run-spinner");
+    expect(html).not.toContain("data-conversation-run-spinner");
+    expect(html).toMatch(/<svg class="c2-run-icon[^"]*"[^>]*data-conversation-run-icon="running"/);
     expect(html).toMatch(/c2-run-verb[^>]*>Running</);
     const summary = source("../src/components/conversation/ToolRunSummary.svelte");
     expect(summary).not.toContain("line-clamp");
-    expect(summary).toMatch(/\.c2-run-spin \{[^}]*border: 2px solid #4a4a4a;\s*border-top-color: #d9d9d9;/);
+    expect(summary).not.toContain("c2-run-spin");
     expect(summary).toContain(".c2-run-summary.is-live .c2-run-verb { margin-inline-end: 2px; color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }");
     const call = source("../src/components/conversation/ToolCallRow.svelte");
-    expect(call).toContain('{#if presentation.outcome === "running" && !activityUncertain}');
-    expect(call).toContain("data-conversation-tool-spinner");
+    expect(call).not.toContain("data-conversation-tool-spinner");
+    expect(call).not.toContain("c2-tool-spin");
     expect(call).toContain('.acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }');
     expect(html.indexOf("c2-run-subject")).toBeLessThan(html.indexOf("c2-run-chevron"));
     expect(source("../src/components/conversation/ToolCallRow.svelte")).not.toContain("data-conversation-tool-elapsed");
@@ -189,9 +186,9 @@ describe("design v5: controls", () => {
     expect(mode).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/ComposerRunControls.svelte")).toContain('chevron="none"');
   });
-  it("Stop is #f2f2f2 with a #121212 square; v6: disabled send #2a2a2a with a #8c8c8c arrow", () => {
+  it("Stop is #f2f2f2 with a #121212 square; v9 (9): disabled send #2e2e2e with a #a6a6a6 arrow", () => {
     expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #121212; }");
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #2a2a2a;\s*color: #8c8c8c;/);
+    expect(app).toMatch(/\.chat-send \{[^}]*background: #2e2e2e;\s*color: #a6a6a6;/);
   });
 });
 

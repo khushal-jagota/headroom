@@ -234,6 +234,9 @@ export type TranscriptStatus = {
   /** What the person can do now, in plain words, when the product knows a real next step.
    *  It is said, not offered as a control: only things the person can actually do. */
   next?: string | null;
+  /** v9 (7): the card's words when its one button says the rest (a rate limit: "The
+   *  model's rate limit was reached. It resets in 41m."). */
+  brief?: string | null;
   /** Whether the backend's own words are shown open. They are when the sentence above
    *  could not name a cause, so the words are the only explanation there is. */
   detailOpen?: boolean;
@@ -256,11 +259,21 @@ const TURN_FAILURE_UNNAMED = "The turn stopped because of an error.";
 /** When a limit lifts is the one next step a rate limit has. The provider says it relative
  *  to the failure ("resets in 41m"), so it is quoted as the provider's, never restated as
  *  a countdown from now. */
+function rateLimitResetsWhen(said: string): string | null {
+  return /\bresets? ((?:in|at) [^()\n;,]+?)\s*(?:\)|$|[;,\n]|\.\s)/i.exec(said)?.[1]?.trim() ?? null;
+}
 function rateLimitNextStep(said: string): string {
-  const when = /\bresets? ((?:in|at) [^()\n;,]+?)\s*(?:\)|$|[;,\n]|\.\s)/i.exec(said)?.[1]?.trim();
+  const when = rateLimitResetsWhen(said);
   return when
     ? `The provider said the limit resets ${when}. Send a message after that, or choose another model.`
     : "Send a message once the limit resets, or choose another model.";
+}
+
+/** v9 (7): a rate-limited turn's card says the cause and when it lifts; its button
+ *  ("Choose another model") and Details say the rest. */
+export function rateLimitBrief(said: string): string {
+  const when = rateLimitResetsWhen(said);
+  return when ? `The model's rate limit was reached. It resets ${when}.` : "The model's rate limit was reached.";
 }
 
 export function turnFailureSentence(errorSummary: string | null): string {
@@ -283,6 +296,7 @@ export function turnEndingStatus(
       detail: said,
       next: cause ? cause[2](said ?? "") : "Send a message to try again.",
       action: cause?.[3] ?? null,
+      brief: cause?.[3] === "choose-model" ? rateLimitBrief(said ?? "") : null,
       detailOpen: cause === undefined
     };
   }

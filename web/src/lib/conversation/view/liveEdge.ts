@@ -16,12 +16,3 @@ export function turnHeadAtTop(turn: ConversationViewTurn, status: ConversationVi
   return turn.settled || status?.turn_key !== turn.key || Boolean(status?.stopped_without_ending);
 }
 
-/** v8 (4): whether the live turn has a tool call running. In Full that row carries the
- *  spinner, and the Working line shows a still dot, so only one spinner is on screen. */
-export function liveTurnRunsATool(pages: readonly { items: readonly ConversationViewItem[] }[], turnKey: string): boolean {
-  for (const page of pages)
-    for (const item of page.items)
-      if (item.kind === 'row' && item.row_kind === 'tool_call' && item.turn_key === turnKey
-        && item.body.kind === 'inline' && item.body.value.kind === 'tool_call' && item.body.value.status === 'running') return true;
-  return false;
-}

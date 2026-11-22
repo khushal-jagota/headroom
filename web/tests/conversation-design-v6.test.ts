@@ -39,19 +39,17 @@ describe("v6 layout: the live edge (items 2-5; v8 undoes item 1 and item 5)", ()
     expect(viewport.indexOf("<LiveEdge {reader}")).toBeLessThan(viewport.indexOf("{@render afterTranscript()}"));
   });
 
-  it("2/3: the live edge says Working with the clock, and in Focus the latest narration sentence under it", () => {
-    const narration = "Confirming it reproduces under -race before I write it up.";
-    const focus = render(LiveEdge, { props: { reader: reader("focus", [turn(false)], statusWith({ live_narration: narration })) } }).body;
+  it("2 (v9 24: item 3 undone): the live edge says Working with the clock and no narration sentence", () => {
+    const focus = render(LiveEdge, { props: { reader: reader("focus", [turn(false)], statusWith()) } }).body;
     expect(focus).toContain("data-conversation-live-edge");
     expect(focus).toContain("data-conversation-alive-word");
-    expect(focus).toMatch(/data-conversation-live-narration[^>]*>Confirming it reproduces under -race before I write it up\.<\/p>/);
-    const full = render(LiveEdge, { props: { reader: reader("full", [turn(false)], statusWith({ live_narration: narration })) } }).body;
+    expect(focus).not.toContain("data-conversation-live-narration");
+    const full = render(LiveEdge, { props: { reader: reader("full", [turn(false)], statusWith()) } }).body;
     expect(full).toContain("data-conversation-alive-word");
     expect(full).not.toContain("data-conversation-live-narration");
     const waiting = render(LiveEdge, { props: { reader: reader("focus", [turn(false)], statusWith({ pending_permission: { kind: "permission", request_id: "a", row_key: "e2", source_sequence: 2 } })) } }).body;
     expect(waiting).not.toContain("data-conversation-live-edge");
-    const css = source("../src/components/conversation/view/LiveEdge.svelte");
-    expect(css).toMatch(/\.c2-live-narration \{[^}]*white-space: nowrap;\s*text-overflow: ellipsis;\s*color: #b0b0b0;\s*font: var\(--cv-weight-body\) 14px\/20px var\(--cv-font\);/);
+    expect(source("../src/components/conversation/view/LiveEdge.svelte")).not.toContain("c2-live-narration");
   });
 
   it("4 (p13b): a 16px fade above the composer while content is below the fold, so it never washes a surface's fill into a gradient", () => {
@@ -112,10 +110,10 @@ describe("v6 transcript (items 9-15)", () => {
 });
 
 describe("v6 composer (items 16-21)", () => {
-  it("16: the model and Steer chips have no fill at rest; hover #2a2a2a", () => {
+  it("16 (v9 3: #232323 at rest): the model and Steer chips; hover #2a2a2a", () => {
     expect(app).toMatch(/\[data-conversation-model-picker\] > \.listbox-picker-trigger:hover:not\(:disabled\) \{ background: #2a2a2a;/);
     const mode = source("../src/components/conversation/composer/DeliveryModePicker.svelte");
-    expect(mode).toMatch(/background: transparent;\s*color: #d9d9d9;/);
+    expect(mode).toMatch(/background: #232323;\s*color: #d9d9d9;/);
     expect(mode).toMatch(/hover:not\(:disabled\)\) \{\s*background: #2a2a2a;/);
   });
   it("17: focused or expanded, one 1px #3a3a3a border and no outer ring", () => {

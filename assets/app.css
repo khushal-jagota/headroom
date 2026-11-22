@@ -2414,10 +2414,11 @@ button.list-row:hover .list-row-title {
    words in 500 t1, "gpt-6.1-sol · High" and a drawn chevron in t3. */
 /* v6: no fill at rest, the words #d9d9d9 and the chevron; hover #2a2a2a; open #3a3a3a. */
 /* v8 (14): no chevron; the label alone is the control, with the hover and open fills. */
+/* v9 (3): a 32px pill with a #232323 fill at rest, hover #2a2a2a, open #3a3a3a. */
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger {
   gap: 6px;
-  padding-inline: 10px;
-  background: transparent;
+  padding-inline: 12px;
+  background: #232323;
   color: #d9d9d9;
   font-weight: var(--cv-weight-label);
 }
@@ -2450,9 +2451,9 @@ button.list-row:hover .list-row-title {
   border: 0;
   border-radius: 50%;
   /* v6: #2a2a2a with a #8c8c8c arrow while there is nothing to send; #f2f2f2 with a
-   * #121212 arrow once there is. */
-  background: #2a2a2a;
-  color: #8c8c8c;
+   * #121212 arrow once there is. v9 (9): disabled is #2e2e2e with a #a6a6a6 arrow. */
+  background: #2e2e2e;
+  color: #a6a6a6;
   cursor: pointer;
   line-height: 1;
   display: grid;
@@ -3962,6 +3963,8 @@ select {
 [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
   width: min(var(--cv-col), calc(100% - 2 * var(--space-5)));
 }
+/* v9 (21): the 640 reading column is the full conversation's only. Docked on a work page, the
+ * status row, composer and ask keep the page's column (760), on the page text's edges. */
 /* No hairline above the composer zone: the zone is the composer and its status line. */
 .conversation-layer > .conversation-column::before {
   content: none;
@@ -5509,7 +5512,21 @@ details:not([open]) > summary > .manager-workspace-chevron {
  * gone): it sits on the page canvas with the fade it had before v5.2. The 1px hairline that
  * stood over the zone before v5.2 stays off (owner: no lines that signify things); the
  * canvas fades carry the page into the dock. */
-:is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) > .conversation-layer::after { opacity: 0; }
+/* v9 (14, owner): the dock may have an edge, never a surface colour. The dock zone wears a
+ * 1px rgba(255,255,255,0.08) top edge across the dock's column only (the composer's left and
+ * right, the page text's edges), no fill, the canvas fade above it kept. It belongs to the dock: it rides the zone's top when the ask grows the composer, and it
+ * fades with the dock's move (--conversation-dock-line, driven by dock.ts over 180ms: out at
+ * the start of opening, in over the last 180ms of the return so it lands with the dock). */
+:is(.manager-page, .ticket-page) > .conversation-layer::after {
+  left: 50%;
+  right: auto;
+  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
+  transform: translateX(-50%);
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  opacity: var(--conversation-dock-line, 1);
+}
+:is(.manager-page, .ticket-page)[data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer::after { opacity: 0; }
 
 /* ==========================================================================================
  * v7 — one system (design-v4.md "v7"; v8: one agent face, Inter). Everything is quiet UI in
@@ -5537,13 +5554,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote) { margin-block-end: 16px; }
 [data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote):last-child { margin-block-end: 0; }
 
-/* v8: narration (non-final prose in Full) is the same face and size, one tone back: #b4b4b4. */
+/* v8: narration (non-final prose in Full) is the same face, one tone back: #b4b4b4.
+ * v9 (15): and smaller, 14/22; final answers stay 15/24 #ececec. */
 [data-conversation-pane] .chat-a--narration,
 [data-conversation-pane] .chat-a--narration .markdown,
 [data-conversation-pane] .c2-streaming .markdown {
   font-family: var(--cv-font);
-  font-size: 15px;
-  line-height: 24px;
+  font-size: 14px;
+  line-height: 22px;
   color: #b4b4b4;
 }
 [data-conversation-pane] .chat-a--narration .markdown :is(strong, b) { color: #d9d9d9; }
@@ -5563,12 +5581,12 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-thread .markdown :not(pre) > code.cv-code-before-punctuation { padding-inline-end: 1px; }
 [data-conversation-pane] .chat-thread .markdown li > code.cv-code-leads { margin-inline-start: -5px; }
 
-/* Tables in answers use the UI voice: head 13/20 600 #f2f2f2, body 14/20 #d9d9d9, 1px #2a2a2a
- * row rules, 40px rows. */
-[data-conversation-pane] .chat-thread .markdown table { font-family: var(--cv-font); font-size: 14px; line-height: 20px; font-variant-numeric: normal; }
-[data-conversation-pane] .chat-thread .markdown :is(th, td) { height: 40px; padding: 10px 16px 10px 0; border: 0; border-block-end: 1px solid #2a2a2a; vertical-align: middle; }
-[data-conversation-pane] .chat-thread .markdown th { padding-block-start: 0; color: #f2f2f2; font-size: 13px; line-height: 20px; font-weight: 600; border-block-end-color: #2a2a2a; }
-[data-conversation-pane] .chat-thread .markdown td { color: #d9d9d9; font-size: 14px; line-height: 20px; font-weight: 400; }
+/* Tables in answers use the UI voice. v9 (8): head 14/20 600 #f2f2f2 over a 1px #3a3a3a rule;
+ * body 15/24 #d9d9d9 with 1px #2a2a2a between rows; 40px rows. */
+[data-conversation-pane] .chat-thread .markdown table { font-family: var(--cv-font); font-size: 15px; line-height: 24px; font-variant-numeric: normal; }
+[data-conversation-pane] .chat-thread .markdown :is(th, td) { height: 40px; padding: 8px 16px 8px 0; border: 0; border-block-end: 1px solid #2a2a2a; vertical-align: middle; }
+[data-conversation-pane] .chat-thread .markdown th { padding-block-start: 0; color: #f2f2f2; font-size: 14px; line-height: 20px; font-weight: 600; border-block-end-color: #3a3a3a; }
+[data-conversation-pane] .chat-thread .markdown td { color: #d9d9d9; font-size: 15px; line-height: 24px; font-weight: 400; }
 [data-conversation-pane] .chat-thread .markdown tr:last-child > td { border-block-end: 0; }
 
 /* v7 icon buttons in the conversation (the header's more menu, copy, pager): quiet Buttons,

@@ -1288,7 +1288,9 @@
     /* v5: the header is solid; the thread fades in over 24px starting right at the header's
        bottom edge (no solid band, no hard cut). While newer content sits below the view, the
        bottom edge dissolves over 24px above the composer. */
-    --c2-top-fade: transparent 0, #000 16px;
+    /* v9 (5): the header's fade is 40px from the canvas, starting at its bottom edge, so a
+       line or a card edge scrolling under it dissolves before it reaches the header. */
+    --c2-top-fade: transparent 0, rgb(0 0 0 / 0.35) 16px, #000 40px;
     --c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
             mask-image: linear-gradient(to bottom, var(--c2-top-fade));

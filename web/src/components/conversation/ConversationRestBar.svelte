@@ -66,6 +66,7 @@
      one button, so the whole line opens it. The unread message sits under it. -->
 <button type="button" class="c2-rest" data-conversation-rest-bar data-conversation-expand data-conversation-state-control
   data-conversation-rest-state={state.state} data-conversation-rest-ask-below={askBelow || undefined}
+  data-conversation-rest-page-waits-row={pageWaits || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
@@ -84,6 +85,9 @@
     </span>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open conversation</span>
+      <!-- v9 (25, owner): the one exception to the no-chevron rule: a 12px up arrow after the
+           label says the conversation opens upward. -->
+      <svg class="c2-rest-control-arrow" viewBox="0 0 16 16" data-conversation-open-arrow><path d="m4 10 4-4 4 4" /></svg>
     </span>
   </span>
   {#if saysState && preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
@@ -125,6 +129,11 @@
      semibold, behind the card's 7px accent dot 8px before it. */
   [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .cv-dot { width:8px; height:8px; margin-inline:4px; background:var(--cv-accent); }
+  /* v9 (10): with a proposal on the page, "Needs your approval" is the card's own label, set
+     identically: the page accent (#a9bbe3, the card's colour), 13/20 500, a 6px dot 8px
+     before it, the dot on the composer's left edge (v9 17). */
+  [data-conversation-rest-page-waits-row] .c2-rest-label { color:#a9bbe3; }
+  [data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#a9bbe3; }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }
@@ -134,9 +143,12 @@
     font:var(--cv-weight-label) var(--cv-type-caption)/var(--cv-leading-caption) var(--cv-font); }
   /* v8 (14): "Open conversation" is a quiet Button, the label alone (no chevron): 32 tall
      pill, #bdbdbd, hover #2a2a2a. */
+  /* v9 (3): a #232323 fill at rest so it reads as a control; hover #2a2a2a. */
   .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 14px;
-    border-radius:999px; color:#bdbdbd; font-weight:var(--cv-weight-label);
+    border-radius:999px; background:#232323; color:#d9d9d9; font-weight:var(--cv-weight-label);
     transition:color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out); }
+  .c2-rest-control { padding-inline-end:12px; }
+  .c2-rest-control-arrow { flex:none; width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
     color:#ececec; background-color:#2a2a2a; }
   .c2-rest:focus-visible { outline:var(--cv-focus-width) solid var(--cv-accent); outline-offset:var(--cv-focus-offset); border-radius:var(--cv-r-md); }

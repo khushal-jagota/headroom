@@ -8,7 +8,6 @@ import MessagePieces from "../src/components/conversation/MessagePieces.svelte";
 import HeldPromptStack from "../src/components/conversation/composer/HeldPromptStack.svelte";
 import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
 import { conversationState } from "../src/lib/conversation/dockPresentation";
-import { liveTurnRunsATool } from "../src/lib/conversation/view/liveEdge";
 import { COMPOSER_PLACEHOLDER, composerPlaceholderFor } from "../src/lib/conversation/runControls/logic/runSelection";
 import type { ConversationViewItem, ConversationViewStatus, ConversationViewTurn } from "../src/lib/conversation/view/contracts";
 import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
@@ -29,7 +28,7 @@ const toolRow = (status: "running" | "completed"): ConversationViewItem => ({
   sender_message_id: null, changed_through_sequence: 2, created_at: 0, turn_key: "turn:e1", work_group_key: "g1", fold_rule: "work",
   body: { kind: "inline", value: { kind: "tool_call", tool_call_id: "t1", title: "Run go test", tool_kind: "execute", detail: null, started_detail: null, capped_detail_sequence: null, status } }
 });
-const status = { turn_key: "turn:e1", pending_permission: null, pending_user_input: null, stopped_without_ending: false, live_narration: "Confirming it reproduces." } as unknown as ConversationViewStatus;
+const status = { turn_key: "turn:e1", pending_permission: null, pending_user_input: null, stopped_without_ending: false } as unknown as ConversationViewStatus;
 const reader = (lens: "focus" | "full", items: ConversationViewItem[]): ConversationViewReader => ({
   id: "c", lens, pages: [{ scope: { kind: "timeline", key: null }, items }], status, openTools: new SvelteSet<string>()
 } as unknown as ConversationViewReader);
@@ -48,8 +47,8 @@ describe("v8 layout (items 1, 11, 12, 13)", () => {
     expect(viewport).toContain("moveTheThread(thread, thread.scrollHeight);");
     expect(viewport).toContain("endGapBeforeResize = t.scrollHeight - t.scrollTop - t.clientHeight;");
   });
-  it("12: the header's fade is 16px", () => {
-    expect(viewport).toContain("--c2-top-fade: transparent 0, #000 16px;");
+  it("12 (v9 5: now 40px): the header has a fade from its bottom edge", () => {
+    expect(viewport).toContain("--c2-top-fade: transparent 0, rgb(0 0 0 / 0.35) 16px, #000 40px;");
   });
 });
 
@@ -67,21 +66,13 @@ describe("v8 live edge (items 3-5)", () => {
     const idle = render(HeldPromptStack, { props: { rows: [row], running: false, conversationId: "c" } }).body;
     expect(idle).not.toContain("sends after this turn");
   });
-  it("4: in Full, a running tool row carries the spinner and the Working line a still dot", () => {
-    expect(liveTurnRunsATool([{ items: [turn, toolRow("running")] }], "turn:e1")).toBe(true);
-    expect(liveTurnRunsATool([{ items: [turn, toolRow("completed")] }], "turn:e1")).toBe(false);
+  it("4 (replaced by v9 1): the Working line keeps the spinner in Full while a tool runs", () => {
     const full = render(LiveEdge, { props: { reader: reader("full", [turn, toolRow("running")]) } }).body;
-    expect(full).toContain('data-conversation-live-mark="dot"');
-    expect(full).not.toContain("c2-meta-spin");
-    const fullIdle = render(LiveEdge, { props: { reader: reader("full", [turn, toolRow("completed")]) } }).body;
-    expect(fullIdle).toContain("c2-meta-spin");
-    // Focus shows no tool rows, so its Working line keeps the spinner.
-    const focus = render(LiveEdge, { props: { reader: reader("focus", [turn, toolRow("running")]) } }).body;
-    expect(focus).toContain("c2-meta-spin");
-    expect(source("../src/components/conversation/TurnAnchor.svelte")).toContain(".c2-meta-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #d9d9d9; }");
+    expect(full).toContain("c2-meta-spin");
+    expect(full).not.toContain('data-conversation-live-mark="dot"');
   });
-  it("5: the narration sentence shows in Focus only", () => {
-    expect(render(LiveEdge, { props: { reader: reader("focus", [turn]) } }).body).toContain("data-conversation-live-narration");
+  it("5 (v9 24): no narration sentence under the Working line in any view", () => {
+    expect(render(LiveEdge, { props: { reader: reader("focus", [turn]) } }).body).not.toContain("data-conversation-live-narration");
     expect(render(LiveEdge, { props: { reader: reader("full", [turn]) } }).body).not.toContain("data-conversation-live-narration");
   });
 });
@@ -100,10 +91,8 @@ describe("v8 messages and asks (items 6-9)", () => {
     expect(css).toContain(".c2-bubble--attached { display: flex; flex-direction: column; gap: 8px; padding: 8px; }");
     expect(css).toContain(".c2-bubble-words { padding: 4px 8px; min-width: 0; }");
   });
-  it("7: Deny is secondary, Stop turn quiet, the focused row #2c2c2c with the accent edge, the well a 1px #333 edge", () => {
-    expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-quiet\) \{[^}]*background: #2a2a2a;\s*color: #ececec;/);
+  it("7: the focused row #2c2c2c with the accent edge, the well a 1px #333 edge (Deny and Stop turn: see v9)", () => {
     const shell = source("../src/components/conversation/AskShell.svelte");
-    expect(shell).toMatch(/:global\(\[data-conversation-pane\]\) \.cv-ask-stop \{[^}]*background: transparent;\s*color: #bdbdbd;/);
     expect(shell).toContain("background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%);");
     expect(composer).toContain(".chat-box.has-ask.is-compact > .chat-ta { box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333; }");
     expect(composer).toContain(".chat-box.has-ask:not(.is-compact) > .chat-ta { box-shadow: inset 0 0 0 1px #333; }");
@@ -127,7 +116,8 @@ describe("v8 item 14: no chevrons on dropdown or expand controls", () => {
     const facts = { readOnly: false, activityUncertain: false, waitingForYou: false, waitingFor: null, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
     const rest = render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState(facts) } }).body;
     const control = rest.slice(rest.indexOf("c2-rest-control"));
-    expect(control.slice(0, control.indexOf("</span></span>"))).not.toContain("<svg");
+    // v9 (25, owner): Open conversation is the one exception: a 12px up arrow after its label.
+    expect(control).toMatch(/c2-rest-control-label[^>]*>Open conversation<\/span>[\s\S]*?<svg class="c2-rest-control-arrow/);
     // Pager arrows, Details › and Ran 2 commands › are not dropdown marks and stay.
     expect(source("../src/components/conversation/ToolRunSummary.svelte")).toContain('class="c2-run-chevron"');
     expect(source("../src/components/conversation/TranscriptStatusRow.svelte")).toContain("c2-status-chevron");
@@ -142,6 +132,6 @@ describe("v8 chart (item 10)", () => {
 
 describe("p14c: tables in answers", () => {
   it("use proportional figures, so Inter's tabular hyphen does not open up words like Full-text", () => {
-    expect(app).toContain("[data-conversation-pane] .chat-thread .markdown table { font-family: var(--cv-font); font-size: 14px; line-height: 20px; font-variant-numeric: normal; }");
+    expect(app).toContain("[data-conversation-pane] .chat-thread .markdown table { font-family: var(--cv-font); font-size: 15px; line-height: 24px; font-variant-numeric: normal; }");
   });
 });

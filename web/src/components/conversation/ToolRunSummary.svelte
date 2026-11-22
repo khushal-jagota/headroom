@@ -49,15 +49,10 @@
        head carries the turn's time. -->
   <!-- p13b: one live indicator in the transcript, the Working line's spinner. A running row
        keeps the run's static icon; "Running" in #ececec 500 says it is live. -->
-  <!-- v8 (4): while a call runs, the closed run carries the one spinner in its icon's place
-       (the Working line shows a still dot). Opened, the running call's own row carries it. -->
-  {#if live && !open}
-    <span class="c2-run-slot" aria-hidden="true" data-conversation-run-icon="running"><span class="c2-run-spin" data-conversation-run-spinner></span></span>
-  {:else}
-  <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true">
+  <!-- v9 (1): the Working line holds the one spinner in every view. -->
+  <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true" data-conversation-run-icon={live ? "running" : undefined}>
     {#each summary.iconPaths as path (path)}<path d={path} />{/each}
   </svg>
-  {/if}
   <!-- v4.2: the chevron always ends the row's words: "Ran 2 commands ›", and while a call
        runs "Running <command> ›", the command in mono ellipsizing before the chevron. -->
   <span class="c2-run-line" title={live ? summary.running?.sentence : summary.sentence}>
@@ -116,18 +111,6 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .c2-run-slot { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; }
-  /* The one spinner: a 12px #d9d9d9 arc on a #4a4a4a track, as the Working line's. */
-  .c2-run-spin {
-    box-sizing: border-box;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    border: 2px solid #4a4a4a;
-    border-top-color: #d9d9d9;
-    animation: c2-run-spin var(--cv-spin) linear infinite;
-  }
-  @keyframes c2-run-spin { from { transform: rotate(35deg); } to { transform: rotate(395deg); } }
   /* v6: live, the row stays one line: the command ellipsizes, and the chevron stands right
      after the text, as in "Ran 2 commands ›". */
   .c2-run-summary.is-live .c2-run-verb { margin-inline-end: 2px; color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }
@@ -185,6 +168,5 @@
   .c2-run-summary.is-open .c2-run-chevron { transform: rotate(90deg); }
   @media (prefers-reduced-motion: reduce) {
     .c2-run-summary, .c2-run-chevron { transition: none; }
-    .c2-run-spin { animation: none; transform: rotate(35deg); }
   }
 </style>

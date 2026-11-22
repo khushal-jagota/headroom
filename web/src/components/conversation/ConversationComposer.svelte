@@ -1350,7 +1350,7 @@
             onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
             onWriteOwnAnswer={() => inputElement?.focus()}
             request={userInput}
-            onStop={running && onStop ? onStop : undefined}
+            onStop={undefined}
             busy={disabled}
             answerAvailable={userInputAvailable}
             note={userInputNote}
@@ -1538,6 +1538,12 @@
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
+          {#if panelTakesTheBox && userInput && running && onStop}
+            <!-- v9 (20): a question's Stop turn stands in its footer, left of the answer well,
+                 as a secondary pill; the pager is alone at the top right. -->
+            <button type="button" class="chat-ask-stop" data-conversation-stop={true} data-conversation-ask-stop
+              title="Stop turn" disabled={disabled} onclick={() => onStop?.()}><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="2" /></svg>Stop turn</button>
+          {/if}
           {#if panelTakesTheBox}
             <!-- Under an ask the line is where an own answer is written: a pen marks it. -->
             <span class="chat-ask-pen" aria-hidden="true">
@@ -1939,6 +1945,32 @@
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
   .chat-box.has-ask > .chat-foot :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
+  /* v9 (20): a question's Stop turn, in the footer left of the well: a secondary Button,
+     32 tall pill, #2a2a2a with #ececec (hover #333), 13/20 500, a 16px stop icon 6px before. */
+  .chat-ask-stop {
+    flex: none;
+    order: -1;
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    margin-inline-start: var(--cv-s2);
+    padding: 0 14px 0 10px;
+    border: 0;
+    border-radius: 999px;
+    background: #2a2a2a;
+    color: #ececec;
+    font: var(--cv-weight-label) 13px/20px var(--cv-font);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .chat-ask-stop svg { width: 16px; height: 16px; fill: currentColor; }
+  .chat-ask-stop:hover:not(:disabled) { background: #333333; }
+  .chat-ask-stop:disabled { color: #a6a6a6; cursor: default; }
+  .chat-ask-stop:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  .chat-box.is-compact > .chat-foot > .chat-ask-stop { order: -1; }
   .chat-ask-pen { flex: none; display: grid; place-items: center; width: 32px; height: 32px; color: var(--cv-quiet-ink, #bdbdbd); }
   .chat-ask-pen svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   /* v4.2: the ask's own-answer line sits in its own well (#141414, radius 12, 44 high) so it
@@ -2027,7 +2059,7 @@
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-box :global(.chat-ask-primary:hover:not(:disabled)) { background: #ffffff; }
-  .chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: #8c8c8c; cursor: default; }
+  .chat-box :global(.chat-ask-primary:disabled) { background: #2e2e2e; color: #a6a6a6; cursor: default; }
   .chat-box :global(.chat-ask-primary:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow

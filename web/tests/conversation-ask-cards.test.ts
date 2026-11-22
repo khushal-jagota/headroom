@@ -31,10 +31,11 @@ describe("the permission ask", () => {
     expect(count(body, "xcrun altool")).toBe(1);
   });
 
-  it("answers with one list of numbered tiles: allow once first and chosen; v7: docked, Deny is the composer's quiet button", () => {
+  it("answers with one list of numbered tiles: allow once first and chosen; v9 (2): docked too, Deny is option row 3", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, docked: true } });
     const order = [...body.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1]);
-    expect(order).toEqual(["allow", "always"]);
+    expect(order).toEqual(["allow", "always", "deny"]);
+    expect(body).toMatch(/data-conversation-ask-action="deny"[^>]*aria-keyshortcuts="3"/);
     // Standing alone (not docked), every answer, Deny too, is a tile.
     const alone = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } }).body;
     expect([...alone.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1])).toEqual(["allow", "always", "deny"]);

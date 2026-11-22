@@ -127,8 +127,8 @@
   }
   /* v4.2: the pager's arrows stay in the meta tone, #a3a3a3, even when one cannot go further. */
   .cv-ask-context :global(.cv-icon-button) { color: var(--cv-t3); }
-  /* v5.1: a pager arrow that cannot go further is #8c8c8c. */
-  .cv-ask-context :global(.cv-icon-button:disabled) { color: #8c8c8c; }
+  /* v5.1: a pager arrow that cannot go further; v9 (22): #a6a6a6. */
+  .cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }
   .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { color: var(--cv-t1); }
   .cv-ask-title {
     margin: 6px 0 0;
@@ -244,23 +244,25 @@
   :global([data-conversation-pane]) .cv-ask-context { gap: 0; color: #b0b0b0; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button) { width: 32px; height: 32px; border-radius: 999px; color: #bdbdbd; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button svg) { width: 16px; height: 16px; }
-  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #8c8c8c; }
+  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { background: #2a2a2a; color: #ececec; }
   :global([data-conversation-pane]) .cv-ask-context :global(.count) { margin-inline: 0 4px; }
   :global([data-conversation-pane]) .cv-ask-title { margin-block-start: 8px; color: #ececec; }
   :global([data-conversation-pane]) .cv-ask-description { margin-block-start: 8px; color: #b0b0b0; font: var(--cv-weight-body) 13px/20px var(--cv-font); }
-  /* v8 (7): Stop turn is a quiet Button: 32 tall pill, no fill, #bdbdbd, hover #2a2a2a,
+  /* v9 (9): Stop turn is a secondary Button: 32 tall pill, #2a2a2a, #ececec, hover #333,
      13/20 500, a 16px stop icon 6px before its word. */
   :global([data-conversation-pane]) .cv-ask-stop {
     height: 32px;
     padding: 0 14px 0 10px;
     margin-inline-end: 8px;
     border-radius: 999px;
-    background: transparent;
-    color: #bdbdbd;
+    background: #2a2a2a;
+    color: #ececec;
     font: var(--cv-weight-label) 13px/20px var(--cv-font);
   }
-  :global([data-conversation-pane]) .cv-ask-stop:hover:not(:disabled) { background: #2a2a2a; color: #ececec; }
+  :global([data-conversation-pane]) .cv-ask-stop:hover:not(:disabled) { background: #333333; color: #ececec; }
+  /* Its pill's right edge stands on the option rows' right edge. */
+  :global([data-conversation-pane]) .cv-ask-stop:last-child { margin-inline-end: 0; }
   :global([data-conversation-pane]) .cv-ask-stop-mark { width: 16px; height: 16px; }
   /* Option rows (part 5): min 48, #242424, radius 12, padding 12 16, 8px apart; a 24px #2e2e2e
      keycap (radius 6, 13 500); the title 15/22 #ececec and its description 13/20 #b0b0b0. The

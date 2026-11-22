@@ -376,9 +376,6 @@ export interface ConversationViewStatus {
   live_output: ViewLiveOutput | null;
   live_tool_key: string | null;
   live_tool_progress: ViewBodyReference | null;
-  /** v6: the running turn's latest narration sentence (agent prose only), for Focus's live
-   *  edge. Absent from older servers. */
-  live_narration?: string | null;
 }
 
 export interface ConversationViewSnapshot {

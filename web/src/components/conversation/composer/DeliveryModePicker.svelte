@@ -69,10 +69,10 @@
   /* Closed, the mode is a 28px chip, 8px round, its name in 500 and a drawn chevron. */
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger) {
     gap: 4px;
-    /* v8 (14): the label alone is the control (no chevron): no fill at rest (#d9d9d9);
-       hover #2a2a2a; open #3a3a3a. */
-    padding-inline: 10px;
-    background: transparent;
+    /* v8 (14): the label alone is the control (no chevron). v9 (3): a 32px pill with a
+       #232323 fill at rest (#d9d9d9), hover #2a2a2a, open #3a3a3a. */
+    padding-inline: 12px;
+    background: #232323;
     color: #d9d9d9;
     font-weight: var(--cv-weight-label);
   }

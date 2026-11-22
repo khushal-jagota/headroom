@@ -60,6 +60,9 @@
   /** v8 (6): a bubble with attachments holds them above its words. */
   let attachedRuns = $derived(bubble ? runs.filter(run => !isWordsRun(run)) : []);
   let wordRuns = $derived(bubble ? runs.filter(isWordsRun) : []);
+  /** v9 (19): a bubble whose one attachment is one image is as wide as that image (min 240);
+   *  its words wrap to it. */
+  let oneImage = $derived(attachedRuns.length === 1 && attachedRuns[0].pieces.length === 1 && attachedRuns[0].pieces[0].piece.piece === "image");
   const presentations = getContext<TextPresentationRegistry | undefined>(conversationTextPresentations);
 </script>
 
@@ -99,7 +102,7 @@
 {#if bubble && attachedRuns.length > 0}
   <!-- v8 (6): attachments belong to their message: inside the bubble, above its words, 8px
        apart; the bubble is 8px around them and 12 16 around the words. -->
-  <div class="c2-bubble c2-bubble--attached" data-conversation-bubble data-conversation-bubble-attached>
+  <div class="c2-bubble c2-bubble--attached" class:c2-bubble--one-image={oneImage} data-conversation-bubble data-conversation-bubble-attached>
     <div class="c2-bubble-attachments">
       {#each attachedRuns as run (run.at)}{@render attachment(run)}{/each}
     </div>
@@ -150,4 +153,10 @@
   .c2-bubble.c2-bubble--attached :global(.c2-piece-image-slot) { display: flex; justify-content: flex-start; max-width: 100%; margin: 0; }
   .c2-bubble.c2-bubble--attached :global(.file-preview-media) { border-radius: 10px; }
   .c2-bubble.c2-bubble--attached :global(.conversation-file-card) { margin: 0; border-radius: 10px; }
+  /* v9 (19): file cards stretch to the bubble's inner width. */
+  .c2-bubble-attachments > :global(.conversation-file-card) { align-self: stretch; width: auto; max-width: none; }
+  /* v9 (19): one image: the bubble takes the image's width (at least 240); the words take no
+     part in its width (0 wide, at least the full line), so they wrap to it. */
+  .c2-bubble--one-image { min-width: 240px; }
+  .c2-bubble--one-image > .c2-bubble-words { width: 0; min-width: 100%; }
 </style>

@@ -115,12 +115,14 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
           // Keep it bottom anchored throughout return. Rejoining the row is the final step.
           host.setAttribute('data-conversation-dock-transition', '');
           const movingLayer = layer;
-          // The hairline fades out on open and back in on return, from wherever it is.
+          // v9 (14): the dock's top edge fades with the dock, over DOCK_EDGE_FADE_MS: out at
+          // the start of opening, and in over the last DOCK_EDGE_FADE_MS of the return, so it
+          // never shows alone on a tall moving layer and never arrives after the dock lands.
           const toLine = nextState === 'opened' ? 0 : 1;
           void motion.move(layer, fraction => {
             const eased = 1 - Math.pow(1 - fraction, 3);
             movingLayer.style.height = `${from + (wanted - from) * eased}px`;
-            movingLayer.style.setProperty('--conversation-dock-line', String(fromLine + (toLine - fromLine) * eased));
+            movingLayer.style.setProperty('--conversation-dock-line', String(dockEdgeOpacity(fromLine, toLine, fraction)));
           }, CONVERSATION_CARD_MS, () => {
             movingLayer.style.removeProperty('height');
             movingLayer.style.removeProperty('--conversation-dock-line');
@@ -191,4 +193,18 @@ export function conversationDock(host: HTMLElement): { destroy(): void } {
     delete host.dataset.conversationDockState;
     host.removeAttribute('data-conversation-dock-transition');
   } };
+}
+
+/** v9 (14): how long the dock's top edge takes to fade, in milliseconds. */
+export const DOCK_EDGE_FADE_MS = 180;
+
+/** The dock edge's opacity at a point of the dock's move (fraction 0..1 of
+ *  CONVERSATION_CARD_MS). Fading out (opening), it runs over the first DOCK_EDGE_FADE_MS;
+ *  fading in (returning to the dock), over the last DOCK_EDGE_FADE_MS, so it is fully there
+ *  exactly when the dock lands. Linear in time. */
+export function dockEdgeOpacity(fromLine: number, toLine: number, fraction: number): number {
+  const elapsed = Math.min(1, Math.max(0, fraction)) * CONVERSATION_CARD_MS;
+  const start = toLine < fromLine ? 0 : Math.max(0, CONVERSATION_CARD_MS - DOCK_EDGE_FADE_MS);
+  const progress = Math.min(1, Math.max(0, (elapsed - start) / DOCK_EDGE_FADE_MS));
+  return fromLine + (toLine - fromLine) * progress;
 }

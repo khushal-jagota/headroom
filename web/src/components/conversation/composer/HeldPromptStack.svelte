@@ -97,6 +97,9 @@
     return null;
   }
 
+  /** v9 (12): the first message waiting its turn carries the caption's detail. */
+  let firstHeldKey = $derived(displayedRows.find(row => row.state === "held")?.key ?? null);
+
   async function act(key: string, action: () => Promise<void> | void): Promise<void> {
     if (actionInFlight !== null) return;
     actionInFlight = key;
@@ -113,6 +116,8 @@
   }
 </script>
 
+<!-- v9 (12): the full caption "Queued · sends after this turn" stands only under the first
+     queued message; the ones after it say "Queued". -->
 <div class="chat-queue-slot" use:conversationHeight><div bind:this={stackElement}>
 {#if displayedRows.length > 0}
   <!-- Messages waiting to be sent stand at the end of the thread, where they will land, as the
@@ -151,7 +156,7 @@
               onclick={() => (menuOpenFor = menuOpenFor === row.key ? null : row.key)}
             >
               <svg class="chat-qrow-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v4.2l2.6 1.6" /></svg>
-              <span class="chat-qrow-word">{stateWord(row)}</span>{#if row.state === "held" && running}<span class="chat-qrow-sep" aria-hidden="true">·</span><span class="chat-qrow-detail" data-conversation-held-detail>sends after this turn</span>{/if}
+              <span class="chat-qrow-word">{stateWord(row)}</span>{#if row.state === "held" && running && row.key === firstHeldKey}<span class="chat-qrow-sep" aria-hidden="true">·</span><span class="chat-qrow-detail" data-conversation-held-detail>sends after this turn</span>{/if}
             </button>
             <!-- Drawn closed as hidden, so its actions are always the same buttons. -->
               <div class="chat-qrow-menu" role="menu" aria-label="Queued message" hidden={menuOpenFor !== row.key} data-conversation-held-menu>
@@ -264,12 +269,12 @@
     /* v7: the Queued chip is a Composer control: 32 tall, text-only at rest (#d9d9d9, a 16px
        clock and a 12px chevron), hover #2a2a2a, open #3a3a3a. */
     height: 32px;
-    /* v8 (14): no chevron; the words are the control. */
-    margin-inline-end: -10px;
-    padding: 0 10px;
+    /* v8 (14): no chevron; the words are the control. v9 (3): a resting #232323 fill, so
+       the chip reads as a control; its right edge meets the bubble's. */
+    padding: 0 12px;
     border: 0;
     border-radius: 999px;
-    background: none;
+    background: #232323;
     color: #d9d9d9;
     font: var(--cv-weight-label) 13px/20px var(--cv-font);
     cursor: pointer;
@@ -280,7 +285,7 @@
   .chat-qrow-word { color: #ececec; }
   .chat-qrow-sep { margin-inline: -2px; color: #b0b0b0; font-weight: var(--cv-weight-body); }
   .chat-qrow-detail { color: #b0b0b0; font-weight: var(--cv-weight-body); }
-  .chat-qrow-chip.is-static { cursor: default; }
+  .chat-qrow-chip.is-static { cursor: default; background: none; margin-inline-end: -12px; }
   .chat-qrow-chip:not(.is-static):hover:not(:disabled) { background: #2a2a2a; color: #ececec; }
   /* p12c: an open chip is filled #3a3a3a, its words #f2f2f2, its chevron pointing up. */
   .chat-qrow-chip[aria-expanded="true"], .chat-qrow-chip[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }
@@ -299,7 +304,8 @@
   .chat-qrow-menu {
     position: absolute;
     z-index: 30;
-    right: calc(var(--cv-s2) * -1);
+    /* v9 (4): the menu's right edge on its own chip's right edge. */
+    right: 0;
     bottom: calc(100% + 8px);
     width: max-content;
     min-width: 160px;

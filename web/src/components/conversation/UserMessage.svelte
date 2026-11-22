@@ -63,7 +63,7 @@
 </script>
 <article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} class:undelivered={row?.kind === 'prompt_refused' || row?.kind === 'prompt_discarded'} class:has-callout={label === null && status?.tone === 'error'} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
   {#if label !== null}
-    <!-- Someone other than the person wrote this (Panels, another agent). v6: a centred system
+    <!-- Someone other than the person wrote this (Panels, another agent). v9 (11): a left-aligned system
          note with no box: "From Panels · " and the words, 13/20 #b0b0b0, at most two lines. -->
     <p class="c2-system-note" data-conversation-system-note title={systemText}><span class="c2-label" data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</p>
   {:else}
@@ -111,8 +111,9 @@
 
   /* v6: Panels' words are a centred system note with no box: 13/20 #b0b0b0, "From Panels · "
      then the words, at most two lines. */
+  /* v9 (11): a left-aligned status line on the thread's start edge, as "Worked for" is. */
   .c2-system-note {
-    align-self: center;
+    align-self: flex-start;
     max-width: 100%;
     margin: 0;
     display: -webkit-box;
@@ -122,7 +123,7 @@
     overflow: hidden;
     color: #b0b0b0;
     font: var(--cv-weight-body) 13px/20px var(--cv-font);
-    text-align: center;
+    text-align: start;
     overflow-wrap: anywhere;
   }
   /* v7: it is a status line: the label "From Panels" 500 #ececec, " · ", the words #b0b0b0. */

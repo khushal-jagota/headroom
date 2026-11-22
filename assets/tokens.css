@@ -666,7 +666,8 @@
   --cv-transcript-pad-bottom: 24px;
 
   /* Layout */
-  --cv-col: 680px;
+  /* v9 (21): the reading column is 640 (about 80 characters at 15px). */
+  --cv-col: 640px;
 
   /* Radii */
   --cv-r-sm: 6px;

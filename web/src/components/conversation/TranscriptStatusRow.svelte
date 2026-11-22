@@ -61,6 +61,7 @@
   });
   let calloutReason = $derived.by(() => {
     if (status.tone !== "error") return status.next ?? null;
+    if (status.brief) return status.brief;
     const cause = status.title
       .replace(/^Not delivered:\s*/, "")
       .replace(/^The turn stopped because\s*/, "");
@@ -151,7 +152,9 @@
       <div class="c2-status-actions">
         {#if actions}{@render actions()}{/if}
         {#if status.action === "choose-model"}
-          <button type="button" class="cv-button c2-status-second c2-status-choose" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
+          <!-- v9 (7): with no other action it is the card's one primary; beside Resend it is
+               secondary (one primary per surface). -->
+          <button type="button" class="cv-button c2-status-choose" class:c2-status-main={actions === undefined} class:c2-status-second={actions !== undefined} data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
         {/if}
         {@render detailsToggle()}
       </div>

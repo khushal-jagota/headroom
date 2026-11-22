@@ -812,27 +812,33 @@
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   /* --- Lens: a segmented control. The track is a well; the chosen segment is a control. */
-  /* v7: Focus and Full are two Buttons: the shown lens a secondary (#2a2a2a with #ececec),
-     the other quiet (#bdbdbd, hover #2a2a2a). 32 tall pills, 13/20 500, padding 0 14. No track. */
+  /* v9 (16): Focus and Full sit in one segmented track: #1c1c1c, radius 10, a 2px inset; the
+     shown lens is a #2a2a2a segment (#ececec), the other quiet (#bdbdbd, hover #ececec on
+     #242424). Segments 28 tall (the track 32), radius 8, 13/20 500, padding 0 12. Then 16px
+     (the header's 12 gap + 4) before Dock and more, which are quiet buttons. */
   .cv-segmented {
     display: inline-flex;
     flex: none;
-    gap: 4px;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 10px;
+    background: #1c1c1c;
+    margin-inline-end: 4px;
   }
   .cv-segment {
-    min-height: 32px;
-    height: 32px;
-    padding: 0 14px;
+    min-height: 28px;
+    height: 28px;
+    padding: 0 12px;
     border: 0;
-    border-radius: 999px;
+    border-radius: 8px;
     background: transparent;
     color: #bdbdbd;
     font: var(--cv-weight-label) 13px/20px var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .cv-segment:hover { background: #2a2a2a; color: #ececec; }
-  .cv-segment[aria-pressed="true"] { background: #2a2a2a; color: #ececec; }
+  .cv-segment:hover { background: #242424; color: #ececec; }
+  .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #2a2a2a; color: #ececec; }
   .cv-segment:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   .conversation-read-only {

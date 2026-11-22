@@ -40,7 +40,6 @@
     expanded = false,
     waiting = null,
     livenessPulse = 0,
-    liveMark = "spinner",
     onToggle
   }: {
     activityUncertain?: boolean;
@@ -63,9 +62,6 @@
     waiting?: "permission" | "question" | null;
     /** Moves whenever a live frame arrives. Only its movement is read. */
     livenessPulse?: number;
-    /** v8 (4): the live line's mark. "dot" (a still 6px #d9d9d9 dot) while a running tool row
-     *  in Full carries the one spinner. */
-    liveMark?: "spinner" | "dot";
     /** Opens and closes the turn's earlier messages. Absent where the reading shows them. */
     onToggle?: () => void;
   } = $props();
@@ -128,7 +124,7 @@
       >
         <!-- It turns only while frames arrive; when they stop it holds still. Unknown
              activity has no mark, because nothing is known to be running. -->
-        {#if !activityUncertain}<span class="c2-meta-slot" aria-hidden="true">{#if liveMark === "dot"}<span class="c2-meta-dot" data-conversation-live-mark="dot"></span>{:else}<span class="c2-meta-spin" class:is-turning={fresh} data-conversation-live-mark></span>{/if}</span>{/if}
+        {#if !activityUncertain}<span class="c2-meta-slot" aria-hidden="true"><span class="c2-meta-spin" class:is-turning={fresh} data-conversation-live-mark></span></span>{/if}
         {#if activityUncertain}
           <span data-conversation-alive-word>Current activity on this machine is unknown.</span>
         {:else}
@@ -207,7 +203,6 @@
     transform: rotate(35deg);
   }
   /* v8 (4): the still mark while a running tool row carries the spinner. */
-  .c2-meta-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #d9d9d9; }
   .c2-meta-spin.is-turning { animation: c2-meta-spin var(--cv-spin) linear infinite; }
   @keyframes c2-meta-spin { to { transform: rotate(395deg); } }
   /* v5.2: "Working" 13 medium #d9d9d9, its duration #b0b0b0. "Worked for" 13 regular #b0b0b0. */
@@ -225,7 +220,6 @@
   @media (prefers-reduced-motion: reduce) {
     .c2-meta--fold, .c2-meta-chevron { transition: none; }
     /* v8 (4): the still mark while a running tool row carries the spinner. */
-  .c2-meta-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #d9d9d9; }
   .c2-meta-spin.is-turning { animation: none; }
     .c2-meta-working.is-alive { animation: none; background: none; color: #ececec; }
   }

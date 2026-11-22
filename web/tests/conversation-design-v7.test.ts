@@ -24,11 +24,12 @@ describe("v8 type: one agent face (Inter), no serif", () => {
     expect(app).toContain("[data-conversation-pane] .chat-a .markdown :is(h1, h2, h3, h4, h5, h6) { margin: 24px 0 8px; font-family: var(--cv-font); font-weight: 600; letter-spacing: 0; }");
     expect(app).toContain("[data-conversation-pane] .chat-thread .markdown li::marker { color: #8f8f8f; }");
   });
-  it("narration is the same face and size, #b4b4b4; inline code 0.85em on #262626; tables 13/20 head, 14/20 body, 40px rows", () => {
-    expect(app).toMatch(/\[data-conversation-pane\] \.chat-a--narration,[\s\S]{0,120}\{\s*font-family: var\(--cv-font\);\s*font-size: 15px;\s*line-height: 24px;\s*color: #b4b4b4;/);
+  it("narration is the same face, v9 (15) 14/22 #b4b4b4; inline code 0.85em on #262626; tables (v9 8) 14/20 head over #3a3a3a, 15/24 body, 40px rows", () => {
+    expect(app).toMatch(/\[data-conversation-pane\] \.chat-a--narration,[\s\S]{0,120}\{\s*font-family: var\(--cv-font\);\s*font-size: 14px;\s*line-height: 22px;\s*color: #b4b4b4;/);
     expect(app).toMatch(/\[data-conversation-pane\] \.cv-code \{\s*font-family: var\(--cv-mono\);\s*font-size: 0\.85em;[^}]*padding: 1px 5px;[^}]*border-radius: 5px;\s*background: #262626;/);
     expect(app).toContain("[data-conversation-pane] .chat-thread .markdown :is(th, td) { height: 40px;");
-    expect(app).toContain("font-size: 13px; line-height: 20px; font-weight: 600; border-block-end-color: #2a2a2a; }");
+    expect(app).toContain("font-size: 14px; line-height: 20px; font-weight: 600; border-block-end-color: #3a3a3a; }");
+    expect(app).toContain("[data-conversation-pane] .chat-thread .markdown td { color: #d9d9d9; font-size: 15px; line-height: 24px; font-weight: 400; }");
   });
 });
 
@@ -47,14 +48,14 @@ describe("v7 the five parts", () => {
     expect(source("../src/lib/markdown/codeBlocks.css")).toMatch(/border-radius: 12px;\s*background: var\(--cv-code-surface, #1a1a1a\);/);
     expect(source("../src/components/conversation/MessagePieces.svelte")).toMatch(/background: #242424;\s*color: #ececec;\s*border-radius: 18px;\s*padding: 12px 16px;/);
   });
-  it("2 Button: the ask's primary 32 pill #f2f2f2/#141414; v8 (7): Deny is a secondary button beside it", () => {
+  it("2 Button: the ask's primary 32 pill #f2f2f2/#141414; v9 (2): Deny is an option row, not a button", () => {
     expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-primary\) \{[^}]*height: 32px;\s*padding: 0 14px;[^}]*background: #f2f2f2;\s*color: #141414;/);
     expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-quiet\) \{[^}]*height: 32px;[^}]*background: #2a2a2a;\s*color: #ececec;/);
     const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
     expect(controls.indexOf("data-conversation-ask-decline")).toBeLessThan(controls.indexOf("data-conversation-ask-primary"));
     const docked = render(PermissionAskCard, { props: { docked: true, onAnswer: () => {}, ask: { askId: "a", title: "Upload", detail: null, options: [
       { option_id: "allow", label: "Allow once", option_kind: "allow_once" }, { option_id: "deny", label: "Deny", option_kind: "reject_once" }] } } }).body;
-    expect(docked).not.toContain('data-conversation-ask-action="deny"');
+    expect(docked).toContain('data-conversation-ask-action="deny"');
   });
   it("3 Composer control: 32 tall, text-only #d9d9d9 (v8 14: no chevron); Send/Stop a 32 round", () => {
     expect(app).toMatch(/\[data-conversation-composer\] \.chat-foot \.listbox-picker-trigger \{[^}]*height: 32px;[^}]*background: transparent;[^}]*color: #d9d9d9;/);

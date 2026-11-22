@@ -6,7 +6,7 @@
    * list of numbered tiles, the same tiles a question's choices are. Allow once leads and is
    * chosen by default (key 1); the standing permissions follow, and decline comes last, a
    * tone down. Docked in the composer (v4), a tile only chooses; the composer's primary pill
-   * in the send slot ("Allow", or "Deny" when decline is chosen) commits it. Standing alone, a
+   * in the send slot (v9: the chosen row's own label, "Allow once" … "Deny") commits it. Standing alone, a
    * tile answers at once. The turn is stopped from the header's "Stop turn".
    */
   import type { Snippet } from "svelte";
@@ -54,8 +54,7 @@
     /** What the composer's pill says, and whether it can commit now. */
     commitLabel?: string;
     commitReady?: boolean;
-    /** v7: docked, a declining answer (Deny) is a quiet Button beside the primary pill, not
-     *  an option row. The composer draws it from this. */
+    /** v9 (2): always null; Deny is an option row (v7 drew it as a button from this). */
     declineAction?: { label: string; optionId: string } | null;
     onAnswer: (optionId: string) => void;
   } = $props();
@@ -65,14 +64,14 @@
     ? askQuestionChoices(ask).map((choice) => ({ ...choice, emphasis: "option" as const, supplied: true }))
     : permissionAnswerRows(ask));
   let detail = $derived(readableConversationDetail(ask.detail));
-  let declineRow = $derived(docked && shape !== "question" ? rows.find((row) => row.emphasis === "decline") ?? null : null);
-  let tiles = $derived(declineRow === null ? rows : rows.filter((row) => row !== declineRow));
-  $effect(() => { declineAction = declineRow === null ? null : { label: declineRow.label === "Decline" ? "Deny" : declineRow.label, optionId: declineRow.optionId }; });
-  /** Answers with the declining option at once, for the composer's quiet Deny button. */
-  export function decline(): void {
-    if (declineRow === null || busy || !answerAvailable) return;
-    onAnswer(declineRow.optionId);
-  }
+  /** v9 (2): Deny is an option row again (the last one), never a separate button. The
+   *  composer's one primary pill says the focused row's label and acts on that row. */
+  let tiles = $derived(rows);
+  $effect(() => { declineAction = null; });
+  /** Kept for the composer's contract; nothing draws a separate decline any more. */
+  export function decline(): void {}
+  /** What a row is called on the primary pill: its own label ("Decline" reads "Deny"). */
+  function pillLabel(label: string): string { return label === "Decline" ? "Deny" : label; }
   // v5: a permission ask says "Needs your permission" (with the shield); a question keeps
   // "Needs your answer". "Needs your approval" belongs to proposals.
   let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your permission");
@@ -84,7 +83,7 @@
   $effect(() => { if (ask.askId !== chosenFor) { chosenFor = ask.askId; chosenId = null; } });
   let chosen = $derived(rows.find((row) => row.optionId === chosenId) ?? (shape === "question" ? null : rows[0] ?? null));
   $effect(() => {
-    commitLabel = shape === "question" ? "Send answer" : chosen?.emphasis === "decline" ? "Deny" : "Allow";
+    commitLabel = shape === "question" ? "Send answer" : chosen === null ? "Allow once" : pillLabel(chosen.label);
     commitReady = chosen !== null && !busy && answerAvailable;
   });
 
@@ -112,7 +111,6 @@
       : rows.find((row) => row.shortcutDigit === digit) ?? null;
     if (byDigit === null) return;
     event.preventDefault();
-    if (declineRow !== null && byDigit.optionId === declineRow.optionId) { decline(); return; }
     pick(byDigit.optionId);
   }
 </script>
