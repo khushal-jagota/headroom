@@ -14,7 +14,7 @@ Agents use `panels api` when no dedicated command covers a route. This keeps the
 
 On the live host, the owner is the caller Tailscale Serve vouches for. The browser and the iPhone app reach Headroom through Tailscale Serve, which adds Khushal's login header. This owner path is separate from agent credentials.
 
-A browser write must come from the server's own address. The desktop app is the one other origin the server accepts, `panels://app`, named once in `server/core/http/middleware.ts`. The server sends CORS headers to that origin only, for reads, writes, preflights and live streams. The origin adds no identity: the app still reaches a hosted server through Tailscale Serve.
+A browser write must come from the server's own address. The desktop app is the one other origin the server accepts, `panels://app`, named once in `server/core/http/middleware.ts`. The server sends CORS headers to that origin only, for reads, writes, preflights and live streams. The origin adds no identity: the app still reaches a hosted server through Tailscale Serve. The app as built forwards its requests from its native side, which sends no Origin, so it does not rely on this rule.
 
 An unidentified caller stands above nothing. It can read what any caller can read and send a message to Chief. Other writes are refused. The refusal directs an agent to the authenticated CLI API command instead of hand-built headers. Panels supplies a resumed child with its credential. A terminal without identity and the stall watchdog use unidentified access on the live host.
 
