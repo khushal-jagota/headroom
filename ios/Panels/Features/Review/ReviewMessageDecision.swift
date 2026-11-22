@@ -145,7 +145,7 @@ extension APIClient {
                 composer.attachments = message.content.filter { $0.piece != "text" }
             }
             loaded = true; loadedFreshness = Self.freshness(item); readStarted = started; error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, !(error is URLError) { self.error = error.localizedDescription } }
     }
     /// Waits for a read in flight, so a reply or Mark read uses the newest run.
     private func settled() async {

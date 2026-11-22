@@ -62,6 +62,19 @@ import XCTest
         return (decision, api, item)
     }
 
+    /// The card never names the connection: a dropped read keeps the loaded proposal
+    /// ready, with no error under its buttons, and Approve still saves at once.
+    func testDroppedTicketReadShowsNoErrorAndKeepsTheCardReady() async throws {
+        let (decision, api, item) = try await setupDecision()
+        ReviewStub.state.configureScope(mode: "success", failNextRead: true)
+        await decision.load(item: item, api: api)
+        XCTAssertNil(decision.error)
+        XCTAssertTrue(decision.ready)
+        let saved = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
+        XCTAssertTrue(saved)
+        XCTAssertNil(decision.error)
+    }
+
     func testReadOnlyApprovalIgnoresLegacyEditsAndCarriesExactRevisionAndNextGate() async throws {
         let (original, api, item) = try await setupDecision()
         let revision = try XCTUnwrap(original.proposal?.revision)

@@ -215,7 +215,9 @@ struct DecisionGuidance: Sendable, Equatable {
             let terminal = facts.last { $0.proposalField == incoming.field && $0.proposalRevision == incoming.revision && $0.proposalCreatedAt == incoming.createdAt && $0.refused }
             error = terminal?.note
         } catch {
-            guard !Task.isCancelled else { return }
+            // A read that cannot reach the server says nothing: the card keeps what it
+            // has, and its decision is saved and sent when the server answers.
+            guard !Task.isCancelled, !(error is URLError) else { return }
             self.error = error.localizedDescription
         }
     }
