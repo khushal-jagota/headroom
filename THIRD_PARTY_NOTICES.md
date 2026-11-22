@@ -44,3 +44,15 @@ Source: https://github.com/rsms/inter — release `v4.1`, `Inter-4.1.zip`
 
 Copyright (c) 2016 The Inter Project Authors. Licensed under the SIL Open Font License, Version 1.1.
 The full licence text is retained in [third_party/inter/LICENSE.txt](third_party/inter/LICENSE.txt).
+
+## JetBrains Mono
+
+The code typeface in the conversation is JetBrains Mono, self-hosted as
+`assets/fonts/JetBrainsMono-Regular.woff2` (sha256 `f1a7a03672cdd494ce0d5543fac6e4360fe22403c6de297fdc2e55a815f7baff`)
+and `assets/fonts/JetBrainsMono-Bold.woff2` (sha256 `08863c7964612257a90bd821e3127dc5ccb0b5046f881673a1ade5809eb21d0f`),
+unmodified webfont builds of the official release.
+
+Source: https://github.com/JetBrains/JetBrainsMono
+
+Copyright 2020 The JetBrains Mono Project Authors. Licensed under the SIL Open Font License, Version 1.1.
+The full licence text is retained in [third_party/jetbrains-mono/LICENSE.txt](third_party/jetbrains-mono/LICENSE.txt).

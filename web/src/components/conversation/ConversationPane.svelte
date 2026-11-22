@@ -21,7 +21,8 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { awaitsCredential, dockFeedbackFor, dockPreviewText, latestUnreadReply, paneFailureFrom, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
+  import { awaitsCredential, conversationState as readConversationState, copyText, dockFeedbackFor, dockPreviewText, interruptedFrom, latestUnreadReply, paneFailureFrom, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
+  import type { ConversationJump } from "./viewport/viewportConfiguration";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
@@ -277,8 +278,8 @@
   // the bar is not drawn: the dock's status line says the same there.
   let headTitle = $derived(paneTitleFor(title, roleLabel));
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
-  const headElapsed = elapsedTurnTime(() => conversationState !== "rest" && running && !activityUncertain ? turnStartedAt : null);
-  const headSetupElapsed = elapsedTurnTime(() => conversationState !== "rest" && headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
+  const headElapsed = elapsedTurnTime(() => running && !activityUncertain ? turnStartedAt : null);
+  const headSetupElapsed = elapsedTurnTime(() => headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
   // A key request blocks on the person as an ask or a question does, so the bar says so too.
   let credentialWaiting = $derived(!readOnly && awaitsCredential(rows, reader?.pages.flatMap(page => page.items) ?? []));
   // A turn that failed, or a message that was not delivered, is said in the bar until the
@@ -286,16 +287,42 @@
   let headFailure = $derived(outgoingMessages.length > 0 ? null : paneFailureFrom(reader?.status
     ? { lastBoundaryFailed: reader.status.rest.last_boundary_failed, latestKind: reader.status.rest.latest_happened?.kind ?? null }
     : { lastBoundaryFailed: restLineMarksFrom(rows, ownerReadThroughSequence, running).failed, latestKind: rows.at(-1)?.kind ?? null }));
-  let headStatus = $derived(paneHeadStatus({
-    readOnly,
-    activityUncertain,
-    waitingForYou: ask !== null || userInput !== null || credentialWaiting,
-    running,
-    backgroundWorking,
-    settingUp: headSettingUp && workerSetup ? workerSetupSentence(workerSetup, headSetupElapsed.seconds) : null,
-    elapsed: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds),
-    failure: headFailure
-  }));
+  // The newest thing that happened is the turn being stopped: "Interrupted" until the next turn.
+  let headInterrupted = $derived(outgoingMessages.length > 0 ? false : interruptedFrom(reader?.status
+    ? reader.status.rest.latest_happened as { kind: string; ending?: string } | null
+    : rows.findLast(row => row.kind === "turn_ended" || row.kind === "turn_stopped" || row.kind === "prompt") as { kind: string; ending?: string } | undefined));
+  /** The one state of this conversation. The header, the dock's line and the turn meta read
+   *  it, so they never disagree; "Working" is never shown while an ask waits. Its words never
+   *  name a tool or command, so it reads the same in Focus and Full. */
+  function stateFacts() {
+    return {
+      readOnly,
+      activityUncertain,
+      waitingForYou: ask !== null || userInput !== null || credentialWaiting,
+      running,
+      backgroundWorking,
+      settingUp: headSettingUp && workerSetup ? workerSetupSentence(workerSetup, headSetupElapsed.seconds) : null,
+      elapsed: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds),
+      failure: headFailure,
+      interrupted: headInterrupted
+    };
+  }
+  let headStatus = $derived.by(() => {
+    const reading = readConversationState(stateFacts());
+    return reading.state === "idle" ? null : reading;
+  });
+  let restState = $derived(readConversationState(stateFacts()));
+  /** What the waiting ask is about, for the dock's line ("Waiting for you — Upload build 41"). */
+  let restWaitingTitle = $derived(ask?.title ?? null);
+  let jump = $state<ConversationJump | null>(null);
+  let workspaceCopied = $state(false);
+  let workspaceCopiedTimer: ReturnType<typeof setTimeout> | null = null;
+  async function copyWorkspace(path: string): Promise<void> {
+    if (!(await copyText(path))) return;
+    workspaceCopied = true;
+    if (workspaceCopiedTimer) clearTimeout(workspaceCopiedTimer);
+    workspaceCopiedTimer = setTimeout(() => (workspaceCopied = false), 1500);
+  }
   // A model list that could not be read because the machine is not connected is that same
   // machine state, which the dock already says. The model picker keeps the sentence and its
   // retry; the red line under the box is kept for failures nothing else explains.
@@ -414,51 +441,55 @@
   bind:this={paneElement}
 >
   <div class="chat-head">
-    {#if connectionTrouble}
-      <span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>
-    {/if}
     <div class="chat-head-identity" data-conversation-head-identity>
       <span class="chat-head-title" data-conversation-title title={headTitle}>{headTitle}</span>
       {#if headStatus}
-        <span class="chat-head-status" data-conversation-head-status={headStatus.tone}>
-          {#if headStatus.tone === "live"}<span class="chat-head-mark chat-head-mark--live" aria-hidden="true"></span>
-          {:else if headStatus.tone === "attention"}<span class="chat-head-mark chat-head-mark--attention" aria-hidden="true"></span>
-          {:else if headStatus.tone === "failed"}<svg class="chat-head-mark chat-head-mark--failed" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.75v3.75" /><path d="M8 11.1v.15" /></svg>{/if}
-          <span class="chat-head-status-text">{headStatus.text}</span>
+        <!-- One derived state (conversationState), the same the dock's line reads. -->
+        <span class="cv-state" data-conversation-head-status={headStatus.state}
+          role="status" aria-label={headStatus.text} title={headStatus.text}>
+          {#if headStatus.mark === "spinner"}<span class="cv-spinner" aria-hidden="true"></span>
+          {:else if headStatus.mark === "dot"}<span class="cv-dot" aria-hidden="true"></span>
+          {:else if headStatus.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
+          {:else if headStatus.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>{/if}
+          <span class="cv-state-text" aria-hidden="true">{headStatus.text}</span>
+        </span>
+      {/if}
+      {#if connectionTrouble}
+        <span class="cv-state" data-conversation-connection role="img" aria-label="Connection trouble" title="Connection trouble">
+          <svg class="cv-glyph cv-glyph--danger" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6.2a8 8 0 0 1 11 0" /><path d="M4.6 8.6a5 5 0 0 1 6.8 0" /><path d="M8 11.6v.1" /><path d="m3 3 10 10" /></svg>
         </span>
       {/if}
     </div>
     <!-- Two named choices rather than one control whose label is the state it is in:
          which lens you are in and which you can move to are both on the screen. -->
     <div
-      class="chat-lens"
+      class="cv-segmented"
       role="group"
       aria-label="How much of the conversation to show (F)"
       data-conversation-lens-group
     >
       <button
         type="button"
-        class="chat-lens-choice"
+        class="cv-segment"
         data-conversation-lens-choice="focus"
         aria-pressed={lens === "focus"}
-        title="The exchange only (F)"
+        title="What is said to you (F)"
         onclick={() => (lens = "focus")}
       >Focus</button>
       <button
         type="button"
-        class="chat-lens-choice"
+        class="cv-segment"
         data-conversation-lens-choice="full"
         aria-pressed={lens === "full"}
-        title="The exchange and the work (F)"
+        title="Also the work as it happens (F)"
         onclick={() => (lens = "full")}
       >Full</button>
     </div>
     <div class="chat-head-right">
-      <!-- The corresponding state control receives focus after preview activation. -->
       {#if stateControl !== null && conversationState !== "rest"}
         <button
           type="button"
-          class="chat-overflow-btn"
+          class="cv-icon-button chat-head-collapse"
           data-conversation-state-control
           data-conversation-expand={stateControl.opensIt ? true : undefined}
           data-conversation-collapse={stateControl.opensIt ? undefined : true}
@@ -466,36 +497,33 @@
           title={stateControl.label}
           onclick={moveThroughTheStates}
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            {#if stateControl.opensIt}
-              <path d="m6 14 6-6 6 6" />
-            {:else}
-              <path d="m6 10 6 6 6-6" />
-            {/if}
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            {#if stateControl.opensIt}<path d="m4 10 4-4 4 4" />{:else}<path d="m4 6 4 4 4-4" />{/if}
           </svg>
         </button>
       {/if}
-      {#if !readOnly || historyOwner || pastConversations.length > 0}
+      {#if !readOnly || historyOwner || pastConversations.length > 0 || workspaceFolder}
         <div class="chat-overflow" bind:this={menuElement}>
           <button
             type="button"
-            class="chat-overflow-btn"
+            class="cv-icon-button"
             bind:this={menuButton}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             aria-label="Conversation options"
+            title="Conversation options"
             onclick={() => (menuOpen ? closeMenu() : (menuOpen = true))}
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true" class="chat-overflow-dots">
-              <circle cx="5" cy="12" r="1.5" />
-              <circle cx="12" cy="12" r="1.5" />
-              <circle cx="19" cy="12" r="1.5" />
+            <svg viewBox="0 0 16 16" aria-hidden="true" class="cv-dots">
+              <circle cx="3.5" cy="8" r="1.25" />
+              <circle cx="8" cy="8" r="1.25" />
+              <circle cx="12.5" cy="8" r="1.25" />
             </svg>
           </button>
           {#if menuOpen}
-            <div class="chat-overflow-menu">
+            <div class="chat-overflow-menu" data-conversation-options-menu>
               {#if !readOnly}
-                <div class="chat-overflow-actions" role="menu">
+                <div class="chat-overflow-actions" role="menu" aria-label="Conversation">
                   {#if confirmArmed}
                     <button
                       type="button"
@@ -503,7 +531,7 @@
                       role="menuitem"
                       data-conversation-new-confirm
                       onclick={confirmNewConversation}
-                    >Confirm — this kills the old one</button>
+                    >Confirm — this ends the current one</button>
                   {:else}
                     <button
                       type="button"
@@ -520,9 +548,13 @@
                    read-only pane keeps this section and loses the one above it, so the
                    way back to the current conversation is where it was left. -->
               {#if historyOwner}
-                <ConversationHistoryPicker owner={historyOwner} bind:selected={selectedPastConversationId} label={pastConversationsLabel} {conversationExists} />
+                <div class="chat-overflow-section">
+                  <span class="chat-overflow-label" aria-hidden="true">Earlier conversations</span>
+                  <ConversationHistoryPicker owner={historyOwner} bind:selected={selectedPastConversationId} label={pastConversationsLabel} {conversationExists} />
+                </div>
               {:else if pastConversations.length > 0}
-                <label class="chat-overflow-history" data-conversation-history>
+                <label class="chat-overflow-section chat-overflow-history" data-conversation-history>
+                  <span class="chat-overflow-label">Earlier conversations</span>
                   <select
                     aria-label={pastConversationsLabel}
                     value={selectedPastConversationId ?? CURRENT_CONVERSATION}
@@ -540,7 +572,23 @@
                 </label>
               {/if}
               {#if workspaceFolder}
-                <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
+                <!-- A fact, not an action: where the agent works. The path wraps, because
+                     either truncated end can be the part that identifies it. -->
+                <div class="chat-overflow-section chat-overflow-fact" data-conversation-workspace>
+                  <span class="chat-overflow-label">Workspace</span>
+                  <div class="chat-overflow-fact-row">
+                    <span class="chat-overflow-path">{workspaceFolder}</span>
+                    <button type="button" class="cv-icon-button cv-icon-button--small" data-conversation-workspace-copy
+                      aria-label={workspaceCopied ? "Workspace path copied" : "Copy the workspace path"}
+                      title={workspaceCopied ? "Copied" : "Copy"}
+                      onclick={() => void copyWorkspace(workspaceFolder)}>
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        {#if workspaceCopied}<path d="m3.5 8.5 3 3 6-7" />
+                        {:else}<rect x="5.5" y="5.5" width="8" height="8" rx="1.75" /><path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5A1.75 1.75 0 0 0 3.25 10.5h.25" />{/if}
+                      </svg>
+                    </button>
+                  </div>
+                </div>
               {/if}
             </div>
           {/if}
@@ -582,30 +630,45 @@
     {activityUncertain}
     {conversationState}
     {emptyState}
+    bind:jump
   />
   </div>
 
   </div>
 
-  {#if conversationState === "opened"}
-    <TaskProgress
-      progress={taskProgress}
-      variant="strip"
-      {running}
-      moving={!activityUncertain && running && ask === null && userInput === null}
-      composerGap={conversationState === "opened"}
-    />
-  {/if}
-
   <!-- Activity and the latest unread preview belong to the dock surface above the input. -->
   {#if conversationState === "rest"}
-    <ConversationRestBar preview={unreadPreview} {roleLabel} {activityKnown}
-      {connectionTrouble} running={running && !activityUncertain}
-      startedAtUnixMilliseconds={turnStartedAt}
-      {backgroundWorking}
-      {workerSetup}
+    <ConversationRestBar preview={unreadPreview} {roleLabel}
+      state={restState}
+      {connectionTrouble}
+      waitingTitle={restLine?.waiting ? restWaitingTitle : null}
+      offline={activityUncertain}
       feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
+
+  <!-- The composer stack's status slot: the task pill on the left and the way back to the
+       newest line in the middle. It is in the flow, between the transcript and the
+       composer, so neither ever covers a line of what was said; empty, it takes no room. -->
+  <div class="cv-status-slot" data-conversation-status-slot>
+    <div class="cv-status-start">
+      <TaskProgress
+        progress={taskProgress}
+        variant="strip"
+        {running}
+        moving={!activityUncertain && running && ask === null && userInput === null}
+        composerGap={false}
+      />
+    </div>
+    {#if jump && conversationState !== "rest"}
+      <button
+        type="button"
+        class="cv-jump"
+        data-conversation-jump
+        aria-label="Jump to latest message"
+        onclick={(event) => jump?.go(event.currentTarget)}
+      ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9" /></svg>{jump.label}</button>
+    {/if}
+  </div>
 
   {#if readOnly}
     <div class="conversation-read-only" data-conversation-read-only-notice>
@@ -666,132 +729,83 @@
      panel on a wide screen, and a host that names no container of its own — the Chief
      conversation is one — still gets the adaptation. */
   :global([data-conversation-pane]) {
-    gap: var(--space-2);
     container-type: inline-size;
     container-name: conversation-pane;
   }
-  /* A narrow pane gives its width to the words, not to two sets of edges. This is what
-     the app already does for a narrow window, said about the pane instead — so a side
-     panel on a wide screen, and a host that names no container, get it too. It must not
-     add a gutter back: the widths here are the narrow ones, never the wide ones. */
-  @container conversation-pane (max-width: 480px) {
-    :global([data-conversation-pane] .chat-u) { max-width: 86%; }
-  }
-  /* The activity preview owns its gap above the separate rounded input. */
+  /* The stack under the transcript (status slot, composer) has one gap: 8. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
     display: none;
   }
-  /* Who the conversation is with, then what it is doing, on the bar's left. The title gives
-     way first: on a narrow pane it ellipsizes before the status does, and the lens and the
-     two controls never move. */
+
+  /* --- Header: title, state, lens, collapse, options. 56 tall; space, not a rule, sets it
+     off from the transcript (the transcript's own 16px fade takes what scrolls under it). */
   .chat-head-identity {
     display: flex;
     flex: 1 1 auto;
-    align-items: baseline;
-    gap: var(--space-3);
+    align-items: center;
+    gap: var(--cv-s3);
     min-width: 0;
     overflow: hidden;
   }
+  /* The title gives way first: it ellipsizes before the state does. */
   .chat-head-title {
     flex: 0 100 auto;
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    color: var(--tone-strong);
-    font-family: var(--font-ui);
-    font-size: var(--type-row);
-    font-weight: var(--weight-needs-you);
-    line-height: 18px;
+    color: var(--cv-t1);
+    font: var(--cv-weight-title) var(--cv-type-title)/var(--cv-leading-title) var(--cv-font);
   }
-  .chat-head-status {
+  .cv-state {
     display: inline-flex;
     flex: 0 1 auto;
     align-items: center;
-    align-self: center;
-    gap: var(--space-2);
+    gap: 6px;
     min-width: 0;
-    color: var(--tone-tertiary);
-    font-family: var(--font-ui);
-    font-size: var(--type-small);
-    font-weight: var(--weight-small);
-    line-height: 18px;
+    color: var(--cv-t3);
+    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .chat-head-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .chat-head-status[data-conversation-head-status="attention"] { color: var(--accent-text); }
-  /* Failed reads as the transcript's error rows do: the same error mark, the words a step above the quiet states. */
-  .chat-head-status[data-conversation-head-status="failed"] { color: var(--text-muted); }
-  .chat-head-mark { flex: none; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); }
-  /* The dock's live mark, the same ring and arc, so working reads the same open or at rest. */
-  .chat-head-mark--live {
-    border: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 28%, transparent);
-    border-top-color: var(--accent-bright);
-    border-right-color: var(--accent-bright);
-    animation: chat-head-spin var(--motion-loop-spin) linear infinite;
-  }
-  .chat-head-mark--attention {
-    width: var(--space-2);
-    height: var(--space-2);
-    background: var(--accent-bright);
-  }
-  .chat-head-mark--failed {
-    width: 14px;
-    height: 14px;
-    border-radius: 0;
-    fill: none;
-    stroke: var(--accent-error);
-    stroke-width: 1.5;
-    stroke-linecap: round;
-  }
-  @keyframes chat-head-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .chat-head-mark--live { animation: none; } }
-  /* A narrow pane stacks the two, the status under the title, inside the bar's own height. */
-  @container conversation-pane (max-width: 560px) {
-    .chat-head-identity { flex-direction: column; align-items: flex-start; gap: 0; }
-    .chat-head-title { flex: none; max-width: 100%; line-height: 17px; }
-    .chat-head-status { align-self: flex-start; max-width: 100%; line-height: 16px; }
-    .chat-lens-choice { padding-inline: var(--space-2); }
-  }
-  .chat-lens {
+  .cv-state-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* Weight follows the state: the person's accent when it waits on them, the danger colour
+     when something failed, quiet meta for everything moving or past. */
+  .cv-state[data-conversation-head-status="waiting"] { color: var(--cv-accent); font-weight: var(--cv-weight-label); }
+  .cv-state:is([data-conversation-head-status="failed"], [data-conversation-head-status="undelivered"]) { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
+  .cv-state[data-conversation-head-status="working"] { color: var(--cv-t3); }
+
+  /* --- Lens: a segmented control. The track is a well; the chosen segment is a control. */
+  .cv-segmented {
     display: inline-flex;
     flex: none;
-    gap: var(--space-1);
+    padding: 2px;
+    border-radius: 10px;
+    background: var(--cv-well);
   }
-  .chat-lens-choice {
-    border: var(--border-hairline) solid transparent;
-    border-radius: var(--radius-pill);
+  .cv-segment {
+    min-height: 28px;
+    padding: var(--cv-s1) var(--cv-s3);
+    border: 0;
+    border-radius: var(--cv-r-md);
     background: transparent;
-    color: var(--text-faint);
-    /* A target a finger can find, at the size the rest of the head uses. */
-    min-height: var(--conversation-target);
-    padding: 6px var(--space-3);
-    font: inherit;
-    font-size: var(--type-sm);
+    color: var(--cv-t3);
+    font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
     cursor: pointer;
-    transition:
-      color var(--motion-fast, 90ms) ease,
-      background var(--motion-fast, 90ms) ease;
+    transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-lens-choice:hover { color: var(--text-strong); }
-  .chat-lens-choice[aria-pressed="true"] {
-    background: var(--surface-2);
-    color: var(--text-strong);
-  }
+  .cv-segment:hover { color: var(--cv-t1); }
+  .cv-segment[aria-pressed="true"] { background: var(--cv-control); color: var(--cv-t1); }
+  .cv-segment:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+
   .conversation-read-only {
     flex: none;
-    margin: 0 calc(var(--space-4) * -1);
-    border-top: var(--border-hairline) solid var(--border-color);
-    padding: var(--space-3) var(--space-4);
-    color: var(--text-faint);
-    font-family: var(--font-ui);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-label);
+    padding: var(--cv-s3) 0 var(--cv-s5);
+    color: var(--cv-t3);
+    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
     text-align: center;
-    text-transform: uppercase;
   }
 </style>

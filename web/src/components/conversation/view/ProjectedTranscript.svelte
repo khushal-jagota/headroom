@@ -3,9 +3,12 @@
   import { reconcileDisplaySlots, isMessageRow, type MessageDisplaySlot } from '../../../lib/conversation/displaySlots';
   import type { OutgoingMessage } from '../../../lib/conversation/outgoing';
   import ProjectedMessage from './ProjectedMessage.svelte';
-  import { transcriptHistoryEdges, runningToolSentence } from '../../../lib/conversation/view/presentation';
+  import { transcriptHistoryEdges, rowForBody } from '../../../lib/conversation/view/presentation';
+  import { summarizeToolRun } from '../../../lib/conversation/toolCallPresentation';
+  import type { ToolCallRow as ToolCallRowType } from '../../../lib/conversation/transcript';
+  import ToolRunSummary from '../ToolRunSummary.svelte';
   import { getContext, untrack } from 'svelte';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
   import { compareItems } from '../../../lib/conversation/view/reader.svelte';
   import type { ConversationViewItem, ViewHistoryScope, ViewPageCursor } from '../../../lib/conversation/view/contracts';
@@ -37,10 +40,33 @@
   // Only a deferred ending needs a body read to discover that it has no visual
   // output. Keep the disposition, not the body, and bind it to that exact version.
   let emptyEndings = new SvelteMap<string, string>();
-  const items = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
+  // Which runs of tool calls the reader opened in Full. Every run starts closed.
+  let openRuns = new SvelteSet<string>();
+  const everyItem = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
       for (const item of page.items)
-          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'focus' && (item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call') && (item.turn_key === null || !reader.isExpanded({ kind: 'turn', key: item.turn_key }))) return false; if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
+          map.set(item.key, item); return map; });
+  /** A run of more than one call stands behind its summary; a run of one is its own row. */
+  function summarized(group: ConversationViewItem | undefined): boolean {
+      return group?.kind === 'work_group' && group.entry_count > 1;
+  }
+  const items = $derived.by(() => { const map = everyItem; return [...map.values()].filter(item => {
+      const isWork = item.kind === 'work_group' || item.kind === 'row' && item.row_kind === 'tool_call';
+      // Focus is focus: no tool call, no run and no count of them is drawn there.
+      if (reader.lens === 'focus' && isWork) return false;
+      if (reader.lens === 'full' && item.kind === 'row' && item.row_kind === 'tool_call' && item.work_group_key !== null && summarized(map.get(item.work_group_key)) && !openRuns.has(item.work_group_key)) return false;
+      if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
+  /** Each run's calls that are at hand, as rows, for its summary line. */
+  const runRows = $derived.by(() => {
+      const rows = new Map<string, ToolCallRowType[]>();
+      for (const item of [...everyItem.values()].sort(compareItems)) {
+          if (item.kind !== 'row' || item.row_kind !== 'tool_call' || item.work_group_key === null || item.body.kind !== 'inline') continue;
+          const row = rowForBody(item, item.body.value);
+          if (row.kind !== 'tool_call') continue;
+          rows.set(item.work_group_key, [...(rows.get(item.work_group_key) ?? []), row]);
+      }
+      return rows;
+  });
   const historyEdges = $derived(transcriptHistoryEdges(reader.pages, items));
   const exits = new MessageExits<MessageDisplaySlot>();
   let exitRevision = $state(0);
@@ -62,9 +88,9 @@
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
           return !item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0;
-      // A run draws nothing of its own: an opened turn shows every call in it.
+      // In Full a run of more than one call is drawn as its summary line.
       if (item.kind === 'work_group')
-          return false;
+          return reader.lens === 'full' && item.entry_count > 1;
       if (item.row_kind === 'token_usage')
           return false;
       if (item.body.kind === 'inline' && item.body.value.kind === 'permission_ask')
@@ -83,28 +109,44 @@
   function endingVersion(reference: { body_id: string; version: string }): string {
       return JSON.stringify([reference.body_id, reference.version]);
   }
+  /** Where each drawn item stands in the thread's rhythm (design direction 2.5), from what
+   *  it is and what was drawn before it. Items that draw nothing take no space. */
+  type Rhythm = 'first' | 'turn' | 'meta' | 'block' | 'section' | 'row' | 'none';
+  type Beat = 'prompt' | 'head' | 'work' | 'prose' | 'other';
   const presentation = $derived.by(() => {
-      const result = new Map<string, { assistantContinuation: boolean; toolContinuation: boolean }>();
+      const result = new Set<string>();
+      for (const item of items)
+          if (hasPresentation(item))
+              result.add(item.key);
+      return result;
+  });
+  const rhythm = $derived.by(() => {
+      const result = new Map<string, Rhythm>();
       const before = new Set<string>();
-      const after = new Set<string>();
-      for (const boundary of historyEdges) {
-          if (boundary.anchorKey !== null)
-              (boundary.direction === 'older' ? before : after).add(boundary.anchorKey);
-      }
-      let previous: ConversationViewItem | undefined;
-      for (const item of items) {
+      for (const boundary of historyEdges)
+          if (boundary.anchorKey !== null && boundary.direction === 'older')
+              before.add(boundary.anchorKey);
+      let previous: Beat | null = null;
+      for (const slot of displaySlots) {
+          const item = slot.item;
           // A held page edge does not establish who is adjacent across the gap.
-          if (before.has(item.key))
-              previous = undefined;
-          if (hasPresentation(item)) {
-              result.set(item.key, {
-                  assistantContinuation: reader.lens === 'focus' && item.kind === 'row' && item.row_kind === 'agent_message' && previous?.kind === 'row' && previous.row_kind === 'agent_message',
-                  toolContinuation: item.kind === 'row' && item.row_kind === 'tool_call' && item.work_group_key !== null && previous?.kind === 'row' && previous.row_kind === 'tool_call' && previous.work_group_key === item.work_group_key
-              });
-              previous = item;
-          }
-          if (after.has(item.key))
-              previous = undefined;
+          if (item !== null && before.has(item.key)) previous = null;
+          let beat: Beat | null;
+          if (slot.local !== null || item !== null && isMessageRow(item)) beat = 'prompt';
+          else if (item === null || !presentation.has(item.key)) beat = null;
+          else if (item.kind === 'turn') beat = 'head';
+          else if (item.kind === 'work_group' || item.row_kind === 'tool_call') beat = 'work';
+          else if (item.row_kind === 'agent_message') beat = 'prose';
+          else beat = 'other';
+          if (beat === null) { result.set(slot.key, 'none'); continue; }
+          result.set(slot.key,
+              previous === null ? 'first'
+              : beat === 'prompt' || beat === 'head' ? 'turn'
+              : previous === 'head' ? 'meta'
+              : beat === 'work' && previous === 'work' ? 'row'
+              : beat === 'prose' && previous === 'prose' ? 'section'
+              : 'block');
+          previous = beat;
       }
       return result;
   });
@@ -172,18 +214,22 @@
       <div use:edge={boundary} data-conversation-history-edge="older" aria-hidden="true"></div>
     {/each}
     {#if slot.local !== null || item !== null && isMessageRow(item)}
-      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
+      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register} rhythm={rhythm.get(slot.key) ?? 'block'}>
         <ProjectedMessage item={item?.kind === 'row' ? item : null} local={slot.local} {reader} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
       </ViewItem>
     {:else if item !== null}
     {#if item.kind!=='row'||presentation.has(item.key)}
-    <ViewItem itemKey={item.key} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false}>
+    <ViewItem itemKey={item.key} rhythm={rhythm.get(slot.key) ?? 'block'}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={!item.settled && reader.status?.turn_key === item.key ? (reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null) : null} {livenessPulse} activity={item.settled || reader.lens==='full' || reader.isExpanded({kind:'turn',key:item.key}) ? null : runningToolSentence(reader.status, item.key)} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={!item.settled && reader.status?.turn_key === item.key ? (reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null) : null} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
         </div>
       {:else if item.kind==='work_group'}
-        <div use:demand={item} data-conversation-work-group>
+        {@const groupKey = item.key}
+        <div use:demand={item} data-conversation-work-group data-conversation-work-expanded={openRuns.has(groupKey) ? 'true' : 'false'}>
+          {#if presentation.has(groupKey)}
+            <ToolRunSummary summary={summarizeToolRun(runRows.get(groupKey) ?? [], item.entry_count)} callCount={item.entry_count} open={openRuns.has(groupKey)} {activityUncertain} onToggle={() => { if (openRuns.has(groupKey)) openRuns.delete(groupKey); else openRuns.add(groupKey); }}/>
+          {/if}
         </div>
       {:else}
         <ProjectedRow {activityUncertain} {item} {reader} {models} {ownSenderLabel} {openRows} {wholeDetails} onEmptyEnding={(reference)=>emptyEndings.set(item.key,endingVersion(reference))}/>
@@ -199,7 +245,7 @@
     <div use:edge={boundary} data-conversation-history-edge={boundary.direction} aria-hidden="true"></div>
   {/each}
   {#if reader.lens==='full'&&reader.status?.live_output}
-    <ViewItem itemKey="live-output" marker={reader.status.live_output.byte_count===0}><LiveOutput {reader}/></ViewItem>
+    <ViewItem itemKey="live-output" rhythm={reader.status.live_output.byte_count===0 ? 'none' : 'block'}><LiveOutput {reader}/></ViewItem>
   {/if}
   {#if reader.status?.stopped_without_ending}<TranscriptStatusRow status={TURN_STOPPED_STATUS} role="status" data-conversation-row="turn_stopped"/>{/if}
   <!-- The turn has ended but work it started is still live: say so, one line per task,
@@ -215,4 +261,4 @@
     {#if page.scope.kind==='timeline'&&page.newer}<div use:edge={{scope:page.scope,cursor:page.newer,direction:'newer'}} data-conversation-history-edge="newer" aria-hidden="true"></div>{/if}
   {/each}
 </div>
-<style>.c2-background-work{justify-self:start;padding:var(--space-1) 0;color:var(--text-faintest);font-family:var(--font-ui);font-size:var(--type-small)}.diagnostic-expiry-notice{color:var(--text-muted);font-size:var(--type-xs);margin:0}.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block-start:calc(-1px - var(--space-5))}</style>
+<style>.c2-background-work{align-self:flex-start;color:var(--cv-t3);font-family:var(--cv-font);font-size:var(--cv-type-meta);line-height:var(--cv-leading-meta)}.diagnostic-expiry-notice{color:var(--cv-t3);font-family:var(--cv-font);font-size:var(--cv-type-caption);line-height:var(--cv-leading-caption);margin:0}.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block:-1px 0}</style>

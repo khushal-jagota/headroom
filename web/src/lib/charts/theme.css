@@ -143,3 +143,51 @@
   .completion-summary .completion-context { margin-top:var(--space-1); font-size:var(--type-small); line-height:18px; min-height:18px; }
 
 }
+
+/* A chart in the conversation (design v3 §3.7): the conversation's block shell, the title at
+ * the UI size, the key straight under it, quiet grid and axes, and two series of the same
+ * lightness in different hues. Charts elsewhere (goals, pages, artifacts) are unchanged. The
+ * plot reads these names from the canvas, so scoping them here recolours only this chart. */
+.chat-thread .chat-chart .goal-chart-host {
+  --accent-bright: var(--cv-data-1);
+  --chart-compare-second: var(--cv-data-2);
+  --chart-grid: var(--cv-chart-grid);
+  --chart-muted: var(--cv-t4);
+  --chart-legend: var(--cv-t3);
+  --chart-surface: var(--cv-well);
+  --chart-card-border: var(--cv-line);
+  color: var(--cv-t2);
+  font-family: var(--cv-font);
+}
+.chat-thread .chat-chart .goal-chart-host .metric-card {
+  padding: var(--cv-s4) 20px 14px;
+  border: 1px solid var(--cv-line);
+  border-radius: var(--cv-r-lg);
+  background: var(--cv-well);
+}
+.chat-thread .chat-chart .goal-chart-host .metric-top { min-height: 0; }
+.chat-thread .chat-chart .goal-chart-host .metric-top h2 {
+  font-size: var(--cv-type-ui);
+  line-height: var(--cv-leading-ui);
+  font-weight: var(--cv-weight-title);
+  color: var(--cv-t1);
+}
+.chat-thread .chat-chart .goal-chart-host .snapshot-legend {
+  gap: var(--cv-s1) var(--cv-s4);
+  margin: var(--cv-s1) 0 var(--cv-s3);
+  color: var(--cv-t3);
+  font-size: var(--cv-type-caption);
+  line-height: var(--cv-leading-caption);
+}
+.chat-thread .chat-chart .goal-chart-host .snapshot-legend li { gap: 6px; }
+.chat-thread .chat-chart .goal-chart-host .snapshot-legend-swatch {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 2px;
+}
+.chat-thread .chat-chart .goal-chart-host .caption {
+  margin: var(--cv-s3) 0 0;
+  color: var(--cv-t3);
+  font-size: var(--cv-type-caption);
+  line-height: var(--cv-leading-caption);
+}

@@ -49,7 +49,12 @@
       else if (last && bubble && piece.piece === "text" && last.pieces[0].piece.piece === "text") last.pieces.push({ piece, at });
       else result.push({ at, pieces: [{ piece, at }] });
     });
-    return result;
+    // The person's message reads attachments first, then the words about them: pictures
+    // and files stand above the bubble on its right edge (design v3 §3.2). Each keeps the
+    // order it was sent in. An agent's message keeps its pieces where they were written.
+    if (!bubble) return result;
+    const isWords = (run: (typeof result)[number]) => run.pieces[0].piece.piece === "text";
+    return [...result.filter(run => !isWords(run)), ...result.filter(isWords)];
   });
   const presentations = getContext<TextPresentationRegistry | undefined>(conversationTextPresentations);
 </script>
@@ -71,6 +76,7 @@
         ? `data:${piece.media_type};base64,${piece.data}`
         : conversationFileHref(conversationId, piece.stored_file_id)}
       fileName={piece.file_name}
+      mediaType={piece.media_type}
       byteCount={"data" in piece ? base64DecodedByteCount(piece.data) : piece.byte_count}
     />
   {/if}
@@ -91,13 +97,19 @@
 {/each}
 
 <style>
-  /* The person's words, and only their words, in the thread's one bubble. */
+  /* The person's words, and only their words, in the thread's one bubble: the raised step,
+     the first tone, no edge (design v3 §3.2). */
   .c2-bubble {
     min-width: 0;
     max-width: 100%;
-    background: var(--surface-2);
-    color: var(--text-strong);
-    border-radius: var(--radius-lg);
-    padding: var(--space-3) var(--space-4);
+    background: var(--cv-raised);
+    color: var(--cv-t1);
+    border-radius: var(--cv-r-xl);
+    padding: 10px var(--cv-s4);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-prose);
+    line-height: var(--cv-leading-prose);
+    overflow-wrap: anywhere;
   }
+  .c2-bubble :global(.markdown) { color: inherit; }
 </style>

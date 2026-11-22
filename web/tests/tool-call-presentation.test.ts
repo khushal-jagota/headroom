@@ -180,3 +180,27 @@ describe("which summaries are set as code", () => {
     expect(presentToolCall(row("TodoWrite", "think", "{}", "ok")).summaryIsLiteral).toBe(false);
   });
 });
+
+describe("a run of tool calls, said as one line", () => {
+  const row = (over: Partial<import("../src/lib/conversation/transcript").ToolCallRow>) => ({
+    key: "e", kind: "tool_call" as const, sequence: 1, createdAt: 1, toolCallId: "t", title: "npm test", toolKind: "execute",
+    detail: "ok", startedDetail: null, cappedDetailSequence: null, status: "completed" as const, progress: null, ...over
+  });
+  it("counts what the run did by kind, in the past tense", async () => {
+    const { summarizeToolRun } = await import("../src/lib/conversation/toolCallPresentation");
+    const summary = summarizeToolRun([
+      row({ title: "npm test" }), row({ title: "git status" }),
+      row({ title: "Read", toolKind: "read", startedDetail: JSON.stringify({ file_path: "/a/b.ts" }) })
+    ]);
+    expect(summary.sentence).toBe("Ran 2 commands and read 1 file");
+    expect(summary.failedCount).toBe(0);
+    expect(summary.running).toBeNull();
+  });
+  it("counts failures and names the running call, and counts calls it does not have", async () => {
+    const { summarizeToolRun } = await import("../src/lib/conversation/toolCallPresentation");
+    const summary = summarizeToolRun([row({ status: "failed", detail: "boom" }), row({ title: "go test ./...", status: "running", detail: null })]);
+    expect(summary.failedCount).toBe(1);
+    expect(summary.running?.title).toBe("Running");
+    expect(summarizeToolRun([row({})], 5).sentence).toBe("5 tool calls");
+  });
+});

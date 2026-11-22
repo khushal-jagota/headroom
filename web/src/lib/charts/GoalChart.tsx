@@ -90,7 +90,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     ...(block.binding ? categorySeries : [
     { key: actualKey, label: authoredSeries[0]?.name ?? 'Current', color: block.expectation ? lineColors[chartTone(block, summary.value, summary.target, summary.point, summary.categorySummary, summary.coverage_status)] : latestReading?.target === undefined ? C.blue : latestReading[actualKey] === undefined ? badColor : lineColors[chartTone(block, latestReading[actualKey], latestReading.target, undefined, undefined, data.at(-1)?.coverage_status)], area: true,
       datedComparisons, neutralColor: colors.neutral, compareTo: !datedComparisons && data.some(d => d.values.target !== undefined) ? 'target' : undefined, higherIsBetter: block.direction !== 'atmost', goodColor: lineColors.good, badColor },
-    ...authoredSeries.slice(1).map((item, index) => ({ key: seriesKey(item, index + 1), label: item.name, area: false, color: comparisonColor(item, index + 1) })),
+    ...authoredSeries.slice(1).map((item, index) => ({ key: seriesKey(item, index + 1), label: item.name, area: false, color: chatSnapshot ? comparisonColor(item, index + 1) : seriesColor(item, index + 1) })),
     ]),
     ...(data.some(d => d.values.target !== undefined) ? [{ key: 'target', label: block.expectation ? 'Expected' : block.binding || block.reference?.length || block.aggregate === 'sum' ? 'Target' : `${formatTrimmedReading(block, displayBlock.target!)} ${block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target')}`, color: C.reference, dashed: true, area: false, curve: block.expectation ? 'linear' as const : undefined }] : []),
   ];

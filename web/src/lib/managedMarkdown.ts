@@ -54,6 +54,13 @@ const EDITABLE_CARET_GUARD = "\u200b";
 const SOURCE_UNSET = Symbol("source-unset");
 let nextChartIdentity = 0;
 
+/** Whether Markdown drawn in `host` presents its code blocks (a header with the language and
+ *  Copy, and syntax colour). Only the conversation's transcript does: artifacts, file
+ *  previews and pages are out of the conversation's design and keep their own code. */
+export function presentsCodeBlocks(host: Pick<Element, "closest">): boolean {
+  return host.closest(".chat-thread") !== null;
+}
+
 export function createManagedMarkdownSurface(
   host: HTMLElement,
   options: { mode: "read-only"; onRendered?: () => void; presentation?: MarkdownPresentationController }
@@ -179,7 +186,7 @@ export function createManagedMarkdownSurface(
         disconnectObserver(); host.replaceChildren();
         documentRegion = mount(ManagedMarkdownRegion, { target: host });
       }
-      documentRegion?.reveal(target => {
+      documentRegion?.reveal((target: HTMLElement) => {
         if (destroyed || generation !== renderGeneration) return;
         render(target);
         rendered();
@@ -287,8 +294,9 @@ export function createManagedMarkdownSurface(
           })
         });
       }
-      // What is left is code: give each block its language, a copy button and colour.
-      for (const pre of Array.from(root.querySelectorAll<HTMLElement>("pre"))) {
+      // What is left is code. In the conversation each block gets its language, a copy
+      // button and colour; an artifact or a page renders its code exactly as it always has.
+      if (presentsCodeBlocks(host)) for (const pre of Array.from(root.querySelectorAll<HTMLElement>("pre"))) {
         const { frame, stop } = presentCodeBlock(pre);
         codeBlocks.set(frame, stop);
       }

@@ -87,13 +87,28 @@ export function paneFailureFrom(facts: {
   if (facts.lastBoundaryFailed) return 'turn_failed';
   return null;
 }
-const FAILURE_TEXT: Record<PaneFailure, string> = { turn_failed: 'Last turn failed', not_delivered: 'Message not delivered' };
 
-/** What the opened conversation is doing, as its top bar says it. `live` draws the moving
- * mark, `attention` the person's own accent, `failed` the error mark, `quiet` words alone.
- * Idle says nothing: the transcript already shows a conversation at rest. */
-export type PaneHeadStatus = { text: string; tone: 'live' | 'attention' | 'failed' | 'quiet' };
-export function paneHeadStatus(state: {
+/** Whether the newest thing that happened is the turn being stopped: a turn that ended
+ * interrupted, or one the record says stopped. It holds until the next turn starts. */
+export function interruptedFrom(latest: { kind: string; ending?: string } | null | undefined): boolean {
+  if (!latest) return false;
+  return latest.kind === 'turn_stopped' || (latest.kind === 'turn_ended' && latest.ending === 'interrupted');
+}
+
+/** The one state the conversation is in, which the opened pane's header, the dock's status
+ * line and the turn's meta line all read, so they can never disagree. Its words never name a
+ * tool or a command: Focus does not speak of the work, and these are read in both lenses. */
+export type ConversationActivity =
+  | 'idle' | 'working' | 'waiting' | 'failed' | 'undelivered' | 'interrupted' | 'setting-up'
+  | 'unknown' | 'read-only';
+export type ConversationStateReading = {
+  state: ConversationActivity;
+  /** The words the header and the dock say. Empty for idle. */
+  text: string;
+  /** Which mark is drawn: spinner, accent dot, alert, stop square, or nothing. */
+  mark: 'spinner' | 'dot' | 'alert' | 'stop' | null;
+};
+export type ConversationStateFacts = {
   readOnly: boolean;
   activityUncertain: boolean;
   waitingForYou: boolean;
@@ -101,19 +116,37 @@ export function paneHeadStatus(state: {
   backgroundWorking: boolean;
   /** The Worker-setup sentence ("Setting up · preparing workspace · 1m 35s"), or null. */
   settingUp: string | null;
-  /** Seconds the running turn has taken, or null while that is not known. */
+  /** How long the running turn has taken, formatted, or null while that is not known. */
   elapsed: string | null;
-  /** What went wrong last, or null. Anything still moving says that instead. */
+  /** What went wrong last, or null. */
   failure?: PaneFailure | null;
-}): PaneHeadStatus | null {
-  if (state.readOnly) return { text: 'Past conversation · read only', tone: 'quiet' };
-  if (state.activityUncertain) return { text: 'Activity on this machine unknown', tone: 'quiet' };
-  if (state.waitingForYou) return { text: 'Waiting for you', tone: 'attention' };
-  if (state.running) return { text: state.elapsed ? `Working · ${state.elapsed}` : 'Working', tone: 'live' };
-  if (state.backgroundWorking) return { text: 'Working in the background', tone: 'live' };
-  if (state.failure) return { text: FAILURE_TEXT[state.failure], tone: 'failed' };
-  if (state.settingUp) return { text: state.settingUp, tone: 'live' };
-  return null;
+  /** The newest thing that happened is the turn being stopped. */
+  interrupted?: boolean;
+};
+
+/** Precedence: waiting > failed / not delivered > working > setting up > interrupted > idle.
+ * A machine Panels cannot read, and a past conversation, say only that. */
+export function conversationState(facts: ConversationStateFacts): ConversationStateReading {
+  if (facts.readOnly) return { state: 'read-only', text: 'Past conversation · read only', mark: null };
+  // Setup the machine cannot confirm is still setup: setting up is recorded, and normal.
+  if (facts.activityUncertain && facts.settingUp && !facts.waitingForYou) return { state: 'setting-up', text: facts.settingUp, mark: 'spinner' };
+  if (facts.activityUncertain) return { state: 'unknown', text: 'Activity on this machine unknown', mark: null };
+  if (facts.waitingForYou) return { state: 'waiting', text: 'Waiting for you', mark: 'dot' };
+  if (facts.failure === 'turn_failed') return { state: 'failed', text: 'Turn failed', mark: 'alert' };
+  if (facts.failure === 'not_delivered') return { state: 'undelivered', text: 'Message not delivered', mark: 'alert' };
+  if (facts.running) return { state: 'working', text: facts.elapsed ? `Working · ${facts.elapsed}` : 'Working', mark: 'spinner' };
+  if (facts.backgroundWorking) return { state: 'working', text: 'Working in the background', mark: 'spinner' };
+  if (facts.settingUp) return { state: 'setting-up', text: facts.settingUp, mark: 'spinner' };
+  if (facts.interrupted) return { state: 'interrupted', text: 'Interrupted', mark: 'stop' };
+  return { state: 'idle', text: '', mark: null };
+}
+
+/** What the opened conversation is doing, as its top bar says it, or null when idle (the
+ * transcript already shows a conversation at rest). */
+export type PaneHeadStatus = ConversationStateReading;
+export function paneHeadStatus(facts: ConversationStateFacts): PaneHeadStatus | null {
+  const reading = conversationState(facts);
+  return reading.state === 'idle' ? null : reading;
 }
 
 /** The dock's line under the status while the machine's own activity cannot be read. Setup
@@ -123,4 +156,14 @@ export function uncertainActivityFeedback(settingUp: boolean): string {
   return settingUp
     ? 'This machine is not connected, so setup progress cannot be confirmed.'
     : 'Current activity on this machine is unknown.';
+}
+
+/** Copies a fact (the workspace path) for the person. Says whether it landed, so the control
+ * only says "Copied" when it did. */
+export async function copyText(
+  text: string,
+  clipboard: Pick<Clipboard, 'writeText'> | undefined = globalThis.navigator?.clipboard
+): Promise<boolean> {
+  if (!clipboard) return false;
+  try { await clipboard.writeText(text); return true; } catch { return false; }
 }

@@ -291,10 +291,7 @@ strong {
   .bar-item[aria-current="page"] { color:var(--text-strong); font-weight:var(--weight-title); }
   .bar-item:focus-visible { outline:var(--focus-width) solid var(--focus-ring); outline-offset:-2px; }
   .bar-item .count-badge { position:static; box-shadow:none; }
-  /* The app's drawn chevron (the conversation head's): it points to where the sheet
-     opens and turns over while it is open. */
-  .bar-caret { flex:none; width:14px; height:14px; color:var(--text-faintest); fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:transform var(--motion-fast) var(--motion-ease); }
-  .bar-item[aria-expanded="true"] .bar-caret { transform:rotate(180deg); }
+  .bar-caret { color:var(--text-faintest); font-size:var(--type-small); }
   .destination-sheet { animation:shell-panel-in var(--motion-base) var(--motion-ease); position:absolute; z-index:14; inset:auto 0 100%; max-height:calc(100dvh - var(--shell-nav-height)); overflow:auto; padding:var(--space-2) var(--space-3) var(--space-5); border-top:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-lg) var(--radius-lg) 0 0; background:var(--surface-2); box-shadow:var(--shadow-float); }
   .sheet-grab { display:block; }
   .sheet-group { padding:var(--space-2) var(--space-2) var(--space-1); color:var(--text-faintest); font-size:var(--type-xs); letter-spacing:var(--tracking-label); text-transform:uppercase; }
@@ -800,36 +797,6 @@ strong {
   max-width: 100%;
 }
 
-/* In the conversation inline code sits on a lift the eye finds on the dark page (the
- * page-wide 3% all but vanished there); the words keep the text's own tone. */
-.chat-thread .markdown :not(pre) > code {
-  background: rgb(255 255 255 / 8%);
-}
-
-/* An answer's headings stand clearly over its text: h1 and h2 a size up in the strong
- * tone with room above them, h3 the section-head size. h4-h6 stay the quiet labels. */
-.chat-thread .markdown :is(h1, h2, h3) {
-  margin-block: var(--space-5) var(--space-2);
-  color: var(--tone-strong);
-  letter-spacing: var(--tracking-title);
-}
-
-.chat-thread .markdown :is(h1, h2) {
-  font-size: var(--type-conversation-heading);
-  line-height: 1.35;
-}
-
-.chat-thread .markdown > :is(h1, h2, h3):first-child {
-  margin-block-start: 0;
-}
-
-/* The agent's prose keeps the reading measure every page uses (about 85 characters), so
- * a line on a wide window is still one the eye can follow back. Code, tables, charts and
- * pictures keep the column's full width. */
-.chat-a .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
-  max-inline-size: var(--page-prose-measure);
-}
-
 .markdown pre code {
   background: none;
   padding: 0;
@@ -896,24 +863,19 @@ strong {
   table-layout: fixed;
 }
 
-/* One table for every Markdown surface (a conversation answer, a Ticket, an artifact
- * preview): rows, not a grid. Hairlines between rows only, the heading set apart by weight
- * and one firmer rule, and no padding outside the first and last columns, so the words
- * line up with the text around the table. */
 .markdown th,
 .markdown td {
-  padding: var(--space-2) var(--space-4) var(--space-2) 0;
-  border: 0;
-  border-block-end: var(--border-hairline) solid var(--border-color);
+  padding: var(--space-2);
+  border: var(--border-hairline) solid var(--border-color);
   text-align: left;
   vertical-align: top;
 }
 
-.markdown :is(th, td):last-child {
+.chat-thread .markdown :is(th, td):last-child {
   padding-inline-end: 0;
 }
 
-.markdown tr:last-child > td {
+.chat-thread .markdown tr:last-child > td {
   border-block-end: 0;
 }
 
@@ -923,10 +885,16 @@ strong {
   overflow-wrap: anywhere;
 }
 
-/* Table heads: bold in the strong tone over the firmer rule, at the table's own size. */
+/* Table heads, as staging: bold in the strong tone over a recessed band, at the table's
+ * own size. */
 .markdown th {
   color: var(--tone-strong);
   font-weight: var(--weight-title);
+  background: var(--surface-recessed);
+}
+
+.chat-thread .markdown th {
+  background: none;
   border-block-end-color: var(--border-hover);
 }
 
@@ -1238,13 +1206,163 @@ a.pv-name:focus-visible { outline:0; }
 .file-preview-progress { display:block; height:100%; background:var(--accent-bright); border-radius:var(--radius-pill); }
 .file-preview-time { flex:none; font-size:var(--type-small); font-weight:var(--weight-small); color:var(--tone-tertiary); font-variant-numeric:tabular-nums; }
 .file-preview-failed-name { color:var(--tone-strong); font-weight:var(--weight-title); }
-.chat-u .file-preview-card, .chat-u .file-preview-transport { border:var(--border-hairline) solid var(--border-color); }
 @media (max-width:40rem) {
   .file-preview-clip { padding:var(--space-5) var(--space-5) 0; }
   .file-preview-clip--loading { padding:0; }
   .file-preview-band { padding:var(--space-4); }
   .file-preview-transport { flex-wrap:wrap; }
 }
+
+/* --- Conversation prose (design v3 §2.4, §3.3, §3.7) ----------------------------------
+ * Words in the conversation, on the --cv-* system only. Artifacts and pages keep their own look.
+ * Hierarchy is size, weight and tone; space separates. No rule or bar carries meaning:
+ * the only lines are a table's (structure) and an author's own <hr>. The column (680) is the
+ * measure, so prose runs its full width. */
+.chat-thread .markdown {
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-prose);
+  line-height: var(--cv-leading-prose);
+}
+/* Agent prose is the second tone; the person's own words (in the bubble) stay the first.
+ * Streaming text is never faded: it is the same prose, still arriving. */
+.chat-a .markdown { color: var(--cv-t2); }
+.chat-thread .markdown :is(p, ul, ol, blockquote) {
+  margin: 0 0 var(--cv-gap-paragraph);
+}
+/* Blocks (code, tables, charts, files) stand a block's gap from the prose around them;
+ * vertical margins collapse, so the larger gap wins on each side. */
+.chat-thread .markdown :is(table, .markdown-code, .chat-chart-slot, .file-preview:not(.file-preview--inline)) {
+  margin-block: var(--cv-gap-block);
+}
+.chat-thread .markdown :is(p, ul, ol, blockquote, table, .markdown-code, .chat-chart-slot, .file-preview):last-child {
+  margin-block-end: 0;
+}
+.chat-thread .markdown :is(strong, b) {
+  color: var(--cv-t1);
+  font-weight: var(--cv-weight-title);
+}
+.chat-thread .markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--cv-gap-heading-above) 0 var(--cv-gap-heading-below);
+  color: var(--cv-t1);
+  font-weight: var(--cv-weight-title);
+  letter-spacing: 0;
+}
+.chat-thread .markdown h1 {
+  font-size: var(--cv-type-h1);
+  line-height: var(--cv-leading-h1);
+  letter-spacing: -0.01em;
+}
+.chat-thread .markdown h2 {
+  font-size: var(--cv-type-h2);
+  line-height: var(--cv-leading-h2);
+}
+.chat-thread .markdown :is(h3, h4, h5, h6) {
+  font-size: var(--cv-type-h3);
+  line-height: var(--cv-leading-h3);
+}
+.chat-thread .markdown > :first-child { margin-block-start: 0; }
+.chat-thread .markdown > :last-child { margin-block-end: 0; }
+.chat-thread .markdown :is(ul, ol) { padding-inline-start: var(--cv-s5); }
+.chat-thread .markdown li + li { margin-block-start: var(--cv-gap-list-item); }
+.chat-thread .markdown li > :is(ul, ol) { margin-block: var(--cv-gap-list-item) 0; }
+.chat-thread .markdown li > p { margin-block: 0; }
+.chat-thread .markdown li > p + :is(p, ul, ol) { margin-block-start: var(--cv-gap-paragraph); }
+.chat-thread .markdown li::marker {
+  color: var(--cv-t3);
+  font-variant-numeric: tabular-nums;
+}
+/* A quotation steps in and quiets; it needs no bar to say so. */
+.chat-thread .markdown blockquote {
+  padding: 0 0 0 var(--cv-s4);
+  border-radius: 0;
+  background: none;
+  color: var(--cv-t3);
+}
+.chat-thread .markdown hr {
+  margin: var(--cv-s5) 0;
+  border-top-color: var(--cv-line);
+}
+/* Inline code: the code face at 0.87em on the control step, in the first tone. In a bubble
+ * (the raised step) the control step still stands one level above it. */
+.chat-thread .markdown :not(pre) > code {
+  font-family: var(--cv-mono);
+  font-size: var(--cv-type-inline-code);
+  line-height: 1;
+  padding: 1px 5px;
+  border-radius: var(--cv-r-sm);
+  background: var(--cv-control);
+  color: var(--cv-t1);
+}
+/* A link is the first tone with a soft underline; the accent stays "needs you". */
+.chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) {
+  color: var(--cv-t1);
+  text-decoration-color: var(--cv-link-underline);
+  text-underline-offset: 3px;
+}
+.chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover {
+  text-decoration-color: var(--cv-t2);
+}
+.chat-thread .markdown a:focus-visible {
+  outline: var(--cv-focus-width) solid var(--cv-accent);
+  outline-offset: var(--cv-focus-offset);
+  border-radius: var(--cv-r-sm);
+}
+
+/* Tables: the column's full width, no outer box. The heading row is set apart by tone and
+ * weight over the one firmer rule; quiet hairlines between rows are structure only. */
+.chat-thread .markdown table {
+  display: table;
+  width: 100%;
+  table-layout: auto;
+  font-size: var(--cv-type-ui);
+  line-height: var(--cv-leading-ui);
+  font-variant-numeric: tabular-nums;
+}
+.chat-thread .markdown :is(th, td) {
+  padding: 10px var(--cv-s4) 10px 0;
+  border: 0;
+  border-block-end: 1px solid var(--cv-line);
+}
+.chat-thread .markdown th {
+  padding-block-start: 0;
+  padding-block-end: var(--cv-s2);
+  color: var(--cv-t3);
+  font-size: var(--cv-type-meta);
+  font-weight: var(--cv-weight-label);
+  border-block-end-color: var(--cv-line-strong);
+}
+.chat-thread .markdown td { color: var(--cv-t2); }
+.chat-thread .markdown td:first-child { color: var(--cv-t1); }
+.chat-thread .markdown :is(th, td)[align="right"] { text-align: right; }
+.chat-thread .markdown :is(th, td)[align="center"] { text-align: center; }
+
+/* Streaming: a 2px caret blinks where the words will continue. Nothing is faded. */
+.c2-streaming .markdown > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.c2-streaming .markdown > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
+  display: inline-block;
+  inline-size: 2px;
+  block-size: 1.1em;
+  margin-inline-start: 2px;
+  vertical-align: -0.15em;
+  background: var(--cv-t2);
+  animation: cv-caret 1s steps(1, end) infinite;
+}
+@keyframes cv-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .c2-streaming .markdown > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+  .c2-streaming .markdown > :is(ul, ol):last-child > li:last-child::after { animation: none; }
+}
+
+/* Pictures the person sent: a glance (240 x 180 at most) on their own edge, opening the viewer. */
+.chat-u .file-preview-media { max-width: 240px; border-radius: var(--cv-r-lg); }
+.chat-u .file-preview-media > :is(.file-preview-image, .file-preview-video-poster) {
+  max-height: 180px;
+  border-radius: var(--cv-r-lg);
+}
+.chat-u .file-preview-media > .file-preview-media--wide { min-width: 0; }
+.chat-u .file-preview-grid { width: min(100%, 360px); gap: var(--cv-s1); margin: 0; }
+.chat-u .file-preview-grid .file-preview-media { max-width: none; border-radius: var(--cv-r-md); }
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
@@ -1568,40 +1686,35 @@ button.list-row:hover .list-row-title {
   /* The live mark every working state uses (head, dock, task pill, tool row, the turn's
      own line): an accent track with half of it lit, so it reads as live in a still frame
      and never as the grey empty circle of a task that has not started. */
-  border: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 28%, transparent);
-  border-top-color: var(--accent-bright);
-  border-right-color: var(--accent-bright);
+  /* Working has no colour (design direction 2.3): a 16% track with the arc in the body
+     tone, said by motion alone. */
+  border: 1.6px solid rgb(255 255 255 / 16%);
+  border-top-color: var(--cv-t2);
   border-radius: var(--radius-pill);
-  animation: acp-spin var(--motion-loop-spin) linear infinite;
+  animation: acp-spin var(--cv-spin) linear infinite;
 }
 
-/* Compaction seam: dashed full-width divider, centred uppercase mono label. */
+/* A seam in the conversation (context compacted, model changed): one centred quiet line.
+   It is said by its place and tone; no rule is drawn on either side. */
 .acp-compaction {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  justify-content: center;
+  text-align: center;
+  color: var(--cv-t3);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-caption);
+  line-height: var(--cv-leading-caption);
+  font-variant-numeric: tabular-nums;
 }
-.acp-compaction::before,
-.acp-compaction::after {
-  content: "";
-  flex: 1;
-  border-top: var(--border-hairline) dashed var(--border-color);
-}
-.acp-compaction span {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
+.acp-compaction span { color: inherit; }
 
 /* A backend's own answer to a slash command: the tool voice, kept whole, never a bubble. */
 .acp-command-reply {
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  letter-spacing: var(--tracking-mono);
-  color: var(--text-muted);
+  font-family: var(--cv-mono);
+  font-size: var(--cv-type-code);
+  line-height: var(--cv-leading-code);
+  color: var(--cv-t2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1629,209 +1742,268 @@ button.list-row:hover .list-row-title {
 }
 
 /* --- Chat panel (v2 — the ticket's worker; Vylo restraint) --------------- */
-/* Message history + input. No dividers: the thread fades into a whisper header and
- * a recessed composer. One user pill; the worker is bubble-less prose. */
+/* The conversation uses only the --cv-* system (tokens.css). Head and pane rules (lane D):
+ * the pane frame, header, options menu, status slot, jump button, shared state marks. */
 
-/* Shared measures keep the conversation's head and composer controls in agreement. */
 .chat-panel {
+  /* Shared measures keep the conversation's head and composer controls in agreement. */
   --conversation-glyph: 22px;
   --conversation-target: 32px;
-  /* Quiet text in the conversation is one tone: the secondary (#a7a7a7), which holds 4.5:1
-     on every surface the conversation draws (7.8 on the page, 6.0 on the composer, 5.1 on
-     a selected row). The tertiary step under it read as faint on the dark page, so every
-     name for it — and the aliases resolved from it at the root — lands on the secondary
-     here. The ladder in the conversation is strong, primary, secondary; faint is left for
-     placeholders and disabled controls. Hierarchy among quiet things is size and weight. */
-  /* Round 4: the quiet tone itself sits a step over the app's secondary here (#b1b1b1:
-     8.7 on the page, 6.7 on the composer's field, 5.7 on a selected row), because the
-     conversation's quiet lines are small and many — turn heads, tool rows, an option's
-     description — and at #a7a7a7 they read as dim beside the prose. Body (#dadada) and
-     strong (#ececec) stay where they are, so the ladder keeps its steps. */
-  --tone-secondary: #b1b1b1;
-  --text-muted: var(--tone-secondary);
-  --text-faint: var(--tone-secondary);
-  --tone-tertiary: var(--tone-secondary);
-  --text-faintest: var(--tone-secondary);
-  --chart-muted: var(--tone-secondary);
-  --chart-legend: var(--tone-secondary);
-  --code-syntax-comment: var(--tone-secondary);
-  /* Marks that are not words (a tool's kind glyph, a chevron at rest) stay a step under the
-     text they sit beside, and above 3:1 on the page and the row's hover. */
-  /* An answer's h1 and h2: between the section head (15) and the page reading (22). */
-  --type-conversation-heading: 18px;
-  --conversation-mark-quiet: color-mix(in srgb, var(--tone-secondary) 50%, var(--tone-faint));
   flex: 1;
   min-height: 0;
   min-width: 0;
   max-width: 100%;
   display: flex;
   flex-direction: column;
+  color: var(--cv-t2);
+  font-family: var(--cv-font);
 }
 
 .chat-head {
   flex: none;
   min-width: 0;
   max-width: 100%;
+  height: 56px;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  /* Inline padding follows the transcript's rule: inside a card the card holds the inset,
-     and a host that draws no card gets it here. */
-  padding: var(--space-2) var(--space-3);
-  /* The design rules the head off from the transcript. It is the card's own seam, the pair
-     to the one above the well, and it is only ever drawn where the head is: at rest the
-     head is not on the screen at all. */
-  border-block-end: var(--border-hairline) solid var(--border-color);
+  gap: var(--cv-s3);
+  padding: 0;
 }
-
-.chat-conn-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  flex: none;
-  background: var(--accent-error);
-}
-
-
-.chat-state {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-}
-.chat-state--attn { color: var(--accent-text); }
 
 .chat-head-right {
   flex: none;
-  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--cv-s1);
 }
 
-
-.chat-overflow { position: relative; display: flex; }
-
-.chat-overflow-btn {
-  width: var(--conversation-target);
-  height: var(--conversation-target);
+/* One icon button: 32 square, an 8 radius, a drawn 16px glyph, t3 at rest and t1 on a
+ * control fill when hovered. */
+.cv-icon-button {
+  width: 32px;
+  height: 32px;
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: none;
-  border: none;
-  color: var(--text-faintest);
-  line-height: 1;
-  cursor: pointer;
   padding: 0;
-  border-radius: var(--radius-md);
-  transition:
-    color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
+  border: 0;
+  border-radius: var(--cv-r-md);
+  background: transparent;
+  color: var(--cv-t3);
+  cursor: pointer;
+  transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
 }
-/* One icon size for every control on the card, head and foot alike. A control whose glyph
- * is a character draws whatever share of its em the font chooses, which is why these read
- * as specks beside the drawn ones. */
-.chat-overflow-btn svg {
-  width: var(--conversation-glyph);
-  height: var(--conversation-glyph);
+.cv-icon-button--small { width: 28px; height: 28px; }
+.cv-icon-button svg {
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.35;
+  stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* The three dots are dots, not strokes. */
-.chat-overflow-btn .chat-overflow-dots circle { fill: currentColor; stroke: none; }
-.chat-overflow-btn:hover { color: var(--text-strong); background-image: var(--interaction-hover); }
+.cv-icon-button .cv-dots circle { fill: currentColor; stroke: none; }
+.cv-icon-button:hover,
+.cv-icon-button[aria-expanded="true"] { color: var(--cv-t1); background: var(--cv-control); }
+.cv-icon-button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+
+/* The state marks every place that says the conversation's state draws with: the header,
+ * the dock's line. A 14px ring whose arc is t2 (working has no colour, only motion), the
+ * person's 6px accent dot, and drawn 14px glyphs in the line's own tone. */
+.cv-spinner {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--cv-r-pill);
+  border: 1.6px solid rgb(255 255 255 / 16%);
+  border-top-color: var(--cv-t2);
+  animation: cv-spin var(--cv-spin, 1s) linear infinite;
+}
+.cv-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-inline: 4px;
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-accent);
+}
+.cv-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cv-glyph--danger { color: var(--cv-danger); }
+.cv-glyph--caution { color: var(--cv-caution); }
+@keyframes cv-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .cv-spinner { animation: none; transform: rotate(35deg); }
+}
+
+/* --- Options menu: the float plane. Sections are set apart by space and a quiet caption,
+ * never by rules. */
+.chat-overflow { position: relative; display: flex; }
 
 .chat-overflow-menu {
   position: absolute;
-  top: calc(100% + var(--space-1));
+  top: calc(100% + var(--cv-s2));
   right: 0;
-  z-index: 2;
-  min-width: 160px;
-  background: var(--surface-2);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: var(--space-1);
+  z-index: 4;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: 60vh;
+  overflow-y: auto;
   display: grid;
+  gap: var(--cv-s1);
+  padding: 6px;
+  border-radius: var(--cv-r-lg);
+  background: var(--cv-float);
+  box-shadow: var(--cv-shadow-float);
+  animation: cv-pop-in var(--cv-dur-base) var(--cv-ease-out);
 }
+@keyframes cv-pop-in { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .chat-overflow-menu { animation: none; } }
 
 .chat-overflow-actions { display: grid; }
 
 .chat-overflow-item {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px var(--cv-s2);
+  border: 0;
+  border-radius: var(--cv-r-md);
   background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
+  color: var(--cv-t2);
   cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
+  font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
   text-align: left;
-  padding: var(--space-1) var(--space-2);
 }
-.chat-overflow-item:hover { color: var(--text-strong); background-image: var(--interaction-hover); }
-.chat-overflow-item--confirm { color: var(--accent-error); }
-.chat-overflow-item--confirm:hover { color: var(--accent-error); }
+.chat-overflow-item:hover,
+.chat-overflow-item:focus-visible { color: var(--cv-t1); background: var(--cv-control); outline: none; }
+.chat-overflow-item--confirm,
+.chat-overflow-item--confirm:hover { color: var(--cv-danger); }
 
-/* At full height, the top bar is the conversation's only chrome. The larger targets keep
- * their glyph ink on the same inset as the worker type. Smaller states retain the card
- * header above without any size or spacing changes. */
-[data-conversation-pane][data-conversation-state="opened"] .chat-head {
-  height: 44px;
-  padding: 0;
+.chat-overflow-section {
+  display: grid;
+  gap: var(--cv-s1);
+  min-width: 0;
+  padding: var(--cv-s2) var(--cv-s2) var(--cv-s1);
 }
-
-[data-conversation-pane][data-conversation-state="opened"] .chat-overflow-menu {
-  min-width: 200px;
-}
-
-/* The earlier conversations, as one control in the menu. It sits under the actions and
- * above the workspace path, and it is the only part a read-only pane keeps. */
-.chat-overflow-history {
-  display: block;
-  /* An entry is named by when it started and by its id, which is wider than any menu
-     should be. The cap is what holds the menu to its own width; the control fills it. */
-  max-width: 240px;
-  padding: var(--space-2) var(--space-2) var(--space-1);
-}
-
-/* The seam belongs between two sections. A read-only pane keeps only this one. */
-.chat-overflow-history:not(:first-child) {
-  margin-top: var(--space-1);
-  border-top: var(--border-hairline) solid var(--border-color);
+.chat-overflow-label {
+  color: var(--cv-t3);
+  font: var(--cv-weight-label) var(--cv-type-caption)/var(--cv-leading-caption) var(--cv-font);
 }
 
 .chat-overflow-history select {
   display: block;
   width: 100%;
   min-width: 0;
+  min-height: 32px;
   border: 0;
-  background: transparent;
-  color: var(--text-muted);
+  border-radius: var(--cv-r-md);
+  background: var(--cv-control);
+  color: var(--cv-t1);
   cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
+  padding: 0 var(--cv-s2);
+  font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
   text-overflow: ellipsis;
 }
-
 .chat-overflow-history select:focus-visible {
-  outline: var(--focus-width) solid var(--focus-ring);
-  outline-offset: 2px;
+  outline: var(--cv-focus-width) solid var(--cv-accent);
+  outline-offset: var(--cv-focus-offset);
 }
 
-/* The workspace path is a fact in the menu, not an action. A path wraps because either
+/* The workspace path is a fact in the menu, not an action. It wraps, because either
  * truncated end can contain the part that identifies the workspace. */
+.chat-overflow-fact-row { display: flex; align-items: flex-start; gap: var(--cv-s2); min-width: 0; }
 .chat-overflow-path {
-  margin-top: var(--space-1);
-  padding: var(--space-2) var(--space-2) var(--space-1);
-  border-top: var(--border-hairline) solid var(--border-color);
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-mono);
+  flex: 1;
+  min-width: 0;
+  padding-top: 5px;
+  color: var(--cv-t3);
+  font: var(--cv-weight-body) var(--cv-type-output)/var(--cv-leading-output) var(--cv-mono);
   overflow-wrap: anywhere;
 }
+
+/* --- The composer stack's status slot (h28, gone when empty): the task pill at the left,
+ * the jump to the newest line in the middle. In flow between transcript and composer. */
+.cv-status-slot {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  min-height: 28px;
+  margin-block-end: var(--cv-s2);
+}
+.cv-status-slot:not(:has(.cv-jump, .cv-status-start *)) { display: none; }
+.cv-status-start { grid-column: 1; min-width: 0; display: flex; justify-content: flex-start; }
+.cv-status-start:not(:has(*)) { display: none; }
+.cv-jump {
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--cv-s3) 0 10px;
+  border: 0;
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-raised);
+  color: var(--cv-t2);
+  font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+  white-space: nowrap;
+  cursor: pointer;
+  animation: cv-fade-in var(--cv-dur-base) var(--cv-ease-out);
+  transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
+}
+.cv-jump svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.cv-jump:hover { background: var(--cv-control); color: var(--cv-t1); }
+.cv-jump:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+@keyframes cv-fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cv-jump { animation: none; } }
+
+/* --- One set of buttons for the conversation (design direction 2.7). One primary per
+ * decision area: the action that commits. A primary that cannot go yet is drawn as a quiet
+ * outline with t4 words, never as a dimmed white pill. */
+.cv-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 0 var(--cv-s3);
+  border: 0;
+  border-radius: var(--cv-r-md);
+  background: transparent;
+  color: var(--cv-t2);
+  font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
+}
+.cv-button svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.cv-button--small { min-height: 28px; padding: 0 10px; }
+.cv-button--primary { background: var(--cv-primary-fill); color: var(--cv-primary-ink); }
+.cv-button--primary:hover:not(:disabled) { background: #ffffff; }
+.cv-button--secondary { background: var(--cv-control); color: var(--cv-t1); }
+.cv-button--secondary:hover:not(:disabled) { background: var(--cv-control-hover); }
+.cv-button--ghost { color: var(--cv-t2); }
+.cv-button--ghost:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
+.cv-button--danger { color: var(--cv-danger); }
+.cv-button:disabled { cursor: default; background: transparent; color: var(--cv-t4); }
+.cv-button--primary:disabled,
+.cv-button--secondary:disabled { box-shadow: inset 0 0 0 1px var(--cv-line-strong); }
+.cv-button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
 .chat-thread-shell {
   position: relative;
@@ -1855,26 +2027,19 @@ button.list-row:hover .list-row-title {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  /* The transcript lines up with the well below it. Inside a card the card holds the
-     inset for both of them; in a host that draws no card — the Chief of Staff — the well
-     carries its own, so the transcript matches it rather than sitting a few pixels
-     further out. The newest line keeps a full step of air over the composer, so a draft
-     that grows several lines tall never sits against what was last said
-     (NEWEST_LINE_BOTTOM_GAP_PIXELS in viewport/viewportConfiguration.ts is this value). */
-  /* The top is a step deeper than the bottom: the first message's time and Copy appear
-     in the space over it, and need clear air under the head's rule. */
-  padding: var(--space-6) var(--space-3) var(--space-5);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
-          mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+  /* 28 over the first line (its time and Copy appear in the space above it, clear of the
+     head's rule) and 24 under the newest (NEWEST_LINE_BOTTOM_GAP_PIXELS in
+     viewport/viewportConfiguration.ts is this value). */
+  padding: var(--cv-transcript-pad-top) var(--space-3) var(--cv-transcript-pad-bottom);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
+          mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
 }
 
-/* The measured content box keeps the transcript's original flex layout. It cannot
- * shrink when delayed media or Markdown grows, and answer room stays outside it. */
+/* The measured content box. It cannot shrink when delayed media or Markdown grows, and
+ * answer room stays outside it. */
 .chat-thread-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
   flex: none;
 }
 
@@ -1887,196 +2052,126 @@ button.list-row:hover .list-row-title {
   max-width: 100%;
 }
 
-.chat-jump {
-  position: absolute;
-  left: 50%;
-  bottom: var(--space-3);
-  transform: translateX(-50%);
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  white-space: nowrap;
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  font-weight: var(--weight-title);
-  line-height: 1;
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease),
-    color var(--motion-fast) var(--motion-ease);
-}
-.chat-jump:hover {
-  background-image: var(--interaction-hover);
-  border-color: var(--accent-bright);
-  color: var(--text-strong);
-}
+/* The thread's rhythm (design direction 2.5). Every gap is a margin on the transcript's
+ * direct children, set by what a child is and what came before it, never by a patch that
+ * undoes a shared gap:
+ *   turn   32  between turns: the person's message, a turn's head, the next message
+ *   meta    8  a turn's head binds to the first thing in its turn
+ *   block  16  prose, a tool run, a callout, an attachment, inside one turn
+ *   section 24 two messages of the agent's in a row (Focus): two, not one long one
+ *   row     0  tool rows stack with no gap; each is its own 32 px line
+ * The projected transcript names each item's place with data-rhythm; the plain transcript
+ * is read by its elements. */
+.chat-thread-content > * + * { margin-block-start: var(--cv-gap-block); }
+.chat-thread-content > [data-rhythm="turn"] { margin-block-start: var(--cv-gap-turn); }
+.chat-thread-content > [data-rhythm="meta"] { margin-block-start: var(--cv-gap-meta); }
+.chat-thread-content > [data-rhythm="block"] { margin-block-start: var(--cv-gap-block); }
+.chat-thread-content > [data-rhythm="section"] { margin-block-start: var(--cv-s5); }
+.chat-thread-content > [data-rhythm="row"],
+.chat-thread-content > [data-rhythm="first"],
+.chat-thread-content > [data-rhythm="none"],
+.chat-thread-content > [data-rhythm]:first-child { margin-block-start: 0; }
+.chat-thread-content > :is(.chat-u, .chat-system, [data-conversation-turn]):not(:first-child) { margin-block-start: var(--cv-gap-turn); }
+.chat-thread-content > [data-conversation-turn] + * { margin-block-start: var(--cv-gap-meta); }
+.chat-thread-content > .chat-a + .chat-a { margin-block-start: var(--cv-s5); }
 
-/* The thread's rhythm: a turn's head ("Worked for…", "Working for…") and the line that
- * says how a turn ended belong to what they introduce, so they sit close over it, and the
- * space between turns stays the larger one. Rows draw through wrappers (the view's item
- * and, inside it, display: contents transcripts), so the rules name the wrappers:
- *   head    an item holding a drawn turn head
- *   marker  an item that draws nothing and gives back its share of the gap
- *   ending  an item holding a turn's ending or stop line
- * The pull is a margin on what follows, never on the head, so the head and the last
- * line under it keep their measured edges for the viewport. */
-[data-conversation-transcript] > [data-conversation-view-key]:has(> div > [data-conversation-turn]) + [data-conversation-view-key]:has(.chat-a, [data-conversation-row="tool_call"], [data-conversation-row="streaming"]),
-[data-conversation-transcript] > [data-conversation-view-key]:has(> div > [data-conversation-turn]) + [data-conversation-view-key]:has(> div:only-child:not(:has(*))) + [data-conversation-view-key]:has(.chat-a, [data-conversation-row="tool_call"], [data-conversation-row="streaming"]),
-[data-conversation-transcript] > [data-conversation-view-key]:has([data-conversation-row="turn_ended"], [data-conversation-row="turn_stopped"]) + [data-conversation-view-key]:has(.chat-a),
-[data-conversation-transcript] > [data-conversation-view-key]:has([data-conversation-row="turn_ended"], [data-conversation-row="turn_stopped"]) + [data-conversation-view-key]:has(> div:only-child:not(:has(*))) + [data-conversation-view-key]:has(.chat-a),
-[data-conversation-transcript] > [data-conversation-turn] + :is(.chat-a, .c2-streaming),
-[data-conversation-transcript] > [data-conversation-row="turn_ended"] + .chat-a {
-  margin-block-start: calc(var(--space-2) - var(--space-5));
-}
-/* And a new turn starts a step further from the one before it. */
-[data-conversation-transcript] > [data-conversation-view-key]:has(.chat-u):not(:first-child),
-[data-conversation-transcript] > [data-conversation-view-key]:has(> div > [data-conversation-turn]):not(:first-child),
-[data-conversation-transcript] > :is(.chat-u, [data-conversation-turn]):not(:first-child) {
-  margin-block-start: var(--space-2);
-}
-/* A head right under the person's message is the same turn: the step goes over the
-   message, not between it and its head. */
-[data-conversation-transcript] > [data-conversation-view-key]:has(.chat-u) + [data-conversation-view-key]:has(> div > [data-conversation-turn]),
-[data-conversation-transcript] > .chat-u + [data-conversation-turn] {
-  margin-block-start: 0;
-}
-
-/* user = the only bubble */
-.chat-u {
-  align-self: flex-end;
-  max-width: 78%;
-  background: var(--surface-2);
-  color: var(--text-strong);
-  border-radius: var(--radius-lg);
-  padding: var(--space-3) var(--space-4);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
 /* Worker messages are bubble-less prose. */
 .chat-a {
   align-self: stretch;
-  color: var(--text-default);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.68;
+  color: var(--cv-t2);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-prose);
+  line-height: var(--cv-leading-prose);
   overflow-wrap: anywhere;
 }
-/* Two messages in a row from the same worker are two messages, not one long one.
-   A short mark the width of a few characters hangs above the second, marking the break
-   without ruling the column. Full already has the turn's work between them, so this
-   belongs to Focus, where that work is not drawn. */
-[data-conversation-lens="focus"] .chat-a + .chat-a {
-  position: relative;
-  margin-block-start: var(--space-4);
+/* In Full, the agent's working narration steps back one tone and one size, so what it
+   said to the person stands as the turn's voice: placement and tone, not a rule. */
+.chat-a--narration {
+  color: var(--cv-t3);
+  font-size: var(--cv-type-ui);
+  line-height: 22px;
 }
-[data-conversation-lens="focus"] .chat-a + .chat-a::before {
-  content: "";
-  position: absolute;
-  inset-block-start: calc(var(--space-3) * -1);
-  inset-inline-start: 0;
-  inline-size: var(--space-6);
-  border-block-start: var(--border-hairline) solid var(--text-faintest);
-  opacity: 0.55;
-}
+.chat-a--narration .markdown { color: inherit; }
+.chat-a--narration :is(strong, b) { color: var(--cv-t2); }
 
-/* programmatic prompts = visible system context, never hidden or mistaken for user prose */
-.chat-system {
-  align-self: stretch;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  padding-block: var(--space-2);
-  padding-inline-end: var(--space-3);
-  color: var(--text-faint);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.6;
-  padding-inline-start: var(--space-3);
-  overflow-wrap: anywhere;
-}
-
-/* The same rounded input stays distinct from the conversation in both states: the
- * reference composer's 10% surface, a 1px edge one step lighter, radius 12. */
+/* THE COMPOSER (ConversationComposer.svelte), design direction v3 §3.12-3.13. One shell on the
+ * raised plane, 16px round, two rows that never trade places: the draft (and, over it, waiting
+ * messages and pending attachments) on top; the controls on a 32px row under it. Meaning is
+ * carried by placement, weight and tone; the shell's own hairline is the only line it draws. */
 .chat-box {
-  position: relative;   /* anchors the "/" command popover above it */
+  position: relative;   /* anchors the composer's upward popovers */
   flex: none;
-  background: var(--composer-surface);
-  border: var(--border-hairline) solid var(--composer-edge);
-  border-radius: var(--composer-radius);
-  padding: var(--space-3) var(--space-3) var(--space-2) calc(var(--composer-inset) - var(--border-hairline));
-  transition: border-color var(--motion-fast) var(--motion-ease);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-line-strong);
+  border-radius: var(--cv-r-xl);
+  padding: var(--cv-s3) var(--cv-s2) var(--cv-s2);
+  transition: border-color var(--cv-dur-fast) var(--cv-ease-out), box-shadow var(--cv-dur-fast) var(--cv-ease-out);
 }
-/* Focus: the composer's own 1px edge in the accent (--composer-focus-edge). Owner: the 2px accent
- * ring was far too much, and staging's faint blend too quiet; one clear 1px accent edge. */
+/* Writing: the shell lifts a step in tone and gathers a soft halo. No coloured edge. */
 .chat-box:focus-within {
-  border-color: var(--composer-focus-edge);
-  box-shadow: none;
+  border-color: rgb(255 255 255 / 18%);
+  box-shadow: 0 0 0 3px var(--cv-accent-halo);
   outline: none;
 }
-/* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
-.chat-box.drag {
-  box-shadow: inset 0 0 0 var(--border-strong) color-mix(in srgb, var(--accent-bright) 30%, transparent);
-}
 
-/* The task-progress popover shares the raised-popover shadow; the property
- * lives here because component styles may not declare box-shadow. */
-.task-pop { box-shadow: var(--shadow-float); }
+/* The task-progress popover shares the floating plane's shadow. */
+.task-pop { box-shadow: var(--cv-shadow-float); }
 
-/* The composer catalog is a raised popover above the composer. No dividers and no accent:
- * grouped rows fade into the surface. */
+/* The catalog of commands, skills and apps: the floating plane, opening upward across the box. */
 .chat-menu {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(100% + var(--space-2));
+  bottom: calc(100% + var(--cv-s2));
   max-height: 320px;
   overflow-y: auto;
-  background: var(--surface-2);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-float);
-  padding: var(--space-1);
-  z-index: 20;
+  background: var(--cv-float);
+  border: 0;
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow-float);
+  padding: 6px;
+  z-index: 40;
 }
 .chat-menu-hd {
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-  letter-spacing: var(--tracking-mono);
-  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-caption);
+  line-height: var(--cv-leading-caption);
+  font-weight: var(--cv-weight-label);
+  color: var(--cv-t3);
+  padding: 6px var(--cv-s2);
 }
 .chat-menu-item {
   display: flex;
   align-items: baseline;
-  gap: var(--space-2);
+  gap: var(--cv-s2);
   width: 100%;
+  min-height: 32px;
   text-align: left;
   background: none;
   border: none;
   cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-md);
+  padding: 6px var(--cv-s2);
+  border-radius: var(--cv-r-md);
+  font-family: var(--cv-font);
 }
-.chat-menu-item.on { background: var(--surface-recessed); }
+.chat-menu-item.on { background: var(--cv-control); }
+/* A command is code, so its name is the one mono word in the menu. */
 .chat-menu-name {
   flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  color: var(--text-strong);
+  font-family: var(--cv-mono);
+  font-size: var(--cv-type-code);
+  line-height: var(--cv-leading-meta);
+  color: var(--cv-t1);
 }
 .chat-menu-desc {
   flex: 1;
   min-width: 0;
-  font-size: var(--type-xs);
-  color: var(--text-faint);
+  font-size: var(--cv-type-caption);
+  line-height: var(--cv-leading-meta);
+  color: var(--cv-t3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2085,19 +2180,19 @@ button.list-row:hover .list-row-title {
 /* The composer also renders on its own (for example, a voice response). Its control
  * measures inherit a host's custom values and otherwise keep the conversation defaults. */
 [data-conversation-composer] {
-  --composer-target: var(--conversation-target, 32px);
-  --composer-glyph: var(--conversation-glyph, 22px);
+  --composer-target: 32px;
+  --composer-glyph: 18px;
+  container-type: inline-size;
 }
 
-/* Pending attachments share one horizontal strip and a common tile height, tall enough that a
- * picture can be told apart and a file's name and whole size fit on its tile. */
+/* Pending attachments (§3.9): one row of tiles over the draft, inside the shell, 56px tall. */
 .chat-attachments {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--cv-s2);
   overflow-x: auto;
   max-width: 100%;
   min-width: 0;
-  padding: var(--space-2) var(--space-1) var(--space-2);
+  padding: var(--cv-s1) var(--cv-s2) var(--cv-s2);
   scrollbar-width: thin;
 }
 .chat-att {
@@ -2118,30 +2213,20 @@ button.list-row:hover .list-row-title {
   display: flex; align-items: center; gap: var(--space-2); max-width: 280px;
   padding-inline: var(--space-2); background: var(--surface-recessed);
 }
-.chat-att.video { max-width: 300px; padding-inline-start: var(--space-1); }
-.chat-att-thumb {
-  position: relative; flex: none; display: grid; place-items: center; overflow: hidden;
-  width: 80px; height: 54px; border-radius: var(--radius-sm); background: var(--surface-2);
-}
-.chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.chat-att-thumb svg {
-  position: relative; width: 20px; height: 20px; padding: 3px; fill: var(--surface-ink);
-  border-radius: var(--radius-pill); background: var(--text-strong);
-}
 .chat-att-kind {
   flex: none; display: grid; place-items: center; width: 32px; height: 32px;
   border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-faint);
-  font-family: var(--font-mono); font-size: var(--type-xs); letter-spacing: var(--tracking-mono);
+  font-family: var(--font-ui); font-size: var(--type-xs);
 }
 .chat-att-words { min-width: 0; display: grid; gap: 1px; }
 .chat-att-name {
   color: var(--text-strong); font-size: var(--type-xs); font-weight: var(--weight-title);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* The size never gives way: a long media type ends in an ellipsis before it. */
+/* The size never gives way: a long kind ends in an ellipsis before it. */
 .chat-att-meta {
   display: flex; min-width: 0;
-  color: var(--text-faint); font-family: var(--font-mono); font-size: var(--type-xs);
+  color: var(--text-faint); font-family: var(--font-ui); font-size: var(--type-xs);
   white-space: nowrap;
 }
 .chat-att-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -2153,7 +2238,7 @@ button.list-row:hover .list-row-title {
   background: var(--surface-2); color: var(--text-strong); cursor: pointer;
   font-size: var(--type-md); line-height: 1;
 }
-.chat-att-x:hover { border-color: var(--accent-error); background-image: var(--interaction-hover); }
+.chat-att-x:hover { background-image: var(--interaction-hover); }
 .chat-att-x:disabled { opacity: 0.5; cursor: default; }
 /* The drop face's place and when it shows; its look is ConversationComposer's own. */
 .chat-drop-label {
@@ -2164,153 +2249,151 @@ button.list-row:hover .list-row-title {
   pointer-events: none;
 }
 .chat-box.drag .chat-drop-label { display: flex; }
+/* Row 1: the draft, 15/24 in the strongest tone, 8px in from the shell's own inset. */
 .chat-ta {
+  display: block;
   width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--cv-s2);
   background: none;
   border: none;
-  resize: none;
-  color: var(--text-default);
-  font: inherit;
-  font-family: var(--font-ui);
-  font-size: max(var(--type-md), var(--type-input));
-  line-height: 1.6;
   outline: none;
-  min-height: 0;
-  padding: 0;
+  resize: none;
   overflow-y: hidden;
-  display: block;
+  color: var(--cv-t1);
+  font-family: var(--cv-font);
+  font-size: max(var(--cv-type-prose), var(--type-input));
+  line-height: var(--cv-leading-prose);
 }
-.chat-ta::placeholder { color: var(--tone-tertiary); }
-/* The input actions use one row and one treatment at every width. */
+.chat-ta::placeholder { color: var(--cv-t4); opacity: 1; }
+/* Row 2: the controls, 32px tall, 8px under the draft. Add at the left; the run choice,
+ * delivery, voice and send at the right. Nothing here moves between states. */
 .chat-foot {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: flex-start;
+  gap: var(--cv-s1);
   width: 100%;
-  max-width: 100%;
   min-width: 0;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
+  height: 32px;
+  margin-top: var(--cv-s2);
+  color: var(--cv-t3);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-meta);
 }
-.chat-foot > [data-conversation-model-picker] { flex: 1 1 0; width: 0; }
-.chat-slash {
-  background: none;
-  border: none;
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  line-height: 1.2;
-}
-.chat-slash:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
-/* A target a finger can find: the conversation's own control size, not the app's
- * smallest icon. The glyph inside grows with it. */
+/* An ask's own actions bring their own height. */
+.chat-foot.has-ask { height: auto; margin-top: 0; }
+.chat-foot > [data-conversation-model-picker] { flex: 0 1 auto; min-width: 0; margin-inline-start: auto; }
+/* Icon buttons: 32px, 8px round, the glyph in the quiet tone, lifting on a control fill. */
 .chat-image {
   width: var(--composer-target);
   height: var(--composer-target);
   display: grid;
   place-items: center;
+  flex: none;
+  padding: 0;
   background: none;
   border: none;
-  color: var(--text-faintest);
+  border-radius: var(--cv-r-md);
+  color: var(--cv-t3);
   cursor: pointer;
-  padding: 0;
-  flex: none;
-  border-radius: var(--radius-md);
+  transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
 }
-.chat-image:hover { color: var(--text-strong); background-image: var(--interaction-hover); }
-.chat-image.on { color: var(--accent-bright); background: var(--surface-recessed); }
-.chat-image:disabled { opacity: 0.5; cursor: default; }
+.chat-image:hover:not(:disabled),
+.chat-image[aria-expanded="true"] { color: var(--cv-t1); background: var(--cv-control); }
+.chat-image:disabled { color: var(--cv-t4); cursor: default; }
 .chat-image svg {
   display: block;
   width: var(--composer-glyph);
   height: var(--composer-glyph);
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.35;
+  stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 .chat-image-input { display: none; }
-/* The model chip and the delivery chip are pills, not icons, so they set their height
- * from their text and came out short of the others. Raise them to the same target here
- * rather than in the picker itself: the same picker draws the Ceiling control on a page
- * this Ticket does not touch. */
-/* The run chips, as the design draws them: the card's own step, the interface face rather
- * than the machine one, and quiet until they are pointed at. Written against the composer so it
- * outranks the picker's own scoped rule, and kept to the composer foot because the same
- * picker draws the Ceiling control on a screen this Ticket does not touch. */
+/* The run chip (§2.7 chip): 28px, 8px round, the model's name in 500 t2, its effort in t3. */
 [data-conversation-composer] .chat-foot .listbox-picker-trigger {
-  height: var(--composer-target);
-  min-height: var(--composer-target);
-  padding-block: 0;
-  font-family: var(--font-ui);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  color: var(--tone-secondary);
-  padding-inline: var(--space-3);
+  height: 28px;
+  min-height: 28px;
+  gap: 6px;
+  padding: 0 var(--cv-s2);
+  border: 0;
+  border-radius: var(--cv-r-md);
+  background: transparent;
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-meta);
+  line-height: var(--cv-leading-meta);
+  font-weight: var(--cv-weight-body);
+  color: var(--cv-t3);
+  transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
 }
-[data-conversation-composer] .chat-foot .listbox-picker-trigger:hover {
-  color: var(--tone-strong);
+[data-conversation-composer] .chat-foot .listbox-picker-trigger:hover:not(:disabled),
+[data-conversation-composer] .chat-foot .listbox-picker-trigger.is-open {
+  background: var(--cv-control);
+  color: var(--cv-t1);
 }
+[data-conversation-composer] .chat-foot .listbox-picker-trigger:disabled { opacity: 1; color: var(--cv-t4); }
 [data-conversation-composer] .chat-foot .listbox-picker-chevron,
-[data-conversation-composer] .chat-foot .listbox-picker-chevron-drawn { display: none; }
-[data-conversation-composer] { container-type: inline-size; }
+[data-conversation-composer] .chat-foot [data-conversation-model-picker] .listbox-picker-chevron-drawn { display: none; }
+[data-conversation-composer] .chat-foot .model-picker-face { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--cv-t3); font-weight: var(--cv-weight-body); text-transform: capitalize; }
+[data-conversation-composer] .chat-foot .listbox-picker-trigger:hover .model-picker-face { color: var(--cv-t1); }
 .chat-submit {
   flex: none;
-  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--cv-s1);
   min-width: 0;
 }
+.chat-foot > .chat-submit:first-of-type,
+.chat-foot > span.chat-submit { margin-inline-start: auto; }
+.chat-foot > [data-conversation-model-picker] + .chat-submit { margin-inline-start: 0; }
+/* Send and Stop: one 32px round at the row's end. Send is the inverse primary when there is
+ * something to send and a quiet control fill when there is not; Stop is a control fill with
+ * a small rounded square in the strongest tone. */
 .chat-send {
-  width: 28px; height: 28px;
+  width: 32px; height: 32px;
   flex: none;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--text-faintest);
+  background: var(--cv-control);
+  color: var(--cv-t4);
   cursor: pointer;
   line-height: 1;
   display: grid;
   place-items: center;
-  transition: background var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
+  transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
 }
 .chat-send svg {
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.chat-send.on { background: var(--accent-bright); color: var(--surface-ink); }
-.chat-send.stop {
-  background: transparent;
-  border: var(--border-hairline) solid var(--accent-error);
-  color: var(--accent-error);
-}
-/* A filled square paints at half the stroked glyph's size. */
+.chat-send.on { background: var(--cv-primary-fill); color: var(--cv-primary-ink); }
+.chat-send.on:hover:not(:disabled) { background: #ffffff; }
+.chat-send.stop { background: var(--cv-control); color: var(--cv-t1); }
+.chat-send.stop:hover { background: var(--cv-control-hover); }
 .chat-send .chat-send-fill {
-  width: calc(var(--composer-glyph) / 2);
-  height: calc(var(--composer-glyph) / 2);
-  border-radius: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2.5px;
   background: currentColor;
   display: block;
 }
-.chat-send:disabled { opacity: 0.5; cursor: default; }
+.chat-send:disabled { cursor: default; }
+.chat-send.on:disabled { opacity: 1; }
 
 /* --- Voice input (t_0pgfmbsr) -------------------------------------------- */
-/* The conversation composer draws its voice take on its own one row, in its own styles.
+/* The conversation composer draws its voice take in its own rows, in its own styles.
  * The .chat-voice-* faces below are the composer field's (ComposerField.svelte), sized for
  * it under THE COMPOSER FIELD. */
 /* The textarea declares display: block, which beats the hidden attribute the
@@ -2372,114 +2455,42 @@ button.list-row:hover .list-row-title {
   line-height: 1;
 }
 
-/* Waiting messages share one tray over the input box: its own card, as wide as the box and on
- * the same edges, 8px clear of it, so the box's rounded corners (and its focus edge) never meet
- * the tray's foot. */
+/* The queue section lives inside the composer shell (HeldPromptStack.svelte owns its look).
+ * .chat-qrow-act stays a plain small ghost button, which the pane's own Retry also wears. */
 .chat-box-stack { display: grid; min-width: 0; max-width: 100%; }
-.chat-queue-wrap {
-  min-width: 0;
-  margin: 0 0 var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  background: var(--surface-recessed);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--composer-radius);
-}
-.chat-queue-stack {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: 172px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-.chat-qrow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  padding: var(--space-1) 0;
-  border-bottom: var(--border-hairline) solid var(--border-color);
-
-}
-.chat-qrow:last-child { border-bottom: 0; }
-
-@keyframes chat-queue-row-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: none; }
-}
-.chat-qrow-txt {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-muted);
-  font-family: var(--font-ui);
-  font-size: var(--type-xs);
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.chat-qrow[data-fate="in_flight"] .chat-qrow-txt,
-.chat-qrow[data-fate="unknown"] .chat-qrow-txt { color: var(--text-faintest); }
-/* A held or unconfirmed message's small actions: ghost buttons in the interface face, in the
- * shared button's radius, never under a 24px target. */
-.chat-qrow-x {
-  flex: none;
-  display: inline-grid;
-  place-items: center;
-  min-width: 24px;
-  min-height: 24px;
-  background: none;
-  border: 0;
-  padding: 0;
-  border-radius: var(--button-radius);
-  color: var(--tone-tertiary);
-  cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: var(--type-row);
-  line-height: 1;
-}
-.chat-qrow-x:hover:not(:disabled) { color: var(--tone-strong); background: var(--button-ghost-fill-hover); }
-.chat-qrow-state {
-  flex: none;
-  align-self: center;
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-mono);
-  padding: 0 var(--space-1);
-}
 .chat-qrow-act {
   flex: none;
-  align-self: center;
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  height: 28px;
+  padding: 0 10px;
   background: transparent;
   border: 0;
-  border-radius: var(--button-radius);
-  color: var(--tone-secondary);
+  border-radius: var(--cv-r-md);
+  color: var(--cv-t2);
   cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: var(--type-small);
-  font-weight: var(--weight-small);
-  line-height: 1.2;
-  padding: 0 var(--space-2);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-meta);
+  font-weight: var(--cv-weight-label);
+  line-height: var(--cv-leading-meta);
   white-space: nowrap;
+  transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
 }
-.chat-qrow-act:hover:not(:disabled) { background: var(--button-ghost-fill-hover); color: var(--tone-strong); }
-.chat-qrow-x:disabled,
-.chat-qrow-act:disabled { opacity: 0.45; cursor: default; }
-@media (prefers-reduced-motion: reduce) {
-  .chat-qrow { animation: none; }
-  .chat-qrow.is-leaving { transition: none; transform: none; }
-}
+.chat-qrow-act:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
+.chat-qrow-act:disabled { color: var(--cv-t4); cursor: default; }
 
-/* Composer receipt: only failures speak — a mono error line under the box */
+/* Composer receipt: only failures speak, as a note in the danger tone under the box. */
 .chat-receipt {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--accent-error);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding-inline: var(--cv-s2);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-meta);
+  line-height: var(--cv-leading-meta);
+  color: var(--cv-danger);
 }
+.chat-receipt svg { flex: none; width: 14px; height: 14px; margin-top: 3px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* --- Proposal / scope / review (T15) ------------------------------------- */
 
@@ -5377,84 +5388,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 }
 .manager-column { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear)); }
 .ticket-col { padding-bottom: calc(var(--conversation-layer-height, var(--composer-clear)) + var(--page-end-clear) - var(--space-7)); }
-
-/* The floating composer: one line, 44px; its + at the left, its model, delivery and voice
- * controls at the right, all on the composer's own row. It grows with what is typed, and
- * keeps its full layout whenever it holds anything but the line (attachments, an ask, a
- * question, a voice take). */
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) {
-  display: grid;
-  /* The model chip's column gives way first: on a phone, while a turn runs and a draft waits,
-   * delivery, voice, stop and send need the room, and the chip's name ends in an ellipsis. */
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) auto;
-  align-items: end;
-  column-gap: var(--space-1);
-  min-height: var(--composer-height);
-  padding: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline)) var(--space-2);
-  /* From the box's top edge to the first line. The draft owns this band as its own padding,
-   * so a finger on the box's top edge lands in the field, not on the transcript or the
-   * status line just above it. The words stay where they were. */
-  --composer-field-reach: calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline) + (var(--composer-control) - 24px) / 2);
-}
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-foot { display: contents; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-ta {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: end;
-  margin: calc(-1 * var(--composer-field-reach)) 0 calc((var(--composer-control) - 24px) / 2) var(--space-1);
-  padding-top: var(--composer-field-reach);
-  line-height: 24px;
-  /* The band takes presses, never words: a scrolled draft ends cleanly where its first line
-   * begins. A mask leaves the band's hit area to the field. */
-  -webkit-mask-image: linear-gradient(to bottom, transparent var(--composer-field-reach), #000 var(--composer-field-reach));
-          mask-image: linear-gradient(to bottom, transparent var(--composer-field-reach), #000 var(--composer-field-reach));
-}
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-add { grid-column: 1; grid-row: 1; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { grid-column: 3; grid-row: 1; flex: none; width: auto; min-width: 0; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) .chat-submit { grid-column: 4; grid-row: 1; min-width: max-content; }
-
-/* THE DRAFT ROW. A draft that comes within ~40px of the controls, or holds a line break, takes
- * the full width on a row of its own, and the controls stay on the row under it
- * (ConversationComposer sets data-composer-controls-below, and clears it once the draft fits
- * with ~80px to spare or is emptied). Where the one row would leave the draft under 240px (a
- * phone, a tablet, a narrow window) the draft has its own row at rest too. The columns are the same in both layouts, so no control
- * moves: the draft rises into its row and the box grows over it, the component animating both
- * (180ms, none under reduced motion). The rows sit at the box's foot, so while the height
- * moves the controls stay put and the draft travels with the box's top edge. The draft's
- * first line keeps its 10px from the top and its left edge is the composer's inset. */
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) { align-content: end; }
-.conversation-layer .chat-box[data-composer-controls-below]:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) > .chat-ta {
-  grid-column: 1 / -1;
-  width: auto;
-  margin: calc((var(--composer-control) - 24px) / 2) calc(var(--composer-inset) - var(--space-2) - var(--border-hairline));
-  margin-top: calc((var(--composer-control) - 24px) / 2 - var(--composer-field-reach));
-}
-.conversation-layer .chat-box[data-composer-controls-below]:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) :is(.chat-add, [data-conversation-model-picker], .chat-submit) { grid-row: 2; }
-/* The model picker sits at the right in both layouts, so its panel opens from the composer's
- * right edge, inside the composer's width (it used to open from the chip's left and run past
- * the composer, off screen at 768px). It is placed against the box, 8px above it, like the
- * command menu. */
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] { position: static; }
-.conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label))) [data-conversation-model-picker] > .listbox-picker-panel {
-  left: auto;
-  right: 0;
-  bottom: calc(100% + var(--space-2));
-}
-
-/* The status line stands over the composer, where staging placed it (ConversationRestBar). */
-
-/* The run chips are small print: the model's name and its provider mark (drawn in the chip's
- * own tone, ComposerRunControls) at 12.5px in the secondary tone, the reasoning effort a step
- * quieter, the delivery chip the same. The placeholder is tertiary at rest and secondary once
- * the composer has focus. */
-[data-conversation-composer] .chat-foot .model-picker-face { color: inherit; }
-[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--composer-quiet-tone); }
-[data-conversation-composer] .chat-ta:focus::placeholder { color: var(--tone-secondary); }
-/* The composer's icons (add, voice, send at rest) stand in the secondary tone, one step above
- * the placeholder, and lift to the strong tone on hover. */
-[data-conversation-composer] .chat-image:not(.on),
-[data-conversation-composer] .chat-send:not(.on) { color: var(--tone-secondary); }
-[data-conversation-composer] .chat-image:not(.on):hover:not(:disabled) { color: var(--tone-strong); }
 
 /* Short page summaries keep their final words together when space allows. */
 :is(.manager-workspace-recap, .ticket-recap, .review-recap, .recap-text, .screen-header-description, .page-kit .summary, [data-recap]) { text-wrap: pretty; }

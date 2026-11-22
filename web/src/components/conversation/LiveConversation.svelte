@@ -1119,11 +1119,15 @@
   {#if !started && emptyState}
     {@render emptyState()}
   {:else if !emptyState && !readOnly && nothingSaidYet}
-    <!-- Orientation, not content: nothing here is invented, it says what will appear. -->
+    <!-- Orientation, not content: nothing here is invented, it says what will appear. It
+         stands in the middle of the empty transcript (the viewport gives it the whole view),
+         a mark, a title and one line, so the composer under it is the obvious next step. -->
     <div class="conversation-empty" data-conversation-empty role="note">
+      <svg class="conversation-empty-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5Z" />
+      </svg>
       <p class="conversation-empty-title">No messages yet</p>
-      <p>Your first message starts this conversation. Replies, questions and anything that needs your approval appear here.</p>
-      <p class="conversation-empty-hint">Focus shows what is said to you. Full also shows the work as it happens.</p>
+      <p class="conversation-empty-body">Replies, and anything that needs you, will appear here.</p>
     </div>
   {/if}
 {/snippet}
@@ -1132,15 +1136,39 @@
   .conversation-empty {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
-    max-width: 52ch;
-    padding-block: var(--space-6) var(--space-3);
-    color: var(--text-muted);
-    font-family: var(--font-ui);
-    font-size: var(--type-body);
-    line-height: var(--leading-body);
+    align-items: center;
+    align-self: center;
+    max-width: 420px;
+    margin-block: auto;
+    padding-block: var(--cv-s7);
+    text-align: center;
+    font-family: var(--cv-font);
+    animation: conversation-empty-in var(--cv-dur-base) var(--cv-ease-out) both;
   }
   .conversation-empty p { margin: 0; }
-  .conversation-empty-title { color: var(--text-strong); font-size: var(--type-page-section); font-weight: var(--weight-title); }
-  .conversation-empty-hint { margin-block-start: var(--space-2) !important; color: var(--text-faintest); font-size: var(--type-small); }
+  /* A quiet mark, not a badge: the glyph alone in the placeholder tone. */
+  .conversation-empty-mark {
+    width: 24px;
+    height: 24px;
+    margin-block-end: var(--cv-s4);
+    fill: none;
+    stroke: var(--cv-t4);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+  }
+  .conversation-empty-title {
+    color: var(--cv-t1);
+    font-size: var(--cv-type-h2);
+    line-height: var(--cv-leading-h2);
+    font-weight: var(--cv-weight-title);
+    letter-spacing: -0.01em;
+  }
+  .conversation-empty-body {
+    margin-block-start: var(--cv-s1) !important;
+    color: var(--cv-t3);
+    font-size: var(--cv-type-ui);
+    line-height: 22px;
+  }
+  @keyframes conversation-empty-in { from { opacity: 0; transform: translateY(4px); } }
+  @media (prefers-reduced-motion: reduce) { .conversation-empty { animation: none; } }
 </style>

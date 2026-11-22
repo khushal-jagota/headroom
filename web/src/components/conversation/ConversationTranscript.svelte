@@ -140,7 +140,7 @@
   function runValuesLine(model: string | null, reasoningEffort: string | null): string {
     const parts = [modelDisplayName(models, model) ?? "the backend's own model"];
     if (reasoningEffort) parts.push(reasoningEffort);
-    return `now running on ${parts.join(" · ")}`;
+    return `Now running on ${parts.join(" · ")}`;
   }
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
@@ -167,7 +167,7 @@
   {#each display as slot (slot.key)}
     {@const item = slot.item}
     {#if slot.local !== null}
-      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
+      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register} rhythm="turn">
       <UserMessage presentationRowKey={item?.key ?? null} row={item?.kind === 'row' && (item.row.kind === 'prompt' || item.row.kind === 'prompt_refused' || item.row.kind === 'prompt_uncertain' || item.row.kind === 'prompt_discarded') ? item.row : null} local={slot.local} {conversationId} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
       </ViewItem>
     {:else if item !== null}
@@ -185,24 +185,22 @@
         {livenessPulse}
       />
     {:else if item.kind === "work_group"}
-      {#if lens === "full"}
+      <!-- Focus shows no tool calls at all; Full keeps each run behind its own summary. -->
       <WorkGroup {activityUncertain}
         openRows={openToolCallRows}
         wholeDetails={wholeToolCallDetails}
         entries={item.entries}
-        hidden={lens !== "full" && item.settled && expandedTurns[item.turnKey] !== true}
-        showAll={lens === "full"}
+        hidden={lens !== "full"}
         {conversationId}
       />
-      {/if}
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
       <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
     {:else if item.row.kind === "agent_message"}
-      {@const toYou = lens === "full" && item.row.toOwner}
-      <!-- In Full, where the agent's own narration sits beside them, the messages it
-           addressed to the owner are marked as theirs. Focus shows little else. -->
-      <article class="chat-a" class:chat-a--to-you={toYou} data-conversation-row="agent_message" data-conversation-to-owner={item.row.toOwner ? "" : undefined} data-conversation-source-key={item.row.key}>
-        {#if toYou}<div class="c2-to-you">To you</div>{/if}
+      {@const narration = lens === "full" && !item.row.toOwner}
+      <!-- In Full the agent's own narration sits beside what it said to the person. The
+           narration steps back a tone and a size, so a message to the person reads as the
+           turn's voice by tone and weight alone, with no rule or label beside it. -->
+      <article class="chat-a" class:chat-a--narration={narration} data-conversation-row="agent_message" data-conversation-to-owner={item.row.toOwner ? "" : undefined} data-conversation-source-key={item.row.key}>
         <MessagePieces presentationRowKey={item.key} content={item.row.content} {conversationId} />
         <MessageActions content={item.row.content} createdAt={item.row.createdAt} />
       </article>
@@ -283,54 +281,38 @@
 
 <style>
   .c2-transcript { display: contents; }
-  .c2-streaming { color: var(--text-muted); }
   .chat-a { position: relative; }
-  /* The label says whose it is; the rule beside the message only groups it, so it is a
-     quiet tint of the label's colour rather than the label's full strength. A long message
-     cut by the thread's edge then fades out with its words instead of running on as the
-     brightest mark on the screen. */
-  .chat-a--to-you {
-    padding-inline-start: var(--space-3);
-    border-inline-start: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 45%, transparent);
-    color: var(--text-strong);
-  }
-  .c2-to-you {
-    margin-block-end: var(--space-1);
-    color: var(--accent-bright);
-    font-family: var(--font-ui);
-    font-size: var(--type-small);
-    font-weight: var(--weight-title);
-    line-height: 1.4;
-  }
-  /* An ask's record reads like the turn head beside it: the thread's own small voice,
-     flush with the thread, no box. Only the command it asked about stays in mono. */
+  /* An ask's record, once it has been answered or has expired: the turn head's own small
+     voice, flush with the thread, no box. Only the command it asked about stays in mono. */
   .c2-ask-row {
     align-self: stretch;
     display: grid;
-    gap: var(--space-1);
+    gap: var(--cv-s1);
     min-width: 0;
-    color: var(--text-default);
-    font-family: var(--font-ui);
-    font-size: var(--type-small);
-    line-height: 1.5;
+    color: var(--cv-t3);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
     overflow-wrap: anywhere;
   }
-  .c2-ask-label { color: var(--text-faintest); }
-  .c2-ask-title { color: var(--text-muted); }
-  .c2-ask-question { color: var(--text-muted); }
-  .c2-ask-answers { color: var(--text-faintest); }
-  .c2-ask-row.is-dead .c2-ask-title { color: var(--text-faintest); }
+  .c2-ask-label { color: var(--cv-t3); }
+  .c2-ask-title { color: var(--cv-t2); }
+  .c2-ask-question { color: var(--cv-t2); }
+  .c2-ask-answers { color: var(--cv-t3); }
+  .c2-ask-row.is-dead .c2-ask-title { color: var(--cv-t3); }
   /* Capped and scrolling: a transcript row never grows by the size of a payload. */
   .c2-ask-detail {
     margin: 0;
-    max-height: calc(var(--type-xs) * 16);
+    max-height: calc(var(--cv-leading-output) * 12);
     overflow: auto;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    background: var(--surface-code);
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    padding: 10px var(--cv-s3);
+    border: 1px solid var(--cv-line);
+    border-radius: var(--cv-r-md);
+    background: var(--cv-well);
+    color: var(--cv-t2);
+    font-family: var(--cv-mono);
+    font-size: var(--cv-type-output);
+    line-height: var(--cv-leading-output);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

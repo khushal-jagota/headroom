@@ -53,3 +53,12 @@ export function completeUserInputAnswers(
   }
   return answers;
 }
+
+/** The option a number key picks in a question (1–9), or null. */
+export function userInputOptionForKey(
+  question: Pick<UserInputQuestion, "options"> | undefined,
+  key: string
+): string | null {
+  if (!/^[1-9]$/.test(key) || question === undefined) return null;
+  return question.options[Number(key) - 1]?.label ?? null;
+}

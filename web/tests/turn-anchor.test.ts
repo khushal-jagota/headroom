@@ -6,40 +6,39 @@ import ToolCallRow from "../src/components/conversation/ToolCallRow.svelte";
 import type { ToolCallRow as ToolCallRowType } from "../src/lib/conversation/transcript";
 
 describe("a turn's head", () => {
-  it("sets only a literal subject of its live line as code", () => {
-    const draw = (summaryIsLiteral: boolean) => render(TurnAnchor, {
-      props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity: { sentence: "Running go test", title: "Running", summary: "go test", summaryIsLiteral } }
+  it("never counts or opens tool calls: Focus does not show them, Full shows them in runs", () => {
+    const settled = render(TurnAnchor, {
+      props: { settled: true, durationSeconds: 420, toolCallCount: 11, onToggle: () => {} }
     }).body;
-    expect(draw(true)).toContain("c2-live-subject--literal");
-    expect(draw(true)).toContain("go test");
-    expect(draw(false)).not.toContain("c2-live-subject--literal");
+    expect(settled).toContain("Worked for 7m");
+    expect(settled).not.toContain("tool call");
+    expect(settled).not.toContain("data-conversation-turn-fold");
+    const running = render(TurnAnchor, {
+      props: { settled: false, startedAtUnixMilliseconds: Date.now(), toolCallCount: 3, onToggle: () => {} }
+    }).body;
+    expect(running).toContain("Working");
+    expect(running).not.toContain("tool call");
+    expect(running).not.toContain("data-conversation-turn-fold");
+    expect(running).not.toContain("data-conversation-live-activity");
   });
 
-  it("opens onto the work a reading keeps folded, and says how much there is", () => {
+  it("opens onto the earlier messages a settled turn folded, and says how many", () => {
     const html = render(TurnAnchor, {
-      props: { settled: true, durationSeconds: 420, toolCallCount: 11, onToggle: () => {} }
+      props: { settled: true, durationSeconds: 420, toolCallCount: 11, foldedMessageCount: 2, onToggle: () => {} }
     }).body;
     expect(html).toContain("data-conversation-turn-fold");
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Worked for 7m");
-    expect(html).toContain("11 tool calls");
+    expect(html).toContain("2 earlier messages");
+    expect(html).not.toContain("tool call");
   });
 
-  it("stays a plain line where the reading already shows the work", () => {
+  it("stays a plain line where the reading already shows everything", () => {
     const html = render(TurnAnchor, {
-      props: { settled: true, durationSeconds: 420, toolCallCount: 11 }
+      props: { settled: true, durationSeconds: 420, toolCallCount: 11, foldedMessageCount: 2 }
     }).body;
     expect(html).not.toContain("<button");
     expect(html).toContain("Worked for 7m");
-  });
-
-  it("lets a running turn's tool calls be opened beside its clock", () => {
-    const html = render(TurnAnchor, {
-      props: { settled: false, startedAtUnixMilliseconds: Date.now(), toolCallCount: 3, onToggle: () => {} }
-    }).body;
-    expect(html).toContain("Working");
-    expect(html).toContain("3 tool calls");
-    expect(html).toContain("data-conversation-turn-fold");
   });
 
   it("marks a running turn as live, and a finished one not", () => {
@@ -57,31 +56,17 @@ describe("a turn's head", () => {
     expect(unknown).not.toContain("data-conversation-live-mark");
   });
 
-  it("says what the running turn is doing now, only while it is working", () => {
-    const activity = { sentence: "Running go test -race -count=50 ./internal/push", title: "Running", summary: "go test -race -count=50 ./internal/push", summaryIsLiteral: true };
-    const running = render(TurnAnchor, {
-      props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity }
-    }).body;
-    expect(running).toContain("data-conversation-live-activity");
-    expect(running).toContain(activity.summary);
-    const waiting = render(TurnAnchor, {
-      props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity, waiting: "question" }
-    }).body;
-    expect(waiting).not.toContain("data-conversation-live-activity");
-    const settled = render(TurnAnchor, { props: { settled: true, durationSeconds: 60, activity } }).body;
-    expect(settled).not.toContain(activity.summary);
-  });
-
-  it("says the turn is waiting on the person rather than working", () => {
+  it("says the turn is waiting on the person rather than working, with no count", () => {
     for (const [waiting, sentence] of [
       ["permission", "Waiting for your approval"],
       ["question", "Waiting for your answer"]
     ] as const) {
       const html = render(TurnAnchor, {
-        props: { settled: false, startedAtUnixMilliseconds: Date.now() - 75_000, waiting }
+        props: { settled: false, startedAtUnixMilliseconds: Date.now() - 75_000, waiting, toolCallCount: 1, onToggle: () => {} }
       }).body;
       expect(html).toContain(sentence);
-      expect(html).not.toContain("Working for");
+      expect(html).not.toContain("Working");
+      expect(html).not.toContain("tool call");
     }
   });
 });
@@ -137,5 +122,32 @@ describe("a tool call row", () => {
       startedDetail: JSON.stringify({ todos: [{ content: "A", status: "pending" }] }) });
     expect(todos).toContain("0 of 1 done");
     expect(todos).not.toContain("c2-tool-subject--literal");
+  });
+
+  it("says nothing for a call that passed: the outcome column stays, with no mark", () => {
+    const html = draw({ ...base, title: "git status", status: "completed", detail: "clean" });
+    expect(html).toContain("c2-tool-outcome");
+    expect(html).not.toContain("Failed");
+    expect(html).not.toContain("c2-tool-mark--ok");
+  });
+
+  it("says a call still running in the present tense, beside the live mark", () => {
+    const html = draw({ ...base, title: "npm test", status: "running", detail: null });
+    expect(html).toContain("Running");
+    expect(html).toContain('aria-label="Running"');
+  });
+
+  it("opens a failed call onto its output in a block whose header says it failed", () => {
+    const row = { ...base, title: "npm run check", detail: "src/a.ts:1 error TS2304\nExit code 1" };
+    const html = render(ToolCallRow, {
+      props: { row, conversationId: "c", openRows: new SvelteSet<string>(["t1"]), wholeDetails: new SvelteMap<string, string>() }
+    }).body;
+    expect(html).toContain("Exit code 1");
+    expect(html).toContain("data-conversation-tool-copy");
+    expect(html).toContain('class="c2-tool-problem');
+    const passed = render(ToolCallRow, {
+      props: { row: { ...row, status: "completed" as const, detail: "one\ntwo" }, conversationId: "c", openRows: new SvelteSet<string>(["t1"]), wholeDetails: new SvelteMap<string, string>() }
+    }).body;
+    expect(passed).toContain("Output · 2 lines");
   });
 });

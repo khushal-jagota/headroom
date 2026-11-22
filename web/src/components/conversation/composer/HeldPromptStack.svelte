@@ -30,7 +30,8 @@
     onSendAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
-  let displayedRows = $state<readonly HeldPromptRow[]>([]);
+  // The rows there are from the first paint; later ones join, and leaving ones fade out.
+  let displayedRows = $state<readonly HeldPromptRow[]>(untrack(() => rows));
   const exiting = new Set<string>();
   const faded = new Set<string>();
   $effect(() => {
@@ -53,12 +54,27 @@
       }
     });
   });
-  const headId = $props.id();
+  /** Rows whose whole message is showing; the rest are one line. */
+  let expanded = $state(new Set<string>());
+  function toggle(key: string): void {
+    const next = new Set(expanded);
+    if (!next.delete(key)) next.add(key);
+    expanded = next;
+  }
   let actionInFlight = $state<string | null>(null);
   function stateWord(row: HeldPromptRow): string | null {
     if (row.state === "in_flight") return "sending";
     if (row.state === "unknown") return "no answer came";
     return null;
+  }
+
+  /** What the list is, for a screen reader: the visible lines need no header to say it. */
+  function stackLabel(rows: readonly HeldPromptRow[]): string {
+    const count = rows.length;
+    const noun = count === 1 ? "message" : "messages";
+    if (rows.some((row) => row.state === "held")) return `${count} queued ${noun}`;
+    if (rows.some((row) => row.state === "in_flight")) return `${count} ${noun} sending`;
+    return `${count} ${noun} not confirmed`;
   }
 
   function queueReason(row: HeldPromptRow): string | null {
@@ -87,172 +103,209 @@
 
 <div class="chat-queue-slot" use:conversationHeight><div bind:this={stackElement}>
 {#if displayedRows.length > 0}
-  {@const waitingForTheTurn = displayedRows.some((row) => row.state === "held")}
-  {@const title = waitingForTheTurn ? "Queued" : displayedRows.some((row) => row.state === "in_flight") ? "Sending" : "Not confirmed"}
-  <div class="chat-queue-wrap" data-conversation-held-stack>
-    <!-- What the tray is, in words: these messages have not reached the agent yet. -->
-    <div class="chat-queue-head" id={headId}>
-      <span class="chat-queue-title">{title}</span>
-      <span class="chat-queue-count">{displayedRows.length}</span>
-      {#if waitingForTheTurn && running}<span class="chat-queue-note">Runs when this turn ends</span>{/if}
-    </div>
-    <ol
-      class="chat-queue-stack"
-      aria-labelledby={headId}
-    >
-      {#each displayedRows as row (row.key)}
-        {@const actions = heldPromptRowActions(row)}
-        {@const actionable = actions.length > 0 && actionInFlight === null}
-        {@const thisTabsOwn = row.state === "unknown" && row.senderMessageId !== null}
-        {@const word = stateWord(row)}
-        {@const reason = queueReason(row)}
-        {@const label = heldPromptRowLabel(row)}
-        <li
-          class="chat-qrow"
-          data-conversation-held-row={row.key}
-          data-fate={row.state}
+  <!-- The waiting messages are the whole of it: no card and no header. Each is one quiet line of
+       its own words, led by a small clock that says it is waiting, with its actions beside it. -->
+  <ol class="chat-queue-stack" data-conversation-held-stack aria-label={stackLabel(displayedRows)}>
+    {#each displayedRows as row (row.key)}
+      {@const actions = heldPromptRowActions(row)}
+      {@const actionable = actions.length > 0 && actionInFlight === null}
+      {@const thisTabsOwn = row.state === "unknown" && row.senderMessageId !== null}
+      {@const word = stateWord(row)}
+      {@const reason = queueReason(row)}
+      {@const label = heldPromptRowLabel(row)}
+      {@const why = [word, reason].filter(Boolean).join(" · ")}
+      <li
+        class="chat-qrow"
+        class:open={expanded.has(row.key)}
+        data-conversation-held-row={row.key}
+        data-fate={row.state}
+      >
+        <span class="chat-qrow-mark" title={why || (running ? "Runs when this turn ends" : "Waiting to send")} aria-hidden="true">
+          {#if row.state === "in_flight"}
+            <span class="chat-qrow-spin"></span>
+          {:else}
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 8v4.2l2.6 1.6" /></svg>
+          {/if}
+        </span>
+        <button
+          type="button"
+          class="chat-qrow-words"
+          aria-expanded={expanded.has(row.key)}
+          title={expanded.has(row.key) ? "Show one line" : "Show the whole message"}
+          onclick={() => toggle(row.key)}
         >
-          <span class="chat-qrow-words">
-            <span class="chat-qrow-txt" title={label}>
-              {label}
-              {#each row.content as piece}
-                {#if piece.piece === "file" && ("data" in piece || conversationId !== null)}
-                  · <a
-                    data-conversation-held-file
-                    href={"data" in piece
-                      ? `data:${piece.media_type};base64,${piece.data}`
-                      : conversationFileHref(conversationId!, piece.stored_file_id)}
-                    download={piece.file_name}
-                    title={piece.file_name}
-                  >{piece.file_name}</a>
-                {/if}
-              {/each}
-            </span>
-            {#if word || reason}
-              <span class="chat-qrow-why">{[word, reason].filter(Boolean).join(" · ")}</span>
-            {/if}
-          </span>
-          <span class="chat-qrow-actions">
-            {#if actions.includes("send_again")}
-              <button
-                type="button"
-                class="chat-qrow-act"
-                data-conversation-held-send-again={row.senderMessageId}
-                title="Send these words again. They may already have arrived once."
-                disabled={!actionable}
-                onclick={() => row.senderMessageId === null
-                  ? undefined
-                  : void act(row.key, () => onSendAgain?.(row.senderMessageId!))}
-              >Send again</button>
-            {/if}
-            {#if supportsSteer && actions.includes("steer")}
-              <button
-                type="button"
-                class="chat-qrow-act"
-                data-conversation-held-promote="steer"
-                data-held-prompt-id={row.heldPromptId ?? undefined}
-                title="Put this into the turn that is already running"
-                disabled={!actionable || !running}
-                onclick={() => row.heldPromptId === null
-                  ? undefined
-                  : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
-              >Steer</button>
-            {/if}
-            {#if actions.includes("send_now")}
-              <button
-                type="button"
-                class="chat-qrow-act"
-                data-conversation-held-promote="send_now"
-                data-held-prompt-id={row.heldPromptId ?? undefined}
-                title={running ? "Stop the running turn and run this next" : "Run this next"}
-                disabled={!actionable}
-                onclick={() => row.heldPromptId === null
-                  ? undefined
-                  : void act(row.key, () => onPromote?.(row.heldPromptId!, "send_now"))}
-              >Send now</button>
-            {/if}
+          <span class="chat-qrow-txt">{label}</span>
+          {#if why}<span class="chat-qrow-why">{why}</span>{/if}
+        </button>
+        {#each row.content as piece}
+          {#if piece.piece === "file" && ("data" in piece || conversationId !== null)}
+            <a
+              class="chat-qrow-file"
+              data-conversation-held-file
+              href={"data" in piece
+                ? `data:${piece.media_type};base64,${piece.data}`
+                : conversationFileHref(conversationId!, piece.stored_file_id)}
+              download={piece.file_name}
+              title={piece.file_name}
+            >{piece.file_name}</a>
+          {/if}
+        {/each}
+        <span class="chat-qrow-actions">
+          {#if actions.includes("send_again")}
             <button
-                type="button"
-                class="chat-qrow-x"
-                data-conversation-held-discard={row.heldPromptId ?? undefined}
-                data-conversation-held-stop-drawing={
-                  actions.includes("stop_drawing") ? row.senderMessageId : undefined
-                }
-                aria-label={thisTabsOwn ? "Stop showing this message" : "Do not send this message"}
-                title={thisTabsOwn ? "Stop showing this message" : "Do not send this message"}
-                disabled={!actionable}
-                onclick={() => {
-                  if (row.heldPromptId !== null) {
-                    void act(row.key, () => onDiscard?.(row.heldPromptId!));
-                  } else if (thisTabsOwn) {
-                    void act(row.key, () => onStopDrawing?.(row.senderMessageId!));
-                  }
-                }}
-              ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
-          </span>
-        </li>
-      {/each}
-    </ol>
-  </div>
+              type="button"
+              class="chat-qrow-act"
+              data-conversation-held-send-again={row.senderMessageId}
+              title="Send these words again. They may already have arrived once."
+              disabled={!actionable}
+              onclick={() => row.senderMessageId === null
+                ? undefined
+                : void act(row.key, () => onSendAgain?.(row.senderMessageId!))}
+            >Send again</button>
+          {/if}
+          {#if supportsSteer && actions.includes("steer")}
+            <button
+              type="button"
+              class="chat-qrow-act"
+              data-conversation-held-promote="steer"
+              data-held-prompt-id={row.heldPromptId ?? undefined}
+              title="Put this into the turn that is already running"
+              disabled={!actionable || !running}
+              onclick={() => row.heldPromptId === null
+                ? undefined
+                : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
+            >Steer</button>
+          {/if}
+          {#if actions.includes("send_now")}
+            <button
+              type="button"
+              class="chat-qrow-act"
+              data-conversation-held-promote="send_now"
+              data-held-prompt-id={row.heldPromptId ?? undefined}
+              title={running ? "Stop the running turn and run this next" : "Run this next"}
+              disabled={!actionable}
+              onclick={() => row.heldPromptId === null
+                ? undefined
+                : void act(row.key, () => onPromote?.(row.heldPromptId!, "send_now"))}
+            >Send now</button>
+          {/if}
+          <button
+            type="button"
+            class="chat-qrow-x"
+            data-conversation-held-discard={row.heldPromptId ?? undefined}
+            data-conversation-held-stop-drawing={
+              actions.includes("stop_drawing") ? row.senderMessageId : undefined
+            }
+            aria-label={thisTabsOwn ? "Stop showing this message" : "Remove this message from the queue"}
+            title={thisTabsOwn ? "Stop showing this message" : "Remove"}
+            disabled={!actionable}
+            onclick={() => {
+              if (row.heldPromptId !== null) {
+                void act(row.key, () => onDiscard?.(row.heldPromptId!));
+              } else if (thisTabsOwn) {
+                void act(row.key, () => onStopDrawing?.(row.senderMessageId!));
+              }
+            }}
+          ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
+        </span>
+      </li>
+    {/each}
+  </ol>
 {/if}
 </div></div>
 
 <style>
-  /* The tray reads as its own small list: a header that says what these are, then one row
-   * per message with its words on the left in the body tone and its actions on the right in
-   * the interface face, each a real button with a 24px target. */
-  .chat-queue-wrap { padding: var(--space-2) var(--space-2) var(--space-1); }
-  .chat-queue-head {
-    display: flex; align-items: baseline; gap: var(--space-2);
-    padding: 0 var(--space-1) var(--space-1);
-    font-family: var(--font-ui); font-size: var(--type-small); font-weight: var(--weight-small);
-    color: var(--tone-tertiary);
+  /* Light, not a tray: the lines sit on the canvas over the composer, their left edge on the
+   * draft's own inset, 4px between them and 8px clear of the shell (the stack's gap). The words
+   * are the body tone a step down; the clock and the actions are quieter still, and the actions
+   * lift to the strongest tone under the pointer or the keyboard. */
+  .chat-queue-stack {
+    display: grid;
+    gap: var(--cv-s1);
+    margin: 0;
+    padding: 0 var(--cv-s2) 0 var(--cv-s4);
+    list-style: none;
+    max-height: 168px;
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
-  .chat-queue-title { color: var(--tone-secondary); font-weight: var(--weight-needs-you); }
-  .chat-queue-count { font-variant-numeric: tabular-nums; }
-  .chat-queue-note { margin-inline-start: auto; }
   .chat-qrow {
-    gap: var(--space-3);
-    padding: var(--space-1) 0 var(--space-1) var(--space-1);
-    border-top: var(--border-hairline) solid var(--border-color);
-    border-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--cv-s2);
+    min-width: 0;
+    min-height: 28px;
+    animation: chat-qrow-in var(--cv-dur-base) var(--cv-ease-out);
   }
-  .chat-qrow-words { flex: 1; min-width: 0; display: grid; gap: 1px; }
+  @keyframes chat-qrow-in { from { opacity: 0; } to { opacity: 1; } }
+  .chat-qrow.open { align-items: flex-start; }
+  .chat-qrow-mark { flex: none; display: grid; place-items: center; width: 14px; height: 28px; color: var(--cv-t4); }
+  .chat-qrow-mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .chat-qrow-spin {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 1.6px solid rgb(255 255 255 / 16%); border-top-color: var(--cv-t2);
+    animation: chat-qrow-spin var(--cv-spin) linear infinite;
+  }
+  @keyframes chat-qrow-spin { to { transform: rotate(360deg); } }
+  /* The words are one line until pressed, then the whole message. */
+  .chat-qrow-words {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    padding: 4px 0;
+    background: none;
+    border: 0;
+    border-radius: var(--cv-r-sm);
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--cv-font);
+  }
   .chat-qrow-txt {
-    color: var(--tone-primary);
-    font-size: var(--type-row);
-    line-height: 1.45;
+    min-width: 0;
+    color: var(--cv-t2);
+    font-size: var(--cv-type-ui);
+    line-height: var(--cv-leading-ui);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+  .chat-qrow.open .chat-qrow-txt { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .chat-qrow-words:hover .chat-qrow-txt { color: var(--cv-t1); }
   .chat-qrow[data-fate="in_flight"] .chat-qrow-txt,
-  .chat-qrow[data-fate="unknown"] .chat-qrow-txt { color: var(--tone-secondary); }
+  .chat-qrow[data-fate="unknown"] .chat-qrow-txt { color: var(--cv-t3); }
   .chat-qrow-why {
-    color: var(--tone-tertiary);
-    font-size: var(--type-small);
+    color: var(--cv-t3);
+    font-size: var(--cv-type-caption);
+    line-height: var(--cv-leading-caption);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .chat-qrow-actions { flex: none; display: flex; align-items: center; gap: var(--space-1); }
-  /* Each action is a real button and looks like one: the secondary button's fill with its
-   * words in the primary tone (over 9:1 on that fill), so Steer and Send now read as things to
-   * press, not as more of the row's text. The × is a plain icon button in the same tone. */
-  .chat-qrow-act {
-    display: inline-flex; align-items: center; min-height: 26px;
-    padding: 0 var(--space-2);
-    border: 0; border-radius: var(--button-radius);
-    background: var(--button-secondary-fill);
-    color: var(--tone-primary);
-    font-family: var(--font-ui); font-size: var(--type-small); font-weight: var(--weight-small);
-    letter-spacing: normal;
+  .chat-qrow-file {
+    flex: 0 1 auto; min-width: 0; max-width: 30%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--cv-t3); font-family: var(--cv-font); font-size: var(--cv-type-meta);
+    text-decoration: underline; text-decoration-color: var(--cv-link-underline); text-underline-offset: 3px;
   }
-  .chat-qrow-act:hover:not(:disabled) { background: var(--button-secondary-fill-hover); color: var(--tone-strong); }
+  .chat-qrow-actions { flex: none; display: flex; align-items: center; gap: 2px; }
+  /* Small, quiet actions: the ghost button at 28px in the quiet tone. */
+  .chat-qrow-act { color: var(--cv-t3); padding: 0 var(--cv-s2); }
   .chat-qrow-x {
-    display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
-    border-radius: var(--button-radius); color: var(--tone-primary);
+    display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+    background: none; border: 0; border-radius: var(--cv-r-md);
+    color: var(--cv-t3); cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-qrow-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-  .chat-qrow-x:hover:not(:disabled) { background: var(--button-ghost-fill-hover); color: var(--tone-strong); background-image: none; }
-  .chat-qrow-act:disabled, .chat-qrow-x:disabled { opacity: .45; }
-  .chat-qrow-txt a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-  @media (max-width: 520px) {
-    .chat-queue-note { display: none; }
+  .chat-qrow-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+  .chat-qrow-x:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
+  .chat-qrow-x:disabled { color: var(--cv-t4); cursor: default; }
+  .chat-qrow-words:focus-visible,
+  .chat-qrow-x:focus-visible,
+  .chat-qrow :global(.chat-qrow-act:focus-visible),
+  .chat-qrow-file:focus-visible {
+    outline: var(--cv-focus-width) solid var(--cv-accent);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chat-qrow { animation: none; }
+    .chat-qrow-spin { animation: none; }
   }
 </style>

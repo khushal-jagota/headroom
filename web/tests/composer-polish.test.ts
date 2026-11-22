@@ -122,8 +122,8 @@ describe("a waiting file reads as the sent file card reads", () => {
 
   it("names its kind in words, never its raw media type", () => {
     expect(attachmentKindLabel("ci-run-4812.txt", "text/plain")).toBe("Text");
-    expect(attachmentKindLabel("data.json", "application/json")).toBe("Text");
+    expect(attachmentKindLabel("data.json", "application/json")).toBe("JSON");
     expect(attachmentKindLabel("spec.pdf", "application/pdf")).toBe("PDF");
-    expect(attachmentKindLabel("archive.zip", "application/zip")).toBe("File");
+    expect(attachmentKindLabel("archive.bin", "application/octet-stream")).toBe("File");
   });
 });

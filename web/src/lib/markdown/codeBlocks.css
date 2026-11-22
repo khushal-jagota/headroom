@@ -1,20 +1,20 @@
 /* A fenced code block: one recessed frame holding a quiet header (language, Copy) over the
  * code, which scrolls sideways inside the frame instead of widening anything around it. */
 :root {
-  /* Syntax colour, muted to sit with the rest of the dark palette. Every colour keeps at
-   * least 4.5:1 against --surface-recessed. A light theme overrides these names. */
-  --code-syntax-comment: var(--tone-tertiary);
-  --code-syntax-keyword: #c5a8ea;
-  --code-syntax-string: #a9cc8f;
-  --code-syntax-number: #e2b47c;
-  --code-syntax-literal: #e2b47c;
-  --code-syntax-function: #a3bce6;
-  --code-syntax-type: #8fd0c8;
-  --code-syntax-inserted: #9fcf86;
-  --code-syntax-deleted: #e59d97;
+  /* Syntax colour (design v3 §2.3): one family of muted hues, each at least 5.2:1 on the
+   * conversation's well and above 4.5:1 on --surface-recessed. A light theme overrides these. */
+  --code-syntax-comment: var(--cv-syntax-comment);
+  --code-syntax-keyword: var(--cv-syntax-keyword);
+  --code-syntax-string: var(--cv-syntax-string);
+  --code-syntax-number: var(--cv-syntax-number);
+  --code-syntax-literal: var(--cv-syntax-number);
+  --code-syntax-function: var(--cv-syntax-type);
+  --code-syntax-type: var(--cv-syntax-type);
+  --code-syntax-inserted: var(--cv-syntax-string);
+  --code-syntax-deleted: var(--cv-danger);
 }
 
-.markdown .markdown-code {
+.chat-thread .markdown .markdown-code {
   min-width: 0;
   max-width: 100%;
   margin: 0 0 var(--space-3);
@@ -24,9 +24,9 @@
   overflow: hidden;
 }
 
-.markdown .markdown-code:last-child { margin-bottom: 0; }
+.chat-thread .markdown .markdown-code:last-child { margin-bottom: 0; }
 
-.markdown .markdown-code > pre {
+.chat-thread .markdown .markdown-code > pre {
   margin: 0;
   border-radius: 0;
   background: transparent;
@@ -34,7 +34,7 @@
   overflow-wrap: normal;
 }
 
-.markdown .markdown-code-head {
+.chat-thread .markdown .markdown-code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -50,19 +50,83 @@
   user-select: none;
 }
 
-.markdown .markdown-code-language {
+.chat-thread .markdown .markdown-code-language {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The shared ghost button (.button--ghost), at the header's size. */
-.markdown .markdown-code-copy {
+/* The shared ghost button (.button--ghost), at the header's size: a glyph and its word. */
+.chat-thread .markdown .markdown-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   height: 24px;
   padding: 0 var(--space-2);
   font-size: var(--type-small);
   font-weight: var(--weight-body);
+}
+.chat-thread .markdown .markdown-code-copy-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* In the conversation a code block is the one block shell
+ * (design v3 §3.6): the well, a hairline edge, radius 12. The header is not ruled off: its
+ * quiet caption and the space under it separate it from the code. */
+.chat-thread .markdown .markdown-code {
+  border: 1px solid var(--cv-line);
+  border-radius: var(--cv-r-lg);
+  background: var(--cv-well);
+}
+.chat-thread .markdown .markdown-code-head {
+  min-height: 36px;
+  padding: 0 var(--cv-s2) 0 var(--cv-s4);
+  border-bottom: 0;
+  color: var(--cv-t3);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-caption);
+  font-weight: var(--cv-weight-label);
+  line-height: var(--cv-leading-caption);
+}
+.chat-thread .markdown .markdown-code-copy {
+  height: 28px;
+  border-radius: var(--cv-r-md);
+  color: var(--cv-t3);
+  font-family: var(--cv-font);
+  font-size: var(--cv-type-meta);
+  font-weight: var(--cv-weight-label);
+  transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
+}
+.chat-thread .markdown .markdown-code-copy:hover {
+  background: var(--cv-control);
+  color: var(--cv-t1);
+}
+.chat-thread .markdown .markdown-code-copy:focus-visible {
+  outline: var(--cv-focus-width) solid var(--cv-accent);
+  outline-offset: var(--cv-focus-offset);
+}
+.chat-thread .markdown .markdown-code > pre {
+  padding: var(--cv-s1) var(--cv-s4) var(--cv-s3);
+  color: var(--cv-code-ink);
+  font-family: var(--cv-mono);
+  font-size: var(--cv-type-code);
+  line-height: var(--cv-leading-code);
+}
+.chat-thread .markdown .markdown-code > pre code {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-thread .markdown .markdown-code-copy { transition: none; }
 }
 
 ::highlight(panels-code-comment) { color: var(--code-syntax-comment); }
@@ -76,5 +140,5 @@
 ::highlight(panels-code-deleted) { color: var(--code-syntax-deleted); }
 
 @media (forced-colors: active) {
-  .markdown .markdown-code { border-color: CanvasText; }
+  .chat-thread .markdown .markdown-code { border-color: CanvasText; }
 }

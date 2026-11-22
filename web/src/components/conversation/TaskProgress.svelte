@@ -7,7 +7,7 @@
     variant,
     running = progress.turnRunning,
     moving = running,
-    composerGap = false
+    composerGap: _composerGap = false
   }: {
     progress: ConversationTaskProgress;
     variant: "rest" | "strip";
@@ -45,11 +45,8 @@
     return "pending";
   }
 
-  function statusMark(status: string): string {
-    if (status === "completed") return "✓";
-    if (status === "in_progress") return "›";
-    return "○";
-  }
+  /** Past this many steps the drawn mark would outgrow the pill; the words carry the count. */
+  const SEGMENT_LIMIT = 12;
 </script>
 
 {#snippet checklist()}
@@ -63,8 +60,17 @@
         role="listitem"
         data-conversation-task-status={entry.status}
       >
-        <span class="task-plan-mark" aria-hidden="true">{statusMark(entry.status)}</span>
+        <span class="task-plan-mark" aria-hidden="true">
+          {#if entry.status === "completed"}
+            <svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+          {:else if entry.status === "in_progress"}
+            {#if moving}<span class="task-spin"></span>{:else}<span class="task-ring now"></span>{/if}
+          {:else}
+            <span class="task-ring"></span>
+          {/if}
+        </span>
         <span class="task-plan-text">{entry.text}</span>
+        <span class="cv-visually-hidden">{entry.status === "completed" ? ", done" : entry.status === "in_progress" ? ", in progress" : ""}</span>
       </span>
     {/each}
   </span>
@@ -88,74 +94,82 @@
     </button>
   {/if}
 {:else if visible}
-  <div class="task-strip" role="group" class:has-composer-gap={composerGap} data-conversation-task-strip onpointerleave={releaseIfOutside}>
-      <button
-        type="button"
-        class="task-pill"
-        data-conversation-task-control
+  <div class="task-strip" role="group" data-conversation-task-strip onpointerleave={releaseIfOutside}>
+    <button
+      type="button"
+      class="task-pill"
+      data-conversation-task-control
       onpointerenter={() => progress.onDemand?.()}
       onfocus={() => progress.onDemand?.()}
       onpointerleave={releaseIfOutside}
       onblur={releaseIfOutside}
-        data-conversation-task-progress
-        aria-label={`Task ${position} of ${total}${currentText ? `: ${currentText}` : ""}, ${progress.completedCount} complete`}
-      >
-        {#if moving}<span class="acp-spin" aria-hidden="true"></span>{/if}
-        <!-- The step being worked on, not a count of finished ones: "3 / 5" read as three done.
-             Its name follows, cut to the pill's measure; the list above has it whole. -->
-        <span class="task-count">Task {position} of {total}</span>
-        {#if currentText}<span class="task-sep" aria-hidden="true">·</span><span class="task-now" data-conversation-task-current>{currentText}</span>{/if}
-      </button>
-      {@render checklist()}
+      data-conversation-task-progress
+      aria-label={`Task ${position} of ${total}${currentText ? `: ${currentText}` : ""}, ${progress.completedCount} complete`}
+    >
+      <!-- Where the plan stands, drawn: one small square per step, the done ones quiet, the one
+           in hand bright, the rest barely there. A long plan keeps its count in words only. -->
+      {#if total <= SEGMENT_LIMIT}
+        <span class="task-segments" aria-hidden="true">
+          {#each Array.from({ length: total }, (_, index) => index) as index (index)}
+            <span class="task-segment" class:done={index < position - 1} class:now={index === position - 1}></span>
+          {/each}
+        </span>
+      {/if}
+      <span class="task-count">Task {position} of {total}</span>
+      {#if currentText}<span class="task-now" data-conversation-task-current>{currentText}</span>{/if}
+    </button>
+    {@render checklist()}
   </div>
 {/if}
 
 <style>
+  /* The pill stands at the left of the status slot over the composer, on the raised plane with
+     no edge: the plan's mark, then "Task 3 of 5" quiet and the step in hand a step brighter. */
   .task-strip {
     flex: none;
-    height: 34px;
     position: relative;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    min-width: 0;
+    height: 28px;
   }
-  .task-strip.has-composer-gap { margin-block-end: var(--space-2); }
-  /* The raised plane every floating thing in Panels shares (--surface-raised and its
-     --border-raised ring), in the UI face: it floats over the transcript, so it carries the
-     popover's finish rather than a near-page fill that disappeared against the bar. */
   .task-pill {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
-    min-height: 26px;
-    box-sizing: border-box;
-    border: var(--border-hairline) solid var(--border-raised);
-    border-radius: var(--radius-pill);
-    background: var(--surface-raised);
-    color: var(--text-default);
-    font-family: var(--font-ui);
-    font-size: var(--type-xs);
-    padding: 0 var(--space-3);
+    gap: var(--cv-s2);
+    height: 28px;
+    max-width: min(100%, 36rem);
+    min-width: 0;
+    padding: 0 var(--cv-s3) 0 10px;
+    border: 0;
+    border-radius: var(--cv-r-pill);
+    background: var(--cv-raised);
+    color: var(--cv-t2);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+    white-space: nowrap;
+    overflow: hidden;
     cursor: default;
     font-variant-numeric: tabular-nums;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .task-pill:hover,
-  .task-pill:focus-visible { color: var(--text-strong); }
-  /* The pill never outgrows the composer's column: the name gives way, not the count. One
-     line at every width, a gutter kept on a phone, and nothing drawn past its own edge, so
-     the name always ends in an ellipsis inside the pill rather than being cut by its border. */
-  .task-pill { max-width: min(calc(100% - var(--space-4)), 36rem); min-width: 0; overflow: hidden; white-space: nowrap; }
-  .task-count, .task-sep { flex: none; color: var(--text-muted); }
-  .task-sep { margin-inline: calc(var(--space-1) * -1); }
-  .task-now {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-default);
+  .task-pill:focus-visible { background: var(--cv-control); }
+  .task-pill:focus-visible,
+  .c2-rest-progress:focus-visible {
+    outline: var(--cv-focus-width) solid var(--cv-accent);
+    outline-offset: var(--cv-focus-offset);
   }
+  .task-segments { flex: none; display: inline-flex; gap: 2px; }
+  .task-segment { width: 6px; height: 6px; border-radius: 2px; background: rgb(255 255 255 / 14%); }
+  .task-segment.done { background: var(--cv-t3); }
+  .task-segment.now { background: var(--cv-t1); }
+  .task-count { flex: none; color: var(--cv-t3); }
+  .task-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-t2); }
   .task-pill:hover .task-now,
-  .task-pill:focus-visible .task-now { color: var(--text-strong); }
+  .task-pill:focus-visible .task-now { color: var(--cv-t1); }
   .c2-rest-progress {
     flex: none;
     position: relative;
@@ -164,33 +178,34 @@
     border: 0;
     padding: 0;
     margin: 0;
-    color: var(--text-faint);
+    color: var(--cv-t3);
     font: inherit;
     font-variant-numeric: tabular-nums;
     cursor: default;
-    border-radius: var(--radius-sm);
+    border-radius: var(--cv-r-sm);
   }
   .c2-rest-progress:hover,
-  .c2-rest-progress:focus-visible { color: var(--text-strong); }
-  .c2-rest-progress:focus-visible {
-    outline: var(--focus-width) solid var(--focus-ring);
-    outline-offset: 2px;
-  }
+  .c2-rest-progress:focus-visible { color: var(--cv-t1); }
+  /* The list opens upward from the pill's left edge, 8px over it, on the floating plane. It
+     overlays the transcript and never moves the stack. */
   .task-pop {
     position: absolute;
-    bottom: calc(100% - var(--space-1));
-    left: 50%;
-    transform: translateX(-50%);
-    min-width: 280px;
-    max-width: 90vw;
+    bottom: calc(100% + var(--cv-s2));
+    left: 0;
+    width: 340px;
+    max-width: calc(100vw - var(--cv-s6));
+    max-height: 60vh;
+    overflow-y: auto;
     box-sizing: border-box;
-    background: var(--surface-raised);
-    border: var(--border-hairline) solid var(--border-raised);
-    border-radius: var(--radius-lg);
-    padding: var(--space-2) var(--space-3) var(--space-2);
+    background: var(--cv-float);
+    border-radius: var(--cv-r-lg);
+    padding: 6px;
     display: none;
-    z-index: 5;
+    z-index: 30;
+    font-family: var(--cv-font);
   }
+  /* The pointer travels from the pill to the list across the 8px between them. */
+  .task-pop::after { content: ""; position: absolute; inset: 100% 0 auto; height: var(--cv-s2); }
   .task-pill:hover ~ .task-pop,
   .task-pill:focus ~ .task-pop,
   .task-pill:focus-visible ~ .task-pop,
@@ -199,41 +214,52 @@
   .c2-rest-progress:focus-visible .task-pop,
   .task-pop:hover {
     display: grid;
-    gap: var(--space-1);
+    animation: task-pop-in var(--cv-dur-base) var(--cv-ease-out);
   }
-  .c2-rest-progress .task-pop { left: 0; transform: none; }
+  @keyframes task-pop-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   .task-pop-head {
-    padding: var(--space-1) 0 var(--space-1);
-    color: var(--text-muted);
-    font-family: var(--font-ui);
-    font-size: var(--type-xs);
+    padding: 6px var(--cv-s2);
+    color: var(--cv-t3);
+    font-size: var(--cv-type-caption);
+    line-height: var(--cv-leading-caption);
+    font-weight: var(--cv-weight-label);
     font-variant-numeric: tabular-nums;
     text-align: left;
   }
   .task-plan-item {
     display: flex;
-    gap: var(--space-2);
-    padding: var(--space-1) 0;
-    font-size: var(--type-sm);
-    color: var(--text-muted);
-    align-items: baseline;
-    font-family: var(--font-ui);
-    letter-spacing: normal;
-    line-height: 1.45;
+    gap: 10px;
+    align-items: flex-start;
+    min-height: 32px;
+    padding: 6px var(--cv-s2);
+    border-radius: var(--cv-r-md);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+    color: var(--cv-t2);
     text-align: left;
+    white-space: normal;
   }
-  .task-plan-mark {
-    font-family: var(--font-ui);
-    font-size: var(--type-sm);
-    flex: none;
-    width: 14px;
-    text-align: center;
+  .task-plan-mark { flex: none; display: grid; place-items: center; width: 14px; height: 20px; }
+  .task-plan-mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .task-ring { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--cv-t4); }
+  .task-ring.now { box-shadow: inset 0 0 0 1.5px var(--cv-t1); }
+  .task-spin {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 1.6px solid rgb(255 255 255 / 16%); border-top-color: var(--cv-t1);
+    animation: task-spin var(--cv-spin) linear infinite;
   }
+  @keyframes task-spin { to { transform: rotate(360deg); } }
   .task-plan-text { min-width: 0; overflow-wrap: anywhere; }
-  /* Done is said by the green check; a strike through the words only made them read faint. */
-  .task-plan-item--done { color: var(--text-muted); }
-  .task-plan-item--done .task-plan-mark { color: var(--accent-done); }
-  .task-plan-item--now { color: var(--text-strong); }
-  .task-plan-item--now .task-plan-mark { color: var(--accent-bright); }
-  :global(.task-pill .acp-spin) { flex: none; margin-left: 0; }
+  /* Done is quiet; the step in hand is bright on the control fill; what is to come is plain. */
+  .task-plan-item--done { color: var(--cv-t3); }
+  .task-plan-item--done .task-plan-mark { color: var(--cv-t3); }
+  .task-plan-item--now { color: var(--cv-t1); background: var(--cv-control); }
+  .cv-visually-hidden {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .task-spin { animation: none; }
+    .task-pill:hover ~ .task-pop, .task-pill:focus ~ .task-pop, .task-pop:hover { animation: none; }
+  }
 </style>

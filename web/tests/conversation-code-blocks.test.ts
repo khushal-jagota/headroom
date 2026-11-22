@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { codeCopyText, tokenizeCode, type CodeToken } from '../src/lib/markdown/codeBlocks';
+// @ts-expect-error -- the tests' type check has no Node types; vitest runs in Node.
+import { readFileSync } from 'node:fs';
+import { codeCopyText, codeLanguageName, tokenizeCode, type CodeToken } from '../src/lib/markdown/codeBlocks';
+import { presentsCodeBlocks } from '../src/lib/managedMarkdown';
 
 const words = (text: string, tokens: CodeToken[], kind: CodeToken['kind']) =>
   tokens.filter(token => token.kind === kind).map(token => text.slice(token.start, token.end));
@@ -49,5 +52,39 @@ describe('code block colour', () => {
   it('copies the code without the fence line break', () => {
     expect(codeCopyText('a\nb\n')).toBe('a\nb');
     expect(codeCopyText('a')).toBe('a');
+  });
+});
+
+describe('code block header', () => {
+  it('names a language the way a person says it, and leaves an unknown tag as written', () => {
+    expect(codeLanguageName('ts')).toBe('TypeScript');
+    expect(codeLanguageName('go')).toBe('Go');
+    expect(codeLanguageName('sh')).toBe('Shell');
+    expect(codeLanguageName('json')).toBe('JSON');
+    expect(codeLanguageName('hcl')).toBe('hcl');
+    expect(codeLanguageName(null)).toBe('');
+  });
+});
+
+describe('artifacts and pages keep their own code blocks', () => {
+  const host = (inConversation: boolean) => ({
+    closest: (selector: string) => (inConversation && selector === '.chat-thread' ? ({} as Element) : null)
+  });
+
+  it('presents code blocks only in the conversation transcript', () => {
+    expect(presentsCodeBlocks(host(true))).toBe(true);
+    // An artifact preview, a file preview page, a Ticket: the <pre> is left as rendered.
+    expect(presentsCodeBlocks(host(false))).toBe(false);
+  });
+
+  it('scopes every code block rule to the conversation', () => {
+    const css = (readFileSync(new URL('../src/lib/markdown/codeBlocks.css', import.meta.url), 'utf8') as string)
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const selectors = [...css.matchAll(/(^|})\s*([^{}@]+?)\s*\{/g)].map(match => match[2].trim())
+      .filter(selector => selector !== ':root' && !selector.startsWith('::highlight'));
+    expect(selectors.length).toBeGreaterThan(0);
+    for (const selector of selectors) {
+      for (const part of selector.split(',')) expect(part.trim(), selector).toMatch(/^\.chat-thread /);
+    }
   });
 });

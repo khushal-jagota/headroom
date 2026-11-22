@@ -45,7 +45,7 @@ export type AskAction =
 
 export const CANCEL_TURN_ACTION: AskAction = {
   act: "cancel_turn",
-  label: "Cancel turn",
+  label: "Stop turn",
   emphasis: "cancel",
   supplied: true
 };
@@ -66,7 +66,7 @@ function isAllowOnce(option: PermissionAskOption): boolean {
 
 /** Every answer this ask offers, in escalating order, with the anchors guaranteed.
  *
- * Cancel turn, then decline, then whatever else the backend offered, then approve once.
+ * Stop turn, then decline, then whatever else the backend offered, then approve once.
  * A missing anchor is supplied rather than left out, so the shape of the card does not
  * depend on the shape of the ask.
  */

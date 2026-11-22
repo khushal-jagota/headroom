@@ -16,6 +16,15 @@
   import type { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { DiagnosticExpiredError, DIAGNOSTIC_EXPIRED_MESSAGE } from "../../lib/conversation/diagnosticExpiry";
   import { readToolCallDetail } from "../../lib/conversation/wire";
+  import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
+  import { formatDuration } from "../../lib/conversation/transcript";
+
+  /** How tall an opened output stands before it scrolls in its own block. */
+  const OUTPUT_HEIGHT_CAP_LINES = 17;
+  /** Outputs longer than this are drawn as one text run, not line by line. */
+  const MARKED_LINES_MAXIMUM = 2_000;
+  /** A line that says something broke leads with that word in the danger tone. */
+  const PROBLEM_WORD = /\b(?:error|Error|ERROR|FAIL|FAILED|Failed|panic|fatal)\b/;
 
   let {
     row,
@@ -43,6 +52,40 @@
   let presentation = $derived(presentToolCall(row));
   let regionId = $derived(`c2-tool-${row.toolCallId}`);
   let shownDetail = $derived(selectedDetail ?? wholeDetails.get(row.toolCallId) ?? presentation.detail);
+  let showAll = $state(false);
+  let copied = $state(false);
+  // A running call counts from the moment its start was recorded, as the turn head does.
+  const running = elapsedTurnTime(() => presentation.outcome === "running" && !activityUncertain && row.createdAt > 0 ? row.createdAt * 1_000 : null);
+  let outputLines = $derived((shownDetail ?? "").replace(/\n$/, "").split("\n"));
+  let exitCode = $derived(presentation.outcome === "failed" ? /exit (?:code|status)[:\s]+(\d+)/i.exec(shownDetail ?? "")?.[1] ?? null : null);
+  let outputLabel = $derived(
+    exitCode !== null ? `Exit code ${exitCode}`
+      : presentation.outcome === "failed" ? `Failed · ${lineCount(outputLines.length)}`
+      : `Output · ${lineCount(outputLines.length)}`
+  );
+  let tall = $derived(outputLines.length > OUTPUT_HEIGHT_CAP_LINES);
+  let markedLines = $derived(outputLines.length <= MARKED_LINES_MAXIMUM ? outputLines.map(markProblem) : null);
+
+  function lineCount(count: number): string {
+    return `${count} ${count === 1 ? "line" : "lines"}`;
+  }
+
+  function markProblem(line: string): { before: string; word: string; after: string } {
+    const found = PROBLEM_WORD.exec(line);
+    return found === null
+      ? { before: line, word: "", after: "" }
+      : { before: line.slice(0, found.index), word: found[0], after: line.slice(found.index + found[0].length) };
+  }
+
+  async function copyOutput(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(shownDetail ?? "");
+      copied = true;
+      setTimeout(() => (copied = false), 1_500);
+    } catch {
+      copied = false;
+    }
+  }
 
   function openRow(): void {
     if (openRows.has(row.toolCallId)) {
@@ -81,33 +124,26 @@
     <span class="c2-tool-verb">{presentation.title}</span>{#if presentation.summary}<span class="c2-tool-subject" class:c2-tool-subject--literal={presentation.summaryIsLiteral} data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}
   </span>
   <!-- How it went, in one column at the row's end, so a run of rows reads its outcomes
-       straight down rather than wherever each line happened to stop. A word that says the
-       outcome comes before its mark, so the marks themselves stay in the column. -->
+       straight down. A call that passed says nothing: passing is the ordinary case. -->
   <span class="c2-tool-outcome">
-    {#if presentation.outcome === "completed"}
-      <svg class="c2-tool-mark c2-tool-mark--ok" viewBox="0 0 24 24" role="img" aria-label="Completed"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
-    {:else if presentation.outcome === "failed"}
-      <span class="c2-tool-state c2-tool-state--failed">
-        <span>Failed</span>
-        <svg class="c2-tool-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" /></svg>
-      </span>
+    {#if presentation.outcome === "failed"}
+      <span class="c2-tool-state c2-tool-state--failed">Failed</span>
     {:else if presentation.outcome === "no_matches"}
       <span class="c2-tool-state" data-conversation-tool-no-matches>No matches</span>
+    {:else if presentation.outcome === "completed"}
+      <span class="c2-tool-state" role="img" aria-label="Completed"></span>
     {:else if activityUncertain}
-      <span class="c2-tool-state">activity unknown</span>
+      <span class="c2-tool-state">Unknown</span>
     {:else}
-      <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
+      <span class="c2-tool-state c2-tool-state--running">
+        <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
+        {#if running.seconds !== null}<span data-conversation-tool-elapsed>{formatDuration(running.seconds)}</span>{/if}
+      </span>
     {/if}
   </span>
-  <!-- Every row opens, so a run of rows reads as one list of the same thing: a call that
-       printed nothing opens onto saying so, and onto the whole call when its line was
-       shortened. -->
   <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
 {/snippet}
 
-<!-- The line and what it opens onto are one thing, not two. The wash sits out here so
-     it covers both, and what opens sits inside the same shape rather than arriving as a
-     second box below it. -->
 <div class="c2-tool" class:is-open={open} class:is-failed={presentation.outcome === "failed"}>
   <button
     type="button"
@@ -124,7 +160,21 @@
     <div id={regionId} class="c2-tool-body">
       {#if presentation.summaryInFull}<pre class="c2-tool-call" data-conversation-tool-call-in-full>{presentation.summaryInFull}</pre>{/if}
       {#if shownDetail || row.cappedDetailSequence !== null}
-        <pre class="c2-tool-output" data-conversation-tool-output>{shownDetail ?? ""}</pre>
+        <div class="c2-tool-block">
+          <div class="c2-tool-block-head">
+            <span class="c2-tool-block-label" class:c2-tool-block-label--failed={presentation.outcome === "failed"} data-conversation-tool-output-label>{outputLabel}</span>
+            {#if tall}
+              <button type="button" class="c2-tool-block-action" aria-pressed={showAll} onclick={() => (showAll = !showAll)}>{showAll ? "Show less" : "Show all"}</button>
+            {/if}
+            <button type="button" class="c2-tool-block-action" onclick={() => void copyOutput()} data-conversation-tool-copy>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                {#if copied}<path d="m5 12.5 4.5 4.5L19 7.5" />{:else}<rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />{/if}
+              </svg>
+              <span>{copied ? "Copied" : "Copy"}</span>
+            </button>
+          </div>
+          <pre class="c2-tool-output" class:is-whole={showAll} data-conversation-tool-output>{#if markedLines !== null}{#each markedLines as line, index (index)}{line.before}{#if line.word}<span class="c2-tool-problem">{line.word}</span>{/if}{line.after}{index < markedLines.length - 1 ? "\n" : ""}{/each}{:else}{shownDetail ?? ""}{/if}</pre>
+        </div>
       {:else}
         <p class="c2-tool-empty" data-conversation-tool-no-output>{presentation.outcome === "running" ? "No output yet." : "No output."}</p>
       {/if}
@@ -138,177 +188,197 @@
 </div>
 
 <style>
-  /* One line: the kind's glyph, what was done in words, which call it was in the tool
-     voice, and how it went. The words carry the reading; the subject is the exact thing,
-     set one step quieter so a run of rows scans by its verbs. */
+  /* One line, 32 tall, on the grid every tool row and run summary shares: the kind's
+     glyph, the verb, the exact subject, how it went, and the chevron slot. */
   .acp-step {
-    display: flex;
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) minmax(72px, auto) 14px;
     align-items: center;
-    gap: var(--space-2);
+    column-gap: 10px;
+    width: 100%;
     min-width: 0;
-    min-height: 26px;
-    padding: var(--space-1) 0;
-    color: var(--text-muted);
-    font-family: var(--font-ui);
-    font-size: var(--type-small);
+    height: 32px;
+    padding: 0 var(--cv-s2);
+    border: 0;
+    border-radius: var(--cv-r-md);
+    background: transparent;
+    color: var(--cv-t3);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
     letter-spacing: normal;
     text-align: start;
+    cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .acp-step:hover { background-color: var(--cv-raised); }
+  .acp-step:focus-visible {
+    outline: var(--cv-focus-width) solid var(--cv-accent);
+    outline-offset: calc(var(--cv-focus-width) * -1);
   }
   .c2-tool-icon {
-    flex: none;
     width: 14px;
     height: 14px;
     fill: none;
-    stroke: var(--conversation-mark-quiet);
+    stroke: var(--cv-t4);
     stroke-width: 1.6;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .acp-step { max-width: 100%; }
   .c2-tool-line {
-    flex: 0 1 auto;
-    display: inline-flex;
+    display: flex;
     align-items: baseline;
-    gap: 0.35em;
+    gap: 6px;
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
-    /* The line takes what it needs and the outcome column takes the row's end. */
-    margin-inline-end: auto;
     color: inherit;
     font-size: inherit;
     letter-spacing: normal;
   }
-  /* The verb in the thread's body tone, the subject a step under it: a run of rows scans
-     by its verbs, and both read clearly on the page rather than as a grey block. */
-  .c2-tool-verb { flex: none; color: var(--text-default); }
+  .c2-tool-verb { flex: none; color: var(--cv-t2); font-weight: var(--cv-weight-label); }
   .c2-tool-subject {
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: color-mix(in srgb, var(--tone-primary) 45%, var(--tone-secondary));
+    color: var(--cv-t3);
   }
   /* Only the exact thing the call acted on (a command, a path, a pattern) is set as code.
      Words about the call ("0 of 5 done") stay in the thread's own face. */
-  .c2-tool-subject--literal {
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-  }
-  .c2-tool-outcome {
-    flex: none;
+  .c2-tool-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-code); }
+  .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-t1); }
+  .c2-tool-outcome { display: flex; justify-content: flex-end; min-width: 0; }
+  .c2-tool-state {
     display: inline-flex;
     align-items: center;
-    justify-content: flex-end;
-    min-inline-size: 14px;
+    gap: 6px;
+    color: var(--cv-t4);
+    font-size: var(--cv-type-caption);
+    line-height: var(--cv-leading-caption);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .c2-tool-mark {
-    flex: none;
+  .c2-tool-state--failed { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
+  .c2-tool-spin {
+    margin: 0;
+    width: 12px;
+    height: 12px;
+    border: 1.6px solid rgb(255 255 255 / 16%);
+    border-top-color: var(--cv-t2);
+    border-right-color: rgb(255 255 255 / 16%);
+    animation-duration: var(--cv-spin);
+  }
+  .c2-tool-chevron {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: var(--cv-t4);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: stroke var(--cv-dur-fast) var(--cv-ease-out), transform var(--cv-dur-expand) var(--cv-ease-out);
+  }
+  .acp-step:hover .c2-tool-chevron,
+  .acp-step:focus-visible .c2-tool-chevron,
+  .c2-tool.is-open .c2-tool-chevron { stroke: var(--cv-t2); }
+  .c2-tool.is-open .c2-tool-chevron { transform: rotate(90deg); }
+  /* The hover fill reaches past the text to the column's edge. */
+  .c2-tool { min-width: 0; margin-inline: calc(var(--cv-s2) * -1); }
+  /* What it printed: a block of its own, starting under the verb. */
+  .c2-tool-body { padding: var(--cv-s1) var(--cv-s2) var(--cv-s2) 34px; }
+  .c2-tool-block {
+    overflow: hidden;
+    border: 1px solid var(--cv-line);
+    border-radius: var(--cv-r-lg);
+    background: var(--cv-well);
+  }
+  .c2-tool-block-head {
+    display: flex;
+    align-items: center;
+    gap: var(--cv-s1);
+    height: 32px;
+    padding: 0 var(--cv-s1) 0 14px;
+  }
+  .c2-tool-block-label {
+    flex: 1;
+    min-width: 0;
+    color: var(--cv-t3);
+    font-size: var(--cv-type-caption);
+    line-height: var(--cv-leading-caption);
+    font-weight: var(--cv-weight-label);
+    font-variant-numeric: tabular-nums;
+  }
+  /* A failure's output says so in its header's words and tone, not with an edge. */
+  .c2-tool-block-label--failed { color: var(--cv-danger); }
+  .c2-tool-block-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 var(--cv-s2);
+    border: 0;
+    border-radius: var(--cv-r-md);
+    background: transparent;
+    color: var(--cv-t3);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-caption);
+    font-weight: var(--cv-weight-label);
+    cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .c2-tool-block-action:hover { background: var(--cv-control); color: var(--cv-t1); }
+  .c2-tool-block-action:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  .c2-tool-block-action svg {
     width: 14px;
     height: 14px;
     fill: none;
     stroke: currentColor;
-    stroke-width: 2;
+    stroke-width: 1.6;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .c2-tool-mark--ok { color: var(--accent-done); }
-  .c2-tool-state {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    color: var(--text-faintest);
-    font-size: var(--type-small);
-    white-space: nowrap;
-  }
-  .c2-tool-state--failed { color: var(--accent-error); }
-  .c2-tool-spin { margin: 0; }
-  /* What opens the row, said where the line ends: there at rest in the quiet mark tone, so
-     a row that opens says so before it is pointed at, and brighter when pointed at,
-     focused or open. */
-  .c2-tool-chevron {
-    flex: none;
-    width: 14px;
-    height: 14px;
-    fill: none;
-    stroke: var(--conversation-mark-quiet);
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    transition: stroke var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
-  }
-  .c2-tool:hover .c2-tool-chevron,
-  .acp-step:focus-visible .c2-tool-chevron,
-  .c2-tool.is-open .c2-tool-chevron { stroke: var(--text-muted); }
-  .c2-tool.is-open .c2-tool-chevron { transform: rotate(90deg); }
-  .acp-step--expandable { width: 100%; background: transparent; border: 0; cursor: pointer; }
-  .acp-step--expandable:hover .c2-tool-verb { color: var(--text-strong); }
-  .acp-step--expandable:hover .c2-tool-subject { color: var(--text-default); }
-  /* One shape for the line and what it opens onto, so opening a row grows it rather than
-     putting a second thing underneath it. The wash is on the whole shape, including the
-     part that is only there when it is open. */
-  .c2-tool {
-    border-radius: var(--radius-sm);
-    /* The wash reaches past the text to the edges the thread's other rows sit at. */
-    margin-inline: calc(var(--space-2) * -1);
-    padding-inline: var(--space-2);
-    transition: background var(--motion-fast) var(--motion-ease);
-  }
-  /* Pointed at, the row takes the app's one hover wash (the rest bar's and the utility
-     buttons'), a step that reads on the dark page rather than a 6% tint that barely did. */
-  .c2-tool:hover { background-color: var(--wash-hover); }
-  /* The output sits in its own recessed well under the line, so it reads as what the call
-     printed rather than as more of the conversation. */
-  .c2-tool-body {
-    padding: 0 0 var(--space-2) calc(14px + var(--space-2));
-  }
-  /* The cap is the point: an expanded row scrolls its own output rather than growing
+  /* The cap is the point: an opened output scrolls inside its block rather than growing
      the thread by the length of whatever the tool happened to print. */
   .c2-tool-output {
     margin: 0;
-    max-height: calc(var(--type-xs) * 24);
+    max-height: calc(var(--cv-leading-output) * 17 + 20px);
     overflow: auto;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    background: var(--surface-recessed);
-    border-inline-start: 2px solid var(--border-raised);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    line-height: 1.55;
+    padding: 10px 14px;
+    color: var(--cv-t2);
+    font-family: var(--cv-mono);
+    font-size: var(--cv-type-output);
+    line-height: var(--cv-leading-output);
     white-space: pre;
     overflow-wrap: normal;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
   }
-  /* A failure's output is the reason it failed: tinted and edged in the error colour so
-     it reads as the problem, not as one more listing. */
-  .c2-tool.is-failed .c2-tool-output {
-    background: color-mix(in srgb, var(--error-surface) 55%, var(--surface-recessed));
-    border-inline-start-color: var(--accent-error);
-    color: var(--text-default);
-  }
+  .c2-tool-output:hover { scrollbar-color: var(--cv-t4) transparent; }
+  .c2-tool-output.is-whole { max-height: none; }
+  .c2-tool-problem { color: var(--cv-danger); }
   /* The whole call, when its line had to shorten it: the exact thing, over what it printed. */
   .c2-tool-call {
-    margin: 0 0 var(--space-2);
-    color: var(--text-default);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    line-height: 1.55;
+    margin: 0 0 var(--cv-s2);
+    color: var(--cv-t2);
+    font-family: var(--cv-mono);
+    font-size: var(--cv-type-output);
+    line-height: var(--cv-leading-output);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   .c2-tool-empty {
     margin: 0;
-    color: var(--text-muted);
-    font-size: var(--type-small);
+    color: var(--cv-t3);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
   }
   .c2-tool-detail-failed {
-    margin: var(--space-1) 0 0;
-    color: var(--text-faintest);
-    font-size: var(--type-xs);
+    margin: var(--cv-s1) 0 0;
+    color: var(--cv-t3);
+    font-size: var(--cv-type-caption);
   }
   @media (prefers-reduced-motion: reduce) {
-    .c2-tool, .c2-tool-chevron { transition: none; }
+    .acp-step, .c2-tool-chevron, .c2-tool-block-action { transition: none; }
   }
 </style>

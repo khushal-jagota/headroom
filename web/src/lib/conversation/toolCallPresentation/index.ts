@@ -82,7 +82,7 @@ const STEP_ICON_PATHS: Record<ToolGlyphKind, readonly string[]> = {
     "M10 11v6",
     "M14 11v6"
   ],
-  move: ["M9 7h8v8", "M7 17 17 7"],
+  move: ["M5 12h14", "m13 6 6 6-6 6"],
   search: ["M11 4a7 7 0 1 0 0 14 7 7 0 1 0 0-14", "m21 21-4.3-4.3"],
   execute: ["m5 7 5 5-5 5", "M13 17h6"],
   think: [
@@ -91,7 +91,8 @@ const STEP_ICON_PATHS: Record<ToolGlyphKind, readonly string[]> = {
   ],
   // A checklist: a to-do update is the list, not an edit to a file.
   todo: ["m4 6.5 1.5 1.5L8.5 5", "M12 6.5h8", "m4 13.5 1.5 1.5 3-3", "M12 13.5h8", "M5 20h.01", "M12 20h8"],
-  fetch: ["M12 3v12", "m7 10 5 5 5-5", "M5 21h14"],
+  // A globe: a fetch reaches out to an address, it is not a download to a file.
+  fetch: ["M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18", "M3 12h18", "M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"],
   switch_mode: ["M4 9h13", "m14 6 3 3-3 3", "M20 15H7", "m10 12-3 3 3 3"],
   other: ["M6 12h.01", "M12 12h.01", "M18 12h.01"]
 };
@@ -606,4 +607,64 @@ export function presentToolCall(row: ToolCallRow): ToolCallPresentation {
       || (detail !== null && !lineShowsWholeDetail(line, detail)),
     outcome: noMatches ? "no_matches" : row.status
   };
+}
+
+/** A run of tool calls said as one quiet sentence, so the thread can keep the run closed
+ *  until the person opens it on purpose: "Ran 4 commands, read 2 files". */
+export type ToolRunSummary = {
+  /** What the run did, counted by kind, in the past tense. */
+  sentence: string;
+  /** How many of its calls failed. A failure is never hidden by the fold: it is said. */
+  failedCount: number;
+  /** The call that is running now, when one is, so a live run can say its current step. */
+  running: ToolCallPresentation | null;
+  /** The glyph of the run's current or most frequent kind. */
+  iconPaths: readonly string[];
+};
+
+const RUN_PHRASES: Partial<Record<ToolGlyphKind, (count: number) => string>> = {
+  execute: (n) => `ran ${n} ${n === 1 ? "command" : "commands"}`,
+  read: (n) => `read ${n} ${n === 1 ? "file" : "files"}`,
+  edit: (n) => `edited ${n} ${n === 1 ? "file" : "files"}`,
+  delete: (n) => `deleted ${n} ${n === 1 ? "file" : "files"}`,
+  move: (n) => `moved ${n} ${n === 1 ? "file" : "files"}`,
+  search: (n) => `searched ${n} ${n === 1 ? "time" : "times"}`,
+  fetch: (n) => `fetched ${n} ${n === 1 ? "page" : "pages"}`,
+  todo: () => "updated to-dos"
+};
+const RUN_PHRASES_SHOWN = 3;
+
+function otherSteps(n: number): string {
+  return `${n} other ${n === 1 ? "step" : "steps"}`;
+}
+
+/** Say a run of tool calls in one line. `total` is how many calls the run holds; when
+ *  fewer of them are at hand than that, the line counts them rather than guess at kinds. */
+export function summarizeToolRun(rows: readonly ToolCallRow[], total = rows.length): ToolRunSummary {
+  const counted = new Map<ToolGlyphKind, number>();
+  let failedCount = 0;
+  let running: ToolCallRow | null = null;
+  for (const row of rows) {
+    const kind = toolGlyphKind(namedTool(row));
+    counted.set(kind, (counted.get(kind) ?? 0) + 1);
+    if (row.status === "failed" && !searchFoundNothing(row)) failedCount += 1;
+    if (row.status === "running") running = row;
+  }
+  const runningPresentation = running === null ? null : presentToolCall(running);
+  const busiest = [...counted.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "other";
+  const iconPaths = runningPresentation?.iconPaths ?? STEP_ICON_PATHS[busiest];
+  const callCount = Math.max(total, rows.length);
+  if (rows.length < callCount || rows.length === 0) {
+    return { sentence: `${callCount} tool ${callCount === 1 ? "call" : "calls"}`, failedCount, running: runningPresentation, iconPaths };
+  }
+  const phrases: string[] = [];
+  let unnamed = 0;
+  for (const [kind, count] of counted) {
+    const phrase = RUN_PHRASES[kind];
+    if (phrase === undefined || phrases.length >= RUN_PHRASES_SHOWN) unnamed += count;
+    else phrases.push(phrase(count));
+  }
+  if (unnamed > 0) phrases.push(phrases.length === 0 ? `used ${unnamed} ${unnamed === 1 ? "tool" : "tools"}` : otherSteps(unnamed));
+  const joined = phrases.length <= 1 ? phrases.join("") : `${phrases.slice(0, -1).join(", ")} and ${phrases.at(-1)}`;
+  return { sentence: joined.charAt(0).toUpperCase() + joined.slice(1), failedCount, running: runningPresentation, iconPaths };
 }

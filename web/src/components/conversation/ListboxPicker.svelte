@@ -569,7 +569,7 @@
             {...optionAttributes?.(item, index+itemOffset === active, item.value === selectedValue)}
           >
             {@render optionContent(item, item.value === selectedValue)}
-            <span class="listbox-picker-tick" aria-hidden="true">{item.value === selectedValue ? "✓" : ""}</span>
+            <span class="listbox-picker-tick" aria-hidden="true">{#if item.value === selectedValue}<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>{/if}</span>
           </button>
         {/each}
         {#if pageWindow}<div aria-hidden="true" style:height={`${Math.max(0,totalItems-itemOffset-items.length)*pageWindow.rowHeight}px`}></div>{/if}
@@ -640,7 +640,49 @@
   .listbox-picker-option:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
   .listbox-picker-option.cursor { background: var(--surface-selected); color: var(--text-strong); }
   .listbox-picker-option.on { color: var(--text-strong); }
-  .listbox-picker-tick { flex: none; font-family: var(--font-mono); font-size: var(--type-xs); }
+  .listbox-picker-tick { flex: none; display: grid; place-items: center; width: 14px; min-height: 1em; }
+  .listbox-picker-tick svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* In the conversation composer every picker stands on the floating plane (§3.14): no edge,
+   * 12px round, the float shadow, 6px of padding; rows 32px tall on an 8px round, 13/20 in the
+   * body tone, the active row on the control fill in the strongest tone, the chosen row marked
+   * by a drawn check at its right. It opens upward with a short rise. Other screens keep theirs. */
+  :global([data-conversation-composer]) .listbox-picker-panel {
+    background: var(--cv-float);
+    border: 0;
+    border-radius: var(--cv-r-lg);
+    box-shadow: var(--cv-shadow-float);
+    animation: listbox-picker-in var(--cv-dur-base) var(--cv-ease-out);
+  }
+  @keyframes listbox-picker-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  :global([data-conversation-composer]) .listbox-picker-panel.compact { padding: 6px; }
+  :global([data-conversation-composer]) .listbox-picker-panel.rail {
+    grid-template-columns: 160px minmax(0, 1fr);
+    width: 440px;
+    max-width: calc(100vw - var(--cv-s6));
+  }
+  :global([data-conversation-composer]) .listbox-picker-list { padding: 6px; }
+  :global([data-conversation-composer]) .compact > .listbox-picker-list { padding: 0; }
+  :global([data-conversation-composer]) .listbox-picker-option {
+    min-height: 32px;
+    gap: var(--cv-s3);
+    padding: 6px var(--cv-s2);
+    border-radius: var(--cv-r-md);
+    color: var(--cv-t2);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+  }
+  :global([data-conversation-composer]) .listbox-picker-option:hover { background: var(--cv-control); background-image: none; color: var(--cv-t1); }
+  :global([data-conversation-composer]) .listbox-picker-option.cursor { background: var(--cv-control); color: var(--cv-t1); }
+  :global([data-conversation-composer]) .listbox-picker-option.on { color: var(--cv-t1); font-weight: var(--cv-weight-label); }
+  :global([data-conversation-composer]) .listbox-picker-list:focus-visible .listbox-picker-option.cursor {
+    box-shadow: inset 0 0 0 var(--cv-focus-width) var(--cv-accent);
+  }
+  :global([data-conversation-composer]) .listbox-picker-tick { color: var(--cv-t1); }
+  @media (prefers-reduced-motion: reduce) {
+    :global([data-conversation-composer]) .listbox-picker-panel { animation: none; }
+  }
   .listbox-picker-panel[aria-busy="true"] .listbox-picker-option { cursor: progress; opacity: .55; }
   @media (max-width: 620px) {
     .listbox-picker-panel.rail { width: min(274px, calc(100vw - var(--space-4) * 2)); }

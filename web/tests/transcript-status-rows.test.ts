@@ -52,7 +52,7 @@ describe("a turn that failed", () => {
   });
 
   it("draws an interrupted turn and a turn with no ending as stopped, a step above metadata", () => {
-    expect(turnEndingStatus("interrupted", null)).toEqual({ tone: "stopped", title: "Turn interrupted", detail: null });
+    expect(turnEndingStatus("interrupted", null)).toEqual({ tone: "stopped", title: "The turn was interrupted", detail: null });
     expect(turnEndingStatus("completed", null)).toBeNull();
     expect(TURN_STOPPED_STATUS.tone).toBe("stopped");
     const html = render(TranscriptStatusRow, { props: { status: turnEndingStatus("interrupted", null)! } }).body;
@@ -117,8 +117,21 @@ describe("a message with attachments", () => {
 });
 
 describe("a running turn's head", () => {
-  it("separates its clock and its count the way a settled head does", () => {
+  it("says it is working and never counts tool calls", () => {
     const html = render(TurnAnchor, { props: { settled: false, startedAtUnixMilliseconds: Date.now(), toolCallCount: 3, onToggle: () => {} } }).body;
-    expect(html).toMatch(/Working[\s\S]*·[\s\S]*3 tool calls/);
+    expect(html).toContain("Working");
+    expect(html).not.toContain("3 tool calls");
+  });
+});
+
+describe("the weight of a status line", () => {
+  it("draws a turn's failure as a callout, with Copy details, and a message's as a note", () => {
+    const raw = "something nobody has seen";
+    const callout = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, role: "alert" } }).body;
+    expect(callout).toContain("c2-status--callout");
+    expect(callout).toContain("data-conversation-status-copy");
+    const note = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, align: "end" } }).body;
+    expect(note).toContain("c2-status--note");
+    expect(note).not.toContain("data-conversation-status-copy");
   });
 });

@@ -72,4 +72,27 @@
   /* A backend mark is the one coloured icon a row carries. An unavailable part greys it. */
   .picker-rail-row.dim :global(.model-picker-mark) { filter: grayscale(1); opacity: .8; }
   :global(.listbox-picker-panel[aria-busy="true"]) .picker-rail-row { cursor: progress; opacity: .55; }
+  /* The model picker's providers, in the composer (§3.14): 32px rows on an 8px round, the
+   * provider's mark and name 13/20 in the body tone; the one whose models are showing on the
+   * control fill in the strongest tone, the held one (chosen, its efforts showing) in t1. */
+  :global([data-conversation-composer]) .picker-rail-row {
+    gap: 10px;
+    min-height: 32px;
+    padding: 6px var(--cv-s2);
+    border-radius: var(--cv-r-md);
+    color: var(--cv-t2);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+  }
+  :global([data-conversation-composer]) .picker-rail-row:hover { background: var(--cv-control); background-image: none; color: var(--cv-t1); }
+  :global([data-conversation-composer]) .picker-rail-row.held { color: var(--cv-t1); }
+  :global([data-conversation-composer]) .picker-rail-row.on { background: var(--cv-control); color: var(--cv-t1); font-weight: var(--cv-weight-label); }
+  :global([data-conversation-composer]) .picker-rail-row.dim,
+  :global([data-conversation-composer]) .picker-rail-row.dim:hover { background: none; color: var(--cv-t3); }
+  :global([data-conversation-composer]) .picker-rail-row-detail { color: var(--cv-t3); font-size: var(--cv-type-caption); }
+  :global([data-conversation-composer]) .picker-rail-row:focus-visible {
+    outline: var(--cv-focus-width) solid var(--cv-accent);
+    outline-offset: -2px;
+  }
 </style>

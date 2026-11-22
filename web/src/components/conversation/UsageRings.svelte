@@ -113,4 +113,13 @@
   .usage-ring-label { color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs); line-height: 1; }
   .usage-ring.absent .usage-ring-percent { color: var(--text-faintest); }
   .usage-ring.spent .usage-ring-percent { color: var(--accent-error); }
+  /* In the composer's picker: the conversation's tones, and numbers in the interface face. */
+  :global([data-conversation-composer]) .usage-rings { --usage-ring-track: rgb(255 255 255 / 14%); }
+  :global([data-conversation-composer]) .usage-ring-percent,
+  :global([data-conversation-composer]) .usage-ring-label {
+    font-family: var(--cv-font);
+    font-variant-numeric: tabular-nums;
+    color: var(--cv-t3);
+  }
+  :global([data-conversation-composer]) .usage-ring.spent .usage-ring-percent { color: var(--cv-danger); }
 </style>

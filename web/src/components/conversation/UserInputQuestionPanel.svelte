@@ -7,17 +7,23 @@
     completeUserInputAnswers,
     emptyUserInputDraft,
     toggleUserInputChoice,
+    userInputOptionForKey,
     userInputAnswerFor,
     type UserInputDraft
   } from "../../lib/conversation/userInput";
   // One name for ending the turn on every ask: the permission ask's own words.
   import { CANCEL_TURN_ACTION } from "../../lib/conversation/composer";
+  import type { Snippet } from "svelte";
+  import { onMount } from "svelte";
+  import AskShell from "./AskShell.svelte";
 
   let {
     request,
     busy = false,
     answerAvailable = true,
     note = null,
+    framed = true,
+    replyStrip,
     onSubmit,
     onCancelTurn
   }: {
@@ -25,6 +31,10 @@
     busy?: boolean;
     answerAvailable?: boolean;
     note?: string | null;
+    /** Whether it draws its own raised plane (the composer gives up its own for it). */
+    framed?: boolean;
+    /** The composer's one-line reply, under the answers. */
+    replyStrip?: Snippet;
     onSubmit?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
   } = $props();
@@ -47,6 +57,29 @@
   );
   let canContinue = $derived(currentAnswers.length > 0);
   let isLast = $derived(step === request.questions.length - 1);
+  let optionsElement = $state<HTMLDivElement | null>(null);
+
+  // The decision is where the person's attention goes: the first answer takes focus when the
+  // ask appears, unless they are already somewhere else on the page.
+  onMount(() => {
+    if (document.activeElement === null || document.activeElement === document.body) {
+      optionsElement?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+    }
+  });
+
+  /** 1–9 choose an answer, as a permission ask's question does. Typing a number into a
+   *  field means the number. */
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (question === undefined || busy || !answerAvailable) return;
+    if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+      || (target instanceof HTMLElement && target.isContentEditable)) return;
+    const option = userInputOptionForKey(question, event.key);
+    if (option === null) return;
+    event.preventDefault();
+    choose(option);
+  }
 
   function choose(option: string): void {
     if (question === undefined || busy || !answerAvailable) return;
@@ -81,50 +114,79 @@
   }
 </script>
 
-<!-- The question is the composer's content while it waits, so it stands on the
-     composer's own surface: no plane, no frame, no outlined boxes inside it. -->
-<section
-  class="question-panel"
-  data-user-input-panel
-  data-user-input-request-id={request.requestId}
-  aria-label="Questions from the agent"
->
-  {#if question}
-    <header>
-      <div class="progress">
-        <span class="eyebrow">{question.header || "Question"}</span>
-        {#if request.questions.length > 1}
-          <span class="count">{step + 1} of {request.questions.length}</span>
-        {/if}
-      </div>
-      <h3 id={`${uid}-question`}>{question.question}</h3>
-      <p class="hint" id={`${uid}-hint`}>
-        {question.multi_select ? "Choose all that apply." : "Choose one."}
-        {#if question.allow_other}Or write your own below.{/if}
-      </p>
-    </header>
+<svelte:window onkeydown={onWindowKeydown} />
 
+{#snippet position()}
+  {#if question?.header}<span class="topic">{question.header}</span>{/if}
+  {#if request.questions.length > 1}
+    {#if question?.header}<span class="sep" aria-hidden="true">·</span>{/if}
+    <span class="count">{step + 1} of {request.questions.length}</span>
+    <button type="button" class="cv-icon-button cv-icon-button--small" data-user-input-back
+      aria-label="Previous question" title="Previous question" disabled={busy || step === 0}
+      onclick={() => (step -= 1)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4" /></svg></button>
+    <button type="button" class="cv-icon-button cv-icon-button--small" data-user-input-forward
+      aria-label="Next question" title="Next question" disabled={busy || isLast || !canContinue}
+      onclick={continueOrSubmit}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
+  {/if}
+{/snippet}
+
+{#snippet stopTurn()}
+  <button
+    type="button"
+    class="cv-button cv-button--ghost cancel"
+    data-user-input-cancel
+    disabled={busy}
+    onclick={() => onCancelTurn?.()}
+  >{CANCEL_TURN_ACTION.label}</button>
+{/snippet}
+
+{#snippet commit()}
+  <!-- The one primary. Before there is an answer it waits as a quiet outline. -->
+  <button
+    type="button"
+    class="cv-button cv-button--primary"
+    data-user-input-continue
+    disabled={busy || !answerAvailable || !canContinue}
+    onclick={continueOrSubmit}
+  >{busy && isLast ? "Sending…" : isLast ? (request.questions.length > 1 ? "Send answers" : "Send answer") : "Next"}</button>
+{/snippet}
+
+{#if question}
+  <AskShell
+    kind="question"
+    eyebrow="Needs your answer"
+    context={position}
+    title={question.question}
+    titleId={`${uid}-question`}
+    description={question.multi_select ? "Choose all that apply." : null}
+    {framed}
+    {replyStrip}
+    footerStart={stopTurn}
+    footerEnd={commit}
+    data-user-input-panel
+    data-user-input-request-id={request.requestId}
+    aria-label="Questions from the agent"
+  >
     <div
       class="options"
       role="group"
       aria-labelledby={`${uid}-question`}
-      aria-describedby={`${uid}-hint`}
+      bind:this={optionsElement}
     >
-      {#each question.options as option (option.label)}
+      {#each question.options as option, index (option.label)}
         {@const selected = (draft.selected[question.question_id] ?? []).includes(option.label)}
         <button
           type="button"
           class:selected
           data-user-input-option={option.label}
           aria-pressed={selected}
+          aria-keyshortcuts={index < 9 ? String(index + 1) : undefined}
           disabled={busy || !answerAvailable}
           onclick={() => choose(option.label)}
         >
-          <span
-            class="mark"
-            class:square={question.multi_select}
-            aria-hidden="true"
-          ></span>
+          <span class="key" aria-hidden="true">
+            {#if selected}<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></svg>{:else if index < 9}{index + 1}{/if}
+          </span>
           <span class="words">
             <span class="label">{option.label}</span>
             {#if option.description}<small>{option.description}</small>{/if}
@@ -136,10 +198,11 @@
     {#if question.allow_other}
       <label class="other">
         <span class="visually-hidden">Other answer</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3.2a1.5 1.5 0 0 1 2.1 2.1L6 11.9l-2.8.7.7-2.8z" /></svg>
         <input
           data-user-input-other
           value={draft.other[question.question_id] ?? ""}
-          placeholder="Other: type your own answer"
+          placeholder="Something else…"
           disabled={busy || !answerAvailable}
           oninput={(event) => writeOther(event.currentTarget.value)}
           onkeydown={otherKeydown}
@@ -148,81 +211,88 @@
     {/if}
 
     {#if note}<p class="note" role="alert">{note}</p>{/if}
-
-    <footer>
-      <button
-        type="button"
-        class="button button--ghost cancel"
-        data-user-input-cancel
-        disabled={busy}
-        onclick={() => onCancelTurn?.()}
-      >{CANCEL_TURN_ACTION.label}</button>
-      <span class="spacer"></span>
-      {#if step > 0}
-        <button
-          type="button"
-          class="button button--secondary"
-          data-user-input-back
-          disabled={busy}
-          onclick={() => (step -= 1)}
-        >Back</button>
-      {/if}
-      <button
-        type="button"
-        class="button button--primary"
-        data-user-input-continue
-        disabled={busy || !answerAvailable || !canContinue}
-        onclick={continueOrSubmit}
-      >{busy && isLast ? "Sending…" : isLast ? (request.questions.length > 1 ? "Submit answers" : "Submit answer") : "Next"}</button>
-    </footer>
-  {:else}
-    <p class="note" role="alert">This question request contained no questions.</p>
-    <footer>
-      <button type="button" class="button button--ghost cancel" data-user-input-cancel onclick={() => onCancelTurn?.()}>{CANCEL_TURN_ACTION.label}</button>
-    </footer>
-  {/if}
-</section>
+  </AskShell>
+{:else}
+  <AskShell
+    kind="question"
+    eyebrow="Needs your answer"
+    title="This question request contained no questions."
+    {framed}
+    {replyStrip}
+    footerStart={stopTurn}
+    data-user-input-panel
+    data-user-input-request-id={request.requestId}
+    aria-label="Questions from the agent"
+  />
+{/if}
 
 <style>
-  .question-panel { display: grid; gap: var(--space-3); padding: var(--space-3) 0 var(--space-1); width: 100%; box-sizing: border-box; color: var(--text-default); }
-  header { display: grid; gap: var(--space-1); }
-  .progress { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); font-size: var(--type-xs); }
-  .eyebrow { color: var(--accent-bright); font-weight: var(--weight-title); letter-spacing: var(--tracking-label); text-transform: uppercase; overflow-wrap: anywhere; }
-  .count { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  h3 { margin: 0; font: inherit; font-size: var(--type-md); font-weight: var(--weight-title); line-height: 1.4; color: var(--text-strong); overflow-wrap: anywhere; }
-  .hint, .note { margin: 0; color: var(--text-muted); font-size: var(--type-xs); line-height: 1.5; }
-  .note[role="alert"] { color: var(--accent-error); }
-  .options { display: grid; gap: var(--space-1); }
-  /* Filled, not outlined, like the shared secondary button: one step of white on the
-     composer. The chosen answer carries the accent in its mark and a tint of it. */
-  .options button { display: flex; align-items: flex-start; gap: var(--space-3); width: 100%; min-height: var(--button-height); padding: var(--space-2) var(--space-3); text-align: left; border: 0; border-radius: var(--radius-md); background: var(--state-step); color: inherit; font: inherit; font-size: var(--type-row); cursor: pointer; }
-  .options button:hover:not(:disabled) { background-image: var(--interaction-hover); }
-  .options button.selected { background: color-mix(in srgb, var(--accent-bright) 16%, transparent); }
-  .options button.selected .label { color: var(--text-strong); }
-  .mark { flex: none; box-sizing: border-box; width: 14px; height: 14px; margin-top: 3px; border: 1.5px solid var(--text-muted); border-radius: 50%; }
-  .mark.square { border-radius: var(--radius-sm); }
-  .selected .mark { border-color: var(--accent-bright); background: radial-gradient(circle, var(--accent-bright) 0 3.5px, transparent 4px); }
-  .selected .mark.square { background: linear-gradient(var(--accent-bright), var(--accent-bright)) center / 6px 6px no-repeat; }
+  .topic { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sep { color: var(--cv-t4); }
+  .count { flex: none; }
+  .options { display: grid; gap: var(--cv-s1); }
+  /* An option is a two-line row (label, then its description) with its number key on the
+     left. Hover is one step up; the chosen one takes the control fill and a check in place
+     of its key: tone and a mark, not a coloured edge. */
+  .options button {
+    display: flex;
+    align-items: center;
+    gap: var(--cv-s3);
+    width: 100%;
+    min-height: 48px;
+    padding: var(--cv-s2) var(--cv-s3) var(--cv-s2) var(--cv-s2);
+    border: 0;
+    border-radius: var(--cv-r-md);
+    background: transparent;
+    color: var(--cv-t1);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .options button:hover:not(:disabled) { background: var(--cv-control); }
+  .options button.selected { background: var(--cv-control); }
+  .options button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: -2px; }
+  .options button:disabled { cursor: default; color: var(--cv-t3); }
+  .key {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--cv-r-sm);
+    background: var(--cv-control);
+    color: var(--cv-t3);
+    font: var(--cv-weight-label) var(--cv-type-caption)/1 var(--cv-font);
+    font-variant-numeric: tabular-nums;
+  }
+  .selected .key { background: var(--cv-primary-fill); color: var(--cv-primary-ink); }
+  .key svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .words { display: grid; gap: 2px; min-width: 0; }
-  .label { overflow-wrap: anywhere; }
-  .options small { color: var(--text-muted); font-size: var(--type-xs); line-height: 1.45; overflow-wrap: anywhere; }
-  .other { display: grid; }
-  .other input { width: 100%; box-sizing: border-box; min-height: var(--button-height); padding: var(--space-2) var(--space-3); border: var(--border-hairline) solid var(--border-raised); border-radius: var(--radius-md); background: transparent; color: var(--text-strong); font: inherit; font-size: var(--type-row); }
-  .other input::placeholder { color: var(--text-muted); }
+  .label { overflow-wrap: anywhere; font: var(--cv-weight-label) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font); }
+  .options small { color: var(--cv-t3); font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); overflow-wrap: anywhere; }
+  /* The field: a canvas well inside the raised ask, with a pen where the key would be. */
+  .other {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-block-start: var(--cv-s2);
+  }
+  .other svg { position: absolute; left: 13px; width: 14px; height: 14px; fill: none; stroke: var(--cv-t4); stroke-width: 1.5; stroke-linejoin: round; pointer-events: none; }
+  .other input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 40px;
+    padding: 0 var(--cv-s3) 0 44px;
+    border: 1px solid var(--cv-line-strong);
+    border-radius: var(--cv-r-md);
+    background: var(--cv-canvas);
+    color: var(--cv-t1);
+    font: var(--cv-weight-body) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font);
+  }
+  .other input::placeholder { color: var(--cv-t4); }
+  .other input:focus { outline: none; border-color: var(--cv-accent-line); }
+  .other input:disabled { cursor: default; color: var(--cv-t4); }
+  .note { margin: var(--cv-s3) 0 0; color: var(--cv-danger); font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); }
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-  .spacer { flex: 1; }
-  /* The ask shell's action row, as the permission ask's: the way out on the left in the
-     primary tone (the ghost's secondary tone read as disabled on the composer's fill), the
-     one primary at the right end. A primary that cannot go yet loses its fill, not its
-     label: a hairline ring on the composer's own fill, the label in the secondary tone
-     (6:1 there), so it reads as the primary waiting rather than as another option. */
-  footer .button--ghost:not(:disabled) { color: var(--text-default); }
-  footer .button--ghost:hover:not(:disabled) { color: var(--text-strong); }
-  footer .cancel:hover:not(:disabled) { color: var(--accent-error); }
-  footer .button--secondary { background: var(--state-step); }
-  footer .button--secondary:hover:not(:disabled) { background-image: var(--interaction-hover); }
-  footer .button--primary:disabled { background: transparent; box-shadow: inset 0 0 0 var(--border-hairline) var(--border-raised); color: var(--text-muted); }
-  .options button:disabled { cursor: default; color: var(--text-faint); }
-  input:disabled { opacity: .5; cursor: default; }
 </style>

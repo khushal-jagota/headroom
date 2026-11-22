@@ -38,7 +38,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const unknownVerdict = (summary: typeof latestSummary) => !!block.binding && !!summary && summary.comparison !== null && summary.meets_expectation === null;
   const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : unknownVerdict(latestSummary) ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
     : { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--chart-muted)' }[currentTone];
-  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? showLegend ? 'var(--accent-bright)' : currentColor : comparisonColor(item, i, 'composition') }));
+  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? showLegend ? 'var(--accent-bright)' : currentColor : showLegend ? comparisonColor(item, i, 'composition') : seriesColor(item, i, 'composition') }));
   const topStackKey = entries.at(-1)?.key;
   if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--chart-reference)' });
 

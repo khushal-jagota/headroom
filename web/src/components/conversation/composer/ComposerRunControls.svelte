@@ -32,6 +32,7 @@
   backendEffortOptions={view.pickerSource.backendEffortOptions}
   showUsage
   tonedMark
+  layout="composer"
   disabled={view.disabled}
   attributes={{ "data-conversation-picker-model": "" }}
   afterChoose={() => {}}
@@ -39,12 +40,12 @@
   onChooseModel={intents.chooseModel}
 />
 
-<!-- What is on the right is what there is to do. The microphone leads the turn actions,
-     and sending appears when there is something to send: a composer with
-     nothing in it offers no Send, greyed out or otherwise. How the message will be
-     delivered is a standing choice rather than an action, so it leads the group, and it
-     is only there while a turn runs: with nothing running a message starts the next turn
-     whatever the choice says. -->
+<!-- What is on the right is what there is to do. How the message will be delivered is a
+     standing choice rather than an action, so it leads the group, and it is only there while
+     a turn runs: with nothing running a message starts the next turn whatever it says. The
+     row always ends in one 32px round: Send, quiet until there is something to send; while
+     a turn runs, Stop, with Send beside it once there is a draft. Stop stays reachable while
+     writing, because a draft is no reason to lose the way to end the turn. -->
 <div class="chat-submit">
   {#if view.showDeliveryMode}
     <DeliveryModePicker
@@ -60,13 +61,13 @@
       type="button"
       class="chat-send stop"
       data-conversation-stop={true}
-      title="Stop the turn"
-      aria-label="Stop the turn"
+      title="Stop turn"
+      aria-label="Stop turn"
       onclick={intents.stop}
     ><span class="chat-send-fill" aria-hidden="true"></span></button>
   {/if}
   <!-- Sending leaves the cursor in the field, so a phone's keyboard stays up for the reply. -->
-  {#if view.submit.active || view.submit.sending}
+  {#if view.submit.active || view.submit.sending || !view.showStop}
     <button
       type="button"
       class={`chat-send${view.submit.active ? " on" : ""}`}

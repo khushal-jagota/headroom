@@ -60,9 +60,15 @@
 </script>
 <article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
   {#if label !== null}
-    <div class="c2-system-box">
-      <div class="c2-label" data-conversation-prompt-label>{label}</div>
-      <MessagePieces {presentationRowKey} {content} {conversationId}/>
+    <!-- Someone other than the person wrote this (Panels, another agent). It is a quiet
+         system row: an arrow, who sent it, then their words, all in the meta voice. No box:
+         the small size, the quiet tone and the left edge say it is not the person's. -->
+    <div class="c2-system-row">
+      <svg class="c2-system-mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5" /></svg>
+      <div class="c2-system-body">
+        <div class="c2-label" data-conversation-prompt-label>{label}</div>
+        <MessagePieces {presentationRowKey} {content} {conversationId}/>
+      </div>
     </div>
   {:else}
     <MessagePieces {presentationRowKey} {content} {conversationId} bubble/>
@@ -86,34 +92,66 @@
 </article>
 <style>
   article { position: relative; }
-  /* The message is a column of the things that make it up: the bubble of words, what was
-     attached beside it, and what became of it. Only the words are in a bubble. */
-  .chat-u, .chat-system { display: flex; flex-direction: column; gap: var(--space-2); background: transparent; padding: 0; border-radius: 0; }
-  /* A turn of the person's reads as a turn on the dark page: their words, and the files
-     they sent, stand on the raised plane with a hairline edge, a clear step off the
-     page (#121212) and still a step under the composer's field (#2a2a2a). */
-  .chat-u { align-items: flex-end; --user-turn-fill: var(--surface-raised); }
-  .chat-u :global(.c2-bubble) { background: var(--user-turn-fill); box-shadow: inset 0 0 0 var(--border-hairline) var(--border-raised); }
-  .chat-u :global(.conversation-file-card .file-preview-band) { background: var(--user-turn-fill); }
-  .chat-system { align-items: stretch; }
-  .attaches-files { inline-size: 100%; }
+  /* The message is a column of the things that make it up: what was attached, the bubble of
+     words, and what became of it, 8 apart on one right edge (design v3 §3.2). */
+  .chat-u, .chat-system {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cv-gap-bubble-stack);
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    color: var(--cv-t1);
+    font-family: var(--cv-font);
+  }
+  .chat-u { align-self: flex-end; align-items: flex-end; max-width: 80%; }
+  .chat-system { align-self: stretch; align-items: stretch; }
+  .attaches-files { min-inline-size: min(100%, 320px); }
   .chat-u :global(.c2-piece-image-slot), .chat-u :global(.conversation-file-card) { margin-block: 0; }
-  .chat-u :global(.conversation-file-card) { align-self: stretch; }
   /* One group with one right edge, the bubble's. A picture's slot can be wider than the
-     picture (a large image sizes the slot to the column, then the picture caps itself
-     inside it), so the picture is set against the slot's end, not left at its start. */
+     picture, so the picture is set against the slot's end. */
   .chat-u :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; }
-  /* A sent file is one of the person's things, not a document dropped into the thread:
-     its corners and inner inset are the bubble's, so text, preview and file name start on
-     one line, and its preview is a glance (the full file is one click away). */
-  .chat-u :global(.conversation-file-card .file-preview-card) { border-radius: var(--radius-lg); }
-  .chat-u :global(.conversation-file-card .file-preview-clip:not(.file-preview-clip--loading)) { max-height: 12rem; padding: var(--space-3) var(--space-4) 0; }
-  .chat-u :global(.conversation-file-card .file-preview-band) { padding: var(--space-3) var(--space-4); }
-  /* Someone other than the person, in the box that says so. */
-  .c2-system-box { border-radius: var(--radius-md); background: var(--surface-2); padding: var(--space-2) var(--space-3); }
-  .c2-label { color:var(--text-faint); font-family:var(--font-ui); font-size:var(--type-small); padding-block-end:var(--space-1); }
-  .message-status-window { align-self: stretch; margin-block-start: calc(var(--space-2) * -1); }
+  .chat-u :global(.conversation-file-card--media) { align-self: flex-end; }
+
+  .c2-system-row {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    column-gap: var(--cv-s2);
+    color: var(--cv-t3);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+  }
+  .c2-system-mark {
+    inline-size: 14px;
+    block-size: 14px;
+    margin-block-start: 3px;
+    color: var(--cv-t4);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .c2-system-body { min-width: 0; display: grid; gap: 2px; }
+  .c2-label { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  /* The sent words keep their structure but speak in the row's small, quiet voice. */
+  .c2-system-body :global(.markdown) {
+    color: var(--cv-t3);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+  }
+  .c2-system-body :global(.markdown :is(p, ul, ol, blockquote)) { margin-block-end: var(--cv-s1); }
+  .c2-system-body :global(.markdown > :last-child) { margin-block-end: 0; }
+  .c2-system-body :global(.markdown :is(h1, h2, h3, h4, h5, h6)) {
+    margin-block: var(--cv-s2) 0;
+    color: var(--cv-t2);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+  }
+  .c2-system-body :global(.markdown strong) { color: var(--cv-t2); }
+
+  .message-status-window { align-self: stretch; margin-block-start: calc(var(--cv-gap-bubble-stack) * -1); }
   .message-status { display: flex; flex-direction: column; }
-  .message-status > :global(.c2-status) { margin-block-start: var(--space-2); }
-  .c2-status-action { height: 24px; padding: 0 var(--space-2); font-size: var(--type-small); font-weight: var(--weight-body); }
+  .message-status > :global(.c2-status) { margin-block-start: var(--cv-gap-bubble-stack); }
+  .c2-status-action { height: 28px; padding: 0 var(--cv-s2); color: var(--cv-t1); font-size: var(--cv-type-meta); font-weight: var(--cv-weight-label); }
 </style>

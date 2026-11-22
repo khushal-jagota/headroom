@@ -1,3 +1,4 @@
+import { friendlyFileType } from "../../../lib/conversation/fileTypes";
 import type { PendingVideo } from "../../../lib/conversation/videoUploads/contracts";
 import type { PendingConversationImage } from "../../../lib/conversation/pendingImages";
 import type { PendingConversationFile } from "../../../lib/conversation/pendingFiles";
@@ -41,18 +42,20 @@ export function attachmentByteLabel(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-const TEXT_EXTENSIONS = new Set(["txt", "text", "log", "csv", "tsv", "json", "jsonl", "md", "markdown"]);
-
-/** The kind a file is called by, in words, as the sent file card calls it ("Text", "PDF"),
- *  never its raw media type: a person reads "Text · 692 B", not "text/plain · 692 B". */
+/** The kind a file is called by, in words, as the sent file card calls it ("Text", "CSV",
+ *  "PDF"), never its raw media type: a person reads "Text · 692 B", not "text/plain · 692 B".
+ *  One naming for pending and sent files (lib/conversation/fileTypes.ts). */
 export function attachmentKindLabel(fileName: string, mediaType = ""): string {
-  const dot = fileName.lastIndexOf(".");
-  const extension = dot < 0 ? "" : fileName.slice(dot + 1).toLowerCase();
-  const type = mediaType.toLowerCase();
-  if (extension === "pdf" || type === "application/pdf") return "PDF";
-  if (TEXT_EXTENSIONS.has(extension) || type.startsWith("text/") || type === "application/json") return "Text";
-  if (type.startsWith("image/")) return "Image";
-  if (type.startsWith("video/")) return "Video";
-  if (type.startsWith("audio/")) return "Audio";
-  return "File";
+  return friendlyFileType(fileName, mediaType);
+}
+
+/** A file's name cut in its middle when it is long, so both its start and its kind survive
+ *  ("export-…-v1.csv"). The whole name stays in the tile's title. */
+export function attachmentDisplayName(name: string, longest = 26): string {
+  const characters = Array.from(name);
+  if (characters.length <= longest) return name;
+  const dot = name.lastIndexOf(".");
+  const tailLength = Math.min(Math.max(dot < 0 ? 0 : characters.length - Array.from(name.slice(0, dot)).length, 0) + 4, Math.floor(longest / 2));
+  const headLength = longest - tailLength - 1;
+  return `${characters.slice(0, headLength).join("")}…${characters.slice(characters.length - tailLength).join("")}`;
 }

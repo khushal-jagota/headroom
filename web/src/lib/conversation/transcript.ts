@@ -282,14 +282,14 @@ export function turnEndingStatus(
       detailOpen: cause === undefined
     };
   }
-  if (ending === "interrupted") return { tone: "stopped", title: "Turn interrupted", detail: null };
+  if (ending === "interrupted") return { tone: "stopped", title: "The turn was interrupted", detail: null };
   return null;
 }
 
 /** A turn the record never wrote an ending for, in the same family. */
 export const TURN_STOPPED_STATUS: TranscriptStatus = {
   tone: "stopped",
-  title: "Turn stopped before it finished",
+  title: "The turn stopped before it finished",
   detail: null
 };
 
@@ -934,6 +934,12 @@ export function foldedWorkSentence(toolCallCount: number, messageCount: number):
   return counted.join(" · ");
 }
 
+/** What a settled turn's fold holds in Focus: only what the turn said on the way to its
+ *  answer. Focus never counts or opens tool calls; that work belongs to Full. */
+export function earlierMessagesSentence(messageCount: number): string {
+  return messageCount <= 0 ? "" : `${messageCount} earlier message${messageCount === 1 ? "" : "s"}`;
+}
+
 /** How far through its plan the conversation is: what it has finished, out of what it
  *  said it would do.
  *
@@ -957,7 +963,7 @@ function completedPlanEntryCount(entries: readonly PlanEntry[]): number {
 }
 
 /** What the seam where the backend cut the thread says. */
-export const CONTEXT_COMPACTED_SENTENCE = "context compacted";
+export const CONTEXT_COMPACTED_SENTENCE = "Context compacted";
 
 /** The label over a prompt bubble, or nothing when it would only say "you".
  *

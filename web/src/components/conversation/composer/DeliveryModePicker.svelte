@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PromptDeliveryMode } from "../../../lib/conversation/wire";
+  import { DELIVERY_MODE_CHOICES, deliveryModeChoices } from "./deliveryModes";
   import ListboxPicker, {
     type ListboxPickerController,
     type ListboxPickerItem
@@ -18,16 +19,9 @@
     onChoose: (mode: PromptDeliveryMode) => void;
   } = $props();
 
-  /** Each mode says what it will do to the turn that is running, because that is the whole
-   *  of the difference between them. */
-  const everyChoice: readonly (ListboxPickerItem & { value: PromptDeliveryMode; hint: string })[] = [
-    { value: "steer", name: "Steer", hint: "Add it to the turn that is running" },
-    { value: "queue", name: "Queue", hint: "Send it when this turn ends" },
-    { value: "send_now", name: "Send now", hint: "Stop this turn and run it next" }
-  ];
-  let choices = $derived(everyChoice.filter((choice) => modes.includes(choice.value)));
+  let choices = $derived(deliveryModeChoices(modes));
   let picker = $state<ListboxPickerController>(null!);
-  let selected = $derived(choices.find((choice) => choice.value === value) ?? choices[0] ?? everyChoice[0]);
+  let selected = $derived(choices.find((choice) => choice.value === value) ?? choices[0] ?? DELIVERY_MODE_CHOICES[0]);
 
   function choose(next: string): void {
     if (disabled) return;
@@ -47,56 +41,55 @@
   attributes={{ "data-conversation-send-mode": "" }}
   triggerAttributes={{ "data-conversation-send-mode-trigger": "" }}
   panelAttributes={{ "data-conversation-send-mode-panel": "" }}
-  optionAttributes={(choice) => ({ "data-conversation-send-mode-choice": choice.value })}
+  optionAttributes={(choice) => {
+    const meaning = DELIVERY_MODE_CHOICES.find((each) => each.value === choice.value)?.meaning;
+    return {
+      "data-conversation-send-mode-choice": choice.value,
+      "aria-label": meaning ? `${choice.name}: ${meaning}` : choice.name,
+      title: meaning
+    };
+  }}
   onChoose={choose}
 >
   {#snippet triggerContent(open)}
     <span class="delivery-mode-face">{selected.name}</span>
   {/snippet}
   {#snippet optionContent(choice, isSelected)}
-    <span class="delivery-mode-choice">
-      <span class="delivery-mode-name">{choice.name}</span>
-      <span class="delivery-mode-hint">{everyChoice.find((each) => each.value === choice.value)?.hint}</span>
-    </span>
+    <span class="delivery-mode-name">{choice.name}</span>
   {/snippet}
 </ListboxPicker>
 
 <style>
   .delivery-mode-face { white-space: nowrap; }
-  .delivery-mode-choice { display: grid; gap: 2px; min-width: 0; }
-  .delivery-mode-name { color: var(--text-strong); }
-  .delivery-mode-hint { color: var(--tone-tertiary); font-size: var(--type-small); white-space: nowrap; }
-  /* Closed, the mode is a control and reads as one: a filled pill with its chevron, in the
-   * primary tone, so it never runs into the model's plain label beside it ("gpt-6.1-sol high
-   * Steer"). 28px tall, the send round's height, on the composer's row. */
+  .delivery-mode-name { white-space: nowrap; }
+  /* Closed, the mode is the one filled chip on the row, because it changes what Send does:
+   * 28px, 8px round, the control fill, the mode in 500 t1 and a drawn chevron. It stands apart
+   * from the model's plain words beside it by its fill and weight; no edge is drawn. */
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger) {
-    height: 28px;
-    min-height: 28px;
-    gap: 2px;
-    padding-inline: var(--space-2) var(--space-1);
-    background: var(--surface-selected);
-    border-color: transparent;
-    color: var(--tone-primary);
+    gap: 4px;
+    padding-inline: 10px 6px;
+    background: var(--cv-control);
+    color: var(--cv-t1);
+    font-weight: var(--cv-weight-label);
   }
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger:hover:not(:disabled)),
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open) {
-    background: var(--surface-selected);
-    background-image: var(--interaction-hover);
-    color: var(--tone-strong);
+    background: var(--cv-control-hover);
+    color: var(--cv-t1);
   }
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] .listbox-picker-chevron-drawn) {
     display: block;
     width: 14px;
     height: 14px;
+    color: var(--cv-t3);
   }
-  /* The panel opens from the composer's right edge, 8px above the box, like the model
-   * picker's, and floats over the queue tray and the task pill on the raised plane rather than
-   * moving them (ConversationComposer). */
+  /* The menu opens upward from the composer's right edge, 8px over the shell, and overlays what
+   * stands above (ConversationComposer). Three short labels: it is as narrow as they are. */
   :global(.chat-box .chat-submit [data-conversation-send-mode]) { position: static; }
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;
     right: 0;
-    bottom: calc(100% + var(--space-2));
-    width: min(264px, calc(100vw - var(--space-4) * 2));
+    bottom: calc(100% + var(--cv-s2));
+    width: 200px;
   }
 </style>

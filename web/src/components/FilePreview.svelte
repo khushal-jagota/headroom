@@ -11,7 +11,6 @@
     resolvePreview
   } from "../lib/filePreview";
   import MarkdownBlock from "./MarkdownBlock.svelte";
-  import { attachmentKindLabel } from "./conversation/composer/attachments";
   import { readManagedFile } from "../lib/managedFileRead";
 
   let {
@@ -159,7 +158,7 @@
         </svg></span>
         <span class="file-preview-identity">
           <a class="pv-name" href={resolved.previewHref ?? resolved.href}>{resolved.label}</a>
-          <span class="file-preview-kind">{attachmentKindLabel(resolved.label, resolved.kind === "pdf" ? "application/pdf" : "text/plain")}{knownSizeLabel ? ` · ${knownSizeLabel}` : ""}</span>
+          <span class="file-preview-kind">{resolved.kind === "pdf" ? "PDF" : "Text"}{knownSizeLabel ? ` · ${knownSizeLabel}` : ""}</span>
         </span>
         {#if download}<a class="pv-act" href={download.href} download={download.fileName}>Download</a>{/if}
       </div>

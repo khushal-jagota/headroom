@@ -1,30 +1,27 @@
 <script lang="ts">
-  /** A turn's head: the one place in the thread that does not move.
+  /** A turn's head: the one line in the thread that does not move.
    *
-   * It appears the moment the turn starts, before there is anything to put under it —
-   * the wait before the first tool call is exactly the silence it exists to fill — and it
-   * is still there when the turn is over, as the fold across everything the turn did: its
-   * tool calls, and everything it said on the way to the answer it left standing.
+   * It appears the moment the turn starts, before there is anything to put under it, and
+   * it is still there when the turn is over. It binds to what follows it — the turn's
+   * first words sit 8 px under it — so it reads as that turn's line, never as a stray
+   * caption between two turns.
    *
-   * While the turn runs it counts, honestly, from the moment the prompt landed: a reload
-   * mid-turn shows the real elapsed time rather than starting again from zero. The mark
-   * beside it turns while the model was alive recently and holds still when it is not; it
-   * never claims to track progress nobody can see. Under it, when the record names one, is
-   * the tool call running now.
+   * It speaks about the turn, not about its tools. Tool calls are Full's to show, under
+   * their own summaries, so the head never counts them and never opens onto them. In Focus
+   * a settled turn that said more than its answer folds those earlier messages, and the
+   * head is the one place to open them.
    *
-   * It never removes itself. A turn that folded nothing away has nothing to open, but it
-   * still says how long it took, in the place it has occupied since the turn began — the
-   * head is the same line all the way through, and a line that disappears the instant a
-   * turn ends moves everything under it for no reason anybody reading could name.
+   * While the turn runs it counts, honestly, from the moment the prompt landed. The mark
+   * turns while live frames arrive and holds still when they stop; the label shimmers only
+   * while it is alive. Waiting on the person is the one state it says in the accent.
    */
   import {
-    foldedWorkSentence,
-    turnFoldLabel,
-    workingSentence
+    earlierMessagesSentence,
+    formatDuration,
+    turnFoldLabel
   } from "../../lib/conversation/transcript";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import type { ConversationTurnEnding } from "../../lib/conversation/wire";
-  import type { RunningToolActivity } from "../../lib/conversation/view/presentation";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
    *  frames, short enough that a stalled backend stops claiming to be alive. */
@@ -43,68 +40,46 @@
     expanded = false,
     waiting = null,
     livenessPulse = 0,
-    activity = null,
     onToggle
   }: {
     activityUncertain?: boolean;
     settled?: boolean;
     stopped?: boolean;
-    /** When the turn began, in unix milliseconds, so a reload counts from the truth and
-     *  the count turns over on that instant's own seconds. */
+    /** When the turn began, in unix milliseconds, so a reload counts from the truth. */
     startedAtUnixMilliseconds?: number | null;
     ending?: ConversationTurnEnding | null;
     isLatest?: boolean;
     durationSeconds?: number | null;
+    /** Whether the turn did any work. Never said: it only keeps the head of a turn that
+     *  stopped without an ending, because its work is still there to be read in Full. */
     toolCallCount?: number;
-    /** How much of what the turn said is behind this fold. Everything the turn said but
-     *  the last of it, once the turn has settled. */
+    /** How much of what the turn said is behind this fold, once the turn has settled. */
     foldedMessageCount?: number;
-    /** Whether this turn's work is showing. The turn owns it, not the individual runs. */
+    /** Whether this turn's earlier messages are showing. */
     expanded?: boolean;
     /** What the running turn is waiting on the person for, if anything. A turn held by a
      *  question or an approval is not working, and its head must not say it is. */
     waiting?: "permission" | "question" | null;
     /** Moves whenever a live frame arrives. Only its movement is read. */
     livenessPulse?: number;
-    /** What the running turn is doing right now, from the record: the sentence its
-     *  running tool call reads as, and its halves, so a literal subject (a command, a path)
-     *  is set as code as its row sets it. Absent when nothing is running that anybody can
-     *  name. */
-    activity?: RunningToolActivity | null;
-    /** Opens and closes what this turn did. Absent where the reading already shows it. */
+    /** Opens and closes the turn's earlier messages. Absent where the reading shows them. */
     onToggle?: () => void;
   } = $props();
 
-  // A turn that has only just begun is as alive as it gets: starting is itself the sign of
-  // life, and the wait before the first frame is exactly when a still line would read as
-  // nothing happening. So it starts alive and goes still only if nothing follows.
   let fresh = $state(true);
-  // The one thing that changes every second. The transcript is not rebuilt on a tick and
-  // no row is touched: only this number moves.
   const elapsed = elapsedTurnTime(() => settled ? null : startedAtUnixMilliseconds);
 
   let foldLabel = $derived(turnFoldLabel({ durationSeconds, ending, isLatest }));
-  // A turn that only talked folds too: five paragraphs of commentary is exactly as long
-  // to scroll past as five tool calls.
-  let somethingBehindTheFold = $derived(toolCallCount > 0 || foldedMessageCount > 0);
-  let foldVisible = $derived(settled && somethingBehindTheFold);
-  // The head is there for every turn but one: a turn that stopped without an ending, with
-  // nothing behind it and no plan, has nothing it can honestly say. It still keeps its
-  // fold when it did work, because that work is behind the fold and this is the only way
-  // to reach it.
-  let visible = $derived(!settled || !stopped || foldVisible);
-  // Where the work is not already on screen, the head says how much there is and opens
-  // onto it. A running turn counts only its tool calls: what it said so far is not folded.
-  let foldCount = $derived(
-    onToggle === undefined ? "" : settled
-      ? foldedWorkSentence(toolCallCount, foldedMessageCount)
-      : foldedWorkSentence(toolCallCount, 0)
-  );
+  let foldCount = $derived(onToggle === undefined ? "" : earlierMessagesSentence(foldedMessageCount));
+  // A turn that stopped without an ending, with nothing it said or did, has nothing it can
+  // honestly say: its own status line already says what happened.
+  let visible = $derived(!settled || !stopped || toolCallCount > 0 || foldedMessageCount > 0);
   let waitingSentence = $derived(
     waiting === "permission" ? "Waiting for your approval"
       : waiting === "question" ? "Waiting for your answer"
       : null
   );
+  let alive = $derived(fresh && !activityUncertain);
 
   $effect(() => {
     livenessPulse;
@@ -112,7 +87,6 @@
     const decay = setTimeout(() => (fresh = false), LIVELINESS_DECAY_MS);
     return () => clearTimeout(decay);
   });
-
 </script>
 
 {#if visible}
@@ -123,205 +97,139 @@
     data-conversation-turn-stopped={stopped ? "true" : undefined}
     data-conversation-turn-expanded={expanded ? "true" : "false"}
   >
-    {#if settled && (!stopped || foldVisible)}
+    {#if settled}
       {#if foldCount !== ""}
-        <!-- The one place to open this turn: everything it did comes back where it
-             happened, and closes again from here. -->
+        <!-- The one place to open what this turn said before its answer. -->
         <button
           type="button"
-          class="c2-turn-fold"
+          class="c2-meta c2-meta--fold"
           data-conversation-turn-fold
           aria-expanded={expanded}
           onclick={() => onToggle?.()}
         >
           <span data-conversation-turn-label>{foldLabel}</span>
-          <span class="c2-turn-count" aria-hidden="true">·</span>
-          <span class="c2-turn-count">{foldCount}</span>
-          <svg class="c2-turn-chevron" class:is-open={expanded} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+          <span class="c2-meta-sep" aria-hidden="true">·</span>
+          <span class="c2-meta-detail">{foldCount}</span>
+          <svg class="c2-meta-chevron" class:is-open={expanded} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
         </button>
       {:else}
-        <!-- Nothing is folded here, or the reading already shows it, so there is nothing
-             to open. The head stays where it has been since the turn began: it is the
-             same line that was counting a moment ago, and a line that removes itself
-             when a turn ends moves everything under it for no reason. A turn that
-             stopped without an ending is the one exception: it has no length anybody
-             can claim, its own row already says what happened, and "Worked" over a dead
-             process would be the head telling a story nobody can stand behind. -->
-        <div class="c2-turn-fold c2-turn-settled" data-conversation-turn-settled-head>
+        <div class="c2-meta" data-conversation-turn-settled-head>
           <span data-conversation-turn-label>{foldLabel}</span>
         </div>
       {/if}
-    {:else if !settled}
-      <div class="c2-alive-line">
-        {#if waitingSentence !== null && !activityUncertain}
-          <!-- Held by the person, not working: the count would claim progress that is
-               not being made, so the head says who the turn is waiting on instead. -->
-          <div class="c2-alive c2-waiting" data-conversation-alive data-conversation-turn-waiting={waiting} role="status">
-            <span class="c2-waiting-dot" aria-hidden="true"></span>
-            <span data-conversation-alive-word>{waitingSentence}</span>
-          </div>
+    {:else if waitingSentence !== null && !activityUncertain}
+      <!-- Held by the person, not working: the clock would claim progress that is not
+           being made, so the head says who the turn is waiting on instead. -->
+      <div class="c2-meta c2-meta--waiting" data-conversation-alive data-conversation-turn-waiting={waiting} role="status">
+        <span class="c2-meta-dot" aria-hidden="true"></span>
+        <span data-conversation-alive-word>{waitingSentence}</span>
+      </div>
+    {:else}
+      <div
+        class="c2-meta c2-meta--live"
+        data-conversation-alive
+        data-conversation-alive-fresh={alive ? "true" : "false"}
+        role="status"
+      >
+        <!-- It turns only while frames arrive; when they stop it holds still. Unknown
+             activity has no mark, because nothing is known to be running. -->
+        {#if !activityUncertain}<span class="c2-meta-spin" class:is-turning={fresh} aria-hidden="true" data-conversation-live-mark></span>{/if}
+        {#if activityUncertain}
+          <span data-conversation-alive-word>Current activity on this machine is unknown.</span>
         {:else}
-          <div
-            class="c2-alive"
-            class:is-fresh={fresh && !activityUncertain}
-            data-conversation-alive
-            data-conversation-alive-fresh={fresh && !activityUncertain ? "true" : "false"}
-            role="status"
-          >
-            <!-- The live mark: the header's and the rest line's own spinner, so a running
-                 turn reads as running in a still frame too, and never as one that is over.
-                 It turns only while frames arrive; when they stop it holds still. Unknown
-                 activity has no mark, because nothing is known to be running. -->
-            {#if !activityUncertain}<span class="c2-live-mark" class:is-turning={fresh} aria-hidden="true" data-conversation-live-mark></span>{/if}
-            <span
-              class="c2-alive-word"
-              class:live-text-shimmer={fresh && !activityUncertain}
-              data-conversation-alive-word
-            >
-              {activityUncertain ? "Current activity on this machine is unknown." : workingSentence(elapsed.seconds)}
-            </span>
-          </div>
-        {/if}
-        {#if foldCount !== ""}
-          <!-- The same separator a settled head puts between its clock and its count. -->
-          <span class="c2-turn-count" aria-hidden="true">·</span>
-          <button
-            type="button"
-            class="c2-turn-fold c2-turn-fold--live"
-            data-conversation-turn-fold
-            aria-expanded={expanded}
-            onclick={() => onToggle?.()}
-          >
-            <span>{foldCount}</span>
-            <svg class="c2-turn-chevron" class:is-open={expanded} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
-          </button>
+          <span class="c2-meta-working" class:is-alive={alive} data-conversation-alive-word>Working</span>
+          {#if elapsed.seconds !== null}
+            <span class="c2-meta-sep" aria-hidden="true">·</span>
+            <span class="c2-meta-clock" data-conversation-alive-clock>{formatDuration(elapsed.seconds)}</span>
+          {/if}
         {/if}
       </div>
-      {#if activity && waitingSentence === null && !activityUncertain}
-        <!-- What it is doing now, in the words its tool row uses. -->
-        <div class="c2-live-activity" data-conversation-live-activity title={activity.sentence}>{#if activity.summary === null}{activity.title}{:else}{activity.title} <span class="c2-live-subject" class:c2-live-subject--literal={activity.summaryIsLiteral}>{activity.summary}</span>{/if}</div>
-      {/if}
     {/if}
   </div>
 {/if}
 
 <style>
-  .c2-turn { display: grid; min-width: 0; max-width: 100%; gap: var(--space-1); }
-  .c2-alive {
-    justify-self: start;
+  .c2-turn { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
+  /* One layout for every state: [mark] label · detail [chevron], 13/20 in the meta tone. */
+  .c2-meta {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
-    color: var(--text-faintest);
-    /* The thread's own voice at its small size, not the tool voice: the head is the
-       turn speaking about itself, and tabular numerals keep the clock from jittering. */
-    font-family: var(--font-ui);
-    font-size: var(--type-small);
-    /* Flush with the thread, like every other line in it. The head is not a control that
-       sits in from the edge; it is the turn's own line and it starts where they start. */
-    padding: var(--space-1) 0;
-  }
-  .c2-alive-word { font-variant-numeric: tabular-nums; }
-  /* A running turn speaks a step brighter than a finished one: finished heads are history
-     in the tertiary tone, the one that is still going is the thread's present. */
-  .c2-alive-line .c2-alive:not(.c2-waiting) { color: var(--text-muted); }
-  /* The live mark is the brightest mark on the line and never a grey ring: an accent
-     track with half of it lit, so even held still it reads as a spinner, not as the empty
-     circle of a task that has not started. */
-  .c2-live-mark {
-    flex: none;
-    width: 12px;
-    height: 12px;
-    border-radius: var(--radius-pill);
-    border: var(--border-strong) solid color-mix(in srgb, var(--accent-bright) 28%, transparent);
-    border-top-color: var(--accent-bright);
-    border-right-color: var(--accent-bright);
-  }
-  .c2-live-mark.is-turning { animation: c2-live-spin var(--motion-loop-spin) linear infinite; }
-  @keyframes c2-live-spin { to { transform: rotate(360deg); } }
-  /* The running call's sentence, under the clock and in from the mark, on one line. */
-  .c2-live-activity {
-    justify-self: start;
-    max-width: 100%;
+    gap: 6px;
     min-width: 0;
-    margin-block-start: calc(var(--space-1) * -1);
-    padding-inline-start: calc(12px + var(--space-2));
-    color: var(--text-faintest);
-    font-family: var(--font-ui);
-    font-size: var(--type-small);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  /* Only the exact thing the call acts on is set as code, as its tool row sets it. */
-  .c2-live-subject--literal {
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-  }
-  /* Alive recently is said by `live-text-shimmer`, the app's shared way of showing a thing
-     is happening now. When frames stop arriving the words go still and the count carries
-     on, so stillness means what it says rather than meaning nothing. */
-  .c2-turn-fold {
-    justify-self: start;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--text-faintest);
-    cursor: pointer;
-    /* The thread's own voice at its small size, not the tool voice: the head is the
-       turn speaking about itself, and tabular numerals keep the clock from jittering. */
-    font-family: var(--font-ui);
-    font-size: var(--type-small);
-    /* Flush left with the thread, and the hover reaches back out to cover the gap the
-       padding used to hold — the target stays as big as it was, the text stops sitting in. */
-    padding: var(--space-1) var(--space-2);
-    margin-inline: calc(var(--space-2) * -1);
+    max-width: 100%;
+    min-height: 24px;
+    color: var(--cv-t3);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .c2-turn-fold:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
-  .c2-turn-fold:focus-visible { color: var(--text-muted); }
-  .c2-turn-count { color: var(--text-faintest); }
-  .c2-turn-chevron {
+  .c2-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .c2-meta-sep { color: var(--cv-t4); }
+  /* The fold is a quiet control: the line itself, with a hover fill that reaches past
+     its text so the target is as large as the line, not as small as its words. */
+  .c2-meta--fold {
+    margin-inline: calc(var(--cv-s2) * -1);
+    padding: 2px var(--cv-s2);
+    border: 0;
+    border-radius: var(--cv-r-md);
+    background: transparent;
+    cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .c2-meta--fold:hover { background: var(--cv-raised); color: var(--cv-t2); }
+  .c2-meta--fold:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 0; color: var(--cv-t2); }
+  .c2-meta-chevron {
     flex: none;
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
     fill: none;
-    stroke: currentColor;
-    stroke-width: 2;
+    stroke: var(--cv-t4);
+    stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
-    transition: transform var(--motion-fast) var(--motion-ease);
+    transition: transform var(--cv-dur-expand) var(--cv-ease-out), stroke var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .c2-turn-chevron.is-open { transform: rotate(90deg); }
-  /* Same line, same place, nothing to open: it keeps the geometry and drops the affordance. */
-  .c2-turn-settled { cursor: default; }
-  .c2-turn-settled:hover { color: var(--text-faintest); background: transparent; }
-  /* A running turn's count sits on the same line as its clock, after it. */
-  .c2-alive-line {
-    justify-self: start;
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    column-gap: var(--space-2);
-    min-width: 0;
+  .c2-meta--fold:hover .c2-meta-chevron, .c2-meta--fold:focus-visible .c2-meta-chevron { stroke: var(--cv-t2); }
+  .c2-meta-chevron.is-open { transform: rotate(90deg); }
+  /* Working has no colour: it is said by motion and by a brighter tone. */
+  .c2-meta-spin {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--cv-r-pill);
+    border: 1.6px solid rgb(255 255 255 / 16%);
+    border-top-color: var(--cv-t2);
+    transform: rotate(35deg);
   }
-  .c2-turn-fold--live { margin-inline: calc(var(--space-2) * -1) 0; }
-  /* Waiting on the person is the one state this head speaks in the accent: it is the
-     brand's "needs the human", and it does not move, because nothing is moving. */
-  .c2-waiting { color: var(--accent-bright); }
-  .c2-waiting-dot {
+  .c2-meta-spin.is-turning { animation: c2-meta-spin var(--cv-spin) linear infinite; }
+  @keyframes c2-meta-spin { to { transform: rotate(395deg); } }
+  .c2-meta-working { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  .c2-meta-working.is-alive {
+    background: linear-gradient(90deg, var(--cv-t2) 0%, var(--cv-t2) 35%, #fafafa 50%, var(--cv-t2) 65%, var(--cv-t2) 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+            background-clip: text;
+    color: transparent;
+    animation: c2-meta-shimmer var(--cv-shimmer) linear infinite;
+  }
+  @keyframes c2-meta-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+  .c2-meta-clock { color: var(--cv-t3); }
+  /* Waiting on the person is the one state this head speaks in the accent. Nothing moves,
+     because nothing is moving. */
+  .c2-meta--waiting { color: var(--cv-accent); font-weight: var(--cv-weight-label); }
+  .c2-meta-dot {
     flex: none;
     width: 6px;
     height: 6px;
-    border-radius: var(--radius-pill);
+    margin-inline: 4px 2px;
+    border-radius: var(--cv-r-pill);
     background: currentColor;
   }
   @media (prefers-reduced-motion: reduce) {
-    .c2-turn-chevron { transition: none; }
-    .c2-live-mark.is-turning { animation: none; }
+    .c2-meta--fold, .c2-meta-chevron { transition: none; }
+    .c2-meta-spin.is-turning { animation: none; }
+    .c2-meta-working.is-alive { animation: none; background: none; color: var(--cv-t1); }
   }
 </style>

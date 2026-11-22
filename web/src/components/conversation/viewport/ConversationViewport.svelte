@@ -5,6 +5,7 @@
    * arriving stream text funds line travel, so a relayout cannot replay a backlog.
    */
   import { onMount, tick, untrack, setContext, type Snippet } from "svelte";
+  import type { ConversationJump } from "./viewportConfiguration";
   import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
   import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
@@ -46,7 +47,8 @@
     conversationState,
     emptyState,
     reader = null,
-    viewAnchor = $bindable(null)
+    viewAnchor = $bindable(null),
+    jump = $bindable(null)
   }: {
     reader?: ConversationViewReader | null;
     viewAnchor?: ViewReaderAnchor | null;
@@ -68,6 +70,9 @@
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
+    /** The way back to the newest line while the reader is away from it, for the pane to
+     *  draw in the composer stack's status slot (never over the transcript), or null. */
+    jump?: ConversationJump | null;
   } = $props();
 
   let threadElement = $state<HTMLDivElement | null>(null);
@@ -1150,6 +1155,16 @@
       document.removeEventListener("focusin", onFocusIn);
     };
   });
+
+  // The jump is drawn by the pane in its status slot, so it never covers a line of the
+  // transcript. It shows while there is something below to go back to.
+  const jumpShown = $derived(newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending);
+  $effect(() => {
+    jump = jumpShown
+      ? { label: belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Jump to latest",
+          go: (button) => void jumpToTheNewestLine(button) }
+      : null;
+  });
 </script>
 
 <div class="chat-thread-shell">
@@ -1211,67 +1226,28 @@
       ></div>
     {/if}
   </div>
-  {#if newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending}
-    <!-- Latest stands on its own shelf under the thread rather than floating over it, so
-         it never covers a line of what was said. The thread gives up the shelf's height
-         only while there is something below to jump to. -->
-    <div class="chat-jump-shelf" data-conversation-jump-shelf>
-      <button
-        type="button"
-        class="chat-jump"
-        aria-label="Jump to latest message"
-        onclick={(event) => void jumpToTheNewestLine(event.currentTarget)}
-      ><svg class="chat-jump-arrow" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.5v7M2.75 6.5 6 9.5l3.25-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{belowCount > 0 ? `${belowCount} new ${belowCount === 1 ? "message" : "messages"}` : "Latest"}</button>
-    </div>
-  {/if}
 </div>
 
 <style>
-  /* Ordinary navigation stays reachable while exact transcript placement waits. */
-  .chat-jump { visibility: visible; }
-  .chat-jump-shelf {
-    flex: none;
-    display: flex;
-    justify-content: center;
-    /* A full step of clear air between the thread's edge and the pill, so the pill never
-       reads as sitting on whatever the edge cut. */
-    padding-block: var(--space-3) 0;
-  }
-  .chat-jump-shelf .chat-jump {
-    position: static;
-    transform: none;
-    min-height: 28px;
-    padding: var(--space-1) var(--space-3);
-    font-family: var(--font-ui);
-    font-weight: var(--weight-body);
-    color: var(--text-default);
-    box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
-  }
-  .chat-jump-arrow { inline-size: 12px; block-size: 12px; flex: none; }
-  /* Lines leave the thread softly at both edges, never cut flat against the composer or a
-     docked card, but only an edge with more beyond it fades. The bottom fade is one depth
-     (NEWEST_LINE_BOTTOM_GAP_PIXELS), and only while there is more below: pinned to the
-     newest line, with no Latest shelf, nothing at the bottom is dimmed, so a chart's bars
-     or a file's name at the end of the thread stand at full tone. The top fade starts
-     clear of the head's rule, so the last sliver of a card scrolled out above never reads
-     as a stray line under it. At the very top nothing is above, so nothing fades there:
-     the first message and the time and Copy over it keep their full tone under the head. */
+  /* The thread's edges: a 16px canvas fade under the header while something is above, and
+     no fade at the bottom. The thread ends above the composer stack, so nothing is ever
+     dimmed or covered there (a chart's bars, a file's name at the end stand at full tone). */
   .chat-thread {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px, #000 calc(100% - 24px), transparent 100%);
-            mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px, #000 calc(100% - 24px), transparent 100%);
-  }
-  .chat-thread[data-more-below="false"] {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px);
-            mask-image: linear-gradient(to bottom, transparent 0, transparent var(--space-2), #000 28px);
+    /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
+    padding-bottom: 32px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
+            mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
   }
   .chat-thread[data-at-top="true"] {
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
-            mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
-  }
-  .chat-thread[data-at-top="true"][data-more-below="false"] {
     -webkit-mask-image: none;
             mask-image: none;
   }
+  /* A conversation shorter than the view sits on the composer: the newest line is always
+     where the person types, never across a gap from it. A margin, not justify-content, so
+     a thread taller than the view still scrolls from its top. */
+  .chat-thread-content { margin-block-start: auto; }
+  /* An empty conversation takes the whole view, so its empty state can stand in the middle. */
+  .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */

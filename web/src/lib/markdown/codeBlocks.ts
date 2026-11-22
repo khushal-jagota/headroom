@@ -174,12 +174,43 @@ function pruneDetached(highlight: Highlight): void {
   }
 }
 
+const LANGUAGE_NAMES: Record<string, string> = {
+  js: "JavaScript", jsx: "JSX", mjs: "JavaScript", cjs: "JavaScript", javascript: "JavaScript",
+  ts: "TypeScript", tsx: "TSX", mts: "TypeScript", typescript: "TypeScript",
+  go: "Go", golang: "Go", rust: "Rust", rs: "Rust", swift: "Swift", kotlin: "Kotlin", kt: "Kotlin",
+  java: "Java", scala: "Scala", dart: "Dart", php: "PHP", c: "C", h: "C", cpp: "C++", "c++": "C++", cc: "C++", hpp: "C++",
+  cs: "C#", csharp: "C#", objc: "Objective-C", "objective-c": "Objective-C", zig: "Zig", groovy: "Groovy",
+  proto: "Protocol Buffers", protobuf: "Protocol Buffers", svelte: "Svelte", vue: "Vue",
+  py: "Python", python: "Python", rb: "Ruby", ruby: "Ruby", perl: "Perl", pl: "Perl", r: "R", lua: "Lua",
+  sh: "Shell", bash: "Bash", zsh: "Zsh", shell: "Shell", console: "Shell", shellsession: "Shell", fish: "Fish",
+  powershell: "PowerShell", ps1: "PowerShell", elixir: "Elixir", ex: "Elixir", exs: "Elixir", nix: "Nix",
+  yaml: "YAML", yml: "YAML", toml: "TOML", ini: "INI", conf: "Config", dockerfile: "Dockerfile", docker: "Dockerfile",
+  makefile: "Makefile", make: "Makefile",
+  sql: "SQL", sqlite: "SQLite", postgres: "PostgreSQL", postgresql: "PostgreSQL", psql: "PostgreSQL", mysql: "MySQL",
+  json: "JSON", jsonc: "JSON", json5: "JSON5", jsonl: "JSON Lines", ndjson: "JSON Lines",
+  diff: "Diff", patch: "Diff", html: "HTML", xml: "XML", css: "CSS", scss: "SCSS",
+  md: "Markdown", markdown: "Markdown", text: "Text", txt: "Text", plaintext: "Text", graphql: "GraphQL", gql: "GraphQL",
+};
+
+/** The name a person calls a fenced language by ("TypeScript", "Shell"), never the fence's
+ *  short tag ("ts", "sh"). A tag this does not know is shown as it was written. */
+export function codeLanguageName(language: string | null): string {
+  if (language === null) return "";
+  return LANGUAGE_NAMES[language] ?? language;
+}
+
 /** The words a copy should hold: the code, without the fence's closing line break. */
 export function codeCopyText(raw: string): string {
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
-const COPIED_MS = 1600;
+const COPIED_MS = 1500;
+const SVG = "http://www.w3.org/2000/svg";
+type CopyWords = "Copy" | "Copied" | "Selected";
+const COPY_GLYPHS = {
+  copy: ["M5.75 5.75h6.5a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-6.5a1 1 0 0 1-1-1v-6.5a1 1 0 0 1 1-1Z", "M10.75 5.75V3.75a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"],
+  check: ["m3.5 8.5 3 3 6-7"],
+} as const;
 
 /** Put a header on one rendered `<pre>`: its language and a copy button. The `<pre>` and
  *  every text node inside it are kept, moved into a frame rather than rebuilt. */
@@ -196,20 +227,33 @@ export function presentCodeBlock(pre: HTMLElement): { frame: HTMLElement; stop: 
   head.dataset.markdownChrome = "";
   const label = doc.createElement("span");
   label.className = "markdown-code-language";
-  label.textContent = language ?? "";
+  label.textContent = codeLanguageName(language);
   const copy = doc.createElement("button");
   copy.type = "button";
   copy.className = "button button--ghost markdown-code-copy";
-  copy.textContent = "Copy";
   copy.title = "Copy this code";
+  // A glyph and its word: the copy mark, then a check once the code is on the clipboard.
+  const glyph = doc.createElementNS(SVG, "svg");
+  glyph.setAttribute("class", "markdown-code-copy-glyph");
+  glyph.setAttribute("viewBox", "0 0 16 16");
+  glyph.setAttribute("aria-hidden", "true");
+  const word = doc.createElement("span");
+  copy.append(glyph, word);
+  const show = (words: CopyWords) => {
+    glyph.replaceChildren(...COPY_GLYPHS[words === "Copied" ? "check" : "copy"].map(d => {
+      const path = doc.createElementNS(SVG, "path"); path.setAttribute("d", d); return path;
+    }));
+    word.textContent = words;
+  };
+  show("Copy");
   head.append(label, copy);
   pre.replaceWith(frame);
   frame.append(head, pre);
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const settle = (words: string) => {
-    copy.textContent = words;
+  const settle = (words: CopyWords) => {
+    show(words);
     if (timer !== null) clearTimeout(timer);
-    timer = setTimeout(() => { timer = null; copy.textContent = "Copy"; }, COPIED_MS);
+    timer = setTimeout(() => { timer = null; show("Copy"); }, COPIED_MS);
   };
   const onCopy = (): void => {
     const text = codeCopyText((code ?? pre).textContent ?? "");
