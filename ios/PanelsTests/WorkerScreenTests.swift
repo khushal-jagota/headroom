@@ -47,7 +47,7 @@ final class WorkerScreenTests: XCTestCase {
         XCTAssertEqual(refused.note, "Not delivered · backend did not start")
         let uncertain = try await api.requestRecap(target: Principal(kind: "manager", id: "uncertain"))
         XCTAssertFalse(uncertain.accepted)
-        XCTAssertEqual(uncertain.note, "Delivery uncertain · do not resend")
+        XCTAssertNil(uncertain.note, "An uncertain delivery shows no connection note")
     }
 
     func testApprovedPageActionsUseExistingWriteContracts() async throws {

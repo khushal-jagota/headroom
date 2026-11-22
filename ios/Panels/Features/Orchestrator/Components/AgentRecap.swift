@@ -2,7 +2,6 @@ import SwiftUI
 
 struct AgentRecap: View {
     let recap: String
-    let actions: AgentPageActions
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -35,8 +34,6 @@ struct AgentRecap: View {
                     }
                 }
             }
-            if actions.isSending { RingSpinner("Sending recap request…", size: .compact) }
-            if let note = actions.note { Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
         }.clipped()
     }
 

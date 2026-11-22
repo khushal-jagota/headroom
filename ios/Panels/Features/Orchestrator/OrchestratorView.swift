@@ -8,7 +8,6 @@ struct OrchestratorView: View {
     private var detail: ManagerDetail? { resource.value }
     private var contentResource: ResourceHandle<ManagerDocumentContent> { store.resources.handle(ManagerResources.content(managerID)) }
     private var error: String? { resource.error ?? contentResource.error }
-    @State private var actions = AgentPageActions()
 
     private var summary: ManagerSummary? { store.managers.first { $0.id == managerID } }
     private var liveSignal: ConversationSignal? { store.presentation?.managersById[managerID]?.signal.conversationSignal }
@@ -19,7 +18,7 @@ struct OrchestratorView: View {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                     AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: liveSignal ?? detail?.conversationSignal ?? summary?.conversationSignal)
                     if let detail {
-                        AgentRecap(recap: contentResource.value?.recap ?? detail.recap, actions: actions)
+                        AgentRecap(recap: contentResource.value?.recap ?? detail.recap)
                     }
                 }
                 if let detail {
@@ -34,7 +33,7 @@ struct OrchestratorView: View {
         .navigationTitle("").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await load(); await store.refresh() }
+                AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false) { await load(); await store.refresh() }
             }
         }
         .panelsScreen()

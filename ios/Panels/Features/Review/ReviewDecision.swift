@@ -32,102 +32,25 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 }
 
-/// A sheet's interaction state survives replacement of its presented content.
-@MainActor @Observable final class DecisionApprovalFlow {
-    var selected: String?
-    var busy = false
-    var error: String?
-    var confirmationMessage: String?
-}
-
-/// Ordinary scope writes have no decision receipt. They are never saved to the Outbox.
-/// Keep the exact choice for an explicit read-only check after an uncertain result.
+/// A reviewer or ceiling change is not a decision, so it never reaches the Outbox. The sheet
+/// waits for the server and shows a failure inline. The change is a plain set, so a retry is safe.
 @MainActor @Observable final class DecisionScopeChange {
-    struct Choice: Equatable {
-        let server: String
-        let ticketID: String
-        let ceiling: String
-        let holder: Principal
-    }
-    private(set) var choice: Choice?
-    private(set) var busy = false
-    private(set) var needsCheck = false
-    private(set) var canRetry = false
+    /// Keeps the proposal card on screen while the sheet is open, because a reviewer
+    /// transfer takes the proposal out of the live queue.
     private(set) var holdingProposal = false
-    private(set) var message: String?
-    @ObservationIgnored private var capturedAPI: APIClient?
 
-    func save(api: APIClient, ticket: TicketDetail, ceiling: String?, holder: Principal, online: Bool) async throws -> TicketDetail {
-        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
-        guard !needsCheck || canRetry else { throw APIError(status: 0, message: message ?? "Check current settings before another change.") }
-        choice = Choice(server: LocalStore.server(api.baseURL), ticketID: ticket.id,
-                        ceiling: ceiling ?? ticket.ceiling, holder: holder)
-        capturedAPI = api
+    func save(api: APIClient, ticket: TicketDetail, ceiling: String?, holder: Principal) async throws -> TicketDetail {
         holdingProposal = true
-        guard online else {
-            message = "Not sent while offline. Your choice is kept. No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        busy = true
-        needsCheck = false
-        canRetry = false
-        defer { busy = false }
-        do {
-            try await api.setTicketApprovalLimit(ticket.id, ceiling: ceiling, holder: holder)
-        } catch let error as APIError where (400..<500).contains(error.status) {
-            message = "Not sent. \(error.localizedDescription) No proposal approval was sent."
-            throw APIError(status: error.status, message: message!)
-        } catch {
-            // A transport failure or server error cannot establish whether the write applied.
-            // The next request is a GET, never another PATCH.
-        }
-        needsCheck = true
-        return try await readCurrent()
+        try await api.setTicketApprovalLimit(ticket.id, ceiling: ceiling, holder: holder)
+        // APIClient.ticket always uses a network GET with reloadIgnoringLocalCacheData.
+        return try await api.ticket(ticket.id)
     }
 
     func releasePresentation() { holdingProposal = false }
-
-    func check(online: Bool) async throws -> TicketDetail {
-        guard !busy else { throw APIError(status: 0, message: "A settings check is already in progress.") }
-        holdingProposal = true
-        guard online else {
-            message = "Not checked while offline. Your choice is kept. No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        busy = true
-        defer { busy = false }
-        return try await readCurrent()
-    }
-
-    private func readCurrent() async throws -> TicketDetail {
-        guard let choice, let api = capturedAPI else { throw APIError(status: 0, message: "Choose the settings first.") }
-        let current: TicketDetail
-        do {
-            // APIClient.ticket always uses a network GET with reloadIgnoringLocalCacheData.
-            current = try await api.ticket(choice.ticketID)
-        } catch {
-            needsCheck = true
-            canRetry = false
-            message = "The change is not confirmed. Check current settings when online. No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        let waiting = current.pendingProposal == nil ? " Refresh the Ticket for its current proposal." : " The proposal still waits."
-        guard current.ceiling == choice.ceiling, current.ceilingHolder == choice.holder else {
-            needsCheck = true
-            canRetry = true
-            message = "Current settings do not match your choice. The change is not confirmed." + waiting + " No proposal approval was sent."
-            throw APIError(status: 0, message: message!)
-        }
-        needsCheck = false
-        canRetry = false
-        message = "Current settings match your choice." + waiting + " No proposal approval was sent."
-        return current
-    }
 }
 
 /// A draft belongs to the exact proposal the person read, including its revision.
 @MainActor @Observable final class ReviewDecision {
-    var approvalFlow = DecisionApprovalFlow()
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
     /// later change is not current when its card is shown.
     let scopeChange = DecisionScopeChange()

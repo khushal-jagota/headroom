@@ -45,11 +45,11 @@ final class ReviewFinalPageTests: XCTestCase {
         app.buttons["review.approve"].tap()
         let consequences = app.buttons["decision.stage.needs_consequences"]
         XCTAssertTrue(waitForDecisionStage(consequences))
-        XCTAssertFalse(app.buttons["decision.stage.done"].exists)
+        // Approval offers only stages after the waiting one, as the web does.
+        XCTAssertFalse(app.buttons["decision.stage.needs_implementation"].exists)
         capture(app, "consequences-implementation-approval-choices")
         consequences.tap()
-        let owner = app.buttons["decision.reviewer.owner"]
-        XCTAssertTrue(owner.waitForExistence(timeout: 5)); owner.tap()
+        app.buttons["sheet-confirm"].tap()
         XCTAssertTrue(app.buttons["review.approve"].waitForNonExistence(timeout: 8))
         let first = try await oracle("needs_consequences", pending: false, count: 1)
         XCTAssertEqual(first.first?["next_ceiling"] as? String, "needs_consequences")
@@ -275,6 +275,80 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "review-card-draft-retained")
     }
 
+    /// Rare Ticket settings wait for the server inside their sheet and show a failure inline.
+    /// Model tests cannot prove the sheet stays open with its spinner, or that no banner appears.
+    @MainActor func testTicketSettingsWaitInTheirSheet() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["review.openTicket"].waitForExistence(timeout: 12))
+        // The approval limit row shows only when no proposal waits. The Ticket page reads
+        // the Ticket when it opens, so remove the proposal first.
+        try await proof(base, "design-state/settings")
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+        let limit = app.buttons["ticket-approval-limit"]
+        for _ in 0..<3 where !limit.waitForExistence(timeout: 4) {
+            let window = app.windows.firstMatch
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+                .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)))
+        }
+        XCTAssertTrue(limit.waitForExistence(timeout: 4))
+
+        // Approval limit: choose a ceiling, Save, and the sheet closes on success.
+        limit.tap()
+        let consequences = app.buttons["decision.stage.needs_consequences"]
+        XCTAssertTrue(waitForDecisionStage(consequences)); consequences.tap()
+        capture(app, "settings-approval-limit-sheet")
+        app.buttons["sheet-confirm"].tap()
+        XCTAssertTrue(consequences.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(limit.label.contains("Consequences"), limit.label)
+
+        // Backlog ticket waits in the sheet with a spinner, then closes.
+        app.buttons["ticket-actions"].tap()
+        let backlog = app.buttons["ticket-action-backlog"]
+        XCTAssertTrue(backlog.waitForExistence(timeout: 5)); backlog.tap()
+        // While the server answers, the sheet stays open with a spinner and Cancel disabled.
+        XCTAssertTrue(backlog.exists, "The sheet stays open while the server answers")
+        XCTAssertFalse(app.buttons["Cancel"].isEnabled, "Cancel waits for the answer")
+        capture(app, "settings-backlog-waiting")
+        XCTAssertTrue(backlog.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Backlogged. Automatic work is paused."].waitForExistence(timeout: 8))
+        capture(app, "settings-backlogged")
+
+        // Ask for a recap succeeds and closes the sheet.
+        app.buttons["ticket-actions"].tap()
+        let recap = app.buttons["ticket-action-recap"]
+        XCTAssertTrue(recap.waitForExistence(timeout: 5)); recap.tap()
+        XCTAssertTrue(recap.waitForNonExistence(timeout: 8))
+
+        // A refused recap keeps the sheet open with an inline error and no banner.
+        try await proof(base, "design-state/refuse-recap")
+        app.buttons["ticket-actions"].tap()
+        XCTAssertTrue(recap.waitForExistence(timeout: 5)); recap.tap()
+        let error = app.staticTexts["sheet-error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 8))
+        XCTAssertTrue(error.label.hasPrefix("Not delivered"), error.label)
+        XCTAssertTrue(recap.exists, "A failure keeps the sheet open")
+        capture(app, "settings-recap-refused-inline")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(recap.waitForNonExistence(timeout: 5))
+        let banner = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Not delivered")).firstMatch
+        XCTAssertFalse(banner.exists, "The failure shows only inside the sheet")
+        capture(app, "settings-after-refusal-no-banner")
+
+        let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/settings-writes")!)
+        let writes = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [[String: Any]]).compactMap { $0["path"] as? String }
+        XCTAssertEqual(writes, ["/api/tickets/offline-1/backlog", "/api/recap-requests", "/api/recap-requests"])
+        let (scopeData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/scopes")!)
+        let scopes = try XCTUnwrap(try JSONSerialization.jsonObject(with: scopeData) as? [[String: Any]])
+        XCTAssertEqual((scopes.last?["body"] as? [String: Any])?["ceiling"] as? String, "needs_consequences")
+    }
+
     /// One-off keyboard and decision-flow review on the existing fixture host.
     @MainActor func testPinnedDesignDecisions() async throws {
         continueAfterFailure = false
@@ -305,11 +379,7 @@ final class ReviewFinalPageTests: XCTestCase {
         approve.tap()
         var stage: XCUIElement { app.buttons["decision.stage.needs_implementation"] }
         XCTAssertTrue(waitForDecisionStage(stage))
-        capture(app, "design-how-far")
-        stage.tap()
-        var reviewer: XCUIElement { app.buttons["decision.reviewer.owner"] }
-        XCTAssertTrue(reviewer.waitForExistence(timeout: 5))
-        capture(app, "design-who-reviews")
+        capture(app, "design-approve-sheet")
         // Dismiss without a decision, then prove the exact note survives relaunch.
         app.swipeDown()
         app.terminate(); app = launch(["--conversation-stub", base])
@@ -319,6 +389,22 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
         XCTAssertTrue(approve.waitForExistence(timeout: 8))
         capture(app, "design-ticket-pinned")
+        app.buttons["ticket-actions"].tap()
+        XCTAssertTrue(app.buttons["ticket-action-backlog"].waitForExistence(timeout: 5))
+        capture(app, "design-ticket-actions")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 5))
+        // The Ticket page opens the same Approve and Reviewer sheets as Review.
+        approve.tap()
+        XCTAssertTrue(waitForDecisionStage(stage))
+        capture(app, "design-ticket-approve-sheet")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(stage.waitForNonExistence(timeout: 5))
+        app.buttons["decision.reviewer"].tap()
+        XCTAssertTrue(app.buttons["decision.reviewer.chief"].waitForExistence(timeout: 5))
+        capture(app, "design-ticket-reviewer-sheet")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["decision.reviewer.chief"].waitForNonExistence(timeout: 5))
         XCTAssertEqual(note.value as? String, "Keep this proposal note")
         // Open ticket pushes the Ticket on Review, so Back returns to the card.
         app.backButton.tap()
@@ -342,29 +428,30 @@ final class ReviewFinalPageTests: XCTestCase {
         let hierarchy = XCTAttachment(string: app.debugDescription)
         hierarchy.name = "design-review-restored-normal-hierarchy"
         hierarchy.lifetime = .keepAlways; add(hierarchy)
-        // An earlier-stage choice changes only settings and keeps the proposal pending.
-        approve.tap()
-        let earlierStage = app.buttons["decision.stage.needs_brief"]
-        XCTAssertTrue(waitForDecisionStage(earlierStage)); earlierStage.tap()
-        XCTAssertTrue(reviewer.waitForExistence(timeout: 5)); reviewer.tap()
-        let scopeConfirmation = app.staticTexts["decision.scopeConfirmation"]
-        XCTAssertTrue(scopeConfirmation.waitForExistence(timeout: 5))
-        XCTAssertTrue(scopeConfirmation.label.contains("No proposal approval was sent."))
-        capture(app, "design-earlier-stage-settings-confirmed")
-        app.buttons["decision.scopeDone"].tap()
+        // A reviewer change is not an approval: it waits in its sheet, then the proposal
+        // leaves the owner's Review because Chief now holds it. The next card shows.
+        app.buttons["decision.reviewer"].tap()
+        let chief = app.buttons["decision.reviewer.chief"]
+        XCTAssertTrue(chief.waitForExistence(timeout: 5))
+        capture(app, "design-reviewer-sheet")
+        chief.tap()
+        XCTAssertTrue(chief.waitForNonExistence(timeout: 8))
         XCTAssertTrue(approve.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Make the work that needs your attention easy to read."].exists)
-        XCTAssertEqual(note.value as? String, "Keep this proposal note")
+        let emptied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: note)
+        let emptiedResult = await XCTWaiter.fulfillment(of: [emptied], timeout: 5)
+        XCTAssertEqual(emptiedResult, .completed, "The next card has its own empty note; the handed-off proposal left Review")
+        capture(app, "design-reviewer-changed")
         let (beforeDecision, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: beforeDecision) as? [String]), [])
         let (scopeData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/scopes")!)
         let scopeWrites = try XCTUnwrap(try JSONSerialization.jsonObject(with: scopeData) as? [[String: Any]])
         XCTAssertEqual(scopeWrites.count, 1)
         let scopeBody = try XCTUnwrap(scopeWrites.first?["body"] as? [String: Any])
-        XCTAssertEqual(scopeBody["ceiling"] as? String, "needs_brief")
+        XCTAssertNil(scopeBody["ceiling"])
+        XCTAssertEqual((scopeBody["ceiling_holder"] as? [String: Any])?["kind"] as? String, "chief")
         approve.tap()
         XCTAssertTrue(waitForDecisionStage(stage)); stage.tap()
-        XCTAssertTrue(reviewer.waitForExistence(timeout: 5)); reviewer.tap()
+        app.buttons["sheet-confirm"].tap()
         let next = app.staticTexts["Match the iPhone app to the web"]
         XCTAssertTrue(next.waitForExistence(timeout: 8))
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)

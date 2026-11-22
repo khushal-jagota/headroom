@@ -14,9 +14,8 @@ struct TicketView: View {
     @State private var artifacts: ArtifactPage?
     private var error: String? { resource.error ?? manifestResource?.error }
     @State private var artifactError: String?
-    @State private var actionNote: String?
-    @State private var busy = false
     @State private var scopeOpen = false
+    @State private var actionsOpen = false
     @State private var stepsOpen = false
     @State private var configurationOpen = false
     @State private var decision = TicketDecisionState()
@@ -75,6 +74,20 @@ struct TicketView: View {
                 }
             }
         }
+        .sheet(isPresented: $actionsOpen) {
+            if let detail {
+                TicketActionsSheet(ticket: detail, canChange: presentation?.terminal == false, baseURL: store.baseURL,
+                    askForRecap: {
+                        let delivery = try await store.client.requestTicketRecap(ticketID)
+                        if let note = delivery.note { throw APIError(status: 0, message: note) }
+                        await load(); await store.refresh()
+                    },
+                    setBacklog: {
+                        try await store.client.setTicketBacklogged(detail, backlogged: !detail.isBacklogged)
+                        await load(); await store.refresh()
+                    })
+            }
+        }
         .sheet(isPresented: $configurationOpen) {
             if let detail { TicketWorkerSetup(ticket: detail) { await load() } }
         }
@@ -85,19 +98,8 @@ struct TicketView: View {
     }
 
     private var ticketMenu: some View {
-        Menu {
-            if let detail, presentation?.terminal == false {
-                Button("Ask for a recap", systemImage: "arrow.clockwise") { requestRecap() }
-                Button(detail.isBacklogged ? "Resume ticket" : "Backlog ticket", systemImage: detail.isBacklogged ? "play" : "pause") { changeBacklog(detail) }
-            }
-            Button("Copy link", systemImage: "doc.on.doc") {
-                var components = URLComponents(url: store.baseURL, resolvingAgainstBaseURL: false)
-                components?.fragment = "/workspace/\(ticketID)"
-                UIPasteboard.general.url = components?.url
-                Haptics.success()
-            }
-        } label: { Image(systemName: "ellipsis") }
-            .disabled(busy).accessibilityLabel("Ticket actions").accessibilityIdentifier("ticket-actions")
+        Button { actionsOpen = true } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel("Ticket actions").accessibilityIdentifier("ticket-actions")
     }
 
     private func masthead(_ detail: TicketDetail) -> some View {
@@ -123,14 +125,7 @@ struct TicketView: View {
                 }
             }
             if detail.isBacklogged {
-                HStack {
-                    Text("Backlogged. Automatic work is paused.").foregroundStyle(PanelsTheme.faint)
-                    Button("Resume") { changeBacklog(detail) }.font(PanelsTheme.TypeScale.sectionLabel).disabled(busy)
-                }.font(PanelsTheme.TypeScale.small)
-            }
-            if let actionNote {
-                Text(actionNote).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
-                    .accessibilityIdentifier("ticket-action-note")
+                Text("Backlogged. Automatic work is paused.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
             }
         }
     }
@@ -157,7 +152,7 @@ struct TicketView: View {
                         }.panelsScaledFont(size: PanelsTheme.Web.bodySize)
                             .foregroundStyle(PanelsTheme.Web.secondary)
                             .frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
-                    }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("ticket-approval-limit")
+                    }.buttonStyle(.plain).accessibilityIdentifier("ticket-approval-limit")
                 }
             if !presentation.terminal, presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField,
                presentation.ticket.pendingProposal?.field != field {
@@ -208,10 +203,6 @@ struct TicketView: View {
         }
     }
 
-    private func requestRecap() { Task { await perform { try await store.client.requestTicketRecap(ticketID).note } } }
-    private func changeBacklog(_ ticket: TicketDetail) {
-        Task { await perform { try await store.client.setTicketBacklogged(ticket, backlogged: !ticket.isBacklogged); return nil } }
-    }
     private func load() async {
         store.resources.invalidate([resource.key])
         await resource.refresh()
@@ -225,15 +216,5 @@ struct TicketView: View {
             guard client.baseURL == store.baseURL else { return }
             artifacts = result; artifactError = nil
         } catch { if !Task.isCancelled { artifactError = ServerReadFailure.note(error) } }
-    }
-    private func perform(_ action: () async throws -> String?) async {
-        guard !busy else { return }
-        busy = true; actionNote = nil
-        defer { busy = false }
-        do {
-            actionNote = try await action()
-            if actionNote == nil { Haptics.success() } else { Haptics.error() }
-            await load(); await store.refresh()
-        } catch { actionNote = error.localizedDescription; Haptics.error() }
     }
 }

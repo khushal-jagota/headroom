@@ -21,6 +21,9 @@ struct ConversationComposer: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .body) private var iconSize = 18.0
     @State private var modelSheet = false
+    @State private var attachOpen = false
+    /// The picker the Attach sheet chose. It opens once the sheet has closed.
+    @State private var attachChoice: AttachChoice?
     @State private var importFile = false
     @State private var pickPicture = false
     @State private var picture: PhotosPickerItem?
@@ -36,6 +39,9 @@ struct ConversationComposer: View {
     var body: some View {
         composer
         .sheet(isPresented: $modelSheet) { ConversationModelSheet(model: model, owner: owner) }
+        .sheet(isPresented: $attachOpen, onDismiss: openAttachChoice) {
+            AttachSheet(cameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)) { attachChoice = $0 }
+        }
         .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
         .onChange(of: picture) { _, selected in
             guard let selected else { return }
@@ -72,6 +78,17 @@ struct ConversationComposer: View {
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onDisappear { speech.cancel() }
     }
+    private func openAttachChoice() {
+        defer { attachChoice = nil }
+        switch attachChoice {
+        case .picture: pickPicture = true
+        case .camera: camera = true
+        case .file: importFile = true
+        case .command: model.draft = "/"; textEntry?.requestFocus(inputID)
+        case nil: break
+        }
+    }
+
     @ViewBuilder private var feedback: some View {
         if let error = speech.error ?? model.error ?? refreshError {
             HStack(alignment: .center) {
@@ -166,12 +183,7 @@ struct ConversationComposer: View {
                     }
                     Spacer(minLength: 0)
                 } else {
-                    Menu {
-                        Button("File", systemImage: "paperclip") { importFile = true }
-                        Button("Picture", systemImage: "photo") { pickPicture = true }
-                        Button("Photo", systemImage: "camera") { camera = true }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-                        Button("Command", systemImage: "slash.circle") { model.draft = "/"; textEntry?.requestFocus(inputID) }
-                    } label: { Image(systemName: "plus").font(.system(size: min(iconSize, 28))).frame(width: 36, height: 36).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
+                    Button { textEntry?.endEditing(); attachOpen = true } label: { Image(systemName: "plus").font(.system(size: min(iconSize, 28))).frame(width: 36, height: 36).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
                     if card && !reviewReply && !typeSize.isAccessibilitySize { configurationControls }
                     Spacer(minLength: 0)
                 }
