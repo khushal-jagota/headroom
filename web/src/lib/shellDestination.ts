@@ -20,7 +20,9 @@ export function parseShellDestination(incoming: string): ShellDestination {
   const unknown = (): ShellDestination => ({ name: "unknown", params: {}, key: "unknown", hash });
   const workspace = (address: WorkspaceAddress, target = hash): ShellDestination => ({ name: "workspace", params: {}, key: "workspace", workspace: address, hash: target });
   const redirect = (selection: WorkspaceAddress["selection"]): ShellDestination => workspace({ selection, view: impliedWorkspaceView(selection), openFile: null }, workspaceAddress(selection));
-  if (!segments.length || name === "chief" || name === "day" && segments.length === 1) return redirect({ kind: "chief" });
+  // No address at all opens the review queue, which shows its final screen when nothing waits.
+  if (!segments.length) return { name: "review", params: {}, key: "review", hash: "#/review" };
+  if (name === "chief" || name === "day" && segments.length === 1) return redirect({ kind: "chief" });
   if (name === "board") return redirect({ kind: "none" });
   if (name === "ticket" && segments[1]) {
     let id = segments[1];

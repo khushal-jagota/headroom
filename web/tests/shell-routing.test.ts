@@ -48,13 +48,13 @@ it("uses the unavailable screen for archived calendar routes", () => {
   }
 });
 
-it("preserves the bare Home redirect to Chief", () => {
-  for (const hash of ["", "#", "#/day"]) {
+it("opens the review queue for the bare address and keeps the old Home alias on Chief", () => {
+  for (const [hash, target] of [["", "#/review"], ["#", "#/review"], ["#/day", "#/workspace/chief-of-staff"]]) {
     const replace = vi.fn();
     vi.stubGlobal("window", { location: { hash, replace } });
     try {
       expect(render(AppWithQueryClient).body).not.toContain("no such screen");
-      expect(replace).toHaveBeenCalledWith("#/workspace/chief-of-staff");
+      expect(replace).toHaveBeenCalledWith(target);
     } finally {
       vi.unstubAllGlobals();
     }
