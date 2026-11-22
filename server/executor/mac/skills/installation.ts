@@ -252,12 +252,17 @@ export async function install_native_skill_snapshot(
       invalid(`configured native provider home resolves elsewhere: ${native_home}`);
     home_fd = retain(open_directory_descriptor(home));
     try {
+      // Machine code is the only program that links skills, so it makes a missing skills folder.
       target_fd = retain(
-        open_directory_components(home_fd, relative_directory_components(native_skills_directory)),
+        open_directory_components(
+          home_fd,
+          relative_directory_components(native_skills_directory),
+          0o700,
+        ),
       );
     } catch (error) {
       invalid(
-        `native provider skills entry must be an existing real directory: ${join(home, native_skills_directory)} (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`,
+        `native provider skills entry must be a real directory: ${join(home, native_skills_directory)} (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`,
         error,
       );
     }
