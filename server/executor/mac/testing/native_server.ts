@@ -52,6 +52,7 @@ async function wait_until<T>(
 }
 
 export async function start_native_server(
+  reopen_credential?: string,
   options: {
     expected_protocol?: number;
     create_environments?: typeof create_test_environment_runtime;
@@ -68,11 +69,13 @@ export async function start_native_server(
       'utf8',
     ),
   ) as ApplicationSchemaSeed;
-  const initial = createDatabaseFromSeed(path, seed, (tx) => {
-    bootstrap_application(tx, Math.floor(Date.now() / 1000));
-    seed_original_mac_rows(tx);
-  });
-  initial.close();
+  if (reopen_credential === undefined) {
+    const initial = createDatabaseFromSeed(path, seed, (tx) => {
+      bootstrap_application(tx, Math.floor(Date.now() / 1000));
+      seed_original_mac_rows(tx);
+    });
+    initial.close();
+  }
   let context!: ConversationCompositionContext;
   let core!: SqliteProcessConversationSystem;
   let registry!: VpsExecutorRegistry;
@@ -119,7 +122,8 @@ export async function start_native_server(
   });
   const endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)!;
   assert.ok(endpoint);
-  const credential = issue_original_credential(context.database, randomUUID()).credential;
+  const credential =
+    reopen_credential ?? issue_original_credential(context.database, randomUUID()).credential;
   if (options.platform)
     context.database.write((tx) => {
       tx.run('UPDATE machine_executor_credentials SET platform=? WHERE machine_id=?', [

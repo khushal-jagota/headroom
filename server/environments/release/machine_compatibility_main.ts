@@ -277,7 +277,7 @@ try {
       },
     },
   };
-  server = await start_native_server({
+  server = await start_native_server(undefined, {
     platform,
     expected_protocol: JSON.parse(
       await readFile(join(previous, 'server/executor/wire.schema.json'), 'utf8'),
