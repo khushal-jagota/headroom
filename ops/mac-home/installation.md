@@ -137,7 +137,9 @@ A second machine runs Workers for this home. It needs step 4 first, because it r
 panels machine join-command "Second machine" --home https://MACHINE.TAILNET.ts.net
 ```
 
-Run the printed command on the other machine. A Linux machine joins with this command. See [Install an extra Linux machine](../linux-executor/installation.md). The new machine signs in to its own providers, as in step 1.
+Run the printed command on the other machine. The same command supports Linux x86_64 and Apple Silicon.
+See the [Linux installation notes](../linux-executor/installation.md) or [Apple Silicon installation notes](../mac-executor/typescript-installation.md).
+The new machine signs in to its own providers, as in step 1.
 
 ## Stop, restart, and backup
 
@@ -148,31 +150,31 @@ export PANELS_ROOT="$HOME/Library/Application Support/PanelsHome"
 export PANELS_LABEL=com.panels.home
 ```
 
-Before stop, record the supervisor and app identities for this home.
-Stop the exact jobs, with the auxiliary jobs first:
+Before stop, record the server and machine process identities.
+Stop the exact jobs, with the machine job first:
 
 ```sh
-for suffix in maintenance stall-watchdog backup; do
+for suffix in machine maintenance stall-watchdog backup; do
   launchctl bootout "gui/$(id -u)/$PANELS_LABEL.$suffix"
 done
 launchctl bootout "gui/$(id -u)/$PANELS_LABEL"
 ```
 Wait until `launchctl print "gui/$(id -u)/$PANELS_LABEL"` reports that the job is absent.
-Check that the recorded supervisor and app ended and that the port has no listener.
+Check that the recorded server and machine processes ended and that the port has no listener.
 If the stop exceeds 30 seconds, record the output and stop. Do not bootstrap a replacement until these checks pass.
-Apply the same job-absence and recorded-process checks to every auxiliary label before reload.
-Start them again, the home first. This is also the ordinary service restart route.
+Apply the same job-absence and recorded-process checks to every machine and auxiliary label before reload.
+Start the server first, then the machine and auxiliary jobs. This is also the ordinary service restart route.
 
 ```sh
 launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
-for suffix in backup maintenance stall-watchdog; do
+for suffix in machine backup maintenance stall-watchdog; do
   launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.$suffix.plist"
 done
 ```
 
 The supervisor remains in launchd custody. Its hard death also removes the app and permits a fresh start.
 
-To remove the installation, first complete those stop checks for all four labels.
+To remove the installation, first complete those stop checks for all five labels.
 Remove only login symlinks whose targets equal this installation's generated plists.
 Do not remove foreign entries, provider folders, or data during job removal.
 Keep the installation folder until all recorded jobs and processes retire.
@@ -185,7 +187,7 @@ Retain a separate copy of those files when you need them. Database restore does 
 ## Jobs, sleep, and logs
 
 Logs live in `$PANELS_ROOT/logs/`. Mac cleanup truncates oversized live logs in place because launchd retains their open descriptors.
-The login session owns all four jobs. Logout stops them. Sleep makes the home unreachable.
+The login session owns all five jobs. Logout stops them. Sleep makes the home unreachable.
 Calendar jobs missed during sleep run after wake. Several missed calendar events coalesce into one run.
 The watchdog skips intervals during sleep. It resumes at a later interval and does not replay each missed check.
 After login or a missed watchdog stretch, the first interval defers only a stale-checker alarm.

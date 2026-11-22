@@ -5,7 +5,11 @@ import { cp, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
+import { ChildProcesses, OneShotChildren } from '../../lifecycle/owned_processes.ts';
+import { DarwinWorkerProcesses } from '../../platform_runtime/darwin/worker_processes.ts';
+import { LinuxWorkerProcesses } from '../../platform_runtime/linux/worker_processes.ts';
+import type { WorkerProcess } from '../../worker_supervision/contracts.ts';
+import { check_home_port } from '../home.ts';
 import { run_release_command } from '../../environments/release/process.ts';
 import type { ReleaseExecution } from '../../environments/release/contracts.ts';
 import { shell_quote } from '../../conversation/worker_unit/logic.ts';
@@ -62,6 +66,11 @@ await writeFile(
 const environment: NodeJS.ProcessEnv = { ...process.env, HOME: home, PLAN_TEST_MODE: '0' };
 for (const key of Object.keys(environment)) if (key.startsWith('PLAN_')) delete environment[key];
 const owner = new ChildProcesses();
+const commands = new OneShotChildren(owner);
+const primitives =
+  system === 'darwin'
+    ? new DarwinWorkerProcesses({ children: commands })
+    : new LinuxWorkerProcesses();
 const execution: ReleaseExecution = {
   child_processes: owner,
   signal: AbortSignal.timeout(12 * 60_000),
@@ -297,6 +306,50 @@ try {
                 ]
               : []),
           ];
+    const births = new Map<number, WorkerProcess>();
+    try {
+      const pids = new Set<number>();
+      for (const job of jobs) {
+        const result = await run_release_command(
+          system === 'linux'
+            ? ['systemctl', '--user', 'show', job, '--property=MainPID', '--value']
+            : ['/bin/launchctl', 'print', `${domain}/${job}`],
+          { environment, timeout_seconds: 10, allow_nonzero: true },
+          cleanup_execution,
+        );
+        if (result.code === 0) {
+          const pid = Number(
+            system === 'linux' ? result.stdout.trim() : result.stdout.match(/\bpid = (\d+)/)?.[1],
+          );
+          if (Number.isSafeInteger(pid) && pid > 0) pids.add(pid);
+        }
+      }
+      for (const value of [report.first_machine, report.second_machine]) {
+        const runtime = value as { process_id?: number } | undefined;
+        if (runtime?.process_id) pids.add(runtime.process_id);
+      }
+      const snapshot = await primitives.snapshot(performance.now() / 1000 + 10);
+      for (const pid of pids) {
+        const birth = snapshot.get(pid);
+        assert.ok(birth, 'Cannot capture the native birth of an installed process: ' + pid);
+        births.set(pid, birth);
+      }
+      // Include runtime children and any commands that were still in flight at the snapshot.
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (const birth of snapshot.values()) {
+          if (births.has(birth.parent) && !births.has(birth.pid)) {
+            births.set(birth.pid, birth);
+            expanded = true;
+          }
+        }
+      }
+      report.process_births = [...births.values()];
+    } catch (error) {
+      report.process_capture_error = String(error);
+      failed = new AggregateError([failed, error].filter(Boolean), 'Proof process capture failed');
+    }
     for (const job of jobs) {
       if (system === 'linux') {
         const stopped = await run_release_command(
@@ -336,7 +389,24 @@ try {
         assert.ok(absent, 'An installed proof job remains loaded: ' + job);
       }
     }
-    report.cleanup = 'all attempted jobs stopped';
+    const retirement_deadline = Math.min(
+      cleanup_execution.deadline!,
+      performance.now() / 1000 + 30,
+    );
+    let retired = false;
+    while (performance.now() / 1000 < retirement_deadline) {
+      retired = (
+        await Promise.all(
+          [...births.values()].map((birth) => primitives.is_absent(birth, retirement_deadline)),
+        )
+      ).every(Boolean);
+      if (retired) break;
+      await delay(100);
+    }
+    assert.ok(retired, 'An installed process or captured descendant survives service stop');
+    await check_home_port(port);
+    report.cleanup =
+      'all attempted jobs stopped, captured native process births retired, server port free';
   } catch (error) {
     report.cleanup = String(error);
     failed = new AggregateError([failed, error].filter(Boolean), 'Proof cleanup failed');
@@ -355,9 +425,17 @@ try {
       }
     }
   }
-  await writeFile(join(evidence, 'proof.json'), JSON.stringify(report, null, 2) + '\n');
+  if (failed) report.result = 'failed';
+  commands.seal();
   owner.seal();
-  await owner.settled();
+  try {
+    await Promise.all([commands.settled(), owner.settled()]);
+  } catch (error) {
+    failed = new AggregateError([failed, error].filter(Boolean), 'Proof child settlement failed');
+    report.result = 'failed';
+    report.child_settlement_error = String(error);
+  }
+  await writeFile(join(evidence, 'proof.json'), JSON.stringify(report, null, 2) + '\n');
 }
 if (failed) throw failed;
 console.log(
