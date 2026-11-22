@@ -1326,9 +1326,11 @@ a.pv-name:focus-visible { outline:0; }
 .chat-thread .markdown th {
   padding-block-start: 0;
   padding-block-end: var(--cv-s2);
-  color: var(--cv-t3);
+  /* The head is a step up in weight and tone from a caption, so it reads as the table's
+     head and not as one more grey row. */
+  color: var(--cv-t2);
   font-size: var(--cv-type-meta);
-  font-weight: var(--cv-weight-label);
+  font-weight: var(--cv-weight-title);
   border-block-end-color: var(--cv-line-strong);
 }
 .chat-thread .markdown td { color: var(--cv-t2); }
@@ -1805,8 +1807,10 @@ button.list-row:hover .list-row-title {
   stroke-linejoin: round;
 }
 .cv-icon-button .cv-dots circle { fill: currentColor; stroke: none; }
-.cv-icon-button:hover,
+.cv-icon-button:hover:not(:disabled),
 .cv-icon-button[aria-expanded="true"] { color: var(--cv-t1); background: var(--cv-control); }
+/* A control that cannot act now steps back a tone, so it never reads as live. */
+.cv-icon-button:disabled { color: rgb(255 255 255 / 22%); cursor: default; }
 .cv-icon-button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
 /* The state marks every place that says the conversation's state draws with: the header,
@@ -1818,8 +1822,9 @@ button.list-row:hover .list-row-title {
   width: 14px;
   height: 14px;
   border-radius: var(--cv-r-pill);
-  border: 1.6px solid rgb(255 255 255 / 16%);
-  border-top-color: var(--cv-t2);
+  /* Readable at a glance on the canvas: a 2px ring, a visible track and a bright arc. */
+  border: 2px solid rgb(255 255 255 / 22%);
+  border-top-color: var(--cv-t1);
   animation: cv-spin var(--cv-spin, 1s) linear infinite;
 }
 .cv-dot {
@@ -1998,6 +2003,11 @@ button.list-row:hover .list-row-title {
 .cv-button--secondary { background: var(--cv-control); color: var(--cv-t1); }
 .cv-button--secondary:hover:not(:disabled) { background: var(--cv-control-hover); }
 .cv-button--ghost { color: var(--cv-t2); }
+/* Stop turn's mark: the same filled square the composer's stop button draws. */
+.cv-button svg.cv-stop-glyph { width: 12px; height: 12px; fill: currentColor; stroke: none; }
+/* Outline: a refusal (Deny, Decline). A full button by its edge, a step below a filled one. */
+.cv-button--outline { color: var(--cv-t1); box-shadow: inset 0 0 0 1px var(--cv-line-strong); }
+.cv-button--outline:hover:not(:disabled) { background: var(--cv-control); }
 .cv-button--ghost:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
 .cv-button--danger { color: var(--cv-danger); }
 .cv-button:disabled { cursor: default; background: transparent; color: var(--cv-t4); }
@@ -2031,8 +2041,7 @@ button.list-row:hover .list-row-title {
      head's rule) and 24 under the newest (NEWEST_LINE_BOTTOM_GAP_PIXELS in
      viewport/viewportConfiguration.ts is this value). */
   padding: var(--cv-transcript-pad-top) var(--space-3) var(--cv-transcript-pad-bottom);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
-          mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
+  /* Its edge fades are ConversationViewport's: only at an edge where something is cut. */
 }
 
 /* The measured content box. It cannot shrink when delayed media or Markdown grows, and
@@ -2062,18 +2071,20 @@ button.list-row:hover .list-row-title {
  *   row     0  tool rows stack with no gap; each is its own 32 px line
  * The projected transcript names each item's place with data-rhythm; the plain transcript
  * is read by its elements. */
-.chat-thread-content > * + * { margin-block-start: var(--cv-gap-block); }
-.chat-thread-content > [data-rhythm="turn"] { margin-block-start: var(--cv-gap-turn); }
-.chat-thread-content > [data-rhythm="meta"] { margin-block-start: var(--cv-gap-meta); }
-.chat-thread-content > [data-rhythm="block"] { margin-block-start: var(--cv-gap-block); }
-.chat-thread-content > [data-rhythm="section"] { margin-block-start: var(--cv-s5); }
-.chat-thread-content > [data-rhythm="row"],
-.chat-thread-content > [data-rhythm="first"],
-.chat-thread-content > [data-rhythm="none"],
-.chat-thread-content > [data-rhythm]:first-child { margin-block-start: 0; }
-.chat-thread-content > :is(.chat-u, .chat-system, [data-conversation-turn]):not(:first-child) { margin-block-start: var(--cv-gap-turn); }
-.chat-thread-content > [data-conversation-turn] + * { margin-block-start: var(--cv-gap-meta); }
-.chat-thread-content > .chat-a + .chat-a { margin-block-start: var(--cv-s5); }
+/* Both transcripts render through a display:contents wrapper ([data-conversation-transcript]),
+ * so the thread's items are its children, not the content box's. Every rule names that level. */
+:where(.chat-thread-content, .chat-thread-content > [data-conversation-transcript]) > :where(:not([data-conversation-transcript], [data-conversation-history-edge])) + :where(:not([data-conversation-history-edge])) { margin-block-start: var(--cv-gap-block); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="turn"] { margin-block-start: var(--cv-gap-turn); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] { margin-block-start: var(--cv-gap-meta); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="block"] { margin-block-start: var(--cv-gap-block); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="section"] { margin-block-start: var(--cv-s5); }
+.chat-thread-content > [data-conversation-transcript] > :is([data-rhythm="row"], [data-rhythm="first"], [data-rhythm="none"]) { margin-block-start: 0; }
+/* The plain transcript (no view reader) is read by its elements. */
+.chat-thread-content > [data-conversation-transcript] > :is(.chat-u, .chat-system, [data-conversation-turn]):not(:first-child, [data-rhythm]) { margin-block-start: var(--cv-gap-turn); }
+.chat-thread-content > [data-conversation-transcript] > [data-conversation-turn] + :not([data-rhythm]) { margin-block-start: var(--cv-gap-meta); }
+.chat-thread-content > [data-conversation-transcript] > .chat-a + .chat-a { margin-block-start: var(--cv-s5); }
+/* An item that draws nothing gives nothing, and the item after it keeps its own gap. */
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="none"] { margin-block: 0; }
 
 /* Worker messages are bubble-less prose. */
 .chat-a {
@@ -2282,8 +2293,19 @@ button.list-row:hover .list-row-title {
   font-family: var(--cv-font);
   font-size: var(--cv-type-meta);
 }
-/* An ask's own actions bring their own height. */
-.chat-foot.has-ask { height: auto; margin-top: 0; }
+/* Under a waiting ask the composer is one line: the draft and its send on a single row, the
+ * way to answer otherwise. It grows back to its two rows the moment something is written,
+ * attached or recorded. The model choice and the add menu wait for that. */
+.chat-ask { display: flex; flex-direction: column; min-width: 0; margin-block-end: var(--cv-s2); }
+.chat-box.is-compact {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--cv-s1);
+  padding: var(--cv-s2) var(--cv-s2) var(--cv-s2) var(--cv-s3);
+}
+.chat-box.is-compact .chat-ta { flex: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
+.chat-box.is-compact .chat-foot { flex: none; width: auto; margin-top: 0; }
+.chat-box.is-compact .chat-foot > :is(.chat-add, [data-conversation-model-picker]) { display: none; }
 .chat-foot > [data-conversation-model-picker] { flex: 0 1 auto; min-width: 0; margin-inline-start: auto; }
 /* Icon buttons: 32px, 8px round, the glyph in the quiet tone, lifting on a control fill. */
 .chat-image {

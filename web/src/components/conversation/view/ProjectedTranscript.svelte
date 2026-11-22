@@ -85,9 +85,16 @@
     previousDisplay = retained;
     return retained;
   });
+  /** What a running turn waits on the person for: its ask is docked over the composer. */
+  function turnWaiting(item: ConversationViewItem & { kind: 'turn' }): 'permission' | 'question' | null {
+      if (item.settled || reader.status?.turn_key !== item.key) return null;
+      return reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null;
+  }
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
-          return !item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0;
+          // A turn held by the person has no head: the docked ask says so, once.
+          return !(turnWaiting(item) !== null && !activityUncertain)
+              && (!item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0);
       // In Full a run of more than one call is drawn as its summary line.
       if (item.kind === 'work_group')
           return reader.lens === 'full' && item.entry_count > 1;
@@ -127,10 +134,14 @@
           if (boundary.anchorKey !== null && boundary.direction === 'older')
               before.add(boundary.anchorKey);
       let previous: Beat | null = null;
+      // A turn whose head draws nothing still starts a turn: what comes first in it takes
+      // the turn gap.
+      let turnOpens = false;
       for (const slot of displaySlots) {
           const item = slot.item;
           // A held page edge does not establish who is adjacent across the gap.
           if (item !== null && before.has(item.key)) previous = null;
+          if (item !== null && item.kind === 'turn' && !presentation.has(item.key)) { turnOpens = true; result.set(slot.key, 'none'); continue; }
           let beat: Beat | null;
           if (slot.local !== null || item !== null && isMessageRow(item)) beat = 'prompt';
           else if (item === null || !presentation.has(item.key)) beat = null;
@@ -139,9 +150,10 @@
           else if (item.row_kind === 'agent_message') beat = 'prose';
           else beat = 'other';
           if (beat === null) { result.set(slot.key, 'none'); continue; }
+          const opens = turnOpens; turnOpens = false;
           result.set(slot.key,
               previous === null ? 'first'
-              : beat === 'prompt' || beat === 'head' ? 'turn'
+              : beat === 'prompt' || beat === 'head' || opens ? 'turn'
               : previous === 'head' ? 'meta'
               : beat === 'work' && previous === 'work' ? 'row'
               : beat === 'prose' && previous === 'prose' ? 'section'
@@ -222,7 +234,7 @@
     <ViewItem itemKey={item.key} rhythm={rhythm.get(slot.key) ?? 'block'}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={!item.settled && reader.status?.turn_key === item.key ? (reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null) : null} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
         </div>
       {:else if item.kind==='work_group'}
         {@const groupKey = item.key}

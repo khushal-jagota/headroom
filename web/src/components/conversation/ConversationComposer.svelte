@@ -349,10 +349,12 @@
   /** The asks that bring their own actions, so the box draws none of its own under them. */
   // Every ask draws its own answers in its shell's footer, so the box's own foot gives way to it.
   let panelTakesTheBox = $derived(userInput !== null || ask !== null || credentialInTheBox);
-  let inputDisabled = $derived(disabled || takenOver || attachmentIntakesInFlight > 0);
+  // The composer stays usable under a waiting ask (owner): the ask is answered in its own
+  // shell, and a message still goes as the delivery chip says.
+  let inputDisabled = $derived(disabled || attachmentIntakesInFlight > 0);
   /** Browser recording capability controls availability. The question panel and
    *  permission ask always outrank voice. */
-  let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, !takenOver));
+  let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
   /** The Add menu, and the camera the design's third choice needs. */
   let addMenuOpen = $state(false);
   let addMenuElement = $state<HTMLDivElement | null>(null);
@@ -367,7 +369,7 @@
   // The foot this menu lives in is replaced whole by a question or a permission ask.
   // A menu that is not on the screen must not still be holding the Escape key.
   $effect(() => {
-    if (takenOver || inputDisabled) addMenuOpen = false;
+    if (inputDisabled) addMenuOpen = false;
   });
 
   $effect(() => {
@@ -631,7 +633,7 @@
   function intakeFiles(
     files: Iterable<File> | ArrayLike<File> | null | undefined
   ): Promise<void> {
-    if (disabled || takenOver) return Promise.resolve();
+    if (disabled) return Promise.resolve();
     const chosen: File[] = [];
     for (const file of Array.from(files ?? [])) {
       if (!isVideoFile(file.name)) { chosen.push(file); continue; }
@@ -983,9 +985,6 @@
 
   // A question panel or permission ask arriving mid-voice takes the composer: whatever
   // voice was doing is cancelled rather than left running under a surface it cannot show.
-  $effect(() => {
-    if (takenOver && voiceState.phase !== "idle") voice?.cancel();
-  });
 
   let textareaMeasurement: ReturnType<typeof createComposerTextareaMeasurement> | null = null;
 
@@ -1202,18 +1201,52 @@
       onSendAgain={onSendHeldPromptAgain}
     />
 
+    <!-- A waiting ask docks over the composer, where the person types; the composer stays
+         under it, one line high, so they can still say something instead of (or as well as)
+         answering. -->
+    {#if panelTakesTheBox}
+    <div class="chat-ask" data-conversation-ask-dock data-conversation-taken-over="true">
+        {#if userInput}
+          <UserInputQuestionPanel
+            request={userInput}
+            busy={disabled}
+            answerAvailable={userInputAvailable}
+            note={userInputNote}
+            onSubmit={(answers) => onSubmitUserInput?.(answers)}
+            onCancelTurn={() => onCancelTurn?.()}
+          />
+        {:else if takenOver && ask}
+          <PermissionAskCard
+            ask={ask}
+            answerAvailable={permissionAvailable}
+            busy={disabled}
+            note={askNote}
+            onAnswer={(optionId) => onAnswer?.(optionId)}
+            onCancelTurn={() => onCancelTurn?.()}
+          />
+        {:else if credentialInTheBox && credentialRequest}
+          <!-- A turn still running while the key is asked for can be ended from here, as it can
+               from a question or a permission ask; a request left by a finished turn has no turn
+               to end, so the card offers only its own answers. -->
+          <ConversationCredentialRequestCard
+            request={credentialRequest}
+            onCancelTurn={running && onCancelTurn ? () => onCancelTurn?.() : undefined}
+          />
+        {/if}
+    </div>
+    {/if}
+
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
       class="chat-box"
       bind:this={boxElement}
       class:drag={draggingAttachments}
-      class:has-ask={takenOver}
-      class:has-attachments={!panelTakesTheBox && attachments.length > 0}
+      class:is-compact={panelTakesTheBox && attachments.length === 0 && voiceState.phase === "idle" && text.length === 0}
+      class:has-attachments={attachments.length > 0}
       class:keyboard-focus={keyboardFocus}
-      class:is-voice={!takenOver && voiceState.phase !== "idle"}
+      class:is-voice={voiceState.phase !== "idle"}
       data-conversation-box
-      data-conversation-taken-over={takenOver ? "true" : undefined}
       role="group"
       aria-label="Conversation composer"
       ondragenter={onDragEnter}
@@ -1223,35 +1256,7 @@
       onmousedown={keepTheFieldFocused}
       onclick={focusTheFieldFromTheBox}
     >
-      {#if userInput}
-        <UserInputQuestionPanel
-          request={userInput}
-          busy={disabled}
-          answerAvailable={userInputAvailable}
-          note={userInputNote}
-          onSubmit={(answers) => onSubmitUserInput?.(answers)}
-          onCancelTurn={() => onCancelTurn?.()}
-        />
-      {:else if takenOver && ask}
-        <PermissionAskCard
-          ask={ask}
-          answerAvailable={permissionAvailable}
-          busy={disabled}
-          note={askNote}
-          onAnswer={(optionId) => onAnswer?.(optionId)}
-          onCancelTurn={() => onCancelTurn?.()}
-        />
-      {:else if credentialInTheBox && credentialRequest}
-        <!-- A turn still running while the key is asked for can be ended from here, as it can
-             from a question or a permission ask; a request left by a finished turn has no turn
-             to end, so the card offers only its own answers. -->
-        <ConversationCredentialRequestCard
-          request={credentialRequest}
-          onCancelTurn={running && onCancelTurn ? () => onCancelTurn?.() : undefined}
-        />
-      {/if}
-
-      {#if !panelTakesTheBox && attachments.length > 0}
+      {#if attachments.length > 0}
         <div class="chat-attachments" data-conversation-attachments aria-label="Attached and waiting to send">
           {#each attachments as attachment (`${attachment.kind}-${attachment.value.id}`)}
             {@const item = attachment.value}
@@ -1321,7 +1326,7 @@
 
       <!-- A voice take stands where the words go: its level and its clock, on the draft's row,
            at the draft's height, so the composer keeps its size. -->
-      {#if !takenOver && voiceState.phase !== "idle"}
+      {#if voiceState.phase !== "idle"}
         <div class="chat-voice-line" data-conversation-voice={voiceState.phase}>
           {#if voiceState.phase === "recording"}
             <span class="chat-voice-word cv-visually-hidden" role="status">Recording</span>
@@ -1349,7 +1354,7 @@
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
-        hidden={takenOver || voiceState.phase !== "idle"}
+        hidden={voiceState.phase !== "idle"}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
@@ -1359,8 +1364,7 @@
         onpaste={onPaste}
       ></textarea>
 
-      {#if !panelTakesTheBox}
-      <div class="chat-foot" class:has-ask={takenOver}>
+      <div class="chat-foot">
         <!-- The catalog floats over the box from inside its foot, so opening it never changes
              what the box holds and the box keeps its one layout. -->
         {#if catalogMenuIsOpen}
@@ -1546,13 +1550,13 @@
               intents={runControlIntents}
               bind:snapshots={backends}
               beforeSubmit={microphone}
+              stopElsewhere={userInput !== null || ask !== null || (credentialInTheBox && running && onCancelTurn !== undefined)}
             />
           {:else}
             <span class="chat-submit">{@render microphone()}</span>
           {/if}
         {/if}
       </div>
-      {/if}
       <!-- While something is dragged over it, the whole box becomes the place to drop: one
            opaque face over everything in it, so no word of the draft or the controls shows
            through the instruction, and the box keeps its size. -->
@@ -1835,6 +1839,8 @@
   }
   .chat-att.img { width: 56px; overflow: hidden; }
   .chat-att.img img { border-radius: var(--cv-r-md); }
+  /* A picture keeps a hairline frame, so a dark image still reads as a tile. */
+  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--cv-line-strong); pointer-events: none; }
   .chat-att.file {
     gap: 10px;
     max-width: 240px;
@@ -1895,7 +1901,7 @@
     transition: width var(--cv-dur-base) linear;
   }
   /* Remove: a 20px round on the floating plane inside the tile's corner, 4px in, with a 24px
-     target. It appears on hover or focus, and is always there on a touch screen. */
+     target. It is always there: a control people rely on is never hidden until hover. */
   .chat-att-x {
     top: 2px;
     right: 2px;
@@ -1905,13 +1911,10 @@
     border: 0;
     border-radius: 50%;
     background: none;
-    color: var(--cv-t1);
-    opacity: 0;
-    transition: opacity var(--cv-dur-fast) var(--cv-ease-out);
+    color: var(--cv-t2);
+    transition: color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-att:hover .chat-att-x,
-  .chat-att:focus-within .chat-att-x { opacity: 1; }
-  @media (hover: none) { .chat-att-x { opacity: 1; } }
+  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { color: var(--cv-t1); }
   .chat-att-x svg {
     display: block;
     width: 20px;
@@ -1926,6 +1929,6 @@
     stroke-linecap: round;
   }
   .chat-att-x:hover:not(:disabled) svg { background: var(--cv-control-hover); }
-  .chat-att-x:disabled { opacity: 0; }
+  .chat-att-x:disabled { color: var(--cv-t4); cursor: default; }
   .chat-att.file { padding-inline-end: var(--cv-s5); }
 </style>

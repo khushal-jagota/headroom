@@ -112,6 +112,9 @@ export type ConversationStateFacts = {
   readOnly: boolean;
   activityUncertain: boolean;
   waitingForYou: boolean;
+  /** What the person is asked for, in the ask's own words ("Needs your approval"). One
+   *  wording per state: the ask card, the dock's line and the sidebar all say it this way. */
+  waitingFor?: 'approval' | 'answer' | 'key' | null;
   running: boolean;
   backgroundWorking: boolean;
   /** The Worker-setup sentence ("Setting up · preparing workspace · 1m 35s"), or null. */
@@ -131,7 +134,7 @@ export function conversationState(facts: ConversationStateFacts): ConversationSt
   // Setup the machine cannot confirm is still setup: setting up is recorded, and normal.
   if (facts.activityUncertain && facts.settingUp && !facts.waitingForYou) return { state: 'setting-up', text: facts.settingUp, mark: 'spinner' };
   if (facts.activityUncertain) return { state: 'unknown', text: 'Activity on this machine unknown', mark: null };
-  if (facts.waitingForYou) return { state: 'waiting', text: 'Waiting for you', mark: 'dot' };
+  if (facts.waitingForYou) return { state: 'waiting', text: waitingWords(facts.waitingFor ?? null), mark: 'dot' };
   if (facts.failure === 'turn_failed') return { state: 'failed', text: 'Turn failed', mark: 'alert' };
   if (facts.failure === 'not_delivered') return { state: 'undelivered', text: 'Message not delivered', mark: 'alert' };
   if (facts.running) return { state: 'working', text: facts.elapsed ? `Working · ${facts.elapsed}` : 'Working', mark: 'spinner' };
@@ -141,12 +144,24 @@ export function conversationState(facts: ConversationStateFacts): ConversationSt
   return { state: 'idle', text: '', mark: null };
 }
 
-/** What the opened conversation is doing, as its top bar says it, or null when idle (the
- * transcript already shows a conversation at rest). */
+/** The words for a conversation waiting on the person, the same words its ask card leads with. */
+export function waitingWords(kind: 'approval' | 'answer' | 'key' | null): string {
+  return kind === 'approval' ? 'Needs your approval'
+    : kind === 'answer' ? 'Needs your answer'
+    : kind === 'key' ? 'Needs a key'
+    : 'Needs you';
+}
+
+/** The states the opened pane's top bar says. Each state is said once, in one place: working
+ * by the running turn's own line, waiting by the ask docked over the composer, a failure by its
+ * callout or note in the thread, an interruption by its callout. The top bar says only what the
+ * thread has no place for: a machine still being set up, or one Panels cannot read, and a past
+ * conversation. */
+const HEAD_STATES: ReadonlySet<ConversationActivity> = new Set(['setting-up', 'unknown', 'read-only']);
 export type PaneHeadStatus = ConversationStateReading;
 export function paneHeadStatus(facts: ConversationStateFacts): PaneHeadStatus | null {
   const reading = conversationState(facts);
-  return reading.state === 'idle' ? null : reading;
+  return HEAD_STATES.has(reading.state) ? reading : null;
 }
 
 /** The dock's line under the status while the machine's own activity cannot be read. Setup

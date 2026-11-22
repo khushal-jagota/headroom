@@ -22,18 +22,21 @@ const request: CredentialRequestRowBody = {
 const base = { draftKey: "composer-credential-dock", onSend: async () => true };
 
 describe("a key request is asked in the composer's place", () => {
-  it("draws the request in the box, which gives way to it", () => {
+  it("docks the request over the composer, which stays usable under it", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request } });
     expect(body).toContain("Needs a key");
-    expect(body).toMatch(/data-conversation-box[^>]*data-conversation-taken-over="true"|data-conversation-taken-over="true"[^>]*data-conversation-box/);
-    expect(body).toMatch(/<textarea[^>]*hidden/);
-    // The box draws no add, model or send controls of its own under the request's actions.
-    expect(body).not.toContain("data-conversation-add");
+    expect(body).toMatch(/data-conversation-ask-dock[^>]*data-conversation-taken-over="true"/);
+    // The ask stands above the box, never inside it.
+    expect(body.indexOf("data-conversation-ask-dock")).toBeLessThan(body.indexOf("data-conversation-box"));
+    // The person can still write: the field is there, enabled, and the box is one line.
+    expect(body).not.toMatch(/<textarea[^>]*hidden/);
+    expect(body).not.toMatch(/<textarea[^>]*disabled/);
+    expect(body).toMatch(/class="chat-box[^"]*is-compact/);
   });
 
   it("ends the running turn from the request, and offers no such end with no turn running", () => {
     const running = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, running: true, onCancelTurn: () => {} } }).body;
-    expect(running).toMatch(/data-credential-cancel-turn[^>]*>Stop turn</);
+    expect(running).toMatch(/data-credential-cancel-turn[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
     const idle = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, onCancelTurn: () => {} } }).body;
     expect(idle).not.toContain("data-credential-cancel-turn");
   });

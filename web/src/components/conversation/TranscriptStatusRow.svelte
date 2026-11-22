@@ -10,7 +10,7 @@
    *
    *  Tone is said by the glyph and the words' colour, and by a faint wash on a failed
    *  callout. Never by a coloured edge or rule. */
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import type { TranscriptStatus } from "../../lib/conversation/transcript";
   let { status, align = "start", mark = null, weight = undefined, actions, ...attributes }: {
     status: TranscriptStatus | (Omit<TranscriptStatus, "tone"> & { tone: "quiet" });
@@ -25,8 +25,14 @@
     role?: "status" | "alert";
   } = $props();
 
-  let shownWeight = $derived(weight ?? (align === "start" && (status.tone === "error" || status.tone === "stopped") ? "callout" : "note"));
+  // A problem is a callout wherever it stands: a turn that failed, in the turn; a message
+  // that was not delivered, under that message. One pattern for both: what stopped, what to
+  // do, the one real next step as a button, and the backend's own words behind Details.
+  let shownWeight = $derived(weight ?? (status.tone === "error" || (align === "start" && status.tone === "stopped") ? "callout" : "note"));
+  // Open from the start when the backend's words are the only explanation there is.
+  let detailsOpen = $state(untrack(() => status.detailOpen === true));
   let copied = $state(false);
+  let root = $state<HTMLElement | null>(null);
 
   async function copyDetails(): Promise<void> {
     if (!status.detail) return;
@@ -38,6 +44,15 @@
       copied = false;
     }
   }
+  /** Opens the composer's model picker, where another model is chosen. */
+  function chooseAnotherModel(): void {
+    const trigger = root?.closest("[data-conversation-pane]")?.querySelector<HTMLButtonElement>("[data-conversation-model-picker] button[data-conversation-picker-trigger]");
+    if (!trigger) return;
+    trigger.focus();
+    trigger.click();
+  }
+  const uid = $props.id();
+  const detailsId = `c2-status-details-${uid}`;
 </script>
 
 {#snippet glyph()}
@@ -54,47 +69,61 @@
   </svg>
 {/snippet}
 
-{#snippet more()}
+{#snippet detailsToggle()}
+  {#if status.detail}
+    <button type="button" class="cv-button cv-button--ghost cv-button--small c2-status-toggle" aria-expanded={detailsOpen} aria-controls={detailsId}
+      data-conversation-status-details onclick={() => (detailsOpen = !detailsOpen)}>
+      <span>Details</span>
+      <svg class="c2-status-chevron" class:is-open={detailsOpen} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+    </button>
+  {/if}
+{/snippet}
+
+{#snippet details()}
   {#if status.detail}
     <!-- The backend's own words: kept whole and selectable, one step behind the plain
          sentence, open from the start when they are the only explanation there is. -->
-    <details class="c2-status-more" open={status.detailOpen === true}>
-      <summary class="c2-status-summary">
-        <span>Details</span>
-        <svg class="c2-status-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
-      </summary>
+    <div class="c2-status-more" id={detailsId} hidden={!detailsOpen}>
       <span class="c2-status-detail" data-conversation-status-detail>{status.detail}</span>
-    </details>
+      <button type="button" class="cv-icon-button cv-icon-button--small c2-status-copy" data-conversation-status-copy
+        aria-label={copied ? "Details copied" : "Copy details"} title={copied ? "Copied" : "Copy details"} onclick={() => void copyDetails()}>
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          {#if copied}<path d="m3.5 8.5 3 3 6-7" />
+          {:else}<rect x="5.5" y="5.5" width="8" height="8" rx="1.75" /><path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5A1.75 1.75 0 0 0 3.25 10.5h.25" />{/if}
+        </svg>
+      </button>
+    </div>
   {/if}
 {/snippet}
 
 {#if shownWeight === "callout"}
-  <div class="c2-status c2-status--callout c2-status--{status.tone}" {...attributes}>
+  <div bind:this={root} class="c2-status c2-status--callout c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
     <span class="c2-status-icon">{@render glyph()}</span>
     <div class="c2-status-body">
       <span class="c2-status-line"><span class="c2-status-title">{status.title}</span></span>
       {#if status.next}<span class="c2-status-next" data-conversation-status-next>{status.next}</span>{/if}
-      {#if actions || status.detail}
+      {#if actions || status.detail || status.action === "choose-model"}
         <div class="c2-status-actions">
           {#if actions}{@render actions()}{/if}
-          {#if status.detail}
-            <button type="button" class="c2-status-button" onclick={() => void copyDetails()} data-conversation-status-copy>{copied ? "Copied" : "Copy details"}</button>
+          {#if status.action === "choose-model"}
+            <button type="button" class="cv-button cv-button--secondary cv-button--small" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
           {/if}
+          {@render detailsToggle()}
         </div>
       {/if}
-      {@render more()}
+      {@render details()}
     </div>
   </div>
 {:else}
-  <div class="c2-status c2-status--note c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
+  <div bind:this={root} class="c2-status c2-status--note c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
     <div class="c2-status-body">
       <!-- The mark rides with the sentence, so a line under a message can end on the
            message's own edge, mark and all. -->
       <span class="c2-status-line">{@render glyph()}<span class="c2-status-title">{status.title}</span></span>
       {#if status.next}<span class="c2-status-next c2-status-indent" data-conversation-status-next>{status.next}</span>{/if}
-      {#if status.detail}<div class="c2-status-indent">{@render more()}</div>{/if}
+      {#if actions || status.detail}<div class="c2-status-actions c2-status-actions--note c2-status-indent">{#if actions}{@render actions()}{/if}{@render detailsToggle()}</div>{/if}
+      {#if status.detail}<div class="c2-status-indent">{@render details()}</div>{/if}
     </div>
-    {#if actions}<div class="c2-status-actions c2-status-actions--note">{@render actions()}</div>{/if}
   </div>
 {/if}
 
@@ -142,7 +171,6 @@
   .c2-status--note.c2-status--warning { color: var(--cv-caution); }
   .c2-status--note.c2-status--warning .c2-status-title { color: var(--cv-caution); }
   .c2-status--note .c2-status-next { color: var(--cv-t3); }
-  .c2-status-actions--note { flex: none; display: flex; align-items: center; gap: var(--cv-s1); margin-block-start: -4px; }
 
   /* Callout: a block in the turn. The glyph column and a calm surface carry the weight;
      a failure adds only a faint wash of its colour and the colour of its glyph. */
@@ -177,41 +205,15 @@
     gap: var(--cv-s2);
     margin-block-start: var(--cv-s3);
   }
-  .c2-status--callout .c2-status-more { margin-block-start: var(--cv-s2); }
-  .c2-status-button {
-    display: inline-flex;
-    align-items: center;
-    height: 28px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: var(--cv-r-md);
-    background: var(--cv-control);
-    color: var(--cv-t1);
-    font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    font-weight: var(--cv-weight-label);
-    cursor: pointer;
-    transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
-  }
-  .c2-status-button:hover { background: var(--cv-control-hover); }
-  .c2-status-button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  /* A message's callout stands under that message, on its right edge, as wide as it needs. */
+  .c2-status--callout.c2-status--end { align-self: flex-end; width: fit-content; max-width: 100%; text-align: start; }
+  .c2-status--callout.c2-status--end .c2-status-body { justify-items: start; }
 
-  /* The disclosure for the backend's words, shared by both weights. */
-  .c2-status-more { min-width: 0; }
-  .c2-status-summary {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--cv-s1);
-    min-height: 24px;
-    color: var(--cv-t3);
-    font-weight: var(--cv-weight-label);
-    cursor: pointer;
-    list-style: none;
-    border-radius: var(--cv-r-sm);
-  }
-  .c2-status-summary::-webkit-details-marker { display: none; }
-  .c2-status-summary:hover, .c2-status-summary:focus-visible { color: var(--cv-t1); }
-  .c2-status-summary:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  /* Details is a quiet ghost beside the real next step, never above it. Its chevron sits
+     right after its word. */
+  .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t3); }
+  .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { color: var(--cv-t1); }
+  .c2-status-actions > .c2-status-toggle:first-child { margin-inline-start: calc(var(--cv-s2) * -1); }
   .c2-status-chevron {
     flex: none;
     width: 12px;
@@ -223,11 +225,14 @@
     stroke-linejoin: round;
     transition: transform var(--cv-dur-expand) var(--cv-ease-out);
   }
-  .c2-status-more[open] .c2-status-chevron { transform: rotate(90deg); }
+  .c2-status-chevron.is-open { transform: rotate(90deg); }
+
+  /* The backend's words: a canvas well with its own Copy in the corner. */
+  .c2-status-more { position: relative; min-width: 0; margin-block-start: var(--cv-s2); }
+  .c2-status-more[hidden] { display: none; }
   .c2-status-detail {
     display: block;
-    margin-block-start: var(--cv-s1);
-    padding: var(--cv-s2) 10px;
+    padding: var(--cv-s2) 40px var(--cv-s2) var(--cv-s3);
     border-radius: var(--cv-r-md);
     background: var(--cv-canvas);
     color: var(--cv-t3);
@@ -238,7 +243,9 @@
     text-align: start;
     user-select: text;
   }
-  /* Under a bubble the words sit straight on the canvas, so their well is one step up. */
+  .c2-status-copy { position: absolute; top: 4px; right: 4px; }
   .c2-status--note .c2-status-detail { background: var(--cv-well); }
-  @media (prefers-reduced-motion: reduce) { .c2-status-chevron, .c2-status-button { transition: none; } }
+  .c2-status-actions--note { display: flex; align-items: center; gap: var(--cv-s2); margin-block-start: var(--cv-s1); }
+  .c2-status--end .c2-status-actions--note { justify-content: flex-end; }
+  @media (prefers-reduced-motion: reduce) { .c2-status-chevron { transition: none; } }
 </style>

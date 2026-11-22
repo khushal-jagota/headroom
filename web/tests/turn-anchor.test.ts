@@ -56,17 +56,14 @@ describe("a turn's head", () => {
     expect(unknown).not.toContain("data-conversation-live-mark");
   });
 
-  it("says the turn is waiting on the person rather than working, with no count", () => {
-    for (const [waiting, sentence] of [
-      ["permission", "Waiting for your approval"],
-      ["question", "Waiting for your answer"]
-    ] as const) {
+  it("draws nothing while the turn waits on the person: the docked ask says so, once", () => {
+    for (const waiting of ["permission", "question"] as const) {
       const html = render(TurnAnchor, {
         props: { settled: false, startedAtUnixMilliseconds: Date.now() - 75_000, waiting, toolCallCount: 1, onToggle: () => {} }
       }).body;
-      expect(html).toContain(sentence);
+      expect(html).not.toContain("data-conversation-turn");
       expect(html).not.toContain("Working");
-      expect(html).not.toContain("tool call");
+      expect(html).not.toContain("Waiting");
     }
   });
 });

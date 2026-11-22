@@ -1229,23 +1229,23 @@
 </div>
 
 <style>
-  /* The thread's edges: a 16px canvas fade under the header while something is above, and
-     no fade at the bottom. The thread ends above the composer stack, so nothing is ever
-     dimmed or covered there (a chart's bars, a file's name at the end stand at full tone). */
+  /* The thread's edges: a short canvas fade at an edge only while something is cut there,
+     so a line scrolled under the header or toward the composer softens out instead of being
+     sliced. With nothing beyond an edge, that edge stands sharp and at full tone. */
   .chat-thread {
     /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
     padding-bottom: 32px;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
-            mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-s4));
+    --cv-fade-top: 24px;
+    --cv-fade-bottom: 24px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-fade-top), #000 calc(100% - var(--cv-fade-bottom)), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-fade-top), #000 calc(100% - var(--cv-fade-bottom)), transparent 100%);
   }
-  .chat-thread[data-at-top="true"] {
-    -webkit-mask-image: none;
-            mask-image: none;
-  }
-  /* A conversation shorter than the view sits on the composer: the newest line is always
-     where the person types, never across a gap from it. A margin, not justify-content, so
-     a thread taller than the view still scrolls from its top. */
-  .chat-thread-content { margin-block-start: auto; }
+  .chat-thread[data-at-top="true"] { --cv-fade-top: 0px; }
+  .chat-thread[data-more-below="false"] { --cv-fade-bottom: 0px; }
+  /* A conversation shorter than the view reads from the top, under its header, as a page
+     does; the composer stays docked at the bottom. (Bottom-anchoring left the top half of a
+     short conversation empty.) */
+  .chat-thread-content { margin-block-start: 0; }
   /* An empty conversation takes the whole view, so its empty state can stand in the middle. */
   .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
   /* The browser keeps the reader's place when history arrives above them. Nothing

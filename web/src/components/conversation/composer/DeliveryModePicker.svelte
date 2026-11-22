@@ -23,6 +23,19 @@
   let picker = $state<ListboxPickerController>(null!);
   let selected = $derived(choices.find((choice) => choice.value === value) ?? choices[0] ?? DELIVERY_MODE_CHOICES[0]);
 
+  let host = $state<HTMLElement | null>(null);
+  /** The menu opens from its own trigger: its right edge on the chip's right edge, over the
+   *  composer's top edge. The panel is placed against the composer shell, so it is given the
+   *  chip's distance from the shell's right edge. */
+  function alignToTheTrigger(): void {
+    const picker = host?.querySelector<HTMLElement>("[data-conversation-send-mode]");
+    const trigger = host?.querySelector<HTMLElement>("[data-conversation-send-mode-trigger]");
+    const shell = host?.closest<HTMLElement>(".chat-box");
+    if (!picker || !trigger || !shell) return;
+    const inset = shell.getBoundingClientRect().right - trigger.getBoundingClientRect().right - shell.clientLeft;
+    picker.style.setProperty("--cv-mode-menu-right", `${Math.max(0, Math.round(inset))}px`);
+  }
+
   function choose(next: string): void {
     if (disabled) return;
     onChoose(next as PromptDeliveryMode);
@@ -30,6 +43,7 @@
   }
 </script>
 
+<span class="delivery-mode-host" bind:this={host}>
 <ListboxPicker
   chevron="drawn"
   items={choices}
@@ -50,6 +64,7 @@
     };
   }}
   onChoose={choose}
+  onOpen={alignToTheTrigger}
 >
   {#snippet triggerContent(open)}
     <span class="delivery-mode-face">{selected.name}</span>
@@ -58,8 +73,10 @@
     <span class="delivery-mode-name">{choice.name}</span>
   {/snippet}
 </ListboxPicker>
+</span>
 
 <style>
+  .delivery-mode-host { display: contents; }
   .delivery-mode-face { white-space: nowrap; }
   .delivery-mode-name { white-space: nowrap; }
   /* Closed, the mode is the one filled chip on the row, because it changes what Send does:
@@ -83,13 +100,13 @@
     height: 14px;
     color: var(--cv-t3);
   }
-  /* The menu opens upward from the composer's right edge, 8px over the shell, and overlays what
-   * stands above (ConversationComposer). Three short labels: it is as narrow as they are. */
+  /* The menu opens upward from its chip, right edges aligned, 8px over the shell, and overlays
+   * what stands above (ConversationComposer). Three short labels: it is as narrow as they are. */
   :global(.chat-box .chat-submit [data-conversation-send-mode]) { position: static; }
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;
-    right: 0;
+    right: var(--cv-mode-menu-right, 0px);
     bottom: calc(100% + var(--cv-s2));
-    width: 200px;
+    width: 168px;
   }
 </style>

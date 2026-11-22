@@ -64,13 +64,16 @@
 </button>
 
 <style>
-  /* The tool row's own grid: glyph, words, status column, chevron slot. */
+  /* Glyph, words, status, chevron: as wide as what it says, so the chevron stands right after
+     its label rather than across the column, as the turn's own fold line does. */
   .c2-run-summary {
     display: grid;
-    grid-template-columns: 14px minmax(0, 1fr) auto 14px;
+    grid-template-columns: 14px minmax(0, auto) auto 14px;
     align-items: center;
     column-gap: 10px;
-    width: calc(100% + var(--cv-s2) * 2);
+    justify-self: start;
+    width: fit-content;
+    max-width: calc(100% + var(--cv-s2) * 2);
     min-width: 0;
     height: 32px;
     margin-inline: calc(var(--cv-s2) * -1);
@@ -105,8 +108,8 @@
     height: 12px;
     margin-inline-start: 1px;
     border-radius: var(--cv-r-pill);
-    border: 1.6px solid rgb(255 255 255 / 16%);
-    border-top-color: var(--cv-t2);
+    border: 2px solid rgb(255 255 255 / 22%);
+    border-top-color: var(--cv-t1);
     animation: c2-run-spin var(--cv-spin) linear infinite;
   }
   @keyframes c2-run-spin { to { transform: rotate(360deg); } }

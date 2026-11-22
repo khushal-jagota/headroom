@@ -21,7 +21,7 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { awaitsCredential, conversationState as readConversationState, copyText, dockFeedbackFor, dockPreviewText, interruptedFrom, latestUnreadReply, paneFailureFrom, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
+  import { awaitsCredential, conversationState as readConversationState, copyText, paneHeadStatus, dockFeedbackFor, dockPreviewText, interruptedFrom, latestUnreadReply, paneFailureFrom, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
   import type { ConversationJump } from "./viewport/viewportConfiguration";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
@@ -91,6 +91,7 @@
     ownerReadThroughSequence = 0,
     lens = $bindable("focus"),
     conversationState = $bindable(null),
+    waitingOnPage = null,
     emptyState,
     reader = null,
     acknowledgedMessageIds = new Set<string>(),
@@ -200,6 +201,9 @@
     /** How far open the conversation is, or null for a page that is not making a layer of
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
+    /** A decision for the person that the page shows above the dock (a proposal awaiting
+     *  their approval). The dock's line then says the conversation waits on them. */
+    waitingOnPage?: "approval" | null;
     emptyState?: Snippet;
     onSend: (
       content: SentMessagePiece[],
@@ -298,7 +302,8 @@
     return {
       readOnly,
       activityUncertain,
-      waitingForYou: ask !== null || userInput !== null || credentialWaiting,
+      waitingForYou: ask !== null || userInput !== null || credentialWaiting || waitingOnPage !== null,
+      waitingFor: ask !== null ? "approval" as const : userInput !== null ? "answer" as const : credentialWaiting ? "key" as const : waitingOnPage,
       running,
       backgroundWorking,
       settingUp: headSettingUp && workerSetup ? workerSetupSentence(workerSetup, headSetupElapsed.seconds) : null,
@@ -307,12 +312,10 @@
       interrupted: headInterrupted
     };
   }
-  let headStatus = $derived.by(() => {
-    const reading = readConversationState(stateFacts());
-    return reading.state === "idle" ? null : reading;
-  });
+  // Said once: the top bar carries only the states the thread has no place for.
+  let headStatus = $derived(paneHeadStatus(stateFacts()));
   let restState = $derived(readConversationState(stateFacts()));
-  /** What the waiting ask is about, for the dock's line ("Waiting for you — Upload build 41"). */
+  /** What the waiting ask is about, for the dock's line ("Needs your approval — Upload build 41"). */
   let restWaitingTitle = $derived(ask?.title ?? null);
   let jump = $state<ConversationJump | null>(null);
   let workspaceCopied = $state(false);
@@ -342,7 +345,8 @@
       ? reader.status.rest.latest_owner_message_preview : null
     : latestUnreadReply(rows, ownerReadThroughSequence)));
   let dockFeedback = $derived.by(() => {
-    if (userInput || credentialWaiting) return "Waiting for you";
+    // The line's own label already says what the person is asked for.
+    if (userInput || credentialWaiting || waitingOnPage !== null) return null;
     if (restLine?.waiting) return restLine.text;
     const latest = reader?.status?.rest.latest_happened ?? rows.at(-1);
     const said = reader?.status ? happened(reader.status.rest.latest_happened, ownSenderLabel ?? "") : latest ? whatThisRowSays(latest as TranscriptRow, ownSenderLabel ?? "") : null;

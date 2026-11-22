@@ -11,8 +11,12 @@
     intents,
     snapshots = $bindable(),
     beforeSubmit,
+    stopElsewhere = false,
     onRetry
   }: {
+    /** The turn's Stop is drawn by a waiting ask's own footer, just above; the row does not
+     *  draw a second one. */
+    stopElsewhere?: boolean;
     onRetry?: () => Promise<void>;
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
@@ -56,7 +60,7 @@
     />
   {/if}
   {#if beforeSubmit}{@render beforeSubmit()}{/if}
-  {#if view.showStop}
+  {#if view.showStop && !stopElsewhere}
     <button
       type="button"
       class="chat-send stop"
@@ -67,7 +71,7 @@
     ><span class="chat-send-fill" aria-hidden="true"></span></button>
   {/if}
   <!-- Sending leaves the cursor in the field, so a phone's keyboard stays up for the reply. -->
-  {#if view.submit.active || view.submit.sending || !view.showStop}
+  {#if view.submit.active || view.submit.sending || !view.showStop || stopElsewhere}
     <button
       type="button"
       class={`chat-send${view.submit.active ? " on" : ""}`}

@@ -107,6 +107,7 @@
     startValues = null,
     runningBackendKey = $bindable(),
     conversationState = $bindable(null),
+    waitingOnPage = null,
     composerPlaceholder,
     emptyState,
     sendMessage,
@@ -149,6 +150,8 @@
      *  conversation writes back when the person moves it. Nothing here reads it — it goes
      *  straight through to the pane, which is where the state is drawn. */
     conversationState?: ConversationState | null;
+    /** A proposal on the page awaits the person's approval (see ConversationPane). */
+    waitingOnPage?: "approval" | null;
     composerPlaceholder?: string;
     emptyState?: Snippet;
     /** Hand a message to whoever owns this conversation, and say what became of it. A
@@ -1085,6 +1088,7 @@
   startsOnModel={startValues?.model ?? null}
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState
+  {waitingOnPage}
   fateNote={visibleFateNote}
   errorNote={errorNote ?? pickerReadError}
   {connectionTrouble}

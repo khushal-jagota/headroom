@@ -54,6 +54,8 @@
       }
     });
   });
+  /** A message this long may not fit its line: it shows a chevron that says it opens. */
+  const LONG_ROW = 64;
   /** Rows whose whole message is showing; the rest are one line. */
   let expanded = $state(new Set<string>());
   function toggle(key: string): void {
@@ -134,7 +136,10 @@
           title={expanded.has(row.key) ? "Show one line" : "Show the whole message"}
           onclick={() => toggle(row.key)}
         >
-          <span class="chat-qrow-txt">{label}</span>
+          <span class="chat-qrow-line">
+            <span class="chat-qrow-txt">{label}</span>
+            {#if label.length > LONG_ROW}<svg class="chat-qrow-more" class:is-open={expanded.has(row.key)} viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg>{/if}
+          </span>
           {#if why}<span class="chat-qrow-why">{why}</span>{/if}
         </button>
         {#each row.content as piece}
@@ -221,9 +226,11 @@
    * lift to the strongest tone under the pointer or the keyboard. */
   .chat-queue-stack {
     display: grid;
-    gap: var(--cv-s1);
+    gap: 2px;
+    /* Padding, not margin: the slot's height is measured from its content's box, and the
+       clear space under the lines must be part of it. */
     margin: 0;
-    padding: 0 var(--cv-s2) 0 var(--cv-s4);
+    padding: 0 var(--cv-s1) var(--cv-s3) var(--cv-s4);
     list-style: none;
     max-height: 168px;
     overflow-y: auto;
@@ -239,11 +246,11 @@
   }
   @keyframes chat-qrow-in { from { opacity: 0; } to { opacity: 1; } }
   .chat-qrow.open { align-items: flex-start; }
-  .chat-qrow-mark { flex: none; display: grid; place-items: center; width: 14px; height: 28px; color: var(--cv-t4); }
+  .chat-qrow-mark { flex: none; display: grid; place-items: center; width: 14px; height: 28px; color: var(--cv-t3); }
   .chat-qrow-mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .chat-qrow-spin {
     width: 12px; height: 12px; border-radius: 50%;
-    border: 1.6px solid rgb(255 255 255 / 16%); border-top-color: var(--cv-t2);
+    border: 2px solid rgb(255 255 255 / 22%); border-top-color: var(--cv-t1);
     animation: chat-qrow-spin var(--cv-spin) linear infinite;
   }
   @keyframes chat-qrow-spin { to { transform: rotate(360deg); } }
@@ -260,6 +267,16 @@
     cursor: pointer;
     font-family: var(--cv-font);
   }
+  .chat-qrow-line { display: flex; align-items: center; gap: var(--cv-s1); min-width: 0; }
+  .chat-qrow-more {
+    flex: none; width: 14px; height: 14px; fill: none; stroke: var(--cv-t3); stroke-width: 1.7;
+    stroke-linecap: round; stroke-linejoin: round;
+    transition: transform var(--cv-dur-expand) var(--cv-ease-out);
+  }
+  .chat-qrow-more.is-open { transform: rotate(180deg); }
+  .chat-qrow-words:hover .chat-qrow-more { stroke: var(--cv-t1); }
+  .chat-qrow.open .chat-qrow-line { align-items: flex-start; }
+  .chat-qrow.open .chat-qrow-more { margin-block-start: 3px; }
   .chat-qrow-txt {
     min-width: 0;
     color: var(--cv-t2);
@@ -286,12 +303,12 @@
     text-decoration: underline; text-decoration-color: var(--cv-link-underline); text-underline-offset: 3px;
   }
   .chat-qrow-actions { flex: none; display: flex; align-items: center; gap: 2px; }
-  /* Small, quiet actions: the ghost button at 28px in the quiet tone. */
-  .chat-qrow-act { color: var(--cv-t3); padding: 0 var(--cv-s2); }
+  /* Small actions: the ghost button at 28px, in the label tone so they read at a glance. */
+  .chat-qrow-act { color: var(--cv-t2); padding: 0 var(--cv-s2); font-weight: var(--cv-weight-label); }
   .chat-qrow-x {
     display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
     background: none; border: 0; border-radius: var(--cv-r-md);
-    color: var(--cv-t3); cursor: pointer;
+    color: var(--cv-t2); cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-qrow-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }

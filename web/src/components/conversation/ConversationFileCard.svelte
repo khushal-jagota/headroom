@@ -57,7 +57,12 @@
     display: flex;
     align-items: center;
     gap: var(--cv-s3);
-    inline-size: min(100%, 320px);
+    /* As wide as its name needs, from 320 up to the message column, so a name only gives
+       way when there is truly no room. */
+    inline-size: max-content;
+    min-inline-size: min(100%, 320px);
+    max-inline-size: 100%;
+    box-sizing: border-box;
     padding: 10px var(--cv-s2) 10px 10px;
     border-radius: var(--cv-r-lg);
     background: var(--cv-raised);

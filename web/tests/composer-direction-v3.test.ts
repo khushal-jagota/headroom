@@ -67,6 +67,13 @@ describe("the queue is light", () => {
     expect(body.indexOf("data-conversation-held-stack")).toBeLessThan(body.indexOf("data-conversation-box"));
   });
 
+  it("shows that a long waiting message opens to its whole text, and a short one does not", () => {
+    const long = "After that, log each 429 with the share token's first 6 characters so we can spot abuse patterns";
+    const { body } = render(HeldPromptStack, { props: { rows: [held("a", long), held("b", "Short")], supportsSteer: true, running: true } });
+    expect(body.match(/class="chat-qrow-more/g)?.length).toBe(1);
+    expect(body).toMatch(/class="chat-qrow-words[^"]*"[^>]*aria-expanded="false"/);
+  });
+
   it("offers no Steer for a turn that cannot take one", () => {
     const { body } = render(HeldPromptStack, { props: { rows: [held("a", "x")], supportsSteer: false, running: true } });
     expect(body).not.toContain('data-conversation-held-promote="steer"');

@@ -122,10 +122,10 @@
 </script>
 
 {#snippet stopTurn()}
-  <button type="button" class="cv-button cv-button--ghost cancel" data-credential-cancel-turn disabled={draft.busy} onclick={() => onCancelTurn?.()}>{CANCEL_TURN_ACTION.label}</button>
+  <button type="button" class="cv-button cv-button--ghost cancel" data-credential-cancel-turn disabled={draft.busy} onclick={() => onCancelTurn?.()}><svg class="cv-stop-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" /></svg><span>{CANCEL_TURN_ACTION.label}</span></button>
 {/snippet}
 {#snippet answers()}
-  <button type="button" class="cv-button cv-button--secondary reject" data-credential-decline disabled={draft.busy} onclick={() => void action('reject')}>Decline</button>
+  <button type="button" class="cv-button cv-button--outline reject" data-credential-decline disabled={draft.busy} onclick={() => void action('reject')}>Decline</button>
   {#if !draft.stale}<button type="button" class="cv-button cv-button--primary" data-credential-save disabled={draft.busy || !canSave} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace key' : 'Save key'}</button>{/if}
 {/snippet}
 

@@ -14,12 +14,16 @@ describe("the opened pane's top bar", () => {
     expect(paneTitleFor(null, "Worker")).toBe("Worker");
   });
 
-  it("says what the conversation is doing, the person's turn first", () => {
+  it("says each state once: the top bar only says what the thread has no place for", () => {
     expect(paneHeadStatus(quiet)).toBeNull();
-    expect(paneHeadStatus({ ...quiet, running: true, elapsed: "2m 14s" })).toMatchObject({ state: "working", text: "Working · 2m 14s", mark: "spinner" });
-    expect(paneHeadStatus({ ...quiet, running: true })).toMatchObject({ text: "Working", mark: "spinner" });
-    expect(paneHeadStatus({ ...quiet, running: true, waitingForYou: true })).toMatchObject({ state: "waiting", text: "Waiting for you", mark: "dot" });
-    expect(paneHeadStatus({ ...quiet, backgroundWorking: true })?.state).toBe("working");
+    // Working is the running turn's own line; waiting is the docked ask's; neither repeats here.
+    expect(paneHeadStatus({ ...quiet, running: true, elapsed: "2m 14s" })).toBeNull();
+    expect(paneHeadStatus({ ...quiet, running: true, waitingForYou: true })).toBeNull();
+    expect(paneHeadStatus({ ...quiet, backgroundWorking: true })).toBeNull();
+    expect(conversationState({ ...quiet, running: true, elapsed: "2m 14s" })).toMatchObject({ state: "working", text: "Working · 2m 14s", mark: "spinner" });
+    expect(conversationState({ ...quiet, running: true, waitingForYou: true, waitingFor: "approval" })).toMatchObject({ state: "waiting", text: "Needs your approval", mark: "dot" });
+    expect(conversationState({ ...quiet, waitingForYou: true, waitingFor: "answer" }).text).toBe("Needs your answer");
+    expect(conversationState({ ...quiet, waitingForYou: true, waitingFor: "key" }).text).toBe("Needs a key");
     expect(paneHeadStatus({ ...quiet, settingUp: "Setting up · preparing workspace · 1m 35s" }))
       .toMatchObject({ state: "setting-up", text: "Setting up · preparing workspace · 1m 35s", mark: "spinner" });
     expect(paneHeadStatus({ ...quiet, running: true, activityUncertain: true })?.state).toBe("unknown");
@@ -34,8 +38,10 @@ describe("the opened pane's top bar", () => {
     // A message sent after a failure is the person moving on.
     expect(paneFailureFrom({ lastBoundaryFailed: false, latestKind: "prompt" })).toBeNull();
     expect(paneFailureFrom({ lastBoundaryFailed: false, latestKind: "prompt_uncertain" })).toBeNull();
-    expect(paneHeadStatus({ ...quiet, failure: "turn_failed" })).toMatchObject({ state: "failed", text: "Turn failed", mark: "alert" });
-    expect(paneHeadStatus({ ...quiet, failure: "not_delivered" })).toMatchObject({ state: "undelivered", text: "Message not delivered", mark: "alert" });
+    // The failure's callout in the thread says it; the top bar does not say it again.
+    expect(paneHeadStatus({ ...quiet, failure: "turn_failed" })).toBeNull();
+    expect(conversationState({ ...quiet, failure: "turn_failed" })).toMatchObject({ state: "failed", text: "Turn failed", mark: "alert" });
+    expect(conversationState({ ...quiet, failure: "not_delivered" })).toMatchObject({ state: "undelivered", text: "Message not delivered", mark: "alert" });
     expect(paneHeadStatus({ ...quiet, failure: "turn_failed", readOnly: true })?.state).toBe("read-only");
   });
 
@@ -72,8 +78,8 @@ describe("the dock's status line", () => {
   it("reads the same derived state the header does", () => {
     expect(rest({})).toContain("Worker idle");
     expect(rest({ running: true, elapsed: "2m 14s" })).toContain("Working · 2m 14s");
-    const waiting = rest({ waitingForYou: true }, { waitingTitle: "Upload build 41 to TestFlight" });
-    expect(waiting).toContain("Waiting for you");
+    const waiting = rest({ waitingForYou: true, waitingFor: "approval" }, { waitingTitle: "Upload build 41 to TestFlight" });
+    expect(waiting).toContain("Needs your approval");
     expect(waiting).toContain(" — Upload build 41 to TestFlight");
     expect(waiting).toContain('data-conversation-rest-state="waiting"');
     expect(rest({ failure: "turn_failed" }, { feedback: "rate limit · resets in 41m" })).toContain("Turn failed");

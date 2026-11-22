@@ -81,9 +81,9 @@
       <TranscriptStatusRow {status} align={label === null ? 'end' : 'start'} role={status.tone === 'error' ? 'alert' : 'status'}
         data-conversation-message-status={status.tone} data-conversation-outgoing-label={local && !row ? '' : undefined}>
         {#snippet actions()}
-          {#if offersResend && !resent}<button type="button" class="button button--ghost c2-status-action" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
-          {#if heldActions.includes('send_again')}<button type="button" class="button button--ghost c2-status-action" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
-          {#if heldActions.includes('stop_drawing')}<button type="button" class="button button--ghost c2-status-action" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
+          {#if offersResend && !resent}<button type="button" class="cv-button cv-button--secondary cv-button--small" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
+          {#if heldActions.includes('send_again')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
+          {#if heldActions.includes('stop_drawing')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
         {/snippet}
       </TranscriptStatusRow>
     {/if}
@@ -132,8 +132,10 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .c2-system-body { min-width: 0; display: grid; gap: 2px; }
-  .c2-label { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  /* One line in the thread's event voice, like "Steered into the running turn": who sent it,
+     then their words running on after it, wrapping under both. */
+  .c2-system-body { min-width: 0; display: block; }
+  .c2-label { float: left; margin-inline-end: 6px; color: var(--cv-t2); font-weight: var(--cv-weight-label); }
   /* The sent words keep their structure but speak in the row's small, quiet voice. */
   .c2-system-body :global(.markdown) {
     color: var(--cv-t3);
@@ -153,5 +155,4 @@
   .message-status-window { align-self: stretch; margin-block-start: calc(var(--cv-gap-bubble-stack) * -1); }
   .message-status { display: flex; flex-direction: column; }
   .message-status > :global(.c2-status) { margin-block-start: var(--cv-gap-bubble-stack); }
-  .c2-status-action { height: 28px; padding: 0 var(--cv-s2); color: var(--cv-t1); font-size: var(--cv-type-meta); font-weight: var(--cv-weight-label); }
 </style>

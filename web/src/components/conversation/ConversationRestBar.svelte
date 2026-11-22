@@ -10,7 +10,7 @@
     /** The conversation's one state (conversationState in dockPresentation). */
     state: ConversationStateReading;
     connectionTrouble?: boolean;
-    /** What a waiting ask is about, said after "Waiting for you". */
+    /** What a waiting ask is about, said after "Needs your approval". */
     waitingTitle?: string | null;
     /** The machine cannot be read. Setup still says setup, with one caution chip. */
     offline?: boolean;

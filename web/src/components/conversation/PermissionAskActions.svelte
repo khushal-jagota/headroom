@@ -40,18 +40,20 @@
     data-conversation-ask-action="cancel_turn"
     disabled={busy}
     onclick={onCancelTurn}
-  >{actions[0].label}</button>
+  ><svg class="cv-stop-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" /></svg><span>{actions[0].label}</span></button>
 {/snippet}
 
 {#snippet answerButtons()}
   {#each answers as action (action.act === "answer" ? action.optionId : "")}
     {#if action.act === "answer"}
-      <!-- Deny and the backend's other options are secondaries; approve once is the one
-           primary. An answer Panels had to supply says so in its tooltip. -->
+      <!-- Three weights for three commitments: Deny is an outline, the standing permissions
+           (Always allow …) are filled secondaries, and approve once is the one primary. An
+           answer Panels had to supply says so in its tooltip. -->
       <button
         type="button"
         class="cv-button c2-ask-answer"
-        class:cv-button--secondary={action.emphasis !== "primary"}
+        class:cv-button--outline={action.emphasis === "decline"}
+        class:cv-button--secondary={action.emphasis === "option"}
         class:cv-button--primary={action.emphasis === "primary"}
         data-conversation-ask-action={action.optionId}
         data-conversation-ask-supplied={action.supplied ? "true" : "false"}

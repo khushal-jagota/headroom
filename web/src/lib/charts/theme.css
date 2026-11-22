@@ -165,8 +165,9 @@
   border-radius: var(--cv-r-lg);
   background: var(--cv-well);
 }
-.chat-thread .chat-chart .goal-chart-host .metric-top { min-height: 0; }
+.chat-thread .chat-chart .goal-chart-host .metric-top { min-height: 0; margin: 0; padding: 0; }
 .chat-thread .chat-chart .goal-chart-host .metric-top h2 {
+  margin: 0;
   font-size: var(--cv-type-ui);
   line-height: var(--cv-leading-ui);
   font-weight: var(--cv-weight-title);
@@ -179,7 +180,7 @@
   font-size: var(--cv-type-caption);
   line-height: var(--cv-leading-caption);
 }
-.chat-thread .chat-chart .goal-chart-host .snapshot-legend li { gap: 6px; }
+.chat-thread .chat-chart .goal-chart-host .snapshot-legend li { gap: 6px; margin: 0; line-height: var(--cv-leading-caption); }
 .chat-thread .chat-chart .goal-chart-host .snapshot-legend-swatch {
   inline-size: 8px;
   block-size: 8px;

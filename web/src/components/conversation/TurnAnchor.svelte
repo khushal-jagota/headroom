@@ -73,12 +73,10 @@
   let foldCount = $derived(onToggle === undefined ? "" : earlierMessagesSentence(foldedMessageCount));
   // A turn that stopped without an ending, with nothing it said or did, has nothing it can
   // honestly say: its own status line already says what happened.
-  let visible = $derived(!settled || !stopped || toolCallCount > 0 || foldedMessageCount > 0);
-  let waitingSentence = $derived(
-    waiting === "permission" ? "Waiting for your approval"
-      : waiting === "question" ? "Waiting for your answer"
-      : null
-  );
+  // A turn held by the person draws no head: the ask docked over the composer says it waits,
+  // in its own words, and a clock here would claim progress that is not being made.
+  let held = $derived(!settled && waiting !== null && !activityUncertain);
+  let visible = $derived(!held && (!settled || !stopped || toolCallCount > 0 || foldedMessageCount > 0));
   let alive = $derived(fresh && !activityUncertain);
 
   $effect(() => {
@@ -117,13 +115,6 @@
           <span data-conversation-turn-label>{foldLabel}</span>
         </div>
       {/if}
-    {:else if waitingSentence !== null && !activityUncertain}
-      <!-- Held by the person, not working: the clock would claim progress that is not
-           being made, so the head says who the turn is waiting on instead. -->
-      <div class="c2-meta c2-meta--waiting" data-conversation-alive data-conversation-turn-waiting={waiting} role="status">
-        <span class="c2-meta-dot" aria-hidden="true"></span>
-        <span data-conversation-alive-word>{waitingSentence}</span>
-      </div>
     {:else}
       <div
         class="c2-meta c2-meta--live"
@@ -199,8 +190,8 @@
     width: 14px;
     height: 14px;
     border-radius: var(--cv-r-pill);
-    border: 1.6px solid rgb(255 255 255 / 16%);
-    border-top-color: var(--cv-t2);
+    border: 2px solid rgb(255 255 255 / 22%);
+    border-top-color: var(--cv-t1);
     transform: rotate(35deg);
   }
   .c2-meta-spin.is-turning { animation: c2-meta-spin var(--cv-spin) linear infinite; }
@@ -216,17 +207,6 @@
   }
   @keyframes c2-meta-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
   .c2-meta-clock { color: var(--cv-t3); }
-  /* Waiting on the person is the one state this head speaks in the accent. Nothing moves,
-     because nothing is moving. */
-  .c2-meta--waiting { color: var(--cv-accent); font-weight: var(--cv-weight-label); }
-  .c2-meta-dot {
-    flex: none;
-    width: 6px;
-    height: 6px;
-    margin-inline: 4px 2px;
-    border-radius: var(--cv-r-pill);
-    background: currentColor;
-  }
   @media (prefers-reduced-motion: reduce) {
     .c2-meta--fold, .c2-meta-chevron { transition: none; }
     .c2-meta-spin.is-turning { animation: none; }

@@ -540,6 +540,7 @@
         <div class="conversation-column">
           <LiveConversation machineId={masthead.machine_id} locale={masthead.locale}
             bind:conversationState
+            waitingOnPage={selectedPastConversationId === null && pageProposal && section?.detail.ceiling_holder.kind === "owner" ? "approval" : null}
             conversationId={shownConversationId}
             bind:selectedPastConversationId
             workerSetup={selectedPastConversationId === null ? masthead.worker_setup : null}

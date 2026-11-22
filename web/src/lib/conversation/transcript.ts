@@ -237,13 +237,16 @@ export type TranscriptStatus = {
   /** Whether the backend's own words are shown open. They are when the sentence above
    *  could not name a cause, so the words are the only explanation there is. */
   detailOpen?: boolean;
+  /** The one real next step the status offers as a control, when there is one the person
+   *  can take from the thread. "choose-model" opens the composer's model picker. */
+  action?: "choose-model" | null;
 };
 
 /** The plain reason a turn failed, read from the backend's own words, and what the person
  *  can do about it. Only causes those words name are said; anything else is said as an
  *  error, and the words stay beneath. */
-const TURN_FAILURE_CAUSES: readonly [RegExp, string, (said: string) => string][] = [
-  [/rate[ _-]?limit|usage limit|quota|too many requests|\b429\b/i, "The turn stopped because the model's rate limit was reached.", rateLimitNextStep],
+const TURN_FAILURE_CAUSES: readonly [RegExp, string, (said: string) => string, ("choose-model" | null)?][] = [
+  [/rate[ _-]?limit|usage limit|quota|too many requests|\b429\b/i, "The turn stopped because the model's rate limit was reached.", rateLimitNextStep, "choose-model"],
   [/unauthori[sz]ed|authenticat|\b401\b|\bapi key\b|not signed in|sign[ -]?in/i, "The turn stopped because the provider would not accept the sign-in.", () => "Sign in to the provider again, then send a message."],
   [/disconnect|connection (?:reset|closed|refused|lost)|network|socket hang up|econnreset|timed out|timeout/i, "The turn stopped because the connection to the model dropped.", () => "Send a message to try again."],
   [/exited with code|exited unexpectedly|crashed|was killed|\bsignal\b|sigkill|sigterm/i, "The turn stopped because the agent's process exited.", () => "Send a message to start it again."]
@@ -256,8 +259,8 @@ const TURN_FAILURE_UNNAMED = "The turn stopped because of an error.";
 function rateLimitNextStep(said: string): string {
   const when = /\bresets? ((?:in|at) [^()\n;,]+?)\s*(?:\)|$|[;,\n]|\.\s)/i.exec(said)?.[1]?.trim();
   return when
-    ? `The provider said the limit resets ${when}. Send a message after that, or choose another model in the composer.`
-    : "Send a message once the limit resets, or choose another model in the composer.";
+    ? `The provider said the limit resets ${when}. Send a message after that, or choose another model.`
+    : "Send a message once the limit resets, or choose another model.";
 }
 
 export function turnFailureSentence(errorSummary: string | null): string {
@@ -279,6 +282,7 @@ export function turnEndingStatus(
       title: cause?.[1] ?? TURN_FAILURE_UNNAMED,
       detail: said,
       next: cause ? cause[2](said ?? "") : "Send a message to try again.",
+      action: cause?.[3] ?? null,
       detailOpen: cause === undefined
     };
   }

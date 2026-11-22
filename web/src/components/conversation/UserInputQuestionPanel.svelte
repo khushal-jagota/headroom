@@ -137,7 +137,7 @@
     data-user-input-cancel
     disabled={busy}
     onclick={() => onCancelTurn?.()}
-  >{CANCEL_TURN_ACTION.label}</button>
+  ><svg class="cv-stop-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" /></svg><span>{CANCEL_TURN_ACTION.label}</span></button>
 {/snippet}
 
 {#snippet commit()}
@@ -146,6 +146,7 @@
     type="button"
     class="cv-button cv-button--primary"
     data-user-input-continue
+    title={!canContinue ? "Choose an answer, or write your own, to go on" : undefined}
     disabled={busy || !answerAvailable || !canContinue}
     onclick={continueOrSubmit}
   >{busy && isLast ? "Sending…" : isLast ? (request.questions.length > 1 ? "Send answers" : "Send answer") : "Next"}</button>

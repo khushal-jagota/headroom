@@ -420,7 +420,7 @@
   .model-picker-refresh svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
   .model-picker-spin {
     width: 12px; height: 12px; border-radius: 50%;
-    border: 1.6px solid rgb(255 255 255 / 16%); border-top-color: var(--cv-t2);
+    border: 2px solid rgb(255 255 255 / 22%); border-top-color: var(--cv-t1);
     animation: model-picker-spin var(--cv-spin) linear infinite;
   }
   @keyframes model-picker-spin { to { transform: rotate(360deg); } }

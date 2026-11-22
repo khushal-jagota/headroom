@@ -17,7 +17,8 @@ describe("a turn that failed", () => {
       tone: "error",
       title: "The turn stopped because the model's rate limit was reached.",
       detail: raw,
-      next: "The provider said the limit resets in 41m. Send a message after that, or choose another model in the composer.",
+      next: "The provider said the limit resets in 41m. Send a message after that, or choose another model.",
+      action: "choose-model",
       detailOpen: false
     });
     expect(turnFailureSentence("codex app-server exited with code 1")).toBe("The turn stopped because the agent's process exited.");
@@ -35,10 +36,15 @@ describe("a turn that failed", () => {
     const html = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, role: "alert" } }).body;
     expect(html).toContain("data-conversation-status-next");
     expect(html).toContain("resets in 41m. Send a message after that");
-    expect(html).toMatch(/<details class="c2-status-more[^"]*"(?![^>]*\bopen\b)[^>]*>/);
+    // The backend's words wait behind a Details toggle, closed, beside the real next step.
+    expect(html).toMatch(/data-conversation-status-details[^>]*|aria-expanded="false"[^>]*data-conversation-status-details/);
+    expect(html).toMatch(/<div class="c2-status-more[^"]*"[^>]*\bhidden\b/);
     expect(html).toContain("Details");
+    // The next step that can be taken from here is a button, ahead of Details.
+    expect(html.indexOf("data-conversation-status-choose-model")).toBeGreaterThan(-1);
+    expect(html.indexOf("data-conversation-status-choose-model")).toBeLessThan(html.indexOf("data-conversation-status-details"));
     // A rate limit that does not say when it lifts still has a next step.
-    expect(turnEndingStatus("failed", "429 Too Many Requests")?.next).toBe("Send a message once the limit resets, or choose another model in the composer.");
+    expect(turnEndingStatus("failed", "429 Too Many Requests")?.next).toBe("Send a message once the limit resets, or choose another model.");
     expect(turnEndingStatus("failed", "rate limit exceeded; resets at 3:10 PM UTC")?.next).toContain("resets at 3:10 PM UTC.");
   });
 
@@ -48,7 +54,8 @@ describe("a turn that failed", () => {
     expect(status.next).toBe("Send a message to try again.");
     expect(status.detailOpen).toBe(true);
     const html = render(TranscriptStatusRow, { props: { status } }).body;
-    expect(html).toMatch(/<details class="c2-status-more[^"]*"[^>]*\bopen\b/);
+    expect(html).toMatch(/<div class="c2-status-more[^"]*"(?![^>]*\bhidden\b)[^>]*>/);
+    expect(html).toMatch(/aria-expanded="true"/);
   });
 
   it("draws an interrupted turn and a turn with no ending as stopped, a step above metadata", () => {
@@ -83,10 +90,11 @@ describe("a message that was not delivered", () => {
     const sentence = "codex app-server exited with code 1 before it accepted the prompt";
     const html = draw({ ...base, kind: "prompt_refused", reason: "backend_did_not_start", sentence });
     const status = html.slice(html.indexOf("data-conversation-message-status"));
+    // The same callout as a failed turn, standing on the bubble's right edge.
     expect(html).toContain("c2-status--end");
-    const line = status.slice(status.indexOf("c2-status-line"), status.indexOf("data-conversation-status-detail"));
-    expect(line).toContain("c2-status-mark");
-    expect(line).toContain("Not delivered");
+    expect(html).toContain("c2-status--callout");
+    expect(status.slice(status.indexOf("c2-status-icon"))).toContain("c2-status-mark");
+    expect(status).toContain("Not delivered");
     expect(status).toContain("Send it again to retry");
   });
   it("marks an ordinary message with nothing", () => {
@@ -125,13 +133,17 @@ describe("a running turn's head", () => {
 });
 
 describe("the weight of a status line", () => {
-  it("draws a turn's failure as a callout, with Copy details, and a message's as a note", () => {
+  it("draws every failure as a callout, with Copy inside its Details, and quieter news as a note", () => {
     const raw = "something nobody has seen";
     const callout = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, role: "alert" } }).body;
     expect(callout).toContain("c2-status--callout");
-    expect(callout).toContain("data-conversation-status-copy");
-    const note = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, align: "end" } }).body;
+    // One way to the backend's words: Details. Copy lives inside them, not beside them.
+    expect(callout.indexOf("data-conversation-status-copy")).toBeGreaterThan(callout.indexOf("data-conversation-status-detail"));
+    expect(callout).not.toContain("Copy details</button>");
+    const underAMessage = render(TranscriptStatusRow, { props: { status: turnEndingStatus("failed", raw)!, align: "end" } }).body;
+    expect(underAMessage).toContain("c2-status--callout");
+    expect(underAMessage).toContain("c2-status--end");
+    const note = render(TranscriptStatusRow, { props: { status: { tone: "warning", title: "Delivery not confirmed.", detail: null }, align: "end" } }).body;
     expect(note).toContain("c2-status--note");
-    expect(note).not.toContain("data-conversation-status-copy");
   });
 });

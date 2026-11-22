@@ -264,8 +264,8 @@
     margin: 0;
     width: 12px;
     height: 12px;
-    border: 1.6px solid rgb(255 255 255 / 16%);
-    border-top-color: var(--cv-t2);
+    border: 2px solid rgb(255 255 255 / 22%);
+    border-top-color: var(--cv-t1);
     border-right-color: rgb(255 255 255 / 16%);
     animation-duration: var(--cv-spin);
   }

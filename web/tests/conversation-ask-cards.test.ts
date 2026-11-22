@@ -42,15 +42,16 @@ describe("the permission ask", () => {
     expect(count(body, "cv-button--primary")).toBe(1);
     expect(body).toMatch(/class="cv-button[^"]*cv-button--primary[^"]*"[^>]*data-conversation-ask-action="allow"/);
     expect(body).toMatch(/class="cv-button[^"]*cv-button--secondary[^"]*"[^>]*data-conversation-ask-action="always"/);
-    // Deny is a secondary, not a red or ghost button.
-    expect(body).toMatch(/class="cv-button[^"]*cv-button--secondary[^"]*"[^>]*data-conversation-ask-action="deny"/);
+    // Deny is an outline: a full button, a step below the filled standing permission, never red.
+    expect(body).toMatch(/class="cv-button[^"]*cv-button--outline[^"]*"[^>]*data-conversation-ask-action="deny"/);
+    expect(body).not.toContain("cv-button--danger");
   });
 
   it("draws its own answers in the shell's footer when it is given the way out", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, onCancelTurn: () => {} } });
     const order = [...body.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1]);
     expect(order).toEqual(["cancel_turn", "deny", "always", "allow"]);
-    expect(body).toContain(">Stop turn<");
+    expect(body).toContain("<span>Stop turn</span>");
     // Without it the host draws them, so they are never drawn twice.
     const bare = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } }).body;
     expect(bare).not.toContain("data-conversation-ask-action");
@@ -99,12 +100,12 @@ describe("the question panel", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: { request: { requestId: "q-2", questions: [] } }
     });
-    expect(body).toMatch(/data-user-input-cancel[^>]*>Stop turn</);
+    expect(body).toMatch(/data-user-input-cancel[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
     expect(body).not.toMatch(/>Cancel turn</);
     const actions = render(PermissionAskActions, {
       props: { ask, onAnswer: () => {}, onCancelTurn: () => {} }
     }).body;
-    expect(actions).toMatch(/data-conversation-ask-action="cancel_turn"[^>]*>Stop turn</);
+    expect(actions).toMatch(/data-conversation-ask-action="cancel_turn"[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
   });
 });
 
@@ -156,8 +157,8 @@ describe("the credential request", () => {
 
   it("ends a running turn as the other asks do, first in its row, and only when one runs", () => {
     const running = render(ConversationCredentialRequestCard, { props: { request, onCancelTurn: () => {} } }).body;
-    expect(running).toMatch(/data-credential-cancel-turn[^>]*>Stop turn</);
-    expect(running.indexOf(">Stop turn<")).toBeLessThan(running.indexOf(">Decline<"));
+    expect(running).toMatch(/data-credential-cancel-turn[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
+    expect(running.indexOf("<span>Stop turn</span>")).toBeLessThan(running.indexOf(">Decline<"));
     const settled = render(ConversationCredentialRequestCard, { props: { request } }).body;
     expect(settled).not.toContain("Stop turn");
   });

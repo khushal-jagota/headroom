@@ -78,12 +78,12 @@ describe("Focus is focus: no tool activity at all", () => {
     expect(html).not.toContain("data-conversation-live-activity");
   });
 
-  it("says a running turn held by an ask is waiting, not working, with no count", () => {
+  it("draws no head for a running turn held by an ask: the ask says it waits, not the thread", () => {
     const html = draw({
       expanded: false, settled: false,
       status: { pending_permission: { kind: "permission", request_id: "a1" } as ConversationViewStatus["pending_permission"] }
     });
-    expect(html).toContain("Waiting for your approval");
+    expect(html).not.toContain("Waiting for your approval");
     expect(html).not.toContain("Working");
     expect(html).not.toContain("tool call");
   });
