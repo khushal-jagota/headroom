@@ -300,14 +300,27 @@ export function turnEndingStatus(
       detailOpen: cause === undefined
     };
   }
-  if (ending === "interrupted") return { tone: "stopped", title: "The turn was interrupted", detail: null };
+  if (ending === "interrupted") return { tone: "stopped", title: "Stopped before it finished", detail: null };
   return null;
+}
+
+/** A status's reason in one short phrase, for the line "This turn failed · <reason>" or
+ *  "Not delivered · <reason>": the brief when there is one, otherwise the cause the title
+ *  names, without its lead-in and its full stop. */
+export function statusReason(status: Pick<TranscriptStatus, "title" | "brief">): string {
+  const said = (status.brief ?? status.title)
+    .replace(/^Not delivered:\s*/, "")
+    .replace(/^The turn stopped because\s*/, "")
+    .replace(/^of\s+/, "")
+    .trim()
+    .replace(/[.!?]$/, "");
+  return said.charAt(0).toUpperCase() + said.slice(1);
 }
 
 /** A turn the record never wrote an ending for, in the same family. */
 export const TURN_STOPPED_STATUS: TranscriptStatus = {
   tone: "stopped",
-  title: "The turn stopped before it finished",
+  title: "Stopped before it finished",
   detail: null
 };
 

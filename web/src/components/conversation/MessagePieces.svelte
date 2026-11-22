@@ -10,7 +10,7 @@
    * A picture is drawn as the picture it is, and opens the expanded view. Pictures and
    * videos side by side form a grid.
    */
-  import { getContext } from 'svelte';
+  import { getContext, type Snippet } from 'svelte';
   import { conversationTextPresentations, TextPresentationRegistry } from '../../lib/conversation/view/textPresentation';
   import MarkdownBlock from "../MarkdownBlock.svelte";
   import VisibleMessageImage from "./VisibleMessageImage.svelte";
@@ -26,12 +26,18 @@
     content,
     conversationId,
     presentationRowKey = null,
-    bubble = false
+    bubble = false,
+    failed = false,
+    footer
   }: {
     presentationRowKey?: string | null;
     /** The person's own message: one bubble. v8 (6): what they attached sits inside it,
      *  above the words, in the order it was sent. */
     bubble?: boolean;
+    /** The message was not delivered: the bubble wears the failure outline (B5). */
+    failed?: boolean;
+    /** What the bubble says under its words: "Not delivered · …" and its actions (B5). */
+    footer?: Snippet;
     content: readonly (MessagePiece | SentMessagePiece)[];
     /** Which conversation's files these pieces name. A file is fetched under the
      *  conversation that kept it, so a piece can never reach another one's. */
@@ -60,6 +66,7 @@
   /** v8 (6): a bubble with attachments holds them above its words. */
   let attachedRuns = $derived(bubble ? runs.filter(run => !isWordsRun(run)) : []);
   let wordRuns = $derived(bubble ? runs.filter(isWordsRun) : []);
+  let lastWordsAt = $derived(wordRuns.at(-1)?.at ?? null);
   /** v9 (19): a bubble whose one attachment is one image is as wide as that image (min 240);
    *  its words wrap to it. */
   let oneImage = $derived(attachedRuns.length === 1 && attachedRuns[0].pieces.length === 1 && attachedRuns[0].pieces[0].piece.piece === "image");
@@ -102,7 +109,7 @@
 {#if bubble && attachedRuns.length > 0}
   <!-- v8 (6): attachments belong to their message: inside the bubble, above its words, 8px
        apart; the bubble is 8px around them and 12 16 around the words. -->
-  <div class="c2-bubble c2-bubble--attached" class:c2-bubble--one-image={oneImage} data-conversation-bubble data-conversation-bubble-attached>
+  <div class="c2-bubble c2-bubble--attached" class:is-failed={failed} class:c2-bubble--one-image={oneImage} data-conversation-bubble data-conversation-bubble-attached>
     <div class="c2-bubble-attachments">
       {#each attachedRuns as run (run.at)}{@render attachment(run)}{/each}
     </div>
@@ -111,12 +118,14 @@
         {#each run.pieces as entry (entry.at)}{@render drawn(entry.piece, entry.at)}{/each}
       </div>
     {/each}
+    {#if footer}<div class="c2-bubble-words">{@render footer()}</div>{/if}
   </div>
 {:else}
 {#each runs as run (run.at)}
   {#if bubble && run.pieces[0].piece.piece === "text"}
-    <div class="c2-bubble" data-conversation-bubble>
+    <div class="c2-bubble" class:is-failed={failed} data-conversation-bubble>
       {#each run.pieces as entry (entry.at)}{@render drawn(entry.piece, entry.at)}{/each}
+      {#if footer && run.at === lastWordsAt}{@render footer()}{/if}
     </div>
   {:else if run.pieces.length > 1}
     <div class="file-preview-grid">
@@ -126,6 +135,9 @@
     {@render drawn(run.pieces[0].piece, run.at)}
   {/if}
 {/each}
+{#if bubble && footer && runs.length === 0}
+  <div class="c2-bubble" class:is-failed={failed} data-conversation-bubble>{@render footer()}</div>
+{/if}
 {/if}
 
 <style>
@@ -134,7 +146,7 @@
   .c2-bubble {
     min-width: 0;
     max-width: 100%;
-    /* v7: user bubbles #242424, no border, radius 18, padding 12 16, 15/24 #ececec. */
+    /* v7: user bubbles #242424, no border, radius 18, padding 12 16, #ececec. */
     background: #242424;
     color: #ececec;
     border-radius: 18px;
@@ -145,6 +157,9 @@
     overflow-wrap: anywhere;
   }
   .c2-bubble :global(.markdown) { color: inherit; }
+  /* B5: a message that was not delivered keeps its bubble and wears a 1 px failure outline,
+     drawn inside the edge so the bubble does not move. */
+  .c2-bubble.is-failed { outline: 1px solid rgb(255 143 133 / 55%); outline-offset: -1px; }
   /* v8 (6): padding 8 around the attachments, 12 16 around the words (8 + 4 8). Inside, the
      attachments' corners follow the bubble's (18 - 8 = 10). */
   .c2-bubble--attached { display: flex; flex-direction: column; gap: 8px; padding: 8px; }

@@ -123,7 +123,7 @@
     border-radius: 999px;
     color: #bdbdbd;
     font-family: var(--cv-font);
-    font-size: 13px;
+    font-size: var(--cv-type-control);
     font-weight: var(--cv-weight-label);
     line-height: 20px;
     text-align: left;

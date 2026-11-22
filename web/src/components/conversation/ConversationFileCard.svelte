@@ -94,7 +94,7 @@
   .cv-file-name {
     overflow: hidden;
     color: var(--cv-ink, #ececec);
-    font-size: 14px;
+    font-size: var(--cv-type-title);
     font-weight: var(--cv-weight-label);
     line-height: 20px;
     text-overflow: ellipsis;
@@ -102,7 +102,7 @@
   }
   .cv-file-meta {
     color: var(--cv-detail-ink, #b0b0b0);
-    font-size: 13px;
+    font-size: var(--cv-type-control);
     line-height: 20px;
     font-variant-numeric: tabular-nums;
   }
@@ -119,7 +119,7 @@
   }
   .cv-file-preview {
     padding: 0 14px;
-    font-size: 13px;
+    font-size: var(--cv-type-control);
     font-weight: var(--cv-weight-label);
     line-height: 20px;
   }

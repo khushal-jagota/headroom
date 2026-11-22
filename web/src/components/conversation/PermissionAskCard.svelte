@@ -166,14 +166,14 @@
     border-radius: 12px;
     background: var(--cv-code-surface, #1a1a1a);
     color: #e0e0e0;
-    font: var(--cv-weight-body) 13px/20px var(--cv-mono);
+    font: var(--cv-weight-body) var(--cv-type-code)/20px var(--cv-mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   /* v17 (7): the command wraps only at spaces (each word is one unbreakable piece). A single
      word wider than the block scrolls inside it instead of breaking. v18 (5): 16px side padding
      again, and mono 12.5/20, so a 74-character command stays on one line with room to the right. */
-  .c2-ask-detail { padding-inline: 16px; font-size: 12.5px; line-height: 20px; overflow-wrap: normal; }
+  .c2-ask-detail { padding-inline: 16px; font-size: var(--cv-type-code); line-height: 20px; overflow-wrap: normal; }
   .c2-ask-word { white-space: pre; }
   .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
   .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }

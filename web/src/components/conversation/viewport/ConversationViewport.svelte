@@ -1296,8 +1296,6 @@
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
             mask-image: linear-gradient(to bottom, var(--c2-top-fade));
   }
-  /* v17 (8) does not move the empty state: its heading stays 20px over the composer (v15 (6)). */
-  .chat-thread:has(> .chat-thread-content > :global([data-conversation-empty])) { padding-bottom: 24px; }
   .chat-thread[data-at-top="true"] { -webkit-mask-image: none; mask-image: none; }
   .chat-thread[data-more-below="true"] {
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade), var(--c2-bottom-fade));

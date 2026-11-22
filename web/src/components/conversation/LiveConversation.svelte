@@ -44,6 +44,7 @@
   import { queryClient } from "../../lib/queryClient";
   import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
+  import SystemLine from "./SystemLine.svelte";
   import {
     afterTheRecordHasBeenRead,
     anOutgoingMessageIsWaitingOnTheRecord,
@@ -1118,7 +1119,6 @@
   onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}
   onNewConversation={() => void newConversation()}
   emptyState={beforeThereIsAConversation}
-  emptyHint={!emptyState && !readOnly && nothingSaidYet ? "You can attach or drop files here." : null}
   showRunPicker={started || emptyState === undefined}
 />
 
@@ -1128,20 +1128,14 @@
   {#if !started && emptyState}
     {@render emptyState()}
   {:else if !emptyState && !readOnly && nothingSaidYet}
-    <!-- v15 (6): an empty conversation asks one question over a composer in the column's
-         vertical centre; the pane puts the attach hint under the composer. -->
+    <!-- B8: an empty conversation says so in one system line, centred in the empty area
+         over the composer in its usual place. The first message takes it away. -->
     <div class="conversation-empty" data-conversation-empty data-conversation-empty-bare>
-      <h2 class="conversation-empty-said">What should we work on?</h2>
+      <SystemLine align="center">No messages yet</SystemLine>
     </div>
   {/if}
 {/snippet}
 
 <style>
-  /* v5.1: one quiet line, 15 px #b0b0b0, centred in the canvas above the composer. */
-  /* v8: centred in the canvas. */
-  /* v13 (12): the hint sits just above the composer, centred, 24px over its top edge (the
-     thread's own end gap), not in the middle of the canvas. */
-  .conversation-empty { display: flex; align-items: flex-end; justify-content: center; flex: 1 0 auto; align-self: stretch; }
-  /* The thread ends 24px over the composer; the heading stands 20px over it. */
-  .conversation-empty-said { margin: 0 0 -4px; color: #ececec; font: 600 20px/28px var(--cv-font); letter-spacing: 0; text-align: center; }
+  .conversation-empty { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; align-self: stretch; }
 </style>

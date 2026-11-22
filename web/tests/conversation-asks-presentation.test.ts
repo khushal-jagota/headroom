@@ -12,7 +12,7 @@ const composer = (source("../src/components/conversation/ConversationComposer.sv
 const shell = source("../src/components/conversation/AskShell.svelte");
 const questions = source("../src/components/conversation/UserInputQuestionPanel.svelte");
 const permission = source("../src/components/conversation/PermissionAskCard.svelte");
-const status = source("../src/components/conversation/TranscriptStatusRow.svelte");
+const tokens = source("../../assets/tokens.css");
 
 describe("asks", () => {
   it("the own-answer line sits in a #141414 well, radius 12, 40 high; the round send is its last piece, inside it", () => {
@@ -109,16 +109,16 @@ describe("the command block in asks", () => {
 });
 
 describe("one red for Deny and the failed turn", () => {
-  it("the Deny label and the 'This turn failed' title are both #ff8f85", () => {
+  it("the Deny label and the failure mark are both #ff8f85", () => {
     expect(permission).toContain('.c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #ff8f85; }');
     expect(permission).not.toContain("#f08a7e");
-    expect(status).toContain(".c2-status--callout.c2-status--error .c2-status-title { color: #ff8f85; }");
+    expect(tokens).toContain("--cv-failure-ink: #ff8f85;");
   });
 });
 
 describe("the command block in asks", () => {
   it("16px side padding, mono 12.5/20, still wraps only at spaces", () => {
-    expect(permission).toContain(".c2-ask-detail { padding-inline: 16px; font-size: 12.5px; line-height: 20px; overflow-wrap: normal; }");
+    expect(permission).toContain(".c2-ask-detail { padding-inline: 16px; font-size: var(--cv-type-code); line-height: 20px; overflow-wrap: normal; }");
     expect(permission).toContain(".c2-ask-word { white-space: pre; }");
   });
 });

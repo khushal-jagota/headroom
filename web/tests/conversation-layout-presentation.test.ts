@@ -148,7 +148,7 @@ describe("layout", () => {
     expect(viewport).toContain(".chat-thread-content { margin-block-start: 0; }");
     expect(viewport).toContain(".chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }");
     const live = source("../src/components/conversation/LiveConversation.svelte");
-    expect(live).toContain(".conversation-empty { display: flex; align-items: flex-end; justify-content: center; flex: 1 0 auto; align-self: stretch; }");
+    expect(live).toContain(".conversation-empty { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; align-self: stretch; }");
     expect(live).not.toContain("lensHidden");
     expect(source("../src/components/conversation/ConversationPane.svelte")).not.toContain("lensHidden");
   });
@@ -247,32 +247,13 @@ describe("asks have no Stop; the header menu leads with Stop the agent", () => {
   });
 });
 
-describe("the empty conversation centres its composer", () => {
-  const props = { conversationId: "c-empty", draftKey: "empty-presentation", onSend: async () => true };
-  it("an opened, empty conversation puts the hint under the composer and marks the pane", () => {
-    const { body } = render(PaneWithQueryClient, { props: { ...props, conversationState: "opened", emptyHint: "You can attach or drop files here." } });
-    expect(body).toContain('data-conversation-empty-start="true"');
-    const hint = body.indexOf("data-conversation-empty-hint");
-    expect(hint).toBeGreaterThan(body.indexOf("data-conversation-input"));
-    expect(body).toContain("You can attach or drop files here.</p>");
-  });
-  it("the docked conversation at rest keeps its composer at the foot (no hint, no mark)", () => {
-    const { body } = render(PaneWithQueryClient, { props: { ...props, conversationState: "rest", emptyHint: "You can attach or drop files here." } });
-    expect(body).not.toContain("data-conversation-empty-start");
-    expect(body).not.toContain("data-conversation-empty-hint");
-  });
-  it("a conversation without the hint (one with turns) is unchanged", () => {
-    const { body } = render(PaneWithQueryClient, { props: { ...props, conversationState: "opened" } });
-    expect(body).not.toContain("data-conversation-empty-start");
-  });
-  it("the heading is 20/28 600 #ececec; the hint 13/20 #a6a6a6, 12px under the composer", () => {
-    expect(live).toContain('<h2 class="conversation-empty-said">What should we work on?</h2>');
-    expect(live).toContain(".conversation-empty-said { margin: 0 0 -4px; color: #ececec; font: 600 20px/28px var(--cv-font);");
-    expect(live).toContain('emptyHint={!emptyState && !readOnly && nothingSaidYet ? "You can attach or drop files here." : null}');
-
-    expect(pane).toMatch(/\.cv-empty-hint \{[^}]*margin: 12px 0 0;[^}]*color: #b8b8b8;[^}]*13px\/20px/);
-    expect(pane).toContain(".cv-empty-foot { flex: 1 1 0; min-height: 0; }");
-    expect(pane).toContain(".chat-panel.is-empty-start > .conversation-reader { flex: 1 1 0; }");
+describe("the empty conversation (B8)", () => {
+  it("says 'No messages yet' as one centred system line, with the composer in its usual place", () => {
+    expect(live).toContain('<SystemLine align="center">No messages yet</SystemLine>');
+    expect(live).not.toContain("What should we work on?");
+    expect(live).not.toContain("You can attach or drop files here.");
+    expect(pane).not.toContain("emptyHint");
+    expect(pane).not.toContain("is-empty-start");
   });
 });
 
@@ -287,12 +268,6 @@ describe("the transcript's end", () => {
   it("keeps 32px between its last item and the composer or ask card", () => {
     expect(viewport).toMatch(/\.chat-thread \{[^}]*padding-bottom: 32px;/);
     expect(NEWEST_LINE_BOTTOM_GAP_PIXELS).toBe(32);
-  });
-});
-
-describe("leaves the empty state alone", () => {
-  it("an empty thread keeps its 24px foot, so the heading stays 20px over the composer", () => {
-    expect(viewport).toContain(".chat-thread:has(> .chat-thread-content > :global([data-conversation-empty])) { padding-bottom: 24px; }");
   });
 });
 

@@ -128,7 +128,7 @@
   .cv-ask-title {
     margin: 6px 0 0;
     color: var(--cv-t1);
-    font: var(--cv-weight-title) 16px/24px var(--cv-font);
+    font: var(--cv-weight-title) var(--cv-type-ui)/24px var(--cv-font);
   }
   .cv-ask-description {
     margin: var(--cv-s1) 0 0;
@@ -168,7 +168,7 @@
     border-radius: 8px;
     background: #242424;
     color: #d9d9d9;
-    font: var(--cv-weight-body) 13px/18px var(--cv-font);
+    font: var(--cv-weight-body) var(--cv-type-control)/18px var(--cv-font);
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
@@ -231,7 +231,7 @@
   :global([data-conversation-pane]) .cv-ask.is-framed { background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 20px; }
   /* The eyebrow is a Status line: a 16px icon slot (the 8px accent dot, on every ask), the
      label 13/20 500 in the accent. */
-  :global([data-conversation-pane]) .cv-ask-eyebrow { min-height: 32px; font: var(--cv-weight-label) 13px/20px var(--cv-font); }
+  :global([data-conversation-pane]) .cv-ask-eyebrow { min-height: 32px; font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font); }
   :global([data-conversation-pane]) .cv-ask-dot { width: 8px; height: 8px; margin-inline: 4px; }
   /* The pager: "1 of 2" is status detail (#b0b0b0); its arrows are quiet Buttons (32 round,
      #bdbdbd, hover #2a2a2a). */
@@ -244,7 +244,7 @@
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { background: #2a2a2a; color: #ececec; }
   :global([data-conversation-pane]) .cv-ask-context :global(.count) { margin-inline: 0 4px; }
   :global([data-conversation-pane]) .cv-ask-title { margin-block-start: 8px; color: #ececec; }
-  :global([data-conversation-pane]) .cv-ask-description { margin-block-start: 8px; color: #b0b0b0; font: var(--cv-weight-body) 13px/20px var(--cv-font); }
+  :global([data-conversation-pane]) .cv-ask-description { margin-block-start: 8px; color: #b0b0b0; font: var(--cv-weight-body) var(--cv-type-control)/20px var(--cv-font); }
   /* v9 (9): Stop turn is a secondary Button: 32 tall pill, #2a2a2a, #ececec, hover #333,
      13/20 500, a 16px stop icon 6px before its word. */
   :global([data-conversation-pane]) .cv-ask-stop {
@@ -254,7 +254,7 @@
     border-radius: 999px;
     background: #2a2a2a;
     color: #ececec;
-    font: var(--cv-weight-label) 13px/20px var(--cv-font);
+    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
   }
   :global([data-conversation-pane]) .cv-ask-stop:hover:not(:disabled) { background: #333333; color: #ececec; }
   /* Its pill's right edge stands on the option rows' right edge. */
@@ -265,7 +265,7 @@
      focused (and chosen) row: a 1px #bccbf0 edge at 55% and an accent keycap with a #141414
      digit. */
   :global([data-conversation-pane] .cv-ask-rows) { gap: 8px; }
-  :global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424; font: var(--cv-weight-body) 15px/22px var(--cv-font); }
+  :global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424; font: var(--cv-weight-body) var(--cv-type-ui)/22px var(--cv-font); }
   /* v11 (2): on the #1c1c1c ask a row is #2a2a2a with a 1px #363636 edge (drawn inside, so the
      row keeps its size); hover and keyboard focus #303030 with the accent edge. */
   :global([data-conversation-pane] .cv-ask-row) { background: #2a2a2a; box-shadow: inset 0 0 0 1px #363636; }
@@ -276,10 +276,10 @@
   :global([data-conversation-pane] .cv-ask-row:focus-visible) { outline: none; }
   /* v14 (3): no row is lit at rest (v13 (4) withdrawn); every keycap is the neutral #3a3a3a.
      Hover and keyboard focus keep their style. */
-  :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #3a3a3a; color: #d9d9d9; font: var(--cv-weight-label) 13px/1 var(--cv-font); }
+  :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #3a3a3a; color: #d9d9d9; font: var(--cv-weight-label) var(--cv-type-control)/1 var(--cv-font); }
   :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
   :global([data-conversation-pane] .cv-ask-label) { color: #ececec; }
-  :global([data-conversation-pane] .cv-ask-sub) { color: #b0b0b0; font: var(--cv-weight-body) 13px/20px var(--cv-font); }
+  :global([data-conversation-pane] .cv-ask-sub) { color: #b0b0b0; font: var(--cv-weight-body) var(--cv-type-control)/20px var(--cv-font); }
   /* v15 (5): option descriptions are #b8b8b8; an unavailable pager arrow is #7a7a7a. */
   :global([data-conversation-pane] .cv-ask-sub) { color: #b8b8b8; }
   :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #7a7a7a; }

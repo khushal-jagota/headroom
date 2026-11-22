@@ -113,8 +113,8 @@
   .chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .chat-att-thumb svg { position: relative; width: 20px; height: 20px; padding: 4px; fill: var(--cv-primary-ink); border-radius: 50%; background: var(--cv-primary-fill); }
   .chat-att-words { gap: 0; }
-  .chat-att-name { color: #ececec; font-family: var(--cv-font); font-size: 14px; line-height: 20px; font-weight: var(--cv-weight-label); }
-  .chat-att-meta { color: #b8b8b8; font-family: var(--cv-font); font-size: 13px; line-height: 20px; font-variant-numeric: tabular-nums; }
+  .chat-att-name { color: #ececec; font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: 20px; font-weight: var(--cv-weight-label); }
+  .chat-att-meta { color: #b8b8b8; font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: 20px; font-variant-numeric: tabular-nums; }
   .chat-att.failed .chat-att-meta { color: var(--cv-danger); }
   .chat-att-again { flex: none; margin-inline-start: auto; }
   .chat-att-progress { position: absolute; inset: auto var(--cv-s2) 4px var(--cv-s2); height: 2px; border-radius: 1px; background: rgb(255 255 255 / 10%); overflow: hidden; }

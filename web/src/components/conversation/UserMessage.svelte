@@ -2,7 +2,10 @@
   import MessagePieces from './MessagePieces.svelte';
   import MessageActions from './MessageActions.svelte';
   import TranscriptStatusRow from './TranscriptStatusRow.svelte';
-  import { promptLabelFor, promptOutcomeStatus, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
+  import SystemLine from './SystemLine.svelte';
+  import BackendWords from './BackendWords.svelte';
+  import { promptLabelFor, promptOutcomeStatus, statusReason, type TranscriptRow, type TranscriptStatus } from '../../lib/conversation/transcript';
+  import { openComposerModelPicker } from '../../lib/conversation/modelPicker';
   import { outgoingMessageNote, type OutgoingMessage } from '../../lib/conversation/outgoing';
   import { heldPromptRowActions, heldPromptRows } from '../../lib/conversation/heldPrompts';
   import { conversationHeight } from '../../lib/conversation/surfaceMotion';
@@ -60,28 +63,48 @@
     finally { busy = false; }
   }
   async function resend(): Promise<void> { if (!local || busy) return; busy = true; try { await onSendAgain?.(local.messageId); } finally { busy = false; } }
+  // B5: the person's message that was not delivered says so inside its own bubble.
+  const undelivered = $derived(label === null && status?.tone === 'error' ? status : null);
+  let detailsOpen = $state(false);
+  let root = $state<HTMLElement | null>(null);
+  const uid = $props.id();
+  const detailsId = `c2-undelivered-details-${uid}`;
 </script>
-<article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} class:undelivered={row?.kind === 'prompt_refused' || row?.kind === 'prompt_discarded'} class:has-callout={label === null && status?.tone === 'error'} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
+{#snippet undeliveredFooter()}
+  {#if undelivered}
+    <div class="c2-undelivered" role="alert" data-conversation-message-status="error">
+      <p class="c2-undelivered-reason" data-conversation-status-next>Not delivered<span aria-hidden="true">{" · "}</span>{statusReason(undelivered)}</p>
+      {#if (offersResend && !resent) || undelivered.action === 'choose-model' || undelivered.detail}
+        <div class="c2-undelivered-actions">
+          {#if offersResend && !resent}<button type="button" class="c2-undelivered-resend" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
+          {#if undelivered.action === 'choose-model'}<button type="button" data-conversation-status-choose-model onclick={() => openComposerModelPicker(root)}>Choose another model</button>{/if}
+          {#if undelivered.detail}<button type="button" aria-expanded={detailsOpen} aria-controls={detailsId} data-conversation-status-details onclick={() => (detailsOpen = !detailsOpen)}>Details</button>{/if}
+        </div>
+      {/if}
+      {#if undelivered.detail}<BackendWords id={detailsId} detail={undelivered.detail} open={detailsOpen}/>{/if}
+    </div>
+  {/if}
+{/snippet}
+<article bind:this={root} class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
   {#if label !== null}
-    <!-- Someone other than the person wrote this (Panels, another agent). v9 (11): a left-aligned system
-         note with no box: "From Panels · " and the words, 13/20 #b0b0b0, at most two lines. -->
-    <!-- v11 (11): a system message, not a turn label: in a #1a1a1a well (radius 10, padding
-         8 12), "From Panels" #bdbdbd 500, then the words #b0b0b0, 13/20 (p17c review: no mark). -->
-    <p class="c2-system-note" data-conversation-system-note title={systemText}><span class="c2-system-words"><span class="c2-label" data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</span></p>
+    <!-- Someone other than the person wrote this (Panels, another agent): one system line,
+         "From Panels · " and the words, at most two lines, on the thread's left edge (B3). -->
+    <SystemLine data-conversation-system-note="" title={systemText}>
+      <span class="c2-system-words"><span data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</span>
+    </SystemLine>
   {:else}
-    <MessagePieces {presentationRowKey} {content} {conversationId} bubble/>
+    <MessagePieces {presentationRowKey} {content} {conversationId} bubble failed={undelivered !== null} footer={undelivered ? undeliveredFooter : undefined}/>
   {/if}
   {#if steered}
-    <TranscriptStatusRow status={{ tone: 'quiet', title: 'Steered', next: 'into the running turn', detail: null }} mark="steer" align="end" data-conversation-steered=""/>
+    <SystemLine align="end" data-conversation-steered="">Steered<span aria-hidden="true">{" · "}</span><span data-conversation-status-next>into the running turn</span></SystemLine>
   {/if}
   <div class="message-status-window" use:conversationHeight><div class="message-status">
-    {#if status}
+    {#if status && undelivered === null}
       <TranscriptStatusRow {status} align={label === null ? 'end' : 'start'} role={status.tone === 'error' ? 'alert' : 'status'}
         data-conversation-message-status={status.tone} data-conversation-outgoing-label={local && !row ? '' : undefined}>
         {#snippet actions()}
-          {#if offersResend && !resent}<button type="button" class="cv-button c2-status-main" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
-          {#if heldActions.includes('send_again')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
-          {#if heldActions.includes('stop_drawing')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
+          {#if heldActions.includes('send_again')}<button type="button" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
+          {#if heldActions.includes('stop_drawing')}<button type="button" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
         {/snippet}
       </TranscriptStatusRow>
     {/if}
@@ -90,8 +113,8 @@
 </article>
 <style>
   article { position: relative; }
-  /* The message is a column of the things that make it up: what was attached, the bubble of
-     words, and what became of it, 8 apart on one right edge (design v3 §3.2). */
+  /* The message is a column of the things that make it up: the bubble (with what was
+     attached inside it) and the captions under it, on one right edge. */
   .chat-u, .chat-system {
     display: flex;
     flex-direction: column;
@@ -103,7 +126,7 @@
     font-family: var(--cv-font);
   }
   .chat-u { align-self: flex-end; align-items: flex-end; max-width: 80%; }
-  .chat-system { align-self: stretch; align-items: stretch; }
+  .chat-system { align-self: stretch; align-items: flex-start; }
   .attaches-files { min-inline-size: min(100%, 320px); }
   .chat-u :global(.c2-piece-image-slot), .chat-u :global(.conversation-file-card) { margin-block: 0; }
   /* One group with one right edge, the bubble's. A picture's slot can be wider than the
@@ -111,64 +134,39 @@
   .chat-u :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; }
   .chat-u :global(.conversation-file-card--media) { align-self: flex-end; }
 
-  /* v6: Panels' words are a centred system note with no box: 13/20 #b0b0b0, "From Panels · "
-     then the words, at most two lines. */
-  /* v9 (11): a left-aligned status line on the thread's start edge, as "Worked for" is. */
-  .c2-system-note {
-    align-self: flex-start;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    max-width: 100%;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 8px 12px;
-    border-radius: 10px;
-    background: #1a1a1a;
-    color: #b0b0b0;
-    font: var(--cv-weight-body) 13px/20px var(--cv-font);
-    text-align: start;
-    overflow-wrap: anywhere;
-  }
   .c2-system-words {
-    min-width: 0;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
   }
-  .c2-label { color: #bdbdbd; font-weight: var(--cv-weight-label); }
-  /* v13 (10): the note stands centred in the column, same well and type. */
-  .c2-system-note { align-self: center; }
-  /* v16 (12): the note's words (after "From Panels") one step up, #c4c4c4. */
-  .c2-system-note { color: #c4c4c4; }
-  .chat-system { align-items: center; }
 
-  /* A message that never reached the agent is not drawn as one that did: its bubble steps
-     back (the well, the body tone) and (v4.2) a small red "!" stands beside it on the left, as
-     a message app marks one that failed to send. The callout under it says why and offers
-     Resend. No edge or rule carries it. */
-  .chat-u.undelivered :global(.c2-bubble) {
-    position: relative;
+  /* B5: inside the bubble, under the words: a 1 px rule 10 below them, "Not delivered ·
+     <reason>" 10 under the rule in the failure red, then one row of text actions. */
+  .c2-undelivered {
+    margin-block-start: 10px;
+    padding-block-start: 10px;
+    border-block-start: 1px solid rgb(255 143 133 / 30%);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
+    text-align: start;
   }
-  .chat-u.undelivered :global(.c2-bubble)::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    right: calc(100% + 8px);
-    width: 16px;
-    height: 16px;
-    margin-top: -8px;
-    /* v7: failure is #f08a7e; the mark is a 16px icon. */
-    background: #f08a7e;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
-            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  .c2-undelivered-reason { margin: 0; color: var(--cv-failure-ink); }
+  .c2-undelivered-actions { display: flex; flex-wrap: wrap; gap: var(--cv-s4); margin-block-start: var(--cv-s3); }
+  .c2-undelivered-actions button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--cv-system-action-ink);
+    font: inherit;
+    cursor: pointer;
   }
-  /* v4.1: a message with an error callout spans the column so its callout can take the full
-     width, left-aligned; the message's own pieces keep their right edge and 80% measure. */
-  .chat-u.has-callout { align-self: stretch; max-width: none; }
-  .chat-u.has-callout > :global(:not(.message-status-window)) { max-width: 80%; }
+  .c2-undelivered-actions button:hover:not(:disabled) { color: var(--cv-hover-ink); }
+  .c2-undelivered-actions button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; border-radius: var(--cv-r-sm); }
+  .c2-undelivered-actions button:disabled { color: var(--cv-system-ink); cursor: default; }
+  .c2-undelivered-actions .c2-undelivered-resend { color: #ffffff; font-weight: var(--cv-weight-label); }
 
   .message-status-window { align-self: stretch; margin-block-start: calc(var(--cv-gap-bubble-stack) * -1); }
   .message-status { display: flex; flex-direction: column; }
