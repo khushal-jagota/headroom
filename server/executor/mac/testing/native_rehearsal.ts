@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, cp } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { request as http_request } from 'node:http';
 import { join, dirname, resolve } from 'node:path';
+import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
@@ -11,7 +12,12 @@ import { extract } from 'tar';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
-import { mac_installation_paths } from '../platform.ts';
+import {
+  mac_installation_assets,
+  mac_installation_paths,
+  MAC_RUNTIME_LAUNCHER_APP,
+} from '../platform.ts';
+import { build_mac_launcher } from '../packaging/launcher_main.ts';
 import { native_file_peer, file_peer_bytes, file_peer_digest } from './native_file_peer.ts';
 import { native_failure_snapshot } from './native_failure_snapshot.ts';
 import { credential_path, write_credential } from '../../credential_file.ts';
@@ -45,9 +51,11 @@ const run = async (args: string[], environment = process.env) => {
   return result;
 };
 await mkdir(evidence, { recursive: true });
+// Providers get a private HOME. The signed launcher finds its runtime below the account's
+// real home, which the disposable runner owns. Darwin Unix sockets have a short path limit,
+// so the state uses the supported explicit root.
 const home = join(root, 'executor-home');
-// Darwin Unix sockets have a short path limit. Use the supported explicit state root.
-const paths = { ...mac_installation_paths(home), state: join(root, 'state') };
+const paths = { ...mac_installation_paths(userInfo().homedir), state: join(root, 'state') };
 const bin = join(root, 'scripted-bin');
 await mkdir(bin, { recursive: true });
 await mkdir(home, { recursive: true });
@@ -133,6 +141,9 @@ try {
   proxy_target = server.address;
   steps.local_server = 'passed';
 
+  const launcher_app = join(root, 'launcher/Panels TypeScript.app');
+  await mkdir(dirname(launcher_app));
+  await build_mac_launcher(launcher_app, '-');
   await run([
     process.execPath,
     join(source, 'server/executor/mac/packaging/publication_main.ts'),
@@ -146,14 +157,8 @@ try {
     join(root, 'package'),
     '--revision',
     revision,
-    '--home',
-    home,
-    '--executor-id',
-    'test-executor',
-    '--server-url',
-    origin,
-    '--backend-path',
-    `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    '--launcher-app',
+    launcher_app,
     '--run-id',
     process.env.MAC_REHEARSAL_RUN_ID!,
     '--run-attempt',
@@ -173,19 +178,16 @@ try {
     strict: true,
   });
   await mkdir(dirname(paths.console), { recursive: true });
-  await cp(join(root, 'package/assets/bin/panels'), paths.console);
-  await cp(join(root, 'package/assets/Panels TypeScript.app'), paths.app, { recursive: true });
-  await mkdir(dirname(paths.app_executable), { recursive: true });
-  await run([
-    'clang',
-    '-arch',
-    'arm64',
-    '-O2',
-    join(root, 'package/assets/launcher.c'),
-    '-o',
-    paths.app_executable,
-  ]);
-  await run(['codesign', '--force', '--sign', '-', paths.app]);
+  const { console: console_script } = mac_installation_assets({
+    home: paths.home,
+    revision,
+    executor_id: 'test-executor',
+    server_url: origin,
+    backend_path: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+  });
+  await writeFile(paths.console, console_script, { mode: 0o755 });
+  await mkdir(dirname(paths.app), { recursive: true });
+  await run(['ditto', join(paths.supervisor, MAC_RUNTIME_LAUNCHER_APP), paths.app]);
   await run(['codesign', '--verify', '--strict', '--verbose=2', paths.app]);
   steps.package = {
     revision,

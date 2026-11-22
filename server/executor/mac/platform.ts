@@ -698,30 +698,50 @@ export function legacy_custody_process_inspector(
   };
 }
 
+/** Fixed places below an account's home. The signed launcher holds no account path. */
+const MAC_INSTALL_DIRECTORY = 'Deployments/PanelsExecutorTypeScript';
+const MAC_SUPERVISOR_NODE = 'supervisor/node/bin/node';
+const MAC_SUPERVISOR_BOOTSTRAP = 'supervisor/server/executor/mac/entrypoint.ts';
+const MAC_APP_NAME = 'Panels TypeScript.app';
+const MAC_BUNDLE_ID = 'com.panels.executor.typescript.app';
+/** The signed launcher app travels inside the runtime archive at this relative path. */
+export const MAC_RUNTIME_LAUNCHER_APP = `launcher/${MAC_APP_NAME}`;
 export function mac_installation_paths(home: string) {
   if (!isAbsolute(home) || home.includes('\0'))
     throw new Error('Mac installation HOME must be absolute.');
-  const install = join(home, 'Deployments/PanelsExecutorTypeScript');
+  const install = join(home, MAC_INSTALL_DIRECTORY);
   const supervisor = join(install, 'supervisor'),
     state = darwin_executor_root(home);
-  const app = join(home, 'Applications/Panels TypeScript.app');
+  const app = join(home, 'Applications', MAC_APP_NAME);
   return {
     home,
     install,
     supervisor,
     state,
     app,
-    node: join(supervisor, 'node/bin/node'),
-    bootstrap: join(supervisor, 'server/executor/mac/entrypoint.ts'),
+    node: join(install, MAC_SUPERVISOR_NODE),
+    bootstrap: join(install, MAC_SUPERVISOR_BOOTSTRAP),
     console: join(install, 'bin/panels'),
     app_executable: join(app, 'Contents/MacOS/Panels'),
     plist: join(home, 'Library/LaunchAgents/com.panels.executor.typescript.plist'),
     job: 'com.panels.executor.typescript',
-    bundle_id: 'com.panels.executor.typescript.app',
+    bundle_id: MAC_BUNDLE_ID,
     stdout: join(state, 'logs/launch-agent.stdout.log'),
     stderr: join(state, 'logs/launch-agent.stderr.log'),
     socket: executor_socket_path(state),
   };
+}
+/** Provider commands on a joined machine: account tools, Homebrew, then the system folders. */
+export function mac_backend_path(home: string): string {
+  return [
+    join(home, '.local/bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ].join(':');
 }
 type PlistValue = string | number | boolean | PlistValue[] | { [key: string]: PlistValue };
 function plist(value: Record<string, PlistValue>): string {
@@ -748,7 +768,56 @@ function plist(value: Record<string, PlistValue>): string {
   );
 }
 
-/** Generate candidate assets only. No compiler, signer, installation or launchctl runs. */
+/**
+ * The launcher app is the same for every account, so a release can sign it once.
+ * It reads the account's home from the user database, never from the environment,
+ * so the signed requester cannot be pointed at another Node.
+ */
+export function mac_launcher_bundle() {
+  const info = plist({
+    CFBundleIdentifier: MAC_BUNDLE_ID,
+    CFBundleName: 'Panels TypeScript',
+    CFBundleDisplayName: 'Panels TypeScript',
+    CFBundleExecutable: 'Panels',
+    CFBundlePackageType: 'APPL',
+    CFBundleVersion: '1',
+    LSUIElement: true,
+    NSDesktopFolderUsageDescription: 'Panels accesses your selected files on Desktop.',
+    NSDocumentsFolderUsageDescription: 'Panels accesses your selected files in Documents.',
+    NSDownloadsFolderUsageDescription: 'Panels accesses your selected files in Downloads.',
+  });
+  const launcher = `/* Fixed native requester. execve preserves PID, signals and argument boundaries. */
+#include <limits.h>
+#include <pwd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+extern char **environ;
+int main(int argc, char **argv) {
+  unsetenv("NODE_OPTIONS"); unsetenv("NODE_PATH");
+  struct passwd *account = getpwuid(getuid());
+  if (!account || !account->pw_dir || account->pw_dir[0] != '/') {
+    fputs("Panels: the account home is unknown\\n", stderr); return 1;
+  }
+  char node[PATH_MAX], bootstrap[PATH_MAX];
+  int node_length = snprintf(node, sizeof node, "%s/%s", account->pw_dir, ${JSON.stringify(`${MAC_INSTALL_DIRECTORY}/${MAC_SUPERVISOR_NODE}`)});
+  int bootstrap_length = snprintf(bootstrap, sizeof bootstrap, "%s/%s", account->pw_dir, ${JSON.stringify(`${MAC_INSTALL_DIRECTORY}/${MAC_SUPERVISOR_BOOTSTRAP}`)});
+  if (node_length < 0 || node_length >= (int)sizeof node || bootstrap_length < 0 || bootstrap_length >= (int)sizeof bootstrap) {
+    fputs("Panels: the account home is too long\\n", stderr); return 1;
+  }
+  char **args = calloc((size_t)argc + 2, sizeof(char *));
+  if (!args) { perror("Panels: arguments"); return 1; }
+  args[0] = node;
+  args[1] = bootstrap;
+  for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
+  execve(args[0], args, environ);
+  perror("Panels: fixed Node runtime"); free(args); return 1;
+}
+`;
+  return { bundle_id: MAC_BUNDLE_ID, info_plist: info, launcher_source: launcher };
+}
+
+/** The account-specific files of one installation. A join writes them on the machine. */
 export function mac_installation_assets(options: {
   home: string;
   revision: string;
@@ -759,35 +828,6 @@ export function mac_installation_assets(options: {
   const paths = mac_installation_paths(options.home);
   if (!options.backend_path.split(':').every((part) => isAbsolute(part)))
     throw new Error('Backend PATH must contain absolute directories.');
-  const info = plist({
-    CFBundleIdentifier: paths.bundle_id,
-    CFBundleName: 'Panels TypeScript',
-    CFBundleDisplayName: 'Panels TypeScript',
-    CFBundleExecutable: 'Panels',
-    CFBundlePackageType: 'APPL',
-    CFBundleVersion: '1',
-    PanelsApplicationRevision: options.revision,
-    LSUIElement: true,
-    NSDesktopFolderUsageDescription: 'Panels accesses your selected files on Desktop.',
-    NSDocumentsFolderUsageDescription: 'Panels accesses your selected files in Documents.',
-    NSDownloadsFolderUsageDescription: 'Panels accesses your selected files in Downloads.',
-  });
-  const launcher = `/* Fixed native requester. execve preserves PID, signals and argument boundaries. */
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-extern char **environ;
-int main(int argc, char **argv) {
-  unsetenv("NODE_OPTIONS"); unsetenv("NODE_PATH");
-  char **args = calloc((size_t)argc + 2, sizeof(char *));
-  if (!args) { perror("Panels: arguments"); return 1; }
-  args[0] = ${JSON.stringify(paths.node)};
-  args[1] = ${JSON.stringify(paths.bootstrap)};
-  for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
-  execve(args[0], args, environ);
-  perror("Panels: fixed Node runtime"); free(args); return 1;
-}
-`;
   const launch_agent = plist({
     Label: paths.job,
     AssociatedBundleIdentifiers: [paths.bundle_id],
@@ -818,19 +858,7 @@ int main(int argc, char **argv) {
   const console =
     '#!/bin/sh\nset -eu\nunset NODE_OPTIONS NODE_PATH\n' +
     `if [ "\${PLAN_EXECUTOR_ROOT+x}" != x ]; then export PLAN_EXECUTOR_ROOT=${shell_quote(paths.state)}; fi\nif [ "\${PLAN_SERVER_URL+x}" != x ]; then export PLAN_SERVER_URL=${shell_quote(options.server_url)}; fi\nexec ${shell_quote(paths.app_executable)} "$@"\n`;
-  return {
-    paths,
-    files: {
-      'Panels TypeScript.app/Contents/Info.plist': { text: info, mode: 0o644 },
-      'launcher.c': { text: launcher, mode: 0o644 },
-      'bin/panels': { text: console, mode: 0o755 },
-      'com.panels.executor.typescript.plist': { text: launch_agent, mode: 0o600 },
-      'installation.json': {
-        text: JSON.stringify({ ...options, paths }, null, 2) + '\n',
-        mode: 0o600,
-      },
-    },
-  };
+  return { paths, launch_agent, console };
 }
 
 /** Worker custody uses libproc births with microsecond precision, independently of legacy probes. */

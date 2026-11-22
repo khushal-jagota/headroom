@@ -10,6 +10,7 @@ import { run_release_command } from '../../../environments/release/process.ts';
 import { publication_id } from '../../../environments/release/publication_identity.ts';
 import type { MacRuntimePublication } from '../../../environments/release/mac_publication_contracts.ts';
 import { build_mac_package } from './build.ts';
+import { MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
 import { PUBLICATION_MAC_VALIDATION_SECONDS } from '../../../environments/release/publication_configuration.ts';
 
 export function publication_main(args: string[]): Promise<0 | 1> {
@@ -22,10 +23,7 @@ export function publication_main(args: string[]): Promise<0 | 1> {
       'node-modules',
       'output',
       'revision',
-      'home',
-      'executor-id',
-      'server-url',
-      'backend-path',
+      'launcher-app',
       'run-id',
       'run-attempt',
     ] as const;
@@ -47,10 +45,7 @@ export function publication_main(args: string[]): Promise<0 | 1> {
       production_node_modules: text('node-modules'),
       output: text('output'),
       revision: text('revision'),
-      home: text('home'),
-      executor_id: text('executor-id'),
-      server_url: text('server-url'),
-      backend_path: text('backend-path'),
+      launcher_app: text('launcher-app'),
     });
     const output = text('output'),
       archive = join(output, 'panels-mac-runtime.tar.gz');
@@ -65,7 +60,7 @@ export function publication_main(args: string[]): Promise<0 | 1> {
     const started = performance.now();
     const environment = {
       PATH: dirname(node) + ':/usr/bin:/bin',
-      HOME: text('home'),
+      HOME: process.env.HOME,
       TMPDIR: process.env.TMPDIR,
       PLAN_SERVER_URL: 'https://127.0.0.1:9',
       PLAN_TEST_MODE: '0',
@@ -81,6 +76,24 @@ export function publication_main(args: string[]): Promise<0 | 1> {
       execution,
     );
     await writeFile(join(work, 'cli.log'), cli.stdout + cli.stderr);
+    const launcher = await run_release_command(
+      [
+        '/usr/bin/codesign',
+        '--verify',
+        '--strict',
+        '--verbose=2',
+        join(relocated, MAC_RUNTIME_LAUNCHER_APP),
+      ],
+      {
+        timeout_seconds: PUBLICATION_MAC_VALIDATION_SECONDS,
+        cwd: work,
+        environment,
+        allow_nonzero: true,
+      },
+      execution,
+    );
+    if (launcher.code !== 0)
+      throw new Error('The unpacked launcher signature failed: ' + launcher.stderr);
     if (cli.code !== 0) throw new Error('Packaged executor CLI failed: ' + cli.stderr);
     const native = await run_release_command(
       [node, join(relocated, 'server/executor/mac/packaging/native_probe.ts'), work],

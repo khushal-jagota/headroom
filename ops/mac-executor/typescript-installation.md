@@ -1,93 +1,21 @@
-# Separate TypeScript Mac executor
+# Apple Silicon machine code
 
-Each TypeScript release publishes the Node Mac executor and its native execution receipt. The package producer also creates unsigned assets for the separate installation.
-No command in this document ran on the owner's Mac during this Ticket.
-The shared codec embeds its schema as `WIRE_SCHEMA` in `server/executor/wire.generated.ts`. It does not read `wire.schema.json` at runtime.
+An Apple Silicon machine joins with the same command as a Linux machine.
+The owner gets the command and a private credential from Settings → Machines, or from `panels machine join-command`.
+The machine needs macOS 15 or newer, a login to its graphical session, the GitHub CLI with a login, and Python 3.11 or newer.
+The Python that comes with macOS is 3.9. Install a newer one with Homebrew: `brew install python gh`.
+The machine needs no Node, no Xcode tools and no signing identity.
 
-The TypeScript default state root is `~/Library/Application Support/Panels/executor-typescript`.
-TypeScript refuses the earlier executor root, its sibling `executor`, with its descendants and resolved aliases.
-Provider homes and credentials remain account resources. Separate roots do not solve shared skill publication.
-The owner must choose the shared-publication policy before concurrent native use.
+## What the join does
 
-## Produce the reviewed package
+The command downloads `scripts/panels_install.py` at the server's released revision.
+The script checks the machine, then selects the newest unexpired release from `main` that matches that revision.
+It downloads the `panels-mac-runtime` artifact and checks its SHA-256 against the publication receipt.
+It starts the join step `server/environments/mac_executor/join_main.ts` on the Node inside that release.
+The credential passes on private standard input. It never appears in a process argument.
 
-Use the exact approved source revision. Supply an official Darwin arm64 Node distribution and production dependencies for that Node version.
-Use Node 22.18 or later in the Node 22 series, or Node 24.
-Prepare dependencies with `npm ci --omit=dev` from the approved `server/package-lock.json` on Darwin arm64.
-The producer requires the installed lock metadata and exact direct dependency versions.
-It checks Mach-O headers for Node, better-sqlite3, and Koffi. These checks do not establish provenance or ABI compatibility.
-The Manager must arrange genuine Darwin package construction and native addon load checks before installation.
-
-The Manager can dispatch `.github/workflows/typescript-lifecycle-native.yml` with `build_mac_package=true` for a test build.
-Its synthetic defaults are `/Users/panels-test`, `test-executor`, `https://panels.invalid`, and `/usr/bin:/bin`.
-The artifact name includes `test-build`, and `TEST-BUILD.txt` marks the extracted package.
-Real installation values come only from the later Mac session with the owner.
-It uses standard `macos-15` arm64 and official Node 22, then uploads the archive, assets, build metadata, and this document.
-The workflow does not install, sign, launch, or contact the configured peer.
-
-The pull-request workflow `typescript-mac-executor.yml` runs a separate hosted rehearsal.
-It uses a private home, temporary state, a local TypeScript server over HTTPS, and scripted Claude and Codex commands.
-It checks protocol 26 presence, both turns, and active Stop against the real local TypeScript home.
-A small test double serves the home file routes for upload and download and checks bytes and digests.
-This proves the Mac file transport, not the real Linux home intake.
-The real Linux intake check remains part of the live check after the Mac switch.
-Its launcher uses ad-hoc signing because the hosted runner has no owner signing identity.
-Ad-hoc signing does not prove the live Mac's requester attribution or file consent.
-Use the owner's Apple Development identity for the live app, as described below.
-The workflow retains its logs, results, cleanup evidence, and elapsed time.
-Physical sleep/wake and permission retention remain checks for the later owner session.
-
-Run the producer with production dependencies under its own `server/node_modules` directory. Node strips TypeScript without a compiler.
-
-```sh
-node server/executor/mac/packaging/main.ts \
-  --source "$APPROVED_SOURCE" \
-  --node-distribution "$DARWIN_ARM64_NODE" \
-  --node-modules "$DARWIN_PRODUCTION_NODE_MODULES" \
-  --output "$NEW_PACKAGE_DIRECTORY" \
-  --revision "$APPROVED_REVISION" \
-  --home "$TARGET_MAC_HOME" \
-  --executor-id "$APPROVED_EXECUTOR_ID" \
-  --server-url "$APPROVED_HTTPS_PEER" \
-  --backend-path "$REVIEWED_BACKEND_PATH"
-```
-
-All input paths must identify reviewed inputs. The output parent must exist, and the output directory must be new.
-`--home` is the target account's absolute home, even when another machine assembles the package.
-`--backend-path` contains absolute directories for the installed provider commands and ordinary system tools.
-The producer does not download, execute, sign, or install its inputs.
-
-The output contains these artifacts:
-
-| Artifact | Purpose |
-| --- | --- |
-| `panels-mac-runtime.tar.gz` | Runtime archive for initial installation and later updates. |
-| `runtime/` | Expanded archive with `node/bin/node`, `bin/panels`, production dependencies, and TypeScript source. |
-| `runtime/mac-runtime.json` | Exactly `schema_version`, `application_revision`, `platform`, and `architecture`. |
-| `assets/` | Candidate app metadata, native launcher source, manual console, LaunchAgent, and target paths. |
-| `build.json` | Source revision, Node version, Node digest, archive digest, and target paths. |
-| `INSTALLATION.md` | This handoff document. |
-
-The wire schema remains embedded in `wire.generated.ts`.
-The package also includes static skills, Worker seed data, CLI metadata, and the shell startup asset.
-
-## Install from the owner's native session
-
-These commands are a future owner procedure. They do not authorize this Ticket to install or launch anything.
-Resolve the shared provider skill policy before the first real provider session.
-
-Use a new private package directory on the Mac. Set `PACKAGE` to its absolute path.
-Compare `build.json` and the archive digest with the Manager's approved revision and digest through a separate trusted record.
-Check that `assets/installation.json` names this account's actual `HOME`, reviewed executor ID, HTTPS peer, and provider PATH.
-If any target differs, regenerate the package assets before installation.
-
-```sh
-shasum -a 256 "$PACKAGE/panels-mac-runtime.tar.gz"
-cat "$PACKAGE/build.json"
-cat "$PACKAGE/assets/installation.json"
-```
-
-The fixed paths are:
+The join step refuses an existing installation, state folder, LaunchAgent file or loaded job.
+It then writes these fixed paths:
 
 | Item | Path or identity |
 | --- | --- |
@@ -101,69 +29,47 @@ The fixed paths are:
 | LaunchAgent | `~/Library/LaunchAgents/com.panels.executor.typescript.plist` |
 | Job label | `com.panels.executor.typescript` |
 | State | `~/Library/Application Support/Panels/executor-typescript` |
-| Unix socket | `~/Library/Application Support/Panels/executor-typescript/run/executor.sock` |
-| Launch logs | `~/Library/Application Support/Panels/executor-typescript/logs/launch-agent.{stdout,stderr}.log` |
+| Credential | `<state>/machine-credential.json` |
+| Unix socket | `<state>/run/executor.sock` |
+| Launch logs | `<state>/logs/launch-agent.{stdout,stderr}.log` |
 | Updated runtime | `<state>/updates/releases/<revision>-<archive-sha256>` |
 
-The native app executes the fixed supervisor Node and bootstrap with the original arguments.
-The supervisor launches the selected versioned runtime as a child. It retains its own Node across runtime updates.
-The versioned `bin/panels` uses its own adjacent Node and entrypoint. The supervisor prepends this directory to agent PATH.
-The manual console always enters through the signed app.
+It loads the job in the `gui/<uid>` domain and polls `executor health` through the console.
+The join ends when the server accepts a fresh lease from this revision.
+If a step fails, the join stops its job and removes only what it made. Its error includes the last launch error.
 
-Check that the install, app, and job destinations are absent before this first-install procedure.
-Do not overwrite an existing installation with these commands.
+Provider commands get a fixed PATH: `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, then the system folders.
+The supervisor puts the runtime's own `bin` first.
 
-```sh
-set -eu
-TS_INSTALL="$HOME/Deployments/PanelsExecutorTypeScript"
-TS_ROOT="$HOME/Library/Application Support/Panels/executor-typescript"
-TS_APP="$HOME/Applications/Panels TypeScript.app"
-TS_PLIST="$HOME/Library/LaunchAgents/com.panels.executor.typescript.plist"
-test ! -e "$TS_INSTALL" && test ! -L "$TS_INSTALL"
-test ! -e "$TS_APP" && test ! -L "$TS_APP"
-test ! -e "$TS_PLIST" && test ! -L "$TS_PLIST"
-umask 077
-mkdir -p "$HOME/Deployments" "$HOME/Applications" "$HOME/Library/LaunchAgents"
-mkdir "$TS_INSTALL"
-mkdir "$TS_INSTALL/supervisor"
-tar -xzf "$PACKAGE/panels-mac-runtime.tar.gz" -C "$TS_INSTALL/supervisor"
-mkdir "$TS_INSTALL/bin"
-install -m 755 "$PACKAGE/assets/bin/panels" "$TS_INSTALL/bin/panels"
-ditto "$PACKAGE/assets/Panels TypeScript.app" "$TS_APP"
-mkdir -p "$TS_APP/Contents/MacOS"
-clang -arch arm64 -O2 "$PACKAGE/assets/launcher.c" -o "$TS_APP/Contents/MacOS/Panels"
-```
+## The launcher and its signature
 
-Choose the owner's Apple Development signing identity. Do not substitute ad hoc signing.
-Sign this separate app and retain its identity across later updates.
+The launcher app is the same for every account. It reads the account's home from the user database, not from `HOME`.
+It runs the fixed Node and bootstrap below that home with the original arguments.
+The supervisor keeps its own Node across runtime updates and launches the selected versioned runtime as a child.
 
-```sh
-security find-identity -v -p codesigning
-codesign --force --sign "$APPLE_DEVELOPMENT_IDENTITY" "$TS_APP"
-codesign --verify --strict --verbose=2 "$TS_APP"
-codesign -dv --verbose=4 "$TS_APP"
-plutil -lint "$TS_APP/Contents/Info.plist"
-plutil -lint "$PACKAGE/assets/com.panels.executor.typescript.plist"
-```
+The release workflow builds the launcher on its Apple Silicon runner with `server/executor/mac/packaging/launcher_main.ts`.
+It signs the app with the project's Developer ID Application identity, the identity of the desktop app.
+The app travels inside the runtime archive at `launcher/Panels TypeScript.app`, so the archive digest covers it.
+The publication proof checks the signature of the unpacked copy. The join copies it with `ditto` and checks it again.
 
-Complete the native load and consent checks below before the first service start.
-The signed app must receive any required file permissions through the normal macOS consent flow.
-Install only the separate TypeScript LaunchAgent:
+macOS keys folder permissions on the designated requirement of the app.
+For a team signature, that requirement names the bundle identity and the team. For an ad-hoc signature, it names the exact code hash.
+So folder permissions stay when a later release changes the launcher.
+The launcher is not notarized. The join downloads it through the GitHub API, so it carries no quarantine flag, and Gatekeeper does not assess it.
 
-```sh
-mkdir -p "$TS_ROOT/logs"
-chmod 700 "$TS_ROOT" "$TS_ROOT/logs"
-install -m 600 "$PACKAGE/assets/com.panels.executor.typescript.plist" "$TS_PLIST"
-launchctl bootstrap "gui/$(id -u)" "$TS_PLIST"
-launchctl print "gui/$(id -u)/com.panels.executor.typescript"
-"$TS_INSTALL/bin/panels" executor health
-```
+The hosted rehearsal `typescript-mac-executor.yml` signs its launcher ad hoc, because a pull request build has no release identity.
+Its join case runs the server's own join command on a clean runner with a local release.
+Folder consent and permission retention under the Developer ID need a real second Apple Silicon machine. That check remains the owner's.
 
-Check the selected revision, socket path, health response, and launch logs before real work.
-Record the package digest, Node version, signing identity, bundle identity, and job label with the native handoff.
+## Operate an installed machine
+
+Use the manual console for executor commands, for example `~/Deployments/PanelsExecutorTypeScript/bin/panels executor health`.
 Use `executor quiesce --exit-when-ready` before a planned stop.
-Require committed exit, zero work counts, and exit of the recorded runtime before unloading this job.
+Require committed exit, zero work counts, and exit of the recorded runtime before you unload the job with `launchctl bootout`.
 If startup fails, retain the state and logs. Use the recovery procedure below when SQLite reports version zero.
+
+An installation from the earlier manual procedure keeps its own launcher, which the owner's Apple Development identity signed.
+Runtime updates do not change the launcher, so that installation keeps working.
 
 ## Preserve a failed first initialization
 
