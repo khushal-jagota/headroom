@@ -1,3 +1,5 @@
+import { read_server_location } from '../server_link/data.ts';
+import { SERVER_LOCATION_HEADER, SERVER_LOCATION_PATH } from '../server_link/contracts.ts';
 import * as worker_skill_startup from '../worker_settings/startup.ts';
 import { issue_launch_token } from '../agent_identity/data.ts';
 /** Startup and shutdown own one record runtime and retain its lease through cleanup. */
@@ -193,6 +195,18 @@ test('normal staged server serves the reconciled record through real publication
         sql.get<{ epoch: string }>('SELECT epoch FROM conversation_runtime_epoch'),
       )?.epoch,
     ).toBe(epochBeforePublication);
+    // The real route must enter compatibility's catalogue before its pre-parser runs.
+    const location_response = await fetch(address + SERVER_LOCATION_PATH);
+    expect(location_response.status).toBe(200);
+    const location = f.database.read(read_server_location);
+    expect(await location_response.json()).toEqual(location);
+    expect(
+      JSON.parse(
+        Buffer.from(location_response.headers.get(SERVER_LOCATION_HEADER)!, 'base64url').toString(
+          'utf8',
+        ),
+      ),
+    ).toEqual(location);
     const response = await fetch(address + '/api/conversation/conversations/retained/view');
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ page: { conversation_id: 'retained' } });
