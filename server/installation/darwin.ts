@@ -18,7 +18,7 @@ import { assert_release_execution } from '../environments/release/process.ts';
 import {
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
   HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS,
-  MAC_HOME_SCHEDULE_SUFFIXES,
+  HOME_SCHEDULE_SUFFIXES,
 } from './configuration.ts';
 import type {
   HomeInstallRequest,
@@ -84,7 +84,7 @@ export async function create_darwin_home_service(
   const labels = [
     request.service,
     request.service + '.backup',
-    ...MAC_HOME_SCHEDULE_SUFFIXES.map((suffix) => request.service + suffix),
+    ...HOME_SCHEDULE_SUFFIXES.map((suffix) => request.service + suffix),
   ];
   const files: HomeInstallationFile[] = labels.map((label) => ({
     path: join(request.root, 'agents', label + '.plist'),

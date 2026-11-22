@@ -40,9 +40,16 @@ import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 import { home_install_request, validate_home_host } from './logic/home.ts';
 import {
   HOME_CLEANUP_TIMEOUT_SECONDS,
+  HOME_COMMAND_LINK,
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
+  HOME_UPDATE_TOKEN_FILE,
 } from './configuration.ts';
-import type { HomeInstallDependencies, HomeInstallRequest, HomeServicePlan } from './contracts.ts';
+import type {
+  HomeInstallDependencies,
+  HomeInstallRequest,
+  HomeInstallSubmission,
+  HomeServicePlan,
+} from './contracts.ts';
 import { HomeCleanupUnsettled } from './contracts.ts';
 
 interface DirectoryProof {
@@ -99,6 +106,16 @@ async function canonical_new_root(path: string, home: string): Promise<string> {
     return join(ancestor, relative(original, path));
   }
   throw new Error(`The installation root already exists: ${path}`);
+}
+/** Like a service file, an existing command link belongs to someone else and is never replaced. */
+async function require_absent_command_link(path: string): Promise<void> {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (absent(error)) return;
+    throw error;
+  }
+  throw new Error(`The panels command already exists: ${path}. It will not be replaced.`);
 }
 /** A private bind is only a refusal check; activation still owns its later bind. */
 export async function check_home_port(port: number): Promise<void> {
@@ -381,11 +398,13 @@ async function cleanup(
     );
 }
 export async function install_home(
-  input: HomeInstallRequest,
+  input: HomeInstallSubmission,
   deps: HomeInstallDependencies,
 ): Promise<string> {
-  let request = home_install_request(input);
+  const { update_token, ...validated } = home_install_request(input);
+  let request: HomeInstallRequest = validated;
   validate_home_host(request, deps);
+  const command_link = join(deps.account_home, HOME_COMMAND_LINK);
   assert_release_execution(deps.execution);
   const root_path = await canonical_new_root(request.root, deps.account_home);
   assert_installer_path(root_path, deps.environment);
@@ -399,6 +418,7 @@ export async function install_home(
   try {
     service = await deps.service(request, deps);
     await service.preflight(deps.execution);
+    await require_absent_command_link(command_link);
     await check_home_port(request.port);
     assert_release_execution(deps.execution);
     const ancestor = files.directory(await existing_ancestor(dirname(root_path)));
@@ -456,6 +476,8 @@ export async function install_home(
       }) + '\n',
       0o600,
     );
+    // The private secrets folder is created 0700 with the file.
+    await files.file(join(root_path, HOME_UPDATE_TOKEN_FILE), update_token + '\n', 0o600);
     for (const file of service.files) {
       assert_release_execution(deps.execution);
       await files.file(file.path, file.content, file.mode);
@@ -470,6 +492,8 @@ export async function install_home(
       }
     }
     for (const link of service.links) await files.link(link.path, link.target);
+    // The path names the app folder, so it follows each update that swaps that folder.
+    await files.link(command_link, join(root_path, 'app/bin/panels'));
     current_directory(root);
     const data = files.directory(join(root_path, 'data'));
     await deps.initialize_database(

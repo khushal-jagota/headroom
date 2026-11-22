@@ -13,8 +13,8 @@ import { instant } from './logic/experience.ts';
 import { with_zip_member } from './zip.ts';
 import { LINUX_HOME } from '../release/contracts.ts';
 import type { RuntimeTarget } from '../release/contracts.ts';
+import { TRUSTED_RELEASE_WORKFLOW } from '../release/source.ts';
 
-export const TRUSTED_RELEASE_WORKFLOW = '.github/workflows/publish-typescript-release.yml';
 function repository_stream(response: Response, message: string): Readable {
   if (response.body === null) throw new Error(message);
   return Readable.from(

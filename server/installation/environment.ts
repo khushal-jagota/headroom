@@ -4,6 +4,8 @@ import { find_release_executable } from '../environments/release/process.ts';
 import { resolved_path } from '../environments/paths.ts';
 import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
 import { home_path } from '../drivers/core/paths.ts';
+import { RELEASE_REPOSITORY } from '../environments/release/source.ts';
+import { HOME_UPDATE_TOKEN_FILE } from './configuration.ts';
 import type { HomeInstallRequest, HomeInstallHost } from './contracts.ts';
 
 export async function home_service_environment(
@@ -36,6 +38,8 @@ export async function home_service_environment(
     PLAN_PORT: String(request.port),
     PLAN_BACKUP_DIR: join(root, 'data/backups'),
     PLAN_DISPATCHER_LOCK_PATH: join(root, 'data/dispatcher.lock'),
+    PLAN_UPDATE_REPOSITORY: RELEASE_REPOSITORY,
+    PLAN_UPDATE_TOKEN_FILE: join(root, HOME_UPDATE_TOKEN_FILE),
     ...(host.system === 'linux'
       ? { PLAN_SERVER_CONTROL_SOCKET: join(root, 'data/server-control.sock') }
       : { PLAN_WORKSPACE_ROOT: join(root, 'workspaces') }),
@@ -52,13 +56,11 @@ export async function home_service_environment(
     environment[home.environment_name] = await resolved_path(configured, host.account_home);
   }
   // An executable override is kept only on macOS.
-  const retained = ['PLAN_UPDATE_REPOSITORY', 'PLAN_UPDATE_TOKEN_FILE'];
-  for (const { manifest } of BUILT_IN_MANIFESTS) {
-    const { override_environment_name } = manifest.executable;
-    if (override_environment_name && host.system === 'darwin')
-      retained.push(override_environment_name);
-  }
-  for (const variable of retained)
-    if (host.environment[variable]) environment[variable] = host.environment[variable]!;
+  if (host.system === 'darwin')
+    for (const { manifest } of BUILT_IN_MANIFESTS) {
+      const variable = manifest.executable.override_environment_name;
+      if (variable && host.environment[variable])
+        environment[variable] = host.environment[variable]!;
+    }
   return environment;
 }

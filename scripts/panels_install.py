@@ -30,28 +30,6 @@ from pathlib import Path
 from types import FrameType
 from typing import IO, Any
 
-REPOSITORY = "khushal-jagota/headroom"
-PUBLICATION_WORKFLOW = "publish-typescript-release.yml"
-
-
-class DownloadRedirect(urllib.request.HTTPRedirectHandler):
-    """GitHub's artifact redirect must not disclose its token to blob storage."""
-
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: IO[bytes],
-        code: int,
-        msg: str,
-        headers: HTTPMessage,
-        newurl: str,
-    ) -> urllib.request.Request | None:
-        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if redirected is not None:
-            redirected.remove_header("Authorization")
-        return redirected
-
-
 def _run(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(arguments, check=check, capture_output=True, text=True, timeout=20)
 
@@ -81,6 +59,11 @@ def preflight(args: argparse.Namespace, target: str) -> None:
     if not 1 <= args.port <= 65535:
         raise ValueError("Use a --port from 1 through 65535.")
     if args.command == "home":
+        command_link = Path.home() / ".local/bin/panels"
+        if command_link.exists() or command_link.is_symlink():
+            raise ValueError(
+                f"The panels command already exists: {command_link}. It will not be replaced."
+            )
         with socket.socket() as listener:
             try:
                 listener.bind(("127.0.0.1", args.port))
@@ -140,7 +123,19 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             [args.service]
             if args.command == "join"
             else [
-                args.service + suffix for suffix in (".service", ".backup.service", ".backup.timer")
+                "panels-workers.slice",
+                *(
+                    args.service + suffix
+                    for suffix in (
+                        ".service",
+                        ".backup.service",
+                        ".backup.timer",
+                        ".maintenance.service",
+                        ".maintenance.timer",
+                        ".stall-watchdog.service",
+                        ".stall-watchdog.timer",
+                    )
+                ),
             ]
         )
         for service in services:
@@ -162,8 +157,40 @@ def preflight(args: argparse.Namespace, target: str) -> None:
                 raise ValueError(f"The service already exists or cannot be inspected: {service}.")
 
 
+# --- Release source --------------------------------------------------------------------
+# The only part of this script that knows where releases come from: GitHub Actions
+# publications of one repository, read with the GitHub CLI login. The rest of the script
+# uses find_release(), download_release() and release_update_token(). Another source
+# replaces this section and nothing else.
+
+REPOSITORY = "khushal-jagota/headroom"
+PUBLICATION_WORKFLOW = "publish-typescript-release.yml"
+
+
+class DownloadRedirect(urllib.request.HTTPRedirectHandler):
+    """GitHub's artifact redirect must not disclose its token to blob storage."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def _github_token() -> str:
+    return _run("gh", "auth", "token").stdout.strip()
+
+
 def _api(path: str, destination: Path | None = None) -> Any:
-    token = _run("gh", "auth", "token").stdout.strip()
+    token = _github_token()
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "panels-install"}
     if token:
         headers["Authorization"] = "Bearer " + token
@@ -184,25 +211,22 @@ def _api(path: str, destination: Path | None = None) -> Any:
     return None
 
 
-def select_publication(
-    args: argparse.Namespace,
-    target: str,
-    work: Path,
-) -> tuple[Path, dict[str, Any]]:
-    """Resolve immutable artifact IDs through the same trusted publication as updates."""
-    if args.archive is not None:
-        if args.receipt is None:
-            raise ValueError("Supply --receipt with --archive.")
-        receipt = json.loads(args.receipt.read_text())
-        return args.archive, select_receipt(receipt, target, args.command)
-    if args.receipt is not None:
-        raise ValueError("Supply --archive with --receipt.")
+def release_update_token() -> str:
+    """The credential the installed home reads its updates with. It never enters argv or output."""
+    token = _github_token()
+    if not token:
+        raise ValueError("Log in to the GitHub CLI before installation: gh auth login")
+    return token
+
+
+def find_release(target: str, command: str, revision: str | None, work: Path) -> dict[str, Any]:
+    """The newest unexpired trusted publication for this target and command, as its receipt."""
     workflow = PUBLICATION_WORKFLOW
     runs = _api(
         f"actions/workflows/{workflow}/runs?branch=main&event=push&status=success&per_page=20"
     )["workflow_runs"]
     for run in runs:
-        if args.revision is not None and run.get("head_sha") != args.revision:
+        if revision is not None and run.get("head_sha") != revision:
             continue
         if (
             run.get("path") != f".github/workflows/{workflow}"
@@ -218,7 +242,7 @@ def select_publication(
         by_name = {item["name"]: item for item in artifacts if not item["expired"]}
         artifact_name = (
             "panels-linux-executor"
-            if args.command == "join"
+            if command == "join"
             else "panels-mac-home"
             if target == "darwin"
             else "panels-app"
@@ -232,7 +256,7 @@ def select_publication(
         )
         with zipfile.ZipFile(proof_zip) as zipped:
             original = json.loads(zipped.read("publication.json"))
-        receipt = select_receipt(original, target, args.command)
+        receipt = select_receipt(original, target, command)
         if (
             original["publication_run_id"] != run["id"]
             or receipt["artifact_id"] != by_name[artifact_name]["id"]
@@ -243,22 +267,47 @@ def select_publication(
             UTC
         ):
             continue
-        artifact_zip = work / "artifact.zip"
-        _api(
-            f"actions/artifacts/{receipt['artifact_id']}/zip",
-            artifact_zip,
-        )
-        with zipfile.ZipFile(artifact_zip) as zipped:
-            candidates = [name for name in zipped.namelist() if name.endswith(".tar.gz")]
-            if len(candidates) != 1:
-                raise ValueError("The release must contain exactly one sealed archive.")
-            archive = work / "runtime.tar.gz"
-            with zipped.open(candidates[0]) as source, archive.open("xb") as stream:
-                shutil.copyfileobj(source, stream, 1024 * 1024)
-        return archive, receipt
+        return receipt
     raise ValueError(
         "No supported, unexpired release exists. Publish a checked release before installation."
     )
+
+
+def download_release(receipt: dict[str, Any], work: Path) -> Path:
+    """Fetch the sealed archive that a receipt from find_release() names."""
+    artifact_zip = work / "artifact.zip"
+    _api(
+        f"actions/artifacts/{receipt['artifact_id']}/zip",
+        artifact_zip,
+    )
+    with zipfile.ZipFile(artifact_zip) as zipped:
+        candidates = [name for name in zipped.namelist() if name.endswith(".tar.gz")]
+        if len(candidates) != 1:
+            raise ValueError("The release must contain exactly one sealed archive.")
+        archive = work / "runtime.tar.gz"
+        with zipped.open(candidates[0]) as source, archive.open("xb") as stream:
+            shutil.copyfileobj(source, stream, 1024 * 1024)
+    return archive
+
+
+# --- End of release source ---------------------------------------------------------------
+
+
+def select_publication(
+    args: argparse.Namespace,
+    target: str,
+    work: Path,
+) -> tuple[Path, dict[str, Any]]:
+    """A supplied archive and receipt, or the newest release from the release source."""
+    if args.archive is not None:
+        if args.receipt is None:
+            raise ValueError("Supply --receipt with --archive.")
+        receipt = json.loads(args.receipt.read_text())
+        return args.archive, select_receipt(receipt, target, args.command)
+    if args.receipt is not None:
+        raise ValueError("Supply --archive with --receipt.")
+    receipt = find_release(target, args.command, args.revision, work)
+    return download_release(receipt, work), receipt
 
 
 def select_receipt(receipt: dict[str, Any], target: str, command: str) -> dict[str, Any]:
@@ -526,6 +575,7 @@ def main() -> None:
                     "archive": str(archive),
                     "archive_sha256": receipt["archive_sha256"],
                     "revision": receipt["revision"],
+                    "update_token": release_update_token(),
                 }
             else:
                 assert linux_node is not None

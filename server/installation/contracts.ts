@@ -13,6 +13,10 @@ export interface HomeInstallRequest extends HomeInstall {
   readonly archive_sha256: string;
   readonly revision: string;
 }
+/** The installer's stdin request. Only the update token file receives the credential; services see the request without it. */
+export interface HomeInstallSubmission extends HomeInstallRequest {
+  readonly update_token: string;
+}
 export interface HomeInstallationFile {
   readonly path: string;
   readonly content: string;

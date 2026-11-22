@@ -60,8 +60,9 @@ The writes are not yours to make. Hand them to the owner or Chief during this re
 1. Prove the record before you hand it over. Validate it with the code that runs live, without a database and without writes to the installed tree:
 
    ```sh
+   PANELS_APP="$(dirname "$(dirname "$(readlink -f "$(command -v panels)")")")" \
    node --input-type=module -e '
-   const app = "/home/vps/Deployments/Panels/current/app/server/worker_types";
+   const app = process.env.PANELS_APP + "/server/worker_types";
    const { readFileSync } = await import("node:fs");
    const { definition_from_json } = await import(app + "/store.ts");
    const { validate_definition } = await import(app + "/registry.ts");

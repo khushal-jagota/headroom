@@ -1,9 +1,11 @@
 /** Sealed first-home entry: one JSON object on stdin, no source checkout. */
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { home_install_request } from './logic/home.ts';
 import { install_home } from './home.ts';
 import { production_home_dependencies } from './production.ts';
+import { HOME_COMMAND_LINK } from './configuration.ts';
 
 export async function home_main(): Promise<number> {
   const child_processes = new ChildProcesses(),
@@ -38,10 +40,19 @@ export async function home_main(): Promise<number> {
     });
     const address = await install_home(request, deps);
     console.log(`Installed Panels at ${request.root}. Open ${address} on this machine.`);
-    console.log(
-      'For another device, configure HTTPS through Tailscale Serve with the owner login.',
+    // Either spelling of the account home counts: the resolved one and the shell's HOME.
+    const directories = [deps.account_home, deps.environment.HOME ?? deps.account_home].map(
+      (home) => dirname(join(home, HOME_COMMAND_LINK)),
     );
-    console.log('Authenticate your agent provider before the first Worker starts.');
+    if (
+      !(deps.environment.PATH ?? '')
+        .split(':')
+        .some((entry) => entry && directories.includes(resolve(entry)))
+    )
+      console.log(
+        `To run panels, add ${directories[0]} to your PATH: export PATH="${directories[0]}:$PATH"`,
+      );
+    console.log('Next steps: see ops/mac-home/installation.md, After the install.');
     return 0;
   } catch (error) {
     console.error(`Home setup refused: ${error instanceof Error ? error.message : String(error)}`);
