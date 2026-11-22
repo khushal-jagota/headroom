@@ -411,6 +411,8 @@ struct ConversationThread: View {
                                     Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
+                                // Code, tables and charts take what they are offered; the spacer keeps only its minimum.
+                                .layoutPriority(1)
                             if !row.own { Spacer(minLength: 0) }
                         }.id(row.id)
                             .onScrollVisibilityChange(threshold: 0.01) { visible in

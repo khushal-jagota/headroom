@@ -492,7 +492,8 @@ sideways inside the page, and text hugs its width, so a short own message keeps 
 bubble. Each view parses its source once. Only the artifact page lays blocks out lazily,
 so conversation rows keep stable heights. A closed `panels-chart` fence that passes the
 web's checks draws a Swift Charts bar or line chart with the goal number formats. Any
-other fence stays code. Fences inside quotes or lists are not read.
+other fence stays code. A fence inside a quote is not read, so a quoted chart, which the
+web draws, shows as quote text.
 
 Artifact logic tests cover cross-owner URLs and encoding, unsafe file paths,
 Markdown code blocks, chart fences and specs, and the photo/video-only rule. The media cases cover a gap

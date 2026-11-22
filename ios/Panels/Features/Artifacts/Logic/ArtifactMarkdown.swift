@@ -34,7 +34,8 @@ struct ArtifactMarkdownBlock: Identifiable, Equatable {
             }
             if let mark = trimmed.first, mark == "`" || mark == "~" {
                 let run = trimmed.prefix { $0 == mark }
-                if run.count >= 3 { flush(); fence = (String(run), String(trimmed.dropFirst(run.count))); continue }
+                // As in CommonMark, a backtick run with a backtick after it is inline code, not a fence.
+                if run.count >= 3, mark == "~" || !trimmed.dropFirst(run.count).contains("`") { flush(); fence = (String(run), String(trimmed.dropFirst(run.count))); continue }
             }
             if trimmed.isEmpty { flush(); continue }
             let hashes = trimmed.prefix { $0 == "#" }.count
@@ -160,10 +161,11 @@ struct ArtifactChart: Equatable, Sendable {
         return series.allSatisfy { item in
             guard case .object(let line) = item, only(line, ["name", "points"]), line["name"]?.string != nil,
                   case .array(let points)? = line["points"], !points.isEmpty else { return false }
-            var labels = Set<String>()
+            // Compared by scalars, as the web's Set compares strings, not by canonical equivalence.
+            var labels = Set<[Unicode.Scalar]>()
             return points.allSatisfy { item in
                 guard case .object(let point) = item, only(point, ["label", "value"]),
-                      let label = point["label"]?.string, labels.insert(label).inserted, let value = point["value"] else { return false }
+                      let label = point["label"]?.string, labels.insert(Array(label.unicodeScalars)).inserted, let value = point["value"] else { return false }
                 if case .number(let reading) = value { return reading.isFinite && abs(reading) <= readingBound }
                 return value == .null
             }

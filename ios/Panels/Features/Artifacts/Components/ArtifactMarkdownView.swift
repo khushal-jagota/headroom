@@ -59,6 +59,7 @@ struct PanelsMarkdown: View {
                 HStack(alignment: .top, spacing: PanelsTheme.Space.md) {
                     Rectangle().fill(PanelsTheme.Web.tertiary).frame(width: 2)
                     text(document.inline[block.id]).panelsScaledFont(size: 14).foregroundStyle(PanelsTheme.Web.secondary)
+                        .lineSpacing(bodyLineSpacing)
                 }.fixedSize(horizontal: false, vertical: true)
             case .paragraph, .list:
                 if let rows = document.tables[block.id] { table(rows) }
@@ -145,6 +146,7 @@ private struct ArtifactChartView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
             Text(chart.title).panelsScaledFont(size: 15, weight: .semibold).foregroundStyle(PanelsTheme.Web.strong)
+                .accessibilityAddTraits(.isHeader)
             plot.frame(height: PanelsTheme.Goal.plotHeight)
             if chart.series.count > 1 { legend }
         }
@@ -154,8 +156,9 @@ private struct ArtifactChartView: View {
         .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius).stroke(PanelsTheme.Web.border, lineWidth: 1))
     }
 
-    /// Bars use the goal composition palette; lines the goal series palette. Both start with the accent.
-    private func color(_ index: Int) -> Color { PanelsTheme.Goal.seriesColor(nil, index: index, composed: !chart.isLine) }
+    /// Bars use the goal composition palette; lines the goal series palette. Both start with the
+    /// accent, and every series past the third keeps the darkest blue, as on the web.
+    private func color(_ index: Int) -> Color { PanelsTheme.Goal.seriesColor(nil, index: min(index, 2), composed: !chart.isLine) }
 
     private var plot: some View {
         Chart {
@@ -164,8 +167,8 @@ private struct ArtifactChartView: View {
                     ForEach(linePoints(series)) { point in
                         if index == 0 {
                             AreaMark(x: .value("Label", point.label), y: .value("Value", point.value), series: .value("Line", point.line), stacking: .unstacked)
-                                .foregroundStyle(LinearGradient(colors: [color(0).opacity(0.22), color(0).opacity(0)], startPoint: .top, endPoint: .bottom))
-                                .interpolationMethod(.monotone)
+                                .foregroundStyle(LinearGradient(colors: [color(0).opacity(0.16), color(0).opacity(0)], startPoint: .top, endPoint: .bottom))
+                                .interpolationMethod(.monotone).accessibilityHidden(true)
                         }
                         LineMark(x: .value("Label", point.label), y: .value("Value", point.value), series: .value("Line", point.line))
                             .foregroundStyle(color(index)).interpolationMethod(.monotone)
@@ -174,7 +177,7 @@ private struct ArtifactChartView: View {
                         // A reading with no neighbour has no line to sit on.
                         if point.alone {
                             PointMark(x: .value("Label", point.label), y: .value("Value", point.value))
-                                .foregroundStyle(color(index)).symbolSize(28)
+                                .foregroundStyle(color(index)).symbolSize(28).accessibilityHidden(true)
                         }
                     }
                 }
@@ -215,7 +218,6 @@ private struct ArtifactChartView: View {
             }
         }
         .chartLegend(.hidden)
-        .accessibilityLabel(chart.title)
     }
 
     /// Every label while they fit; past six, about five evenly spaced, as Chart.js skips ticks.

@@ -35,6 +35,7 @@ final class ArtifactLogicTests: XCTestCase {
         XCTAssertEqual(blocks[2].text, "# not a heading\nlet x = 1")
         XCTAssertEqual(blocks[4].text, "```swift\ninner\n```")
         XCTAssertEqual(blocks.last?.text, "unfinished")
+        XCTAssertEqual(ArtifactMarkdownBlock.parse("```npm test``` runs it\n\nAfter").map(\.kind), [.paragraph, .paragraph])
     }
 
     // Risk: a chart the web would leave as code (or the reverse) draws differently on the phone.
