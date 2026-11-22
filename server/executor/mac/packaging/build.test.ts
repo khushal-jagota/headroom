@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { ArchiveMembers } from '../../../environments/release/logic/archive_members.ts';
 import { build_mac_package } from './build.ts';
+import { extract_publication_archive } from './publication_main.ts';
+import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
 import { MAC_REQUIRED_FILES } from './configuration.ts';
 import { mac_installation_assets, mac_launcher_bundle } from '../platform.ts';
 
@@ -107,6 +109,19 @@ test('Mac package carries the shared launcher, no account path, and refuses a no
     expect(members).not.toEqual(expect.arrayContaining(['server/executor/mac/service.test.ts']));
     expect(members).not.toContain('server/node_modules/better-sqlite3/build/Makefile');
     expect(members).not.toContain('server/node_modules/better-sqlite3/build/config.gypi');
+    const relocated = join(root, 'relocated');
+    await mkdir(relocated, { mode: 0o700 });
+    const previous_umask = process.umask(0o077);
+    try {
+      await extract_publication_archive(
+        join(options.output, 'panels-mac-runtime.tar.gz'),
+        relocated,
+      );
+      expect(process.umask()).toBe(0o077);
+      expect(await digest_machine_build(relocated)).toBe(built.build_id);
+    } finally {
+      process.umask(previous_umask);
+    }
     await put(join(modules, 'better-sqlite3/build/Makefile'), '/scratch/repeated/native');
     await put(join(modules, 'better-sqlite3/build/config.gypi'), '{"prefix":"/scratch/repeated"}');
     const repeated = await build_mac_package({ ...options, output: join(root, 'repeated') });
