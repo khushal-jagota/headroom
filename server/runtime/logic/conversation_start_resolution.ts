@@ -10,7 +10,7 @@ function home_folder_text(shared_workspace_folder: string, extra = ''): string {
   return (
     " Your start folder is your own. Use it to keep things for yourself: notes, scratch files, and rules you want to remember. Don't copy what is already recorded in Tickets or elsewhere in Panels." +
     extra +
-    ` The repositories are under ${shared_workspace_folder}.`
+    (shared_workspace_folder ? ` The repositories are under ${shared_workspace_folder}.` : '')
   );
 }
 export function chief_role_text(shared_workspace_folder: string): string {

@@ -1,19 +1,9 @@
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'vitest';
 import { createDatabase } from '../core/database/index.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { provision_native_backend_skills, provision_workspace_skills } from './sources.ts';
 import { read_skill, save_skill } from './service.ts';
 import { render_new_skill } from './logic.ts';
 import { save_worker_type_definition } from '../worker_settings/service.ts';
@@ -91,37 +81,6 @@ test.skipIf(process.platform !== 'linux')(
     }
   },
 );
-
-test('synthetic skill links refuse a symlink ancestor outside the owned home before any mutation', () => {
-  const path = root(),
-    home = join(path, 'home'),
-    foreign = join(path, 'foreign'),
-    data = join(path, 'data');
-  mkdirSync(home);
-  mkdirSync(foreign);
-  mkdirSync(join(data, 'skills', 'example'), { recursive: true });
-  writeFileSync(join(data, 'skills', 'example', 'SKILL.md'), 'Example');
-  symlinkSync(foreign, join(home, '.codex'), 'dir');
-  expect(() =>
-    provision_native_backend_skills(join(home, '.codex'), data, { test_home: home }),
-  ).toThrow('synthetic destination escapes owned home');
-  expect(readdirSync(foreign)).toEqual([]);
-  expect(readdirSync(home)).toEqual(['.codex']);
-  const workspace = join(home, 'workspace');
-  mkdirSync(workspace);
-  symlinkSync(foreign, join(workspace, '.agents'), 'dir');
-  expect(() => provision_workspace_skills(workspace, data)).toThrow('workspace skills conflict');
-  expect(readdirSync(foreign)).toEqual([]);
-  rmSync(join(workspace, '.agents'));
-  mkdirSync(join(workspace, '.agents'));
-  symlinkSync(foreign, join(workspace, '.agents', 'skills'), 'dir');
-  expect(() => provision_workspace_skills(workspace, data)).toThrow('workspace skills conflict');
-  expect(readdirSync(foreign)).toEqual([]);
-  rmSync(join(workspace, '.agents', 'skills'));
-  const projected = provision_workspace_skills(workspace, data);
-  expect(realpathSync(join(workspace, '.agents', 'skills'))).toBe(projected);
-  expect(provision_workspace_skills(workspace, data)).toBe(projected);
-});
 
 test('incomplete publication preserves the committed source and identifies file or history failure', () => {
   const path = root(),

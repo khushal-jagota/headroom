@@ -1,3 +1,4 @@
+import { CLAUDE_CAPABILITIES, claude_selection_transition } from './runtime/selection.ts';
 /** The Claude driver. Its runtime loads only when an instance is created. */
 import { NO_DRIVER_CONFIG } from '../core/driver.ts';
 import type { AgentDriver } from '../core/driver.ts';
@@ -12,6 +13,8 @@ export const claude_driver: AgentDriver<null> = {
   client: claude_client,
   manifest: claude_manifest,
   home_instructions_file: 'CLAUDE.md',
+  capabilities: CLAUDE_CAPABILITIES,
+  plan_selection_transition: claude_selection_transition,
   config: NO_DRIVER_CONFIG,
   models: claude_models,
   readable_tool_call_detail: claude_readable_tool_call_detail,

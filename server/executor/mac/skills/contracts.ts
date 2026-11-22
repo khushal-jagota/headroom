@@ -4,6 +4,8 @@ export interface SkillInstallation {
   snapshot: CanonicalSkillSnapshot;
   root: string;
   native_home: string;
+  /** Present only on machine code that owns the colocated server account folders. */
+  legacy_server_skill_parent?: string;
   /** One path component inside native_home: the provider's skills folder. */
   native_skills_directory: string;
   /** Whose child the snapshot is for. It names the role skill the snapshot must require. */

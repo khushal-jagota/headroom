@@ -183,11 +183,9 @@ test('configured restart adopts before reconciliation and Mac locality never sel
           current,
           {
             registry: registry_of_factories(for_every_built_in_backend(() => local)),
-            host: unread_driver_host,
           },
           {
             drivers: [],
-            driver_host: () => unread_driver_host,
             http: () => http,
             stall_sources: () => [local_source],
           },
@@ -289,11 +287,9 @@ test('configured restart adopts before reconciliation and Mac locality never sel
       { ...context, config: { ...context.config, executor_id: null }, executor: null },
       {
         registry: registry_of_factories(for_every_built_in_backend(() => local)),
-        host: unread_driver_host,
       },
       {
         drivers: [],
-        driver_host: () => unread_driver_host,
         http: () => bound.http,
         stall_sources: () => [],
       },
@@ -304,7 +300,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
         event_sink: { async report() {} },
         message_files: endpoint.message_files,
       }),
-    ).toThrow('Execution admission invariant violated');
+    ).toThrow('Machine execution is unavailable');
     expect(local).not.toHaveBeenCalled();
     await prompt_acknowledgement_shutdown(server, core, endpoint, context, path);
   } finally {
@@ -490,7 +486,6 @@ test('production constructs its real executor and reconciles that executor inven
     server = await start_production_server({
       backends: {
         drivers: drivers_of_factories(for_every_built_in_backend(() => () => local)),
-        driver_host: () => unread_driver_host,
         http: (current) =>
           create_backend_runtime({
             database: current.database,
@@ -567,7 +562,7 @@ test("a remote Ticket start follows its machine's advertised driver kinds, or th
     );
     const local = vi.fn(),
       remote = Object.assign(vi.fn(), { recover: () => null, retained_runs: () => [] });
-    const factory = new LocaleBackendChildFactory(database, local, remote);
+    const factory = new LocaleBackendChildFactory(database, remote);
     const start_remote = (backend: string) =>
       factory.create({
         resolved_start: new ResolvedConversationStart({
@@ -683,7 +678,7 @@ test("a non-Ticket conversation's child runs on its recorded machine, which its 
     });
     const local = vi.fn(),
       remote = Object.assign(vi.fn(), { recover: () => null, retained_runs: () => [] });
-    const factory = new LocaleBackendChildFactory(database, local, remote);
+    const factory = new LocaleBackendChildFactory(database, remote);
     for (const resolved_start of [chief, generic])
       factory.create({
         resolved_start,

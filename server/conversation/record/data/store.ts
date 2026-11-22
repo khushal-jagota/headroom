@@ -3,19 +3,16 @@ import { HOME_MACHINE_ID } from '../../../execution_identity.ts';
 import { conversation_machine_id } from '../../../machines/conversation_machine.ts';
 import { write_bindings } from '../../start_admission/index.ts';
 import type { AdmissionDatabase, StartRequest } from '../../start_admission/contracts.ts';
-import type { LocalChildIdentity } from '../../local_child_contracts.ts';
 import type {
   LocalChildCustodyRow,
   RecordedSourceSettlement,
 } from '../../local_child_custody_contracts.ts';
 import type { WorkspaceIdentity } from '../../../ticket_workspaces/contracts.ts';
 import type { TurnToken } from '../../backends/contracts.ts';
-import { BackendSpawnFailed } from '../../backends/contracts.ts';
 import { AUTOMATIC_COMPACTION_MINIMUM_INPUT_TOKENS } from '../../runtime/configuration.ts';
 import { read_unresolved_turns } from '../../deploy_interruptions/capture.ts';
 import * as custody from './child_custody.ts';
 import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../../child_custody.ts';
-import * as supervision_records from '../../../worker_supervision/records.ts';
 import {
   release_worker_step_claim,
   read_ticket,
@@ -219,7 +216,6 @@ export class ConversationStorePrimitives {
             machine_id,
           ],
         );
-        custody.write_never_started(tx, value.conversation_id);
       });
     } catch (error) {
       if (
@@ -296,8 +292,6 @@ export class ConversationStorePrimitives {
           randomUUID().replaceAll('-', ''),
           epoch.epoch,
         ]);
-        if (!this.blocked_local_conversations.has(conversation_id))
-          custody.bind_current_turn(tx, conversation_id);
         write_bindings(tx, { conversation_id, turn_number: number }, requests);
         apply_facts(tx, conversation_id, [
           {
@@ -530,71 +524,6 @@ export class ConversationStore
   readonly #settled_recorded_turns = new Map<string, TurnToken>();
   #reconciliation_prepared = false;
 
-  async record_child_custody(
-    conversation_id: string,
-    generation: string,
-    identity: LocalChildIdentity | null = null,
-    options: { retired?: boolean } = {},
-  ): Promise<void> {
-    return this.#settlement.retain_recording(
-      (async () => {
-        const current =
-          !options.retired && identity === null
-            ? await this.#participants.local_child_custody?.host_boot_identity()
-            : null;
-        if (!options.retired && identity === null && (!current?.host || !current.boot))
-          throw new BackendSpawnFailed(
-            'Cannot establish the host and boot identity before agent startup',
-          );
-        await this.#settlement.write_recording(() =>
-          this.#write_custody((tx) => {
-            if (options.retired) custody.write_retired(tx, conversation_id, generation);
-            else if (identity === null)
-              custody.write_pending(tx, conversation_id, generation, current!);
-            else {
-              custody.write_started(tx, conversation_id, generation, identity);
-              const recorded = custody.read(tx, conversation_id);
-              if (
-                recorded === undefined ||
-                recorded.generation !== generation ||
-                recorded.state !== 'started' ||
-                recorded.pid !== identity.pid ||
-                recorded.birth !== identity.birth ||
-                recorded.boot !== identity.boot ||
-                recorded.unit !== identity.unit ||
-                recorded.supervision_record !== identity.supervision_record
-              )
-                throw new BackendSpawnFailed('The agent process identity could not be saved');
-            }
-          }),
-        );
-      })(),
-    );
-  }
-  async record_child_supervision(
-    conversation_id: string,
-    generation: string,
-    path: string,
-  ): Promise<void> {
-    return this.#settlement.retain_recording(
-      (async () => {
-        const record = await supervision_records.read(path);
-        if (record.conversation_id !== conversation_id)
-          throw new Error('Worker supervision record does not own this conversation');
-        await this.#settlement.write_recording(() =>
-          this.#write_custody((tx) =>
-            custody.write_supervision(tx, conversation_id, generation, path),
-          ),
-        );
-      })(),
-    );
-  }
-  local_child_supervision_record(conversation_id: string, generation: string): string | null {
-    return this.database.read((sql) => {
-      const row = custody.read(sql, conversation_id);
-      return row?.generation === generation ? row.supervision_record : null;
-    });
-  }
   async has_recorded_source(conversation_id: string): Promise<boolean> {
     return this.database.read((sql) => custody.read(sql, conversation_id) !== undefined);
   }
@@ -610,19 +539,6 @@ export class ConversationStore
             custody.is_ticket_conversation(sql, conversation_id) === proof.ticket_worker))
       );
     });
-  }
-  async check_local_child_started(
-    conversation_id: string,
-    generation: string,
-    turn_number: number,
-  ): Promise<boolean> {
-    return this.database.read(
-      (sql) =>
-        sql.get(
-          "SELECT 1 FROM conversation_child_custody c JOIN conversation_turn_occurrences o ON o.conversation_id=c.conversation_id AND o.occurrence_id=c.occurrence_id AND o.runtime_epoch=c.runtime_epoch WHERE c.conversation_id=? AND c.generation=? AND c.state='started' AND c.host IS NOT NULL AND c.host!='' AND c.pid>0 AND c.birth IS NOT NULL AND c.birth!='' AND c.boot IS NOT NULL AND c.boot!='' AND o.turn_number=?",
-          [conversation_id, generation, turn_number],
-        ) !== undefined,
-    );
   }
   async recorded_source_block_reason(conversation_id: string): Promise<string> {
     // A marked pending row without a record never spawned, so no reboot is needed for it.
@@ -792,6 +708,39 @@ export class ConversationStore
     return this.#settlement.retain_recording(
       (async () => {
         this.#startup_source_proofs.clear();
+        // One-release upgrade cleanup only. Delete this path after every home runs one
+        // start of this release. New conversations never create physical custody rows.
+        const legacy = this.database.read((sql) =>
+          sql
+            .all<LocalChildCustodyRow>(
+              "SELECT * FROM conversation_child_custody WHERE state!='retired'",
+            )
+            .map((row) => ({
+              row,
+              ticket_worker: custody.is_ticket_conversation(sql, row.conversation_id),
+            })),
+        );
+        const inspector = this.#participants.local_child_custody;
+        for (const { row, ticket_worker } of legacy) {
+          let proven =
+            (await inspector?.retirement_row_proven(row, undefined, ticket_worker)) === true;
+          if (!proven && row.state === 'launch_pending' && row.supervision_record !== null)
+            proven = (await inspector?.stop_supervision(row.supervision_record)) === true;
+          const identity = custody.identity(row);
+          if (!proven && row.state === 'started' && identity !== null)
+            proven =
+              (await inspector?.stop_recorded_child(
+                identity,
+                row.host,
+                undefined,
+                ticket_worker,
+              )) === true;
+          if (proven)
+            this.#write_custody((tx) => {
+              if (custody.same(custody.read(tx, row.conversation_id), row))
+                custody.write_retired(tx, row.conversation_id, row.generation);
+            });
+        }
         const candidates = this.database.read((sql) =>
           read_unresolved_turns(sql, { include_custody_unavailable: true }),
         );

@@ -1,15 +1,10 @@
-/**
- * Test-only: the home's machine code is present and runs every built-in backend. Production
- * runs every conversation through machine code, so tests that run the home's conversations on
- * a local child need this row.
- */
+/** A synthetic lease for an explicit destination, through the ordinary presence record. */
 import type { TransactionSql } from '../../core/database/contracts.ts';
 import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
-import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { native_wire_fixtures } from '../../executor/testing/native_protocol_fixtures.ts';
 import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
-export function seed_present_home_machine(tx: TransactionSql): void {
+export function seed_machine_lease(tx: TransactionSql, machine_id: string): void {
   const fixture = native_wire_fixtures().LeaseRequest;
   const identity = { ...fixture.identity, protocol_version: PROTOCOL_VERSION };
   const lease = {
@@ -28,7 +23,7 @@ export function seed_present_home_machine(tx: TransactionSql): void {
   tx.run(
     'INSERT INTO mac_executor_presence(machine_id,executor_incarnation,identity_json,lease_json,last_lease_at_ms) VALUES(?,?,?,?,?) ON CONFLICT(machine_id) DO NOTHING',
     [
-      HOME_MACHINE_ID,
+      machine_id,
       identity.executor_incarnation,
       JSON.stringify(identity),
       JSON.stringify(lease),

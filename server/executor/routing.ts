@@ -11,19 +11,12 @@ import type {
 } from '../conversation/backends/contracts.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { conversation_machine_id } from '../machines/conversation_machine.ts';
-import { authenticated_local_child } from '../agent_identity/launch.ts';
 
 export class LocaleBackendChildFactory {
   private readonly database: Database;
-  private readonly local_factory: BackendChildFactory;
   private readonly remote_factory: RetainedBackendChildFactory;
-  constructor(
-    database: Database,
-    local_factory: BackendChildFactory,
-    remote_factory: RetainedBackendChildFactory,
-  ) {
+  constructor(database: Database, remote_factory: RetainedBackendChildFactory) {
     this.database = database;
-    this.local_factory = local_factory;
     this.remote_factory = remote_factory;
   }
   retained_runs(): readonly RetainedBackendRun[] {
@@ -40,14 +33,13 @@ export class LocaleBackendChildFactory {
       const machine_id = conversation_machine_id(sql, options.resolved_start.conversation_id);
       return machine_id === null ? null : machine_driver_kinds(sql, machine_id);
     });
-    // Only a start without a conversation record has no machine. It keeps the local child.
-    const remote = driver_kinds !== null;
-    if (remote && !machine_can_run(driver_kinds, options.resolved_start.backend_key))
+    if (driver_kinds === null)
+      throw new BackendSpawnFailed('The conversation has no execution machine');
+    if (!machine_can_run(driver_kinds, options.resolved_start.backend_key))
       throw new BackendSpawnFailed(
         `The conversation's machine cannot run the ${options.resolved_start.backend_key} backend`,
       );
-    const child = (remote ? this.remote_factory : this.local_factory)(options);
-    return remote ? child : authenticated_local_child(child, this.database);
+    return this.remote_factory(options);
   }
   /** The existing core consumes a callable factory with retained recovery methods. */
   as_factory(): RetainedBackendChildFactory {

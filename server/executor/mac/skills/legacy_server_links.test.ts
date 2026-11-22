@@ -10,8 +10,8 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, test } from 'vitest';
-import { account_skill_homes, remove_server_account_skill_links } from './account.ts';
-import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
+import { account_skill_homes, remove_server_account_skill_links } from './legacy_server_links.ts';
+import { BUILT_IN_MANIFESTS } from '../../../drivers/built_in_manifests.ts';
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -19,7 +19,7 @@ afterEach(() => {
 
 // Machine code refuses an entry it does not own, so the server's old links in a provider account
 // folder would stop its first Ticket start. No other test proves the server removes only its own.
-test('startup removes only the server links from each provider account skills folder', () => {
+test('machine code removes only the server links from each provider account skills folder', () => {
   const root = mkdtempSync(join(tmpdir(), 'account-skills-'));
   roots.push(root);
   const parent = join(root, 'data'),

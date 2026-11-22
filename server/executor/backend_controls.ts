@@ -1,5 +1,7 @@
 /** Only display state crosses this boundary. Provider credentials stay on the machine. */
 import type { BackendRequest, JsonObject } from './wire.generated.ts';
+import { parse_backend_instance_id } from '../drivers/core/identity.ts';
+import type { BackendSnapshotServiceContract } from '../conversation/snapshot/contracts.ts';
 import type { ExecutorCatalogSource } from '../drivers/core/executor.ts';
 import {
   SignInReturnUrlRefused,
@@ -12,8 +14,20 @@ export async function run_backend_request(
   source: ExecutorCatalogSource | undefined,
   signal?: AbortSignal,
   resolve_secret?: (id: string) => Promise<string>,
+  snapshots?: Pick<BackendSnapshotServiceContract, 'update_backend'>,
 ): Promise<JsonObject> {
   try {
+    if (request.operation === 'update_backend') {
+      if (snapshots === undefined)
+        throw new SignInUnavailable('This machine cannot update providers.');
+      return JSON.parse(
+        JSON.stringify(
+          await snapshots.update_backend(parse_backend_instance_id(request.backend_key), {
+            signal,
+          }),
+        ),
+      ) as JsonObject;
+    }
     if (request.operation === 'capabilities')
       return {
         can_sign_in: source?.sign_in !== undefined,

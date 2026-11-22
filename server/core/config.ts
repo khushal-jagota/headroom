@@ -1,6 +1,6 @@
 import type { APNsConfig } from '../notifications/contracts.ts';
 import { load_apns_config } from '../notifications/config.ts';
-import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { isAbsolute, dirname, join, delimiter, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -266,32 +266,7 @@ export function loadConfig(
       throw new PlannerError('validation', `invalid integer for ${key}: ${JSON.stringify(v)}`);
     return Number(v);
   };
-  const directory = (key: string, variable: string): string | null => {
-    const v = raw(key, variable);
-    if (v == null) return null;
-    if (typeof v !== 'string' || !v.trim())
-      throw new PlannerError('validation', `invalid ${key}: ${JSON.stringify(v)}`);
-    // Partial-env callers keep their existing ambient default unless home is explicit.
-    const directory_home = paths.home === '' ? '/' : paths.home;
-    const expanded =
-      v === '~'
-        ? (directory_home ?? homedir())
-        : v.startsWith('~/')
-          ? join(directory_home ?? homedir(), v.slice(2))
-          : v;
-    try {
-      if (!isAbsolute(expanded)) throw new Error('the path must be absolute');
-      const result = realpathSync(paths.admit_path?.(expanded) ?? expanded);
-      if (!statSync(result).isDirectory())
-        throw new Error('the path must be an existing directory');
-      return result;
-    } catch (error) {
-      throw new PlannerError(
-        'validation',
-        `invalid ${key} ${JSON.stringify(v)}: ${(error as Error).message}`,
-      );
-    }
-  };
+
   const test_mode = testModeFromEnvironment(env);
   let provider =
     optional('trusted_ingress_provider', 'PLAN_TRUSTED_INGRESS_PROVIDER')?.toLowerCase() ?? null;
@@ -444,8 +419,8 @@ export function loadConfig(
       server_root ? 'credential-secrets/key' : join(dirname(db_path), 'credential-secrets', 'key'),
     ),
     measure_source_timeout_seconds: timeout,
-    workspace_root: directory('workspace_root', 'PLAN_WORKSPACE_ROOT'),
-    ticket_scratch_root: directory('ticket_scratch_root', 'PLAN_TICKET_SCRATCH_ROOT'),
+    workspace_root: optional('workspace_root', 'PLAN_WORKSPACE_ROOT'),
+    ticket_scratch_root: optional('ticket_scratch_root', 'PLAN_TICKET_SCRATCH_ROOT'),
     ticket_scratch_database: optional('ticket_scratch_database', 'PLAN_TICKET_SCRATCH_DATABASE'),
   };
 }

@@ -1,13 +1,13 @@
-/** Machine code links the provider account skill folders. The server removes only its own old links. */
+/** Machine code removes only provider links left by its colocated server. */
 import { constants, closeSync, fstatSync, lstatSync, openSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { flock } from '../core/locks/flock.ts';
-import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
-import type { BuiltInDriverFacts } from '../drivers/built_in_manifests.ts';
-import { home_path } from '../drivers/core/paths.ts';
-import { with_skill_publication_lock } from './files.ts';
-import { resolve_native_skill_path } from './native_publication.ts';
+import { flock } from '../../../core/locks/flock.ts';
+import { BUILT_IN_MANIFESTS } from '../../../drivers/built_in_manifests.ts';
+import type { BuiltInDriverFacts } from '../../../drivers/built_in_manifests.ts';
+import { home_path } from '../../../drivers/core/paths.ts';
+import { with_skill_publication_lock } from '../../../skills/files.ts';
+import { resolve_native_skill_path } from '../../../skills/native_publication.ts';
 import {
   close_native_descriptor,
   native_path_bytes,
@@ -19,7 +19,7 @@ import {
   relative_directory_components,
   readlink_relative,
   unlink_relative,
-} from '../executor/mac/platform.ts';
+} from '../platform.ts';
 /** A provider home, and the one folder inside it that holds the linked skills. */
 export interface AccountSkillHome {
   readonly path: string;

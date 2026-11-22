@@ -763,9 +763,10 @@ export async function readBackends(refresh = false, machineId?: string): Promise
 }
 
 export function updateBackend(
-  backendKey: ConversationBackendKey
+  backendKey: ConversationBackendKey,
+  machineId?: string
 ): Promise<BackendUpdateResult> {
-  return request<BackendUpdateResult>(`/backends/${encodeURIComponent(backendKey)}/update`, {
+  return request<BackendUpdateResult>(backendMachinePath(`/backends/${encodeURIComponent(backendKey)}/update`, machineId), {
     method: "POST"
   });
 }

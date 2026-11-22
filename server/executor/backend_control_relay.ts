@@ -3,6 +3,7 @@ import type { SqliteCommandMailbox } from './vps_mailbox.ts';
 import type { MacPresenceService } from './vps_presence.ts';
 import type { BackendRequest, JsonObject } from './wire.generated.ts';
 import { BackendControlSecrets } from './backend_control_secrets.ts';
+import { UPDATE_COMMAND_TIMEOUT_SECONDS } from '../conversation/snapshot/configuration.ts';
 import { BACKEND_CONTROL_LIMIT_SECONDS } from './configuration.ts';
 import { HttpError } from '../core/http/errors.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
@@ -86,7 +87,8 @@ export class VpsBackendControlRelay implements MachineBackendControls {
       signal.throwIfAborted();
       const result = await this.mailbox.wait_result(
         command.command_id,
-        BACKEND_CONTROL_LIMIT_SECONDS,
+        BACKEND_CONTROL_LIMIT_SECONDS +
+          (request.operation === 'update_backend' ? UPDATE_COMMAND_TIMEOUT_SECONDS : 0),
         { signal },
       );
       if (result?.backend_result == null)

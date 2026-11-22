@@ -1,6 +1,5 @@
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { AdmissionDatabase, StartRequest } from '../start_admission/contracts.ts';
-import type { LocalChildIdentity } from '../local_child_contracts.ts';
 import type {
   LocalChildCustodyInspection,
   RecordedSourceSettlement,
@@ -305,26 +304,8 @@ export interface WorkerStepMemoryNote {
 /** One append owner, synchronous source effects, and publication after successful return. */
 export interface ConversationRecordStore {
   readonly blocked_local_conversations: Set<string>;
-  record_child_custody(
-    conversation_id: string,
-    generation: string,
-    identity?: LocalChildIdentity | null,
-    options?: { retired?: boolean },
-  ): Promise<void>;
-  record_child_supervision(
-    conversation_id: string,
-    generation: string,
-    path: string,
-  ): Promise<void>;
-  /** The supervision record a local child of this generation reported, if it reported one. */
-  local_child_supervision_record(conversation_id: string, generation: string): string | null;
   has_recorded_source(conversation_id: string): Promise<boolean>;
   recorded_source_retirement_proven(conversation_id: string): Promise<boolean>;
-  check_local_child_started(
-    conversation_id: string,
-    generation: string,
-    turn_number: number,
-  ): Promise<boolean>;
   recorded_source_block_reason(conversation_id: string): Promise<string>;
   retire_idle_recorded_source(
     conversation_id: string,

@@ -6,7 +6,8 @@ import { afterEach, expect, test, vi } from 'vitest';
 import type { ReleaseExecution } from '../release/contracts.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { validate_app_manifest } from '../release/identity.ts';
-import { run_release_command } from '../release/process.ts';
+import { find_release_executable, run_release_command } from '../release/process.ts';
+import { linux_executor_path } from './logic/paths.ts';
 import { extract_runtime } from './archive.ts';
 import type { LinuxExecutorInstallation, LinuxExecutorInstallRequest } from './contracts.ts';
 import { LINUX_EXECUTOR_SERVICE_NAME } from './configuration.ts';
@@ -140,4 +141,19 @@ test('late unit collision preserves foreign files, restores empty data, and perm
     value.children.seal();
     await value.children.settled();
   }
+});
+
+// Risk: a provider beside Node or in the release shadows the account's logged-in command.
+// Existing install tests check service writes, but do not resolve colliding executables.
+test('machine provider lookup prefers the account over Node and packaged commands', async () => {
+  const value = await fixture();
+  const account = join(value.root, '.local/bin');
+  const node = join(value.root, 'host-node/bin');
+  const packaged = join(value.runtime, 'agent_backends/node_modules/.bin');
+  for (const directory of [account, node, packaged]) {
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'codex'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  const environment = { PATH: linux_executor_path(value.runtime, join(node, 'node'), value.root) };
+  expect(await find_release_executable('codex', environment)).toBe(join(account, 'codex'));
 });

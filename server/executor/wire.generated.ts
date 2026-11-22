@@ -2,7 +2,7 @@
 // Required nullable fields stay required. Defaults are optional on the wire.
 import wire_schema from './wire.schema.json' with { type: 'json' };
 export const WIRE_SCHEMA = wire_schema;
-export const PROTOCOL_VERSION = 26;
+export const PROTOCOL_VERSION = 27;
 export const SPOOL_FORMAT_VERSION = 5;
 export const COMMAND_JOURNAL_FORMAT_VERSION = 1;
 export type AcceptanceReceipt = {
@@ -89,6 +89,7 @@ export type BackendRequest = {
   operation:
     | 'capabilities'
     | 'refresh_usage'
+    | 'update_backend'
     | 'sign_in_read'
     | 'sign_in_start'
     | 'sign_in_cancel'

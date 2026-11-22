@@ -1,3 +1,4 @@
+import { decode_machine_update } from './machine.ts';
 import { decode_machine_usage } from '../backend_usage/machine.ts';
 import { read_machine } from '../../machines/data.ts';
 import type { BackendRequest } from '../../executor/wire.generated.ts';
@@ -24,7 +25,7 @@ import {
 } from '../../drivers/core/sign_in.ts';
 import { snapshot_json, sign_in_json } from './presentation.ts';
 import type { CardFacts } from './presentation.ts';
-/** Home cards: this server's own hooks. Another machine's card: its driver only. */
+/** Explicit in-process test adapters supply their own card hooks. */
 function card_facts(runtime: BackendHttpRuntime, key: string, home = true): CardFacts {
   return {
     driver: runtime.driver_of(key),
@@ -52,7 +53,7 @@ async function machine_cards(
   snapshots: readonly BackendSnapshot[],
   signal?: AbortSignal,
 ) {
-  if (machine_id === HOME_MACHINE_ID)
+  if (runtime.machine_backends === undefined)
     return snapshots.map((snapshot) => home_card(runtime, snapshot));
   const controls = runtime.machine_backends?.(machine_id);
   return Promise.all(
@@ -192,7 +193,7 @@ export function createBackendRoutes(
     app.get('/backends', async (request) => {
       const machine_id = selected_machine(runtime, request.query);
       const source =
-        machine_id === HOME_MACHINE_ID
+        runtime.machine_backends === undefined
           ? runtime.backend_snapshots
           : runtime.machine_catalog(machine_id);
       if (!source) throw new HttpError(503, 'The selected machine is unavailable.');
@@ -217,7 +218,7 @@ export function createBackendRoutes(
         throw new PlannerError('validation', 'ticket_id is required', {});
       const ticket = runtime.database.read((sql) => read_ticket(sql, raw.ticket_id as string));
       const source =
-        ticket.machine_id === HOME_MACHINE_ID
+        runtime.machine_backends === undefined
           ? runtime.backend_snapshots
           : runtime.machine_catalog(ticket.machine_id);
       if (source === null)
@@ -233,7 +234,7 @@ export function createBackendRoutes(
     });
     app.post('/backends/refresh', async (request) => {
       const machine_id = selected_machine(runtime, request.query);
-      if (machine_id !== HOME_MACHINE_ID) {
+      if (runtime.machine_backends !== undefined) {
         const source = runtime.machine_catalog(machine_id);
         if (!source) throw new HttpError(503, 'The selected machine is unavailable.');
         const snapshots = await Promise.all(
@@ -323,11 +324,21 @@ export function createBackendRoutes(
     app.post('/backends/:backend_key/update', async (request) => {
       const key = backend(runtime, request.params);
       requireOwner(services.identity(request));
+      const machine_id = selected_machine(runtime, request.query);
+      if (runtime.machine_backends !== undefined)
+        return decode_machine_update(
+          await remote_action(
+            runtime,
+            machine_id,
+            { backend_key: key, operation: 'update_backend' },
+            signal_of(request),
+          ),
+        );
       return runtime.backend_snapshots.update_backend(key, { signal: signal_of(request) });
     });
     app.post('/backends/:backend_key/sign-in', async (request) => {
       const machine_id = selected_machine(runtime, request.query);
-      if (machine_id !== HOME_MACHINE_ID)
+      if (runtime.machine_backends !== undefined)
         return remote_action(
           runtime,
           machine_id,
@@ -344,7 +355,7 @@ export function createBackendRoutes(
     });
     app.get('/backends/:backend_key/sign-in', async (request) => {
       const machine_id = selected_machine(runtime, request.query);
-      if (machine_id !== HOME_MACHINE_ID)
+      if (runtime.machine_backends !== undefined)
         return remote_action(
           runtime,
           machine_id,
@@ -356,7 +367,7 @@ export function createBackendRoutes(
     });
     app.delete('/backends/:backend_key/sign-in', async (request) => {
       const machine_id = selected_machine(runtime, request.query);
-      if (machine_id !== HOME_MACHINE_ID)
+      if (runtime.machine_backends !== undefined)
         return remote_action(
           runtime,
           machine_id,
@@ -375,7 +386,7 @@ export function createBackendRoutes(
       '/backends/:backend_key/sign-in/:session_id',
       async (request) => {
         const machine_id = selected_machine(runtime, request.query);
-        if (machine_id !== HOME_MACHINE_ID)
+        if (runtime.machine_backends !== undefined)
           return remote_action(
             runtime,
             machine_id,
@@ -397,7 +408,7 @@ export function createBackendRoutes(
         const return_url = fields.text('return_url');
         fields.finish();
         const machine_id = selected_machine(runtime, request.query);
-        if (machine_id !== HOME_MACHINE_ID) {
+        if (runtime.machine_backends !== undefined) {
           const controls = runtime.machine_backends?.(machine_id);
           if (!controls?.submit_return_url)
             throw new HttpError(503, 'The selected machine is unavailable.');

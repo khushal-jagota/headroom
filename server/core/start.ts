@@ -40,7 +40,6 @@ export type {
 import { assert_test_database_path } from './test_paths.ts';
 import { ServerServices } from './server_services.ts';
 import type { UpdateBarrier } from '../environments/update_barrier.ts';
-import type { WorkerSupervisionRuntime } from '../worker_supervision/runtime.ts';
 
 export interface ExecutorCompositionContext {
   readonly database: Database;
@@ -64,7 +63,6 @@ export interface ConversationCompositionContext extends Omit<
   child_processes: OwnedChildProcesses;
   executor?: VpsExecutorRegistry | null;
   update_barrier?: UpdateBarrier;
-  worker_supervision: WorkerSupervisionRuntime;
 }
 export interface TestCompositionContext extends ConversationCompositionContext {
   /** Existing original stop only. Test close hooks must never create another budget. */

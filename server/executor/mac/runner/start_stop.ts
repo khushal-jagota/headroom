@@ -2,7 +2,7 @@
 import type { WorkerSetupReport } from '../../wire.generated.ts';
 import { same_reference } from '../../child_reference.ts';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   BackendSpawnFailed,
   BackendInitializationTimeout,
@@ -189,6 +189,13 @@ export class MacNativeChildren implements MacNativeChildrenContract {
             native_home: native_home.path,
             native_skills_directory: native_home.skills_directory,
             owner_kind: entry.owner.kind,
+            ...(this.options.paths.server_folders === null
+              ? {}
+              : {
+                  legacy_server_skill_parent: dirname(
+                    dirname(this.options.paths.server_folders.tickets),
+                  ),
+                }),
           },
         );
       } catch (error) {

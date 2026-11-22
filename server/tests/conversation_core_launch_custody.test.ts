@@ -9,52 +9,22 @@ import {
   PromptDeliveryRefusalReason,
   PromptDeliveryStarted,
 } from '../conversation/contracts.ts';
-import {
-  LocalChildCustody,
-  SUPERVISED_CHILD_GENERATION_PREFIX,
-} from '../conversation/child_custody.ts';
+import { LocalChildCustody } from '../conversation/child_custody.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../lifecycle/configuration.ts';
 
-const STOPPED = 'the agent started without a supervision record, so Panels stopped it';
-
-// Risk: a marked row without a record reads as never spawned after a restart, so a child that
-// broke the promise would outlive its custody. Gap: no core check made the marker true.
-test('a supervised launch whose child reports no record is stopped and its prompt refused', async () => {
+// Risk: core changes recreate server-owned process records behind machine dispatch.
+// Existing coverage checked native launch writes, not their absence at the record boundary.
+test('a new conversation creates no server process record or native custody hooks', async () => {
   const f = setup();
-  const registry = f.core.options.backend_registry;
-  const require_live = registry.require_live.bind(registry);
-  vi.spyOn(registry, 'require_live').mockImplementation((id) => ({
-    ...require_live(id),
-    supervises_local_launches: true,
-  }));
-  vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     await f.start();
-    expect(await f.send()).toEqual(
-      new PromptDeliveryRefused({
-        refusal_reason: PromptDeliveryRefusalReason.backend_did_not_start,
-      }),
+    expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
+    expect(f.database.read((sql) => sql.all('SELECT * FROM conversation_child_custody'))).toEqual(
+      [],
     );
-    expect(f.children).toHaveLength(1);
-    const stopped = f.children[0].last_observation!;
-    expect(stopped.calls.map((call) => call.command)).toEqual(['start', 'stop']);
-    expect(stopped.delivered_text).toEqual([]);
     const state = f.core.conversations.get('core')!;
-    expect(state.child).toBeNull();
-    expect(state.child_is_quarantined).toBe(false);
-    const custody = f.database.read((sql) =>
-      sql.get<{ generation: string; state: string; supervision_record: string | null }>(
-        'SELECT generation,state,supervision_record FROM conversation_child_custody',
-      ),
-    );
-    expect(custody?.generation.startsWith(SUPERVISED_CHILD_GENERATION_PREFIX)).toBe(true);
-    expect(custody?.state).toBe('retired');
-    expect(custody?.supervision_record).toBeNull();
-    const refusal = f.store
-      .read_events_after('core', 0)
-      .find((row) => row.kind === 'prompt_delivery_refused')?.payload as
-      { refusal_detail: string } | undefined;
-    expect(refusal?.refusal_detail).toBe(STOPPED);
+    expect(state.child_event_sink?.record_local_child_custody).toBeUndefined();
+    expect(state.child_event_sink?.record_local_child_supervision).toBeUndefined();
   } finally {
     await f.core.shutdown({ deadline: performance.now() / 1000 + SHUTDOWN_GRACE_SECONDS });
   }
@@ -70,7 +40,7 @@ test('outside a Ticket, a new turn starts no child until the recorded process is
   // The old server died with its agent idle and alive, so the record holds a started process.
   f.database.write((tx) =>
     tx.run(
-      "UPDATE conversation_child_custody SET generation='old',state='started',pid=4321,birth='1',boot='boot',host='linux:machine' WHERE conversation_id='core'",
+      "INSERT INTO conversation_child_custody(conversation_id,generation,state,pid,birth,boot,host) VALUES('core','old','started',4321,'1','boot','linux:machine')",
     ),
   );
   let stopped = false;
@@ -82,6 +52,8 @@ test('outside a Ticket, a new turn starts no child until the recorded process is
     .mockImplementation(async () => stopped);
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const restarted = setup({ restart_of: f.database, role_actor: 'chief' });
+  await restarted.store.prepare_reconciliation(new Map());
+  f.database.write((tx) => restarted.store.reconcile_in_transaction(tx, new Map()));
   try {
     expect(await restarted.send('one', 'first')).toEqual(
       new PromptDeliveryRefused({

@@ -5,7 +5,7 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 ## What it is made of
 
 - **The skill row.** Shared role text lives in the database. Structured preset guidance generates specialist skill rows.
-- **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. A server with an explicit workspace links it to those copies. The server does not link agent homes. Machine code (the executor) makes its own copies from the rows, and it links every agent home to them, as each backend driver declares it (Antigravity's in `~/.gemini/config/skills`). Machine code refuses a link that it did not make, so an installed server removes its own old links from the agent homes when it starts.
+- **The published copies.** Headroom writes each row to its own skill folder when a database opens or a skill changes. Machine code makes its copies from those rows and links provider account homes to them. Only machine code opens those homes. On the local link, it removes the colocated server's old links before its first publication.
 - **The seed.** The skill tree packaged with the code fills a database that has no skills yet. Nothing reads it after that.
 - **Skill history.** The editor keeps saved versions in the database. Worker steps do not record skill versions.
 - **Supporting files.** A skill folder can hold other files beside `SKILL.md`. They live only on disk: no row holds them, the skills backup copies them, and republication leaves them alone.

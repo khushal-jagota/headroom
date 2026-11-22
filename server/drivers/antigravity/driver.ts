@@ -1,3 +1,5 @@
+import { ACP_CHILD_CAPABILITIES } from '../acp/flavor.ts';
+import { acp_selection_transition } from '../core/selection.ts';
 /** The Antigravity driver. Its runtime loads only when an instance is created. */
 import { NO_DRIVER_CONFIG } from '../core/driver.ts';
 import type { AgentDriver } from '../core/driver.ts';
@@ -12,6 +14,8 @@ export const antigravity_driver: AgentDriver<null> = {
   manifest: antigravity_manifest,
   // agy reads AGENTS.md (and GEMINI.md) from its workspace.
   home_instructions_file: 'AGENTS.md',
+  capabilities: ACP_CHILD_CAPABILITIES,
+  plan_selection_transition: acp_selection_transition,
   config: NO_DRIVER_CONFIG,
   models: antigravity_models,
   async create(input, host) {
