@@ -377,16 +377,20 @@ export class PermissionAnsweredEventPayload {
   readonly option_id: string;
   readonly fate: AnswerFate;
   readonly answer_id: string | null;
+  /** The caller's own name for this answer. A repeat with the same name gets this row back. */
+  readonly operation_id: string | null;
   constructor(values: {
     ask_id: string;
     option_id: string;
     fate?: AnswerFate;
     answer_id?: string | null;
+    operation_id?: string | null;
   }) {
     this.ask_id = values.ask_id;
     this.option_id = values.option_id;
     this.fate = values.fate === undefined ? AnswerFate.applied : values.fate;
     this.answer_id = values.answer_id === undefined ? null : values.answer_id;
+    this.operation_id = values.operation_id ?? null;
   }
 }
 
@@ -414,16 +418,20 @@ export class UserInputAnsweredEventPayload {
   readonly answers: readonly UserInputAnswer[];
   readonly fate: AnswerFate;
   readonly answer_id: string | null;
+  /** The caller's own name for this answer. A repeat with the same name gets this row back. */
+  readonly operation_id: string | null;
   constructor(values: {
     request_id: string;
     answers: readonly UserInputAnswer[];
     fate?: AnswerFate;
     answer_id?: string | null;
+    operation_id?: string | null;
   }) {
     this.request_id = values.request_id;
     this.answers = values.answers;
     this.fate = values.fate === undefined ? AnswerFate.applied : values.fate;
     this.answer_id = values.answer_id === undefined ? null : values.answer_id;
+    this.operation_id = values.operation_id ?? null;
   }
 }
 
