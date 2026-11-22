@@ -18,6 +18,8 @@ states that nothing was approved. A further check reads settings without another
 PATCH. These changes have no durable operation receipt. Return requires a
 nonempty note and an existing conversation, and does not appear for Brief.
 An empty note focuses the note field. The Ticket has no microphone in this area.
+The note takes pictures and files like Review's, under the same draft identity, and
+a decision carries them in its protected Outbox operation.
 
 A note belongs to the exact server, Ticket, proposal field, creation time, and
 revision. It survives redraws and relaunch. Approval captures the visible note
@@ -45,8 +47,9 @@ the existing in-app viewer.
 stub. It covers workflow ordering, approval limits, retained narrow edit payloads,
 record conflicts, recap delivery, and artifact ownership. The note-state case
 covers the new split between the scrolling proposal and pinned controls: exact
-proposal restoration and a frozen note snapshot with a newer local draft. It
-requires no server or browser host. Review decision tests cover protected operation
+proposal restoration and a frozen note snapshot with a newer local draft. The
+attachment case covers an approval with a file and no words: the frozen decision
+carries the file and the note's draft identity. It requires no server or browser host. Review decision tests cover protected operation
 bytes and receipts. The one-off Simulator review provides appearance and interaction
 evidence without a permanent layout test. Simulator captures do not prove physical
 haptics or live-server behavior.
