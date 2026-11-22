@@ -5,7 +5,7 @@ name: Desktop app
 # publishes it as a GitHub Release. A manual run makes a draft Release instead.
 on:
   pull_request:
-    branches: [staging]
+    branches: [staging, feature/server-and-machine-code]
     paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   push:
     branches: [staging, main]
@@ -54,9 +54,18 @@ jobs:
       - name: Drive the app against a test server
         env:
           PANELS_E2E_FAILURE_DIR: ${{ runner.temp }}/desktop-failure
+          PANELS_UI_PROOF_DIR: ${{ runner.temp }}/desktop-ui-proof
         run: |
           cd tests/e2e
           xvfb-run -a node_modules/.bin/playwright test --config desktop.config.ts
+      - name: Upload desktop review images
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-ui-proof
+          path: ${{ runner.temp }}/desktop-ui-proof
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

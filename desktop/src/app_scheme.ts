@@ -57,7 +57,7 @@ export function handleAppScheme(): void {
       if (isForwarded(url)) return forward(request, url);
       return packedFile(url.pathname, screensFile);
     }
-    if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, addressPageFile);
+    if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, screensFile);
     return notFound();
   });
   refuseWritesFromOtherSites();
@@ -88,10 +88,6 @@ function screensFile(pathname: string): string | null {
   if (pathname.startsWith('/_app/')) return `web/dist/${pathname.slice('/_app/'.length)}`;
   if (pathname.startsWith('/assets/') || pathname.startsWith('/static/')) return pathname.slice(1);
   return null;
-}
-
-function addressPageFile(pathname: string): string | null {
-  return `address_page/${pathname === '/' ? 'index.html' : pathname.slice(1)}`;
 }
 
 /** Serve one file of the packed bundle. A path that climbs, even encoded, is refused. */

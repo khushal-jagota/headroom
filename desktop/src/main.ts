@@ -76,7 +76,7 @@ function openRoute(route: string): void {
   app.focus({ steal: true });
 }
 
-/** The last screen if the app holds a server, or one answers on this Mac. Otherwise the address page. */
+/** The last screen if the app holds a server. Otherwise ask where the server lives. */
 async function firstPage(): Promise<string> {
   const stored = loadStoredServerAddress();
   if (stored) {
@@ -84,7 +84,7 @@ async function firstPage(): Promise<string> {
     await keepLastSessionFor(stored).catch(() => undefined);
     return lastScreenUrl();
   }
-  return (await switchServer(localServerAddress())).ok ? lastScreenUrl() : ADDRESS_PAGE_URL;
+  return ADDRESS_PAGE_URL;
 }
 
 /** Use a typed address. A different server's session is deleted before the address is stored. */
@@ -125,8 +125,8 @@ function openOutside(link: string): void {
     void shell.openExternal(`${address}${url.pathname}${url.search}${url.hash}`);
 }
 
-// The address calls answer only the address page. Artifact HTML runs at the screens'
-// origin and can reach the bridge, so it must get nothing from these calls.
+// Calls that act answer only the separate setup origin. An artifact can invoke the
+// parent's bridge as the top app frame, so a frame check alone is not sufficient.
 function fromAddressPage(event: IpcMainInvokeEvent): boolean {
   const frame = event.senderFrame;
   if (!frame || frame !== event.sender.mainFrame) return false;
@@ -135,8 +135,19 @@ function fromAddressPage(event: IpcMainInvokeEvent): boolean {
 }
 
 function answerBridgeCalls(): void {
+  ipcMain.handle(bridgeChannel('localServerAddress'), (event) => {
+    if (!fromAddressPage(event)) throw new Error('Only setup can read the local address.');
+    return localServerAddress();
+  });
+  ipcMain.handle(bridgeChannel('returnToServer'), (event) => {
+    if (!fromAddressPage(event)) throw new Error('Only setup can return to the server.');
+    if (serverAddress()) void event.sender.loadURL(lastScreenUrl());
+  });
   ipcMain.handle(bridgeChannel('storedServerAddress'), (event) => {
-    if (!fromAddressPage(event)) throw new Error('Only the address page can read the server address.');
+    const frame = event.senderFrame;
+    const url = frame ? new URL(frame.url) : null;
+    if (frame !== event.sender.mainFrame || url?.protocol !== 'panels:' || ![ADDRESS_PAGE_HOST, SCREENS_HOST].includes(url.host))
+      throw new Error('Only the app can read the server address.');
     return serverAddress();
   });
   ipcMain.handle(bridgeChannel('useServerAddress'), async (event, typed: unknown) => {
