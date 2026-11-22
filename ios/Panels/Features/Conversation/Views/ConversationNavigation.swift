@@ -14,10 +14,15 @@ enum ConversationLayout {
 
 /// Each page's docked conversation model, by owner. The full conversation opened from
 /// that page uses the same model, so the draft, the outbox state, the transcript and
-/// the read point stay one. Held weakly: the page owns its model.
-@MainActor final class ConversationModelShelf {
+/// the read point stay one. Held weakly: the page owns its model. While the full page
+/// is open, the page's own docked surface rests, so one model follows one tail.
+@MainActor @Observable final class ConversationModelShelf {
     private final class Entry { weak var model: ConversationModel?; init(_ model: ConversationModel) { self.model = model } }
-    private var entries: [ConversationOwner: Entry] = [:]
+    @ObservationIgnored private var entries: [ConversationOwner: Entry] = [:]
+    private(set) var openPages: Set<ConversationOwner> = []
+    func setPageOpen(_ open: Bool, for owner: ConversationOwner) {
+        if open { openPages.insert(owner) } else { openPages.remove(owner) }
+    }
     func register(_ model: ConversationModel, for owner: ConversationOwner) {
         entries = entries.filter { $0.value.model != nil }
         entries[owner] = Entry(model)
@@ -53,7 +58,8 @@ struct ConversationNavigation: ViewModifier {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if pageVisible {
-                    ConversationSurface(owner: owner, conversationID: conversationID, isPage: false, active: true,
+                    ConversationSurface(owner: owner, conversationID: conversationID, isPage: false,
+                                        active: !(conversationModels?.openPages.contains(owner) ?? false),
                                         open: { textEntry.endEditingBeforeNavigation { open() } },
                                         model: model, speech: speech, refreshError: refreshError, retry: retry)
                 }
@@ -106,7 +112,8 @@ struct ConversationScreen: View {
                     }
                 }
         }
-        .onDisappear { speech.cancel() }
+        .onAppear { if !linked { conversationModels?.setPageOpen(true, for: owner) } }
+        .onDisappear { speech.cancel(); if !linked { conversationModels?.setPageOpen(false, for: owner) } }
         .onChange(of: store.baseURL) { _, _ in speech.cancel(); ownModel = ConversationModel() }
     }
 }
