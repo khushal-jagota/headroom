@@ -34,7 +34,7 @@ For coding tasks, links to supported local development servers can open through 
 
 ## Get help choosing the work
 
-Keep Ideas for possible work and organize committed Tickets under Chief or ordinary Managers.
+Organize committed Tickets under Chief or ordinary Managers.
 
 Discuss direction with Chief and Managers. Their Workers carry bounded work through explicit review gates.
 

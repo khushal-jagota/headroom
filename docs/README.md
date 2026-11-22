@@ -25,7 +25,6 @@ The word list lives in [`CONTEXT.md`](../CONTEXT.md), the engineering rules in [
 - [Goals](goals.md) — outcomes with a deadline, their pages, and whether they were hit.
 - [Measures](measures.md) — dated numbers, the sources that collect them, and datasets.
 - [Historical attention](attention.md) — where Khushal's recorded involvement went between two dates.
-- [Ideas](ideas.md) — possibilities kept before they become work.
 - [Projects](projects.md) — the catalog that classifies work and points at a folder.
 - [Design](design.md) — how the visual principles show up, and the shared page kit.
 - [Live screens](live-updates.md) — why an open screen moves after a write.

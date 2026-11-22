@@ -3,7 +3,7 @@ import { impliedWorkspaceView, parseWorkspaceAddress, workspaceAddress, type Wor
 import { parseUtilityPath } from "./utilityAddress";
 import { parseSettingsPath } from "./settings/address";
 
-type DestinationName = "workspace" | "review" | "ideas" | "goals" | "settings" | "backends" | "preview" | "unknown";
+type DestinationName = "workspace" | "review" | "goals" | "settings" | "backends" | "preview" | "unknown";
 /** One parsed address for the persistent shell. Pane keys never key the shell itself. */
 export type ShellDestination = {
   [Name in DestinationName]: { name: Name; params: Record<string, string>; key: string; hash: string; workspace?: WorkspaceAddress }
@@ -47,7 +47,7 @@ export function parseShellDestination(incoming: string): ShellDestination {
     const placement = parseUtilityPath("usage", segments.slice(1));
     if (!placement || placement.utility !== "usage") return unknown();
     params.tab = placement.usage.tab;
-  } else if (!["review", "ideas", "goals", "preview"].includes(name) || segments.length > 1) return unknown();
+  } else if (!["review", "goals", "preview"].includes(name) || segments.length > 1) return unknown();
   const key = name === "backends" ? "backends" : `${segments.join("/")}${query}`;
   return { name: name as Exclude<DestinationName, "workspace">, params, key, hash };
 }

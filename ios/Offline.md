@@ -89,7 +89,7 @@ retained metadata record on any origin owns it.
 Everything is partitioned by server origin;
 changing the server address cannot send one server's work to another server.
 
-Conversation text, Review edits, send-back guidance and Ideas text are saved as
+Conversation text, Review edits, and send-back guidance are saved as
 they change. A Review draft belongs to the exact ticket, field, proposal time and
 revision. A failed local save is shown in the app; a send cannot clear its composer
 until the outgoing message and composer clear have committed together.

@@ -8,7 +8,7 @@ enum AppRoute: Hashable {
     case orchestrator(String)
     case ticket(String)
     case artifact(owner: ArtifactOwner, path: String, title: String)
-    case ideas, feedback, usage, vps, settings
+    case feedback, usage, vps, settings
 }
 
 struct RouteDestination: View {
@@ -41,7 +41,6 @@ struct RouteDestination: View {
         case .orchestrator(let id): OrchestratorView(managerID: id, editOwner: goalEdits)
         case .ticket(let id): TicketView(ticketID: id)
         case .artifact(let owner, let path, let title): ArtifactViewerView(owner: owner, path: path, title: title)
-        case .ideas: IdeasView()
         case .feedback: FeedbackView()
         case .usage: UsageView()
         case .vps: VPSView()

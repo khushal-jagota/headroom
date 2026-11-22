@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { correctedWorkspaceAddress, parseWorkspaceAddress, whatTheAddressOpens, workspaceAddress } from "../src/lib/workspaceAddress";
 
 describe("workspace utility addresses", () => {
-  it.each(["usage", "ideas"] as const)(
+  it.each(["usage"] as const)(
     "round trips %s as a selected workspace utility",
     (utility) => {
       const href = workspaceAddress({ kind: "utility", utility, path: [] });
@@ -46,7 +46,7 @@ describe("a position inside a utility the pane is showing", () => {
     "#/workspace/utility/usage/tokens/detail",
     "#/workspace/utility/settings",
     "#/workspace/utility/usage/config",
-    "#/workspace/utility/ideas/anything",
+    "#/workspace/utility/ideas",
     "#/workspace/utility/feedback/anything"
   ])("refuses an address no screen has a position for: %s", (href) => {
     expect(parseWorkspaceAddress(href)).toBeNull();

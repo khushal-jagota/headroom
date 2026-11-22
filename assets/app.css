@@ -925,8 +925,8 @@ a.pv-name:focus-visible { outline:0; }
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  /* A control that wraps its segments (the Ideas project picker) grows with its rows, so
-   * nothing under it can sit on its second row. */
+  /* A control that wraps its segments grows with its rows, so nothing under it can sit
+   * on its second row. */
   min-height: var(--segment-height);
 }
 
@@ -992,9 +992,9 @@ a.pv-name:focus-visible { outline:0; }
 /* --- List row ------------------------------------------------------------ */
 
 /* THE LIST ROW — one row primitive (title left, metadata right, hover) for every
- * hand-rolled row: Worker tickets, backlog items, flat ideas, board cards. Base is a
+ * hand-rolled row: Worker tickets, backlog items, board cards. Base is a
  * flex baseline row with a flex-1 title and one title-color-on-hover rule; per-screen
- * variants (--ticket, --backlog, --idea, --board) set their own spacing/seams/tokens. */
+ * variants (--ticket, --backlog, --board) set their own spacing/seams/tokens. */
 .list-row {
   display: flex;
   align-items: baseline;
@@ -2219,7 +2219,7 @@ select {
 }
 
 /* THE COMPOSER FIELD (ComposerField.svelte): the conversation composer's box wherever else a
- * person writes (a reply in Review, the line for the Worker, the return note, an idea). Every
+ * person writes (a reply in Review, the line for the Worker, the return note). Every
  * measure is the composer's own (.chat-box and THE COMPOSER ZONE): its fill alone at rest,
  * radius 12, staging's quiet 1px focus edge; one 44px row with the + at the left and the voice
  * and send controls at the right; and, once the draft nears the controls or holds a line
@@ -2861,7 +2861,7 @@ select {
 /* THE DISCLOSURE — one native <details> family for every expand/collapse surface.
  * Base = the content/support look (ticket notes, recaps, proposals). The summary reset,
  * the ::-webkit-details-marker reset, the chevron glyph + [open] swap live here once;
- * per-screen variants (--stage, --phase, --item, --settled, --idea, --make, --project)
+ * per-screen variants (--stage, --phase, --item, --settled, --make, --project)
  * override spacing/typography below. */
 .disclosure {
   min-width: 0;
@@ -4337,173 +4337,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
   .artifact-strip-more {
     display: none;
   }
-}
-
-/* Header title + a static count pill. */
-[data-screen="ideas"] .screen-header-title {
-  font-family: var(--font-ui);
-  font-size: var(--type-display);
-  font-weight: var(--weight-title);
-  letter-spacing: var(--tracking-title);
-  line-height: 1.26;
-  color: var(--text-strong);
-}
-
-[data-screen="ideas"] .screen-header-meta {
-  padding-top: var(--space-1);
-}
-
-[data-screen="ideas"] .screen-header .pill {
-  cursor: default;
-}
-
-[data-screen="ideas"] .screen-header .pill:hover {
-  color: var(--text-muted);
-}
-
-/* --- Ideas screen (redesign) --------------------------------------------- */
-/* Capture with least friction, then browse the pile. The compose is the hero
-   (always open, the Today focus-line idiom);
-   the pile is newest-first, bodies DISCLOSE, title-only ideas are flat. Scoped to
-   [data-screen="ideas"]; body renders via the shared markdown block. */
-
-[data-screen="ideas"] .doc {
-  width: 100%;
-}
-
-[data-screen="ideas"] .screen-header,
-[data-screen="ideas"] .col {
-  max-width: var(--page-measure);
-  margin: 0 auto;
-}
-
-[data-screen="ideas"] .screen-header {
-  padding: 0 0 var(--space-4);
-}
-
-[data-screen="ideas"] .col {
-  padding: 0 0 var(--space-page-tail);
-}
-
-/* capture — the hero: always open, the Today focus-line treatment */
-[data-screen="ideas"] .capture {
-  padding: var(--space-5) 0;
-}
-
-/* The idea and its detail are the composer's field (ComposerField), one under the other. */
-[data-screen="ideas"] .capture .composer-field + .composer-field {
-  margin-top: var(--space-3);
-}
-
-[data-screen="ideas"] .capture .foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-5);
-  flex-wrap: wrap;
-}
-
-[data-screen="ideas"] .capture .foot .spacer {
-  flex: 1;
-}
-
-[data-screen="ideas"] .hint {
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-}
-
-[data-screen="ideas"] .hint kbd {
-  font-family: inherit;
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-  background: var(--surface-2);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-1);
-}
-
-/* the pile — newest first; a whisper label carries the section */
-[data-screen="ideas"] .list {
-  margin-top: var(--space-6);
-}
-
-[data-screen="ideas"] .list > .section-heading {
-  padding: var(--space-1) 0 var(--space-2);
-  font-size: var(--type-xs);
-  font-weight: var(--weight-title);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faintest);
-}
-
-/* idea = a disclosure (title + project + date; expand reveals the body). Title-only
-   ideas are FLAT rows with an empty chevron. Rows are divided by seams only; the row
-   right after the section label carries none. */
-[data-screen="ideas"] .disclosure--idea,
-[data-screen="ideas"] .list-row--idea {
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="ideas"] .list > .section-heading + .disclosure--idea,
-[data-screen="ideas"] .list > .section-heading + .list-row--idea {
-  border-top: 0;
-}
-
-[data-screen="ideas"] .disclosure--idea > .disclosure-summary,
-[data-screen="ideas"] .list-row--idea {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-}
-
-[data-screen="ideas"] .list-row--idea .chev,
-[data-screen="ideas"] .disclosure--idea .disclosure-chev {
-  flex: none;
-  align-self: center;
-  width: var(--space-3);
-  text-align: center;
-}
-
-[data-screen="ideas"] .disclosure--idea .disclosure-chev::before {
-  font-size: var(--type-xs);
-}
-
-[data-screen="ideas"] .it,
-[data-screen="ideas"] .list-row--idea .list-row-title {
-  flex: 1;
-  font-size: var(--type-md);
-  font-weight: var(--weight-title);
-  color: var(--text-default);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="ideas"] .disclosure--idea > .disclosure-summary:hover .it,
-[data-screen="ideas"] .disclosure--idea[open] > .disclosure-summary .it {
-  color: var(--text-strong);
-}
-
-[data-screen="ideas"] .chip {
-  align-self: center;
-}
-
-[data-screen="ideas"] .disclosure--idea > .disclosure-body {
-  padding: 0 0 var(--space-4) var(--space-6);
-  font-family: var(--font-ui);
-  font-size: var(--type-md);
-  line-height: 1.66;
-  color: var(--text-muted);
-}
-
-/* --- shared compose surfaces (Backlog + Ideas) --------------------------- */
-/* The chip-toggle selectors and grayscale commit — one look across both compose forms. */
-
-/* the deadline is a fact, not prose — a small sans field in the foot row */
-
-
-[data-screen="ideas"] .seg {
-  display: flex;
-  gap: var(--space-1);
-  flex-wrap: wrap;
 }
 
 /* A Ticket group: a readable heading (12/600 at 64%, no count) 4px over its rows, the rows
