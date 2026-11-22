@@ -36,6 +36,7 @@ import { open_command_journal } from '../storage/journal.ts';
 import type { AsyncCommandJournal } from '../storage/journal_contracts.ts';
 import { MacRunner } from '../runner/index.ts';
 import { MacMailbox } from '../mailbox/index.ts';
+import { MachineServerLink } from '../../../server_link/machine.ts';
 import { MacHttpClient } from '../transport/http.ts';
 import { MacFileTransport } from '../transport/files.ts';
 import { MacPresence, MacLeaseLoop } from '../transport/presence.ts';
@@ -125,18 +126,22 @@ export class MacService {
     this.presence = new MacPresence(identity, Date.now, process.pid, () => ({
       ...outbox.delivery_status(),
     }));
+    const http_options = {
+      ...configuration.http,
+      server_link: new MachineServerLink(configuration.paths.root, configuration.panels_server_url),
+    };
     this.client =
       bindings.client?.(
         configuration.panels_server_url,
         configuration.executor_id,
         identity,
-        configuration.http ?? {},
+        http_options,
       ) ??
       new MacHttpClient(
         configuration.panels_server_url,
         configuration.executor_id,
         identity,
-        configuration.http,
+        http_options,
       );
     this.transfer = new MacFileTransport(this.client, this.files);
     this.live = new MacLiveSender(this.client);

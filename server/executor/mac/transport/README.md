@@ -41,3 +41,13 @@ A Ticket's item, or a restart, requests a pass. One pass runs for a Ticket, and 
 A pass compares the folder with the versions the home confirmed. It sends each new or changed file once and removes each file the folder no longer has.
 It removes nothing when a folder is absent or unreadable. Symlinks and all other Ticket folders stay local.
 The file worker hashes each file. A failed file is logged and the other files still go. The Ticket's next pass retries it after a capped delay. A file the home refuses, or one that cannot be read, waits until it changes.
+
+The shared machine host keeps its server address, identity, and highest accepted move number in
+`server-link.json` under the executor root. The service URL is the initial address only.
+Every request first probes the address over HTTPS without credentials. It then sends the pinned
+identity and move number. Responses must pass the same fence before any work reaches a consumer.
+A moved server supplies a pointer. The machine checks the active target before it sends work.
+Address changes survive restart and apply to file transfers, updates, and new provider children.
+`panels executor server-address --url https://server.example` checks and saves a manual change.
+The command preserves the pinned identity and move number. A failed target check preserves the
+previous address. Any valid higher move number that the machine saw remains its minimum.

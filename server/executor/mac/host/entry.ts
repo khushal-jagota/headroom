@@ -1,4 +1,5 @@
 /** Production bindings use the invocation's existing stores and process owners. */
+import { MachineServerLink } from '../../../server_link/machine.ts';
 import { backend_executable_path } from '../../../conversation/snapshot/environment.ts';
 import { SHUTDOWN_GRACE_SECONDS, SHUTDOWN_HARD_SECONDS } from '../../../lifecycle/configuration.ts';
 import { create_mac_adapter_host, load_executor_drivers } from '../adapters.ts';
@@ -21,7 +22,10 @@ export function production_bindings(
       create_mac_adapter_host({
         ...owners,
         drivers,
-        panels_server_url: configuration.panels_server_url,
+        get panels_server_url() {
+          return new MachineServerLink(configuration.paths.root, configuration.panels_server_url)
+            .current_url;
+        },
         environment,
         executable_path: (name) => backend_executable_path(name, environment),
       }),
@@ -36,7 +40,13 @@ export function production_bindings(
         authentication_headers: () => context.client.authentication_headers(),
         runtime: context.runtime,
         session_factory: () =>
-          create_update_session(configuration.panels_server_url, configuration.http),
+          create_update_session(context.client.server_url, {
+            ...configuration.http,
+            server_link: new MachineServerLink(
+              configuration.paths.root,
+              configuration.panels_server_url,
+            ),
+          }),
         request_exit: () => {
           replacing();
           context.request_exit(MAC_RUNTIME_UPDATE_EXIT_CODE);

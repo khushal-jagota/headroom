@@ -94,7 +94,10 @@ function granted_credential(body: Uint8Array): string {
 }
 export class MacHttpClient {
   readonly sessions: HttpSessions;
-  readonly server_url: string;
+  private readonly initial_server_url: string;
+  get server_url(): string {
+    return this.sessions.origin;
+  }
   private request_headers: Readonly<Record<string, string>>;
   private readonly identity: Readonly<ExecutorIdentity>;
   constructor(
@@ -103,7 +106,7 @@ export class MacHttpClient {
     identity: ExecutorIdentity,
     options: MacHttpOptions = {},
   ) {
-    this.server_url = settings.validate_server_url(server_url).replace(/\/$/, '');
+    this.initial_server_url = settings.validate_server_url(server_url).replace(/\/$/, '');
     this.identity = { ...identity };
     this.request_headers = Object.freeze({
       'X-Panels-Executor-ID': executor_id,
@@ -112,7 +115,7 @@ export class MacHttpClient {
       'X-Panels-Executor-Platform': process.platform,
       'Accept-Encoding': 'identity',
     });
-    this.sessions = new HttpSessions(this.server_url, CONNECTORS, options);
+    this.sessions = new HttpSessions(this.initial_server_url, CONNECTORS, options);
   }
   get headers(): Readonly<Record<string, string>> {
     return this.request_headers;

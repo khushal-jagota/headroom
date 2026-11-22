@@ -102,6 +102,9 @@
     "ts_0004_drop_ideas": [
       "ts_0003_ticket_worker_setups"
     ],
+    "ts_0005_server_link": [
+      "ts_0004_drop_ideas"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

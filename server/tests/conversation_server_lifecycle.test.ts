@@ -1,3 +1,4 @@
+import * as worker_skill_startup from '../worker_settings/startup.ts';
 import { issue_launch_token } from '../agent_identity/data.ts';
 /** Startup and shutdown own one record runtime and retain its lease through cleanup. */
 import { dirname, join, resolve } from 'node:path';
@@ -769,4 +770,59 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       }),
     );
   }
+});
+
+// Existing update-barrier tests still compose the record. A moved server must skip it entirely.
+test('moved startup only answers with its address and never constructs record or work services', async () => {
+  const began = performance.now();
+  const f = setup();
+  const { initialize_server_location } = await import('../server_link/data.ts');
+  const original = initialize_server_location(f.database);
+  const location = {
+    ...original,
+    move_number: 3,
+    server_url: 'https://next.example',
+    state: 'moved',
+  };
+  f.database.write((tx) =>
+    tx.run(
+      "UPDATE server_link SET move_number=3,server_url='https://next.example',state='moved' WHERE singleton=1",
+    ),
+  );
+  const unchanged = f.database.read((sql) => sql.all('SELECT * FROM conversation_runtime_epoch'));
+  const forbidden = vi.fn(() => {
+    throw new Error('A moved server constructed a work service');
+  });
+  const skills = vi.spyOn(worker_skill_startup, 'publish_worker_skills');
+  const server = await startServer({
+    createExecutor: forbidden,
+    createConversationCore: forbidden,
+    createEnvironments: forbidden,
+    createBackendServices: forbidden,
+    notificationDelivery: forbidden,
+  });
+  try {
+    for (const [method, path] of [
+      ['GET', '/api/server-link'],
+      ['GET', '/api/tickets'],
+      ['POST', '/api/executor/lease'],
+      ['POST', '/api/updates/install'],
+      ['GET', '/unregistered-path'],
+    ] as const) {
+      const response = await fetch(server.address + path, { method });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual(location);
+    }
+    expect(forbidden).not.toHaveBeenCalled();
+    expect(skills).not.toHaveBeenCalled();
+    expect(f.database.read((sql) => sql.all('SELECT * FROM conversation_runtime_epoch'))).toEqual(
+      unchanged,
+    );
+  } finally {
+    await server.close({ deadline: performance.now() / 1000 + 2 });
+  }
+  console.info(
+    'MOVED_SERVER_BOUNDARY',
+    JSON.stringify({ case_milliseconds: performance.now() - began }),
+  );
 });

@@ -418,6 +418,12 @@ export type ResolvedConversationStart = {
   workspace_folder: string;
   workspace_path_policy?: WorkspacePathPolicy;
 };
+export type ServerLocation = {
+  move_number: number;
+  server_id: string;
+  server_url: string | null;
+  state: 'active' | 'moved';
+};
 export type StartRun = {
   canonical_skill_snapshot: CanonicalSkillSnapshot;
   kind?: 'start';
@@ -610,5 +616,6 @@ export interface WireTypes {
   WorkspaceStatesReply: WorkspaceStatesReply;
   WorkspaceStatesRequest: WorkspaceStatesRequest;
   WritePrompt: WritePrompt;
+  ServerLocation: ServerLocation;
 }
 export type WireRootName = keyof WireTypes;

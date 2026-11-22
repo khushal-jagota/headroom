@@ -1,5 +1,11 @@
 /** One native agent per loop. Request ownership includes producer and response settlement. */
 import http from 'node:http';
+import {
+  MOVE_NUMBER_HEADER,
+  SERVER_ID_HEADER,
+  SERVER_LOCATION_HEADER,
+  SERVER_LOCATION_PATH,
+} from '../../../server_link/contracts.ts';
 import https from 'node:https';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type { Socket } from 'node:net';
@@ -35,15 +41,32 @@ export async function read_bounded(response: IncomingMessage, limit: number): Pr
   }
   return Buffer.concat(chunks, count);
 }
+export async function read_server_location_probe(incoming: IncomingMessage): Promise<unknown> {
+  const body = await read_bounded(incoming, 16384);
+  if (incoming.statusCode !== 200 && incoming.statusCode !== 503)
+    throw new ExecutorValidationError('The server identity probe failed.');
+  let location: unknown;
+  try {
+    location = JSON.parse(body.toString('utf8')) as unknown;
+  } catch {
+    throw new ExecutorValidationError('The server identity probe is invalid.');
+  }
+  if (incoming.statusCode === 503 && (location as { state?: unknown })?.state !== 'moved')
+    throw new ExecutorValidationError('The server identity probe failed.');
+  return location;
+}
 export class HttpSessions {
   private readonly sessions = new Map<MacLoop, Session>();
   private readonly closing = new Set<Promise<void>>();
   private closed = false;
-  readonly origin: string;
+  private readonly initial_origin: string;
+  get origin(): string {
+    return this.options.server_link?.current_url ?? this.initial_origin;
+  }
   private readonly connectors: ConnectorTable;
   private readonly options: MacHttpOptions;
   constructor(origin: string, connectors: ConnectorTable, options: MacHttpOptions = {}) {
-    this.origin = new URL(origin).origin;
+    this.initial_origin = new URL(origin).origin;
     this.connectors = connectors;
     this.options = options;
   }
@@ -140,9 +163,41 @@ export class HttpSessions {
     resolve: (value: T) => void,
     reject: (error: unknown) => void,
   ): Promise<T> {
-    const target = new URL(input.path, this.origin);
-    if (target.origin !== this.origin)
-      throw new Error('Executor request leaves configured origin.');
+    const probe = async (origin: string): Promise<unknown> => {
+      // A separate retained session avoids a limit-one lease reply blocking its own probe.
+      const owner = new HttpSessions(origin, this.connectors, { tls: this.options.tls });
+      try {
+        return await owner.request(
+          {
+            loop: 'lease',
+            method: 'GET',
+            path: SERVER_LOCATION_PATH,
+            timeout: HTTP_CONNECT_TIMEOUT_SECONDS,
+            signal: input.signal,
+          },
+          { 'Accept-Encoding': 'identity' },
+          read_server_location_probe,
+        );
+      } finally {
+        await owner.close();
+      }
+    };
+    const link = this.options.server_link;
+    const accepted = await link?.prepare(probe);
+    const current = link?.current();
+    if (
+      accepted &&
+      current &&
+      (accepted.server_id !== current.server_id ||
+        accepted.highest_move_number !== current.highest_move_number ||
+        accepted.server_url !== current.server_url)
+    )
+      throw new ExecutorValidationError('The server authority changed before this request.');
+    if (this.closed || session.closing)
+      throw new ServerLifecycleError('Machine HTTP session is stopped.');
+    const origin = accepted?.server_url ?? this.origin;
+    const target = new URL(input.path, origin);
+    if (target.origin !== origin) throw new Error('Executor request leaves configured origin.');
     const transport = target.protocol === 'https:' ? https : http;
     const request = transport.request(target, {
       method: input.method,
@@ -150,6 +205,12 @@ export class HttpSessions {
       headers: {
         ...headers,
         ...input.headers,
+        ...(accepted
+          ? {
+              [SERVER_ID_HEADER]: accepted.server_id!,
+              [MOVE_NUMBER_HEADER]: String(accepted.highest_move_number),
+            }
+          : {}),
         ...(session.force_close ? { Connection: 'close' } : {}),
       },
     });
@@ -217,7 +278,13 @@ export class HttpSessions {
       request.once('error', reject);
       request.once('response', (incoming) => {
         response = incoming;
-        consumer = consume(incoming);
+        consumer = (async () => {
+          if (link) {
+            await link.accept(incoming.headers[SERVER_LOCATION_HEADER], origin, probe);
+            link.verify(incoming.headers[SERVER_LOCATION_HEADER], origin);
+          }
+          return consume(incoming);
+        })();
         void consumer.then(resolve, (error: unknown) => {
           fail(error instanceof Error ? error : new Error(String(error)));
           reject(error);

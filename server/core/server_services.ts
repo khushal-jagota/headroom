@@ -1,3 +1,7 @@
+import Fastify from 'fastify';
+import { install_request_lifetime } from './http/lifetime.ts';
+import { initialize_server_location, read_persisted_server_location } from '../server_link/data.ts';
+import { install_server_link } from '../server_link/http.ts';
 import { dirname, join } from 'node:path';
 import { publish_worker_skills } from '../worker_settings/startup.ts';
 import { begin_startup_phase } from './startup_diagnostics.ts';
@@ -193,6 +197,7 @@ export class ServerServices {
       onChange: () => changes.emit(),
     });
     this.database = database;
+    initialize_server_location(database);
     const publication = new SignalPublicationCoordinator({
       database,
       require_runtime_ownership: this.requireOwnership,
@@ -527,6 +532,14 @@ export class ServerServices {
   }
 
   async setup(): Promise<string> {
+    const location = read_persisted_server_location(this.config.db_path);
+    if (location?.state === 'moved') {
+      const app = Fastify({ logger: false, exposeHeadRoutes: false });
+      this.app.own(app);
+      install_request_lifetime(app, this.lifetime.request_lifetime);
+      install_server_link(app, () => location);
+      return this.listen(app);
+    }
     const record_ready = begin_startup_phase('record');
     const { context, integrity_issues } = await this.create_record();
     record_ready();
@@ -627,6 +640,10 @@ export class ServerServices {
         });
     }, 250);
     this.normal_work_timer.unref();
+    return this.listen(app);
+  }
+
+  private async listen(app: FastifyInstance): Promise<string> {
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     const listening = begin_startup_phase('HTTP listener');
     if (inherited !== undefined) {

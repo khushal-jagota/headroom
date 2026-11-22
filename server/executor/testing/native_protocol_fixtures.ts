@@ -192,6 +192,12 @@ export function native_wire_fixtures(): WireTypes {
     ['counts', [1, 1, 1.5, 1234, '1', 0]],
   ]);
   return {
+    ServerLocation: {
+      server_id: 'test-server',
+      move_number: 0,
+      server_url: 'https://localhost',
+      state: 'active',
+    },
     ExecutorIdentity: identity,
     ChildReference: child,
     TurnToken: turn,
