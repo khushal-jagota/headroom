@@ -1,6 +1,7 @@
 name: Desktop app
 # Builds the desktop app from desktop/ with the web/ screens packed inside, and
-# drives it with Playwright under a virtual display against a test server.
+# drives it with Playwright under a virtual display against a test server. On a
+# push to staging or a manual run, a Mac also signs, notarizes and staples it.
 on:
   pull_request:
     branches: [staging]
@@ -11,7 +12,8 @@ on:
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Pushes do not cancel each other, so that a slow notarization can finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -60,3 +62,65 @@ jobs:
           path: ${{ runner.temp }}/desktop-failure
           if-no-files-found: ignore
           retention-days: 14
+
+  signed-mac-app:
+    name: Signed and notarized Mac app
+    # Pull requests skip it: notarization takes minutes, and the Linux job checks the app.
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15
+    # Apple's notary service can take long for a team's first submissions.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci --prefix web
+          npm ci --prefix desktop
+      - name: Build the screens
+        run: cd web && node node_modules/vite/bin/vite.js build
+      - name: Build, sign, notarize and staple
+        env:
+          CSC_LINK: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_API_KEY_P8: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          DEBUG: electron-notarize*,electron-osx-sign*
+        run: |
+          set -euo pipefail
+          export APPLE_API_KEY="$RUNNER_TEMP/notary-key.p8"
+          umask 077
+          printf '%s\n' "$APPLE_NOTARY_API_KEY_P8" > "$APPLE_API_KEY"
+          npm --prefix desktop run build:mac
+          rm -f "$APPLE_API_KEY"
+      - name: Check the signature, notarization and Gatekeeper
+        run: |
+          set -euo pipefail
+          zip=$(ls desktop/dist/*.zip)
+          check="$RUNNER_TEMP/check"
+          mkdir "$check"
+          ditto -x -k "$zip" "$check"
+          app="$check/Panels.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=2 "$app" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
+          grep -q '^Authority=Developer ID Application: ' "$RUNNER_TEMP/codesign.txt"
+          grep -q 'flags=.*runtime' "$RUNNER_TEMP/codesign.txt"
+          grep -q '^Identifier=com.khushaljagota.panels.desktop$' "$RUNNER_TEMP/codesign.txt"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app" 2>&1 | tee "$RUNNER_TEMP/spctl.txt"
+          grep -q 'source=Notarized Developer ID' "$RUNNER_TEMP/spctl.txt"
+          shasum -a 256 "$zip"
+      - name: Upload the signed app
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-desktop-mac
+          path: desktop/dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
