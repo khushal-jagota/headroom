@@ -251,9 +251,8 @@
      rgba(240,138,126,0.35) edge, "This turn failed" in #f08a7e. No fill tint. */
   .c2-status--callout.c2-status--error { border-color: rgb(240 138 126 / 35%); }
   .c2-status--callout.c2-status--error .c2-status-title { color: #f08a7e; }
-  /* v16 (13): one red signal less: the card's edge is neutral #3a3a3a, the red dot stays, and
-     the title "This turn failed" is the brighter #ff8f85. */
-  .c2-status--callout.c2-status--error { border-color: #3a3a3a; }
+  /* v16 (13), v17 (4): the card keeps its v15 edge and red dot; the title "This turn failed" is
+     the brighter #ff8f85. */
   .c2-status--callout.c2-status--error .c2-status-title { color: #ff8f85; }
   .c2-status-reason {
     margin: 8px 0 0;

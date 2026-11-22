@@ -2025,8 +2025,6 @@
   }
   :global(.chat-ask-send.on .chat-ask-send-round) { background: #f2f2f2; color: #121212; }
   :global(.chat-ask-send.on:hover:not(:disabled) .chat-ask-send-round) { background: #ffffff; }
-  /* v16 (5): disabled send everywhere has no fill, a #8a8a8a arrow (Stop keeps its ring). */
-  :global(.chat-ask-send:not(.on) .chat-ask-send-round) { background: none; color: #8a8a8a; }
   :global(.chat-ask-send-round svg) { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   /* A draft that wraps grows the box to two rows: the draft itself is then the well. */
   .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 20px; background: #141414; }

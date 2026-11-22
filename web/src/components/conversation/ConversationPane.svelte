@@ -320,6 +320,10 @@
   }
   // Said once: the top bar carries only the states the thread has no place for.
   let headStatus = $derived(paneHeadStatus(stateFacts()));
+  /** v17 (6): the transcript's own "Waiting for you" line, in the Working line's place. Not in
+   *  the dock, and not while activity is unknown (the live edge says that instead). */
+  let waitingLineShown = $derived(conversationState !== "rest" && !activityUncertain && !readOnly
+    && (ask !== null || userInput !== null || credentialWaiting || waitingOnPage !== null));
   let restState = $derived(readConversationState(stateFacts()));
   /** What the waiting ask is about, for the dock's line ("Needs your approval — Upload build 41"). */
   let restWaitingTitle = $derived(ask?.title ?? null);
@@ -641,6 +645,15 @@
   </div>
 
   {#snippet waitingMessages()}
+    <!-- v17 (6): while an ask (question, permission, key or proposal) waits on the person, the
+         transcript ends with a status line in the Working line's place: the 8px accent dot,
+         then "Waiting for you". Full-width conversation only; the dock is unchanged. -->
+    {#if waitingLineShown}
+      <div class="c2-waiting-edge" data-conversation-waiting-line role="status">
+        <span class="c2-waiting-slot" aria-hidden="true"><span class="c2-waiting-dot"></span></span>
+        <span class="c2-waiting-word">Waiting for you</span>
+      </div>
+    {/if}
     <HeldPromptStack
       rows={heldPromptRows}
       {conversationId}
@@ -872,7 +885,24 @@
   /* v10 (5): the same resting pill as the dock's Open conversation: #232323, #d9d9d9, hover
      #2a2a2a. v11 (6): the label alone, no arrow. */
   .chat-head-collapse { background: #232323; color: #d9d9d9; }
+  /* v17 (5): the header's Dock button has no fill at rest (only the shown Focus/Full segment has
+     one), #d0d0d0 500; under the pointer #2a2a2a. */
+  .chat-head-collapse { background: transparent; color: #d0d0d0; font-weight: 500; }
   .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
+  /* v17 (6): the Waiting line, in the Working line's place and format (24px under the turn's
+     content, a 16px icon slot, 8px gap), the 8px accent dot, "Waiting for you" 14/20 #c4c4c4. */
+  .c2-waiting-edge {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 20px;
+    margin-block-start: 24px;
+    color: #c4c4c4;
+    font: 400 14px/20px var(--cv-font);
+  }
+  .c2-waiting-slot { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; }
+  .c2-waiting-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--cv-accent); }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   /* --- Lens: a segmented control. The track is a well; the chosen segment is a control. */

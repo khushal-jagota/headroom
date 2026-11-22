@@ -1281,8 +1281,9 @@
      content is below the view, a 24px fade above the composer (pass 11). */
   .chat-thread {
     /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
-    /* v6/v7: 24 between the transcript's end and the composer. */
-    padding-bottom: 24px;
+    /* v6/v7: 24 between the transcript's end and the composer. v17 (8): at least 32, at any
+       scroll position. */
+    padding-bottom: 32px;
     margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
     max-width: none;
     /* v5: the header is solid; the thread fades in over 24px starting right at the header's
@@ -1295,6 +1296,8 @@
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
             mask-image: linear-gradient(to bottom, var(--c2-top-fade));
   }
+  /* v17 (8) does not move the empty state: its heading stays 20px over the composer (v15 (6)). */
+  .chat-thread:has(> .chat-thread-content > :global([data-conversation-empty])) { padding-bottom: 24px; }
   .chat-thread[data-at-top="true"] { -webkit-mask-image: none; mask-image: none; }
   .chat-thread[data-more-below="true"] {
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade), var(--c2-bottom-fade));

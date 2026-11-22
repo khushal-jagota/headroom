@@ -17,11 +17,11 @@ const mode = source("../src/components/conversation/composer/DeliveryModePicker.
 const run = source("../src/components/conversation/ToolRunSummary.svelte");
 const user = source("../src/components/conversation/UserMessage.svelte");
 
-describe("v16 (1): one inline code style in answers and in Full narration", () => {
-  it("mono 0.9em #e0e0e0 on #2a2a2a, radius 4, padding 0 4px, for both", () => {
-    expect(app).toContain('[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-family: var(--cv-mono); font-size: 0.9em; line-height: 1; padding: 0 4px; border-radius: 4px; background: #2a2a2a; color: #e0e0e0; }');
+describe("v16 (1), reverted by v17 (1): inline code is back to v15", () => {
+  it("the v16 block no longer restyles inline code", () => {
     const block = app.slice(app.indexOf("v16 (22 Nov, after round 22)"));
-    expect(block).toContain("[data-conversation-pane] .chat-thread .markdown :not(pre) > code,\n[data-conversation-pane] .cv-code,");
+    expect(block).not.toContain(":not(pre) > code");
+    expect(block).not.toContain(".cv-code");
   });
 });
 
@@ -50,10 +50,10 @@ describe("v16 (4): attachment chips", () => {
   });
 });
 
-describe("v16 (5): disabled send has no fill and a #8a8a8a arrow", () => {
-  it("in the composer and in the ask well; Stop keeps its ring", () => {
-    expect(app).toContain(".chat-send:not(.on, .stop) { background: none; color: #8a8a8a; }");
-    expect(composer).toContain(":global(.chat-ask-send:not(.on) .chat-ask-send-round) { background: none; color: #8a8a8a; }");
+describe("v16 (5), reverted by v17 (2): disabled send is back to v14", () => {
+  it("no unfilled disabled send in the composer or the ask well; Stop keeps its ring", () => {
+    expect(app).not.toContain("#8a8a8a");
+    expect(composer).not.toContain("#8a8a8a");
     expect(app).toContain(".chat-send.stop { background: none; box-shadow: inset 0 0 0 1px #4a4a4a; color: #ececec; }");
   });
 });
@@ -70,8 +70,8 @@ describe("v16 (6): the live tool row in Full", () => {
     expect(html).toContain("c2-run-icon");
     expect(html).not.toContain('data-conversation-run-icon="running"');
   });
-  it("live: the icon #ececec, Running #ececec 500, the command #c4c4c4; settled icon stays quiet", () => {
-    expect(run).toContain(".c2-run-summary.is-live .c2-run-icon { stroke: #ececec; }");
+  it("live: Running #ececec 500, the command #c4c4c4; the icon stays the quiet settled icon (v17 (3))", () => {
+    expect(run).not.toContain(".c2-run-summary.is-live .c2-run-icon");
     expect(run).toMatch(/\.c2-run-icon \{[^}]*stroke: var\(--cv-quiet-ink, #bdbdbd\);/);
     expect(run).not.toContain("cv-spinner");
     expect(run).toContain(".c2-run-summary.is-live .c2-run-verb { color: #ececec; font-weight: var(--cv-weight-label); }");
@@ -120,9 +120,9 @@ describe("v16 (12): quiet text one step up", () => {
   });
 });
 
-describe("v16 (13): the error card", () => {
-  it("has a neutral #3a3a3a edge and a #ff8f85 title; the red dot stays", () => {
-    expect(status).toContain(".c2-status--callout.c2-status--error { border-color: #3a3a3a; }");
+describe("v16 (13), v17 (4): the error card", () => {
+  it("keeps its v15 edge (no neutral override) and a #ff8f85 title; the red dot stays", () => {
+    expect(status).not.toContain(".c2-status--callout.c2-status--error { border-color: #3a3a3a; }");
     expect(status).toContain(".c2-status--callout.c2-status--error .c2-status-title { color: #ff8f85; }");
     expect(status).toContain(".c2-status--error .c2-status-dot { background: #f08a7e; }");
   });

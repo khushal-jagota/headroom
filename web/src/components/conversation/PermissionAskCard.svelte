@@ -57,6 +57,9 @@
     ? askQuestionChoices(ask).map((choice) => ({ ...choice, emphasis: "option" as const, supplied: true }))
     : permissionAnswerRows(ask));
   let detail = $derived(readableConversationDetail(ask.detail));
+  /** v17 (7): the command wraps only at spaces. Each run of non-space characters is one
+   *  unbreakable piece, so a line never breaks inside a flag, a path or after a hyphen. */
+  let detailPieces = $derived(detail === null ? [] : detail.split(/([ \n]+)/).filter(piece => piece !== ""));
   /** v9 (2): Deny is an option row (the last one), never a separate button. */
   let tiles = $derived(rows);
   // v5: a permission ask says "Needs your permission" (v16: with the dot); a question keeps
@@ -102,7 +105,7 @@
 >
   {#if shape !== "question" && detail}
     <!-- The one place the command is shown while it waits: the answers sit right under it. -->
-    <pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>
+    <pre class="c2-ask-detail" data-conversation-ask-detail>{#each detailPieces as piece, index (index)}{#if /^[ \n]+$/.test(piece)}{piece}{:else}<span class="c2-ask-word">{piece}</span>{/if}{/each}</pre>
   {/if}
   <div class="cv-ask-rows c2-ask-choices" class:after-detail={shape !== "question" && detail} role="group" aria-label="Answers">
     {#each tiles as row, index (row.optionId)}
@@ -167,6 +170,11 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+  /* v17 (7): mono 13/20; 12px inline padding gives the line its widest measure in the card, and
+     the command wraps only at spaces (each word is one unbreakable piece). A single word wider
+     than the block scrolls inside it instead of breaking. */
+  .c2-ask-detail { padding-inline: 12px; overflow-wrap: normal; }
+  .c2-ask-word { white-space: pre; }
   .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
   .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }
   .c2-ask-choices.after-detail { margin-block-start: 16px; }

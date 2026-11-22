@@ -30,7 +30,8 @@ describe("the permission ask", () => {
     expect(body).toContain("cv-ask-dot");
     expect(body).not.toContain("data-ask-shield");
     expect(body).toContain(ask.title);
-    expect(count(body, "xcrun altool")).toBe(1);
+    // v17 (7): each word of the command is its own unbreakable piece; the text reads once.
+    expect(count(body.replace(/<[^>]+>/g, ""), "xcrun altool")).toBe(1);
   });
 
   it("answers with one list of numbered tiles, allow once first, none pre-chosen; Deny is option row 3, docked too", () => {
