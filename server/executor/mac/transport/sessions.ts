@@ -194,7 +194,7 @@ export class HttpSessions {
       }
     };
     const link = this.options.server_link;
-    const accepted = await link?.prepare(probe);
+    const accepted = link?.needs_probe() ? await link.prepare(probe) : link?.current();
     const current = link?.current();
     if (
       accepted &&

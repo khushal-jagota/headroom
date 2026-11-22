@@ -65,6 +65,12 @@ export class MachineServerLink implements ServerLinkAdmission {
   request_failed(): void {
     this.failed_request_generation++;
   }
+  needs_probe(): boolean {
+    return (
+      this.read().server_id === null ||
+      this.failed_request_generation !== this.checked_failure_generation
+    );
+  }
   private update(
     location: ServerLocation,
     origin: string,

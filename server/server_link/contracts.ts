@@ -13,6 +13,7 @@ export const SERVER_LOCATION_PATH = '/api/server-link';
 export interface ServerLinkAdmission {
   readonly current_url: string;
   current(): MachineServerRecord;
+  needs_probe(): boolean;
   request_failed(): void;
   prepare(probe: (origin: string) => Promise<unknown>): Promise<MachineServerRecord>;
   verify(header: string | string[] | undefined, origin: string): void;
