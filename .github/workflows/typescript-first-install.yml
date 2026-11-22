@@ -99,6 +99,9 @@ jobs:
           else
             git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$FIRST_INSTALL_ROOT/inputs"
             NODE_ENV=production "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix server ci
+            mkdir "$FIRST_INSTALL_ROOT/inputs-repeat"
+            git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$FIRST_INSTALL_ROOT/inputs-repeat"
+            NODE_ENV=production "$FIRST_INSTALL_ROOT/inputs-repeat/scripts/dev" npm --prefix server ci
             NODE_ENV=production "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix agent_backends install
             "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix web ci
             "$FIRST_INSTALL_ROOT/inputs/scripts/dev" npm --prefix web run build
@@ -116,6 +119,7 @@ jobs:
               --source "$FIRST_INSTALL_ROOT/inputs" --revision "$GITHUB_SHA" \
               --node-distribution "$node_distribution" \
               --node-modules "$FIRST_INSTALL_ROOT/inputs/server/node_modules" \
+              --repeat-node-modules "$FIRST_INSTALL_ROOT/inputs-repeat/server/node_modules" \
               --output "$FIRST_INSTALL_ROOT/build/machine" \
               --launcher-app "$FIRST_INSTALL_ROOT/launcher/Panels TypeScript.app" \
               --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
