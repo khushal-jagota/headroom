@@ -244,6 +244,14 @@ import XCTest
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(opened(), 4)
         try await until { open() == 1 }
+
+        // Offline, the new stream fails at once: the pull ends then, and the followed stream stays.
+        RefreshProtocol.state.withLock { $0.failStreams = true }
+        let started = ContinuousClock.now
+        await store.pull()
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(5))
+        XCTAssertEqual(store.view?.contentVersion, "4")
+        XCTAssertEqual(open(), 1)
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.maxOpenStreams }, 2)
         XCTAssertEqual(store.connection, "Following changes")
     }
@@ -300,6 +308,7 @@ private struct RefreshFixture {
     /// delay it, so the replaced stream can be seen still open meanwhile.
     var pullStreams = false
     var openStreams = 0
+    var failStreams = false
     var maxOpenStreams = 0
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
@@ -362,6 +371,7 @@ private struct RefreshFixture {
              "authority": Self.authority, "upserts": upserts, "evictions": evictions, "windows": Self.windows(windowRequests, members: members),
              "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]
         }
+        if failStreams { throw URLError(.notConnectedToInternet) }
         if pullStreams {
             let frame = try Self.frame(snapshot(String(events.count), working: false, updated: 1))
             return ([(events.count == 1 ? 0 : 0.3, [frame])], false)
@@ -439,8 +449,10 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         if url.path == "/api/navigation/view/events" {
             do {
                 let (schedule, finish) = try Self.state.withLock {
-                    $0.paths.append(url.path); $0.openStreams += 1; $0.maxOpenStreams = max($0.maxOpenStreams, $0.openStreams)
-                    return try $0.events(url)
+                    $0.paths.append(url.path)
+                    let events = try $0.events(url)
+                    $0.openStreams += 1; $0.maxOpenStreams = max($0.maxOpenStreams, $0.openStreams)
+                    return events
                 }
                 countedStream.withLock { $0 = true }
                 client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)

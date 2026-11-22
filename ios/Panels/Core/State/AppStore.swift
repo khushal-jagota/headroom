@@ -71,7 +71,11 @@ import SwiftUI
     private var activeStream: ViewStream?
     private var pendingStream: ViewStream?
     private var replacementScheduled = false
+    /// A pull asked for a new stream even if the followed one carries the current scope.
+    private var freshStreamRequested = false
     private var streamsOpened = 0
+    /// The newest stream that ended. A pull stops waiting when its stream ended without a snapshot.
+    private var lastEndedStream = 0
     /// The newest stream whose snapshot landed. A pull waits for a stream opened after it began.
     private var lastSnapshotStream = 0
     /// The scope the followed stream carries, which may be wider than `viewRequest`.
@@ -193,7 +197,8 @@ import SwiftUI
     func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?, reviewConversationIDs: [String] = []) {
         let conversations = Array(Set(reviewConversationIDs)).sorted()
         let windowsChanged = demands[name] != windows
-        let widened = !Set(conversations).isSubset(of: reviewConversationDemands[name, default: []])
+        // Compared with what the followed stream carries, so a return to it opens nothing.
+        let widened = !Set(conversations).isSubset(of: streamRequest?.reviewConversationIds ?? [])
         guard windowsChanged || reviewConversationDemands[name, default: []] != conversations else { return }
         demands[name] = windows
         reviewConversationDemands[name] = windows == nil || conversations.isEmpty ? nil : conversations
@@ -238,9 +243,10 @@ import SwiftUI
     /// new one's snapshot lands, as the web does; several requests in one turn share
     /// one new stream. Without a current stream there is nothing live to keep, so the
     /// follow loop opens the new stream at once.
-    private func replaceStream() {
+    private func replaceStream(fresh: Bool = false) {
         guard running else { return }
-        guard let active = activeStream, connection == "Following changes" else {
+        if fresh { freshStreamRequested = true }
+        guard activeStream != nil, connection == "Following changes" else {
             pendingStream?.task.cancel(); pendingStream = nil
             if let activeStream { activeStream.task.cancel() } else { reconnectRequested = true }
             return
@@ -249,7 +255,13 @@ import SwiftUI
         replacementScheduled = true
         Task {
             replacementScheduled = false
-            guard running, activeStream?.id == active.id else { return }
+            guard running else { return }
+            // The followed stream ended meanwhile: the follow loop opens the current scope now.
+            guard let active = activeStream else { reconnectRequested = true; return }
+            let fresh = freshStreamRequested
+            freshStreamRequested = false
+            // A replacement that took over meanwhile may already carry this scope.
+            guard fresh || active.request != viewRequest else { return }
             pendingStream?.task.cancel()
             pendingStream = openStream(viewRequest)
         }
@@ -382,9 +394,10 @@ import SwiftUI
             if activeStream?.id != stream.id { failures = 0; continue }
             activeStream = nil
             if let pending = pendingStream {
-                // The followed stream ended while its replacement waited: the replacement is followed now.
+                // The followed stream ended while its replacement waited: the replacement is followed
+                // now. Its scope is the newest asked for, or wider after a narrowing.
                 pendingStream = nil
-                if pending.request == viewRequest { activeStream = pending } else { pending.task.cancel() }
+                activeStream = pending
             }
             switch end {
             case .cancelled: break // A new or widened scope: open its stream at once.
@@ -410,7 +423,10 @@ import SwiftUI
 
     private func consume(_ request: ViewRequest, api: APIClient, stream: Int) async -> ViewStreamEnd {
         let generation = runGeneration
-        defer { if pendingStream?.id == stream { pendingStream = nil } }
+        defer {
+            if pendingStream?.id == stream { pendingStream = nil }
+            lastEndedStream = max(lastEndedStream, stream)
+        }
         // Frames apply to this stream's own snapshot, never to a restored or older view.
         var current: ViewSnapshot?
         var admitted = false
@@ -463,7 +479,7 @@ import SwiftUI
         async let settingsRead: () = readSettings(probing: false)
         if running {
             let opened = streamsOpened
-            replaceStream()
+            replaceStream(fresh: true)
             await snapshotLanded(fromStreamAfter: opened)
         } else { await readView(from: api) }
         await settingsRead
@@ -473,10 +489,10 @@ import SwiftUI
 
     private func snapshotLanded(fromStreamAfter opened: Int) async {
         let deadline = ContinuousClock.now + .seconds(25)
-        var seen = false
         while lastSnapshotStream <= opened, running, ContinuousClock.now < deadline, !Task.isCancelled {
             let open = [activeStream, pendingStream].contains { ($0?.id ?? 0) > opened }
-            if open { seen = true } else if seen { return }
+            // The new stream ended without a snapshot, as when the phone is offline.
+            if !open, lastEndedStream > opened { return }
             do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
         }
     }
