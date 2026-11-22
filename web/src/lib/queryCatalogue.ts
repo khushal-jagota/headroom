@@ -74,7 +74,11 @@ export const queries = {
     retry: false
   }),
 
-  updates: () => jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
+  // The update status drives the shell's own card, so an old one is never shown from a saved session.
+  updates: () => ({
+    ...jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
+    meta: { resourceBody: true, savedForNextLaunch: false }
+  }),
   recordedUsage: (input: UsageSummaryInput) => ({
     ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
     // Transcript scans follow explicit window changes and Refresh, not database commits.

@@ -3,6 +3,7 @@ import { ensureDebug } from "./lib/debug";
 import { mount } from "svelte";
 import { queries } from "./lib/queryCatalogue";
 import { queryClient } from "./lib/queryClient";
+import { restoreSavedSession } from "./lib/savedSession";
 
 ensureDebug();
 // Backend names and marks come from this list. Asking before mount keeps first paint steady.
@@ -14,8 +15,7 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-const app = mount(AppWithQueryClient, {
-  target: document.getElementById("app") as HTMLElement
+// In the desktop app, the last session goes back into the cache before the first paint.
+void restoreSavedSession(queryClient).finally(() => {
+  mount(AppWithQueryClient, { target: document.getElementById("app") as HTMLElement });
 });
-
-export default app;

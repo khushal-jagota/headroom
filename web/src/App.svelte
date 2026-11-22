@@ -19,6 +19,7 @@
   import { updatePresentation } from "./lib/updates/logic/presentation";
   import { settleUpdateStarting, updateStarting } from "./lib/updates/api";
   import { mutateJson } from "./lib/mutate";
+  import { savedSessionOnScreen } from "./lib/savedSession";
 
   import { parseShellDestination, type ShellDestination } from "./lib/shellDestination";
   import { SHELL_DESTINATIONS } from "./lib/shellDestinations";
@@ -191,7 +192,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={update.state} now={updateClock} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -226,7 +227,7 @@
 
 <!-- The desktop card sits between the active work and Settled. Phone has its own above the bar. -->
 {#snippet railStatus()}
-  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={update.state} now={updateClock} />
+  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
 {/snippet}
 
 {#snippet destinationPane()}
