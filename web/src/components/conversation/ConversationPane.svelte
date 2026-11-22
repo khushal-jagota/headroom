@@ -663,6 +663,7 @@
     </div>
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
+    data-conversation-ask-open={!readOnly && (ask !== null || userInput !== null) ? true : undefined}
     style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
@@ -794,6 +795,11 @@
     text-align: center;
   }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
+  /* v19 (1): while a question or a permission ask is open, a transcript shorter than the room
+     above the card sits at the foot of that room, its last item 32px over the card (the
+     thread's bottom padding); the empty space goes above the first message. A taller
+     transcript fills the room and scrolls as before. In the dock the reader is hidden. */
+  .conversation-transcript-region[data-conversation-ask-open] :global(.chat-thread-content) { margin-block-start: auto; }
   /* The component measures itself, not the window. The same pane is narrow in a side
      panel on a wide screen, and a host that names no container of its own — the Chief
      conversation is one — still gets the adaptation. */

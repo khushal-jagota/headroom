@@ -181,6 +181,9 @@
   /* v11 (2): in a permission ask the declining row's label is the failure tone. v18 (4): the
      same red as the "This turn failed" title, #ff8f85. */
   .c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #ff8f85; }
+  /* v19 (3): the first option's label (Allow once) is #ffffff 500; the others stay 400. Nothing
+     is preselected: the row itself looks like every other row. */
+  .c2-ask-choice[data-conversation-ask-emphasis="primary"] :global(.cv-ask-label) { color: #ffffff; font-weight: 500; }
   .c2-ask-note {
     margin: var(--cv-s3) 0 0;
     color: var(--cv-t3);

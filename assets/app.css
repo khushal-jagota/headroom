@@ -5743,3 +5743,12 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-thread .chat-a .markdown h3 { font-size: 17px; line-height: 24px; font-weight: 600; color: #ececec; }
 /* (8) Links in answers: reverted to v15 by v18 (3), #ececec with a 50% underline (v11 (10) above). */
 /* (5) Disabled send: reverted to v14 by v17 (2), #2a2a2a fill and a #9a9a9a arrow (above). */
+
+/* ==========================================================================================
+ * v19 (22 Nov, after round 25).
+ * ========================================================================================== */
+/* (2) Stop in the composer: a 32px round filled #ececec with a 10px #141414 square (radius 2).
+ * It is the only white control while the agent works; the disabled send stays #2a2a2a/#9a9a9a. */
+.chat-send.stop { background: #ececec; box-shadow: none; color: #141414; }
+.chat-send.stop:hover { background: #ffffff; }
+.chat-send.stop .chat-send-fill { width: 10px; height: 10px; border-radius: 2px; }
