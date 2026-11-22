@@ -56,6 +56,24 @@
     }
     return node.getBoundingClientRect().height > 1 ? node : null;
   }
+  /** Where an item starts to draw: a wrapper's own padding (the queued stack's 32 px top
+   *  padding, for one) is gap, not content. */
+  function paintedTop(node: Element, depth = 0): number {
+    const box = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    const paints = style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.borderTopWidth !== "0px" || style.boxShadow !== "none"
+      || node.matches("img, svg, video, canvas, input, textarea, button, [data-conversation-system-line]");
+    if (paints || depth > 6) return box.top;
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+        const range = document.createRange();
+        range.selectNodeContents(child);
+        return range.getBoundingClientRect().top;
+      }
+      if (child instanceof Element && getComputedStyle(child).display !== "none" && child.getBoundingClientRect().height > 1) return paintedTop(child, depth + 1);
+    }
+    return box.top;
+  }
   /** An item that is one system line (and what it opens onto), nothing else. */
   function isSystemLine(item: Element): boolean {
     const line = item.matches("[data-conversation-system-line]") ? item : item.querySelector("[data-conversation-system-line]");
@@ -69,7 +87,7 @@
     const following: (FollowingItem & { element: Element })[] = [];
     for (let item = drawnAfter(message); item !== null && following.length < 3; item = drawnAfter(item)) {
       const box = item.getBoundingClientRect();
-      following.push({ element: item, top: box.top, bottom: box.bottom, isSystemLine: isSystemLine(item) });
+      following.push({ element: item, top: paintedTop(item), bottom: box.bottom, isSystemLine: isSystemLine(item) });
       if (!following.at(-1)!.isSystemLine) break;
     }
     const where = placeHoverRow(message.getBoundingClientRect().bottom, following);
@@ -159,6 +177,8 @@
     position: absolute;
     inset-block-start: calc(100% + var(--message-actions-offset, 0px));
     inset-inline-start: 0;
+    /* Above the message's reach (its ::after), so the pointer lands on the row's buttons. */
+    z-index: 1;
     box-sizing: border-box;
     block-size: calc(var(--cv-hover-row-offset) + var(--cv-hover-row-height));
     padding-block-start: var(--cv-hover-row-offset);

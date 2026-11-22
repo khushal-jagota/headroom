@@ -37,7 +37,7 @@
     actions?: Snippet;
     /** What the line opens onto (the backend's own words behind Details). */
     below?: Snippet;
-    role?: "status" | "alert";
+    role?: "status" | "alert" | "separator";
     title?: string;
     [attribute: `data-${string}`]: string | undefined;
   } = $props();

@@ -1263,6 +1263,9 @@ a.pv-name:focus-visible { outline:0; }
 .chat-thread .markdown > :first-child { margin-block-start: 0; }
 .chat-thread .markdown > :last-child { margin-block-end: 0; }
 .chat-thread .markdown :is(ul, ol) { padding-inline-start: var(--cv-s5); }
+/* B9: in the agent's prose a top-level list's text starts at x = 0; its markers hang in the
+ * 24 px mark gutter, as a system line's mark does. Nested lists keep their indent. */
+.chat-thread .chat-a .markdown > :is(ul, ol) { padding-inline-start: 0; }
 .chat-thread .markdown li + li { margin-block-start: var(--cv-gap-list-item); }
 .chat-thread .markdown li > :is(ul, ol) { margin-block: var(--cv-gap-list-item) 0; }
 .chat-thread .markdown li > p { margin-block: 0; }
@@ -1727,20 +1730,6 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-pill);
   animation: acp-spin var(--cv-spin) linear infinite;
 }
-
-/* A seam in the conversation (context compacted, model changed): one centred quiet line.
-   It is said by its place and tone; no rule is drawn on either side. */
-.acp-compaction {
-  display: flex;
-  justify-content: center;
-  text-align: center;
-  color: var(--cv-t3);
-  font-family: var(--cv-font);
-  font-size: var(--cv-type-caption);
-  line-height: var(--cv-leading-caption);
-  font-variant-numeric: tabular-nums;
-}
-.acp-compaction span { color: inherit; }
 
 /* A backend's own answer to a slash command: the tool voice, kept whole, never a bubble. */
 .acp-command-reply {
