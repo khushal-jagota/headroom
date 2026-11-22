@@ -380,6 +380,8 @@ export class AgentGateway {
     };
   }
   private receipt_response(request_id: string, receipt: AcceptanceReceipt): IpcResponse {
+    if (receipt.disposition === 'uncertain')
+      return this.unconfirmed(request_id, receipt.submission_id, 'queued');
     return receipt.disposition === 'refused'
       ? { request_id, result: null, error: (receipt.result.error ?? receipt.result) as JsonObject }
       : { request_id, result: receipt.result, error: null };

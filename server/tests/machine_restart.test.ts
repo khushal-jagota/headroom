@@ -233,7 +233,7 @@ test.each(['socket', 'https'] as const)(
         write_finished = false;
       const read = command('ipc', {
         kind: 'read',
-        payload: { path: `/api/tickets/${turn.ticket_id}`, params: {} },
+        payload: { path: `/api/tickets/${turn.ticket_id}/worker-self`, params: {} },
       }).then((value) => {
         read_finished = true;
         return value;

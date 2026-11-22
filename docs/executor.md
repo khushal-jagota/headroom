@@ -103,7 +103,7 @@ Machine code also owns provider sign-in, allowance reads, and application previe
 
 A graceful server restart leaves machine code and its current agent turns alive, including machine code on the server’s own machine. The server preserves mailboxes, assignments, results, and receipts, then adopts the same remote children. Pending prompts remain busy until their existing native result arrives. Neither path sends the prompt again.
 
-Agent commands wait through a server pause of up to five minutes, with two additional minutes for reconnection and the response. Reads retry transient connection failures. Writes retain their original submission identity and return the saved receipt. The server retains admitted generic requests through their final response and receipt before graceful shutdown completes. A forced process kill during an arbitrary external effect can still leave its outcome unconfirmed. Do not submit that write as a new operation.
+Agent commands wait through a server pause of up to five minutes, with two additional minutes for reconnection and the response. Reads retry transient connection failures. Writes retain their original submission identity and return the saved receipt. The server retains admitted generic requests through their final response and receipt before graceful shutdown completes. After a forced kill, a generic relayed write without a committed final receipt remains unconfirmed, even if its effect occurred. It is never executed again.
 
 Machine code retains output and events during the pause and delivers them in order after reconnection. If the delivery window expires, the local failure retains the content and an unconfirmed result. A timeout does not prove that a write failed.
 

@@ -18,6 +18,8 @@ Registry `configure` binds every endpoint to the same core, start-admission gate
 
 Durable items enter through `MacInbox`. Ordered receipts, replay, assignment authority, canonical writes, answer application, and file publication share the existing write door. A refused domain effect can roll back its savepoint while the outer refusal receipt commits. Runtime predictions are restored before the global publication finalizer, so rolled-back events do not escape through the live tail or Signal.
 
+A graceful server restart retains each admitted relayed write through its final receipt. After a forced kill, generic writes without a committed final receipt remain unconfirmed and are never executed again.
+
 Agent messages require an explicit recipient through `message.send`. Executor transport refuses the retired `ticket.request_help` mutation.
 
 Live batches carry only message deltas, thinking notices, and tool progress. They use the current exact child's event sink and create no durable item receipt. Completed backend prose uses the item route for journal and receipt custody. The core does not turn it into an addressed notebook message. Lifecycle changes and other durable events also use that route. Live reads enter the existing application routes under the child's assigned principal; they do not grant arbitrary owner access.

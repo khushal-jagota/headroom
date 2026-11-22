@@ -3,6 +3,9 @@
  * Exercise the existing gateway without starting its socket or native children.
  */
 import { expect, test, vi } from 'vitest';
+import { executor_response } from '../../../cli/http.ts';
+import { CliFailure } from '../../../cli/errors.ts';
+import { CliCommand } from '../../../cli/declarations.ts';
 import { AgentGateway } from './gateway.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
 import type { GatewayOptions } from './contracts.ts';
@@ -132,13 +135,14 @@ test('reads and write capability probes wait through a temporary server failure'
     async () => receipt as AcceptanceReceipt,
   );
   const read = vi.fn();
+  const lookup = vi.fn();
   const gateway = new AgentGateway({
     runner: {
       authenticate: () => child,
       admission_stopped: false,
       source_work: (async (_reference, work) => work()) as GatewayOptions['runner']['source_work'],
     } as unknown as GatewayOptions['runner'],
-    outbox: { add, wait_confirmed } as unknown as GatewayOutbox,
+    outbox: { add, wait_confirmed, lookup } as unknown as GatewayOutbox,
     presence: {} as GatewayOptions['presence'],
     client: { read },
     request_exit() {},
@@ -224,5 +228,80 @@ test('reads and write capability probes wait through a temporary server failure'
     });
   } finally {
     vi.useRealTimers();
+  }
+  // A forced stop can leave an uncertain durable receipt. Neither the initial waiter
+  // nor a later inspection can translate it into a refusal or repeat its effect.
+  for (const result of [
+    { error: { code: 'uncertain', message: 'Outcome unknown' } },
+    { fate: 'uncertain' },
+  ]) {
+    const uncertain: AcceptanceReceipt = {
+      ...receipt,
+      submission_id: 'original-write',
+      disposition: 'uncertain',
+      result,
+    };
+    wait_confirmed.mockResolvedValueOnce(uncertain);
+    const response = await gateway.handle({
+      ...request('write', {
+        operation: 'cli.request',
+        arguments: { method: 'POST', path: '/api/probe', body: {} },
+      }),
+      request_id: 'original-write',
+    });
+    expect(response).toMatchObject({
+      result: null,
+      error: null,
+      unconfirmed: { submission_id: 'original-write', acceptance: 'unconfirmed' },
+    });
+    lookup.mockReturnValue({
+      envelope: {
+        kind: 'cli_write',
+        payload: {
+          child: child.reference,
+          operation: 'cli.request',
+          arguments: { method: 'POST', path: '/api/probe', body: {} },
+          turn: null,
+        },
+      },
+      receipt: uncertain,
+    });
+    const published = add.mock.calls.length;
+    const inspected = await gateway.handle({
+      ...request('read', { submission_id: 'original-write' }),
+      operation: 'retry',
+      request_id: 'inspection',
+    });
+    expect(inspected).toMatchObject({
+      request_id: 'inspection',
+      unconfirmed: { submission_id: 'original-write', acceptance: 'unconfirmed' },
+    });
+    expect(add).toHaveBeenCalledTimes(published);
+    for (const as_json of [false, true]) {
+      let failure: unknown;
+      try {
+        executor_response(
+          {
+            command: new CliCommand(['executor', 'retry'], 'Inspect a write'),
+            values: { as_json },
+            environment: {},
+            stdin: async () => Buffer.alloc(0),
+          },
+          inspected,
+        );
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(CliFailure);
+      const output = (failure as CliFailure).result;
+      expect(output.exit_code).toBe(3);
+      expect(output.stderr).toBe('');
+      if (as_json)
+        expect(JSON.parse(output.stdout)).toMatchObject({
+          submission_id: 'original-write',
+          acceptance: 'unconfirmed',
+        });
+      else expect(output.stdout).toContain('Do not repeat the original write.');
+    }
   }
 });
