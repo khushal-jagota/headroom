@@ -162,6 +162,38 @@ jobs:
           node-version: '22'
       - name: Prepare native Mac build prerequisites
         run: brew install icu4c pkgconf
+      - name: Install the launcher build's dependencies without the signing secrets
+        run: npm ci --prefix server --omit=dev
+      - name: Build the shared launcher and sign it with the Developer ID
+        # Every Apple Silicon join installs this one signed launcher. macOS keys folder
+        # permissions on the team identity, so they stay when a later release changes it.
+        env:
+          MAC_DEVELOPER_ID_P12_BASE64: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+          MAC_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          keychain="$RUNNER_TEMP/launcher-signing.keychain-db"
+          password=$(openssl rand -hex 24)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$MAC_DEVELOPER_ID_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" \
+            -P "$MAC_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          unset MAC_DEVELOPER_ID_P12_BASE64 MAC_DEVELOPER_ID_P12_PASSWORD
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application: / { print $2; exit }')
+          test -n "$identity"
+          mkdir "$RUNNER_TEMP/panels-launcher"
+          app="$RUNNER_TEMP/panels-launcher/Panels TypeScript.app"
+          node server/executor/mac/packaging/launcher_main.ts --output "$app" --sign "$identity"
+          codesign -dv --verbose=2 "$app" 2>&1 | tee "$RUNNER_TEMP/launcher-codesign.txt"
+          grep -q '^Authority=Developer ID Application: ' "$RUNNER_TEMP/launcher-codesign.txt"
+          grep -q '^Identifier=com.panels.executor.typescript.app$' "$RUNNER_TEMP/launcher-codesign.txt"
+          security delete-keychain "$keychain"
       - name: Build and prove the sealed TypeScript Mac runtime
         run: |
           set -euo pipefail
@@ -170,7 +202,7 @@ jobs:
           mkdir -p "$private"/{home/.codex,home/.claude,config,cache,data,logs,backups,workspace,scratch,runtime,tmp,source}
           env -i PATH="$PATH" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
-            PUBLICATION_ROOT="$private" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
+            PUBLICATION_ROOT="$private" LAUNCHER_APP="$RUNNER_TEMP/panels-launcher/Panels TypeScript.app" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
             XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" npm_config_cache="$private/cache/npm" \
             PLAN_CONFIG_PATH="$private/config.yaml" PLAN_DB_PATH="$private/data/planner.sqlite" PLAN_APP_ROOT="$private/app" PLAN_DATA_DIR="$private/data" \
             PLAN_LOGS_DIR="$private/logs" PLAN_BACKUP_DIR="$private/backups" PLAN_WORKSPACE_ROOT="$private/workspace" PLAN_TICKET_SCRATCH_ROOT="$private/scratch" \
@@ -186,8 +218,7 @@ jobs:
             --source "$PUBLICATION_ROOT/source" --node-distribution "$node_distribution" \
             --node-modules "$PUBLICATION_ROOT/source/server/node_modules" \
             --output "$PUBLICATION_ROOT/mac" --revision "$GITHUB_SHA" \
-            --home "$PUBLICATION_ROOT/home" --executor-id release-package \
-            --server-url https://panels.invalid --backend-path /usr/bin:/bin \
+            --launcher-app "$LAUNCHER_APP" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
           MAC
       - name: Upload the checked native Mac runtime and receipt
@@ -202,14 +233,13 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-      - name: Preserve Mac installation assets and native proof
+      - name: Preserve the Mac build record and native proof
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: panels-typescript-mac-installation
+          name: panels-typescript-mac-build
           path: |
-            ${{ runner.temp }}/panels-mac-publication/mac/assets/
-            ${{ runner.temp }}/panels-mac-publication/mac/INSTALLATION.md
+            ${{ runner.temp }}/launcher-codesign.txt
             ${{ runner.temp }}/panels-mac-publication/mac/build.json
             ${{ runner.temp }}/panels-mac-publication/mac/proof-work/
           if-no-files-found: warn

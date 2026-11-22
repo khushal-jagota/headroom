@@ -7,8 +7,9 @@ import { gunzipSync } from 'node:zlib';
 import { ArchiveMembers } from '../../../environments/release/logic/archive_members.ts';
 import { build_mac_package } from './build.ts';
 import { MAC_REQUIRED_FILES } from './configuration.ts';
+import { mac_installation_assets, mac_launcher_bundle } from '../platform.ts';
 
-test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin Node', async () => {
+test('Mac package carries the shared launcher, no account path, and refuses a non-Darwin Node', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mac-package-'));
   const source = join(root, 'source'),
     node = join(root, 'node'),
@@ -52,21 +53,19 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
       await put(join(modules, name, 'package.json'), JSON.stringify({ name, version }));
     await put(join(modules, 'better-sqlite3/prebuilds/darwin-arm64.node'), native);
     await put(join(modules, '@koromix/koffi-darwin-arm64/darwin_arm64/koffi.node'), native);
+    const launcher_app = join(root, 'launcher/Panels TypeScript.app');
+    await put(join(launcher_app, 'Contents/Info.plist'), mac_launcher_bundle().info_plist);
+    await put(join(launcher_app, 'Contents/MacOS/Panels'), native);
+    await chmod(join(launcher_app, 'Contents/MacOS/Panels'), 0o755);
     const options = {
       source_root: source,
       node_distribution: node,
       production_node_modules: modules,
       output: join(root, 'output'),
       revision: '1'.repeat(40),
-      home: '/Users/Owner & Test',
-      executor_id: 'typescript-trial',
-      server_url: 'https://127.0.0.1:9',
-      backend_path: '/usr/bin:/bin',
+      launcher_app,
     };
-    const built = await build_mac_package(options);
-    expect(built.paths.node).toBe(
-      '/Users/Owner & Test/Deployments/PanelsExecutorTypeScript/supervisor/node/bin/node',
-    );
+    await build_mac_package(options);
     const manifest = JSON.parse(
       await readFile(join(options.output, 'runtime/mac-runtime.json'), 'utf8'),
     );
@@ -87,6 +86,8 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
     expect(members).toEqual(
       expect.arrayContaining([
         'bin/panels',
+        'launcher/Panels TypeScript.app/Contents/Info.plist',
+        'launcher/Panels TypeScript.app/Contents/MacOS/Panels',
         'node/bin/node',
         'server/executor/mac/entrypoint.ts',
         'server/executor/wire.generated.ts',
@@ -100,9 +101,16 @@ test('Mac package keeps its runtime/CLI assets separate and refuses a non-Darwin
     ).toBe(wire_schema);
     expect(Buffer.concat(archived_schema).toString()).toBe(wire_schema);
     expect(members).not.toEqual(expect.arrayContaining(['server/executor/mac/service.test.ts']));
-    expect(
-      await readFile(join(options.output, 'assets/com.panels.executor.typescript.plist'), 'utf8'),
-    ).toContain('Owner &amp; Test');
+    // The account appears only in the files a join writes on the machine.
+    const account = mac_installation_assets({
+      home: '/Users/Owner & Test',
+      revision: options.revision,
+      executor_id: '00000000-0000-4000-8000-000000000000',
+      server_url: 'https://127.0.0.1:9',
+      backend_path: '/usr/bin:/bin',
+    });
+    expect(account.launch_agent).toContain('Owner &amp; Test');
+    expect(mac_launcher_bundle().launcher_source).not.toContain('/Users/');
     await put(join(node, 'bin/node'), Buffer.from('7f454c4600000000', 'hex'));
     await expect(build_mac_package({ ...options, output: join(root, 'refused') })).rejects.toThrow(
       'Darwin arm64 Mach-O',

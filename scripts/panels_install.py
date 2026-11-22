@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Install a sealed Panels home or join an extra Linux machine without a source checkout.
+"""Install a sealed Panels home or join an extra machine without a source checkout.
 
 This bootstrap uses Python's standard library and the authenticated GitHub CLI.
 """
 
 from __future__ import annotations
+
+import sys
+
+# The Python that comes with macOS is 3.9. Refuse before an import that needs 3.11.
+if sys.version_info < (3, 11):
+    raise SystemExit(
+        "Panels setup refused: Python 3.11 or newer is required. "
+        "On a Mac, install it with Homebrew (brew install python), then run the command again."
+    )
 
 import argparse
 import ctypes
@@ -18,7 +27,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import sys
 import tarfile
 import tempfile
 import urllib.error
@@ -45,7 +53,7 @@ def host_target() -> str:
 
 def preflight(args: argparse.Namespace, target: str) -> None:
     """Refuse host and namespace conflicts before downloads or installation writes."""
-    if sys.version_info < (3, 11) or not hasattr(tarfile, "data_filter"):
+    if not hasattr(tarfile, "data_filter"):
         raise ValueError(
             "Install Python 3.11.8 or newer, then run this command with that interpreter."
         )
@@ -53,6 +61,8 @@ def preflight(args: argparse.Namespace, target: str) -> None:
     if any(ord(character) < 32 or ord(character) == 127 for character in str(root)):
         raise ValueError("The installation root must not contain control characters.")
     if root.exists() or root.is_symlink():
+        if args.command == "join" and target == "darwin":
+            raise ValueError(f"This machine already has Panels machine code: {root}")
         raise ValueError(f"The installation root already exists: {root}. Select a new --root.")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.service):
         raise ValueError("Use a service name with letters, numbers, dots, and hyphens.")
@@ -69,35 +79,43 @@ def preflight(args: argparse.Namespace, target: str) -> None:
                 listener.bind(("127.0.0.1", args.port))
             except OSError as error:
                 raise ValueError(f"Port {args.port} is busy. Select an unused --port.") from error
-    node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
-    if node is None or not Path(node).is_file():
-        raise ValueError(
-            "Install Node.js 22 or newer before installation. On Mac use /opt/homebrew/bin/node."
-        )
-    version = _run(node, "--version").stdout.strip()
-    node_version = re.fullmatch(r"v(\d+)\.\d+\.\d+", version)
-    if node_version is None or int(node_version.group(1)) < 22:
-        raise ValueError(f"Install Node.js 22 or newer. The selected Node reports {version}.")
-    if args.command == "join" and target == "linux":
-        require_linux_join_node(version)
+    # An Apple Silicon join runs on the Node inside the machine code release.
+    if not (args.command == "join" and target == "darwin"):
+        node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
+        if node is None or not Path(node).is_file():
+            raise ValueError(
+                "Install Node.js 22 or newer before installation. "
+                "On Mac use /opt/homebrew/bin/node."
+            )
+        version = _run(node, "--version").stdout.strip()
+        node_version = re.fullmatch(r"v(\d+)\.\d+\.\d+", version)
+        if node_version is None or int(node_version.group(1)) < 22:
+            raise ValueError(f"Install Node.js 22 or newer. The selected Node reports {version}.")
+        if args.command == "join":
+            require_linux_join_node(version)
     if target == "darwin":
         if int(platform.mac_ver()[0].split(".")[0]) < 15:
             raise ValueError("Update this Mac to macOS 15 or newer.")
         domain = f"gui/{os.getuid()}"
-        labels = tuple(
-            args.service + suffix for suffix in ("", ".backup", ".maintenance", ".stall-watchdog")
+        suffixes = (
+            ("",)
+            if args.command == "join"
+            else ("", ".backup", ".maintenance", ".stall-watchdog")
         )
+        labels = tuple(args.service + suffix for suffix in suffixes)
         for label in labels:
             path = Path.home() / "Library/LaunchAgents" / (label + ".plist")
+            # A join has one fixed job, so the person cannot choose another name.
+            remedy = (
+                " Remove the earlier Panels machine code first."
+                if args.command == "join"
+                else " Select another --service."
+            )
             if path.exists() or path.is_symlink():
-                raise ValueError(
-                    f"The LaunchAgent file already exists: {path}. Select another --service."
-                )
+                raise ValueError(f"The LaunchAgent file already exists: {path}." + remedy)
             result = _run("/bin/launchctl", "print", f"{domain}/{label}", check=False)
             if result.returncode == 0:
-                raise ValueError(
-                    f"The LaunchAgent already exists: {label}. Select another --service."
-                )
+                raise ValueError(f"The LaunchAgent already exists: {label}." + remedy)
             if "Could not find service" not in result.stderr:
                 raise ValueError("Log in to the Mac graphical session before installation.")
     else:
@@ -240,7 +258,7 @@ def find_release(target: str, command: str, revision: str | None, work: Path) ->
         )["artifacts"]
         by_name = {item["name"]: item for item in artifacts if not item["expired"]}
         artifact_name = (
-            "panels-linux-executor"
+            ("panels-mac-runtime" if target == "darwin" else "panels-linux-executor")
             if command == "join"
             else "panels-mac-home"
             if target == "darwin"
@@ -311,7 +329,7 @@ def select_publication(
 
 def select_receipt(receipt: dict[str, Any], target: str, command: str) -> dict[str, Any]:
     if command == "join":
-        selected = receipt.get("linux_executor", receipt)
+        selected = receipt.get("mac" if target == "darwin" else "linux_executor", receipt)
         revision = receipt.get("manifest", {}).get("app_sha") or receipt.get("application_revision")
     else:
         selected = receipt.get("mac_home", receipt) if target == "darwin" else receipt
@@ -454,6 +472,22 @@ def linux_executor_node(payload: Path, revision: str) -> Path:
     return node
 
 
+def mac_executor_node(payload: Path, revision: str) -> Path:
+    """Bind the Apple Silicon machine code and its own Node before any of it executes."""
+    marker = json.loads((payload / "mac-runtime.json").read_text())
+    if not isinstance(marker, dict) or marker != {
+        "schema_version": 1,
+        "application_revision": revision,
+        "platform": "darwin",
+        "architecture": "arm64",
+    }:
+        raise ValueError("The release is not the Apple Silicon machine code of this revision.")
+    node = payload / "node/bin/node"
+    if not node.is_file() or node.is_symlink():
+        raise ValueError("The Apple Silicon release has no Node of its own.")
+    return node
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("command", choices=("home", "join"))
@@ -463,7 +497,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--root", type=Path)
     result.add_argument(
         "--service",
-        help="Home service label. Linux joins use panels-executor-typescript.service.",
+        help="Home service label. Joins use their fixed machine service.",
     )
     result.add_argument("--port", type=int, default=8767)
     result.add_argument("--isolated-providers", action="store_true")
@@ -522,10 +556,12 @@ def main() -> None:
     args = parser().parse_args()
     try:
         target = host_target()
-        if args.command == "join" and target != "linux":
-            raise ValueError("Join supports a Linux x86_64 machine only.")
         if args.command == "join" and args.service is not None:
-            raise ValueError("Linux joins use panels-executor-typescript.service. Omit --service.")
+            raise ValueError("A join uses its fixed machine service. Omit --service.")
+        if args.command == "join" and target == "darwin" and args.root is not None:
+            raise ValueError("An Apple Silicon join uses fixed paths. Omit --root.")
+        if args.command == "join" and target == "darwin" and args.isolated_providers:
+            raise ValueError("Isolated provider homes are a Linux join option.")
         args.service = args.service or "com.panels.home"
         default_root = (
             Path.home() / "Library/Application Support/PanelsHome"
@@ -537,11 +573,18 @@ def main() -> None:
                 raise ValueError(
                     "Join needs --home URL and --machine-id from the owner's join command."
                 )
-            xdg_data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
-            if args.root is None and not xdg_data.is_absolute():
-                raise ValueError("Linux executor XDG_DATA_HOME must be absolute.")
-            default_root = xdg_data / "panels/executor-typescript"
-            args.service = "panels-executor-typescript.service"
+            if target == "darwin":
+                # The join step owns the fixed paths. Preflight checks the state folder and the job.
+                default_root = (
+                    Path.home() / "Library/Application Support/Panels/executor-typescript"
+                )
+                args.service = "com.panels.executor.typescript"
+            else:
+                xdg_data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+                if args.root is None and not xdg_data.is_absolute():
+                    raise ValueError("Linux executor XDG_DATA_HOME must be absolute.")
+                default_root = xdg_data / "panels/executor-typescript"
+                args.service = "panels-executor-typescript.service"
         args.root = (args.root or default_root).expanduser().absolute()
         preflight(args, target)
         print("Host prerequisites passed. Select and check the release.", flush=True)
@@ -554,6 +597,9 @@ def main() -> None:
             payload = work / "payload"
             extract_bootstrap(archive, payload, receipt["archive_sha256"])
             linux_node: Path | None = None
+            mac_node: Path | None = None
+            if target == "darwin" and args.command == "join":
+                mac_node = mac_executor_node(payload, receipt["revision"])
             if target == "linux":
                 if args.command == "join":
                     linux_node = linux_executor_node(payload, receipt["revision"])
@@ -576,6 +622,24 @@ def main() -> None:
                     "revision": receipt["revision"],
                     "update_token": release_update_token(),
                 }
+            elif mac_node is not None:
+                command = [
+                    str(mac_node),
+                    str(payload / "server/environments/mac_executor/join_main.ts"),
+                ]
+                value = {
+                    "archive": str(archive),
+                    "archive_sha256": receipt["archive_sha256"],
+                    "archive_size": receipt.get("archive_size", archive.stat().st_size),
+                    "revision": receipt["revision"],
+                    "home_url": args.home,
+                    "machine_id": args.machine_id,
+                    "credential": getpass.getpass("Private machine credential: "),
+                    "home": str(Path.home()),
+                }
+                for variable in list(environment):
+                    if variable in ("NODE_OPTIONS", "NODE_PATH") or variable.startswith("DYLD_"):
+                        environment.pop(variable)
             else:
                 assert linux_node is not None
                 command = [
