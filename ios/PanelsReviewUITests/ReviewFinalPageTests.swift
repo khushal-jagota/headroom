@@ -320,6 +320,17 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "design-ticket-actions")
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 5))
+        // The Ticket page opens the same Approve and Reviewer sheets as Review.
+        approve.tap()
+        XCTAssertTrue(waitForDecisionStage(stage))
+        capture(app, "design-ticket-approve-sheet")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(stage.waitForNonExistence(timeout: 5))
+        app.buttons["decision.reviewer"].tap()
+        XCTAssertTrue(app.buttons["decision.reviewer.chief"].waitForExistence(timeout: 5))
+        capture(app, "design-ticket-reviewer-sheet")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["decision.reviewer.chief"].waitForNonExistence(timeout: 5))
         XCTAssertEqual(note.value as? String, "Keep this proposal note")
         // Open ticket pushes the Ticket on Review, so Back returns to the card.
         app.backButton.tap()

@@ -66,7 +66,7 @@ import XCTest
     /// ready, with no error under its buttons, and Approve still saves at once.
     func testDroppedTicketReadShowsNoErrorAndKeepsTheCardReady() async throws {
         let (decision, api, item) = try await setupDecision()
-        ReviewStub.state.configureScope(mode: "success", failNextRead: true)
+        ReviewStub.state.failNextTicketRead()
         await decision.load(item: item, api: api)
         XCTAssertNil(decision.error)
         XCTAssertTrue(decision.ready)
@@ -555,12 +555,11 @@ private final class ReviewStubState: @unchecked Sendable {
     private var operationResponse: (Int, Data)?
     private var operationRequests: [URLRequest] = []
     private var operationReceipts: [String: Data] = [:]
-    private var scopeMode = "success"
     private var failNextScopeRead = false
     private var ticketReadRequests: [URLRequest] = []
     var scopeTicketReads: [URLRequest] { lock.withLock { ticketReadRequests } }
-    func configureScope(mode: String, failNextRead: Bool) {
-        lock.withLock { scopeMode = mode; failNextScopeRead = failNextRead }
+    func failNextTicketRead() {
+        lock.withLock { failNextScopeRead = true }
     }
     var protectedWrites: [URLRequest] { lock.withLock { operationRequests.filter { $0.httpMethod == "POST" } } }
     var protectedRequests: [URLRequest] { lock.withLock { operationRequests } }
@@ -573,7 +572,7 @@ private final class ReviewStubState: @unchecked Sendable {
         set { lock.withLock { failing = newValue } }
     }
     func reset(ticket: Data, manifest: Data) {
-        lock.withLock { self.ticket = ticket; self.manifest = manifest; recorded = []; failing = false; operationResponse = nil; operationRequests = []; operationReceipts = [:]; scopeMode = "success"; failNextScopeRead = false; ticketReadRequests = [] }
+        lock.withLock { self.ticket = ticket; self.manifest = manifest; recorded = []; failing = false; operationResponse = nil; operationRequests = []; operationReceipts = [:]; failNextScopeRead = false; ticketReadRequests = [] }
     }
     func bumpRevision() {
         lock.withLock {
@@ -598,13 +597,11 @@ private final class ReviewStubState: @unchecked Sendable {
             if request.httpMethod == "PATCH" {
                 recorded.append(request)
                 let body = try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-                if scopeMode != "unappliedDrop" {
-                    var object = try! JSONSerialization.jsonObject(with: ticket) as! [String: Any]
-                    if let ceiling = body["ceiling"] { object["ceiling"] = ceiling }
-                    object["ceiling_holder"] = body["ceiling_holder"]
-                    ticket = try! JSONSerialization.data(withJSONObject: object)
-                }
-                return scopeMode == "success" ? (200, Data("{}".utf8)) : (-1, Data())
+                var object = try! JSONSerialization.jsonObject(with: ticket) as! [String: Any]
+                if let ceiling = body["ceiling"] { object["ceiling"] = ceiling }
+                object["ceiling_holder"] = body["ceiling_holder"]
+                ticket = try! JSONSerialization.data(withJSONObject: object)
+                return (200, Data("{}".utf8))
             }
             if request.httpMethod == "GET", request.url!.path == "/api/tickets" {
                 ticketReadRequests.append(request)
