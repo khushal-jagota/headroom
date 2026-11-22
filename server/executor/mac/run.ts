@@ -12,9 +12,7 @@ import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { CliFailure, human_error } from '../../cli/errors.ts';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { ExecutorPaths, executor_paths, validate_executor_launch } from './configuration.ts';
-import { local_server_address } from '../../server_link/logic.ts';
-import { HOME_MACHINE_ID } from '../../execution_identity.ts';
-import { executor_link_server_folders } from './transport/executor_link.ts';
+import { launch_server_folders } from './server_folders.ts';
 import { FilesService } from './files.ts';
 import { run_mac_service } from './host/entry.ts';
 import { supervise } from './runtime/supervisor.ts';
@@ -30,14 +28,14 @@ export async function run_executor(invocation: Invocation): Promise<CommandResul
       invocation.values.panels_server_url as string,
     ).current_url;
     validate_executor_launch(executor_id, revision, panels_server_url);
+    // Only the server's own machine code, with the home identity, works in the server's
+    // folder. The choice is saved, so it keeps those folders after the server moves away.
+    const server_folders = launch_server_folders(paths.root, executor_id, panels_server_url);
+    if (server_folders !== null) paths = new ExecutorPaths(paths.root, server_folders);
   } catch (error) {
     if (!(error instanceof ExecutorValidationError) && !(error instanceof SyntaxError)) throw error;
     throw new CliFailure(human_error(invocation.command, error.message));
   }
-  // Only the server's own machine code, with the home identity, works in the server's folder.
-  const local_link = local_server_address(panels_server_url);
-  if (local_link !== null && executor_id === HOME_MACHINE_ID)
-    paths = new ExecutorPaths(paths.root, executor_link_server_folders(local_link));
   const runtime = mac_runtime_settings(invocation.environment);
   if (runtime.child) {
     let build_id: string | undefined;

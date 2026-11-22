@@ -170,6 +170,9 @@ export const SERVER_MOVE_ATTEMPT_FILE = 'move-attempt.json';
 export const SERVER_MOVE_HELD_FILE = 'move-held.json';
 /** Old-server work folder for the package cache and the database copy. Not state. */
 export const SERVER_MOVE_DIRECTORY = 'server-move';
-/** Machine items wait in the outbox for 300 seconds. The pause must end well before that. */
-export const SERVER_MOVE_PAUSE_LIMIT_SECONDS = 240;
+/**
+ * Machine code holds agent commands and output through a server pause of up to five minutes
+ * (`CLI_RESULT_TIMEOUT_SECONDS`). The pause of a move ends within that time.
+ */
+export const SERVER_MOVE_PAUSE_LIMIT_SECONDS = 300;
 export const SERVER_MOVE_DEFAULT_SERVICE = 'com.panels.home';

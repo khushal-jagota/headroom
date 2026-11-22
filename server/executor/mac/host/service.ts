@@ -47,6 +47,9 @@ import { MacInputs } from '../inputs.ts';
 import { AgentGateway } from '../ipc/gateway.ts';
 import { GatewayOutbox } from '../ipc/outbox.ts';
 import { MachinePreviews } from '../../../previews/machine.ts';
+import { work_folders_are_served } from '../server_folders.ts';
+import { production_server_move } from '../server_move/production.ts';
+import type { MacServerMove } from '../server_move/runner.ts';
 import type { MacCatalog } from '../catalog/index.ts';
 import { failure_detail } from '../failure_detail.ts';
 import type {
@@ -91,6 +94,7 @@ export class MacService {
   readonly ticket_file_sync: MacArtifactSync;
   readonly manager_file_sync: MacArtifactSync;
   readonly updates: MacHostUpdates;
+  readonly server_move: MacServerMove;
   private readonly controller = new AbortController();
   private starting: Promise<void> | undefined;
   private cleanup: Promise<void> | undefined;
@@ -243,15 +247,26 @@ export class MacService {
     this.ticket_file_sync = artifact_sync('ticket', configuration.paths.artifacts);
     this.manager_file_sync = artifact_sync('manager', configuration.paths.managers);
     this.updates = bindings.updates(context);
+    this.server_move = production_server_move({
+      root: configuration.paths.root,
+      machine_id: configuration.executor_id,
+      panels_server_url: configuration.panels_server_url,
+      http: configuration.http,
+      client: this.client,
+      files: this.files,
+      child_processes: this.child_processes,
+    });
     this.lease = new MacLeaseLoop({
       client: this.client,
       workspace_root: configuration.paths.artifacts,
-      workspace_root_is_shared: configuration.paths.server_folders !== null,
+      workspace_root_is_shared: () => this.work_folders_are_served(),
       presence: this.presence,
       outbox,
       journal,
       runner: this.runner,
       updates: this.updates,
+      server_move: this.server_move,
+      after_lease: () => this.follow_file_sync(),
       driver_kinds: adapters.drivers.map((driver) => driver.driver_kind),
       replaced: () => this.request_exit(1),
       on_failure: (error) => on_failure(error instanceof Error ? error : new Error(String(error))),
@@ -348,6 +363,19 @@ export class MacService {
       throw error;
     }
   }
+  /** True while the current address is the local link of the folders this machine works in. */
+  private work_folders_are_served(): boolean {
+    return work_folders_are_served(this.configuration.paths.server_folders, this.client.server_url);
+  }
+  /**
+   * Served folders need no file sync. Once the address leaves that local link, as after the
+   * server moved to another machine, the Ticket and Manager files start to travel.
+   */
+  private follow_file_sync(): void {
+    if (this.work_folders_are_served()) return;
+    this.ticket_file_sync.start();
+    this.manager_file_sync.start();
+  }
   private failed(error: unknown): void {
     this.failures.add(error);
     this.request_exit(1);
@@ -401,12 +429,8 @@ export class MacService {
         this.controller.signal.throwIfAborted();
         this.updates.start();
         this.sender.start();
-        // On the local link, the Ticket and Manager folders are the served folders, so there is
-        // nothing to send.
-        if (this.configuration.paths.server_folders === null) {
-          this.ticket_file_sync.start();
-          this.manager_file_sync.start();
-        }
+        this.follow_file_sync();
+        this.server_move.start();
         this.lease.start();
       });
     })();
@@ -463,6 +487,7 @@ export class MacService {
         this.mailbox,
         this.lease,
         this.updates,
+        this.server_move,
         this.sender,
         this.ticket_file_sync,
         this.manager_file_sync,

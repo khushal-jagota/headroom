@@ -346,6 +346,8 @@ export class ServerServices {
       if (!environments?.mac_updates)
         throw new Error('Configured executor requires the invocation Mac update service.');
       executor.bind_updates(environments.mac_updates);
+      if (environments.server_move_notice)
+        executor.bind_server_move(environments.server_move_notice);
     }
     return environments;
   }
@@ -460,6 +462,7 @@ export class ServerServices {
       workspaceAdmission: conversationSystem?.workspace_admission,
       updateBarrier: this.update_barrier,
       executor,
+      executorRoutes: environments?.executor_routes,
     });
     application_ready();
     this.app.own(app);

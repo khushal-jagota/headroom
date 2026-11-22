@@ -127,3 +127,21 @@ async function rename_key_directory(root: string) {
   await rm(join(root, 'credential-secrets'), { recursive: true });
   await symlink(join(root, 'elsewhere'), join(root, 'credential-secrets'));
 }
+
+// Gap: a move lists a running server. Its live WAL is expected, and the database entry
+// must come from the checked copy under the database's own name, or be absent.
+test('a running inventory takes the database entry from its copy, or omits it', async () => {
+  const f = await fixture();
+  await f.put('record.sqlite-wal', 'live pages');
+  await f.put('move/copy.sqlite', 'consistent copy');
+  const copied = await server_state_manifest(f.paths, {
+    database_copy: join(f.root, 'move/copy.sqlite'),
+  });
+  expect(copied['record.sqlite']).toBe(await sha256_file(join(f.root, 'move/copy.sqlite')));
+  expect(Object.keys(copied)).not.toContain('move/copy.sqlite');
+  const running = await server_state_manifest(f.paths, { database_copy: null });
+  expect(Object.keys(running)).not.toContain('record.sqlite');
+  expect(Object.keys(running)).toEqual(
+    Object.keys(copied).filter((key) => key !== 'record.sqlite'),
+  );
+});

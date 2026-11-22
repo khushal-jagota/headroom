@@ -31,6 +31,8 @@ import { create_vps_status_routes } from './vps_status/routes.ts';
 import type { VpsStatusSnapshot } from './vps_status/contracts.ts';
 import type { StatusOptions } from './vps_status/contracts.ts';
 import { create_vps_status_dependencies } from './vps_status/probes.ts';
+import { create_server_move } from '../server_move/composition.ts';
+import type { ServerPackageSource } from '../server_move/packages/cache.ts';
 
 export interface EnvironmentOperations {
   app_root: string;
@@ -42,6 +44,8 @@ export interface EnvironmentOperations {
   create_mac(context: MacUpdateCompositionContext): MacUpdateComposition;
   collector: CollectorFactory | null;
   collect_status(config: Config, options: StatusOptions): Promise<VpsStatusSnapshot>;
+  /** The release host for another platform's server package, when one is configured. */
+  server_packages?(): ServerPackageSource | null;
 }
 /** The concrete composition exposes its existing Mac service for executor routes. */
 export interface ComposedEnvironmentRuntime extends EnvironmentRuntime {
@@ -70,6 +74,24 @@ export async function createEnvironmentRuntime(
   });
   const attempts = new FileUpdateAttemptStore(attempt_path(data_directory), () => changes.emit());
   const provider = installed === null ? null : operations.provider();
+  const move = create_server_move({
+    config,
+    database: context.database,
+    data_directory,
+    database_path: database,
+    update_barrier,
+    update_running: () => {
+      const attempt = attempts.read();
+      return (
+        (attempt !== null && attempt.state !== 'done' && attempt.state !== 'failed') ||
+        update_barrier.frozen ||
+        update_barrier.installer_active(attempt?.attempt_id ?? '')
+      );
+    },
+    conversation: () => context.conversationSystem ?? null,
+    package_source: config.test_mode ? null : (operations.server_packages?.() ?? null),
+    emit_change: () => changes.emit(),
+  });
   let updates: UpdateService;
   const mac = operations.create_mac({
     root: join(data_directory, 'mac-updates'),
@@ -108,6 +130,7 @@ export async function createEnvironmentRuntime(
     installer: operations.installer,
     mac: mac.operations,
     update_barrier,
+    install_refusal: () => move.coordinator.update_refusal(),
     // A test-mode server must never instantiate a provider transport.
     ...(config.test_mode
       ? {}
@@ -148,8 +171,11 @@ export async function createEnvironmentRuntime(
     reopen_update_work(attempt_id) {
       updates.reopen_trial_work(attempt_id);
     },
+    executor_routes: [move.executor_routes],
+    server_move_notice: (machine_id) => move.coordinator.notice(machine_id),
     areas: [
       { prefix: '/api', routes: create_update_routes(updates, mac.reads) },
+      { prefix: '/api', routes: move.owner_routes },
       { prefix: '/api', routes: create_metrics_routes(metrics) },
       {
         prefix: '/api',
@@ -168,7 +194,10 @@ export async function createEnvironmentRuntime(
       },
     ],
     resourceProviders: [new DeploymentResources(deployment)],
-    before_worker_readiness_poll: () => updates.poll(),
+    before_worker_readiness_poll: () => {
+      const updating = updates.poll();
+      return move.coordinator.holds_work() || updating;
+    },
     start() {
       if (starting) return starting;
       if (closing) return Promise.reject(new Error('Environment runtime is shut down'));
@@ -189,6 +218,7 @@ export async function createEnvironmentRuntime(
           () => metrics.settled(),
           () => updates.settled(),
           () => mac.service.settled(),
+          () => move.coordinator.settled(),
         ];
         for (const actual of actuals) {
           try {
@@ -213,7 +243,11 @@ export async function createEnvironmentRuntime(
         ['environment services'],
       );
       // Fence every producer now, including when setup still owns a continuation.
-      for (const stop of [() => metrics.stop(options), () => updates.stop(options)]) {
+      for (const stop of [
+        () => metrics.stop(options),
+        () => updates.stop(options),
+        () => move.coordinator.stop(),
+      ]) {
         try {
           drains.push(
             Promise.resolve(stop()).catch((error: unknown) => {
@@ -232,6 +266,7 @@ export async function createEnvironmentRuntime(
         metrics.settled(),
         updates.settled(),
         mac.service.settled(),
+        move.coordinator.settled(),
         starting?.catch(() => {}),
       ]).then(() => {}),
   };

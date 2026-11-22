@@ -1,8 +1,9 @@
 /** User systemd units for one new home, with loaded-fragment checks before cleanup. */
-import { lstat } from 'node:fs/promises';
+import { lstat, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolved_path } from '../environments/paths.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
+import { assert_release_execution } from '../environments/release/process.ts';
 import { first_machine_arguments } from './machine.ts';
 import { home_service_environment, machine_service_environment } from './environment.ts';
 import {
@@ -10,17 +11,23 @@ import {
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
   HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS,
 } from './configuration.ts';
-import type { HomeInstallRequest, HomeInstallHost, HomeServicePlan } from './contracts.ts';
+import type {
+  HomeInstallRequest,
+  HomeInstallHost,
+  HomeServicePlan,
+  HomeServiceRemoval,
+} from './contracts.ts';
 
 function unit_argument(value: string): string {
   if (/[\x00-\x1f\x7f]/.test(value))
     throw new Error('Unit values cannot contain control characters');
   return JSON.stringify(value.replaceAll('%', '%%'));
 }
+/** A null machine environment leaves out the machine code unit: the machine already runs it. */
 export function linux_home_units(
   request: HomeInstallRequest,
   environment: Readonly<Record<string, string>>,
-  machine_environment: Readonly<Record<string, string>>,
+  machine_environment: Readonly<Record<string, string>> | null,
   host: HomeInstallHost,
 ): Record<string, string> {
   const root = request.root,
@@ -78,20 +85,22 @@ export function linux_home_units(
       `ExecStart=${unit_argument(join(root, 'app/bin/panels-launcher'))} serve\n` +
       'Restart=always\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=30\nDelegate=yes\n' +
       '[Install]\nWantedBy=default.target\n',
-    [request.service + '.machine.service']:
-      '[Unit]\nDescription=Panels machine code\n[Service]\nType=simple\n' +
-      `WorkingDirectory=${root.replaceAll('%', '%%')}/machine\n` +
-      Object.entries(machine_environment)
-        .map(([key, value]) => `Environment=${unit_argument(key + '=' + value)}\n`)
-        .join('') +
-      'ExecStart=' +
-      first_machine_arguments(request, host)
-        .map((value) => unit_argument(value.replaceAll('$', '$$')))
-        .join(' ') +
-      '\n' +
-      'Restart=always\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=90\nDelegate=yes\n' +
-      'UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH\n' +
-      '[Install]\nWantedBy=default.target\n',
+    ...(machine_environment && {
+      [request.service + '.machine.service']:
+        '[Unit]\nDescription=Panels machine code\n[Service]\nType=simple\n' +
+        `WorkingDirectory=${root.replaceAll('%', '%%')}/machine\n` +
+        Object.entries(machine_environment)
+          .map(([key, value]) => `Environment=${unit_argument(key + '=' + value)}\n`)
+          .join('') +
+        'ExecStart=' +
+        first_machine_arguments(request, host)
+          .map((value) => unit_argument(value.replaceAll('$', '$$')))
+          .join(' ') +
+        '\n' +
+        'Restart=always\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=90\nDelegate=yes\n' +
+        'UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH\n' +
+        '[Install]\nWantedBy=default.target\n',
+    }),
     [request.service + '.backup.service']: oneshot('Panels home backup', [
       panels,
       'environment',
@@ -129,14 +138,16 @@ async function require_absent(path: string): Promise<void> {
   }
   throw new Error(`The service file already exists: ${path}`);
 }
+/** `machine: false` plans the home without machine code, for a machine that already runs it. */
 export async function create_linux_home_service(
   request: HomeInstallRequest,
   host: HomeInstallHost,
+  machine = true,
 ): Promise<HomeServicePlan> {
   const units = linux_home_units(
     request,
     await home_service_environment(request, host),
-    await machine_service_environment(request, host),
+    machine ? await machine_service_environment(request, host) : null,
     host,
   );
   const files = Object.entries(units).map(([name, content]) => ({
@@ -212,6 +223,7 @@ export async function create_linux_home_service(
     },
     async start_machine(execution) {
       const name = request.service + '.machine.service';
+      if (!names.includes(name)) throw new Error('This home plan has no machine code service');
       attempted.push(name);
       await command(['enable', '--now', name], execution);
     },
@@ -227,9 +239,10 @@ export async function create_linux_home_service(
     },
     async stop(execution, assert_owned) {
       if (!attempted.length) return;
+      const machine_name = request.service + '.machine.service';
       for (const name of [
-        request.service + '.machine.service',
-        ...[...names].reverse().filter((name) => name !== request.service + '.machine.service'),
+        ...names.filter((name) => name === machine_name),
+        ...[...names].reverse().filter((name) => name !== machine_name),
       ]) {
         await bound_fragment(name, execution, assert_owned);
         await command(['stop', name], execution);
@@ -246,3 +259,80 @@ export async function create_linux_home_service(
     },
   };
 }
+/**
+ * Stop and remove the home units of a moved home that did not take over. A service unit belongs
+ * to `root` only when it works in `root`; a timer belongs only with its service. It never names
+ * a machine code unit.
+ */
+export const remove_linux_home_service: HomeServiceRemoval = async (
+  root,
+  service,
+  host,
+  execution,
+) => {
+  const directory = join(host.account_home, '.config/systemd/user');
+  const working = `WorkingDirectory=${root.replaceAll('%', '%%')}`;
+  const suffixes = ['.backup', ...HOME_SCHEDULE_SUFFIXES];
+  // Timers first, so a service file never leaves before the timer that starts it.
+  const names = [
+    ...suffixes.map((suffix) => service + suffix + '.timer'),
+    ...suffixes.map((suffix) => service + suffix + '.service'),
+    service + '.service',
+  ];
+  const command = (args: readonly string[], observation = false, allow_nonzero = false) =>
+    host.command(
+      ['systemctl', '--user', ...args],
+      execution,
+      observation ? HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS : HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
+      allow_nonzero,
+    );
+  const read = async (name: string): Promise<string | null> => {
+    try {
+      const info = await lstat(join(directory, name));
+      if (!info.isFile()) throw new Error(`The service file is not a regular file: ${name}`);
+      return await readFile(join(directory, name), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+  const contents = new Map<string, string | null>();
+  for (const name of names) contents.set(name, await read(name));
+  const owned = (name: string): boolean => {
+    const content = contents.get(name);
+    if (content == null) return false;
+    if (name.endsWith('.service')) return content.split('\n').includes(working);
+    return (
+      content.split('\n').includes(`Unit=${name.replace(/\.timer$/, '.service')}`) &&
+      owned(name.replace(/\.timer$/, '.service'))
+    );
+  };
+  const loaded: string[] = [];
+  for (const name of names) {
+    if (contents.get(name) != null && !owned(name))
+      throw new Error(`The service belongs to another installation: ${name}`);
+    const result = await command(['show', name, '--property=FragmentPath', '--value'], true, true);
+    const fragment = result.code === 0 ? result.stdout.trim() : '';
+    if (!fragment) continue;
+    if ((await resolved_path(fragment)) !== (await resolved_path(join(directory, name))))
+      throw new Error(`The service belongs to another installation: ${name}`);
+    loaded.push(name);
+  }
+  for (const name of loaded) {
+    assert_release_execution(execution);
+    await command(['stop', name]);
+    if (contents.get(name) != null) await command(['disable', name]);
+  }
+  for (const name of names) {
+    const result = await command(['is-active', name], true, true);
+    if (!['inactive', 'failed'].includes(result.stdout.trim()))
+      throw new Error(`Cannot confirm that the moved home service stopped: ${name}`);
+  }
+  for (const name of names)
+    if (contents.get(name) != null) {
+      assert_release_execution(execution);
+      await unlink(join(directory, name));
+    }
+  if (loaded.length || [...contents.values()].some((content) => content != null))
+    await command(['daemon-reload']);
+};

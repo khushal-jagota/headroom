@@ -27,6 +27,7 @@ import type { MacRemoteChild } from './vps_remote_child.ts';
 import { VpsExecutor } from './vps_transport.ts';
 import type { MachineBackendControls } from './backend_control_relay.ts';
 import type { VpsExecutorOptions } from './vps_transport.ts';
+import type { ServerMoveNotice } from './wire.generated.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -52,6 +53,7 @@ export class VpsExecutorRegistry {
       }
     | undefined;
   private updates: MacUpdateServiceContract | undefined;
+  private server_move_notice: ((machine_id: string) => ServerMoveNotice | null) | undefined;
   private started = false;
   private starting: Promise<void> | undefined;
   private closed = false;
@@ -82,6 +84,7 @@ export class VpsExecutorRegistry {
     if (configuration)
       owner.configure(configuration.core, configuration.app, configuration.barrier);
     if (this.updates) this.bind_owner_updates(owner, this.updates);
+    if (this.server_move_notice) this.bind_owner_server_move(owner, this.server_move_notice);
     return owner;
   }
 
@@ -149,6 +152,20 @@ export class VpsExecutorRegistry {
     owner.bind_updates(service.for_machine(owner.machine_id));
     // Authentication can change the persisted platform after this endpoint loads.
     owner.presence.update_check = () => service.for_machine(owner.machine_id).check();
+  }
+
+  /** Each lease reply to a move's target machine names the move. */
+  bind_server_move(notice: (machine_id: string) => ServerMoveNotice | null): void {
+    this.admit();
+    this.server_move_notice = notice;
+    for (const owner of this.owned) this.bind_owner_server_move(owner, notice);
+  }
+
+  private bind_owner_server_move(
+    owner: VpsExecutor,
+    notice: (machine_id: string) => ServerMoveNotice | null,
+  ): void {
+    owner.presence.server_move_notice = () => notice(owner.machine_id);
   }
 
   update_service_for(machine_id: string): MacUpdateServiceContract | null {

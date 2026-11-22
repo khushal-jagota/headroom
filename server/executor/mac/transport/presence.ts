@@ -15,6 +15,7 @@ import type {
   LeaseRequest,
   MacLocalStatus,
   MacUpdateCheck,
+  ServerMoveNotice,
   WorkingTurn,
   WorkerCleanupUncertainty,
   WorkspaceState,
@@ -115,8 +116,8 @@ export class MacPresence {
 export interface MacLeaseOptions {
   readonly client: Pick<MacHttpClient, 'lease' | 'workspace_states'>;
   readonly workspace_root: string;
-  /** True when workspace_root is the server's own Ticket folder. */
-  readonly workspace_root_is_shared?: boolean;
+  /** True while workspace_root is the server's served Ticket folder. Read on each pass. */
+  readonly workspace_root_is_shared?: () => boolean;
   readonly presence: MacPresence;
   /** The driver kinds this machine runs, advertised on every lease. */
   readonly driver_kinds: readonly string[];
@@ -132,6 +133,10 @@ export interface MacLeaseOptions {
     seal(): void;
   };
   readonly updates: { offer(update: MacUpdateCheck): void };
+  /** Each accepted lease hands its server move notice, or null, to the move runner. */
+  readonly server_move?: { notice(notice: ServerMoveNotice | null): void };
+  /** After each accepted lease, so the host can follow a server address that changed. */
+  readonly after_lease?: () => void;
   readonly replaced: () => void;
   readonly on_failure: (error: unknown) => void;
   readonly warn: (message: string) => void;
@@ -222,6 +227,8 @@ export class MacLeaseLoop {
     }
     presence.accepted();
     updates.offer(reply.update);
+    this.options.after_lease?.();
+    this.options.server_move?.notice(reply.server_move ?? null);
     this.schedule_workspace_cleanup();
     try {
       if (cursor !== null) await journal.lower_poll_cursor(reply.mailbox_high_sequence, cursor);
@@ -254,7 +261,7 @@ export class MacLeaseLoop {
     try {
       const ids = await local_workspace_ticket_ids(
         workspace_root,
-        this.options.workspace_root_is_shared === true,
+        this.options.workspace_root_is_shared?.() === true,
       );
       signal.throwIfAborted();
       const states: WorkspaceState[] = [];

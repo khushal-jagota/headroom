@@ -11,11 +11,11 @@ import { require_host_node } from '../environments/release/logic/host.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
 import { installer_test_mode } from '../environments/updates/installer/configuration.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from './configuration.ts';
-import { create_linux_home_service } from './linux.ts';
-import { create_darwin_home_service } from './darwin.ts';
-import type { HomeInstallDependencies, HomeCommand } from './contracts.ts';
+import { create_linux_home_service, remove_linux_home_service } from './linux.ts';
+import { create_darwin_home_service, remove_darwin_home_service } from './darwin.ts';
+import type { HomeInstallDependencies, HomeCommand, HomeMoveDependencies } from './contracts.ts';
 import { prepare_first_machine, wait_for_first_machine } from './machine.ts';
-import { initialize_candidate_home_database } from './database.ts';
+import { check_moved_home_database, initialize_candidate_home_database } from './database.ts';
 
 export async function production_home_dependencies(
   execution: ReleaseExecution,
@@ -101,5 +101,33 @@ export async function production_home_dependencies(
       system === 'darwin'
         ? create_darwin_home_service(request, host)
         : create_linux_home_service(request, host),
+  };
+}
+/** The move mode shares the first install's host, extraction, admission and health. */
+export async function production_move_dependencies(
+  execution: ReleaseExecution,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): Promise<HomeMoveDependencies> {
+  const home = await production_home_dependencies(execution, environment);
+  const { system, architecture, account_home, node_executable, uid, command } = home;
+  return {
+    execution,
+    environment,
+    system,
+    architecture,
+    account_home,
+    node_executable,
+    uid,
+    command,
+    extract: home.extract,
+    admit: home.admit,
+    healthy: home.healthy,
+    service: (request, host) =>
+      system === 'darwin'
+        ? create_darwin_home_service(request, host, false)
+        : create_linux_home_service(request, host, false),
+    check_database: (app, path, scope) =>
+      check_moved_home_database(app, path, scope, node_executable),
+    remove_service: system === 'darwin' ? remove_darwin_home_service : remove_linux_home_service,
   };
 }

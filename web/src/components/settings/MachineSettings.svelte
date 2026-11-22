@@ -6,6 +6,8 @@
   import { MACHINE_ICONS, MACHINE_COLORS, type Machine, type MachineIcon, type MachineColor } from "../../lib/machines/contracts";
   import MacStatus from "../machines/MacStatus.svelte";
   import MachineSymbol from "../machines/MachineSymbol.svelte";
+  import ServerMoveDialog from "../machines/ServerMoveDialog.svelte";
+  import { canMoveServerTo, serverMoveActive, serverMovePhaseText } from "../../lib/machines/logic/serverMove";
   import Button from "../Button.svelte";
   import ErrorLine from "../ErrorLine.svelte";
   import SettingsPage from "./SettingsPage.svelte";
@@ -19,6 +21,10 @@
   const remoteMachines = $derived(machines.data?.machines.filter(machine => !machine.is_home) ?? []);
   const healthQueries = createQueries(() => ({queries: remoteMachines.map(machine => queries.executorHealth(machine.machine_id))}));
   const executorHealth = $derived(new Map(remoteMachines.map((machine, index) => [machine.machine_id, healthQueries[index]?.data])));
+  // The latest move of the server, shown on its target machine's row.
+  const serverMove = createQuery(() => queries.serverMove());
+  const move = $derived(serverMove.data?.move ?? null);
+  let moveDialog = $state<ServerMoveDialog | null>(null);
 
   let editing = $state<string | null>(null);
   let name = $state("");
@@ -132,7 +138,10 @@
             {#if status.away}<span class="machine-away">Away</span>{:else}Available{/if} · {status.rest}
           {/snippet}
           {#snippet control()}
-            {#if editing !== machine.machine_id}<Button variant="ghost" onclick={() => edit(machine)} aria-label={`Edit ${machine.name}`}>Edit</Button>{/if}
+            {#if editing !== machine.machine_id}
+              {#if canMoveServerTo(machine, move)}<Button variant="ghost" onclick={() => void moveDialog?.openDialog(machine)} data-server-move={machine.machine_id}>Move the server here</Button>{/if}
+              <Button variant="ghost" onclick={() => edit(machine)} aria-label={`Edit ${machine.name}`}>Edit</Button>
+            {/if}
           {/snippet}
           {#snippet after()}
             {#if editing === machine.machine_id}
@@ -153,8 +162,12 @@
                   <Button variant="ghost" disabled={saving} onclick={() => editing = null}>Cancel</Button>
                 </div>
               </form>
-            {:else if !machine.is_home}
-              <div class="machine-detail"><MacStatus machineId={machine.machine_id} health={executorHealth.get(machine.machine_id)} /></div>
+            {:else}
+              {#if move?.target_machine_id === machine.machine_id}
+                <div class="machine-detail machine-move" class:machine-move--failed={move.phase === "failed"} role="status"
+                  data-server-move-phase={move.phase} aria-busy={serverMoveActive(move)}>{serverMovePhaseText(move)}</div>
+              {/if}
+              {#if !machine.is_home}<div class="machine-detail"><MacStatus machineId={machine.machine_id} health={executorHealth.get(machine.machine_id)} /></div>{/if}
             {/if}
           {/snippet}
         </SettingsRow>
@@ -164,6 +177,8 @@
 </SettingsPage>
 
 <svelte:window onkeydown={windowKeydown} />
+
+<ServerMoveDialog bind:this={moveDialog} />
 
 {#if adding}
   <!-- The scrim is a pointer target only; Escape and Cancel close the sheet from the keyboard. -->
@@ -212,6 +227,8 @@
   .machine-away { color:var(--accent-attention); }
   .machine-detail { padding:0 0 var(--space-4) calc(var(--space-5) + var(--space-4)); }
   .machine-detail:empty { display:none; }
+  .machine-move { padding-bottom:var(--space-2); font-size:var(--type-row); color:var(--tone-secondary); overflow-wrap:anywhere; }
+  .machine-move--failed { color:var(--accent-error); }
   .machine-load-error { display:flex; align-items:center; gap:var(--space-3); margin-top:var(--page-block-gap); }
 
   .machine-edit { display:grid; gap:var(--space-3); max-width:420px; padding:0 0 var(--space-4) calc(var(--space-5) + var(--space-4)); }
