@@ -411,6 +411,16 @@ import XCTest
         XCTAssertEqual(outbox.work(server, id: id)?.state, .sent)
     }
 
+    func testNotificationReplySendsWhenTheOfflineFlagWentStale() async throws {
+        let outbox = Outbox(store: store)
+        outbox.networkAvailable = false // The app went to the background offline; no loop watches the path now.
+        let reply = NotificationReply(serverURL: api.baseURL, conversationID: "conversation", messageID: "conversation:7", owner: .ticket("ticket"))
+        let id = try outbox.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api)
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, [id])
+        XCTAssertEqual(outbox.work(server, id: id)?.state, .sent)
+    }
+
     // MARK: Decisions
 
     private func decision(_ id: String, kind: PendingWork.Kind = .approval, guidance: String? = nil) throws -> PendingWork {

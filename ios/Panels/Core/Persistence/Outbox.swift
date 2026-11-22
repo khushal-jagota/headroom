@@ -17,7 +17,8 @@ import Observation
     private var drainWakes: [String: AsyncStream<DrainWake>.Continuation] = [:]
     private var foregroundRunID = UUID()
     private var foregroundWakes: [String: (id: UUID, continuation: AsyncStream<Void>.Continuation)] = [:]
-    private(set) var networkAvailable = true
+    /// Live only while the foreground loop watches the network path.
+    var networkAvailable = true
     @ObservationIgnored private let now: () -> Date
     private struct Backoff { let deadline: Date; let delay: TimeInterval }
     nonisolated static let initialRetryDelay: TimeInterval = 5
@@ -217,7 +218,8 @@ import Observation
         if wakeForeground { foregroundWakes[server]?.continuation.yield(()) }
         guard !draining.contains(server) else { drainWakes[server]?.yield(.changed); return }
         do { try expire(server) } catch { return }
-        guard !NativeBuildGate.requiresUpdate(api.baseURL), networkAvailable else { return }
+        // Outside the foreground loop the flag can be stale, so a notification reply just tries.
+        guard !NativeBuildGate.requiresUpdate(api.baseURL), networkAvailable || foregroundWakes.isEmpty else { return }
         draining.insert(server)
         let (wakes, continuation) = AsyncStream<DrainWake>.makeStream()
         drainWakes[server] = continuation
