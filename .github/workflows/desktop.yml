@@ -1,13 +1,14 @@
 name: Desktop app
 # Builds the desktop app from desktop/ with the web/ screens packed inside, and
 # drives it with Playwright under a virtual display against a test server. On a
-# push to staging or a manual run, a Mac also signs, notarizes and staples it.
+# push or a manual run, a Mac also signs, notarizes and staples it. A push to main
+# publishes it as a GitHub Release. A manual run makes a draft Release instead.
 on:
   pull_request:
     branches: [staging]
     paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   push:
-    branches: [staging]
+    branches: [staging, main]
     paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   workflow_dispatch:
 concurrency:
@@ -16,6 +17,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
+env:
+  DESKTOP_VERSION: 0.0.${{ github.run_number }}
 jobs:
   app-checks:
     name: Desktop app checks (Linux, Node 22)
@@ -97,7 +100,7 @@ jobs:
           export APPLE_API_KEY="$RUNNER_TEMP/notary-key.p8"
           umask 077
           printf '%s\n' "$APPLE_NOTARY_API_KEY_P8" > "$APPLE_API_KEY"
-          npm --prefix desktop run build:mac
+          npm --prefix desktop run build:mac -- -c.extraMetadata.version="$DESKTOP_VERSION"
           rm -f "$APPLE_API_KEY"
       - name: Check the signature, notarization and Gatekeeper
         run: |
@@ -115,6 +118,7 @@ jobs:
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app" 2>&1 | tee "$RUNNER_TEMP/spctl.txt"
           grep -q 'source=Notarized Developer ID' "$RUNNER_TEMP/spctl.txt"
+          test "$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString)" = "$DESKTOP_VERSION"
           shasum -a 256 "$zip"
       - name: Upload the signed app
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -124,3 +128,27 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+  publish:
+    name: Publish the Mac app as a GitHub Release
+    needs: [app-checks, signed-mac-app]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: panels-desktop-mac
+          path: dist
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # A manual run makes a draft, which is not public, to check this job.
+          DRAFT: ${{ github.event_name == 'workflow_dispatch' && '--draft' || '' }}
+        run: |
+          set -euo pipefail
+          gh release create "desktop-v$DESKTOP_VERSION" dist/Panels-mac-arm64.zip \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" $DRAFT \
+            --title "Panels for Mac $DESKTOP_VERSION" \
+            --notes "The Panels desktop app for Apple silicon Macs, signed and notarized. Built from $GITHUB_SHA."

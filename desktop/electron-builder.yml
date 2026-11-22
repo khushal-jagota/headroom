@@ -4,6 +4,8 @@ files:
   - build/**
   - package.json
 mac:
+  # A fixed name, so that releases/latest/download/Panels-mac-arm64.zip always works.
+  artifactName: Panels-mac-${arch}.${ext}
   category: public.app-category.productivity
   target:
     - target: zip

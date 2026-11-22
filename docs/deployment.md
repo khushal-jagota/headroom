@@ -76,7 +76,9 @@ The publication carries a TypeScript Mac executor from the same source, with its
 
 ## The desktop app
 
-The macOS desktop app has its own workflow, separate from the home's publication. On a push to staging or a manual run, a GitHub-hosted Mac builds it, signs it with the Developer ID of the Blue Door Labs team and the hardened runtime, and sends it to Apple for notarization. Then it staples Apple's ticket to the app and checks the result with Apple's own tools, so that a Mac opens the download with no warning. The signing certificate and the notarization key are repository secrets, set once ([steps](../ops/desktop/signing.md)). The run keeps the signed zip as the `panels-desktop-mac` artifact for 30 days. Its releases and updates come later.
+The macOS desktop app has its own workflow, separate from the home's publication. On a push to staging or `main`, or a manual run, a GitHub-hosted Mac builds it, signs it with the Developer ID of the Blue Door Labs team and the hardened runtime, and sends it to Apple for notarization. Then it staples Apple's ticket to the app and checks the result with Apple's own tools, so that a Mac opens the download with no warning. The signing certificate and the notarization key are repository secrets, set once ([steps](../ops/desktop/signing.md)). The run keeps the signed zip as the `panels-desktop-mac` artifact for 30 days. The CI run number sets its version, `0.0.<run>`.
+
+A push to `main` that touches the app's paths also publishes the zip as a public GitHub Release, tagged `desktop-v<version>`. The newest one always downloads from <https://github.com/khushal-jagota/headroom/releases/latest/download/Panels-mac-arm64.zip>. The app runs on Apple silicon Macs. A manual run makes a draft Release instead, which is not public, so that the job can be checked before a release. Delete such a draft after the check. Its updates come later.
 
 ## The private route
 
