@@ -65,7 +65,9 @@
   {#if label !== null}
     <!-- Someone other than the person wrote this (Panels, another agent). v9 (11): a left-aligned system
          note with no box: "From Panels · " and the words, 13/20 #b0b0b0, at most two lines. -->
-    <p class="c2-system-note" data-conversation-system-note title={systemText}><span class="c2-label" data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</p>
+    <!-- v11 (11): a system message, not a turn label: in a #1a1a1a well (radius 10, padding
+         8 12), "From Panels" #bdbdbd 500, then the words #b0b0b0, 13/20 (p17c review: no mark). -->
+    <p class="c2-system-note" data-conversation-system-note title={systemText}><span class="c2-system-words"><span class="c2-label" data-conversation-prompt-label>From {label}</span><span aria-hidden="true">{" · "}</span>{systemText}</span></p>
   {:else}
     <MessagePieces {presentationRowKey} {content} {conversationId} bubble/>
   {/if}
@@ -114,20 +116,29 @@
   /* v9 (11): a left-aligned status line on the thread's start edge, as "Worked for" is. */
   .c2-system-note {
     align-self: flex-start;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
     max-width: 100%;
+    box-sizing: border-box;
     margin: 0;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: #1a1a1a;
     color: #b0b0b0;
     font: var(--cv-weight-body) 13px/20px var(--cv-font);
     text-align: start;
     overflow-wrap: anywhere;
   }
-  /* v7: it is a status line: the label "From Panels" 500 #ececec, " · ", the words #b0b0b0. */
-  .c2-label { color: #ececec; font-weight: var(--cv-weight-label); }
+  .c2-system-words {
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+  .c2-label { color: #bdbdbd; font-weight: var(--cv-weight-label); }
 
   /* A message that never reached the agent is not drawn as one that did: its bubble steps
      back (the well, the body tone) and (v4.2) a small red "!" stands beside it on the left, as

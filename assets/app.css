@@ -1395,14 +1395,18 @@ a.pv-name:focus-visible { outline:0; }
 
 /* Pictures the person sent (v5.2): up to 320 tall (and 480 wide) on their own edge, so a mock
  * can be read in place; they open the viewer. */
-.chat-u .file-preview-media { max-width: min(100%, 480px); border-radius: var(--cv-r-lg); }
-.chat-u .file-preview-media > :is(.file-preview-image, .file-preview-video-poster) {
-  max-height: 320px;
+/* v11 (5): a queued message's pictures (.chat-qrow) show at the same size as sent ones. */
+/* p17c review: a picture in any bubble (sent or queued) is at most 320 wide and 200 tall, its
+ * aspect ratio kept; the bubble is as wide as its widest content. */
+:is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px); border-radius: var(--cv-r-lg); }
+:is(.chat-u, .chat-qrow) .file-preview-media > :is(.file-preview-image, .file-preview-video-poster) {
+  max-width: 100%;
+  max-height: 200px;
   border-radius: var(--cv-r-lg);
 }
-.chat-u .file-preview-media > .file-preview-media--wide { min-width: 0; }
-.chat-u .file-preview-grid { width: min(100%, 360px); gap: var(--cv-s1); margin: 0; }
-.chat-u .file-preview-grid .file-preview-media { max-width: none; border-radius: var(--cv-r-md); }
+:is(.chat-u, .chat-qrow) .file-preview-media > .file-preview-media--wide { min-width: 0; }
+:is(.chat-u, .chat-qrow) .file-preview-grid { width: min(100%, 320px); gap: var(--cv-s1); margin: 0; }
+:is(.chat-u, .chat-qrow) .file-preview-grid .file-preview-media { max-width: none; border-radius: var(--cv-r-md); }
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
@@ -2451,9 +2455,9 @@ button.list-row:hover .list-row-title {
   border: 0;
   border-radius: 50%;
   /* v6: #2a2a2a with a #8c8c8c arrow while there is nothing to send; #f2f2f2 with a
-   * #121212 arrow once there is. v9 (9): disabled is #2e2e2e with a #a6a6a6 arrow. */
-  background: #2e2e2e;
-  color: #a6a6a6;
+   * #121212 arrow once there is. v11 (8): disabled is #333333 with a #bdbdbd arrow. */
+  background: #333333;
+  color: #bdbdbd;
   cursor: pointer;
   line-height: 1;
   display: grid;
@@ -2473,7 +2477,7 @@ button.list-row:hover .list-row-title {
 .chat-send.on { background: #f2f2f2; color: #121212; }
 .chat-send.on:hover:not(:disabled) { background: #ffffff; }
 /* v5.2: Stop while running is the enabled send's look: #f2f2f2 with a #121212 square. */
-.chat-send.stop { background: #f2f2f2; color: #121212; }
+.chat-send.stop { background: #f2f2f2; color: #141414; } /* v11 (3): a #141414 square */
 .chat-send.stop:hover { background: #ffffff; }
 .chat-send .chat-send-fill {
   width: 10px;
@@ -5523,7 +5527,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
   width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
   transform: translateX(-50%);
   height: 1px;
-  background: rgba(255, 255, 255, 0.12); /* v10 (9) */
+  background: rgba(255, 255, 255, 0.16); /* v11 (8) */
   opacity: var(--conversation-dock-line, 1);
 }
 :is(.manager-page, .ticket-page)[data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer::after { opacity: 0; }
@@ -5649,9 +5653,48 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #bccbf0; text-decoration-color: rgb(188 203 240 / 40%); }
 [data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #bccbf0; text-decoration-color: #bccbf0; }
 /* (9) Thumbnails (pictures in messages) wear a 1px rgba(255,255,255,0.12) edge. */
-[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%); }
+[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); }
 /* (12) Inline code: #232323, padding 1px 4px; in narration the chip's text is #b4b4b4. */
 [data-conversation-pane] .chat-thread .markdown :not(pre) > code,
 [data-conversation-pane] .cv-code { padding: 1px 4px; background: #232323; }
 [data-conversation-pane] .chat-thread .markdown li > code.cv-code-leads { margin-inline-start: -4px; }
 [data-conversation-pane] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { color: #b4b4b4; }
+
+/* ==========================================================================================
+ * v11 (22 Nov, after round 17) — clearance. Scoped to the conversation pane.
+ * ========================================================================================== */
+/* (1) Narration in Full is activity: 13/20 #a6a6a6, indented to the text edge of the tool rows
+ * ("Ran 2 commands", "Running": a 16px icon and an 8px gap, so 24px in). Inline code in it is
+ * the same 13px, #a6a6a6, no fill. Final answers stay flush left 15/24 #ececec. */
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) { padding-inline-start: 24px; }
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { font-size: 13px; line-height: 20px; color: #a6a6a6; }
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown :is(strong, b) { color: #bdbdbd; }
+[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-size: 13px; line-height: 20px; padding: 0; border-radius: 0; background: none; color: #a6a6a6; }
+/* (9) Tables: head 14/20 500 #bdbdbd. */
+[data-conversation-pane] .chat-thread .markdown th { color: #bdbdbd; font-weight: 500; }
+/* (10) Links in answers: #ececec with a 50% underline (the accent means "needs you" only). */
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #ececec; text-decoration-color: rgb(236 236 236 / 50%); }
+[data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #ffffff; text-decoration-color: #ececec; }
+/* (13, owner) Agent answers sit in a bubble: the agent's messages to the person (not narration,
+ * not a message still streaming) are a #1c1c1c surface, radius 18, padding 16 20, on the left, as
+ * wide as their content up to the full column. Tables, charts and code blocks sit inside; a chart
+ * has no width of its own, so a bubble holding one takes the full column. "Worked for" stays
+ * above, outside it. */
+[data-conversation-pane] .chat-thread .chat-a:not(.chat-a--narration, .c2-streaming) {
+  position: relative;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 16px 20px;
+  border-radius: 18px;
+  background: #1c1c1c;
+}
+[data-conversation-pane] .chat-thread .chat-a:not(.chat-a--narration, .c2-streaming):has(.chat-chart, .goal-chart-host) { width: 100%; }
+/* Inside the bubble its 16px padding is the space above a first heading (the heading after
+ * "Worked for" loses its extra 16), so the bubble's top and bottom insets match. */
+[data-conversation-pane] .chat-thread .chat-a.chat-a.chat-a.chat-a:not(.chat-a--narration, .c2-streaming) .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 0; }
+/* Inline code in an answer bubble: the #232323 chip all but vanishes on the #1c1c1c bubble, so
+ * there it is #2a2a2a (one step up, as the composer controls' hover). */
+[data-conversation-pane] .chat-thread .chat-a:not(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { background: #2a2a2a; }

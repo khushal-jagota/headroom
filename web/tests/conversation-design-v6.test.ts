@@ -99,10 +99,12 @@ describe("v6 transcript (items 9-15)", () => {
     expect(html).toContain("c2-status--callout");
     expect(html).not.toContain("data-conversation-error-inline");
   });
-  it("13: a queued picture wears a 1px frame at full strength (v10 (9): rgba(255,255,255,0.12))", () => {
+  it("13: v11 (5, 8): a queued picture is the sent size (at most 320x200, p17c review) and wears the thumbnails' 1px 16% edge", () => {
     const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
-    expect(held).toMatch(/\.chat-qrow :global\(\.c2-piece-image-slot img\) \{[^}]*outline: 1px solid rgb\(255 255 255 \/ 12%\);/);
+    expect(held).not.toContain("max-height: 96px");
     expect(held).not.toMatch(/c2-piece-image-slot img\) \{[^}]*opacity/);
+    expect(source("../../assets/app.css")).toContain("[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); }");
+    expect(source("../../assets/app.css")).toContain(":is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px);");
   });
   it("14: a heading right after Worked for gets 12px more above it", () => {
     expect(app).toContain('[data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 12px; }');
@@ -125,9 +127,9 @@ describe("v6 composer (items 16-21)", () => {
     expect(composer).toContain("bottom: calc(100% + 8px + var(--c2-menu-lift, 0px));");
     expect(composer).toContain(".chat-add-menu { inset-block-end: calc(100% + 8px + var(--c2-menu-lift, 0px));");
   });
-  it("20 (v7 wins): the inactive lens is a quiet Button (#bdbdbd); the Queued chip a composer control (#d9d9d9)", () => {
+  it("20 (v7 wins): the inactive lens is a quiet Button (#bdbdbd); v11 (4): the queued note's more button is quiet (#bdbdbd)", () => {
     expect(source("../src/components/conversation/ConversationPane.svelte")).toMatch(/\.cv-segment \{[^}]*color: #bdbdbd;/);
-    expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).toMatch(/\.chat-qrow-chip \{[^}]*color: #d9d9d9;/);
+    expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).toMatch(/\.chat-qrow-more \{[^}]*background: none;\s*color: #bdbdbd;/);
   });
 
 });

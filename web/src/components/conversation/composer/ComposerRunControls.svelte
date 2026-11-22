@@ -15,9 +15,9 @@
     askCommitReady = false,
     onRetry
   }: {
-    /** While an ask is the composer: no mode chip and no Stop here (Stop turn is the ask's
-     *  footer pill). v10 (4): no confirm pill either; the slot keeps the round send, which
-     *  sends what is written (an own answer, or a message that waits for the turn). */
+    /** While an ask is the composer: no mode chip and no Stop here. v11 (3): the composer
+     *  draws the one round Stop after the answer well; the send sits inside the well and sends
+     *  what is written (an own answer, or a message that waits for the turn). */
     asking?: boolean;
     /** A several-answer question with something chosen and nothing written: send goes on. */
     askCommitReady?: boolean;
@@ -89,6 +89,7 @@
       aria-label={view.submit.ariaLabel}
       onmousedown={(event) => event.preventDefault()}
       onclick={intents.send}
-    ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
+    >{#if asking}<!-- v11 (3): under an ask the send stands inside the answer well: the button is
+         the well's last piece and the round is drawn inside it. --><span class="chat-ask-send-round" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg></span>{:else}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>{/if}</button>
   {/if}
 </div>

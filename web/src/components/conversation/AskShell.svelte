@@ -270,12 +270,15 @@
      digit. */
   :global([data-conversation-pane] .cv-ask-rows) { gap: 8px; }
   :global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424; font: var(--cv-weight-body) 15px/22px var(--cv-font); }
+  /* v11 (2): on the #1c1c1c ask a row is #2a2a2a with a 1px #363636 edge (drawn inside, so the
+     row keeps its size); hover and keyboard focus #303030 with the accent edge. */
+  :global([data-conversation-pane] .cv-ask-row) { background: #2a2a2a; box-shadow: inset 0 0 0 1px #363636; }
   /* v10 (4): a row is the action. Under the pointer or keyboard focus (and a question's
      answer already chosen) it is #2c2c2c with the accent edge and an accent keycap. Nothing is
      lit when the pointer is not on it; the accent edge is the focus mark (no extra ring). */
-  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
+  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
   :global([data-conversation-pane] .cv-ask-row:focus-visible) { outline: none; }
-  :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #2e2e2e; color: #d9d9d9; font: var(--cv-weight-label) 13px/1 var(--cv-font); }
+  :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #3a3a3a; color: #d9d9d9; font: var(--cv-weight-label) 13px/1 var(--cv-font); }
   :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
   :global([data-conversation-pane] .cv-ask-label) { color: #ececec; }
   :global([data-conversation-pane] .cv-ask-sub) { color: #b0b0b0; font: var(--cv-weight-body) 13px/20px var(--cv-font); }

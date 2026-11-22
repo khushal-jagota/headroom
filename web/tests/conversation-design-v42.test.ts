@@ -58,18 +58,21 @@ describe("design v4.2: asks", () => {
     expect(shell).toContain(".cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }");
   });
 
-  it("v10 (4): asks have no confirm pill; the well's round send is the composer's own send (disabled #2e2e2e/#a6a6a6)", () => {
+  it("v10 (4): asks have no confirm pill; the well's round send is the composer's own send (v11 (8): disabled #333333/#bdbdbd)", () => {
     expect(composer).not.toContain("chat-ask-primary");
-    expect(app).toMatch(/v9 \(9\): disabled is #2e2e2e with a #a6a6a6 arrow\. \*\/[\s\S]{0,80}color: #a6a6a6;/);
+    expect(app).toMatch(/v11 \(8\): disabled is #333333 with a #bdbdbd arrow\. \*\/\s*background: #333333;\s*color: #bdbdbd;/);
+    expect(composer).toMatch(/:global\(\.chat-ask-send-round\) \{[^}]*background: #333333;\s*color: #bdbdbd;/);
   });
 
-  it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid), its round send outside it on the right", () => {
+  it("the own-answer line sits in a #141414 well, radius 12, 40 high (v7 grid); v11 (3): the round send is its last piece, inside it", () => {
     expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-foot > \.chat-ask-pen \{[^}]*min-height: 40px;[^}]*border-radius: 12px 0 0 12px;[^}]*background: #141414;/);
     expect(composer).toMatch(/\.chat-box\.has-ask\.is-compact > \.chat-ta \{[^}]*padding-block: 8px;[^}]*background: #141414;/);
-    expect(composer).toMatch(/\.chat-submit > \.chat-voice-mic\) \{[^}]*border-radius: 0 12px 12px 0;[^}]*background: #141414;/);
-    expect(composer).toContain(".chat-box.has-ask.is-compact:not(:has(.chat-voice-mic)) > .chat-ta { border-radius: 0 12px 12px 0; }");
-    // v10 (4): the well's own round send stands 8px right of it.
-    expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send\) \{ order: 3; margin-inline: var\(--cv-s2\); \}/);
+    // The microphone sits in the middle of the well; the send closes it.
+    expect(composer).toMatch(/\.chat-submit > \.chat-voice-mic\) \{[^}]*border-radius: 0;[^}]*background: #141414;/);
+    expect(composer).toMatch(/:global\(\.chat-submit > \.chat-ask-send:hover:not\(:disabled\)\) \{[^}]*width: 40px;[^}]*border-radius: 0 12px 12px 0;\s*background: #141414;\s*box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333;/);
+    expect(composer).toContain(".chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-send) { order: 3; }");
+    // The round Stop stands after the well, 8px off, its right edge on the rows' edge.
+    expect(composer).toContain(".chat-box.has-ask > .chat-foot > .chat-ask-stop { flex: none; order: 4; align-self: center; margin-inline: var(--cv-s2); }");
   });
 });
 
@@ -96,18 +99,27 @@ describe("design v4.2: messages", () => {
     expect(source("../src/components/conversation/UserMessage.svelte")).toMatch(/\.chat-u\.undelivered :global\(\.c2-bubble\)::before \{[^}]*right: calc\(100% \+ 8px\);\s*width: 16px;\s*height: 16px;[^}]*background: #f08a7e;/);
   });
 
-  it("a message from Panels (v9 11): a left-aligned system note with no box, \"From Panels · \" then the words, 13/20 #b0b0b0, two lines at most", () => {
+  it("v11 (11): a message from Panels is a system message (no mark, p17c review): \"From Panels\" #bdbdbd 500, the words #b0b0b0, 13/20, in a #1a1a1a well", () => {
     const row = { key: "e1", kind: "prompt" as const, sequence: 1, createdAt: 1, senderLabel: "Panels", senderMessageId: null,
       content: [{ piece: "text" as const, text: "Continue the Ticket at Stage: Problem understanding." }] };
     const html = render(UserMessage, { props: { row, conversationId: "c", ownSenderLabel: "owner" } }).body;
-    expect(html).toMatch(/<p class="c2-system-note[^"]*" data-conversation-system-note[^>]*><span class="c2-label[^"]*" data-conversation-prompt-label[^>]*>From Panels<\/span><span aria-hidden="true"> · <\/span>Continue the Ticket at Stage: Problem understanding\.<\/p>/);
+    expect(html).toMatch(/<p class="c2-system-note[^"]*" data-conversation-system-note[^>]*>(<!--[^>]*-->)*<span class="c2-system-words[^"]*"><span class="c2-label[^"]*" data-conversation-prompt-label[^>]*>From Panels<\/span><span aria-hidden="true"> · <\/span>Continue the Ticket at Stage: Problem understanding\.<\/span><\/p>/);
     expect(html).not.toContain("c2-system-row");
     const css = source("../src/components/conversation/UserMessage.svelte");
-    expect(css).toMatch(/\.c2-system-note \{[^}]*align-self: flex-start;[^}]*-webkit-line-clamp: 2;[^}]*color: #b0b0b0;\s*font: var\(--cv-weight-body\) 13px\/20px var\(--cv-font\);\s*text-align: start;/);
-    expect(css).not.toContain("background: #191919");
+    expect(css).toMatch(/\.c2-system-note \{[^}]*align-self: flex-start;[^}]*padding: 8px 12px;\s*border-radius: 10px;\s*background: #1a1a1a;\s*color: #b0b0b0;\s*font: var\(--cv-weight-body\) 13px\/20px var\(--cv-font\);/);
+    expect(css).toMatch(/\.c2-system-words \{[^}]*-webkit-line-clamp: 2;/);
+    expect(css).toContain(".c2-label { color: #bdbdbd; font-weight: var(--cv-weight-label); }");
+    expect(html).not.toContain("<img");
+    expect(css).not.toContain("c2-system-mark");
   });
 
-
+  it("v11 (11): another sender's note wears the same well", () => {
+    const row = { key: "e2", kind: "prompt" as const, sequence: 1, createdAt: 1, senderLabel: "Chief of Staff", senderMessageId: null,
+      content: [{ piece: "text" as const, text: "Look at the flaky test first." }] };
+    const html = render(UserMessage, { props: { row, conversationId: "c", ownSenderLabel: "owner" } }).body;
+    expect(html).toContain("From Chief of Staff");
+    expect(html).not.toContain("data-conversation-system-mark");
+  });
 });
 
 describe("design v4.2: Full view tool rows", () => {
@@ -196,8 +208,8 @@ describe("design v4.2: the Working line is always the last thing in the transcri
 
 describe("design v4.3", () => {
   const tokens = source("../../assets/tokens.css");
-  it("v9 (21): the full conversation is one 640px column; docked on a work page it keeps the page's column", () => {
-    expect(tokens).toContain("--cv-col: 640px;");
+  it("v11 (13): the full conversation is one 680px column; docked on a work page it keeps the page's column", () => {
+    expect(tokens).toContain("--cv-col: 680px;");
     expect(app).not.toMatch(/\n\.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\)/);
     expect(app).toMatch(/\.ticket-head,\n\.ticket-col,\n\.conversation-column,\n\.manager-column \{\s*width: min\(var\(--page-measure\), calc\(100% - 2 \* var\(--space-5\)\)\);/);
     expect(app).toMatch(/\[data-conversation-dock-state="opened"\] > \.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\), calc\(100% - 2 \* var\(--space-5\)\)\);/);

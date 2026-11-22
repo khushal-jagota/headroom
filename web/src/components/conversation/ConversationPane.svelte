@@ -219,7 +219,7 @@
     onSubmitUserInput?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
-    onDiscardHeldPrompt?: (messageId: string) => void;
+    onDiscardHeldPrompt?: (messageId: string) => Promise<void> | void;
     onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
     onPromoteHeldPrompt?: (
@@ -323,6 +323,15 @@
   // A model list that could not be read because the machine is not connected is that same
   // machine state, which the dock already says. The model picker keeps the sentence and its
   // retry; the red line under the box is kept for failures nothing else explains.
+  /** v11 (4): Edit on a queued message: it leaves the queue, and its words come back to the
+   *  composer (after anything already written there). */
+  let composerHandle = $state<{ takeBackQueuedWords: (words: string) => void } | null>(null);
+  async function editHeldPrompt(heldPromptId: string, words: string): Promise<void> {
+    if (!onDiscardHeldPrompt || composerHandle === null) return;
+    await onDiscardHeldPrompt(heldPromptId);
+    if (heldPromptRows.some((row) => row.heldPromptId === heldPromptId)) return;
+    composerHandle.takeBackQueuedWords(words);
+  }
   let composerErrorNote = $derived(activityUncertain && errorNote !== null && errorNote === readError ? null : errorNote);
 
   /** The one control through the states, and what it means where it is standing.
@@ -500,11 +509,8 @@
           onclick={moveThroughTheStates}
         >
           <span class="chat-head-collapse-label">{stateControl.opensIt ? "Open conversation" : "Dock"}</span>
-          {#if !stateControl.opensIt}
-            <!-- v10 (5): the mirror of Open conversation's up arrow: a 12px down arrow after
-                 "Dock" (owner allowed that pair). -->
-            <svg class="chat-head-collapse-arrow" viewBox="0 0 16 16" aria-hidden="true" data-conversation-dock-arrow><path d="m4 6 4 4 4-4" /></svg>
-          {/if}
+          <!-- v11 (6): no arrow after "Dock" (the pill stays); only the dock's Open
+               conversation keeps its arrow (owner). -->
         </button>
       {/if}
       {#if !readOnly || historyOwner || pastConversations.length > 0 || workspaceFolder}
@@ -612,6 +618,7 @@
       onPromote={onPromoteHeldPrompt}
       onStopDrawing={onStopDrawingHeldPrompt}
       onSendAgain={onSendHeldPromptAgain}
+      onEdit={readOnly || !onDiscardHeldPrompt ? undefined : editHeldPrompt}
     />
   {/snippet}
   <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
@@ -687,6 +694,7 @@
     </div>
   {:else}
     <ConversationComposer
+      bind:this={composerHandle}
       {draftKey}
       {uploadDestination}
       {reconcileLocalSend}
@@ -814,10 +822,8 @@
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
   /* v10 (5): the same resting pill as the dock's Open conversation: #232323, #d9d9d9, hover
-     #2a2a2a, and a 12px down arrow 6px after the label (padding 0 12 0 14). */
+     #2a2a2a. v11 (6): the label alone, no arrow. */
   .chat-head-collapse { background: #232323; color: #d9d9d9; }
-  .chat-head-collapse:has(.chat-head-collapse-arrow) { padding-inline-end: 12px; }
-  .chat-head-collapse-arrow { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 

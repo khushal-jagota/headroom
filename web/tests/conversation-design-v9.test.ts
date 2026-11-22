@@ -78,10 +78,10 @@ describe("v9 (2): the permission ask", () => {
 });
 
 describe("v9 (3, 16): resting shapes and the header", () => {
-  it("model, Steer and Queued chips and Open conversation rest on #232323", () => {
+  it("model and Steer chips and Open conversation rest on #232323 (v11 (4): the queued note has no pill)", () => {
     expect(app).toMatch(/\[data-conversation-model-picker\] > \.listbox-picker-trigger \{[^}]*background: #232323;/);
     expect(source("../src/components/conversation/composer/DeliveryModePicker.svelte")).toMatch(/padding-inline: 12px;\s*background: #232323;/);
-    expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).toMatch(/\.chat-qrow-chip \{[^}]*background: #232323;/);
+    expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).not.toContain("chat-qrow-chip");
     expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain("border-radius:999px; background:#232323; color:#d9d9d9;");
   });
   it("Focus and Full sit in one segmented track, 16px before Dock", () => {
@@ -97,15 +97,15 @@ describe("v9 (5, 8, 9, 15, 21, 22): measures", () => {
   it("tables: head 14/20 600 over a #3a3a3a rule; body 15/24", () => {
     expect(app).toContain("[data-conversation-pane] .chat-thread .markdown th { padding-block-start: 0; color: #f2f2f2; font-size: 14px; line-height: 20px; font-weight: 600; border-block-end-color: #3a3a3a; }");
   });
-  it("disabled send #2e2e2e/#a6a6a6; Stop turn in asks a secondary pill; disabled pager #a6a6a6", () => {
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #2e2e2e;\s*color: #a6a6a6;/);
+  it("v11 (8): disabled send #333333/#bdbdbd; disabled pager #a6a6a6", () => {
+    expect(app).toMatch(/\.chat-send \{[^}]*background: #333333;\s*color: #bdbdbd;/);
     const shell = source("../src/components/conversation/AskShell.svelte");
     expect(shell).toMatch(/:global\(\[data-conversation-pane\]\) \.cv-ask-stop \{[^}]*background: #2a2a2a;\s*color: #ececec;/);
     expect(shell).toContain(":global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }");
   });
-  it("narration in Full is 14/22; the column is 640", () => {
+  it("narration in Full is 14/22; v11 (13): the column is 680", () => {
     expect(app).toMatch(/\[data-conversation-pane\] \.c2-streaming \.markdown \{\s*font-family: var\(--cv-font\);\s*font-size: 14px;\s*line-height: 22px;\s*color: #b4b4b4;/);
-    expect(tokens).toContain("--cv-col: 640px;");
+    expect(tokens).toContain("--cv-col: 680px;");
     // Docked on a work page, the conversation keeps the page's 760 column.
     expect(app).not.toMatch(/\n\.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\)/);
   });
@@ -139,8 +139,8 @@ describe("v9 (10, 14, 17, 24, 25): the dock", () => {
     expect(bar).toContain("[data-conversation-rest-page-waits-row] .cv-dot { width:6px; height:6px; margin-inline:0; background:#bccbf0; }");
     expect(bar).not.toContain("#a9bbe3");
   });
-  it("the dock zone has a 1px white top edge (v10 (9): 12%) across the dock's column only, faded by the dock's move", () => {
-    expect(app).toMatch(/:is\(\.manager-page, \.ticket-page\) > \.conversation-layer::after \{\s*left: 50%;\s*right: auto;\s*width: min\(var\(--page-measure\), calc\(100% - 2 \* var\(--space-5\)\)\);\s*transform: translateX\(-50%\);\s*height: 1px;\s*background: rgba\(255, 255, 255, 0\.12\);[^\n]*\s*opacity: var\(--conversation-dock-line, 1\);/);
+  it("the dock zone has a 1px white top edge (v11 (8): 16%) across the dock's column only, faded by the dock's move", () => {
+    expect(app).toMatch(/:is\(\.manager-page, \.ticket-page\) > \.conversation-layer::after \{\s*left: 50%;\s*right: auto;\s*width: min\(var\(--page-measure\), calc\(100% - 2 \* var\(--space-5\)\)\);\s*transform: translateX\(-50%\);\s*height: 1px;\s*background: rgba\(255, 255, 255, 0\.16\);[^\n]*\s*opacity: var\(--conversation-dock-line, 1\);/);
     expect(app).toContain(':is(.manager-page, .ticket-page)[data-conversation-dock-state="opened"]:not([data-conversation-dock-transition]) > .conversation-layer::after { opacity: 0; }');
   });
   it("the edge fades over 180ms: out at the start of opening, in over the end of the return", () => {
@@ -185,10 +185,10 @@ describe("v9 (11, 12, 19, 20): thread pieces", () => {
     expect(css).toContain(".c2-bubble--one-image { min-width: 240px; }");
     expect(css).toContain(".c2-bubble--one-image > .c2-bubble-words { width: 0; min-width: 100%; }");
   });
-  it("v10 (3): every ask's Stop turn is a secondary pill in the footer, left of the well", () => {
+  it("v11 (3): every ask's Stop is the composer's round Stop, after the well at the row's right end", () => {
     expect(composer).toContain('{#if panelTakesTheBox && running && onStop}');
-    expect(composer).toMatch(/class="chat-ask-stop" data-conversation-stop=\{true\} data-conversation-ask-stop/);
-    expect(composer).toMatch(/\.chat-ask-stop \{[^}]*order: -1;[^}]*background: #2a2a2a;\s*color: #ececec;/);
+    expect(composer).toMatch(/class="chat-send stop chat-ask-stop" data-conversation-stop=\{true\} data-conversation-ask-stop/);
+    expect(composer).toMatch(/\.chat-box\.has-ask > \.chat-foot > \.chat-ask-stop \{[^}]*order: 4;/);
     const question = composer.slice(composer.indexOf("<UserInputQuestionPanel"), composer.indexOf("/>", composer.indexOf("<UserInputQuestionPanel")));
     expect(question).toContain("onStop={undefined}");
     const permission = composer.slice(composer.indexOf("<PermissionAskCard"), composer.indexOf("/>", composer.indexOf("<PermissionAskCard")));

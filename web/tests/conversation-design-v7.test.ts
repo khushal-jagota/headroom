@@ -48,10 +48,10 @@ describe("v7 the five parts", () => {
     expect(source("../src/lib/markdown/codeBlocks.css")).toMatch(/border-radius: 12px;\s*background: var\(--cv-code-surface, #1a1a1a\);/);
     expect(source("../src/components/conversation/MessagePieces.svelte")).toMatch(/background: #242424;\s*color: #ececec;\s*border-radius: 18px;\s*padding: 12px 16px;/);
   });
-  it("2 Button: v10 (4) asks draw no confirm pill and no decline button; Deny is an option row; Stop turn a secondary pill", () => {
+  it("2 Button: v10 (4) asks draw no confirm pill and no decline button; Deny is an option row; v11 (3): Stop is the composer's round", () => {
     expect(composer).not.toContain("chat-ask-primary");
     expect(composer).not.toContain("chat-ask-quiet");
-    expect(composer).toMatch(/\.chat-ask-stop \{[^}]*height: 32px;[^}]*border-radius: 999px;\s*background: #2a2a2a;\s*color: #ececec;/);
+    expect(composer).toContain('class="chat-send stop chat-ask-stop"');
     const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
     expect(controls).not.toContain("data-conversation-ask-primary");
     expect(controls).not.toContain("data-conversation-ask-decline");
@@ -72,13 +72,14 @@ describe("v7 the five parts", () => {
     expect(row).toContain(".c2-status-title { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }");
     expect(row).toContain(".c2-status--error .c2-status-dot { background: #f08a7e; }");
   });
-  it("5 Option row: min 48, #242424, radius 12; keycap 24 #2e2e2e radius 6; hover/focus ring and accent keycap", () => {
+  it("5 Option row: min 48, radius 12; v11 (2): #2a2a2a with a #363636 edge, keycap 24 #3a3a3a radius 6; hover/focus #303030, accent edge and keycap", () => {
     const shell = source("../src/components/conversation/AskShell.svelte");
     expect(shell).toContain(":global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424;");
-    expect(shell).toContain(":global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #2e2e2e;");
-    // v10 (4): hover and keyboard focus (and a chosen answer) light a row: #2c2c2c, the accent
-    // edge and an accent keycap. Nothing is lit otherwise.
-    expect(shell).toContain(":global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }");
+    expect(shell).toContain(":global([data-conversation-pane] .cv-ask-row) { background: #2a2a2a; box-shadow: inset 0 0 0 1px #363636; }");
+    expect(shell).toContain(":global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #3a3a3a;");
+    // v10 (4): hover and keyboard focus (and a chosen answer) light a row: v11 (2) #303030, the
+    // accent edge and an accent keycap. Nothing is lit otherwise.
+    expect(shell).toContain(":global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible)) { background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }");
     expect(shell).toContain(":global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }");
     expect(shell).not.toContain("is-focused");
     expect(shell).toContain(":global([data-conversation-pane] .cv-ask-rows) { gap: 8px; }");

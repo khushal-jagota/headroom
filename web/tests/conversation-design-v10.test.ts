@@ -63,9 +63,10 @@ describe("v10 (3, 4): asks", () => {
 });
 
 describe("v10 (5, 7, 13): the header", () => {
-  it("Dock is the #232323 pill with a 12px down arrow 6px after its label", () => {
-    expect(pane).toContain(".chat-head-collapse-arrow { flex: none; width: 12px; height: 12px;");
-    expect(pane).toContain(".chat-head-collapse:has(.chat-head-collapse-arrow) { padding-inline-end: 12px; }");
+  it("Dock is the #232323 pill; v11 (6): its label alone, no arrow", () => {
+    expect(pane).toContain(".chat-head-collapse { background: #232323; color: #d9d9d9; }");
+    expect(pane).not.toContain("chat-head-collapse-arrow");
+    expect(pane).not.toContain("data-conversation-dock-arrow");
   });
   it("the title is 17/24 600, ends in an ellipsis, and keeps at least 24px (12 margin + 12 gap) before Focus/Full", () => {
     expect(pane).toMatch(/\.chat-head-title \{[^}]*overflow: hidden;\s*white-space: nowrap;\s*text-overflow: ellipsis;[^}]*font: var\(--cv-weight-title\) 17px\/24px var\(--cv-font\);/);
@@ -93,13 +94,13 @@ describe("v10 (7, 8, 9, 12): answers", () => {
   it("links are #bccbf0 with a 40% underline", () => {
     expect(v10).toContain("color: #bccbf0; text-decoration-color: rgb(188 203 240 / 40%);");
   });
-  it("contrast: Worked for #bdbdbd, Ran 2 commands #c4c4c4, chart axis 13/16, dock edge 12%, thumbnails 12%", () => {
+  it("contrast: Worked for #bdbdbd, Ran 2 commands #c4c4c4, chart axis 13/16; v11 (8): dock edge 16%, thumbnails 16%", () => {
     expect(source("../src/components/conversation/TurnAnchor.svelte")).toContain(":is(.c2-meta--fold, [data-conversation-turn-settled-head]), .c2-meta--fold .c2-meta-sep { color: #bdbdbd; }");
     expect(source("../src/components/conversation/ToolRunSummary.svelte")).toContain(".c2-run-summary, .c2-run-summary .c2-run-verb { color: #c4c4c4; }");
     expect(source("../src/lib/charts/components/bar-chart.tsx")).toContain("font: showLegend ? { size: 13, lineHeight: 16 / 13 } : { size: 11 } }");
-    expect(app).toContain("background: rgba(255, 255, 255, 0.12); /* v10 (9) */");
-    expect(v10).toContain("[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%); }");
-    expect(composer).toContain(".chat-att.img::after { content: \"\"; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%); pointer-events: none; }");
+    expect(app).toContain("background: rgba(255, 255, 255, 0.16); /* v11 (8) */");
+    expect(v10).toContain("[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); }");
+    expect(composer).toContain(".chat-att.img::after { content: \"\"; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); pointer-events: none; }");
   });
   it("inline code is #232323 with 1px 4px padding; in narration its text is #b4b4b4", () => {
     expect(v10).toMatch(/\[data-conversation-pane\] \.cv-code \{ padding: 1px 4px; background: #232323; \}/);

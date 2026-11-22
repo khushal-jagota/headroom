@@ -92,9 +92,9 @@ describe("v8 messages and asks (items 6-9)", () => {
     expect(css).toContain(".c2-bubble--attached { display: flex; flex-direction: column; gap: 8px; padding: 8px; }");
     expect(css).toContain(".c2-bubble-words { padding: 4px 8px; min-width: 0; }");
   });
-  it("7: the focused row #2c2c2c with the accent edge, the well a 1px #333 edge (Deny and Stop turn: see v9)", () => {
+  it("7: the focused row (v11 (2): #303030) with the accent edge, the well a 1px #333 edge (Deny and Stop turn: see v9)", () => {
     const shell = source("../src/components/conversation/AskShell.svelte");
-    expect(shell).toContain("background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%);");
+    expect(shell).toContain("background: #303030; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%);");
     expect(composer).toContain(".chat-box.has-ask.is-compact > .chat-ta { box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333; }");
     expect(composer).toContain(".chat-box.has-ask:not(.is-compact) > .chat-ta { box-shadow: inset 0 0 0 1px #333; }");
   });
@@ -107,16 +107,14 @@ describe("v8 messages and asks (items 6-9)", () => {
 });
 
 describe("v8 item 14: no chevrons on dropdown or expand controls", () => {
-  it("the model, Steer and Queued chips show their label alone; Dock and Open conversation keep their arrows", () => {
+  it("the model, Steer and Queued chips show their label alone; v11 (6): Dock has no arrow, only Open conversation keeps one", () => {
     expect(source("../src/components/conversation/composer/ComposerRunControls.svelte")).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/DeliveryModePicker.svelte")).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).not.toContain("chat-qrow-chevron");
     const pane = source("../src/components/conversation/ConversationPane.svelte");
     const head = pane.slice(pane.indexOf('class="chat-head-collapse"'), pane.indexOf("</button>", pane.indexOf('class="chat-head-collapse"')));
-    // v10 (5): Dock's 12px down arrow mirrors Open conversation's up arrow (owner allowed the
-    // pair); it is the only drawing in the control and shows for Dock only.
-    expect(head.match(/<svg/g)?.length).toBe(1);
-    expect(head).toMatch(/\{#if !stateControl\.opensIt\}[\s\S]*<svg class="chat-head-collapse-arrow" viewBox="0 0 16 16"[^>]*data-conversation-dock-arrow><path d="m4 6 4 4 4-4" \/><\/svg>/);
+    // v11 (6): Dock is its label alone (the v10 down arrow is gone).
+    expect(head).not.toContain("<svg");
     const facts = { readOnly: false, activityUncertain: false, waitingForYou: false, waitingFor: null, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
     const rest = render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState(facts) } }).body;
     const control = rest.slice(rest.indexOf("c2-rest-control"));

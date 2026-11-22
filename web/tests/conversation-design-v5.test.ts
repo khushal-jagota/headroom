@@ -182,14 +182,15 @@ describe("design v5: controls", () => {
     expect(mode).toMatch(/trigger\.is-open:hover:not\(:disabled\)\) \{\s*background: #3a3a3a;\s*color: #f2f2f2;/);
     expect(mode).toMatch(/background: #3a3a3a;\s*color: #f2f2f2;\s*\/\*[^*]*\*\/\s*position: relative;\s*z-index: 41;/);
     const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
-    expect(held).toContain('.chat-qrow-chip[aria-expanded="true"], .chat-qrow-chip[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }');
+    // v11 (4): the queued note's menu opens from its "more" button, open #3a3a3a.
+    expect(held).toContain('.chat-qrow-more[aria-expanded="true"], .chat-qrow-more[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }');
     expect(held).not.toContain("chat-qrow-chevron");
     expect(mode).toContain('chevron="none"');
     expect(source("../src/components/conversation/composer/ComposerRunControls.svelte")).toContain('chevron="none"');
   });
-  it("Stop is #f2f2f2 with a #121212 square; v9 (9): disabled send #2e2e2e with a #a6a6a6 arrow", () => {
-    expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #121212; }");
-    expect(app).toMatch(/\.chat-send \{[^}]*background: #2e2e2e;\s*color: #a6a6a6;/);
+  it("Stop is #f2f2f2 with a #121212 square; v11 (8): disabled send #333333 with a #bdbdbd arrow", () => {
+    expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #141414; }");
+    expect(app).toMatch(/\.chat-send \{[^}]*background: #333333;\s*color: #bdbdbd;/);
   });
 });
 
@@ -208,8 +209,10 @@ describe("design v5.2: surfaces", () => {
     expect(app).toContain(".chat-thread .markdown td { color: #d9d9d9; font-size: 15px; line-height: 22px; font-weight: var(--cv-weight-body); }");
     expect(app).not.toContain(".chat-thread .markdown td:first-child { color: var(--cv-t1); }");
   });
-  it("sent pictures up to 320 tall; composer picture chips 76 tall", () => {
-    expect(app).toMatch(/\.chat-u \.file-preview-media > :is\(\.file-preview-image, \.file-preview-video-poster\) \{\s*max-height: 320px;/);
+  it("pictures in a bubble (sent or queued) at most 320 wide and 200 tall, aspect kept (p17c review); composer picture chips 76 tall", () => {
+    expect(app).toMatch(/:is\(\.chat-u, \.chat-qrow\) \.file-preview-media > :is\(\.file-preview-image, \.file-preview-video-poster\) \{\s*max-width: 100%;\s*max-height: 200px;/);
+    expect(app).toContain(":is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px);");
+    expect(app).toMatch(/\.file-preview-media > \.file-preview-image,\s*\.file-preview-media > \.file-preview-video-poster \{[^}]*width: auto;\s*height: auto;\s*object-fit: contain;/);
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
     expect(composer).toMatch(/\.chat-att\.img \{ width: 76px; height: 76px;/);
     // p12c: the file chip is as tall, its content centred.

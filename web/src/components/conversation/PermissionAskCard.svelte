@@ -158,7 +158,8 @@
     max-height: 240px;
     overflow: auto;
     padding: 12px 16px;
-    border: 1px solid var(--cv-surface-edge, #2a2a2a);
+    /* v11 (8): the command block's edge is #3a3a3a. */
+    border: 1px solid #3a3a3a;
     border-radius: 12px;
     background: var(--cv-code-surface, #1a1a1a);
     color: #e0e0e0;
@@ -169,6 +170,8 @@
   .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
   .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }
   .c2-ask-choices.after-detail { margin-block-start: 16px; }
+  /* v11 (2): in a permission ask the declining row's label is the failure tone. */
+  .c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: #f08a7e; }
   .c2-ask-note {
     margin: var(--cv-s3) 0 0;
     color: var(--cv-t3);
