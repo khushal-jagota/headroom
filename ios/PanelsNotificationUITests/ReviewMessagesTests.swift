@@ -124,7 +124,9 @@ final class ReviewMessagesTests: XCTestCase {
         app.buttons["Send message"].tap()
         let retry = app.buttons["Retry reply"]
         XCTAssertTrue(retry.waitForExistence(timeout: 8))
-        input.tap()
+        // The refused card comes back with its words; type after them.
+        XCTAssertEqual(input.value as? String, "Reply kept after refusal")
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         input.typeText(" corrected")
         retry.tap()
         XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 12))
