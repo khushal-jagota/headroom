@@ -40,6 +40,7 @@ export interface HomeServicePlan {
   readonly links: readonly HomeInstallationLink[];
   preflight(execution: ReleaseExecution): Promise<void>;
   start_home(execution: ReleaseExecution): Promise<void>;
+  start_machine(execution: ReleaseExecution): Promise<void>;
   start_auxiliaries(execution: ReleaseExecution): Promise<void>;
   stop(execution: ReleaseExecution, assert_owned: (path: string) => Promise<void>): Promise<void>;
   finish_cleanup?(execution: ReleaseExecution): Promise<void>;
@@ -72,6 +73,17 @@ export interface HomeInstallDependencies extends HomeInstallHost {
     app: string,
     path: string,
     execution: ReleaseExecution,
+    machine_root?: string,
+  ) => Promise<void>;
+  readonly prepare_machine: (
+    app: string,
+    root: string,
+    execution: ReleaseExecution,
+  ) => Promise<void>;
+  readonly machine_healthy: (
+    request: HomeInstallRequest,
+    execution: ReleaseExecution,
+    started_ms: number,
   ) => Promise<void>;
   readonly healthy: (port: number, revision: string, signal: AbortSignal) => Promise<boolean>;
   readonly service: (

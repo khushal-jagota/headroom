@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a sealed Panels home or join an extra machine without a source checkout.
+"""Install the server and machine code, or join an extra machine, without a source checkout.
 
 This bootstrap uses Python's standard library and the authenticated GitHub CLI.
 """
@@ -510,10 +510,8 @@ def run_installer(
     command: list[str],
     payload: str,
     environment: dict[str, str],
-    *,
-    forward_termination: bool = False,
 ) -> None:
-    """Wait through rollback after the first forwarded interrupt; Linux join also forwards TERM."""
+    """Forward the first interruption and wait through the installer's rollback."""
     process: subprocess.Popen[str] | None = None
     interrupted: int | None = None
     forwarded = False
@@ -529,7 +527,7 @@ def run_installer(
             except ProcessLookupError:
                 pass
 
-    handled = (signal.SIGINT, signal.SIGTERM) if forward_termination else (signal.SIGINT,)
+    handled = (signal.SIGINT, signal.SIGTERM)
     previous = {signum: signal.signal(signum, interrupt) for signum in handled}
     try:
         # A separate session prevents repeated terminal interrupts from reaching cleanup.
@@ -661,12 +659,16 @@ def main() -> None:
                 }
                 for variable in ("NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH"):
                     environment.pop(variable, None)
-            print("Release checksum passed. Install the new service.", flush=True)
+            print(
+                "Release checksum passed. Install the server and machine code."
+                if args.command == "home"
+                else "Release checksum passed. Install the machine code.",
+                flush=True,
+            )
             run_installer(
                 command,
                 json.dumps(value),
                 environment,
-                forward_termination=args.command == "join",
             )
     except (
         OSError,

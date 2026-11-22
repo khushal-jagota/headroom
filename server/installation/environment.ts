@@ -44,11 +44,27 @@ export async function home_service_environment(
       ? { PLAN_SERVER_CONTROL_SOCKET: join(root, 'data/server-control.sock') }
       : { PLAN_WORKSPACE_ROOT: join(root, 'workspaces') }),
   };
+  return environment;
+}
+
+/** Provider homes and machine authority never enter the server service environment. */
+export async function machine_service_environment(
+  request: HomeInstallRequest,
+  host: HomeInstallHost,
+): Promise<Record<string, string>> {
+  const server = await home_service_environment(request, host);
+  const root = request.root;
+  const environment: Record<string, string> = {
+    HOME: host.account_home,
+    PATH: server.PATH!.replaceAll(join(root, 'app'), join(root, 'machine/runtime')),
+    ...(host.system === 'linux' ? { LANG: 'C.UTF-8' } : {}),
+    PLAN_EXECUTOR_ROOT: join(root, 'machine/data'),
+  };
   for (const { manifest } of BUILT_IN_MANIFESTS) {
     const home = manifest.home;
     if (!home) continue;
     const configured = request.isolated_providers
-      ? join(root, 'providers', home.isolated_directory_name)
+      ? join(root, 'machine/providers', home.isolated_directory_name)
       : home_path(home, host.environment, host.account_home, {
           unset: '||',
           expand_configured: false,

@@ -442,19 +442,20 @@ export async function install_home(
     current_directory(temporary);
     assert_release_execution(deps.execution);
     rename_relative(temporary.fd, 'app', root.fd, 'app');
-    for (const name of ['data', 'logs', 'workspaces'])
+    for (const name of ['data', 'logs', 'workspaces', 'machine', 'machine/data'])
       await files.ensure_directory(join(root_path, name));
     await files.ensure_directory(join(root_path, 'data/secrets'));
     if (request.isolated_providers)
       for (const { manifest } of BUILT_IN_MANIFESTS)
         if (manifest.home)
           await files.ensure_directory(
-            join(root_path, 'providers', manifest.home.isolated_directory_name),
+            join(root_path, 'machine/providers', manifest.home.isolated_directory_name),
           );
     await files.file(
       join(root_path, 'data/config.yaml'),
       JSON.stringify({
         server_root: '.',
+        provision_account_skills: false,
         db_path: 'planner.db',
         logs_dir: '../logs',
         backup_dir: 'backups',
@@ -492,6 +493,12 @@ export async function install_home(
       join(root_path, 'app'),
       join(root_path, 'data/planner.db'),
       deps.execution,
+      join(root_path, 'machine/data'),
+    );
+    await deps.prepare_machine(
+      join(root_path, 'app'),
+      join(root_path, 'machine/runtime'),
+      deps.execution,
     );
     current_directory(root);
     current_directory(data);
@@ -500,6 +507,9 @@ export async function install_home(
     if (!(await deps.healthy(request.port, request.revision, deps.execution.signal)))
       throw new Error(`The home did not report ready release ${request.revision}`);
     assert_release_execution(deps.execution);
+    const machine_started_ms = Date.now();
+    await service.start_machine(deps.execution);
+    await deps.machine_healthy(request, deps.execution, machine_started_ms);
     await service.start_auxiliaries(deps.execution);
     files.remove_tree(temporary, deps.execution);
     temporary = undefined;

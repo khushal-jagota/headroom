@@ -3,7 +3,8 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolved_path } from '../environments/paths.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
-import { home_service_environment } from './environment.ts';
+import { first_machine_arguments } from './machine.ts';
+import { home_service_environment, machine_service_environment } from './environment.ts';
 import {
   HOME_SCHEDULE_SUFFIXES,
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
@@ -19,6 +20,8 @@ function unit_argument(value: string): string {
 export function linux_home_units(
   request: HomeInstallRequest,
   environment: Readonly<Record<string, string>>,
+  machine_environment: Readonly<Record<string, string>>,
+  host: HomeInstallHost,
 ): Record<string, string> {
   const root = request.root,
     panels = join(root, 'app/bin/panels');
@@ -75,6 +78,20 @@ export function linux_home_units(
       `ExecStart=${unit_argument(join(root, 'app/bin/panels-launcher'))} serve\n` +
       'Restart=always\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=30\nDelegate=yes\n' +
       '[Install]\nWantedBy=default.target\n',
+    [request.service + '.machine.service']:
+      '[Unit]\nDescription=Panels machine code\n[Service]\nType=simple\n' +
+      `WorkingDirectory=${root.replaceAll('%', '%%')}/machine\n` +
+      Object.entries(machine_environment)
+        .map(([key, value]) => `Environment=${unit_argument(key + '=' + value)}\n`)
+        .join('') +
+      'ExecStart=' +
+      first_machine_arguments(request, host)
+        .map((value) => unit_argument(value.replaceAll('$', '$$')))
+        .join(' ') +
+      '\n' +
+      'Restart=always\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=90\nDelegate=yes\n' +
+      'UnsetEnvironment=NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH\n' +
+      '[Install]\nWantedBy=default.target\n',
     [request.service + '.backup.service']: oneshot('Panels home backup', [
       panels,
       'environment',
@@ -116,7 +133,12 @@ export async function create_linux_home_service(
   request: HomeInstallRequest,
   host: HomeInstallHost,
 ): Promise<HomeServicePlan> {
-  const units = linux_home_units(request, await home_service_environment(request, host));
+  const units = linux_home_units(
+    request,
+    await home_service_environment(request, host),
+    await machine_service_environment(request, host),
+    host,
+  );
   const files = Object.entries(units).map(([name, content]) => ({
     path: join(host.account_home, '.config/systemd/user', name),
     content,
@@ -188,6 +210,11 @@ export async function create_linux_home_service(
       attempted.push(name);
       await command(['enable', '--now', name], execution);
     },
+    async start_machine(execution) {
+      const name = request.service + '.machine.service';
+      attempted.push(name);
+      await command(['enable', '--now', name], execution);
+    },
     async start_auxiliaries(execution) {
       for (const suffix of ['.backup', ...HOME_SCHEDULE_SUFFIXES]) {
         const name = request.service + suffix + '.timer';
@@ -200,7 +227,10 @@ export async function create_linux_home_service(
     },
     async stop(execution, assert_owned) {
       if (!attempted.length) return;
-      for (const name of [...names].reverse()) {
+      for (const name of [
+        request.service + '.machine.service',
+        ...[...names].reverse().filter((name) => name !== request.service + '.machine.service'),
+      ]) {
         await bound_fragment(name, execution, assert_owned);
         await command(['stop', name], execution);
       }

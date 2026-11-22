@@ -14,6 +14,7 @@ import { HOME_HEALTH_TIMEOUT_SECONDS } from './configuration.ts';
 import { create_linux_home_service } from './linux.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import type { HomeInstallDependencies, HomeCommand } from './contracts.ts';
+import { prepare_first_machine, wait_for_first_machine } from './machine.ts';
 import { initialize_candidate_home_database } from './database.ts';
 
 export async function production_home_dependencies(
@@ -77,8 +78,16 @@ export async function production_home_dependencies(
       require_host_node(process.version, manifest.runtime_contract);
       assert_release_execution(scope);
     },
-    initialize_database: (app, path, scope) =>
-      initialize_candidate_home_database(app, path, scope, node_executable),
+    initialize_database: (app, path, scope, machine_root) =>
+      initialize_candidate_home_database(app, path, scope, node_executable, machine_root),
+    prepare_machine: prepare_first_machine,
+    machine_healthy: (request, scope, started_ms) =>
+      wait_for_first_machine(
+        request,
+        { system, architecture, account_home, node_executable, uid, environment, command },
+        scope,
+        started_ms,
+      ),
     healthy: (port, revision, signal) =>
       healthy(
         `http://127.0.0.1:${port}/api/health`,

@@ -1,7 +1,8 @@
 # A home on Mac or Linux
 
-One command installs a home on an Apple Silicon Mac or a Linux x86_64 server.
-The host holds the record. The Mac home runs in your graphical login session.
+One command installs the server and machine code on Apple Silicon or Linux x86_64.
+The server holds the record. Machine code runs as a separate service on the same account.
+The installer connects the two through the local executor link, without a credential prompt. The Mac home runs in your graphical login session.
 Logout stops the Mac home. Sleep makes it unreachable. Linux uses a systemd user service.
 Linux setup requires user lingering so that the home and its backup stay available after logout.
 Tailscale supplies remote HTTPS access.
@@ -30,7 +31,8 @@ panels_setup=$(mktemp) && gh api repos/khushal-jagota/headroom/contents/scripts/
 The command selects a successful publication from the trusted release workflow on `main`.
 It checks the publication identity, target, and archive checksum before it executes the sealed installer.
 It refuses an existing installation root, service name, or occupied port.
-It starts only the new home and checks the exact release health before it reports its address.
+It starts only the new server and machine code.
+It checks the exact release health and an accepted machine connection before it reports its address.
 A private repository requires GitHub access to its contents and Actions artifacts.
 The command uses the GitHub CLI login for release access. It keeps that token in `data/secrets/update-token` for updates. It refuses an existing `~/.local/bin/panels`, then writes a small `panels` command there that runs the installed app.
 
@@ -38,8 +40,12 @@ The Mac default root is `~/Library/Application Support/PanelsHome`. The service 
 Linux uses `~/.local/share/panels-home` and the user service `com.panels.home.service`.
 Both hosts schedule the backup at 02:30 each day, maintenance at 03:15 each day, and the stall watchdog every 30 seconds.
 Linux uses a user service and timer for each job, for example `com.panels.home.backup.service` and `com.panels.home.backup.timer`.
-The Linux home service restarts after any exit and owns its Worker groups.
-The Mac registers its jobs for this installation and future logins.
+The server service and its separate machine service restart after an exit.
+Apple Silicon registers the server and machine jobs for this installation and future logins.
+The machine job uses the server label plus `.machine`, for example `com.panels.home.machine`.
+Linux adds `.service` to that label.
+The machine state stays under `machine/data` in the installation root.
+Its runtime snapshot stays under `machine/runtime`, separate from the server app and data.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
 On the Mac, the command records the external Node at `/opt/homebrew/bin/node` for updates. It must stay outside the home and remain available.
@@ -52,8 +58,10 @@ python3 "$panels_setup" home --archive /private/panels-app.tar.gz --receipt /pri
 
 Use the Mac home publication on Mac and the Linux home publication on Linux.
 The receipt must match the exact archive. Do not use an executor archive for a home.
+The server archive supplies both programs at the same revision. A second download is not required.
 Use `--isolated-providers` for disposable checks. It prevents account skill links and uses private provider folders.
-If setup fails, it stops only its new jobs and removes only its created root, links, and unit files.
+If setup fails, it stops its new machine job before the server jobs.
+It removes only its created root, links, and unit files.
 Existing roots and services remain untouched. If cleanup cannot confirm a stopped job, setup retains its files and reports that job.
 No existing home is restarted or replaced. Updates still use the owner Update action.
 Mac updates stop this installation's home and auxiliary jobs before replacement.
