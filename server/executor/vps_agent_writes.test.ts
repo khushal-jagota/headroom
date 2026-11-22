@@ -45,6 +45,17 @@ function world(owner: { kind: string; id: string }) {
       'INSERT INTO executor_child_assignments(executor_incarnation,child_id,conversation_id,principal_kind,principal_id,created_at_ms) VALUES(?,?,?,?,?,0)',
       [child.executor_incarnation, child.child_id, child.conversation_id, owner.kind, owner.id],
     );
+    // A Manager child's conversation is that Manager's current one, as a real start links it.
+    if (owner.kind === 'manager') {
+      tx.run(
+        "INSERT INTO managers(id,title,project_id,manager_backend,manager_model,created_at,updated_at) VALUES (?,'Manager','project_vylo','codex','gpt-6.1-sol',0,0)",
+        [owner.id],
+      );
+      tx.run('INSERT INTO agents(agent_key,conversation_id) VALUES (?,?)', [
+        `manager_${owner.id}`,
+        child.conversation_id,
+      ]);
+    }
   });
   const store = new InboxStore(database, { machine_id: ORIGINAL_MAC_MACHINE_ID } as FileStaging);
   const writes = new AgentWrites(
@@ -204,5 +215,36 @@ test('a relayed write that runs out of time leaves its one uncertain receipt', a
     expect(signals).toHaveLength(1);
   } finally {
     vi.useRealTimers();
+  }
+});
+
+// Risk: a Manager is reset while its machine is away. When the machine returns, the writes that
+// the old child held reach every route as that Manager. A local agent's token is revoked at the
+// reset; the relayed child must lose its authority the same way.
+test("a reset Manager's old child can no longer act for it", async () => {
+  const { database, writes, envelope, send } = world({ kind: 'manager', id: 'm_one' });
+  const seen: unknown[] = [];
+  const app = Fastify();
+  app.post('/api/probe', async (request) => {
+    seen.push(requestContext(request));
+    return { ok: true };
+  });
+  await app.ready();
+  writes.app = app;
+  try {
+    database.write((tx) =>
+      tx.run("UPDATE agents SET conversation_id='manager-successor' WHERE agent_key=?", [
+        'manager_m_one',
+      ]),
+    );
+    await expect(
+      send(envelope(1, 'cli.request', { method: 'POST', path: '/api/probe', body: {} })),
+    ).rejects.toMatchObject({ code: 'agent_forbidden' });
+    await expect(
+      send(envelope(2, 'ticket.create', { body: { title: 'From the old child' } })),
+    ).rejects.toMatchObject({ code: 'agent_forbidden' });
+    expect(seen).toEqual([]);
+  } finally {
+    await app.close();
   }
 });

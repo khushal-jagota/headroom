@@ -6,7 +6,7 @@ import type { Principal, RequestContext } from '../core/contracts.ts';
 import { IN_PROCESS_REQUEST_CONTEXT } from '../core/authority/identity.ts';
 import { failure_payload } from '../cli/http.ts';
 import { PlannerError } from '../core/contracts.ts';
-import type { TransactionSql } from '../core/database/contracts.ts';
+import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { admitCommand, unidentifiedCommandRefusal } from '../core/authority/intake.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
@@ -41,7 +41,7 @@ import { file_current_proposal } from '../tickets/data/index.ts';
 import { ticket_json } from '../tickets/views.ts';
 import { notify_review_transfers } from '../tickets/review_transfer.ts';
 import type { ReviewTransferNotice } from '../tickets/contracts.ts';
-import { open_child_assignment } from './data/child_custody.ts';
+import { current_agent_owner } from './data/child_custody.ts';
 import { InboxStore } from './data/inbox.ts';
 import type { PublishedFiles } from './data/inbox.ts';
 import type { InboxRuns, PublishFiles } from './vps_inbox.ts';
@@ -82,6 +82,16 @@ export function agent_request_context(
   return principal.kind === 'conversation'
     ? { principal: { kind: 'unidentified', id: 'unidentified' }, conversationId: null }
     : { principal: principal as Principal, conversationId: conversation_id };
+}
+/** Inside the write: the child still acts for the principal that its request was judged as. */
+function require_same_agent_owner(
+  sql: ReadSql,
+  child: WireValue<'ChildReference'>,
+  principal: Principal,
+): void {
+  const current = agent_request_context(current_agent_owner(sql, child), '').principal;
+  if (current.kind !== principal.kind || current.id !== principal.id)
+    throw new PlannerError('agent_forbidden', 'child assignment changed');
 }
 /** Run one route in this process as the agent. Ordinary route authority decides. */
 export function inject_agent_request(
@@ -247,8 +257,9 @@ export class AgentWrites {
     if (write.child.conversation_id !== envelope.conversation_id)
       throw new ExecutorValidationError('CLI conversation conflicts with envelope');
     // A generic conversation acts as a local generic agent does: without a Panels identity.
+    await this.runs.authority(write.child);
     const context = agent_request_context(
-      await this.runs.authority(write.child),
+      this.store.database.read((sql) => current_agent_owner(sql, write.child)),
       write.child.conversation_id,
     );
     const principal = context.principal;
@@ -268,9 +279,7 @@ export class AgentWrites {
     const receipt = this.store.accept(
       envelope,
       (tx) => {
-        const assignment = open_child_assignment(tx, write.child);
-        if (assignment?.[0] !== principal.kind || assignment[1] !== principal.id)
-          throw new PlannerError('agent_forbidden', 'child assignment changed');
+        require_same_agent_owner(tx, write.child, principal);
         return write_ticket_mutation(tx, write, principal, this.clock, notices);
       },
       now_ms(),
@@ -341,13 +350,7 @@ export class AgentWrites {
       const previous = this.store.prior_receipt(tx, envelope, identity);
       if (previous !== null) return { previous, request: null };
       const request = agent_request(write.arguments);
-      const assignment = open_child_assignment(tx, write.child);
-      const current =
-        assignment === null
-          ? null
-          : agent_request_context({ kind: assignment[0], id: assignment[1] }, '').principal;
-      if (current?.kind !== context.principal.kind || current.id !== context.principal.id)
-        throw new PlannerError('agent_forbidden', 'child assignment changed');
+      require_same_agent_owner(tx, write.child, context.principal);
       this.store.require_file_owner(tx, envelope);
       this.store.require_unchanged_files(envelope, published);
       const unfinished: WireValue<'AcceptanceReceipt'> = {
@@ -399,6 +402,7 @@ export class AgentWrites {
       );
       const previous = this.store.prior_receipt(tx, envelope, identity);
       if (previous !== null) return { previous, recipient: principal, message: '', mode: 'queue' };
+      require_same_agent_owner(tx, write.child, principal);
       const body = write.arguments.body;
       if (!is_json_object(body))
         throw new PlannerError('validation', 'message body must be an object');

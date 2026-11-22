@@ -30,6 +30,7 @@ import {
   inject_agent_request,
 } from './vps_agent_writes.ts';
 import { InboxStore, require_manager_files_machine } from './data/inbox.ts';
+import { current_agent_owner } from './data/child_custody.ts';
 import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
 import { VpsBackendControlRelay } from './backend_control_relay.ts';
@@ -559,7 +560,8 @@ export class VpsExecutor {
     if (!read.path.startsWith('/') || read.path.startsWith('//'))
       throw new PlannerError('validation', 'an executor read path must be a server path');
     // Ordinary route authority judges the read, as for a local agent.
-    const principal = this.runs.authority(read.child);
+    this.runs.authority(read.child);
+    const principal = this.database.read((sql) => current_agent_owner(sql, read.child));
     const target = new URL(read.path, 'http://executor');
     // The path can carry its own query, as `panels api` sends it.
     const params = new URLSearchParams(target.search);
