@@ -15,6 +15,7 @@ import type { BackendEventValue } from '../conversation/backends/contracts.ts';
 import { retained_open_runs } from '../conversation/runtime/remote.ts';
 import { admit_remote_turn } from '../conversation/runtime/remote_turn.ts';
 import { observe_shutdown, is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
+import { recover_conversations } from '../conversation/deploy_interruptions/coordinator.ts';
 import { ServerLifecycleError, ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { StopOptions } from '../lifecycle/contracts.ts';
 import type { StallSource } from '../stalls/contracts.ts';
@@ -149,6 +150,30 @@ export class VpsExecutor {
     this.app = app;
     this.update_barrier = update_barrier;
     this.mailbox.start_admission = conversations.start_admission;
+    this.presence.returned = () => {
+      void this.catalog.connected();
+      // A server start skips the recovery of a Ticket whose machine is away. When the machine
+      // connects, for example the server's own machine code after the switch, it runs now.
+      void this.recover_waiting_turns(conversations).catch((error: unknown) => {
+        if (!is_shutdown_business_cancellation(error))
+          console.error(`Recovery for machine ${this.machine_id} failed`, error);
+      });
+    };
+  }
+  private async recover_waiting_turns(conversations: SqliteProcessConversationSystem) {
+    const conversation_ids = this.database.read((sql) =>
+      sql
+        .all<{ conversation_id: string }>(
+          "SELECT DISTINCT d.source_conversation_id AS conversation_id FROM deploy_interruptions d JOIN tickets t ON d.owner_kind='ticket' AND t.id=d.owner_id WHERE t.machine_id=? AND d.recovery_state='awaiting_action'",
+          [this.machine_id],
+        )
+        .map((row) => row.conversation_id),
+    );
+    if (conversation_ids.length === 0) return;
+    await recover_conversations(conversations, this.database, {
+      conversation_ids,
+      signal: conversations.shutdown_signal,
+    });
   }
   bind_updates(service: MacUpdateServiceContract): void {
     this.updates = service;
