@@ -156,6 +156,74 @@ import XCTest
         XCTAssertEqual(posts.map { $0["sender_message_id"] as? String }, [original, original])
         XCTAssertEqual(posts.last?["owner_read_through_sequence"] as? Int, 66)
     }
+    /// Risk: Try Again on a reply that gave up sends the card's text under a new ID, so a
+    /// reply the server already saved lands twice. It must go again as it was, under its own ID.
+    func testGivenUpReplyTryAgainKeepsItsIdentity() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        defer { clean(api) }
+        let decision = ReviewMessageDecision()
+        await decision.load(item: item(), api: api)
+        decision.composer.draft = "Maybe it landed"
+        ReviewMessageProtocol.state.garble = true
+        _ = await decision.send()
+        await Outbox.shared.drain(api: api)
+        decision.refreshAttempt()
+        let original = try XCTUnwrap(decision.attempt)
+        XCTAssertEqual(original.state, .failed)
+        XCTAssertEqual(try LocalStore.shared.outgoing.summary(server: LocalStore.server(api.baseURL), id: original.id)?.gaveUp, true)
+        ReviewMessageProtocol.state.garble = false
+        decision.composer.draft = "Edited after it gave up"
+        let retried = await decision.send()
+        XCTAssertTrue(retried)
+        await Outbox.shared.drain(api: api)
+        decision.refreshAttempt()
+        XCTAssertEqual(decision.attempt?.id, original.id)
+        XCTAssertEqual(decision.attempt?.state, .sent)
+        let posts = ReviewMessageProtocol.state.bodies.filter { $0["sender_message_id"] != nil }
+        XCTAssertEqual(posts.map { $0["sender_message_id"] as? String }, [original.id, original.id])
+        XCTAssertEqual((posts.last?["content"] as? [[String: Any]])?.first?["text"] as? String, "Maybe it landed")
+        XCTAssertEqual(Outbox.shared.entries(LocalStore.server(api.baseURL), conversationID: "c").count, 1)
+    }
+    /// Risk: offline, a card whose detail this run never read shows a spinner forever, so
+    /// Mark read and an ask answer cannot be saved. The phone's saved copy of the last read
+    /// stands in; the actions are saved and land when the server answers.
+    func testOfflineCardsActOnTheirSavedCopy() async throws {
+        let api = makeAPI()
+        ReviewMessageProtocol.state.reset()
+        ReviewMessageProtocol.state.ask = true
+        defer { clean(api) }
+        let ask = ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")
+        // An earlier read on this phone, such as the read-ahead before the connection dropped.
+        await ReviewMessageDecision().load(item: item(), api: api)
+        await ReviewAskDecision().load(item: ask, api: api)
+        await LocalStore.shared.flushCache()
+        ReviewMessageProtocol.state.offline = true
+        let message = ReviewMessageDecision()
+        await message.load(item: item(), api: api, shownAt: .now)
+        XCTAssertNil(message.error)
+        XCTAssertEqual(message.through, 66)
+        let marked = await message.markRead()
+        XCTAssertTrue(marked)
+        let answer = ReviewAskDecision()
+        await answer.load(item: ask, api: api)
+        XCTAssertTrue(answer.available)
+        let question = try XCTUnwrap(answer.userInput?.questions.first)
+        answer.toggle("Blue", in: question)
+        XCTAssertTrue(answer.sendAnswer(item: ask, api: api))
+        ReviewMessageProtocol.state.offline = false
+        // Saving each one woke the outbox; wait for both to land.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ReviewMessageProtocol.state.bodies.count < 2, ContinuousClock.now < deadline {
+            await Outbox.shared.drain(api: api)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let bodies = ReviewMessageProtocol.state.bodies
+        XCTAssertEqual(bodies.first { $0["through_sequence"] != nil }?["through_sequence"] as? Int, 66)
+        let sent = try XCTUnwrap(bodies.first { $0["request_id"] != nil })
+        XCTAssertEqual(sent["request_id"] as? String, "request-1")
+        XCTAssertEqual(sent["answers"] as? [String: [String: [String]]], ["colour": ["answers": ["Blue"]]])
+    }
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()
@@ -246,6 +314,14 @@ private final class ReviewMessageState: @unchecked Sendable {
     private var _loseResponse = false
     private var _eventReads = 0
     private var _postStatus = 200
+    private var _garble = false
+    private var _offline = false
+    private var _ask = false
+    /// The next message gets an unreadable reply, which gives up at once.
+    var garble: Bool { get { lock.withLock { _garble } } set { lock.withLock { _garble = newValue } } }
+    /// Reads fail as they do without a network; writes still land when it returns.
+    var offline: Bool { get { lock.withLock { _offline } } set { lock.withLock { _offline = newValue } } }
+    var ask: Bool { get { lock.withLock { _ask } } set { lock.withLock { _ask = newValue } } }
     var postStatus: Int { get { lock.withLock { _postStatus } } set { lock.withLock { _postStatus = newValue } } }
     func status(_ request: URLRequest) -> Int { lock.withLock { request.url?.path.hasSuffix("/send") == true ? _postStatus : 200 } }
     private var held: Set<String> = []
@@ -254,10 +330,11 @@ private final class ReviewMessageState: @unchecked Sendable {
     var eventReads: Int { lock.withLock { _eventReads } }
     var refuse: Bool { get { lock.withLock { _refuse } } set { lock.withLock { _refuse = newValue } } }
     var newMessage: Bool { get { lock.withLock { _newMessage } } set { lock.withLock { _newMessage = newValue } } }
-    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _loseResponse = false; _eventReads = 0; _postStatus = 200; held = [] } }
+    func reset() { lock.withLock { _bodies = []; _refuse = false; _newMessage = false; _loseResponse = false; _eventReads = 0; _postStatus = 200; held = []; _garble = false; _offline = false; _ask = false } }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
             let path = request.url!.path
+            if _offline, request.httpMethod != "POST" { throw URLError(.notConnectedToInternet) }
             if request.httpMethod == "POST" {
                 var data = request.httpBody ?? Data()
                 if let stream = request.httpBodyStream {
@@ -270,6 +347,7 @@ private final class ReviewMessageState: @unchecked Sendable {
                 if _postStatus == 422 { return Data(#"{"detail":"unsupported or invalid conversation image"}"#.utf8) }
                 if !_refuse, let id = body["sender_message_id"] as? String { held.insert(id) }
                 if _loseResponse { _loseResponse = false; throw URLError(.networkConnectionLost) }
+                if _garble, body["sender_message_id"] != nil { _garble = false; return Data("not json".utf8) }
                 return Data((_refuse ? #"{"conversation_id":"c","fate":"refused"}"# : #"{"conversation_id":"c","fate":"queued","owner_read_through_sequence":66}"#).utf8)
             }
             if path.hasSuffix("/receipts") { return Data(#"{"receipts":[]}"#.utf8) }
@@ -278,6 +356,11 @@ private final class ReviewMessageState: @unchecked Sendable {
                 var events: [[String: Any]] = (1...(_newMessage ? 67 : 66)).map { ["sequence": $0, "kind": "message_to_owner", "payload": ["text": "Message \($0)"]] }
                 events.append(["sequence": 90, "kind": "agent_message", "payload": ["text": "Internal output"]])
                 return try JSONSerialization.data(withJSONObject: ["events": events])
+            }
+            if _ask, path.hasSuffix("/conversations/c") {
+                return try JSONSerialization.data(withJSONObject: ["is_running": true, "pending_permission_ask": NSNull(), "pending_user_input": [
+                    "request_id": "request-1", "questions": [["question_id": "colour", "header": "", "question": "Which colour?",
+                    "options": [["label": "Blue", "description": "Calm"], ["label": "Red", "description": "Loud"]], "multi_select": false, "allow_other": false]]]])
             }
             return try JSONSerialization.data(withJSONObject: ["backend_key": "codex", "held_prompts": held.map { ["held_prompt_id": $0, "sender_message_id": $0, "content": [["piece": "text", "text": "Queued once"]]] }, "owner_read_through_sequence": 1, "latest_sequence": 90])
         }

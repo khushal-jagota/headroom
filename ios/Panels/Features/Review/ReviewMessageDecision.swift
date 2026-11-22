@@ -24,11 +24,17 @@ struct ReviewMessageEvent: Decodable, Identifiable, Sendable {
     }
 }
 
+private struct ReviewMessageEvents: Decodable, Sendable { let events: [ReviewMessageEvent] }
+
 extension APIClient {
     func reviewMessages(_ id: String, after: Int) async throws -> [ReviewMessageEvent] {
-        struct Response: Decodable, Sendable { let events: [ReviewMessageEvent] }
-        let response: Response = try await get("/api/conversation/conversations/\(id)/events", query: [.init(name: "after", value: String(after))])
+        let response: ReviewMessageEvents = try await get("/api/conversation/conversations/\(id)/events", query: [.init(name: "after", value: String(after))])
         return ReviewMessageEvent.unread(response.events, after: after)
+    }
+    /// The same run as the phone last read it, saved on the phone.
+    @MainActor func savedReviewMessages(_ id: String, after: Int) -> [ReviewMessageEvent]? {
+        let response: ReviewMessageEvents? = cached("/api/conversation/conversations/\(id)/events", query: [.init(name: "after", value: String(after))])
+        return response.map { ReviewMessageEvent.unread($0.events, after: after) }
     }
     func currentConversation(_ owner: ConversationOwner) async throws -> String? {
         switch owner {
@@ -122,30 +128,40 @@ extension APIClient {
             composer.restore(owner: owner, api: api, draftID: "review-message:\(id)", savedWork: self.saved(LocalStore.server(api.baseURL)))
             composer.deliveryMode = "queue"
         }
+        var messages: [ReviewMessageEvent]
+        var fromSavedCopy = false
         do {
-            let messages = try await api.reviewMessages(id, after: item.ownerReadThroughSequence)
-            try Task.checkCancellation()
-            events = messages
-            refreshSavedWork(LocalStore.server(api.baseURL))
-            let saved = self.saved(LocalStore.server(api.baseURL)).last {
-                $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
-                ($0.state != .sent || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
+            messages = try await api.reviewMessages(id, after: item.ownerReadThroughSequence)
+        } catch {
+            // Offline, the run the phone saved when it last read it stands in, so Mark read
+            // and a reply work on it. The next connection reads it again.
+            guard !Task.isCancelled, error is URLError, let cached = api.savedReviewMessages(id, after: item.ownerReadThroughSequence) else {
+                if !Task.isCancelled, !(error is URLError) { self.error = error.localizedDescription }
+                return
             }
-            attemptID = saved?.id; refreshAttempt()
-            if saved == nil, let delivered = self.saved(LocalStore.server(api.baseURL)).last(where: {
-                $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil && $0.state == .sent
-            }), let message = delivered.message,
-               composer.draft == message.content.compactMap(\.text).joined(separator: "\n"),
-               (try? JSONEncoder().encode(composer.attachments)) == (try? JSONEncoder().encode(message.content.filter { $0.piece != "text" })) {
-                clearAcceptedDraft()
-            }
-            // Outbox content remains the authority if the app closed during a send.
-            if let saved, saved.state != .failed, let message = saved.message {
-                composer.draft = message.content.compactMap(\.text).joined(separator: "\n")
-                composer.attachments = message.content.filter { $0.piece != "text" }
-            }
-            loaded = true; loadedFreshness = Self.freshness(item); readStarted = started; error = nil
-        } catch { if !Task.isCancelled, !(error is URLError) { self.error = error.localizedDescription } }
+            messages = cached; fromSavedCopy = true
+        }
+        guard !Task.isCancelled else { return }
+        events = messages
+        refreshSavedWork(LocalStore.server(api.baseURL))
+        let saved = self.saved(LocalStore.server(api.baseURL)).last {
+            $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
+            ($0.state != .sent || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
+        }
+        attemptID = saved?.id; refreshAttempt()
+        if saved == nil, let delivered = self.saved(LocalStore.server(api.baseURL)).last(where: {
+            $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil && $0.state == .sent
+        }), let message = delivered.message,
+           composer.draft == message.content.compactMap(\.text).joined(separator: "\n"),
+           (try? JSONEncoder().encode(composer.attachments)) == (try? JSONEncoder().encode(message.content.filter { $0.piece != "text" })) {
+            clearAcceptedDraft()
+        }
+        // Outbox content remains the authority if the app closed during a send.
+        if let saved, saved.state != .failed, let message = saved.message {
+            composer.draft = message.content.compactMap(\.text).joined(separator: "\n")
+            composer.attachments = message.content.filter { $0.piece != "text" }
+        }
+        loaded = true; loadedFreshness = fromSavedCopy ? nil : Self.freshness(item); readStarted = started; error = nil
     }
     /// Waits for a read in flight, so a reply or Mark read uses the newest run.
     private func settled() async {
@@ -159,6 +175,17 @@ extension APIClient {
               loaded, through > 0, !historical, !busy, !accepted else { return false }
         guard !composer.preparingPhoto else { return false }
         busy = true; defer { busy = false }
+        // A reply that gave up may already be on the server, so Try Again sends it as it
+        // was, under its own ID, as the conversation's Try Again does.
+        if let attempt, attempt.state == .failed,
+           (try? LocalStore.shared.outgoing.summary(server: LocalStore.server(api.baseURL), id: attempt.id))??.gaveUp == true {
+            guard await Outbox.shared.retry(attempt.id, api: api) == attempt.id else {
+                error = Outbox.shared.store.saveError
+                return false
+            }
+            refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
+            return accepted
+        }
         let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !composer.attachments.isEmpty else { return false }
         let content: [ConversationSend.Piece]
@@ -167,7 +194,7 @@ extension APIClient {
         catch { self.error = error.localizedDescription; return false }
         guard !historical, self.item?.conversationId == id, self.item?.owner == owner else { return false }
         if let attempt, attempt.state == .failed {
-            // Replace a terminal refusal with the current draft, retaining its read boundary.
+            // Replace a refusal with the current draft under a new ID, retaining its read boundary.
             guard let replacement = await Outbox.shared.retry(attempt.id, api: api, content: content) else {
                 error = Outbox.shared.store.saveError
                 return false

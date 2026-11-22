@@ -66,6 +66,15 @@ struct AppShell: View {
         .onChange(of: ReviewSavedWork.Key(server: LocalStore.server(store.baseURL), revision: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))), initial: true) { _, key in
             savedReviewWork.refresh(key.server)
         }
+        // The shell keeps Review's queue current wherever Khushal is, so the card on
+        // screen is always in the latest window and a return finds it as it is.
+        .onChange(of: reviewInputs, initial: true) { _, _ in
+            reviewSession.update(store: store, savedWork: savedReviewWork,
+                                 freshSession: store.connection == "Following changes" ? store.connectionSession : nil)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { reviewSession.leaveApp(session: store.connectionSession) }
+        }
         // Owner override: a destination change selects; pushes and back navigation give a light impact.
         .onChange(of: destination) { _, _ in Haptics.selection() }
         .onChange(of: paths) { old, new in if old[destination] != new[destination] { Haptics.light() } }
@@ -107,9 +116,7 @@ struct AppShell: View {
         switch destination {
         case .review:
             // Review keeps its own header row; the Sidebar button takes its empty leading corner.
-            ReviewView(savedWork: savedReviewWork, session: reviewSession, isActive: currentPath.isEmpty && scenePhase == .active, openTicket: { id in
-                paths[.review, default: []].append(.ticket(id))
-            })
+            ReviewView(savedWork: savedReviewWork, session: reviewSession, isActive: currentPath.isEmpty && scenePhase == .active)
             .environment(\.reviewVisit, reviewVisit)
             .toolbar(.hidden, for: .navigationBar)
             .overlay(alignment: .topLeading) { reviewSidebarButton.padding(.leading, 16).padding(.top, 4) }
@@ -151,10 +158,16 @@ struct AppShell: View {
         closeSidebar()
     }
 
+    /// What Review's queue is derived from: the view, the saved work and the stream's session.
+    private var reviewInputs: [String] {
+        [store.baseURL.absoluteString, store.view?.contentVersion ?? "", savedReviewWork.key.map { "\($0.server):\($0.revision)" } ?? "",
+         store.connection, String(store.connectionSession)]
+    }
+
     private var reviewBadge: Int {
         let count = store.counts?.review ?? 0
         guard let presentation = store.presentation, let review = store.review else { return count }
-        let pending = ReviewSavedWork.pendingDecisionTickets(in: review.cards,
+        let pending = ReviewSavedWork.pendingDecisionTickets(in: review.items,
             decisions: savedReviewWork.decisions(LocalStore.server(store.baseURL)))
         return presentation.reviewBadge(count: count, pendingDecisionTickets: pending)
     }

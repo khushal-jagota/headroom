@@ -162,6 +162,8 @@ struct ViewAttention: Codable, Sendable {
 
 struct ViewConversationValue: Codable, Sendable {
     let firstUnreadOwnerMessageAt: Double?
+    /// When the newest ask began to wait; it orders an ask in Review.
+    var latestAskAt: Double? = nil
     let ownerReadThroughSequence: Int
     let errorAcknowledgedThroughSequence: Int
     let attention: ViewAttention
@@ -306,7 +308,7 @@ extension ViewSnapshot {
         snapshot.content.records = content.records.map { record in
             guard case .conversation(let id, let value) = record else { return record }
             return .conversation(id, ViewConversationValue(firstUnreadOwnerMessageAt: value.firstUnreadOwnerMessageAt,
-                ownerReadThroughSequence: value.ownerReadThroughSequence,
+                latestAskAt: value.latestAskAt, ownerReadThroughSequence: value.ownerReadThroughSequence,
                 errorAcknowledgedThroughSequence: value.errorAcknowledgedThroughSequence,
                 attention: ViewAttention(current: nil, durable: value.attention.durable)))
         }

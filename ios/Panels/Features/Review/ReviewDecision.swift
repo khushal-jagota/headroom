@@ -74,6 +74,15 @@ struct DecisionGuidance: Sendable, Equatable {
         revisionDraft = LocalStore.shared.draft(server: draftServer!, id: id + ":guidance") ?? ""
         restoringDrafts = false
     }
+    /// A refused decision's card shows its saved note even when its proposal no longer waits.
+    func restoreRefusedNote(server: String, item: ReviewItem) {
+        guard draftIdentity == nil, let revision = item.proposalRevision else { return }
+        let id = "review:\(item.ticketId):\(item.field):\(item.waitingSince):\(revision)"
+        restoringDrafts = true
+        draftServer = server; draftIdentity = id
+        revisionDraft = LocalStore.shared.draft(server: server, id: id + ":guidance") ?? ""
+        restoringDrafts = false
+    }
     func refreshVoiceDraft() {
         guard let server = draftServer, let id = revisionDraftID else { return }
         let saved = LocalStore.shared.draft(server: server, id: id) ?? ""
@@ -198,66 +207,6 @@ struct DecisionGuidance: Sendable, Equatable {
     }
 }
 
-/// Skip is local, like the web. It never resolves a proposal or reduces the live badge.
-/// Skip acts on a whole card; a decision resolves one part, and the card stays while
-/// any part is unresolved. A new part on a skipped card brings the card back.
-struct ReviewQueue {
-    /// Skipped part identities, each with its card's identity.
-    private(set) var skipped: [String: String] = [:]
-    private(set) var resolved: Set<String> = []
-    /// Retain a painted message only while its canonical owner remains eligible.
-    /// A proposal decided here stays until its local exit finishes.
-    func parts(of card: ReviewCard, in cards: [ReviewCard], holdingProposals: Set<String> = [], view: ViewSnapshot?) -> [ReviewItem] {
-        let held = card.parts.filter { part in
-            !resolved.contains(part.id) && (part.isMessage ? Self.messageEligible(part, in: view) : holdingProposals.contains(part.id))
-        }
-        let live = (cards.first { $0.id == card.id }?.parts ?? []).filter { part in
-            !resolved.contains(part.id) && !held.contains { $0.id == part.id || ($0.isMessage && $0.conversationId == part.conversationId) }
-        }
-        let all = live + held
-        return all.filter { !$0.isMessage } + all.filter(\.isMessage)
-    }
-    private static func messageEligible(_ item: ReviewItem, in view: ViewSnapshot?) -> Bool {
-        guard let view else { return true }
-        let context = view.content.reviewContext.first { $0.conversationId == item.conversationId }
-        if let context {
-            guard let canonical = context.canonicalAddressId, canonical == item.addressId else { return false }
-        } else {
-            // Until the held scope arrives, the admitted canonical address governs.
-            let addresses = view.content.records.compactMap { record -> (String, ViewAddressValue)? in
-                if case .address(let id, let value) = record, value.conversationId == item.conversationId { return (id, value) }
-                return nil
-            }.sorted { ($0.1.current ? 0 : 1, $0.0) < ($1.1.current ? 0 : 1, $1.0) }
-            if let canonical = addresses.first?.0, canonical != item.addressId { return false }
-        }
-        let owner = view.content.records.first { $0.key.kind == item.ownerKind && $0.key.id == item.ownerId }
-        switch item.ownerKind {
-        case "ticket":
-            if case .ticket(_, let value) = owner { return value.stage != "done" && !value.isBacklogged }
-            return context == nil
-        case "manager":
-            if case .manager(_, let value) = owner { return !value.settled }
-            return context == nil
-        default: return true
-        }
-    }
-    func pending(_ card: ReviewCard) -> [ReviewItem] { card.parts.filter { !resolved.contains($0.id) } }
-    func isSkipped(_ card: ReviewCard) -> Bool {
-        let parts = pending(card)
-        return !parts.isEmpty && parts.allSatisfy { skipped[$0.id] != nil }
-    }
-    func current(in cards: [ReviewCard]) -> ReviewCard? {
-        cards.first { !pending($0).isEmpty && !isSkipped($0) }
-    }
-    func skippedCount(in cards: [ReviewCard]) -> Int { cards.filter(isSkipped).count }
-    /// Skipped cards, including those on pages that are no longer loaded.
-    var skippedCardCount: Int { Set(skipped.filter { !resolved.contains($0.key) }.values).count }
-    mutating func skip(_ card: ReviewCard) { for part in pending(card) { skipped[part.id] = card.id } }
-    mutating func resolve(_ item: ReviewItem) { resolved.insert(item.id) }
-    mutating func restore(_ item: ReviewItem) { resolved.remove(item.id); skipped[item.id] = nil }
-    mutating func revisit() { skipped.removeAll() }
-}
-
 /// One snapshot for Review and its badge. Rendering reads memory, never the store.
 @MainActor @Observable final class ReviewSavedWork {
     struct Key: Equatable {
@@ -282,9 +231,9 @@ struct ReviewQueue {
     func messages(_ server: String, conversationID: String) -> [PendingWork] { outbox.entries(server, conversationID: conversationID) }
     func voice(_ server: String, draftID: String) -> [PendingWork] { outbox.entries(server, draftID: draftID) }
     /// Only a visible exact proposal can justify subtracting a pending card badge.
-    static func pendingDecisionTickets(in cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> Set<String> {
-        Set(cards.flatMap(\.parts).filter { item in
-            !item.isMessage && item.proposalRevision != nil && decisions.contains {
+    static func pendingDecisionTickets(in items: [ReviewItem], decisions: [OutgoingStore.Summary]) -> Set<String> {
+        Set(items.filter { item in
+            item.isProposal && item.proposalRevision != nil && decisions.contains {
                 decides($0, item) && $0.state == "waiting"
             }
         }.map(\.ticketId))
@@ -300,12 +249,29 @@ struct ReviewQueue {
             && (saved.ownerReadThroughSequence ?? 0) > item.ownerReadThroughSequence
     }
     /// Decided proposals and handled messages leave Review at once. A refusal brings them back.
-    static func cards(_ cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> [ReviewCard] {
-        cards.compactMap { card in
-            let parts = card.parts.filter { item in
-                !decisions.contains { !$0.refused && (item.isMessage ? covers($0, item) : decides($0, item)) }
-            }
-            return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
+    static func cards(_ items: [ReviewItem], decisions: [OutgoingStore.Summary]) -> [ReviewItem] {
+        items.filter { item in
+            item.isAsk || !decisions.contains { !$0.refused && (item.isMessage ? covers($0, item) : decides($0, item)) }
+        }
+    }
+    /// Each proposal whose latest saved decision was refused, as a card. A card in the
+    /// window keeps its own facts; one that left takes its Ticket's title from `title`.
+    static func refusals(_ decisions: [OutgoingStore.Summary], live: [ReviewItem], title: (OutgoingStore.Summary) -> String?) -> [ReviewRefusal] {
+        var latest: [String: OutgoingStore.Summary] = [:]
+        var order: [String] = []
+        for saved in decisions where ["approval", "sendBack"].contains(saved.kind) {
+            guard let ticket = saved.ticketID, let field = saved.proposalField, let created = saved.proposalCreatedAt else { continue }
+            let key = "\(ticket):\(field):\(created):\(saved.proposalRevision ?? 0)"
+            if latest[key] == nil { order.append(key) }
+            if latest[key].map({ $0.sequence < saved.sequence }) ?? true { latest[key] = saved }
+        }
+        return order.compactMap { key in
+            guard let saved = latest[key], saved.refused, let ticket = saved.ticketID, let field = saved.proposalField,
+                  let created = saved.proposalCreatedAt else { return nil }
+            let item = live.first { $0.isProposal && decides(saved, $0) }
+                ?? ReviewItem(reviewItemType: "proposal", ticketId: ticket, field: field, title: title(saved) ?? "Proposal",
+                              waitingSince: created, proposalRevision: saved.proposalRevision)
+            return ReviewRefusal(item: item, note: saved.note, summaryID: saved.id)
         }
     }
 }

@@ -3,58 +3,110 @@ import UIKit
 
 enum ReviewStyle {
     static let gutter: CGFloat = 20
-    static let actionHeight: CGFloat = 50
+    static let actionHeight: CGFloat = 46
     static let enter = 0.32
     static let fadeOut = PanelsTheme.Motion.exit
     static let fadeIn = 0.20
     static let swipeOut = 0.15
     static let swipeFraction: CGFloat = 0.30
-    static let title = PanelsTheme.TypeScale.reviewTitle
-    static let empty = PanelsTheme.TypeScale.reviewCompletion
     static var entrance: Animation { .timingCurve(0.2, 0.7, 0.3, 1, duration: enter) }
     @MainActor static func error() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
     @MainActor static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
 }
 
-/// Equal-size decisions; approval uses the web's filled accent and dark ink.
-struct ReviewActionStyle: ButtonStyle {
-    enum Context { case proposal, message }
-    var approval = false
-    var context: Context = .proposal
+/// Review's two button tiers, equal width in a row: the quiet secondary fill, and the
+/// accent fill with dark ink for the one action that moves work forward.
+struct ReviewButtonStyle: ButtonStyle {
+    var primary = false
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(context == .proposal ? PanelsTheme.TypeScale.reviewAction : PanelsTheme.TypeScale.body)
+            .panelsScaledFont(size: 14.5, weight: .semibold)
+            .lineLimit(1).minimumScaleFactor(0.8)
+            .padding(.horizontal, PanelsTheme.Space.md)
             .frame(maxWidth: .infinity, minHeight: ReviewStyle.actionHeight)
-            .foregroundStyle(approval ? PanelsTheme.ink : PanelsTheme.strong)
-            .background(approval ? PanelsTheme.accent : PanelsTheme.raised, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
-            .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg).stroke(approval ? Color.clear : PanelsTheme.border, lineWidth: 1))
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            .foregroundStyle(primary ? PanelsTheme.ink : PanelsTheme.Web.strong)
+            .background(primary ? PanelsTheme.accent : PanelsTheme.Web.composer, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg))
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .opacity(isEnabled ? 1 : 0.38)
     }
 }
 
-/// One read-only decision surface, used by Review and Ticket.
+/// A card's bottom controls, above the keyboard and the home indicator, with the page
+/// fading in behind them.
+struct ReviewDock<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(spacing: 10) { content }
+            .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 12)
+            .background {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [PanelsTheme.Web.surface.opacity(0), PanelsTheme.Web.surface], startPoint: .top, endPoint: .bottom).frame(height: 22).offset(y: -22)
+                    PanelsTheme.Web.surface
+                }.ignoresSafeArea(.container, edges: .bottom)
+            }
+    }
+}
+
+/// Equal-width buttons in one row; stacked at accessibility sizes.
+struct ReviewButtonRow<Content: View>: View {
+    @ViewBuilder let content: Content
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        if typeSize.isAccessibilitySize { VStack(spacing: PanelsTheme.Space.sm) { content } }
+        else { HStack(spacing: PanelsTheme.Space.sm) { content } }
+    }
+}
+
+/// A note on the card itself, never a banner: a refusal, or a proposal that moved.
+struct ReviewInlineNote: View {
+    enum Tone { case refused, info }
+    let tone: Tone
+    let title: String
+    let text: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).panelsScaledFont(size: 13, weight: .semibold)
+            Text(text).panelsScaledFont(size: 13).fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(tone == .refused ? PanelsTheme.Web.errorText : PanelsTheme.accentText)
+        .padding(.horizontal, 13).padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tone == .refused ? PanelsTheme.Web.errorSurface : PanelsTheme.accentSurface, in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(tone == .refused ? PanelsTheme.Web.error.opacity(0.28) : PanelsTheme.accent.opacity(0.22), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(tone == .refused ? "review.refusal" : "review.notice")
+    }
+}
+
+/// One read-only decision surface, used by Review and Ticket: the stage on the left, the
+/// reviewer on the right, then the proposal.
 struct DecisionProposalCard: View {
     let fieldLabel: String
     let reviewer: String
     let text: String
     let baseURL: URL
+    var reviewerEnabled = true
     let onReviewer: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Text(fieldLabel).foregroundStyle(PanelsTheme.Web.secondary)
-                Text("· Approver").foregroundStyle(PanelsTheme.Web.tertiary)
+            HStack(spacing: 10) {
+                Text(fieldLabel).fontWeight(.semibold).foregroundStyle(PanelsTheme.Web.secondary)
+                Spacer(minLength: 0)
                 Button(action: onReviewer) {
-                    HStack(spacing: 2) { Text(reviewer); Image(systemName: "chevron.down").font(.system(size: 10)) }
-                        .frame(minHeight: 28)
-                }.buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.text)
+                    HStack(spacing: 4) { Text(reviewer); Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)) }
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+                        .frame(minHeight: 32)
+                }.buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.secondary)
+                    .disabled(!reviewerEnabled)
+                    .accessibilityLabel("Reviewer, \(reviewer)")
                     .accessibilityIdentifier("decision.reviewer")
-            }.panelsScaledFont(size: 12.5, weight: .medium)
+            }.panelsScaledFont(size: 13, weight: .medium)
             DecisionMarkdown(source: text, baseURL: baseURL)
-        }.padding(PanelsTheme.Web.cardPadding)
+        }.padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PanelsTheme.Web.recessed, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
-            .overlay(RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius).stroke(PanelsTheme.Web.border, lineWidth: 1))
+            .background(PanelsTheme.Web.cardFill, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
             .reviewArtifactLinks()
     }
 }
@@ -140,6 +192,8 @@ struct DecisionMarkdown: View {
     }
 }
 
+/// The proposal's controls: the note for the worker with its voice button, then Skip
+/// (in Review), Return and Approve in one equal-width row.
 struct DecisionNoteActions: View {
     @Binding var note: String
     let showsSendBack: Bool
@@ -151,75 +205,62 @@ struct DecisionNoteActions: View {
     var accessory: AnyView? = nil
     var focusRequest = 0
     var blurRequest = 0
+    /// Review's Skip; the Ticket page has none.
+    var onSkip: (() -> Void)? = nil
+    var skipEnabled = true
     let onApprove: () -> Void
     let onSendBack: () -> Void
     @Environment(\.screenTextEntry) private var textEntry
     @State private var inputID = UUID()
     private var focused: Bool { textEntry?.focus.wrappedValue == inputID }
-    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
-        VStack(alignment: .trailing, spacing: 12) {
+        ReviewDock {
             HStack(alignment: .bottom, spacing: 4) {
                 TextField("Add a note for the worker…", text: $note, axis: .vertical)
-                    .lineLimit(1...5).panelsScaledFont(size: 16)
+                    .lineLimit(1...5).panelsScaledFont(size: 15)
+                    .foregroundStyle(PanelsTheme.Web.strong)
                     .frame(minHeight: 32).padding(.vertical, 5)
                     .disabled(!noteEnabled || busyAction != nil)
                     .accessibilityIdentifier("review.revision")
                     .screenTextInput(inputID)
                 if let accessory { accessory }
-            }.padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 1)
+            }.padding(.leading, 12).padding(.trailing, 4).padding(.vertical, 1)
                 .background(PanelsTheme.Web.composer, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(focused ? PanelsTheme.Web.accent.opacity(0.6) : Color.clear, lineWidth: 1))
-            Group {
-                if typeSize.isAccessibilitySize {
-                    VStack(alignment: .trailing, spacing: 8) { actionButtons }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                } else {
-                    HStack(spacing: 8) { Spacer(minLength: 0); actionButtons }
+            ReviewButtonRow {
+                if let onSkip {
+                    Button { textEntry?.endEditing(); onSkip() } label: { Text("Skip") }
+                        .buttonStyle(ReviewButtonStyle()).disabled(!skipEnabled || busyAction != nil)
+                        .accessibilityIdentifier("review.skip")
                 }
-            }.buttonStyle(DecisionButtonStyle())
+                if showsSendBack {
+                    Button {
+                        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { textEntry?.requestFocus(inputID) }
+                        else { textEntry?.endEditing(); onSendBack() }
+                    } label: { actionLabel("Return", active: busyAction == "back") }
+                        .buttonStyle(ReviewButtonStyle())
+                        .disabled(!ready || !canReturn || !noteEnabled || busyAction != nil)
+                        .accessibilityIdentifier("review.sendBack")
+                }
+                Button { textEntry?.endEditing(); onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
+                    .buttonStyle(ReviewButtonStyle(primary: true))
+                    .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
+            }
             if showsSendBack && !canReturn {
-                Text("No existing Worker conversation to send a revision to.")
-                    .panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.tertiary).multilineTextAlignment(.trailing)
+                Text("No existing Worker conversation to return it to.")
+                    .panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.tertiary).frame(maxWidth: .infinity, alignment: .leading)
             }
             if let error {
-                Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).multilineTextAlignment(.trailing)
+                Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error).frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("review.decisionError")
             }
-        }.padding(.horizontal, 20).padding(.top, 28).padding(.bottom, 12)
-            .background {
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, PanelsTheme.Web.surface], startPoint: .top, endPoint: .bottom).frame(height: 24)
-                    PanelsTheme.Web.surface
-                }.ignoresSafeArea(.container, edges: .bottom)
-            }
-            .foregroundStyle(PanelsTheme.Web.text)
-            .onChange(of: noteEnabled) { _, enabled in if !enabled { textEntry?.endEditing() } }
-            .onChange(of: focusRequest) { _, _ in textEntry?.requestFocus(inputID) }
-            .onChange(of: blurRequest) { _, _ in textEntry?.endEditing() }
-    }
-    @ViewBuilder private var actionButtons: some View {
-        if showsSendBack {
-            Button {
-                if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { textEntry?.requestFocus(inputID) }
-                else { textEntry?.endEditing(); onSendBack() }
-            } label: { actionLabel("Send it back", active: busyAction == "back") }
-                .disabled(!ready || !canReturn || !noteEnabled || busyAction != nil)
-                .accessibilityIdentifier("review.sendBack")
         }
-        Button { textEntry?.endEditing(); onApprove() } label: { actionLabel("Approve", active: busyAction == "approve") }
-            .disabled(!ready || !noteEnabled || busyAction != nil).accessibilityIdentifier("review.approve")
+        .foregroundStyle(PanelsTheme.Web.text)
+        .onChange(of: noteEnabled) { _, enabled in if !enabled { textEntry?.endEditing() } }
+        .onChange(of: focusRequest) { _, _ in textEntry?.requestFocus(inputID) }
+        .onChange(of: blurRequest) { _, _ in textEntry?.endEditing() }
     }
     private func actionLabel(_ title: String, active: Bool) -> some View {
-        Text(title).fixedSize(horizontal: true, vertical: false).opacity(active ? 0 : 1).overlay { if active { RingSpinner(size: .compact, color: PanelsTheme.Web.text) } }
-    }
-}
-
-struct DecisionButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.panelsScaledFont(size: 13.5, weight: .medium)
-            .padding(.horizontal, 18).frame(minHeight: 44)
-            .background(configuration.isPressed ? PanelsTheme.Web.selected : PanelsTheme.Web.composer, in: RoundedRectangle(cornerRadius: 8))
-            .opacity(isEnabled ? 1 : 0.4)
+        Text(title).opacity(active ? 0 : 1).overlay { if active { RingSpinner(size: .compact, color: PanelsTheme.Web.text) } }
     }
 }
