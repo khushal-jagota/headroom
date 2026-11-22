@@ -46,6 +46,7 @@ import { MacTicketFileSync } from '../transport/ticket_files.ts';
 import { MacInputs } from '../inputs.ts';
 import { AgentGateway } from '../ipc/gateway.ts';
 import { GatewayOutbox } from '../ipc/outbox.ts';
+import { MachinePreviews } from '../../../previews/machine.ts';
 import type { MacCatalog } from '../catalog/index.ts';
 import { failure_detail } from '../failure_detail.ts';
 import type {
@@ -83,6 +84,7 @@ export class MacService {
   readonly gateway: AgentGateway;
   readonly gateway_outbox: GatewayOutbox;
   readonly catalog: MacCatalog;
+  readonly previews: MachinePreviews;
   readonly live: MacLiveSender;
   readonly lease: MacLeaseLoop;
   readonly sender: MacOutboxSender;
@@ -143,10 +145,11 @@ export class MacService {
         identity,
         http_options,
       );
+    this.previews = new MachinePreviews(this.client);
     this.transfer = new MacFileTransport(this.client, this.files);
     this.live = new MacLiveSender(this.client);
     const adapters = bindings.adapters(this);
-    this.catalog = bindings.catalog(adapters, this, on_failure);
+    this.catalog = bindings.catalog(adapters, this, on_failure, this.client);
     this.runner = new MacRunner({
       incarnation: identity.executor_incarnation,
       journal,
@@ -191,6 +194,7 @@ export class MacService {
     });
     this.gateway_outbox = new GatewayOutbox(outbox);
     this.gateway = new AgentGateway({
+      previews: this.previews,
       runner: this.runner,
       outbox: this.gateway_outbox,
       presence: this.presence,
@@ -443,6 +447,7 @@ export class MacService {
       this.controller.abort();
       for (const owner of [
         this.gateway,
+        this.previews,
         this.mailbox,
         this.lease,
         this.updates,

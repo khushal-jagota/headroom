@@ -1,3 +1,4 @@
+import { PreviewError } from '../../../previews/contracts.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { MacPermissionDenied } from '../runner/contracts.ts';
 /** Capability-scoped CLI work remains owned after its caller loses the response. */
@@ -108,6 +109,23 @@ export class AgentGateway {
         };
       if (request.operation === 'quiesce') return await this.quiesce(request);
       const child = this.options.runner.authenticate(request.child_id, request.capability);
+      if (request.operation === 'preview') {
+        if (!this.options.previews) throw connection('Machine previews are unavailable');
+        try {
+          return {
+            request_id: request.request_id,
+            result: await this.options.previews.command(child, request.payload),
+            error: null,
+          };
+        } catch (error) {
+          if (error instanceof PreviewError) throw new ExecutorValidationError(error.message);
+          if (error instanceof ExecutorHttpError) {
+            if (error.status === 403) throw permission(error.message);
+            throw connection(error.message);
+          }
+          throw error;
+        }
+      }
       if (request.operation === 'read') {
         if (this.options.client === null)
           throw connection('VPS unavailable; reads never use journal');

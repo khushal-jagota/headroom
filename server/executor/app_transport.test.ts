@@ -1,8 +1,16 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { MachineServerLink } from '../server_link/machine.ts';
 import { request } from 'node:http';
+import { once } from 'node:events';
+import WebSocket from 'ws';
+import { ChildProcesses } from '../lifecycle/owned_processes.ts';
+import { fileURLToPath } from 'node:url';
+import type { AddressInfo } from 'node:net';
+import { MachinePreviews } from '../previews/machine.ts';
+import { createPreviewRoutes } from '../previews/routes.ts';
+import type { MacRunningChild } from './mac/runner/contracts.ts';
 import { expect, test, vi } from 'vitest';
 import { createApp } from '../app.ts';
 import { RealClock } from '../core/clock.ts';
@@ -248,6 +256,53 @@ test('a machine saves and removes files for its own Ticket only', async () => {
     });
   try {
     expect((await lease(PROTOCOL_VERSION)).statusCode).toBe(200);
+    // The authenticated endpoint owns this transient provider code, not its durable mailbox.
+    const controls = registry.get(ORIGINAL_MAC_MACHINE_ID)!.backend_controls;
+    let secret_id = '';
+    let release_secret!: () => void;
+    const secret_gate = new Promise<void>((resolve) => {
+      release_secret = resolve;
+    });
+    const submit = vi.spyOn(controls, 'request').mockImplementation(async (request) => {
+      secret_id = request.secret_id!;
+      await secret_gate;
+      return { sign_in: null };
+    });
+    const submitted = controls.submit_return_url(
+      'antigravity',
+      'session',
+      'http://localhost/?code=private-provider-code',
+    );
+    const secret_path = `/api/executor/backend-secrets/${secret_id}`;
+    const fetch_secret = (selected_headers: Record<string, string>) =>
+      app.inject({
+        method: 'GET',
+        url: secret_path,
+        remoteAddress: '127.0.0.1',
+        headers: selected_headers,
+      });
+    try {
+      expect(
+        (await fetch_secret({ ...headers, 'X-Panels-Executor-Credential': 'invalid' })).statusCode,
+      ).toBe(403);
+      expect(
+        (
+          await fetch_secret({
+            ...headers,
+            'X-Panels-Executor-Incarnation': '22222222-2222-4222-8222-222222222222',
+          })
+        ).statusCode,
+      ).toBe(409);
+      const answer = await fetch_secret(headers);
+      expect(answer.statusCode).toBe(200);
+      expect(answer.headers['cache-control']).toBe('no-store');
+      expect(answer.json()).toEqual({ return_url: 'http://localhost/?code=private-provider-code' });
+      expect((await fetch_secret(headers)).statusCode).toBe(410);
+    } finally {
+      release_secret();
+      await submitted;
+      submit.mockRestore();
+    }
     expect((await request('PUT', own.id, 'artifacts/report.txt')).statusCode).toBe(204);
     expect(readFileSync(served(own.id))).toEqual(bytes);
     const refused = await request('PUT', foreign.id, 'artifacts/report.txt');
@@ -306,7 +361,13 @@ test('machine code on the home account reaches executor routes, and only those, 
     PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN: 'owner@example.com',
     PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN: 'https://localhost',
   });
-  const app = await createApp(config, { database, executor: registry });
+  const previews = createPreviewRoutes();
+  const app = await createApp(config, {
+    database,
+    executor: registry,
+    previews,
+    areas: [{ prefix: '', routes: previews.routes }],
+  });
   await app.ready();
   const socket_path = executor_link_socket_path(path);
   const link = await open_executor_link(app.server, socket_path);
@@ -333,6 +394,11 @@ test('machine code on the home account reaches executor routes, and only those, 
     admission_stopped: false,
     cleanup_uncertainties: [],
   };
+  const machine_previews = new MachinePreviews(client);
+  const application_children = new ChildProcesses();
+  const ticket_home = join(dirname(path), 'managed-preview-ticket');
+  const worktree = join(ticket_home, 'worktree');
+  mkdirSync(worktree, { recursive: true });
   const refusal = (url: string, headers: Record<string, string>) =>
     client.sessions.request(
       { loop: 'reads', method: 'POST', path: url, timeout: 10, body: Buffer.from('{}') },
@@ -346,6 +412,110 @@ test('machine code on the home account reaches executor routes, and only those, 
     await client.ensure_credential(join(dirname(path), 'link-credential.json'));
     expect(client.headers['X-Panels-Executor-Credential']).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect('error' in (await client.lease(lease))).toBe(false);
+    // Reuse this authenticated local-link host to prove native registration and byte relay.
+    // Provider setup is irrelevant: the synthetic assignment is the real authority seam.
+    const preview_started = performance.now();
+    const endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)!;
+    const ticket = create(database, { machine_id: ORIGINAL_MAC_MACHINE_ID });
+    const child_reference = {
+      executor_incarnation: identity.executor_incarnation,
+      child_id: '22222222-2222-4222-8222-222222222222',
+      conversation_id: 'preview-conversation',
+    };
+    database.write((tx) =>
+      tx.run('INSERT INTO executor_child_assignments VALUES (?,?,?,?,?,?,NULL)', [
+        identity.executor_incarnation,
+        child_reference.child_id,
+        child_reference.conversation_id,
+        'ticket',
+        ticket.id,
+        Date.now(),
+      ]),
+    );
+    const child = {
+      reference: child_reference,
+      ticket_id: ticket.id,
+      workspace: { machine_id: ORIGINAL_MAC_MACHINE_ID, workspace_id: 'fixture-workspace' },
+      localized_start: { workspace_folder: ticket_home },
+    } as unknown as MacRunningChild;
+    const application = application_children.spawn(
+      process.execPath,
+      [fileURLToPath(new URL('../previews/testing/application.ts', import.meta.url))],
+      { cwd: worktree, stdio: 'pipe' },
+    );
+    const application_port = (
+      JSON.parse(String((await once(application.stdout, 'data'))[0])) as { port: number }
+    ).port;
+    const prepared = await machine_previews.command(child, { operation: 'prepare' });
+    expect(prepared.worktree).toBe(realpathSync(worktree));
+    await expect(
+      client.preview({
+        operation: 'prepare',
+        child: { ...child_reference, child_id: '33333333-3333-4333-8333-333333333333' },
+      }),
+    ).rejects.toThrow('no VPS assignment');
+    const registered = await machine_previews.command(child, {
+      operation: 'register',
+      port: application_port,
+    });
+    expect(registered.state).toBe('active');
+    expect(registered).not.toHaveProperty('process');
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const browser_port = (app.server.address() as AddressInfo).port;
+    const browser_headers = { Host: 'localhost', 'Tailscale-User-Login': 'owner@example.com' };
+    const page = await new Promise<string>((resolve, reject) => {
+      const call = request(
+        {
+          host: '127.0.0.1',
+          port: browser_port,
+          path: String(registered.base_path),
+          headers: browser_headers,
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk) => chunks.push(chunk));
+          response.once('end', () => resolve(Buffer.concat(chunks).toString()));
+          response.once('error', reject);
+        },
+      );
+      call.once('error', reject);
+      call.end();
+    });
+    expect(page).toBe('machine preview');
+    const browser = new WebSocket(`ws://127.0.0.1:${browser_port}${registered.base_path}`, {
+      headers: browser_headers,
+    });
+    try {
+      await once(browser, 'open');
+      const echo = once(browser, 'message');
+      browser.send('hot reload');
+      expect((await echo)[0].toString()).toBe('hot reload');
+    } finally {
+      browser.terminate();
+    }
+    await client.sessions.reset();
+    await expect(
+      previews.remote.connect({
+        ticket_id: ticket.id,
+        generation: String(registered.generation),
+      } as never),
+    ).rejects.toThrow();
+    await machine_previews.command(child, { operation: 'stop' });
+    await expect(
+      previews.remote.connect({
+        ticket_id: ticket.id,
+        generation: String(registered.generation),
+      } as never),
+    ).rejects.toThrow();
+    console.info(
+      'MACHINE_PREVIEW_BOUNDARY',
+      JSON.stringify({
+        total_ms: performance.now() - preview_started,
+        extra_application_listeners: 1,
+        browser_sessions: 1,
+      }),
+    );
+
     expect(server_link.current()).toMatchObject({ server_url: socket_path });
     expect(server_link.current().server_id).not.toBeNull();
     expect(await refusal('/api/tickets', client.headers)).toBe(
@@ -387,6 +557,11 @@ test('machine code on the home account reaches executor routes, and only those, 
     chmodSync(dirname(socket_path), 0o700);
     expect('error' in (await client.lease(lease))).toBe(false);
   } finally {
+    await machine_previews.stop();
+    application_children.force_kill(performance.now() / 1000 + 5);
+    await application_children.settled();
+    await previews.stop({ deadline: performance.now() / 1000 + 5 }, Promise.resolve());
+    await previews.settled();
     link?.close();
     await client.stop({ deadline: performance.now() / 1000 + 5 });
     await registry.stop({ deadline: performance.now() / 1000 + 5 });

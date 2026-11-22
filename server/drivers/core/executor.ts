@@ -8,6 +8,8 @@ import type {
   StopOptions,
 } from '../../lifecycle/contracts.ts';
 import type { WorkerSupervisionRuntime } from '../../worker_supervision/runtime.ts';
+import type { BackendUsageAdapter } from '../../conversation/backend_usage/contracts.ts';
+import type { DriverSignInController } from './sign_in.ts';
 import type { DriverStatus } from './status.ts';
 
 /** What an executor machine hands each driver. It has no Panels database. */
@@ -36,6 +38,8 @@ export interface ExecutorCatalogCustody {
 }
 /** A driver's model list and card on an executor machine. */
 export interface ExecutorCatalogSource {
+  readonly sign_in?: DriverSignInController;
+  readonly allowance_usage?: BackendUsageAdapter;
   readonly status: DriverStatus;
   /** Cancel reads this source owns outside custody.probe. */
   cancel?(reason: unknown): Promise<void>;

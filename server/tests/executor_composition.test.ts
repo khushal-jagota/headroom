@@ -204,6 +204,7 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     expect(core.conversation_state('kept')?.child).toBeInstanceOf(MacRemoteChild);
     expect(endpoint.presence.is_present()).toBe(false);
     expect(bound.http.machine_catalog(ORIGINAL_MAC_MACHINE_ID)).toBe(endpoint.catalog);
+    expect(bound.http.machine_backends?.(ORIGINAL_MAC_MACHINE_ID)).toBe(endpoint.backend_controls);
     const sources = bound.stall_sources();
     expect(sources).toContain(local_source);
     expect(sources).toHaveLength(4);
@@ -231,6 +232,8 @@ test('configured restart adopts before reconciliation and Mac locality never sel
     expect(named.updates).toBe(mac_updates.for_machine(named_machine));
     expect(named.updates).not.toBe(endpoint.updates);
     expect(bound.http.machine_catalog(named_machine)).toBe(named.catalog);
+    expect(bound.http.machine_backends?.(named_machine)).toBe(named.backend_controls);
+    expect(bound.http.machine_backends?.(named_machine)).not.toBe(endpoint.backend_controls);
     // The Mac's last lease, from before this home started, lists the drivers it runs.
     context.database.write((tx) =>
       accept_lease_in_transaction(

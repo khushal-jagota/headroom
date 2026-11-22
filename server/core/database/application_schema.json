@@ -47,6 +47,7 @@
     "CREATE TABLE mac_inbox_positions (\n        sender_id TEXT NOT NULL, conversation_id TEXT NOT NULL,\n        sequence INTEGER NOT NULL CHECK(sequence>0), submission_id TEXT NOT NULL,\n        disposition TEXT NOT NULL CHECK(disposition IN ('dispatching','accepted','refused','uncertain')),\n        result_json TEXT NOT NULL, machine_id TEXT NOT NULL DEFAULT 'ee17b608-a449-4966-a808-a791ba7df1c7' REFERENCES machines(machine_id),\n        PRIMARY KEY(sender_id,conversation_id))",
     "CREATE TABLE mac_runs (\n        conversation_id TEXT PRIMARY KEY, executor_incarnation TEXT NOT NULL, child_id TEXT NOT NULL,\n        principal_kind TEXT NOT NULL, principal_id TEXT NOT NULL, turn_number INTEGER NOT NULL,\n        delivery_uncertain INTEGER NOT NULL CHECK(delivery_uncertain IN (0,1)),\n        stop_state TEXT NOT NULL CHECK(stop_state IN ('open','stopping','closed')), machine_id TEXT NOT NULL DEFAULT 'ee17b608-a449-4966-a808-a791ba7df1c7' REFERENCES machines(machine_id))",
     "CREATE TABLE machine_backend_snapshots (\n        machine_id TEXT NOT NULL, backend_key TEXT NOT NULL, snapshot_json TEXT NOT NULL,\n        PRIMARY KEY(machine_id, backend_key))",
+    "CREATE TABLE machine_backend_state (machine_id TEXT NOT NULL REFERENCES machines(machine_id), backend_key TEXT NOT NULL, capabilities_json TEXT, usage_json TEXT, PRIMARY KEY(machine_id,backend_key))",
     "CREATE TABLE machine_executor_credentials (machine_id TEXT PRIMARY KEY REFERENCES machines(machine_id),credential_sha256 TEXT,issued_at_ms INTEGER,issued_incarnation TEXT,legacy_closed_at_ms INTEGER, pending_credential TEXT, platform TEXT NOT NULL DEFAULT 'darwin' CHECK(platform IN ('darwin','linux')))",
     "CREATE TABLE machines (machine_id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT NOT NULL, color TEXT NOT NULL, is_home INTEGER NOT NULL CHECK(is_home IN (0,1)))",
     "CREATE TABLE managed_skill_versions (\n\tid TEXT NOT NULL, \n\tskill_name TEXT NOT NULL, \n\tcontent_sha256 TEXT NOT NULL, \n\tcontent BLOB NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_managed_skill_version_content UNIQUE (skill_name, content_sha256), \n\tCONSTRAINT ck_managed_skill_version_hash_length CHECK (length(content_sha256) = 64)\n)",
@@ -369,5 +370,5 @@
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_legacy_machine AFTER INSERT ON tickets WHEN NEW.locale='macos' AND NEW.machine_id='75a49e78-97de-4e28-8dc5-79646761c46f' BEGIN UPDATE tickets SET machine_id='ee17b608-a449-4966-a808-a791ba7df1c7' WHERE id=NEW.id; END"
   ],
-  "alembicRevision": "ts_0005_server_link"
+  "alembicRevision": "ts_0006_machine_backend_state"
 }

@@ -163,14 +163,14 @@
   // Ticket suggestions use the same resolved workspace as ordinary creation.
   let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
   const pickerQuery = createQuery(() => ({
-    ...queries.ticketBackends(pickerTicketId ?? "", [locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
+    ...queries.ticketBackends(pickerTicketId ?? "", [machineId, locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
     enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined
   }), () => queryClient);
   let pickerReadError = $derived(pickerTicketId !== null && pickerQuery.error ? sentenceFor(pickerQuery.error) : null);
   async function retryScopedChoices(): Promise<void> {
     if (pickerTicketId === null) return;
     await queryClient.fetchQuery({...queries.ticketBackends(pickerTicketId,
-      [locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
+      [machineId, locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
   }
 
   const machines = createQuery(() => ({...queries.machines(), enabled: !!machineId}), () => queryClient);

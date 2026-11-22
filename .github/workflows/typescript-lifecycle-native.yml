@@ -209,6 +209,7 @@ jobs:
           scripts/dev npm --prefix server run test -- \
             platform_runtime/worker_processes.native.test.ts platform_runtime/worker_launchd.native.test.ts lifecycle/paths.native.test.ts \
             previews/darwin.native.test.ts skills/account.test.ts \
+            executor/app_transport.test.ts tests/preview_transport.test.ts tests/machine_backend_cards.test.ts \
             ticket_workspaces/filesystem.test.ts --reporter=junit \
             --outputFile "$NATIVE_EVIDENCE/process-home-preview-abi.xml"
           # Build the home from separate production inputs, then prove the sealed archive after relocation.

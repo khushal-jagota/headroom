@@ -1,3 +1,6 @@
+import { decode_machine_usage } from '../backend_usage/machine.ts';
+import { read_machine } from '../../machines/data.ts';
+import type { BackendRequest } from '../../executor/wire.generated.ts';
 /** Backend HTTP transport depends on Panels interfaces, never provider modules. */
 import type { BackendInstanceId } from '../../drivers/core/identity.ts';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -31,6 +34,66 @@ function card_facts(runtime: BackendHttpRuntime, key: string, home = true): Card
 }
 function home_card(runtime: BackendHttpRuntime, snapshot: BackendSnapshot) {
   return snapshot_json(snapshot, runtime.backend_state, card_facts(runtime, snapshot.backend_key));
+}
+export function selected_machine(
+  runtime: Pick<BackendHttpRuntime, 'database'>,
+  raw: unknown,
+): string {
+  const query = scalarQueries(object(raw) ? raw : {});
+  const machine_id = query.machine_id ?? HOME_MACHINE_ID;
+  if (typeof machine_id !== 'string' || !machine_id.trim())
+    throw new HttpError(422, 'machine_id must be text');
+  runtime.database.read((sql) => read_machine(sql, machine_id));
+  return machine_id;
+}
+async function machine_cards(
+  runtime: BackendHttpRuntime,
+  machine_id: string,
+  snapshots: readonly BackendSnapshot[],
+  signal?: AbortSignal,
+) {
+  if (machine_id === HOME_MACHINE_ID)
+    return snapshots.map((snapshot) => home_card(runtime, snapshot));
+  const controls = runtime.machine_backends?.(machine_id);
+  return Promise.all(
+    snapshots.map(async (snapshot) => {
+      let capabilities = runtime.backend_state?.read_machine_capabilities(
+        machine_id,
+        snapshot.backend_key,
+      ) ?? { can_sign_in: false, reports_allowance_usage: false };
+      if (controls?.available) {
+        const value = await controls.request(
+          { backend_key: snapshot.backend_key, operation: 'capabilities' },
+          { signal },
+        );
+        capabilities = {
+          can_sign_in: value.can_sign_in === true,
+          reports_allowance_usage: value.reports_allowance_usage === true,
+        };
+        runtime.backend_state?.keep_machine_capabilities(
+          machine_id,
+          snapshot.backend_key,
+          capabilities,
+        );
+      }
+      return snapshot_json(
+        snapshot,
+        runtime.backend_state,
+        { driver: runtime.driver_of(snapshot.backend_key), ...capabilities },
+        machine_id,
+      );
+    }),
+  );
+}
+async function remote_action(
+  runtime: BackendHttpRuntime,
+  machine_id: string,
+  request: BackendRequest,
+  signal?: AbortSignal,
+) {
+  const controls = runtime.machine_backends?.(machine_id);
+  if (!controls) throw new HttpError(503, 'The selected machine is unavailable.');
+  return controls.request(request, { signal });
 }
 function backend(runtime: BackendHttpRuntime, raw: unknown): BackendInstanceId {
   const fields = new Fields(raw, ['path']);
@@ -127,13 +190,18 @@ export function createBackendRoutes(
     app.addHook('onResponse', async (request) => requests.get(request)?.release());
     const signal_of = (request: FastifyRequest) => requests.get(request)!.signal;
     app.get('/backends', async (request) => {
-      const snapshots = await runtime.backend_snapshots.snapshots({
-        refresh: refresh(request.query),
-        signal: signal_of(request),
-      });
-      return {
-        backends: snapshots.map((snapshot) => home_card(runtime, snapshot)),
-      };
+      const machine_id = selected_machine(runtime, request.query);
+      const source =
+        machine_id === HOME_MACHINE_ID
+          ? runtime.backend_snapshots
+          : runtime.machine_catalog(machine_id);
+      if (!source) throw new HttpError(503, 'The selected machine is unavailable.');
+      const snapshots = await Promise.all(
+        runtime.backend_ids.map((key) =>
+          source.snapshot(key, { refresh: refresh(request.query), signal: signal_of(request) }),
+        ),
+      );
+      return { backends: await machine_cards(runtime, machine_id, snapshots, signal_of(request)) };
     });
     app.post('/backends', async (request, reply) => {
       // Context validates identity only. This route has no owner-only rule.
@@ -160,16 +228,38 @@ export function createBackendRoutes(
         ),
       );
       return {
-        backends: snapshots.map((snapshot) =>
-          snapshot_json(
-            snapshot,
-            runtime.backend_state,
-            card_facts(runtime, snapshot.backend_key, ticket.machine_id === HOME_MACHINE_ID),
-          ),
-        ),
+        backends: await machine_cards(runtime, ticket.machine_id, snapshots, signal_of(request)),
       };
     });
     app.post('/backends/refresh', async (request) => {
+      const machine_id = selected_machine(runtime, request.query);
+      if (machine_id !== HOME_MACHINE_ID) {
+        const source = runtime.machine_catalog(machine_id);
+        if (!source) throw new HttpError(503, 'The selected machine is unavailable.');
+        const snapshots = await Promise.all(
+          runtime.backend_ids.map((key) =>
+            source.snapshot(key, { refresh: true, signal: signal_of(request) }),
+          ),
+        );
+        const results = await Promise.all(
+          runtime.backend_ids.map(async (backend_key) => {
+            const value = await remote_action(
+              runtime,
+              machine_id,
+              { backend_key, operation: 'refresh_usage' },
+              signal_of(request),
+            );
+            const result = decode_machine_usage(backend_key, value);
+            if (result.outcome === 'succeeded' && result.observed_at !== null)
+              runtime.backend_state?.keep_successful_usage(result, machine_id);
+            return { backend_key, outcome: result.outcome, detail: result.detail };
+          }),
+        );
+        return {
+          backends: await machine_cards(runtime, machine_id, snapshots, signal_of(request)),
+          usage_outcomes: results,
+        };
+      }
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, signal_of(request)]);
       const usage_refresh = Promise.all(
@@ -236,6 +326,14 @@ export function createBackendRoutes(
       return runtime.backend_snapshots.update_backend(key, { signal: signal_of(request) });
     });
     app.post('/backends/:backend_key/sign-in', async (request) => {
+      const machine_id = selected_machine(runtime, request.query);
+      if (machine_id !== HOME_MACHINE_ID)
+        return remote_action(
+          runtime,
+          machine_id,
+          { backend_key: backend(runtime, request.params), operation: 'sign_in_start' },
+          signal_of(request),
+        );
       const service = sign_in_service(runtime, request.params);
       try {
         return sign_in_json(await service.start());
@@ -245,10 +343,26 @@ export function createBackendRoutes(
       }
     });
     app.get('/backends/:backend_key/sign-in', async (request) => {
+      const machine_id = selected_machine(runtime, request.query);
+      if (machine_id !== HOME_MACHINE_ID)
+        return remote_action(
+          runtime,
+          machine_id,
+          { backend_key: backend(runtime, request.params), operation: 'sign_in_read' },
+          signal_of(request),
+        );
       const pending = sign_in_service(runtime, request.params).read();
       return pending === null ? { sign_in: null } : sign_in_json(pending);
     });
     app.delete('/backends/:backend_key/sign-in', async (request) => {
+      const machine_id = selected_machine(runtime, request.query);
+      if (machine_id !== HOME_MACHINE_ID)
+        return remote_action(
+          runtime,
+          machine_id,
+          { backend_key: backend(runtime, request.params), operation: 'sign_out' },
+          signal_of(request),
+        );
       try {
         await sign_in_service(runtime, request.params, 'sign_out').sign_out!();
       } catch (error) {
@@ -260,6 +374,18 @@ export function createBackendRoutes(
     app.delete<{ Params: { backend_key: string; session_id: string } }>(
       '/backends/:backend_key/sign-in/:session_id',
       async (request) => {
+        const machine_id = selected_machine(runtime, request.query);
+        if (machine_id !== HOME_MACHINE_ID)
+          return remote_action(
+            runtime,
+            machine_id,
+            {
+              backend_key: backend(runtime, request.params),
+              operation: 'sign_in_cancel',
+              session_id: request.params.session_id,
+            },
+            signal_of(request),
+          );
         const service = sign_in_service(runtime, request.params);
         return sign_in_json(await in_force(() => service.cancel(request.params.session_id)));
       },
@@ -267,10 +393,22 @@ export function createBackendRoutes(
     app.post<{ Params: { backend_key: string; session_id: string } }>(
       '/backends/:backend_key/sign-in/:session_id/return-url',
       async (request) => {
-        const service = sign_in_service(runtime, request.params, 'submit_return_url');
         const fields = body_fields(request.body);
         const return_url = fields.text('return_url');
         fields.finish();
+        const machine_id = selected_machine(runtime, request.query);
+        if (machine_id !== HOME_MACHINE_ID) {
+          const controls = runtime.machine_backends?.(machine_id);
+          if (!controls?.submit_return_url)
+            throw new HttpError(503, 'The selected machine is unavailable.');
+          return controls.submit_return_url(
+            backend(runtime, request.params),
+            request.params.session_id,
+            return_url!,
+            { signal: signal_of(request) },
+          );
+        }
+        const service = sign_in_service(runtime, request.params, 'submit_return_url');
         return sign_in_json(
           await in_force(() => service.submit_return_url!(request.params.session_id, return_url!)),
         );

@@ -1,4 +1,5 @@
 /** Thin HTTP transport for the copied T3 usage contracts. */
+import { backendMachinePath } from "./wire";
 import { fetchJson } from "../api";
 import type { ServerProviderUsageLimits, UsageSummaryInput, UsageSummary, UsagePricing } from "../usage/contracts";
 export type { UsageSummaryInput, UsageSummary, UsageProviderKind as UsageProvider } from "../usage/contracts";
@@ -15,8 +16,8 @@ export function usageSummaryPath(input: UsageSummaryInput): string {
 export function readUsageSummary(input: UsageSummaryInput): Promise<UsageSummary> {
   return fetchJson(usageSummaryPath(input));
 }
-export function readUsageLimits(): Promise<LocalUsageLimits> {
-  return fetchJson("/api/conversation/usage/limits");
+export function readUsageLimits(machineId?: string): Promise<LocalUsageLimits> {
+  return fetchJson(backendMachinePath("/api/conversation/usage/limits", machineId));
 }
 
 /** Pricing only. This does not refresh a native provider or account. */

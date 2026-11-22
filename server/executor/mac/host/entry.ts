@@ -29,7 +29,13 @@ export function production_bindings(
         environment,
         executable_path: (name) => backend_executable_path(name, environment),
       }),
-    catalog: (host, owners, on_failure) => create_mac_catalog({ host, ...owners, on_failure }),
+    catalog: (host, owners, on_failure, client) =>
+      create_mac_catalog({
+        host,
+        ...owners,
+        on_failure,
+        resolve_backend_secret: (id) => client.backend_secret(id),
+      }),
     updates: (context) =>
       new MacUpdateController({
         paths: context.paths,

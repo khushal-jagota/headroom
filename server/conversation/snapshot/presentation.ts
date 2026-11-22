@@ -64,10 +64,11 @@ export function snapshot_json(
   snapshot: BackendSnapshot,
   backend_state: BackendStateStore | null,
   facts: CardFacts,
+  machine_id?: string,
 ) {
   const identity = snapshot.identity;
   const advisory = snapshot.update_advisory;
-  const cached_usage = backend_state?.read_usage(snapshot.backend_key) ?? null;
+  const cached_usage = backend_state?.read_usage(snapshot.backend_key, machine_id) ?? null;
   const disabled = backend_state?.read_disabled_models(snapshot.backend_key) ?? new Set<string>();
   let default_model_id = snapshot.default_model_id;
   if (

@@ -2,6 +2,7 @@ import { initialize_server_location, read_server_location } from './server_link/
 import { install_server_link } from './server_link/http.ts';
 import { install_slow_task_logging } from './core/slow_tasks.ts';
 import Fastify from 'fastify';
+import type { PreparedPreviewRoutes } from './previews/routes.ts';
 import type { UpdateBarrier } from './environments/update_barrier.ts';
 import type { FastifyInstance } from 'fastify';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +40,7 @@ export interface AppServices {
   workspaceAdmission?: WorkspaceAdmission;
   updateBarrier?: UpdateBarrier;
   executor?: VpsExecutorRegistry | null;
+  previews?: PreparedPreviewRoutes;
 }
 export async function createApp(config: Config, services: AppServices): Promise<FastifyInstance> {
   const app = Fastify({
@@ -79,6 +81,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
       config,
       database: services.database,
       registry: services.executor ?? null,
+      previews: services.previews,
     }),
   );
   app.get('/api/executor/health', async (request, reply) => {

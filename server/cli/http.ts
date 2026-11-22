@@ -460,7 +460,7 @@ export function executor_response(inv: Invocation, response: IpcResponse): any {
 }
 export async function executor_request(
   inv: Invocation,
-  operation: 'read' | 'write' | 'retry',
+  operation: 'read' | 'write' | 'retry' | 'preview',
   payload: Record<string, any>,
 ): Promise<any> {
   const { request } = await import('../executor/mac/ipc_client.ts');

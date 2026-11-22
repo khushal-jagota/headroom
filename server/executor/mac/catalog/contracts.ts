@@ -3,6 +3,10 @@ import type { BackendSnapshot } from '../../wire.generated.ts';
 import type { StopOptions } from '../../../lifecycle/contracts.ts';
 export interface MacCatalogDependencies {
   readonly snapshots: BackendSnapshotSource;
+  backend_request?(
+    request: import('../../wire.generated.ts').BackendRequest,
+    signal: AbortSignal,
+  ): Promise<import('../../wire.generated.ts').JsonObject>;
   /** The backends this machine runs. Any other is answered with a card that says so. */
   readonly backend_ids: readonly string[];
   /** Cancel current provider probes without sealing later reads. */
@@ -12,7 +16,12 @@ export interface MacCatalogDependencies {
   on_failure(error: Error): void;
 }
 export type CatalogAction =
-  | { operation: 'encode'; command_id: string; snapshot: BackendSnapshot | null }
+  | {
+      operation: 'encode';
+      command_id: string;
+      snapshot: BackendSnapshot | null;
+      backend_result?: import('../../wire.generated.ts').JsonObject;
+    }
   | { operation: 'open'; result: number }
   | { operation: 'close_result'; result: number }
   | { operation: 'read'; reader: number }

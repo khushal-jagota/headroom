@@ -3,6 +3,11 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Readable } from 'node:stream';
+import type { PreparedPreviewRoutes } from '../previews/routes.ts';
+import type { PreviewMachine } from '../previews/remote.ts';
+import { PreviewError } from '../previews/contracts.ts';
+import { read_server_location } from '../server_link/data.ts';
+import { SERVER_ID_HEADER, MOVE_NUMBER_HEADER } from '../server_link/contracts.ts';
 import type { Config } from '../core/config.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -60,6 +65,7 @@ export interface ExecutorHttpServices {
   readonly config: Config;
   readonly database: Database;
   readonly registry: VpsExecutorRegistry | null;
+  readonly previews?: PreparedPreviewRoutes;
 }
 function header_map(request: IncomingMessage): Map<string, string[]> {
   const headers = new Map<string, string[]>();
@@ -337,6 +343,48 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
           throw error;
         }
       };
+    app.get<{ Params: { secret_id: string } }>(
+      '/api/executor/backend-secrets/:secret_id',
+      work(async (request, reply) => {
+        const { endpoint } = await current_for(request);
+        const { secret_id } = request.params as { secret_id: string };
+        return reply.header('Cache-Control', 'no-store').send({
+          return_url: endpoint.backend_controls.take_secret(secret_id),
+        });
+      }),
+    );
+    if (services.previews)
+      app.post(
+        '/api/executor/previews',
+        work(async (request, reply) => {
+          const { endpoint, identity } = await current_for(request);
+          const command = decode(
+            await body(request, MAX_ENVELOPE_BYTES),
+            'JsonObject',
+            MAX_ENVELOPE_BYTES,
+          );
+          const child = decode_bounded(
+            Buffer.from(JSON.stringify(command.child)),
+            'ChildReference',
+          );
+          const ticket_id = endpoint.preview_ticket(identity, child);
+          const machine: PreviewMachine = {
+            machine_id: endpoint.machine_id,
+            incarnation: identity.executor_incarnation,
+            protocol: String(identity.protocol_version),
+            require_current: () => endpoint.check_preview_current(identity),
+          };
+          try {
+            return reply.send(
+              services.previews!.remote.command(ticket_id, machine, command.operation),
+            );
+          } catch (error) {
+            if (error instanceof PreviewError)
+              throw new HttpError(error.status_code, error.message);
+            throw error;
+          }
+        }),
+      );
     app.post(
       '/api/executor/credential',
       work(async (request, reply) => {
@@ -660,6 +708,7 @@ export function create_executor_routes(services: ExecutorHttpServices): FastifyP
       return reply.send({ confirmed: report.phase === 'current' });
     });
     install_old_websocket_refusal(app, services);
+    if (services.previews) install_preview_websocket(app, services);
   };
 }
 function close_before_accept(socket: Duplex, refusal: { code: 1008; reason?: string }): void {
@@ -702,6 +751,55 @@ function install_old_websocket_refusal(app: FastifyInstance, services: ExecutorH
         socket.destroy();
       },
     );
+  };
+  app.server.on('upgrade', upgrade);
+  app.addHook('onClose', async () => {
+    app.server.off('upgrade', upgrade);
+  });
+}
+
+function install_preview_websocket(app: FastifyInstance, services: ExecutorHttpServices): void {
+  const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
+    const match = /^\/api\/executor\/previews\/([0-9a-f]{32})\/connect$/.exec(
+      (request.url ?? '').split('?')[0]!,
+    );
+    if (!match) return;
+    const operation = async () => {
+      const headers = header_map(request);
+      const trusted = is_executor_link_connection(request.socket)
+        ? null
+        : trusted_ingress_login(services.config, headers, 'websocket');
+      const machine_id = authenticated_machine(request, trusted, services);
+      const location = services.database.read((sql) => read_server_location(sql)!);
+      if (
+        location.state !== 'active' ||
+        request.headers[SERVER_ID_HEADER] !== location.server_id ||
+        request.headers[MOVE_NUMBER_HEADER] !== String(location.move_number)
+      )
+        throw new Error('Preview channel server authority is not current');
+      if (!services.registry) throw new Error('Executor registry unavailable');
+      const endpoint = await services.registry.ensure(machine_id);
+      const identity = endpoint.require_current({
+        incarnation_header: (request.headers[INCARNATION] as string) ?? null,
+        protocol_header: (request.headers[PROTOCOL] as string) ?? null,
+      });
+      services.previews!.remote.upgrade(
+        {
+          machine_id,
+          incarnation: identity.executor_incarnation,
+          protocol: String(identity.protocol_version),
+          require_current: () => endpoint.check_preview_current(identity),
+        },
+        match[1]!,
+        request,
+        socket,
+        head,
+      );
+    };
+    void (app.request_lifetime ? app.request_lifetime.run(operation) : operation()).catch(() => {
+      if (!socket.destroyed)
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    });
   };
   app.server.on('upgrade', upgrade);
   app.addHook('onClose', async () => {

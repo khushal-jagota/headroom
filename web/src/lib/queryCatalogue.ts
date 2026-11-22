@@ -5,7 +5,7 @@ import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
-import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
+import { readUsageLimits, usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import { readDrivers } from "./drivers/read";
 import type { DriversResponse } from "./drivers/contracts";
 import type { WorkerTypesResponse } from "./lifecycle";
@@ -78,6 +78,9 @@ export const queries = {
   updates: () => ({
     ...jsonQuery<import("./updates/contracts").UpdateStatus>(["updates"], "/api/updates"),
     meta: { resourceBody: true, savedForNextLaunch: false }
+  }),
+  usageLimits: (machineId: string) => queryOptions({
+    queryKey: ["usage-limits", machineId], queryFn: () => readUsageLimits(machineId), retry: false
   }),
   recordedUsage: (input: UsageSummaryInput) => ({
     ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),

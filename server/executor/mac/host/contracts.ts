@@ -57,6 +57,7 @@ export interface MacHostBindings {
     adapters: MacAdapterHost,
     invocation: MacInvocation,
     on_failure: (error: Error) => void,
+    client: MacHttpClient,
   ): MacCatalog;
   updates(context: MacHostContext): MacHostUpdates;
   client?(

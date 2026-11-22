@@ -1,3 +1,4 @@
+import type { RemotePreviews } from './remote.ts';
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices, PreparedAreaRoutes } from '../core/authority/register.ts';
@@ -19,11 +20,13 @@ const result = (record: PreviewRecord | null) =>
     ? { preview: null }
     : { ...record, base_path: base_path(record), url: record.public_origin + base_path(record) };
 export interface PreparedPreviewRoutes extends PreparedAreaRoutes {
+  readonly remote: RemotePreviews;
   seal(): void;
   stop(options: StopOptions, http_actual: Promise<void>): Promise<void>;
   settled(): Promise<void>;
 }
 export function createPreviewRoutes(): PreparedPreviewRoutes {
+  let remote: RemotePreviews | undefined;
   let begin: (() => Promise<void>) | undefined;
   let starting: Promise<void> | undefined;
   let producer_sealed = false;
@@ -44,6 +47,7 @@ export function createPreviewRoutes(): PreparedPreviewRoutes {
       services.config.trusted_ingress_canonical_origin ?? '',
       services.config.port,
     );
+    remote = service.remote;
     const transport = new PreviewTransport(service, lifetime);
     let timer: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -217,6 +221,10 @@ export function createPreviewRoutes(): PreparedPreviewRoutes {
     else app.server.on('upgrade', upgrade);
   };
   return {
+    get remote() {
+      if (!remote) throw new Error('Preview routes are not registered');
+      return remote;
+    },
     routes,
     seal,
     stop(options, http_actual) {

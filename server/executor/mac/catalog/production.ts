@@ -1,3 +1,4 @@
+import { run_backend_request } from '../../backend_controls.ts';
 /** Standalone machine catalogs reuse each driver's probes without a VPS database or login service. */
 import { BackendSnapshotService } from '../../../conversation/snapshot/service.ts';
 import { SubprocessBackendProbeEnvironment } from '../../../conversation/snapshot/environment.ts';
@@ -13,6 +14,7 @@ import type { MacAdapterHost } from '../adapters.ts';
 import { MacCatalog } from './index.ts';
 export function create_mac_catalog(options: {
   readonly host: MacAdapterHost;
+  readonly resolve_backend_secret?: (id: string) => Promise<string>;
   readonly child_processes: OwnedChildProcesses;
   readonly one_shot_children: OwnedOneShotChildren;
   readonly on_failure: (error: Error) => void;
@@ -80,6 +82,13 @@ export function create_mac_catalog(options: {
   const owned = sources.map(({ source }) => source);
   const catalog = new MacCatalog({
     snapshots,
+    backend_request: (request, signal) =>
+      run_backend_request(
+        request,
+        sources.find(({ instance_id }) => instance_id === request.backend_key)?.source,
+        signal,
+        options.resolve_backend_secret,
+      ),
     backend_ids: sources.map(({ instance_id }) => instance_id),
     on_failure: options.on_failure,
     async cancel_sources(reason) {

@@ -31,6 +31,10 @@ export interface CanonicalCatalogResult {
   close(): Promise<void>;
 }
 export interface MailboxCatalog {
+  backend_result?(
+    command_id: string,
+    request: import('../../wire.generated.ts').BackendRequest,
+  ): Promise<CanonicalCatalogResult>;
   read_result(command_id: string, request: ModelListRequest): Promise<CanonicalCatalogResult>;
 }
 export interface MailboxClient {

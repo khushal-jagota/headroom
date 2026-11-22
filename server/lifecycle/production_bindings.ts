@@ -154,6 +154,7 @@ export function compose_production_backends(
           backend_ids: supplied_http.backend_ids,
           sign_in: (backend_key) => supplied_http.sign_in(backend_key),
           machine_catalog: (machine_id) => context.executor!.catalog_for(machine_id),
+          machine_backends: (machine_id) => context.executor!.backend_controls_for(machine_id),
           drivers: supplied_http.drivers,
           driver_of: (backend_key) => supplied_http.driver_of(backend_key),
           reports_allowance_usage: (backend_key) =>

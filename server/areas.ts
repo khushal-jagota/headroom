@@ -133,6 +133,7 @@ export function createAreasRuntime(
     },
   ];
   return {
+    previews,
     commitSteps,
     getRuntime: conversation.getRuntime,
     startRecordReplay(admission?: { readonly closed: boolean }): void {
