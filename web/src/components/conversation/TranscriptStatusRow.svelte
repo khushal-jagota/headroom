@@ -213,6 +213,8 @@
   .c2-status[data-conversation-steered] .c2-status-title { color: #bdbdbd; font-weight: var(--cv-weight-label); }
   .c2-status[data-conversation-steered] .c2-status-mark { stroke: #bdbdbd; }
   .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #a6a6a6; }
+  /* v15 (5): the Steered detail ("into the running turn") is #b8b8b8. */
+  .c2-status[data-conversation-steered] :is(.c2-status-next, .c2-status-sep) { color: #b8b8b8; }
 
   /* A note: one status line, its own width, under the bubble or in the turn. */
   .c2-status--note { align-self: flex-start; display: flex; width: fit-content; }

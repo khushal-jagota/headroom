@@ -95,6 +95,7 @@
     conversationState = $bindable(null),
     waitingOnPage = null,
     emptyState,
+    emptyHint = null,
     reader = null,
     acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
@@ -209,6 +210,10 @@
      *  their approval). The dock's line then says the conversation waits on them. */
     waitingOnPage?: "approval" | null;
     emptyState?: Snippet;
+    /** v15 (6): the line under a centred empty composer ("You can attach or drop files
+     *  here."). Set only while the conversation holds nothing; null keeps the composer at the
+     *  foot as in every other state. */
+    emptyHint?: string | null;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -274,7 +279,13 @@
   // The opened pane's top bar says who the conversation is with and what it is doing. At rest
   // the bar is not drawn: the dock's status line says the same there.
   let headTitle = $derived(paneTitleFor(title, roleLabel));
-  /** v5: the header carries the title alone, in every state. The composer's placeholder
+  /** v15 (6): the empty, full-width conversation centres its composer. Never at rest (the
+   *  dock's line keeps its place), never read only, and only while nothing has been said. */
+  let emptyStart = $derived(
+    typeof emptyHint === "string" && emptyHint !== "" && !readOnly && conversationState !== "rest"
+      && rows.length === 0 && outgoingMessages.length === 0
+  );
+    /** v5: the header carries the title alone, in every state. The composer's placeholder
    *  ("Message <role>") already names who does the work. */
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
   const headElapsed = elapsedTurnTime(() => running && !activityUncertain ? turnStartedAt : null);
@@ -446,7 +457,9 @@
 
 <div
   class="chat-panel"
+  class:is-empty-start={emptyStart}
   data-conversation-pane
+  data-conversation-empty-start={emptyStart ? "true" : undefined}
   data-conversation-id={conversationId}
   data-conversation-read-only={readOnly ? "true" : undefined}
   data-conversation-read-only-boundary={readOnly ? "true" : undefined}
@@ -756,6 +769,9 @@
       {onSendHeldPromptAgain}
       onFieldChosen={openForWritingOnAPhone}
     />
+    {#if emptyStart}
+      <div class="cv-empty-foot"><p class="cv-empty-hint" data-conversation-empty-hint>{emptyHint}</p></div>
+    {/if}
   {/if}
 </div>
 
@@ -764,6 +780,18 @@
   /* v4.1 (revised): an empty conversation is the composer in its normal bottom place, as in
      every other state, and an empty canvas above it. No placement of its own. */
   .conversation-reader[hidden] { display:none; }
+  /* v15 (6): an empty conversation that has the page's width (not the dock at rest) holds its
+     composer in the vertical centre of the column: the reader above it (the heading at its
+     foot, 20px over the composer) and the hint's band under it share the room equally. The
+     first send takes the hint away and the composer goes back to the foot. */
+  .chat-panel.is-empty-start > .conversation-reader { flex: 1 1 0; }
+  .cv-empty-foot { flex: 1 1 0; min-height: 0; }
+  .cv-empty-hint {
+    margin: 12px 0 0;
+    color: #a6a6a6;
+    font: var(--cv-weight-body, 400) 13px/20px var(--cv-font);
+    text-align: center;
+  }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side
      panel on a wide screen, and a host that names no container of its own — the Chief
@@ -875,6 +903,10 @@
   .cv-segment:hover { background: #242424; color: #ececec; }
   .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #2a2a2a; color: #ececec; }
   .cv-segment:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
+  /* v15 (4): the shown lens is a #363636 segment with #f2f2f2 500 text; the other has no fill and
+     #a6a6a6 400 text (hover keeps the #242424 fill and #ececec). */
+  .cv-segment { color: #a6a6a6; font-weight: 400; }
+  .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #363636; color: #f2f2f2; font-weight: 500; }
 
   .conversation-read-only {
     flex: none;

@@ -5714,3 +5714,20 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* (11) Chart legend: its left edge on the chart title's. The chart library insets the key to the
  * plot by an inline style; in the conversation the key starts where the title starts. */
 [data-conversation-pane] .chat-thread .chat-chart .goal-chart-host .snapshot-legend { padding-inline-start: 0 !important; }
+
+/* ==========================================================================================
+ * v15 (22 Nov, after round 21) — scoped to the conversation pane.
+ * ========================================================================================== */
+/* (3) Narration in Full: 14/24 #c4c4c4. Its inline code has no fill: monospace at 0.9em in
+ * #dcdcdc (v14's dark chips withdrawn there). Answers keep their chips. */
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
+[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { font-size: 14px; line-height: 24px; color: #c4c4c4; }
+[data-conversation-pane][data-conversation-lens="full"] .chat-thread :is(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { font-family: var(--cv-mono); font-size: 0.9em; line-height: inherit; padding: 0; border-radius: 0; background: none; color: #dcdcdc; }
+/* (8) Headings in answers: h1, h2 and h3 are one style, 17/24 600 #ececec, 24px above and 8px
+ * below, so one level looks the same whatever mark the source used. */
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2, h3) { margin: 24px 0 8px; font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: 0; color: #ececec; }
+[data-conversation-pane] .chat-thread .chat-a .markdown > :is(h1, h2, h3):first-child { margin-block-start: 0; }
+[data-conversation-pane] .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3):first-child { margin-block-start: 16px; }
+/* What follows a heading starts 8px under it (a table or a picture's own top margin would
+ * otherwise widen the gap to 16). */
+[data-conversation-pane] .chat-thread .chat-a .markdown :is(h1, h2, h3) + * { margin-block-start: 0; }

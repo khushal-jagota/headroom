@@ -2190,22 +2190,27 @@
   /* The file chip's 1px edge is part of its box: its circle sits 5px inside the edge, so it is
      6px from the chip's outer corner, as on the picture (which has no edge). */
   .chat-att.file > .chat-att-x { top: 5px; right: 5px; }
-  /* v14 (9): the remove button is a 20px #ececec circle with a #141414 x, centred on the chip's
-     top-right corner (half of it outside the chip), on both chips. The file chip is its content
-     plus 16px on each side. The row makes room above and after the chips for the circles' outer
-     halves; it takes back all but 4px of it, so a circle stands 10px clear of the frame's edge. */
-  .chat-attachments { padding-block-start: 10px; margin-block-start: -2px; padding-inline-end: 10px; }
-  .chat-att-x, .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { top: -10px; right: -10px; background: #ececec; color: #141414; }
-  .chat-att-x:hover:not(:disabled) { background: #ffffff; }
-  .chat-att.file > .chat-att-x { top: -11px; right: -11px; }
-  .chat-att-x svg { stroke-width: 2; }
-  .chat-att.file { padding-inline: 16px; }
+  /* v15 (2): the remove button is a 20px rgba(20,20,20,0.85) circle with a 1px
+     rgba(255,255,255,0.24) ring and an #ececec x, inside the chip's top-right corner, 6px in, on
+     both chips (v14 (9)'s white badge half outside the chip is withdrawn). Nothing overhangs, so
+     the row needs no room around it. The file chip has 12px before its icon; after its words it
+     leaves room for the button only (6 + 20 + 6 = 32). */
+  .chat-attachments { gap: var(--cv-s2); padding-block-start: 0; margin-block-start: 0; padding-inline-end: 0; }
+  .chat-att-x, .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible {
+    top: 6px;
+    right: 6px;
+    background: rgb(20 20 20 / 85%);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 24%);
+    color: #ececec;
+  }
+  .chat-att-x:hover:not(:disabled) { background: rgb(36 36 36 / 92%); color: #ffffff; }
+  .chat-att.file > .chat-att-x { top: 5px; right: 5px; }
+  .chat-att-x svg { stroke-width: 1.5; }
+  .chat-att.file { padding-inline: 12px 32px; }
   .chat-att.file > .chat-att-kind { width: 16px; }
-  /* Two chips stand 16px apart, so a circle's outer half never touches the next chip. */
-  .chat-attachments { gap: var(--cv-s4); }
-  /* v14 (10): the draft starts at the same x in the one-line and the grown composer: after the
-     add button's place (1px edge difference + 32 + the 4px gap + the 4px start pad = 41 from the
-     grown box's content edge). The chips stand on the same left edge as the draft. */
-  .chat-box:not(.is-compact):not(.has-ask) > .chat-ta { padding-inline-start: 41px; }
-  .chat-box:not(.is-compact):not(.has-ask) > .chat-attachments { padding-inline-start: 41px; }
+  /* v15 (7): 16px between an ask's last option and its answer well (options stay 8 apart). */
+  .chat-box.has-ask > .chat-ask { margin-block-end: var(--cv-s4); }
+  /* v15 (1): in the grown composer (attachments or several lines) the chips and the draft start at
+     the composer's inner left padding, the add button's left edge (v14 (10) withdrawn). The
+     one-line composer keeps the add button, then the draft. */
 </style>

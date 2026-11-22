@@ -286,6 +286,9 @@
   :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row:hover:not(:disabled), .cv-ask-row:focus-visible) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
   :global([data-conversation-pane] .cv-ask-label) { color: #ececec; }
   :global([data-conversation-pane] .cv-ask-sub) { color: #b0b0b0; font: var(--cv-weight-body) 13px/20px var(--cv-font); }
+  /* v15 (5): option descriptions are #b8b8b8; an unavailable pager arrow is #7a7a7a. */
+  :global([data-conversation-pane] .cv-ask-sub) { color: #b8b8b8; }
+  :global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #7a7a7a; }
   @keyframes cv-ask-in { from { opacity: 0; transform: translateY(4px); } }
   @media (prefers-reduced-motion: reduce) { .cv-ask { animation: none; } }
   @media (max-width: 560px) {

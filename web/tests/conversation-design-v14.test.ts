@@ -103,23 +103,7 @@ describe("v14 (7, 8): Steered and Queued notes, the queued bubble", () => {
   });
 });
 
-describe("v14 (9, 10): composer attachments and the draft's start", () => {
-  it("the remove button is a 20px #ececec circle with a #141414 x, centred on the chip's corner", () => {
-    expect(composer).toContain(".chat-att-x, .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { top: -10px; right: -10px; background: #ececec; color: #141414; }");
-    // The file chip's 1px edge is inside its box: its corner is 1px further out.
-    expect(composer).toContain(".chat-att.file > .chat-att-x { top: -11px; right: -11px; }");
-    expect(composer).toContain(".chat-attachments { padding-block-start: 10px; margin-block-start: -2px; padding-inline-end: 10px; }");
-  });
-  it("the file chip is its content plus 16px on each side; thumbnails keep a 1px 16% white edge", () => {
-    expect(composer).toContain(".chat-att.file { padding-inline: 16px; }");
-    expect(composer).toContain(".chat-att.file > .chat-att-kind { width: 16px; }");
-    expect(composer).toContain("box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%)");
-  });
-  it("the grown composer's draft and chips start where the one-line draft starts", () => {
-    expect(composer).toContain(".chat-box:not(.is-compact):not(.has-ask) > .chat-ta { padding-inline-start: 41px; }");
-    expect(composer).toContain(".chat-box:not(.is-compact):not(.has-ask) > .chat-attachments { padding-inline-start: 41px; }");
-  });
-});
+// v14 (9, 10) were withdrawn by v15 (1, 2): see conversation-design-v15.test.ts.
 
 describe("v14 (11): chart legend", () => {
   it("starts on the chart title's left edge inside the conversation", () => {

@@ -219,6 +219,9 @@
   }
   @keyframes c2-meta-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
   .c2-meta-clock { color: var(--cv-detail-ink, #b0b0b0); }
+  /* v15 (5): "Worked for" is #c4c4c4; the Working timer is #b8b8b8. */
+  :is(.c2-meta--fold, [data-conversation-turn-settled-head]), .c2-meta--fold .c2-meta-sep { color: #c4c4c4; }
+  .c2-meta-clock { color: #b8b8b8; }
   @media (prefers-reduced-motion: reduce) {
     .c2-meta--fold, .c2-meta-chevron { transition: none; }
     /* v8 (4): the still mark while a running tool row carries the spinner. */

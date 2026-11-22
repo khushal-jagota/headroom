@@ -101,8 +101,8 @@ describe("v8 messages and asks (items 6-9)", () => {
   it("8: the placeholder is Write a message everywhere; the ask wells keep theirs", () => {
     expect(COMPOSER_PLACEHOLDER).toBe("Write a message");
     expect(composerPlaceholderFor({ askWaiting: null, mode: "queue", running: false, base: "Message Chief of Staff..." })).toBe("Write a message");
-    expect(composerPlaceholderFor({ askWaiting: "answers", mode: "queue", running: true, base: "x" })).toBe("Or write your own answer");
-    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "queue", running: true, base: "x" })).toBe("Or write a message");
+    expect(composerPlaceholderFor({ askWaiting: "answers", mode: "queue", running: true, base: "x" })).toBe("Or write a reply");
+    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "queue", running: true, base: "x" })).toBe("Or write a reply");
   });
 });
 

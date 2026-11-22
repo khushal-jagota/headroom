@@ -344,6 +344,8 @@
   .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #a6a6a6; }
   .chat-qrow-spin { border-top-color: #bdbdbd; }
   .chat-qrow :global(.c2-bubble) { box-shadow: inset 0 0 0 1px #4a4a4a; }
+  /* v15 (5): the Queued detail is #b8b8b8. */
+  .chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #b8b8b8; }
   /* The dropdown (v4): the float plane anchored on its chip, opening upward from its right
      edge; labels only, 14px on 36px rows. Remove is in the danger ink. */
   .chat-qrow-menu[hidden] { display: none; }

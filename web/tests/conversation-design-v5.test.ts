@@ -21,8 +21,8 @@ const pane = source("../src/components/conversation/ConversationPane.svelte");
 describe("design v5: empty and header", () => {
   it("an empty conversation says one quiet centred line (v5.1 words), 15px #b0b0b0", () => {
     const live = source("../src/components/conversation/LiveConversation.svelte");
-    expect(live).toContain('<span class="conversation-empty-said">Start with a message. You can attach or drop files here.</span>');
-    expect(live).toContain(".conversation-empty-said { color: #b0b0b0; font: var(--cv-weight-body) 15px/24px var(--cv-font); text-align: center; }");
+    // v15 (6) replaced the one line with a heading over a centred composer (see the v15 tests).
+    expect(live).toContain('<h2 class="conversation-empty-said">What should we work on?</h2>');
     expect(live).not.toMatch(/\.conversation-empty \{[^}]*clip-path/);
   });
 
@@ -41,7 +41,7 @@ describe("design v5: tones and accent, scoped to the conversation", () => {
     const scoped = tokens.slice(tokens.indexOf("[data-conversation-pane] {"));
     expect(scoped).toContain("--cv-t3: #b0b0b0;");
     expect(scoped).toContain("--cv-t4: #b0b0b0;");
-    expect(scoped).toContain("--cv-placeholder: #999999;");
+    expect(scoped).toContain("--cv-placeholder: #9e9e9e; /* v15 (5) */");
     expect(scoped).toContain("--cv-accent: #bccbf0;");
     expect(scoped).toContain("--cv-data-1-strong: #bccbf0;");
     expect(scoped).toContain("--cv-data-2-strong: #e0b36b;");

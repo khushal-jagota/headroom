@@ -704,7 +704,7 @@
   --cv-data-2-strong: #e0b36b;
   --cv-t3: #b0b0b0;
   --cv-t4: #b0b0b0;
-  --cv-placeholder: #999999;
+  --cv-placeholder: #9e9e9e; /* v15 (5) */
 
   /* v7, one system: two voices, five parts, one set of measures (8px grid). */
   --cv-ink: #ececec;          /* agent final messages, user words, status labels, secondary ink */

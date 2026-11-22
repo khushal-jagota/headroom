@@ -206,6 +206,8 @@ export function applyComposerRunSelectionIntent(
 
 /** v8 (8): the empty composer's one placeholder. */
 export const COMPOSER_PLACEHOLDER = "Write a message";
+/** v15 (7): the one placeholder under every ask. */
+export const ASK_REPLY_PLACEHOLDER = "Or write a reply";
 
 /** What the empty composer says it will do with a message. Under a waiting ask the turn
  *  reads nothing until the person decides, so the words say plainly where a message goes:
@@ -220,11 +222,7 @@ export function composerPlaceholderFor(input: {
   // v8 (8): one placeholder everywhere, in the pane and the dock: "Write a message". Under an
   // ask, the composer line is the place for an own answer, or for a message the turn will
   // read once it goes on. (The caller's role-named base is no longer shown.)
-  const base = COMPOSER_PLACEHOLDER;
-  if (input.askWaiting === "answers") return "Or write your own answer";
-  if (input.askWaiting === "holds") {
-    if (!input.running) return base;
-    return input.mode === "send_now" ? "Or write a message. Sending it stops this turn" : "Or write a message";
-  }
-  return base;
+  // v15 (7): every ask (a question or a permission) says the same thing: "Or write a reply".
+  if (input.askWaiting !== null) return ASK_REPLY_PLACEHOLDER;
+  return COMPOSER_PLACEHOLDER;
 }

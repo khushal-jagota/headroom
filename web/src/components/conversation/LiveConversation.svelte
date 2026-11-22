@@ -1118,6 +1118,7 @@
   onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}
   onNewConversation={() => void newConversation()}
   emptyState={beforeThereIsAConversation}
+  emptyHint={!emptyState && !readOnly && nothingSaidYet ? "You can attach or drop files here." : null}
   showRunPicker={started || emptyState === undefined}
 />
 
@@ -1127,10 +1128,10 @@
   {#if !started && emptyState}
     {@render emptyState()}
   {:else if !emptyState && !readOnly && nothingSaidYet}
-    <!-- v5: an empty conversation is one quiet line centred in the empty canvas, and the
-         composer in its normal bottom place. Nothing else. -->
-    <div class="conversation-empty" data-conversation-empty data-conversation-empty-bare role="note">
-      <span class="conversation-empty-said">Start with a message. You can attach or drop files here.</span>
+    <!-- v15 (6): an empty conversation asks one question over a composer in the column's
+         vertical centre; the pane puts the attach hint under the composer. -->
+    <div class="conversation-empty" data-conversation-empty data-conversation-empty-bare>
+      <h2 class="conversation-empty-said">What should we work on?</h2>
     </div>
   {/if}
 {/snippet}
@@ -1141,5 +1142,6 @@
   /* v13 (12): the hint sits just above the composer, centred, 24px over its top edge (the
      thread's own end gap), not in the middle of the canvas. */
   .conversation-empty { display: flex; align-items: flex-end; justify-content: center; flex: 1 0 auto; align-self: stretch; }
-  .conversation-empty-said { color: #b0b0b0; font: var(--cv-weight-body) 15px/24px var(--cv-font); text-align: center; }
+  /* The thread ends 24px over the composer; the heading stands 20px over it. */
+  .conversation-empty-said { margin: 0 0 -4px; color: #ececec; font: 600 20px/28px var(--cv-font); letter-spacing: 0; text-align: center; }
 </style>

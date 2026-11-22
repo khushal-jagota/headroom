@@ -121,6 +121,8 @@
   .c2-rest-activity > :is(.cv-spinner, .cv-dot, .cv-glyph) { flex:none; }
   [data-conversation-rest-state="working"] .c2-rest-label { color:#ececec; font-weight:var(--cv-weight-label); }
   .c2-rest-clock { color:var(--cv-t3); }
+  /* v15 (5): the Working timer is #b8b8b8 in the dock too, as in the transcript. */
+  .c2-rest-clock { color:#b8b8b8; }
   /* p12c: "Working · 2m 14s" spaced exactly as the transcript's live line: three parts 6px apart. */
   .c2-rest-working { display:inline-flex; align-items:center; gap:6px; }
   .c2-rest-working .c2-rest-label { color:#ececec; font-weight:var(--cv-weight-label); }
