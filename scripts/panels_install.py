@@ -53,7 +53,7 @@ def host_target() -> str:
 
 def preflight(args: argparse.Namespace, target: str) -> None:
     """Refuse host and namespace conflicts before downloads or installation writes."""
-    if sys.version_info < (3, 11) or not hasattr(tarfile, "data_filter"):
+    if not hasattr(tarfile, "data_filter"):
         raise ValueError(
             "Install Python 3.11.8 or newer, then run this command with that interpreter."
         )
@@ -105,15 +105,17 @@ def preflight(args: argparse.Namespace, target: str) -> None:
         labels = tuple(args.service + suffix for suffix in suffixes)
         for label in labels:
             path = Path.home() / "Library/LaunchAgents" / (label + ".plist")
+            # A join has one fixed job, so the person cannot choose another name.
+            remedy = (
+                " Remove the earlier Panels machine code first."
+                if args.command == "join"
+                else " Select another --service."
+            )
             if path.exists() or path.is_symlink():
-                raise ValueError(
-                    f"The LaunchAgent file already exists: {path}. Select another --service."
-                )
+                raise ValueError(f"The LaunchAgent file already exists: {path}." + remedy)
             result = _run("/bin/launchctl", "print", f"{domain}/{label}", check=False)
             if result.returncode == 0:
-                raise ValueError(
-                    f"The LaunchAgent already exists: {label}. Select another --service."
-                )
+                raise ValueError(f"The LaunchAgent already exists: {label}." + remedy)
             if "Could not find service" not in result.stderr:
                 raise ValueError("Log in to the Mac graphical session before installation.")
     else:
@@ -329,11 +331,6 @@ def select_receipt(receipt: dict[str, Any], target: str, command: str) -> dict[s
     if command == "join":
         selected = receipt.get("mac" if target == "darwin" else "linux_executor", receipt)
         revision = receipt.get("manifest", {}).get("app_sha") or receipt.get("application_revision")
-        if target == "darwin" and (selected.get("platform"), selected.get("architecture")) not in (
-            (None, None),
-            ("darwin", "arm64"),
-        ):
-            raise ValueError("The release target differs from this machine.")
     else:
         selected = receipt.get("mac_home", receipt) if target == "darwin" else receipt
         manifest = selected.get("manifest", {})

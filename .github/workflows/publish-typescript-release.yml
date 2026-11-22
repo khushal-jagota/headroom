@@ -47,7 +47,7 @@ jobs:
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
             GITHUB_SHA="$GITHUB_SHA" GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" \
             GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
-            PUBLICATION_ROOT="$private" LAUNCHER_APP="$RUNNER_TEMP/panels-launcher/Panels TypeScript.app" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
+            PUBLICATION_ROOT="$private" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
             XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" \
             XDG_DATA_HOME="$private/data" XDG_STATE_HOME="$private/data" XDG_RUNTIME_DIR="$private/runtime" TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" \
             npm_config_cache="$private/cache/npm" PIP_CONFIG_FILE=/dev/null PIP_CACHE_DIR="$private/cache/pip" \
@@ -162,6 +162,8 @@ jobs:
           node-version: '22'
       - name: Prepare native Mac build prerequisites
         run: brew install icu4c pkgconf
+      - name: Install the launcher build's dependencies without the signing secrets
+        run: npm ci --prefix server --omit=dev
       - name: Build the shared launcher and sign it with the Developer ID
         # Every Apple Silicon join installs this one signed launcher. macOS keys folder
         # permissions on the team identity, so they stay when a later release changes it.
@@ -180,11 +182,11 @@ jobs:
           security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" \
             -P "$MAC_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/developer-id.p12"
+          unset MAC_DEVELOPER_ID_P12_BASE64 MAC_DEVELOPER_ID_P12_PASSWORD
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           identity=$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application: / { print $2; exit }')
           test -n "$identity"
-          npm ci --prefix server --omit=dev
           mkdir "$RUNNER_TEMP/panels-launcher"
           app="$RUNNER_TEMP/panels-launcher/Panels TypeScript.app"
           node server/executor/mac/packaging/launcher_main.ts --output "$app" --sign "$identity"
@@ -200,7 +202,7 @@ jobs:
           mkdir -p "$private"/{home/.codex,home/.claude,config,cache,data,logs,backups,workspace,scratch,runtime,tmp,source}
           env -i PATH="$PATH" LANG=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 \
             GITHUB_ACTIONS=true GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
-            PUBLICATION_ROOT="$private" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
+            PUBLICATION_ROOT="$private" LAUNCHER_APP="$RUNNER_TEMP/panels-launcher/Panels TypeScript.app" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
             XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" npm_config_cache="$private/cache/npm" \
             PLAN_CONFIG_PATH="$private/config.yaml" PLAN_DB_PATH="$private/data/planner.sqlite" PLAN_APP_ROOT="$private/app" PLAN_DATA_DIR="$private/data" \
             PLAN_LOGS_DIR="$private/logs" PLAN_BACKUP_DIR="$private/backups" PLAN_WORKSPACE_ROOT="$private/workspace" PLAN_TICKET_SCRATCH_ROOT="$private/scratch" \

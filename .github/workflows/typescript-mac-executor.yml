@@ -81,7 +81,7 @@ jobs:
         shell: bash
         env:
           # The join command fetches the bootstrap script at this revision with the GitHub CLI.
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ matrix.script == 'native_join_rehearsal.ts' && github.token || '' }}
         run: |
           set -euo pipefail
           native_root="$RUNNER_TEMP/mac-executor-rehearsal"
@@ -100,7 +100,7 @@ jobs:
             PLAN_DISPATCHER_LOCK_PATH="$native_root/run/dispatcher.lock" \
             PLAN_SERVER_CONTROL_SOCKET="$native_root/run/control.sock" \
             PLAN_SERVER_LIFECYCLE_LEASE_PATH="$native_root/run/lifecycle.lock" \
-            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_ACTIONS="$GITHUB_ACTIONS" GH_TOKEN="$GH_TOKEN" \
             node "server/executor/mac/testing/${{ matrix.script }}"
       - name: Preserve native execution evidence
         if: always()

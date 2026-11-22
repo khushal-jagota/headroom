@@ -46,6 +46,8 @@ const run = async (args: string[], environment = process.env, allow_nonzero = fa
   if (!allow_nonzero) assert.equal(result.code, 0, result.stdout + result.stderr);
   return result;
 };
+// Only a disposable hosted runner may receive these fixed paths. A live machine keeps its own.
+assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Run this rehearsal only on a hosted runner');
 await mkdir(evidence, { recursive: true });
 let server:
   Awaited<ReturnType<typeof import('./native_server.ts').start_native_server>> | undefined;
@@ -216,8 +218,13 @@ try {
   if (joined)
     await attempt(() => run(['launchctl', 'bootout', `${domain}/${paths.job}`], process.env, true));
   await attempt(() => run(['launchctl', 'unsetenv', 'NODE_EXTRA_CA_CERTS'], process.env, true));
+  // A failed join removes its state folder, so there can be no logs to keep.
   await attempt(() =>
-    cp(join(paths.state, 'logs'), join(evidence, 'launch-logs'), { recursive: true }),
+    cp(join(paths.state, 'logs'), join(evidence, 'launch-logs'), { recursive: true }).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      },
+    ),
   );
   owner.seal();
   await attempt(async () => {

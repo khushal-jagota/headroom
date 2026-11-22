@@ -1,5 +1,6 @@
 /** One new Apple Silicon installation owns its files and job until a fresh accepted lease or rollback. */
 import { lstat, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { extract } from 'tar';
@@ -24,6 +25,9 @@ import {
   JOIN_LEASE_POLL_SECONDS,
   JOIN_LEASE_TIMEOUT_SECONDS,
 } from '../linux_executor/configuration.ts';
+
+const JOIN_BOOTOUT_CHECKS = 10;
+const JOIN_BOOTOUT_CHECK_SECONDS = 0.5;
 
 export interface MacExecutorJoinRequest {
   readonly archive: string;
@@ -107,6 +111,9 @@ export async function install_mac_executor(
   if (!/^[A-Za-z0-9_-]{43}$/.test(request.credential))
     throw new Error('The private machine credential is invalid');
   validate_app_sha(request.revision, 'release revision');
+  // The signed launcher finds its Node below the account's home, so the install must use that home.
+  if (request.home !== userInfo().homedir)
+    throw new Error(`HOME must be this account's home folder: ${userInfo().homedir}`);
   const backend_path = mac_backend_path(request.home);
   const {
     paths,
@@ -146,19 +153,22 @@ export async function install_mac_executor(
     await mkdir(dirname(paths.console), { mode: 0o700 });
     await writeFile(paths.console, console_script, { flag: 'wx', mode: 0o755 });
     assert_release_execution(execution);
+    // The join owns the app folder before the copy, so a failed copy leaves nothing behind.
     // ditto keeps the bundle exactly as signed. The check proves that the copy still verifies.
+    await mkdir(paths.app, { mode: 0o700 });
+    owned.push(paths.app);
     await run_release_command(
       ['/usr/bin/ditto', join(paths.supervisor, MAC_RUNTIME_LAUNCHER_APP), paths.app],
       { environment, timeout_seconds: 60 },
       execution,
     );
-    owned.push(paths.app);
     await run_release_command(
       ['/usr/bin/codesign', '--verify', '--strict', paths.app],
       { environment, timeout_seconds: 60 },
       execution,
     );
-    await mkdir(paths.state, { recursive: true, mode: 0o700 });
+    await mkdir(dirname(paths.state), { recursive: true, mode: 0o700 });
+    await mkdir(paths.state, { mode: 0o700 });
     owned.push(paths.state);
     await mkdir(dirname(paths.stdout), { mode: 0o700 });
     await write_credential(credential_path(paths.state), request.credential);
@@ -181,8 +191,13 @@ export async function install_mac_executor(
     try {
       if (bootstrapped) {
         await launchctl(['bootout', `${domain}/${paths.job}`], cleanup, true);
-        const after = await launchctl(['print', `${domain}/${paths.job}`], cleanup, true);
-        if (after.code === 0) throw new Error(`Cannot stop the new machine job: ${paths.job}`);
+        // launchd can list the job for a moment while it removes it.
+        let listed = true;
+        for (let attempt = 0; listed && attempt < JOIN_BOOTOUT_CHECKS; attempt++) {
+          if (attempt) await delay(JOIN_BOOTOUT_CHECK_SECONDS * 1000);
+          listed = (await launchctl(['print', `${domain}/${paths.job}`], cleanup, true)).code === 0;
+        }
+        if (listed) throw new Error(`Cannot stop the new machine job: ${paths.job}`);
       }
       for (const path of owned.reverse()) await rm(path, { recursive: true, force: true });
     } catch (failure) {

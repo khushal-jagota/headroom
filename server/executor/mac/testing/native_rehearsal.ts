@@ -1,6 +1,6 @@
 /** One hosted Darwin installation, real remote transport, scripted provider executables. */
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile, cp } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile, cp } from 'node:fs/promises';
 import { createServer } from 'node:https';
 import { request as http_request } from 'node:http';
 import { join, dirname, resolve } from 'node:path';
@@ -56,6 +56,10 @@ await mkdir(evidence, { recursive: true });
 // so the state uses the supported explicit root.
 const home = join(root, 'executor-home');
 const paths = { ...mac_installation_paths(userInfo().homedir), state: join(root, 'state') };
+// Only a disposable hosted runner may receive these fixed paths. A live machine keeps its own.
+assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Run this rehearsal only on a hosted runner');
+for (const path of [paths.install, paths.app])
+  await assert.rejects(lstat(path), { code: 'ENOENT' });
 const bin = join(root, 'scripted-bin');
 await mkdir(bin, { recursive: true });
 await mkdir(home, { recursive: true });
