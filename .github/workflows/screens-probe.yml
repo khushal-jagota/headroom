@@ -46,7 +46,7 @@ jobs:
           if [ "${{ matrix.fuses }}" = on ]; then
             extra=(-c.electronFuses.enableEmbeddedAsarIntegrityValidation=true -c.electronFuses.onlyLoadAppFromAsar=true -c.electronFuses.runAsNode=false -c.electronFuses.grantFileProtocolExtraPrivileges=false)
           fi
-          npm --prefix desktop run build:mac -- -c.extraMetadata.version="0.0.${{ github.run_number }}" "${extra[@]}"
+          npm --prefix desktop run build:mac -- -c.extraMetadata.version="0.0.${{ github.run_number }}" ${extra[@]+"${extra[@]}"}
           rm -f "$APPLE_API_KEY"
       - name: Unpack and check signature, notarization, Gatekeeper and fuses
         run: |
