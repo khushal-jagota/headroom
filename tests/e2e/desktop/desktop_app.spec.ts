@@ -114,37 +114,52 @@ test('the screens reach the server through the app, and links leave it', async (
     expect(write.status, write.body).toBe(200);
     expect(JSON.stringify(await api.get(server, '/api/tickets?detail=summary'))).toContain('Ticket written by the desktop app');
 
-    const compatibility = await desktop.app.evaluate(async ({ app }, address) => {
-      const load = process.getBuiltinModule('node:module').createRequire(`${app.getAppPath()}/build/main.js`);
-      const { fetchDesktopCompatibility } = load('./server_meta.js') as {
-        fetchDesktopCompatibility(address: string): Promise<{ minimum_bridge_version: number }>;
-      };
-      return fetchDesktopCompatibility(address);
-    }, server.base);
-    expect(compatibility).toEqual({ minimum_bridge_version: 1 });
+    await test.step('the native metadata helper reads the bridge floor', async () => {
+      const compatibility = await desktop.app.evaluate(async ({ app }, address) => {
+        const load = process.getBuiltinModule('node:module').createRequire(`${app.getAppPath()}/build/main.js`);
+        const { fetchDesktopCompatibility } = load('./server_meta.js') as {
+          fetchDesktopCompatibility(address: string): Promise<{ minimum_bridge_version: number }>;
+        };
+        return fetchDesktopCompatibility(address);
+      }, server.base);
+      expect(compatibility).toEqual({ minimum_bridge_version: 1 });
+    }, { timeout: WAIT_MS * 3 });
 
-    // The native identity replaces a renderer-supplied value on reads and files too.
-    await page.evaluate(async () => {
-      await fetch('/api/meta', { headers: { 'X-Panels-Client': 'renderer override' } });
-      await fetch('/files/missing-client-identity-proof');
-      const response = await fetch('/api/changes');
-      await response.body!.cancel();
-    });
-    const forwarded = await desktop.app.evaluate(() => (globalThis as { forwardedRequests?: ForwardedRequest[] }).forwardedRequests ?? []);
-    for (const path of ['/api/meta', '/api/tickets', '/files/missing-client-identity-proof', '/api/changes'])
-      expect(forwarded.some((request) => request.path === path)).toBe(true);
-    const identities = forwarded.map((request) => {
-      expect(request.origin).toBeNull();
-      expect(request.identity).not.toBeNull();
-      return JSON.parse(request.identity!);
-    });
-    const nativeIdentity = identities[0];
-    expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 1, device_id: expect.any(String) });
-    for (const identity of identities) expect(identity).toEqual(nativeIdentity);
-    // The server received and retained these facts, independent of the observation above.
-    expect(withDatabase(server, (db) => db.read((sql) => sql.get<{ identity_json: string }>(
-      "SELECT identity_json FROM client_versions WHERE kind='desktop' AND device_id=?", [nativeIdentity.device_id],
-    )))?.identity_json).toBe(JSON.stringify(nativeIdentity));
+    await test.step('the native forward identifies API reads and files', async () => {
+      // The native identity replaces a renderer-supplied value on reads and files too.
+      await page.evaluate(async () => {
+        await fetch('/api/meta', { headers: { 'X-Panels-Client': 'renderer override' } });
+        await fetch('/files/missing-client-identity-proof');
+      });
+    }, { timeout: WAIT_MS * 3 });
+
+    await test.step('the native forward identifies an open live stream', async () => {
+      // EventSource is the production stream API. Closing it does not wait for an
+      // endless forwarded response body to settle its cancellation promise.
+      await page.evaluate(() => new Promise<void>((resolve, reject) => {
+        const source = new EventSource('/api/changes');
+        source.onopen = () => { source.close(); resolve(); };
+        source.onerror = () => { source.close(); reject(new Error('The forwarded change stream did not open.')); };
+      }));
+    }, { timeout: WAIT_MS * 3 });
+
+    await test.step('forwarded requests share identity and the server retains it', async () => {
+      const forwarded = await desktop.app.evaluate(() => (globalThis as { forwardedRequests?: ForwardedRequest[] }).forwardedRequests ?? []);
+      for (const path of ['/api/meta', '/api/tickets', '/files/missing-client-identity-proof', '/api/changes'])
+        expect(forwarded.some((request) => request.path === path)).toBe(true);
+      const identities = forwarded.map((request) => {
+        expect(request.origin).toBeNull();
+        expect(request.identity).not.toBeNull();
+        return JSON.parse(request.identity!);
+      });
+      const nativeIdentity = identities[0];
+      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 1, device_id: expect.any(String) });
+      for (const identity of identities) expect(identity).toEqual(nativeIdentity);
+      // The server received and retained these facts, independent of the observation above.
+      expect(withDatabase(server, (db) => db.read((sql) => sql.get<{ identity_json: string }>(
+        "SELECT identity_json FROM client_versions WHERE kind='desktop' AND device_id=?", [nativeIdentity.device_id],
+      )))?.identity_json).toBe(JSON.stringify(nativeIdentity));
+    }, { timeout: WAIT_MS * 3 });
 
 
     // A page from another site inside the app, such as one an artifact frame opened,
