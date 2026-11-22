@@ -421,7 +421,7 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
     timeout: WAIT_MS,
   });
   await expect(page.locator('[data-conversation-rest-line]')).toHaveText(
-    /^Working(?: · [0-9]+(?:s|m(?: [0-9]+s)?))?$/,
+    /^Working(?: · (?:[0-9]+h [0-9]+m|[0-9]+(?:s|m(?: [0-9]+s)?)))?$/,
     { timeout: WAIT_MS },
   );
   if (evidence) await page.screenshot({ path: join(evidence, 'chief-working-unread.png'), fullPage: true });
