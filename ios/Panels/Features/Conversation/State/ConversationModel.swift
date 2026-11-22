@@ -621,9 +621,10 @@ import UniformTypeIdentifiers
         } catch { if !Task.isCancelled, generation == readerGeneration { reportReadFailure(error) } }
     }
     /// A read that could not reach the server says nothing: the screen keeps what it has
-    /// and reads again when the connection returns. Other failures still show.
+    /// and reads again when the connection returns. With the conversation on screen, no
+    /// connection error shows. Other failures still show.
     func reportReadFailure(_ error: Error) {
-        guard let note = ServerReadFailure.note(error) else { return }
+        guard let note = ServerReadFailure.note(error), items.isEmpty || (error as NSError).domain != NSURLErrorDomain else { return }
         self.error = note
     }
 

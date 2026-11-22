@@ -530,6 +530,16 @@ import UniformTypeIdentifiers
         }
     }
 
+    func testConnectionErrorShowsOnlyWhileTheConversationHasNothingLoaded() throws {
+        let model = ConversationModel()
+        model.reportReadFailure(URLError(.secureConnectionFailed))
+        XCTAssertNotNil(model.error, "A TLS failure shows when nothing is loaded")
+        model.error = nil
+        model.items = [try APIClient.decoder().decode(ConversationItem.self, from: Data(#"{"kind":"row","key":"row-1","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}"#.utf8))]
+        model.reportReadFailure(URLError(.secureConnectionFailed))
+        XCTAssertNil(model.error, "With content on screen a failed refresh stays silent")
+    }
+
     func testHeldPromptRecoveredWithoutDuplicatingLocalQueue() async throws {
         let model = ConversationModel()
         let json = #"{"backend_key":"codex","model":"sol","reasoning_effort":"medium","held_prompts":[{"held_prompt_id":"held-1","sender_message_id":"message-1","content":[{"piece":"text","text":"Waiting"}]}]}"#

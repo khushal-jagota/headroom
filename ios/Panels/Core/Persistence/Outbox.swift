@@ -4,7 +4,7 @@ import Network
 import Observation
 
 /// One foreground drainer. Every action is saved before it is sent, keeps one identity,
-/// and is sent again by itself until the server answers:
+/// and is sent again by itself until it settles or reaches the retry bound:
 /// - a message resends with the same sender message ID; the server drops a repeat;
 /// - a decision checks its receipt before every submit;
 /// - a mark read only moves the read point forward;

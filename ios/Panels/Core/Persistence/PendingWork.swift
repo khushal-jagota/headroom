@@ -1,8 +1,8 @@
 import Foundation
 
 /// One saved phone action. The outbox saves it before the screen moves on, and sends it
-/// while the app is open. `waiting` looks done on screen; only `failed` (the server
-/// refused it) shows a mark on its item.
+/// while the app is open. `waiting` looks done on screen; only `failed` (refused, or
+/// given up after the server kept answering without settling it) shows a mark.
 struct PendingWork: Codable, Identifiable, Sendable {
     enum Kind: String, Codable { case message, approval, sendBack, voice, markRead, askAnswer }
     enum State: String, Codable { case recording, waiting, sent, failed }
@@ -10,7 +10,7 @@ struct PendingWork: Codable, Identifiable, Sendable {
     let created: Date
     let kind: Kind
     var state: State = .waiting
-    /// The server's refusal, shown on the item. Empty until it is refused.
+    /// Why it failed, shown on the item. Empty until it fails.
     var note: String = ""
     var owner: ConversationOwner?
     var message: ConversationSend?
