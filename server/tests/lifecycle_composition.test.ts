@@ -64,7 +64,6 @@ import { ConversationViewRebuilder } from '../conversation/views/data/rebuild.ts
 import * as recovery from '../conversation/deploy_interruptions/coordinator.ts';
 import { MetricsRuntime } from '../environments/vps_metrics/runtime.ts';
 import { UpdateService } from '../environments/updates/service.ts';
-import * as scratch from '../environments/ticket_scratch/runtime.ts';
 import { create_test_environment_runtime } from '../environments/testing/composition.ts';
 import { HttpRequestScope } from '../core/http/lifetime.ts';
 
@@ -780,12 +779,6 @@ test('startServer reconciles before core construction and a route collision star
   const reconcile = vi.spyOn(notificationData, 'reconcile_attention').mockImplementation(() => {
     trace.push('reconcile');
   });
-  const scratch_start = vi.fn();
-  vi.spyOn(scratch, 'create_ticket_scratch_runtime').mockReturnValue({
-    start: scratch_start,
-    close() {},
-    settled: async () => {},
-  });
   const producers = [
     vi.spyOn(PreviewService.prototype, 'start'),
     vi.spyOn(ScopedDelivery.prototype, 'start'),
@@ -793,7 +786,6 @@ test('startServer reconciles before core construction and a route collision star
     vi.spyOn(recovery, 'run_automatic_recovery'),
     vi.spyOn(MetricsRuntime.prototype, 'start'),
     vi.spyOn(UpdateService.prototype, 'start'),
-    scratch_start,
     vi.spyOn(SqliteProcessConversationSystem.prototype, 'start_idle_child_janitor'),
   ];
   const background = vi.fn<BackgroundServiceFactory>(() => ({

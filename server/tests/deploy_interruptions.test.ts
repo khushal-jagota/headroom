@@ -11,7 +11,7 @@ import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import { canonical_ticket_execution_refusal } from '../tickets/execution_admission.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { conversation_machine_refusal } from '../machines/conversation_machine.ts';
-import { seed_present_home_machine } from '../machines/testing/present_home.ts';
+import { seed_machine_lease } from '../machines/testing/lease.ts';
 import { create, read } from './ticket_fixture.ts';
 import {
   reconcile,
@@ -439,7 +439,7 @@ test('a non-Ticket recovery waits while its machine is away and runs once it ret
     await recover_conversations(f.core, f.database, { startup: true });
     expect(f.children).toHaveLength(0);
     expect(f.database.read(select_recoveries).size).toBe(1);
-    f.database.write(seed_present_home_machine);
+    f.database.write((tx) => seed_machine_lease(tx, HOME_MACHINE_ID));
     await recover_conversations(f.core, f.database, { conversation_ids: ['core'] });
     await vi.waitFor(() => expect(f.children).toHaveLength(1));
   } finally {

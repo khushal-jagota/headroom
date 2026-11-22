@@ -7,9 +7,10 @@ import type { Duplex } from 'node:stream';
 import { expect, test, vi } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
 import { create, fixture } from './ticket_fixture.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { RemotePreviews, type PreviewMachine } from '../previews/remote.ts';
 import { PreviewError, type PreviewRecord } from '../previews/contracts.ts';
+import { PreviewService } from '../previews/service.ts';
 
 function expired(previews: RemotePreviews, record: PreviewRecord): void {
   expect(previews.has(record.generation)).toBe(false);
@@ -29,20 +30,25 @@ function channel() {
   return Object.assign(socket, { terminate }) as unknown as WebSocket;
 }
 
-test('replacement, stop, disconnect and recheck retain only live preview generations', () => {
+test('replacement, stop, disconnect and recheck retain only live preview generations', async () => {
   const database = fixture();
-  const ticket = create(database, { machine_id: ORIGINAL_MAC_MACHINE_ID });
-  const other_ticket = create(database, { machine_id: ORIGINAL_MAC_MACHINE_ID });
+  const ticket = create(database, { machine_id: HOME_MACHINE_ID });
+  const other_ticket = create(database, { machine_id: HOME_MACHINE_ID });
   let current = true;
   const machine: PreviewMachine = {
-    machine_id: ORIGINAL_MAC_MACHINE_ID,
+    machine_id: HOME_MACHINE_ID,
     incarnation: 'machine-process',
     protocol: '27',
     require_current() {
       if (!current) throw new Error('replaced machine');
     },
   };
-  const previews = new RemotePreviews(database, 'https://preview.test');
+  const service = new PreviewService(database, 'https://preview.test');
+  const previews = service.remote;
+  // The colocated machine uses its relay. The retired direct command cannot inspect its disk.
+  await expect(service.prepare(ticket.id)).rejects.toThrow(
+    'Preview commands must run through the Ticket machine code.',
+  );
   // Inspect storage itself: filtering ended records in has() must not hide retention.
   const retained = (previews as unknown as { entries: ReadonlyMap<string, unknown> }).entries;
   const prepare = (ticket_id = ticket.id) =>

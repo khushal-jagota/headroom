@@ -1,3 +1,4 @@
+import { HOME_MACHINE_ID } from './execution_identity.ts';
 import { sourceTestArea } from './measure_sources/testing/routes.ts';
 import { notificationTestArea } from './notifications/testing.ts';
 /** Comparison composition. Each area appends its test-only route registration here. */
@@ -21,7 +22,7 @@ import { create_backend_runtime } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 import { makeUsageService } from './conversation/usage/composition.ts';
 import { BackendStateStore } from './conversation/backend_state.ts';
-import { seed_present_home_machine } from './machines/testing/present_home.ts';
+import { seed_machine_lease } from './machines/testing/lease.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -57,7 +58,6 @@ await startServer({
   createConversationCore: conversationSystem
     ? undefined
     : (context) => {
-        registry.bind_runtime(context.worker_supervision);
         const { config, database, record, clock, changes } = context;
         return new SqliteProcessConversationSystem({
           store: record.store,
@@ -113,7 +113,7 @@ await startServer({
   beforePublication(database) {
     // This host runs the home's Tickets on scripted local children. Production runs them
     // through the home's machine code, which readiness requires to be present.
-    database.write(seed_present_home_machine, { changeSignal: 'silent' });
+    database.write((tx) => seed_machine_lease(tx, HOME_MACHINE_ID), { changeSignal: 'silent' });
     // Rebuild copied Python projections through the actual TS writer. Comparing
     // copied rows alone would leave writer drift hidden behind the fixture oracle.
     // This existing test-host bootstrap seam produces no HTTP event writes.

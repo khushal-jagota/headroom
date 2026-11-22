@@ -77,7 +77,6 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   readonly start_admission: AutomaticStartAdmission;
   readonly retiring_workspace_tickets = new Set<string>();
   readonly retiring_workspace_conversations = new Set<string>();
-  readonly local_child_generations = new WeakMap<BackendChild, string>();
   worker_cleanup_recheck:
     ((source: ChildReference, ticket_id: string) => Promise<CleanupResult>) | null = null;
   readonly deferred_start_conversations = new Set<string>();
@@ -372,21 +371,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   drain_held_prompts(state: ConversationState): Promise<void> {
     return send.drain_held_prompts(this, state);
   }
-  make_sink(
-    state: ConversationState,
-    options?: { supervised_launch?: boolean },
-  ): CoreBackendEventSink {
-    return backend_events.make_sink(this, state, options);
-  }
-  record_local_child_preparation(
-    state: ConversationState,
-    child: BackendChild,
-    sink: CoreBackendEventSink,
-  ): Promise<void> {
-    return child_lifecycle.record_local_child_preparation(this, state, child, sink);
-  }
-  check_local_child_started(state: ConversationState, turn: TurnToken): Promise<boolean> {
-    return child_lifecycle.check_local_child_started(this, state, turn);
+  make_sink(state: ConversationState): CoreBackendEventSink {
+    return backend_events.make_sink(this, state);
   }
   _confirm_local_child_stopped(state: ConversationState, child: BackendChild): Promise<void> {
     return child_lifecycle._confirm_local_child_stopped(this, state, child);

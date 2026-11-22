@@ -67,8 +67,10 @@ export const INSTALLER_SOURCE_FILES = [
   'server/drivers/built_in_manifests.ts',
   'server/drivers/built_in.ts',
   'server/drivers/core/driver.ts',
+  'server/drivers/core/capabilities.ts',
   'server/drivers/core/identity.ts',
   'server/drivers/core/paths.ts',
+  'server/drivers/core/selection.ts',
   ...DRIVER_STATIC_FILES,
   'server/package.json',
 ] as const;

@@ -27,11 +27,11 @@ export function linux_executor_path(
   for (const value of [runtime, node_executable, home]) absolute_executor_path(value);
   return [
     join(runtime, 'bin'),
-    join(runtime, 'agent_backends/node_modules/.bin'),
-    dirname(node_executable),
     join(home, '.local/bin'),
     '/usr/local/bin',
+    dirname(node_executable),
     '/usr/bin',
     '/bin',
+    join(runtime, 'agent_backends/node_modules/.bin'),
   ].join(':');
 }

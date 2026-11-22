@@ -88,6 +88,7 @@ export function create_mac_catalog(options: {
         sources.find(({ instance_id }) => instance_id === request.backend_key)?.source,
         signal,
         options.resolve_backend_secret,
+        snapshots,
       ),
     backend_ids: sources.map(({ instance_id }) => instance_id),
     on_failure: options.on_failure,

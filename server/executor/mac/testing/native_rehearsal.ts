@@ -257,7 +257,7 @@ try {
   void app_closed.catch(() => {});
   const command = async (args: string[]) => run([paths.console, ...args], environment);
   await server.wait_for_presence();
-  steps.protocol_26_presence = 'passed';
+  steps.current_protocol_presence = 'passed';
   for (const backend of ['claude', 'codex'] as const) {
     const turn = await server.create_turn(backend);
     await server.turn_result(turn.conversation_id);

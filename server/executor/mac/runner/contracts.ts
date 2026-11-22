@@ -1,6 +1,6 @@
 /** Retained native custody. Command outcomes and event retirement stay with the runner. */
 import type { WorkerSetupReport } from '../../wire.generated.ts';
-import type { AccountSkillHome } from '../../../skills/account.ts';
+import type { AccountSkillHome } from '../skills/legacy_server_links.ts';
 import type {
   BackendChild,
   BackendChildFactory,

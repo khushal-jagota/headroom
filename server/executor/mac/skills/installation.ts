@@ -1,3 +1,4 @@
+import { remove_server_account_skill_links } from './legacy_server_links.ts';
 /** Blocking publication runs only in the owned worker, before provider creation. */
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -231,6 +232,15 @@ export async function install_native_skill_snapshot(
   signal: AbortSignal,
 ): Promise<string> {
   validate_skill_snapshot(input.snapshot, input.owner_kind);
+  if (input.legacy_server_skill_parent !== undefined) {
+    const warning = remove_server_account_skill_links(input.legacy_server_skill_parent, [
+      {
+        path: input.native_home,
+        skills_directory: input.native_skills_directory,
+      },
+    ]);
+    if (warning !== null) invalid(warning);
+  }
   let root_fd: number | undefined,
     parent: number | undefined,
     lock: number | undefined,

@@ -548,14 +548,7 @@ if (spec.mode === 'machines') {
         choices.push(owner.machine_id);
         throw new Error('selection only');
       };
-    const router = new LocaleBackendChildFactory(
-      db,
-      () => {
-        choices.push('local');
-        throw new Error('selection only');
-      },
-      registry.as_factory(),
-    );
+    const router = new LocaleBackendChildFactory(db, registry.as_factory());
     const start = new ResolvedConversationStart({
       conversation_id: 'drain',
       backend_key: parse_backend_instance_id('codex'),
@@ -893,7 +886,7 @@ try {
       },
     },
   ) as RetainedBackendChildFactory;
-  const router = new LocaleBackendChildFactory(database, local, remote);
+  const router = new LocaleBackendChildFactory(database, remote);
   for (const ticket of [spec.ticket, spec.local_ticket, null]) {
     const start = new ResolvedConversationStart({
       conversation_id: ticket === spec.ticket ? 'drain' : 'routing',

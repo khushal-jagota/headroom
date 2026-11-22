@@ -1,5 +1,4 @@
 import { revoke_launch_tokens } from '../agent_identity/data.ts';
-import { prepare_agent_home } from '../agent_homes/agent_home.ts';
 import { read_machine } from '../machines/data.ts';
 import { agent_machine_id } from '../machines/conversation_machine.ts';
 import {
@@ -11,10 +10,7 @@ import { assert_test_database_path } from '../core/test_paths.ts';
 /** Route-owned start/send/reset phases. No SQL capability survives an await. */
 import { observe_conversation_operation, ConversationStartAborted } from './abort.ts';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, statSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
 import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { Principal } from '../core/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -164,23 +160,6 @@ function context(database: Database, overrides: Partial<WorkspaceContext> = {}):
     workspace_root: overrides.workspace_root ?? registered?.workspace_root ?? null,
   };
 }
-export function default_host_workspace(): string {
-  const preferred = join(homedir(), 'projects');
-  try {
-    if (statSync(preferred).isDirectory()) return realpathSync(preferred);
-  } catch (error) {
-    if (!(
-      error instanceof Error &&
-      'code' in error &&
-      ['ENOENT', 'ENOTDIR'].includes(String(error.code))
-    ))
-      throw error;
-  }
-  return resolve(fileURLToPath(new URL('../../', import.meta.url)));
-}
-function default_workspace(database: Database, overrides: Partial<WorkspaceContext> = {}): string {
-  return context(database, overrides).workspace_root ?? default_host_workspace();
-}
 export function chief_home_folder(database: Database): string {
   return join(dirname(context(database).db_path), 'files', 'chief');
 }
@@ -204,11 +183,10 @@ export function workspace_for_project(
     explicit?: string | null;
   } & Partial<WorkspaceContext> = {},
 ): [string, WorkspacePathPolicy] {
-  if (options.explicit != null)
-    return [options.explicit, ticket_locale === 'macos' ? 'absolute' : 'home_relative'];
-  if (ticket_locale === 'macos') return ['/', 'executor_default'];
   if (project_id !== null) database.read((sql) => readProject(sql, project_id));
-  return [default_workspace(database, options), 'home_relative'];
+  const workspace =
+    options.explicit ?? options.workspace_root ?? contexts.get(database)?.workspace_root;
+  return workspace == null ? ['/', 'executor_default'] : [workspace, 'absolute'];
 }
 interface ResolveOptions extends Partial<WorkspaceContext> {
   worker_type_registry?: WorkerTypeRegistry;
@@ -291,7 +269,7 @@ export function agent_resolve_from_sql(
     },
     overrides,
     workspace_folder: join(dirname(resolve(db_path)), 'files', 'chief'),
-    shared_workspace_folder: options.workspace_root ?? default_host_workspace(),
+    shared_workspace_folder: '',
     machine_id: agent_machine_id(sql, { kind: 'chief' }),
   });
   require_usable_model(sql, values.backend_key, values.model, values.machine_id);
@@ -324,7 +302,7 @@ export function manager_resolve(
     },
     overrides,
     workspace_folder: options.workspace_folder ?? manager_home_folder(database, item.id),
-    shared_workspace_folder: default_workspace(database, options),
+    shared_workspace_folder: '',
     machine_id: database.read((sql) => agent_machine_id(sql, { kind: 'manager', id: item.id })),
   });
 }
@@ -684,13 +662,6 @@ export async function start_agent_conversation(
     required_manager_id?: string | null;
   },
 ): Promise<LinkedConversation> {
-  if (agent_key === CHIEF_SETTINGS_KEY) {
-    const home = chief_home_folder(database);
-    if (values.workspace_folder === home) mkdirSync(home, { recursive: true });
-  } else if (options.required_manager_id != null) {
-    const home = manager_home_folder(database, options.required_manager_id);
-    if (values.workspace_folder === home) await prepare_agent_home(home, 'manager');
-  }
   await observe_conversation_operation(
     () => system.start_conversation(start_request(options.conversation_id, values)),
     options.signal,

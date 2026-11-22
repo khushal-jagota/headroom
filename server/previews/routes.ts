@@ -45,7 +45,6 @@ export function createPreviewRoutes(): PreparedPreviewRoutes {
     const service = new PreviewService(
       services.database,
       services.config.trusted_ingress_canonical_origin ?? '',
-      services.config.port,
     );
     remote = service.remote;
     const transport = new PreviewTransport(service, lifetime);

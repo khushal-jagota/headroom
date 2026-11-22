@@ -1,4 +1,6 @@
-/** Exact durable custody remains readable after the live child handle disappears. */
+/** One-release retirement of historical direct children. Starts no agent.
+ * Delete after every home runs one start of this release.
+ */
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';

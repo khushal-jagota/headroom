@@ -28,11 +28,6 @@ import {
   collect_cleanup_inventory,
   inventory_body,
 } from './vps_status/cleanup.ts';
-import { layout_for } from './ticket_scratch/collect.ts';
-import { clean_for_database } from '../ticket_workspaces/cleanup.ts';
-import { snapshot_ticket_scratch, prune_ticket_scratch } from '../conversation/worker_scratch.ts';
-import { dirname, join } from 'node:path';
-import { filesRoot } from '../files/logic/paths.ts';
 
 const success = (stdout: string, stderr = ''): Result => ({
   exit_code: 0,
@@ -69,34 +64,8 @@ export async function environment_cleanup(
     const inventory = await collect_cleanup_inventory(config, resources.status_options);
     resources.require_active();
     const payload: Record<string, unknown> = { dry_run: !args.apply, ...inventory_body(inventory) };
-    const selected_layout = await layout_for(
-      config.ticket_scratch_root,
-      config.ticket_scratch_database,
-      config.db_path,
-      deps.home,
-      deps.admit_path,
-    );
-    const layout =
-      selected_layout === null
-        ? null
-        : {
-            repository: deps.admit_path(selected_layout.repository),
-            folders: selected_layout.folders.map((path) => deps.admit_path(path)),
-          };
-    resources.require_active();
-    const scratch_result = await clean_for_database(config.db_path, Math.floor(deps.now_unix()), {
-      ...resources.scratch_options,
-      extra_roots: layout?.folders ?? [],
-      apply: args.apply,
-      measure_size: true,
-      snapshot_ticket_scratch: (ticket) => snapshot_ticket_scratch(ticket, deps.home),
-      prune_ticket_scratch: (ticket, names) => prune_ticket_scratch(ticket, names, deps.home),
-    });
-    const manifest_path = deps.admit_path(
-      join(dirname(filesRoot(config.db_path, 'ticket')), 'ticket-workspaces-cleanup.json'),
-    );
-    payload.ticket_workspaces = JSON.parse(await readFile(manifest_path, 'utf8'));
-    payload.ticket_workspaces_result = scratch_result;
+    payload.ticket_workspaces = null;
+    payload.ticket_workspaces_result = null;
     if (args.apply)
       payload.result = await apply_cleanup_inventory(inventory, resources.signal, deps.admit_path);
     resources.require_active();
@@ -104,9 +73,6 @@ export async function environment_cleanup(
     const lines = [args.apply ? 'applied cleanup' : 'cleanup dry run'];
     for (const candidate of inventory.candidates)
       lines.push(`${candidate.kind}: ${candidate.path}`);
-    lines.push(`Ticket workspace inventory: ${manifest_path}`);
-    for (const kept of scratch_result?.skipped ?? [])
-      lines.push(`kept: ${kept.path} (${kept.reason})`);
     return success(lines.join('\n'));
   });
 }

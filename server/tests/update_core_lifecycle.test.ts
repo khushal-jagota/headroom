@@ -22,7 +22,6 @@ import { startServer } from '../core/start.ts';
 import type { TestCompositionContext } from '../core/start.ts';
 import type { Database } from '../core/database/contracts.ts';
 import { createReadAccess } from '../core/database/index.ts';
-import * as worker_skill_startup from '../worker_settings/startup.ts';
 import { UpdateBarrier } from '../environments/update_barrier.ts';
 import { flock } from '../core/locks/flock.ts';
 import { acquireRuntimeOwnership } from '../core/locks/index.ts';
@@ -213,7 +212,6 @@ async function owned_server(
     const server = await startServer({
       enableWorkerReadiness: true,
       createConversationCore(value) {
-        registry.bind_runtime(value.worker_supervision);
         return new SqliteProcessConversationSystem({
           store: value.record.store,
           delivery_model_refusal: (backend, model, conversation_id) =>
@@ -552,7 +550,6 @@ test('a retained installer keeps startup health-only and orphan recovery retries
   let recover_calls = 0;
   let failed_calls = 0;
   const metrics_start = vi.spyOn(MetricsRuntime.prototype, 'start');
-  const skill_publication = vi.spyOn(worker_skill_startup, 'publish_worker_skills');
   const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
   const owned = await owned_server(undefined, {
     before_start(root) {
@@ -578,7 +575,6 @@ test('a retained installer keeps startup health-only and orphan recovery retries
       (await fetch(owned.server.address + '/api/health?expected_sha=' + 'a'.repeat(40))).status,
     ).toBe(200);
     expect(metrics_start).not.toHaveBeenCalled();
-    expect(skill_publication).not.toHaveBeenCalled();
     expect(existsSync(join(owned.root, 'workspace/.agents/skills'))).toBe(false);
     expect(owned.context.core!.workspace_admission.closed).toBe(true);
     expect((await owned.post('/api/projects', { name: 'held', summary: 'proof' })).status).toBe(
@@ -594,8 +590,7 @@ test('a retained installer keeps startup health-only and orphan recovery retries
     expect(owned.environment.update_barrier!.frozen).toBe(true);
     await vi.waitFor(() => expect(metrics_start).toHaveBeenCalledOnce(), { timeout: 3500 });
     expect(owned.environment.update_barrier!.frozen).toBe(false);
-    expect(skill_publication).toHaveBeenCalledOnce();
-    expect(existsSync(join(owned.root, 'workspace/.agents/skills'))).toBe(true);
+    expect(existsSync(join(owned.root, 'workspace/.agents/skills'))).toBe(false);
     expect(owned.context.core!.workspace_admission.closed).toBe(false);
     expect(
       errors.mock.calls.some(([message]) =>

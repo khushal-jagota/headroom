@@ -168,8 +168,7 @@ async function ticket_folder(
   };
 }
 /**
- * The Chief's or a Manager's own home on this machine. In the server's folder the server has
- * already written its files there. Elsewhere, a Manager's home gets the same files here.
+ * Machine code prepares the Chief's or a Manager's own home, including on the local link.
  */
 async function supervisor_home(
   owner: Extract<MacChildOwner, { kind: 'chief' | 'manager' }>,
@@ -182,7 +181,7 @@ async function supervisor_home(
     if (owner.kind === 'manager') {
       // The file sync sends this folder, and the owner sees it.
       await create_directory(options, join(home, 'artifacts'));
-      if (options.paths.server_folders === null) await prepare_agent_home(home, 'manager');
+      await prepare_agent_home(home, 'manager');
     }
     return home;
   } catch (error) {
@@ -206,7 +205,7 @@ async function child_folder(
     case 'manager':
       return {
         workspace_folder: await supervisor_home(owner, options),
-        role_text,
+        role_text: `\nThe repositories on this machine are under ${options.workspace_home}.`,
         ticket_files: null,
         managed_ticket_folder: null,
       };

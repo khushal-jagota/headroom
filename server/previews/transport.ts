@@ -65,20 +65,6 @@ class HeaderAdmission {
     }
   }
 }
-class HeaderBoundedSocket extends net.Socket {
-  private readonly admission = new HeaderAdmission();
-  override emit(event: string | symbol, ...args: unknown[]): boolean {
-    if (event === 'data' && Buffer.isBuffer(args[0])) {
-      try {
-        this.admission.admit(args[0]);
-      } catch (error) {
-        this.destroy(error as Error);
-        return false;
-      }
-    }
-    return super.emit(event, ...args);
-  }
-}
 class HeaderBoundedRelay extends Duplex {
   private idle_timer: ReturnType<typeof setTimeout> | undefined;
   private idle_ms = 0;
@@ -165,38 +151,15 @@ class VerifiedAgent extends http.Agent {
     void this.lifetime
       .track(async () => {
         if (this.connection_closed()) throw new Error('Preview connection admission is closed');
-        if (this.record.machine_id !== undefined) {
-          const socket = new HeaderBoundedRelay(await this.service.remote.connect(this.record));
-          if (this.connection_closed()) {
-            socket.destroy();
-            throw new Error('Preview connection admission is closed');
-          }
-          void this.lifetime.track(
-            () => new Promise<void>((resolve) => socket.once('close', resolve)),
-          );
-          callback?.(null, socket);
-          return;
-        }
-        await this.service.before_connection(this.record);
-        if (this.connection_closed()) throw new Error('Preview connection admission is closed');
-        const socket = new HeaderBoundedSocket();
-        void this.lifetime.track(
-          () => new Promise<void>((resolve) => socket.once('close', () => resolve())),
-        );
-        socket.connect({ host: '127.0.0.1', port: port(this.record) });
-        socket.pause();
-        try {
-          await once(socket, 'connect', {
-            signal: AbortSignal.timeout(config.CONNECT_SECONDS * 1000),
-          });
-          await this.service.after_connection(this.record, socket.localPort!);
-          if (this.connection_closed()) throw new Error('Preview connection admission is closed');
-          callback?.(null, socket);
-          setImmediate(() => socket.resume());
-        } catch (error) {
+        const socket = new HeaderBoundedRelay(await this.service.remote.connect(this.record));
+        if (this.connection_closed()) {
           socket.destroy();
-          callback?.(error as Error, undefined as unknown as Duplex);
+          throw new Error('Preview connection admission is closed');
         }
+        void this.lifetime.track(
+          () => new Promise<void>((resolve) => socket.once('close', resolve)),
+        );
+        callback?.(null, socket);
       })
       .catch((error) => callback?.(error as Error, undefined as unknown as Duplex));
     return undefined as unknown as net.Socket;

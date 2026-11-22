@@ -374,14 +374,16 @@ test('the Chief and a Manager start in their own homes, with no Ticket step or W
     expect((await stat(join(home, 'artifacts'))).isDirectory()).toBe(true);
     expect((await stat(join(home, 'logs'))).isDirectory()).toBe(true);
     expect(existsSync(join(home, 'CLAUDE.md'))).toBe(true);
-    expect(remote.role_materials!.role_text).toBe('role');
+    expect(remote.role_materials!.role_text).toBe(
+      `role\nThe repositories on this machine are under ${root}.`,
+    );
     const environment = new Map(remote.role_materials!.identity_environment_variables);
     expect(environment.has('PLAN_TICKET_FILES_DIR')).toBe(false);
     expect(environment.get('PLAN_MANAGER_ID')).toBe('m_one');
     // Worker priority, scratch and per-Ticket process records follow this identity.
     expect(worker_ticket_id(remote)).toBeNull();
 
-    // The server's own machine code works in the server's folders and writes nothing there.
+    // Machine code also prepares the Manager home on the local link.
     const served = join(root, 'data', 'files');
     const shared = new ExecutorPaths(join(root, 'shared'), {
       tickets: join(served, 'tickets'),
@@ -394,8 +396,10 @@ test('the Chief and a Manager start in their own homes, with no Ticket step or W
     const { localized: local } = await localize(shared, manager);
     expect(local.workspace_folder).toBe(served_home);
     expect((await stat(join(served_home, 'artifacts'))).isDirectory()).toBe(true);
-    expect(existsSync(join(served_home, 'logs'))).toBe(false);
-    expect(await readFile(join(served_home, 'CLAUDE.md'), 'utf8')).toBe('written by the server');
+    expect(existsSync(join(served_home, 'logs'))).toBe(true);
+    expect(await readFile(join(served_home, 'CLAUDE.md'), 'utf8')).toContain(
+      'You are one Manager.',
+    );
     const { localized: chief } = await localize(shared, start([['PLAN_ACTOR', 'chief']]));
     expect(chief.workspace_folder).toBe(join(served, 'chief'));
     expect(existsSync(join(served, 'chief', 'artifacts'))).toBe(false);

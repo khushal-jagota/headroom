@@ -79,7 +79,11 @@ async function host(upstream_port: number) {
     check: async () => record,
     before_connection: async () => {},
     after_connection: async () => {},
-  } as unknown as PreviewService;
+  } as unknown as PreviewService & {
+    // Test gates model the machine relay's asynchronous admission, not server process checks.
+    before_connection(record: PreviewRecord): Promise<void>;
+    after_connection(record: PreviewRecord, port: number): Promise<void>;
+  };
   const transport = new PreviewTransport(service);
   const pending = new Set<Promise<void>>();
   const run = (task: Promise<void>) => {

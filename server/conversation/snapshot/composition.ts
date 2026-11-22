@@ -202,7 +202,10 @@ export function create_backend_runtime(options: {
     database,
     backend_snapshots: new BackendSnapshotService({
       sources: backends.sources,
-      keep_complete_model_list: (snapshot) => backend_state.keep_vps_model_list(snapshot),
+      keep_complete_model_list:
+        registry === undefined
+          ? undefined
+          : (snapshot) => backend_state.keep_vps_model_list(snapshot),
       environment,
       now,
     }),

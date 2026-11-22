@@ -20,7 +20,7 @@ The Worker prepares a preview, which reserves the address and names the worktree
 
 A generation ends when the Worker stops it, when the process exits or the port is reused, when the Ticket is done or deleted, or when the relay disconnects, when machine code restarts, or when the server restarts. An old address shows an ended preview. A restarted app needs a new generation.
 
-Previews need trusted Tailscale ingress to be configured on the live host. Without it there are none. Previews run on the Ticket's assigned machine, on Linux x86_64 or Apple Silicon. Machine code retains native process evidence. The server keeps the destination, generation, and preview state. The Tickets of the server's own machine also run through machine code, so they use the same path. The server's older local preview path serves no Ticket.
+Previews need trusted Tailscale ingress to be configured on the live host. Without it there are none. Previews run on the Ticket's assigned machine, on Linux x86_64 or Apple Silicon. Machine code retains native process evidence. The server keeps the destination, generation, and preview state. The Tickets of the server's own machine also run through machine code, so they use the same path. The server never checks an application folder or process on its own disk.
 
 ## Native Mac evidence
 

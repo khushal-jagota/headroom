@@ -46,9 +46,7 @@ import { uncertain_row, refused_row, prompt_row } from './messages.ts';
 import { field_mutation } from './save_attempt.ts';
 import { ConversationRecord } from '../record/contracts.ts';
 import { wait_for_item } from '../../executor/item_budget.ts';
-import { SUPERVISED_CHILD_GENERATION_PREFIX } from '../child_custody.ts';
 import type { SqliteProcessConversationSystem } from '../system.ts';
-import { is_ticket_conversation } from '../record/data/child_custody.ts';
 
 function result(values: Partial<DeliveryAttempt> = {}): DeliveryAttempt {
   return {
@@ -79,17 +77,8 @@ function owned(host: DeliveryServices, state: ConversationState, reservation: Re
  * conversation's vendor session. A Ticket's cleanup recheck guards a Worker. Any other
  * conversation starts no child until that process record is proven retired.
  */
-function waits_for_recorded_source(
-  host: Pick<DeliveryServices, 'options'>,
-  state: ConversationState,
-): boolean {
-  return (
-    !state.local_child_retirement_proven &&
-    !state.local_preparation_cancelled &&
-    !host.options.store.start_admission_database.read((sql) =>
-      is_ticket_conversation(sql, state.record.conversation_id),
-    )
-  );
+function waits_for_recorded_source(state: ConversationState): boolean {
+  return !state.local_child_retirement_proven && !state.local_preparation_cancelled;
 }
 /** Before a new turn opens, retire an idle recorded process, as a kill does. */
 async function retire_recorded_source(
@@ -98,7 +87,7 @@ async function retire_recorded_source(
 ): Promise<void> {
   if (state.child !== null) return;
   await host.ensure_local_custody(state);
-  if (state.child_is_quarantined || !waits_for_recorded_source(host, state)) return;
+  if (state.child_is_quarantined || !waits_for_recorded_source(state)) return;
   if (await host.options.store.retire_idle_recorded_source(state.record.conversation_id))
     state.local_child_retirement_proven = true;
 }
@@ -114,7 +103,7 @@ async function ensure_child(
       'The agent stopped after an earlier failure and was not replaced yet.',
     );
   if (state.child !== null) return state.child;
-  if (waits_for_recorded_source(host, state))
+  if (waits_for_recorded_source(state))
     throw new BackendSpawnFailed(
       'An agent process that the server started earlier is not proven ended. Select Stop to end it, then send your message again.',
     );
@@ -127,11 +116,7 @@ async function ensure_child(
     reasoning_effort: target.reasoning_effort,
   });
   const instance = host.options.backend_registry.require_live(resolved.backend_key);
-  // The factory may still return a remote child. A remote child writes no custody row, so its
-  // marked generation is never judged.
-  const sink = host.make_sink(state, {
-    supervised_launch: instance.supervises_local_launches === true,
-  });
+  const sink = host.make_sink(state);
   state.child_event_sink = sink;
   const child = instance.child_factory({
     resolved_start: resolved,
@@ -154,7 +139,6 @@ async function ensure_child(
       ),
     );
   }
-  if (!child.stop_outside_lock) await host.record_local_child_preparation(state, child, sink);
   state.preparing_child = child;
   try {
     await host.native_operation(() =>
@@ -173,34 +157,6 @@ async function ensure_child(
   if (host.shutting_down || state.reserved_turn !== reservation) {
     if (!host.shutting_down || !child.stop_outside_lock) await host.discard_child(state, child);
     throw new DeliveryCancelled();
-  }
-  // A marked row without a record reads as never spawned after a restart, so a child that broke
-  // that promise is stopped while its handle is still here. A cancelled launch was stopped above.
-  if (!child.stop_outside_lock && sink.generation.startsWith(SUPERVISED_CHILD_GENERATION_PREFIX)) {
-    let recorded: string | null = null;
-    let failure: unknown = null;
-    try {
-      recorded = host.options.store.local_child_supervision_record(
-        state.record.conversation_id,
-        sink.generation,
-      );
-    } catch (error) {
-      failure = error;
-    }
-    if (recorded === null) {
-      state.child = child;
-      state.child_is_quarantined = true;
-      try {
-        await host.discard_child(state, child);
-      } catch (error) {
-        // The refusal stays the reason; a failed stop keeps the child quarantined.
-        failure = failure === null ? error : new AggregateError([failure, error]);
-      }
-      throw new BackendSpawnFailed(
-        'the agent started without a supervision record, so Panels stopped it',
-        failure === null ? undefined : { cause: failure },
-      );
-    }
   }
   state.child = child;
   state.child_selection = {
@@ -370,17 +326,6 @@ export async function deliver_prompt(
           reference,
         ),
       );
-    if (
-      !target.stop_outside_lock &&
-      !(await host.check_local_child_started(state, reservation.token))
-    ) {
-      await host.discard_child(state, target);
-      return result({
-        refusal_reason: R.backend_did_not_start,
-        record_refusal: true,
-        refusal_detail: 'The agent did not record its process identity. No prompt was sent.',
-      });
-    }
     survivors = survivors.filter((message) => !message.dispatch_memory_note);
     const note = host.options.store.worker_step_memory_note(
       state.record.conversation_id,
@@ -650,12 +595,6 @@ export async function write_replayed_prompt(
           reference,
         ),
       );
-    if (!child.stop_outside_lock && !(await host.check_local_child_started(state, token))) {
-      await host.discard_child(state, child);
-      throw new BackendSpawnFailed(
-        'The agent did not record its process identity. No prompt was sent.',
-      );
-    }
     host.start_admission.bind_source(token, child);
     const accepted = await host.native_operation(() =>
       child!.write_prompt(token, prompt.content, {

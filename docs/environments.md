@@ -58,7 +58,7 @@ The contracts and OS adapters live in `platform_runtime/`. Domain policy stays i
 
 Defaults live in `config.yaml`. Every value there can be overridden by the matching `PLAN_*` environment variable. Test-only switches are environment-only on purpose. Stream heartbeats, database lock waits, and shutdown grace periods use fixed values in code. The background poll interval remains adjustable. Startup does not create an empty logs folder. Status and cleanup can inspect existing logs. A server with dispatch enabled owns the readiness, measure-source schedule, and manager-wake loops behind one machine lock, so a second server on the same lock never becomes a second scheduler.
 
-A server can also be given a default workspace folder for new agent conversations. It links the managed skills into that folder and refuses to start rather than overwrite anything already there. How a conversation picks its folder is in [Conversations](conversations.md).
+A server can record a default workspace path for new conversations. Machine code checks that path on the execution machine. How a conversation picks its folder is in [Conversations](conversations.md).
 
 Agent backends need their CLIs installed and logged in outside Headroom. On the VPS, the sealed release carries the Claude Code and Codex CLIs; Antigravity runs the host's own `agy`.
 
@@ -108,13 +108,13 @@ Codex and Claude use real disk scratch at `~/.pw/<ticket-id>-<six hex characters
 
 Scratch belongs to one backend process. Panels can remove scratch of a process that is no longer current. Scratch preparation and removal run on awaited worker threads. A cancelled start waits for preparation and removes its exact new directory before it releases ownership.
 
-Tools that follow the temporary environment use this scratch. Commands that name `/tmp` or `/var/tmp` still use those host paths. Workers must use `TMPDIR` or a tool's explicit temporary-folder setting. Chief and Managers retain the server's private `/tmp` on the VPS, which shares the host's memory-backed filesystem. Host storage and age cleanup remain operator policy.
+Tools that follow the temporary environment use this scratch. Commands that name `/tmp` or `/var/tmp` still use those host paths. Workers must use `TMPDIR` or a tool's explicit temporary-folder setting. Chief and Managers use the temporary folder of their execution machine. Host storage and age cleanup remain operator policy.
 
 The checkout stays private. File access and artifact transfers exclude it, and backups already exclude the files tree. Development checks admit only the managed checkout while they continue to reject storage shared with the installed app. Projects without a repository use an ordinary Ticket workspace.
 
 Panels clears a Ticket checkout when the Ticket ends or is deleted, once it can prove the work is on origin and the Worker's custody is closed. Panels relies on its Worker custody proof and does not inspect unrelated processes. Artifacts inside the checkout leave with it. The rest of the Ticket folder, including its separate artifacts folder, remains for seven days after the Ticket ends. Then Panels removes everything in it except `logs/`, so the Ticket folder and its logs stay. The database keeps the end time and ownership after Ticket deletion. A reopened Ticket no longer qualifies. New activity on a Done Ticket starts a fresh seven-day wait for the remaining folder. Grants belong to one physical workspace on one machine. Removal of a server mirror cannot displace the Mac checkout.
 
-On the server's own machine, machine code and the server share the Ticket files folder. Machine code prepares and retires the workspaces that it registered there, including a folder that it adopted from the server. It retires an adopted folder only after the server's old process records for it are retired. The server's own cleanup, and its retries of earlier retirements, handle only the workspaces that the server registered before its Tickets moved to machine code. Both take the same cleanup lock, and each writes its own cleanup report.
+On the server's own machine, machine code and the server share the Ticket files folder. Machine code prepares and retires only workspaces that it registered there, including an adopted folder. Retirement waits until the server's old process records for that folder are retired. The same ownership rule covers the Chief and the Managers. The server does not inspect or remove their execution folders.
 
 Attached checkouts keep their local changes on resume. Server and CLI cleanup share exclusive access to each cleanup pass. Cleanup adopts existing artifact folders without recreating absent paths. It detaches the checkout or expired folder before slow deletion. File preparation precedes the short database transaction that authorizes detach. Stop and backlog do not start the clock. Stage text and proposals survive, but links to deleted documents and evidence no longer work. Existing ended Tickets keep their remaining folders for a full week from adoption because their historical end dates are unknown.
 
@@ -137,10 +137,10 @@ Renaming the account, moving host state, or changing Tailscale Serve is operator
 
 ## Code
 
-- `server/ticket_workspaces/` and `server/environments/ticket_scratch/`: local workspace ownership, activity clocks, and safe removal.
+- `server/ticket_workspaces/`: workspace records and shared machine-side filesystem operations.
 - `server/environments/registry/`: the registry, its rules, and launch environments. `server/environments/vps_status/`: status and cleanup.
-- `server/core/config.ts`: configuration and `PLAN_*` overrides. `server/skills/sources.ts`: the workspace skills link.
-- `server/lifecycle/`: home custody and who may stop a server. `server/skills/account.ts`: account skill publication.
+- `server/core/config.ts`: configuration and `PLAN_*` overrides. Machine workspace paths remain values until machine code uses them.
+- `server/lifecycle/`: server lifetime. `server/executor/mac/skills/`: machine-owned provider skill publication.
 - `server/installation/` and `server/environments/release/mac_home*.ts`: native first-home installation and sealed Mac home publication.
 - `ops/panels-environments/`: user units, timers, and the host wrapper.
 

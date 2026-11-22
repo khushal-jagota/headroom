@@ -134,7 +134,6 @@ test('a build without Hermes reads every saved Hermes row and refuses only its l
           environment: new RecordingBackendProbeEnvironment(),
         }),
       createConversationCore(context) {
-        registry.bind_runtime(context.worker_supervision);
         return new SqliteProcessConversationSystem({
           store: context.record.store,
           execution_refusal: (id) =>

@@ -1,3 +1,10 @@
+import { MacPresenceService } from '../executor/vps_presence.ts';
+import { ChangeSignal } from '../core/changes/index.ts';
+import { BackendSnapshotService } from '../conversation/snapshot/service.ts';
+import { RecordingBackendProbeEnvironment } from '../conversation/snapshot/recording_environment.ts';
+import { decode_value } from '../executor/protocol.ts';
+import type { BackendRequest } from '../executor/wire.generated.ts';
+import { decode_machine_update } from '../conversation/snapshot/machine.ts';
 /** Distinct gap: Home-only card tests cannot prove provider state stays with its machine. */
 import { expect, test, vi } from 'vitest';
 import { fixture, fixture_path } from './ticket_fixture.ts';
@@ -49,86 +56,90 @@ const usage = (percent: number) => ({
   ],
 });
 
-test('machine cards and sign-in never borrow the server allowance or provider controller', async () => {
-  const database = fixture();
-  const state = new BackendStateStore(database);
-  state.keep_successful_usage(usage(91));
-  state.keep_successful_usage(usage(17), ORIGINAL_MAC_MACHINE_ID);
-  const home_sign_in = vi.fn(() => null);
-  const operations: string[] = [];
-  let available = true;
-  const runtime: BackendHttpRuntime = {
-    database,
-    backend_state: state,
-    backend_ids: [key],
-    drivers: [],
-    driver_of: () => null,
-    reports_allowance_usage: () => false,
-    backend_snapshots: {
-      retained: () => snapshot,
-      snapshot: async () => snapshot,
-      snapshots: async () => [snapshot],
-      update_backend: vi.fn(),
-    },
-    backend_usage: { refresh: vi.fn() },
-    sign_in: home_sign_in,
-    settled: async () => {},
-    machine_catalog: () => ({
-      retained: () => snapshot,
-      snapshot: async () => snapshot,
-      identity: null,
-      ready: true,
-      owns_conversation: () => false,
-    }),
-    machine_backends: (machine_id) => {
-      expect(machine_id).toBe(ORIGINAL_MAC_MACHINE_ID);
-      return {
-        get available() {
-          return available;
-        },
-        async request(request) {
-          operations.push(request.operation);
-          if (!available) throw new Error('machine absent');
-          if (request.operation === 'capabilities')
-            return { can_sign_in: true, reports_allowance_usage: true };
-          if (request.operation === 'refresh_usage') return JSON.parse(JSON.stringify(usage(23)));
-          return { sign_in: null };
-        },
-      };
-    },
-  };
-  const writes = new ConversationHttpWriteScope();
-  const app = await createApp(
-    loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(database) }),
-    {
+test.each([HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID])(
+  'machine %s cards and sign-in never borrow the server allowance or provider controller',
+  async (machine_id) => {
+    const database = fixture();
+    const state = new BackendStateStore(database);
+    state.keep_successful_usage(usage(91));
+    state.keep_successful_usage(usage(17), machine_id);
+    const home_sign_in = vi.fn(() => null);
+    const operations: string[] = [];
+    let available = true;
+    const runtime: BackendHttpRuntime = {
       database,
-      areas: [
-        {
-          prefix: '/api/conversation',
-          routes: createBackendRoutes(runtime, { available: true, writes }),
-        },
-      ],
-    },
-  );
-  try {
-    const path = `/api/conversation/backends?machine_id=${ORIGINAL_MAC_MACHINE_ID}`;
-    const card = (await app.inject({ method: 'GET', url: path })).json().backends[0];
-    expect(card.cached_usage.windows[0].used_percent).toBe(17);
-    expect([card.can_sign_in, card.reports_allowance_usage]).toEqual([true, true]);
-    await app.inject({
-      method: 'POST',
-      url: `/api/conversation/backends/codex/sign-in?machine_id=${ORIGINAL_MAC_MACHINE_ID}`,
-    });
-    expect(operations).toContain('sign_in_start');
-    expect(home_sign_in).not.toHaveBeenCalled();
-    expect(state.read_usage(key, HOME_MACHINE_ID)?.windows[0]?.used_percent).toBe(91);
-    available = false;
-    const cached = (await app.inject({ method: 'GET', url: path })).json().backends[0];
-    expect(cached.cached_usage.windows[0].used_percent).toBe(17);
-  } finally {
-    await app.close();
-  }
-});
+      backend_state: state,
+      backend_ids: [key],
+      drivers: [],
+      driver_of: () => null,
+      reports_allowance_usage: () => false,
+      backend_snapshots: {
+        retained: () => snapshot,
+        snapshot: async () => snapshot,
+        snapshots: async () => [snapshot],
+        update_backend: vi.fn(),
+      },
+      backend_usage: { refresh: vi.fn() },
+      sign_in: home_sign_in,
+      settled: async () => {},
+      machine_catalog: () => ({
+        retained: () => snapshot,
+        snapshot: async () => snapshot,
+        identity: null,
+        ready: true,
+        owns_conversation: () => false,
+      }),
+      machine_backends: (selected) => {
+        expect(selected).toBe(machine_id);
+        return {
+          get available() {
+            return available;
+          },
+          async request(request) {
+            operations.push(request.operation);
+            if (!available) throw new Error('machine absent');
+            if (request.operation === 'capabilities')
+              return { can_sign_in: true, reports_allowance_usage: true };
+            if (request.operation === 'refresh_usage') return JSON.parse(JSON.stringify(usage(23)));
+            return { sign_in: null };
+          },
+        };
+      },
+    };
+    const writes = new ConversationHttpWriteScope();
+    const app = await createApp(
+      loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(database) }),
+      {
+        database,
+        areas: [
+          {
+            prefix: '/api/conversation',
+            routes: createBackendRoutes(runtime, { available: true, writes }),
+          },
+        ],
+      },
+    );
+    try {
+      const path = `/api/conversation/backends?machine_id=${machine_id}`;
+      const card = (await app.inject({ method: 'GET', url: path })).json().backends[0];
+      expect(card.cached_usage.windows[0].used_percent).toBe(17);
+      expect([card.can_sign_in, card.reports_allowance_usage]).toEqual([true, true]);
+      await app.inject({
+        method: 'POST',
+        url: `/api/conversation/backends/codex/sign-in?machine_id=${machine_id}`,
+      });
+      expect(operations).toContain('sign_in_start');
+      expect(home_sign_in).not.toHaveBeenCalled();
+      if (machine_id !== HOME_MACHINE_ID)
+        expect(state.read_usage(key, HOME_MACHINE_ID)?.windows[0]?.used_percent).toBe(91);
+      available = false;
+      const cached = (await app.inject({ method: 'GET', url: path })).json().backends[0];
+      expect(cached.cached_usage.windows[0].used_percent).toBe(17);
+    } finally {
+      await app.close();
+    }
+  },
+);
 
 test('machine driver capabilities and allowance failures retain distinct outcomes', async () => {
   expect(
@@ -294,4 +305,119 @@ test('backend relay admits only the statuses its provider control protocol defin
   await expect(action()).rejects.toMatchObject({ statusCode: 502 });
   status = 422;
   await expect(action()).rejects.toMatchObject({ statusCode: 422 });
+});
+
+// Gap: sign-in/allowance relay tests do not prove that an update reaches the machine's
+// account command, retains the established result, or preserves its command deadline without an aggregate cutoff.
+// This uses the existing relay boundary and a recording environment, with no browser or host.
+test('provider update crosses the backend relay and executes in the machine account environment', async () => {
+  const environment = new RecordingBackendProbeEnvironment();
+  const command = ['/machine/account/bin/codex', 'update'];
+  environment.executables.set('codex', command[0]);
+  environment.outcomes.set(JSON.stringify(command), {
+    exit_code: 0,
+    standard_output: 'machine updated',
+    standard_error: '',
+  });
+  const snapshots = new BackendSnapshotService({
+    environment,
+    sources: [
+      {
+        instance_id: key,
+        executable_name: 'codex',
+        status: {
+          version_detects_upgrade: false,
+          async probe() {
+            return {
+              ...snapshot,
+              version: environment.commands.length ? '2' : '1',
+              update_advisory: {
+                install_method: 'native',
+                update_command: command,
+                latest_version: '2',
+                update_available: true,
+                detail: 'Update the machine CLI.',
+              },
+            };
+          },
+        },
+      },
+    ],
+  });
+  let admitted!: BackendRequest;
+  const withdraw = vi.fn(async () => false);
+  let wait_seconds: number | null | undefined;
+  const database = fixture();
+  const peer_at_version = (protocol_version: number) => {
+    database.write((tx) =>
+      tx.run(
+        "UPDATE mac_executor_presence SET identity_json=json_set(identity_json,'$.protocol_version',?),lease_json=json_set(lease_json,'$.backend_controls',json('true'),'$.identity.protocol_version',?) WHERE machine_id=?",
+        [protocol_version, protocol_version, HOME_MACHINE_ID],
+      ),
+    );
+    return new MacPresenceService(database, {} as never, {
+      machine_id: HOME_MACHINE_ID,
+      changes: new ChangeSignal(),
+    });
+  };
+  let peer = peer_at_version(26);
+  const relay = new VpsBackendControlRelay(
+    {
+      async put_backend_request(request) {
+        admitted = decode_value(request, 'BackendRequest');
+        return {
+          command_sequence: 1,
+          command_id: 'update',
+          created_at_vps_ms: 1,
+          child_command: null,
+          model_list_request: null,
+          backend_request: admitted,
+        };
+      },
+      async wait_result(_id, seconds, options) {
+        wait_seconds = seconds;
+        return {
+          command_id: 'update',
+          child_outcome: null,
+          model_list: null,
+          backend_result: await run_backend_request(
+            admitted,
+            undefined,
+            options?.signal,
+            undefined,
+            snapshots,
+          ),
+        };
+      },
+      withdraw_waiting: withdraw,
+    },
+    {
+      is_present: () => peer.is_present(),
+      supports_backend_controls: (operation) => peer.supports_backend_controls(operation),
+    },
+  );
+  await expect(
+    relay.request({ backend_key: key, operation: 'update_backend' }),
+  ).rejects.toMatchObject({
+    statusCode: 503,
+    message: 'Update machine code before you update a provider CLI.',
+  });
+  expect(admitted).toBeUndefined();
+  await expect(
+    relay.request({ backend_key: key, operation: 'capabilities' }),
+  ).resolves.toMatchObject({ can_sign_in: false });
+  expect(wait_seconds).toBe(60);
+  expect(environment.commands).toEqual([]);
+  peer = peer_at_version(27);
+  const result = decode_machine_update(
+    await relay.request({ backend_key: key, operation: 'update_backend' }),
+  );
+  expect(result).toEqual({
+    outcome: 'succeeded',
+    detail: 'Updated to 2.',
+    output_tail: 'machine updated',
+  });
+  expect(environment.commands).toEqual([command]);
+  expect(wait_seconds).toBeNull();
+  expect(withdraw).toHaveBeenCalledWith('update', 'delivery_withdrawn');
 });

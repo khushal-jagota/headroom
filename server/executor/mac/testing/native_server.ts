@@ -92,11 +92,9 @@ export async function start_native_server() {
         current,
         {
           registry: registry_of_factories(for_every_built_in_backend(() => local)),
-          host: unread_driver_host,
         },
         {
           drivers: [],
-          driver_host: () => unread_driver_host,
           http: () =>
             create_backend_runtime({
               database: current.database,
@@ -155,8 +153,7 @@ export async function start_native_server() {
         ),
       );
       assert.ok(identity);
-      assert.equal(JSON.parse(identity.identity_json).protocol_version, 26);
-      assert.equal(PROTOCOL_VERSION, 26);
+      assert.equal(JSON.parse(identity.identity_json).protocol_version, PROTOCOL_VERSION);
       return endpoint.health_payload();
     },
     async create_turn(

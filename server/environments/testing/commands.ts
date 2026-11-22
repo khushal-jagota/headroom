@@ -415,8 +415,7 @@ export async function command_probe(
   } finally {
     ChildProcesses.prototype.spawn = original_spawn;
   }
-  if (calls.some((call) => call.command === 'cleanup')) assert(scratch.length > 0);
-  else assert.equal(scratch.length, 0);
+  assert.equal(scratch.length, 0, 'server cleanup never opens execution-machine workspaces');
   assert(scratch.every((row) => row.closed));
   const { run } = await import('../../cli/main.ts');
   const routing: { name: string; args: unknown }[] = [];

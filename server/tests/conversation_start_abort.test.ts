@@ -1,9 +1,11 @@
 /** Gap: observer cancellation and new-agent cleanup have different durable effects.
  * Reuse the Ticket SQLite fixture and existing fake. No provider or network host.
  */
-import { dirname } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 import { fixture, fixture_path, create, claim, read, now } from './ticket_fixture.ts';
+import { loadConfig } from '../core/config.ts';
 import { InMemoryConversationSystem } from '../conversation/in_memory_conversation_system.ts';
 import { text_message_content } from '../conversation/message_content.ts';
 import {
@@ -14,6 +16,7 @@ import {
   send_to_ticket_conversation,
   start_agent_conversation,
   read_agent_conversation,
+  workspace_for_project,
 } from '../runtime/conversation_start.ts';
 afterEach(() => vi.restoreAllMocks());
 function setup() {
@@ -132,4 +135,28 @@ test('an aborted lock waiter releases its slot and the next operation completes 
   await holder;
   await successor;
   expect(successor_entered).toBe(true);
+});
+
+// Risk: a machine path absent on the server used to trigger physical setup or local defaults.
+// Reuse the in-memory conversation and private database. No process or listener is needed.
+test('machine workspace values survive resolution without server folder creation', async () => {
+  const { db, system } = setup();
+  const machine_path = join(dirname(fixture_path(db)), 'absent-machine-folder');
+  const config = loadConfig(join(dirname(fixture_path(db)), 'absent-config.yaml'), {
+    PLAN_TEST_MODE: '1',
+    PLAN_DB_PATH: fixture_path(db),
+    PLAN_WORKSPACE_ROOT: machine_path,
+    PLAN_TICKET_SCRATCH_ROOT: machine_path,
+  });
+  expect(config.workspace_root).toBe(machine_path);
+  expect(config.ticket_scratch_root).toBe(machine_path);
+  configure_conversation_start(db, { db_path: fixture_path(db), workspace_root: machine_path });
+  expect(workspace_for_project(db, 'vps', null)).toEqual([machine_path, 'absolute']);
+  expect(workspace_for_project(db, 'macos', null, { explicit: machine_path })).toEqual([
+    machine_path,
+    'absolute',
+  ]);
+  const values = agent_resolve(db, undefined, { workspace_folder: machine_path });
+  await start_agent_conversation(system, db, 'chief', values, { conversation_id: 'machine_path' });
+  expect(existsSync(machine_path)).toBe(false);
 });

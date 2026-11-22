@@ -31,10 +31,6 @@ import { create_vps_status_routes } from './vps_status/routes.ts';
 import type { VpsStatusSnapshot } from './vps_status/contracts.ts';
 import type { StatusOptions } from './vps_status/contracts.ts';
 import { create_vps_status_dependencies } from './vps_status/probes.ts';
-import { layout_for } from './ticket_scratch/collect.ts';
-import { clean_for_database } from '../ticket_workspaces/cleanup.ts';
-import { snapshot_ticket_scratch, prune_ticket_scratch } from '../conversation/worker_scratch.ts';
-import { create_ticket_scratch_runtime } from './ticket_scratch/runtime.ts';
 
 export interface EnvironmentOperations {
   app_root: string;
@@ -67,33 +63,6 @@ export async function createEnvironmentRuntime(
     database,
     operations.service_unit,
   );
-  const scratch_layout = config.test_mode
-    ? null
-    : await layout_for(config.ticket_scratch_root, config.ticket_scratch_database, database);
-  const scratch = config.test_mode
-    ? null
-    : create_ticket_scratch_runtime({
-        layout: scratch_layout,
-        db_path: database,
-        test_mode: config.test_mode,
-        changes: context.changes,
-        now_unix: () => context.clock.nowUnix(),
-        assert_database_owned: context.require_runtime_ownership,
-        clean_workspaces: (db, now, options) =>
-          clean_for_database(db, now, {
-            ...options,
-            extra_roots: scratch_layout?.folders ?? [],
-            git_execution: { children: context.one_shot_children, environment: process.env },
-            snapshot_ticket_scratch,
-            prune_ticket_scratch,
-            retire_local_children: (ticket_id, identity, operation) => {
-              const system = context.conversationSystem;
-              return system?.retire_local_workspace === undefined
-                ? { reason: 'Conversation runtime is unavailable' }
-                : system.retire_local_workspace(ticket_id, identity, operation);
-            },
-          }),
-      });
   const metrics = new MetricsRuntime({
     path: await store_path(database),
     config: load_metrics_config(),
@@ -209,7 +178,6 @@ export async function createEnvironmentRuntime(
         if (closing) return;
         await metrics.start();
         if (!closing) updates.start();
-        if (!closing) scratch?.start();
       });
       return starting;
     },
@@ -221,7 +189,6 @@ export async function createEnvironmentRuntime(
           () => metrics.settled(),
           () => updates.settled(),
           () => mac.service.settled(),
-          () => scratch?.settled(),
         ];
         for (const actual of actuals) {
           try {
@@ -246,11 +213,7 @@ export async function createEnvironmentRuntime(
         ['environment services'],
       );
       // Fence every producer now, including when setup still owns a continuation.
-      for (const stop of [
-        () => metrics.stop(options),
-        () => updates.stop(options),
-        () => scratch?.close(options),
-      ]) {
+      for (const stop of [() => metrics.stop(options), () => updates.stop(options)]) {
         try {
           drains.push(
             Promise.resolve(stop()).catch((error: unknown) => {
@@ -269,7 +232,6 @@ export async function createEnvironmentRuntime(
         metrics.settled(),
         updates.settled(),
         mac.service.settled(),
-        scratch?.settled(),
         starting?.catch(() => {}),
       ]).then(() => {}),
   };

@@ -3,7 +3,6 @@ import { VpsExecutorRegistry } from '../executor/registry.ts';
 import type { MacRemoteChild } from '../executor/vps_remote_child.ts';
 import { read_server_location } from '../server_link/data.ts';
 import { SERVER_LOCATION_HEADER, SERVER_LOCATION_PATH } from '../server_link/contracts.ts';
-import * as worker_skill_startup from '../worker_settings/startup.ts';
 import { issue_launch_token } from '../agent_identity/data.ts';
 /** Startup and shutdown own one record runtime and retain its lease through cleanup. */
 import { dirname, join, resolve } from 'node:path';
@@ -14,7 +13,6 @@ import * as database_module from '../core/database/index.ts';
 import { start_production_server } from '../lifecycle/production.ts';
 import type { ProductionServerDependencies } from '../lifecycle/production.ts';
 import { create_production_backend_bindings } from '../lifecycle/production_bindings.ts';
-import type { DriverHost } from '../drivers/core/host.ts';
 import { drivers_of_factories, for_every_built_in_backend } from '../drivers/testing/registry.ts';
 import { KNOWN_BACKEND_INSTANCE_IDS } from '../drivers/built_in_manifests.ts';
 import { run_application_process } from '../lifecycle/application.ts';
@@ -90,6 +88,10 @@ function setup() {
     tx.run(`INSERT INTO conversations
       (conversation_id,backend_key,model,workspace_folder,access,created_at)
       VALUES('retained','codex','fixture','/synthetic','full',0)`);
+    tx.run('UPDATE conversations SET machine_id=? WHERE conversation_id=?', [
+      HOME_MACHINE_ID,
+      'retained',
+    ]);
   });
   return { database, path };
 }
@@ -261,6 +263,9 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   vi.stubEnv('PLAN_TEST_MODE', '0');
   vi.stubEnv('PLAN_DISPATCH_ENABLED', 'true');
   const registry = new ScriptedBackendRegistry();
+  vi.spyOn(VpsExecutorRegistry.prototype, 'is_present').mockImplementation(
+    (machine_id) => machine_id === HOME_MACHINE_ID,
+  );
   // Production runs these conversations through the home's machine code, which the fixture
   // marks present. This lifecycle proof keeps its scripted children in that code's place.
   vi.spyOn(VpsExecutorRegistry.prototype, 'create').mockImplementation(
@@ -423,8 +428,9 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     });
     return app;
   });
-  const bindings_seen: DriverHost[] = [];
-  const driver_host = create_production_backend_bindings().driver_host;
+  const native_create = vi.fn(() => {
+    throw new Error('The server must not construct native drivers');
+  });
   const tracked_waits = vi.fn((sql: ReadSql, _now_ms: number) => {
     context.require_runtime_ownership();
     expect(sql.get('SELECT 1 AS alive')).toEqual({ alive: 1 });
@@ -435,17 +441,8 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
   };
   const dependencies: ProductionServerDependencies = {
     backends: {
-      drivers: drivers_of_factories(
-        for_every_built_in_backend((id) => (host) => {
-          // Every driver gets the one host, before any child, so each may bind it.
-          registry.bind_runtime(host.worker_supervision);
-          bindings_seen.push(host);
-          return registry.registry.require_live(id).child_factory;
-        }),
-      ),
-      driver_host,
+      drivers: drivers_of_factories(for_every_built_in_backend(() => native_create)),
       http(binding) {
-        bindings_seen.push(binding.driver_host);
         return create_backend_runtime({
           database: binding.database,
           config: binding.config,
@@ -522,7 +519,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
       .sort()
       .join(', ')}`,
   );
-  expect(bindings_seen).toEqual([]);
+  expect(native_create).not.toHaveBeenCalled();
   let server!: StartedServer;
   await run_application_process(
     {
@@ -565,9 +562,7 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     expect(
       context.database.read((sql) => sql.get('SELECT checked_at_ms FROM stall_checker_heartbeat')),
     ).toEqual({ checked_at_ms: tracked_waits.mock.calls.at(-1)![1] });
-    expect(new Set(bindings_seen).size).toBe(1);
-    // One per driver, and one for the HTTP runtime.
-    expect(bindings_seen).toHaveLength(KNOWN_BACKEND_INSTANCE_IDS.length + 1);
+    expect(native_create).not.toHaveBeenCalled();
     expect(existsSync(join(upload_root, 'startup-expired'))).toBe(false);
     expect(
       f.database.read((sql) =>
@@ -821,7 +816,6 @@ test('moved startup only answers with its address and never constructs record or
   const forbidden = vi.fn(() => {
     throw new Error('A moved server constructed a work service');
   });
-  const skills = vi.spyOn(worker_skill_startup, 'publish_worker_skills');
   const server = await startServer({
     createExecutor: forbidden,
     createConversationCore: forbidden,
@@ -842,7 +836,6 @@ test('moved startup only answers with its address and never constructs record or
       expect(await response.json()).toEqual(location);
     }
     expect(forbidden).not.toHaveBeenCalled();
-    expect(skills).not.toHaveBeenCalled();
     expect(f.database.read((sql) => sql.all('SELECT * FROM conversation_runtime_epoch'))).toEqual(
       unchanged,
     );

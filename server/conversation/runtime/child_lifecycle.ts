@@ -37,46 +37,11 @@ export function ensure_local_custody(
   return state.custody_ready;
 }
 
-export async function record_local_child_preparation(
-  host: SqliteProcessConversationSystem,
-  state: ConversationState,
-  child: BackendChild,
-  sink: CoreBackendEventSink,
-): Promise<void> {
-  await host.ensure_local_custody(state);
-  state.local_child_retirement_proven = false;
-  state.local_preparation_cancelled = false;
-  host.local_child_generations.set(child, sink.generation);
-  await host.options.store.record_child_custody(state.record.conversation_id, sink.generation);
-}
-
-export async function check_local_child_started(
-  host: SqliteProcessConversationSystem,
-  state: ConversationState,
-  turn: TurnToken,
-): Promise<boolean> {
-  const child = state.child;
-  const generation = child === null ? undefined : host.local_child_generations.get(child);
-  return (
-    generation !== undefined &&
-    (await host.options.store.check_local_child_started(
-      state.record.conversation_id,
-      generation,
-      turn.turn_number,
-    ))
-  );
-}
-
 export async function _confirm_local_child_stopped(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   child: BackendChild,
 ): Promise<void> {
-  const generation = host.local_child_generations.get(child);
-  if (!child.stop_outside_lock && generation !== undefined)
-    await host.options.store.record_child_custody(state.record.conversation_id, generation, null, {
-      retired: true,
-    });
   await host.persist(state, () =>
     host.start_admission.retire_source(host.options.store.start_admission_database, child),
   );

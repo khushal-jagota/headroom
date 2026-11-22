@@ -3,7 +3,6 @@ import { install_request_lifetime } from './http/lifetime.ts';
 import { initialize_server_location, read_persisted_server_location } from '../server_link/data.ts';
 import { install_server_link } from '../server_link/http.ts';
 import { dirname, join } from 'node:path';
-import { publish_worker_skills } from '../worker_settings/startup.ts';
 import { begin_startup_phase } from './startup_diagnostics.ts';
 import { UpdateBarrier } from '../environments/update_barrier.ts';
 import type { FastifyInstance, FastifyListenOptions } from 'fastify';
@@ -19,7 +18,6 @@ import { notify_chief as notify_chief_of_integrity_faults } from '../tickets/int
 import { acquireLock } from './locks/index.ts';
 import type { OwnedAreaContext } from './authority/register.ts';
 import type { SqliteProcessConversationSystem } from '../conversation/system.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { createConversationRoutes } from '../conversation/routes.ts';
 import { ConversationHttpWriteScope } from '../conversation/http/writes.ts';
 import { createBackendRoutes } from '../conversation/snapshot/routes.ts';
@@ -145,6 +143,7 @@ export class ServerServices {
     this.options = options;
     this.lifetime = lifetime;
     this.update_barrier = new UpdateBarrier(join(dirname(config.db_path), 'update-barrier.json'));
+    // Historical direct children only. Remove after every home starts this release once.
     this.worker_supervision = create_worker_supervision_runtime({
       one_shot_children: lifetime.one_shot_children,
       // An unopened database throws here, and supervision then prunes nothing.
@@ -237,7 +236,6 @@ export class ServerServices {
       child_processes,
       executor,
       update_barrier: this.update_barrier,
-      worker_supervision: this.worker_supervision,
     };
     const open_runs = options.readOpenRuns?.(before_record) ?? new Map();
     await areas.prepareRecord(
@@ -470,8 +468,8 @@ export class ServerServices {
       executor.configure(core, app, this.update_barrier);
     }
     core?.start_admission.configure_destinations(
-      (destination) =>
-        destination === HOME_MACHINE_ID || executor?.is_present(destination) === true,
+      // Scripted test hosts have no executor. Normal production always needs a present machine.
+      (destination) => executor?.is_present(destination) ?? config.test_mode,
     );
     const routes_ready = begin_startup_phase('HTTP routes');
     await app.ready();
@@ -579,9 +577,6 @@ export class ServerServices {
       if (normal_starting) return normal_starting;
       normal_starting = Promise.resolve().then(async () => {
         if (this.lifetime.isClosing()) return;
-        const skills_ready = begin_startup_phase('skills');
-        await publish_worker_skills(this.config);
-        skills_ready();
         const executor_ready = begin_startup_phase('executor');
         await this.executor.value?.start();
         executor_ready();

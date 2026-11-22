@@ -68,7 +68,7 @@
     updating[key] = true;
     delete results[key];
     try {
-      results[key] = await updateBackend(key);
+      results[key] = await updateBackend(key, machineId);
     } catch (problem) {
       results[key] = {
         outcome: "failed",
