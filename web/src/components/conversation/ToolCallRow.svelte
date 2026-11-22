@@ -261,7 +261,9 @@
     padding-inline: var(--space-2);
     transition: background var(--motion-fast) var(--motion-ease);
   }
-  .c2-tool:hover { background-image: var(--interaction-hover); }
+  /* Pointed at, the row takes the app's one hover wash (the rest bar's and the utility
+     buttons'), a step that reads on the dark page rather than a 6% tint that barely did. */
+  .c2-tool:hover { background-color: var(--wash-hover); }
   /* The output sits in its own recessed well under the line, so it reads as what the call
      printed rather than as more of the conversation. */
   .c2-tool-body {

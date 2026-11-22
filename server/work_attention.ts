@@ -1,29 +1,7 @@
 import type { Database } from './core/database/contracts.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
-import type { ReadSql } from './core/database/contracts.ts';
 import { readDurableFactsFor } from './conversation/publication/durable.ts';
-/** Conversations holding a key request the owner has not answered. Like a permission ask or a
- *  question, it stops on the owner, so it counts as awaiting an answer. It is a stored row,
- *  not live turn state, so it holds across restarts and after the turn that asked ended. */
-export function pendingCredentialConversations(sql: ReadSql, ids: Set<string>): Set<string> {
-  if (
-    ids.size === 0 ||
-    sql.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_requests'") ===
-      undefined
-  )
-    return new Set();
-  const sorted = [...ids].sort();
-  return new Set(
-    sql
-      .all<{ conversation_id: string }>(
-        'SELECT DISTINCT conversation_id FROM credential_requests WHERE conversation_id IN (' +
-          sorted.map(() => '?').join(',') +
-          ") AND json_extract(body,'$.state')='pending'",
-        sorted,
-      )
-      .map((row) => row.conversation_id),
-  );
-}
+import { pendingCredentialConversations } from './conversation/publication/coordinator.ts';
 async function signals(
   durableRows: ReturnType<typeof readDurableFactsFor>,
   system: ConversationSystem | undefined,

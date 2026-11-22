@@ -12,7 +12,7 @@
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import TaskProgress from "./TaskProgress.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
-  import type { RunValues } from "../../lib/conversation/composer";
+  import { DOCKED_CREDENTIAL_REQUEST, pendingCredentialRequest, type RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
@@ -21,11 +21,11 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { awaitsCredential, dockFeedbackFor, dockPreviewText, latestUnreadReply, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
+  import { awaitsCredential, dockFeedbackFor, dockPreviewText, latestUnreadReply, paneFailureFrom, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
-  import { restLineFrom, whatThisRowSays } from "../../lib/conversation/restLine";
+  import { restLineFrom, restLineMarksFrom, whatThisRowSays } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
@@ -224,6 +224,11 @@
   setContext(CREDENTIAL_REQUEST_READ_ONLY, () => readOnly);
   const credentialDrafts = $derived.by(() => { conversationId; return new Map() as CredentialRequestDrafts; });
   setContext(CREDENTIAL_REQUEST_DRAFTS, () => credentialDrafts);
+  /** The key request asked in the composer's place: the newest pending one, never in a
+   *  read-only pane. The transcript leaves exactly this one out (DOCKED_CREDENTIAL_REQUEST);
+   *  settled requests, and any older one still pending, stay inline. */
+  let credentialRequest = $derived(readOnly ? null : pendingCredentialRequest(rows, reader?.pages.flatMap(page => page.items) ?? []));
+  setContext(DOCKED_CREDENTIAL_REQUEST, () => credentialRequest?.request_id ?? null);
   let placementReady = $state(false);
   let entryPresentationPending = $state(true);
   let paneElement = $state<HTMLDivElement | null>(null);
@@ -276,6 +281,11 @@
   const headSetupElapsed = elapsedTurnTime(() => conversationState !== "rest" && headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
   // A key request blocks on the person as an ask or a question does, so the bar says so too.
   let credentialWaiting = $derived(!readOnly && awaitsCredential(rows, reader?.pages.flatMap(page => page.items) ?? []));
+  // A turn that failed, or a message that was not delivered, is said in the bar until the
+  // person sends something after it: the same facts the dock's line and the error rows use.
+  let headFailure = $derived(outgoingMessages.length > 0 ? null : paneFailureFrom(reader?.status
+    ? { lastBoundaryFailed: reader.status.rest.last_boundary_failed, latestKind: reader.status.rest.latest_happened?.kind ?? null }
+    : { lastBoundaryFailed: restLineMarksFrom(rows, ownerReadThroughSequence, running).failed, latestKind: rows.at(-1)?.kind ?? null }));
   let headStatus = $derived(paneHeadStatus({
     readOnly,
     activityUncertain,
@@ -283,7 +293,8 @@
     running,
     backgroundWorking,
     settingUp: headSettingUp && workerSetup ? workerSetupSentence(workerSetup, headSetupElapsed.seconds) : null,
-    elapsed: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds)
+    elapsed: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds),
+    failure: headFailure
   }));
   // A model list that could not be read because the machine is not connected is that same
   // machine state, which the dock already says. The model picker keeps the sentence and its
@@ -411,7 +422,8 @@
       {#if headStatus}
         <span class="chat-head-status" data-conversation-head-status={headStatus.tone}>
           {#if headStatus.tone === "live"}<span class="chat-head-mark chat-head-mark--live" aria-hidden="true"></span>
-          {:else if headStatus.tone === "attention"}<span class="chat-head-mark chat-head-mark--attention" aria-hidden="true"></span>{/if}
+          {:else if headStatus.tone === "attention"}<span class="chat-head-mark chat-head-mark--attention" aria-hidden="true"></span>
+          {:else if headStatus.tone === "failed"}<svg class="chat-head-mark chat-head-mark--failed" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.75v3.75" /><path d="M8 11.1v.15" /></svg>{/if}
           <span class="chat-head-status-text">{headStatus.text}</span>
         </span>
       {/if}
@@ -609,6 +621,8 @@
       {conversationExists}
       {running}
       {ask}
+      {credentialRequest}
+      transcriptOpen={conversationState === "opened"}
       {askNote}
     {userInputNote}
     {permissionAvailable}
@@ -711,6 +725,8 @@
   }
   .chat-head-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .chat-head-status[data-conversation-head-status="attention"] { color: var(--accent-text); }
+  /* Failed reads as the transcript's error rows do: the same error mark, the words a step above the quiet states. */
+  .chat-head-status[data-conversation-head-status="failed"] { color: var(--text-muted); }
   .chat-head-mark { flex: none; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-pill); }
   /* The dock's live mark, the same ring and arc, so working reads the same open or at rest. */
   .chat-head-mark--live {
@@ -722,6 +738,15 @@
     width: var(--space-2);
     height: var(--space-2);
     background: var(--accent-bright);
+  }
+  .chat-head-mark--failed {
+    width: 14px;
+    height: 14px;
+    border-radius: 0;
+    fill: none;
+    stroke: var(--accent-error);
+    stroke-width: 1.5;
+    stroke-linecap: round;
   }
   @keyframes chat-head-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .chat-head-mark--live { animation: none; } }

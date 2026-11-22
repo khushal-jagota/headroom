@@ -35,8 +35,8 @@
   </span>
   {#if preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
 </button>
-<!-- While the machine cannot say what it is doing, the line under the status is a warning,
-     not a note: it is the reason the status above it cannot be trusted. -->
+<!-- While the machine cannot say what it is doing, the line under the status is the reason
+     the status above it cannot be trusted: brighter than a note, under the warning mark. -->
 {#if feedback}<div class="c2-rest-feedback" class:is-warning={!activityKnown} role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
 
 <style>
@@ -74,7 +74,10 @@
   /* Setup the machine cannot confirm right now is recorded, not seen moving: no ring that
      could pass for a spinner, but the warning mark the line under it explains. */
   .c2-mark--unconfirmed { flex:none; width:14px; height:14px; fill:none; stroke:var(--accent-attention); stroke-width:1.5; stroke-linecap:round; }
-  .c2-rest-feedback.is-warning { color:var(--accent-attention); }
+  /* A warning in this pane is the amber mark, never amber words (as the transcript's own
+     warning lines): the reason under it is said a step brighter than a note, in the
+     secondary tone, so the colour keeps one meaning and the sentence stays easy to read. */
+  .c2-rest-feedback.is-warning { color:var(--tone-secondary); }
   @keyframes spin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion:reduce) { .c2-mark--running { animation:none; } .c2-rest-control { transition:none; } }
 </style>

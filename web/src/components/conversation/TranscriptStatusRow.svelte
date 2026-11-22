@@ -19,17 +19,21 @@
 </script>
 
 <div class="c2-status c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
-  <svg class="c2-status-mark" viewBox="0 0 16 16" aria-hidden="true">
-    {#if mark === "steer"}
-      <path d="M4 3v4.5a2.5 2.5 0 0 0 2.5 2.5H12M9.5 7.5 12 10l-2.5 2.5" />
-    {:else if status.tone === "error" || status.tone === "warning"}
-      <circle cx="8" cy="8" r="6.25" /><path d="M8 4.75v3.75" /><path d="M8 11.1v.15" />
-    {:else}
-      <circle cx="8" cy="8" r="6.25" /><rect x="5.75" y="5.75" width="4.5" height="4.5" rx="0.75" class="c2-status-fill" />
-    {/if}
-  </svg>
   <div class="c2-status-body">
-    <span class="c2-status-title">{status.title}</span>
+    <!-- The mark rides with the sentence, so a line under a message can end on the
+         message's own edge, mark and all, however long the backend's words under it are. -->
+    <span class="c2-status-line">
+      <svg class="c2-status-mark" viewBox="0 0 16 16" aria-hidden="true">
+        {#if mark === "steer"}
+          <path d="M4 3v4.5a2.5 2.5 0 0 0 2.5 2.5H12M9.5 7.5 12 10l-2.5 2.5" />
+        {:else if status.tone === "error" || status.tone === "warning"}
+          <circle cx="8" cy="8" r="6.25" /><path d="M8 4.75v3.75" /><path d="M8 11.1v.15" />
+        {:else}
+          <circle cx="8" cy="8" r="6.25" /><rect x="5.75" y="5.75" width="4.5" height="4.5" rx="0.75" class="c2-status-fill" />
+        {/if}
+      </svg>
+      <span class="c2-status-title">{status.title}</span>
+    </span>
     {#if status.detail}<span class="c2-status-detail" data-conversation-status-detail>{status.detail}</span>{/if}
   </div>
   {#if actions}<div class="c2-status-actions">{@render actions()}</div>{/if}
@@ -49,7 +53,11 @@
     line-height: 1.5;
     overflow-wrap: anywhere;
   }
-  .c2-status--end { align-self: flex-end; }
+  /* Under the person's message it ends where their bubble ends: the sentence, the mark
+     before it and the backend's words all keep to that edge. */
+  .c2-status--end { align-self: flex-end; text-align: end; }
+  .c2-status--end .c2-status-body { justify-items: end; }
+  .c2-status--end .c2-status-detail { padding-inline-start: 0; }
   .c2-status-mark {
     flex: none;
     width: 14px;
@@ -64,11 +72,14 @@
   }
   .c2-status-fill { fill: currentColor; stroke: none; }
   .c2-status-body { display: grid; gap: 2px; min-width: 0; }
+  .c2-status-line { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
   .c2-status-title { color: var(--text-default); }
-  /* The backend's own words: kept whole and selectable, in the tool voice, a step quieter
-     than the sentence that explains them. */
+  /* The backend's own words: kept whole and selectable, in the tool voice, under the
+     sentence (in from the mark) and a step quieter than it, but still body-legible:
+     small mono needs the secondary tone, not the tertiary one, to read at AA comfortably. */
   .c2-status-detail {
-    color: var(--text-faintest);
+    padding-inline-start: calc(14px + var(--space-2));
+    color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);

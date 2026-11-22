@@ -3,7 +3,7 @@
   import { reconcileDisplaySlots, isMessageRow, type MessageDisplaySlot } from '../../../lib/conversation/displaySlots';
   import type { OutgoingMessage } from '../../../lib/conversation/outgoing';
   import ProjectedMessage from './ProjectedMessage.svelte';
-  import { transcriptHistoryEdges } from '../../../lib/conversation/view/presentation';
+  import { transcriptHistoryEdges, runningToolSentence } from '../../../lib/conversation/view/presentation';
   import { getContext, untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
@@ -15,6 +15,7 @@
   import ViewItem from './ViewItem.svelte';
   import LiveOutput from './LiveOutput.svelte';
   import TranscriptStatusRow from '../TranscriptStatusRow.svelte';
+  import { DOCKED_CREDENTIAL_REQUEST } from '../../../lib/conversation/composer';
   import { TURN_STOPPED_STATUS, ASK_CARD_CONTEXT, askShownByItsCard, backgroundTasksAfterTheTurn, backgroundWorkSentence, type AskCardReading } from '../../../lib/conversation/transcript';
   let { activityUncertain = false, reader, models, ownSenderLabel, livenessPulse, outgoingMessages = [], acknowledgedMessageIds = new Set<string>(), withdrawnDisplayIds = new Set<string>(), onStopDrawingMessage, onSendAgain }: {
       outgoingMessages?: readonly OutgoingMessage[];
@@ -29,6 +30,8 @@
       livenessPulse: number;
   } = $props();
   const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
+  /** The key request the composer is asking in its own place; drawn there, not here. */
+  const dockedCredential = getContext<(() => string | null) | undefined>(DOCKED_CREDENTIAL_REQUEST);
   let openRows = $derived(reader.openTools);
   let wholeDetails = new SvelteMap<string, string>();
   // Only a deferred ending needs a body read to discover that it has no visual
@@ -68,6 +71,8 @@
           return !askShownByItsCard({ state: item.body.value.state, answerFate: item.body.value.answer_fate }, activityUncertain, askCard?.saysAvailabilityUnknown('permission', item.body.value.ask_id) ?? false);
       if (item.body.kind === 'inline' && item.body.value.kind === 'user_input')
           return !askShownByItsCard({ state: item.body.value.state, answerFate: item.body.value.answer_fate }, activityUncertain, askCard?.saysAvailabilityUnknown('user_input', item.body.value.request_id) ?? false);
+      if (item.body.kind === 'inline' && item.body.value.kind === 'credential_request')
+          return item.body.value.request_id !== (dockedCredential?.() ?? null);
       if (item.row_kind !== 'turn_ended')
           return true;
       if (item.body.kind === 'deferred')
@@ -175,7 +180,7 @@
     <ViewItem itemKey={item.key} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={!item.settled && reader.status?.turn_key === item.key ? (reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null) : null} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={!item.settled && reader.status?.turn_key === item.key ? (reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null) : null} {livenessPulse} activity={item.settled || reader.lens==='full' || reader.isExpanded({kind:'turn',key:item.key}) ? null : runningToolSentence(reader.status, item.key)} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
         </div>
       {:else if item.kind==='work_group'}
         <div use:demand={item} data-conversation-work-group>

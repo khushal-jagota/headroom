@@ -38,7 +38,7 @@
     type AskCardReading
   } from "../../lib/conversation/transcript";
   import { getContext } from "svelte";
-  import { modelDisplayName } from "../../lib/conversation/composer";
+  import { DOCKED_CREDENTIAL_REQUEST, modelDisplayName } from "../../lib/conversation/composer";
   import type { BackendModel } from "../../lib/conversation/wire";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
@@ -75,6 +75,8 @@
   } = $props();
 
   const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
+  /** The key request the composer is asking in its own place; drawn there, not here. */
+  const dockedCredential = getContext<(() => string | null) | undefined>(DOCKED_CREDENTIAL_REQUEST);
   let items = $derived<readonly ThreadItem[]>(projectedItems ?? conversationThreadItemsForLens(rows, visibleRows, lens));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
@@ -209,7 +211,9 @@
         <MarkdownBlock text={item.row.text} />
       </article>
     {:else if item.row.kind === 'credential_request'}
-      <ConversationCredentialRequestCard request={item.row.request} />
+      {#if item.row.request.request_id !== (dockedCredential?.() ?? null)}
+        <ConversationCredentialRequestCard request={item.row.request} />
+      {/if}
     {:else if (item.row.kind === "permission_ask" || item.row.kind === "user_input") && askShownByItsCard(item.row, activityUncertain,
       askCard?.saysAvailabilityUnknown(item.row.kind === "permission_ask" ? "permission" : "user_input", item.row.kind === "permission_ask" ? item.row.askId : item.row.requestId) ?? false)}
       <!-- Waiting: the card above the composer asks it, and the turn head says it waits. -->

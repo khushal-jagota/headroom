@@ -114,7 +114,7 @@ describe("the credential request", () => {
     expect(body).toContain("Key name");
     expect(body).toContain("How to get a key");
     expect(body).not.toMatch(/>\?<\/button>/);
-    expect(body).toMatch(/class="button button--primary"[^>]*>Save</);
+    expect(body).toMatch(/class="button button--primary[^"]*"[^>]*>Save</);
   });
 
   it("wears the ask shell: an accent label, and the one primary last in its action row", () => {

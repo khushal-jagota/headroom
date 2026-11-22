@@ -47,6 +47,15 @@ describe("a message that was not delivered", () => {
     expect(html).toContain('data-conversation-message-status="error"');
     expect(html).toContain('role="alert"');
   });
+  it("ends on the bubble's edge, with its mark on the sentence's line", () => {
+    const sentence = "codex app-server exited with code 1 before it accepted the prompt";
+    const html = draw({ ...base, kind: "prompt_refused", reason: "backend_did_not_start", sentence });
+    const status = html.slice(html.indexOf("data-conversation-message-status"));
+    expect(html).toContain("c2-status--end");
+    const line = status.slice(status.indexOf("c2-status-line"), status.indexOf("data-conversation-status-detail"));
+    expect(line).toContain("c2-status-mark");
+    expect(line).toContain("Not delivered");
+  });
   it("marks an ordinary message with nothing", () => {
     const html = draw({ ...base, kind: "prompt", mode: "queue", sentAtUnixMilliseconds: 1000 });
     expect(html).not.toContain("data-conversation-message-status");

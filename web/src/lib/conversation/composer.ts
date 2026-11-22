@@ -24,6 +24,8 @@ import type {
 import type { ConversationBackendKey } from "./wire";
 import type { ProviderOptionDescriptor, SelectProviderOptionDescriptor } from "../usage/contracts/model";
 import type { OutgoingMessage } from "./outgoing";
+import type { TranscriptRow } from "./transcript";
+import type { ConversationViewItem, CredentialRequestRowBody } from "./view/contracts";
 import { refusalSentence } from "./transcript";
 import { latestMessageOutcomes } from "./messageOutcome";
 
@@ -356,3 +358,33 @@ export function recordedMessageFateSentence(
     default: return fallback;
   }
 }
+
+/** The key request the composer asks, in its own place, as it asks a question or a permission
+ *  ask: the newest one still pending. Read from the same two sources the dock reads (the
+ *  transcript's rows and the live view's items, newest version of each), so the composer and
+ *  the transcript always agree on which request is docked: the transcript draws every other
+ *  request inline, and never this one. */
+export function pendingCredentialRequest(
+  rows: readonly TranscriptRow[],
+  items: readonly ConversationViewItem[] = []
+): CredentialRequestRowBody | null {
+  const fromRows = rows.findLast((row) => row.kind === "credential_request" && row.request.state === "pending");
+  if (fromRows?.kind === "credential_request") return fromRows.request;
+  const newest = new Map<string, ConversationViewItem & { kind: "row" }>();
+  for (const item of items) {
+    if (item.kind !== "row" || item.row_kind !== "credential_request" || item.body.kind !== "inline") continue;
+    const held = newest.get(item.key);
+    if (!held || held.changed_through_sequence <= item.changed_through_sequence) newest.set(item.key, item);
+  }
+  let docked: { request: CredentialRequestRowBody; sequence: number } | null = null;
+  for (const item of newest.values()) {
+    const value = item.body.kind === "inline" ? item.body.value : null;
+    if (value?.kind !== "credential_request" || value.state !== "pending") continue;
+    if (!docked || item.source_sequence > docked.sequence) docked = { request: value, sequence: item.source_sequence };
+  }
+  return docked?.request ?? null;
+}
+
+/** Context: the request_id of the key request the composer is asking, or null. The transcript
+ *  leaves that one request out, so it is asked in exactly one place. */
+export const DOCKED_CREDENTIAL_REQUEST = Symbol("docked-credential-request");

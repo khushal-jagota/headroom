@@ -28,7 +28,7 @@
       <span class="chat-att-kind" aria-hidden="true">{attachmentExtension(file.fileName)}</span>
       <span class="chat-att-words">
         <span class="chat-att-name">{file.fileName}</span>
-        <span class="chat-att-meta">{file.mediaType} · {attachmentByteLabel(file.byteCount)}</span>
+        <span class="chat-att-meta"><span class="chat-att-type">{file.mediaType}</span><span class="chat-att-size">&nbsp;· {attachmentByteLabel(file.byteCount)}</span></span>
       </span>
       <button type="button" class="chat-att-x" aria-label={`Remove ${file.fileName}`} title="Remove" {disabled} onclick={() => (files = files.filter((entry) => entry.id !== file.id))}>×</button>
     </div>

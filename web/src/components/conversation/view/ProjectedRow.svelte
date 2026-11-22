@@ -7,6 +7,8 @@
   import { rowForBody } from '../../../lib/conversation/view/presentation';
   import ConversationTranscript from '../ConversationTranscript.svelte';
   import ConversationCredentialRequestCard from '../ConversationCredentialRequestCard.svelte';
+  import { getContext } from 'svelte';
+  import { DOCKED_CREDENTIAL_REQUEST } from '../../../lib/conversation/composer';
   import ToolCallRow from '../ToolCallRow.svelte';
   import TranscriptStatusRow from '../TranscriptStatusRow.svelte';
   import { turnEndingStatus, TURN_STOPPED_STATUS } from '../../../lib/conversation/transcript';
@@ -27,6 +29,7 @@
   let progress = $state<string | null>(null);
   const presentationAttempt = $derived(reader.restorationAnchor?.key === item.key ? reader.restorationAttempt : 0);
   const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
+  const dockedCredential = getContext<(() => string | null) | undefined>(DOCKED_CREDENTIAL_REQUEST);
   const row = $derived(body === null ? null : rowForBody(item, body));
   // A turn's ending and a turn that stopped without one are status lines, drawn in the
   // same family as a message that was not delivered.
@@ -68,7 +71,8 @@
 {:else if row !== null && endingStatus !== null}
   <TranscriptStatusRow status={endingStatus} role={endingStatus.tone === 'error' ? 'alert' : 'status'} data-conversation-row={row.kind} data-conversation-turn-ending={row.kind === 'turn_ended' ? row.ending : undefined}/>
 {:else if row?.kind==='credential_request'}
-  <ConversationCredentialRequestCard request={row.request}/>
+  <!-- The pending request the composer asks is drawn there, once. -->
+  {#if row.request.request_id !== (dockedCredential?.() ?? null)}<ConversationCredentialRequestCard request={row.request}/>{/if}
 {:else if row!==null}
   {#key presentationAttempt}
   <ConversationTranscript {activityUncertain} rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>

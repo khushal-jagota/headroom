@@ -75,6 +75,16 @@
   .attaches-files { inline-size: 100%; }
   .chat-u :global(.c2-piece-image-slot), .chat-u :global(.conversation-file-card) { margin-block: 0; }
   .chat-u :global(.conversation-file-card) { align-self: stretch; }
+  /* One group with one right edge, the bubble's. A picture's slot can be wider than the
+     picture (a large image sizes the slot to the column, then the picture caps itself
+     inside it), so the picture is set against the slot's end, not left at its start. */
+  .chat-u :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; }
+  /* A sent file is one of the person's things, not a document dropped into the thread:
+     its corners and inner inset are the bubble's, so text, preview and file name start on
+     one line, and its preview is a glance (the full file is one click away). */
+  .chat-u :global(.conversation-file-card .file-preview-card) { border-radius: var(--radius-lg); }
+  .chat-u :global(.conversation-file-card .file-preview-clip:not(.file-preview-clip--loading)) { max-height: 12rem; padding: var(--space-3) var(--space-4) 0; }
+  .chat-u :global(.conversation-file-card .file-preview-band) { padding: var(--space-3) var(--space-4); }
   /* Someone other than the person, in the box that says so. */
   .c2-system-box { border-radius: var(--radius-md); background: var(--surface-2); padding: var(--space-2) var(--space-3); }
   .c2-label { color:var(--text-faint); font-family:var(--font-ui); font-size:var(--type-small); padding-block-end:var(--space-1); }

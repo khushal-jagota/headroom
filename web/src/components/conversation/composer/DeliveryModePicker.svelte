@@ -66,9 +66,32 @@
   .delivery-mode-choice { display: grid; gap: 2px; min-width: 0; }
   .delivery-mode-name { color: var(--text-strong); }
   .delivery-mode-hint { color: var(--tone-tertiary); font-size: var(--type-small); white-space: nowrap; }
+  /* Closed, the mode is a control and reads as one: a filled pill with its chevron, in the
+   * primary tone, so it never runs into the model's plain label beside it ("gpt-6.1-sol high
+   * Steer"). 28px tall, the send round's height, on the composer's row. */
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger) {
+    height: 28px;
+    min-height: 28px;
+    gap: 2px;
+    padding-inline: var(--space-2) var(--space-1);
+    background: var(--surface-selected);
+    border-color: transparent;
+    color: var(--tone-primary);
+  }
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger:hover:not(:disabled)),
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open) {
+    background: var(--surface-selected);
+    background-image: var(--interaction-hover);
+    color: var(--tone-strong);
+  }
+  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] .listbox-picker-chevron-drawn) {
+    display: block;
+    width: 14px;
+    height: 14px;
+  }
   /* The panel opens from the composer's right edge, 8px above the box, like the model
-   * picker's, and ConversationComposer lifts it past the queue tray: a whole raised layer over
-   * the transcript, never over the queued messages it is choosing between. */
+   * picker's, and ConversationComposer makes room for it there: the queue tray steps up over
+   * it, so it never covers the queued messages it is choosing between. */
   :global(.chat-box .chat-submit [data-conversation-send-mode]) { position: static; }
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;

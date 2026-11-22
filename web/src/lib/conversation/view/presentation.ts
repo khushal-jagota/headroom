@@ -91,6 +91,18 @@ export function happened(event: ViewRestEvent | null, sender: string): {
         return whatThisRowSays(rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, event), sender);
     return null;
 }
+/** What a running turn is doing right now, in the sentence its tool row reads as.
+ *
+ * Only a tool call that is still running counts, and only for the turn the status is about:
+ * a finished call under a counter that says the turn is working would be news from before.
+ * The status names the newest call of the latest turn; nothing is guessed when it does not. */
+export function runningToolSentence(status: ConversationViewStatus | null | undefined, turnKey: string): string | null {
+    if (!status || status.authority !== 'current' || status.turn_running !== true || status.turn_key !== turnKey) return null;
+    const tool = status.rest.latest_tool;
+    if (tool?.body.kind !== 'inline' || tool.body.value.kind !== 'tool_call' || tool.body.value.status !== 'running') return null;
+    const row = rowForBody({ key: 'live', source_sequence: 0, created_at: 0 }, tool.body.value);
+    return row.kind === 'tool_call' ? toolCallSentence(row) || null : null;
+}
 export function restFor(status: ConversationViewStatus, sender: string, readThrough: number, progress = progressFor(status)): RestLine | null {
     const facts = status.rest;
     const last = happened(facts.latest_happened, sender);

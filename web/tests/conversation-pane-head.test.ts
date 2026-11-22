@@ -1,6 +1,6 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
-import { awaitsCredential, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../src/lib/conversation/dockPresentation";
+import { awaitsCredential, paneFailureFrom, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../src/lib/conversation/dockPresentation";
 import type { ConversationViewItem, CredentialRequestRowBody } from "../src/lib/conversation/view/contracts";
 import type { TranscriptRow } from "../src/lib/conversation/transcript";
 import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
@@ -24,6 +24,22 @@ describe("the opened pane's top bar", () => {
       .toEqual({ text: "Setting up · preparing workspace · 1m 35s", tone: "live" });
     expect(paneHeadStatus({ ...quiet, running: true, activityUncertain: true })?.tone).toBe("quiet");
     expect(paneHeadStatus({ ...quiet, running: true, readOnly: true })?.text).toBe("Past conversation · read only");
+  });
+
+  it("says a failure honestly, from what last happened, and lets anything moving speak over it", () => {
+    expect(paneFailureFrom({ lastBoundaryFailed: true, latestKind: "turn_ended" })).toBe("turn_failed");
+    // A refused message is the newest thing; the failed turn before it is not repeated.
+    expect(paneFailureFrom({ lastBoundaryFailed: false, latestKind: "prompt_refused" })).toBe("not_delivered");
+    expect(paneFailureFrom({ lastBoundaryFailed: true, latestKind: "prompt_refused" })).toBe("not_delivered");
+    // A message sent after a failure is the person moving on.
+    expect(paneFailureFrom({ lastBoundaryFailed: false, latestKind: "prompt" })).toBeNull();
+    expect(paneFailureFrom({ lastBoundaryFailed: false, latestKind: "prompt_uncertain" })).toBeNull();
+    expect(paneHeadStatus({ ...quiet, failure: "turn_failed" })).toEqual({ text: "Last turn failed", tone: "failed" });
+    expect(paneHeadStatus({ ...quiet, failure: "not_delivered" })).toEqual({ text: "Message not delivered", tone: "failed" });
+    expect(paneHeadStatus({ ...quiet, failure: "turn_failed", running: true })?.tone).toBe("live");
+    expect(paneHeadStatus({ ...quiet, failure: "turn_failed", waitingForYou: true })?.tone).toBe("attention");
+    expect(paneHeadStatus({ ...quiet, failure: "turn_failed", backgroundWorking: true })?.tone).toBe("live");
+    expect(paneHeadStatus({ ...quiet, failure: "turn_failed", readOnly: true })?.tone).toBe("quiet");
   });
 });
 

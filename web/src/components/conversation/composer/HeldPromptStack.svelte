@@ -230,20 +230,23 @@
     font-size: var(--type-small);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .chat-qrow-actions { flex: none; display: flex; align-items: center; gap: 2px; }
+  .chat-qrow-actions { flex: none; display: flex; align-items: center; gap: var(--space-1); }
+  /* Each action is a real button and looks like one: the secondary button's fill with its
+   * words in the primary tone (over 9:1 on that fill), so Steer and Send now read as things to
+   * press, not as more of the row's text. The × is a plain icon button in the same tone. */
   .chat-qrow-act {
     display: inline-flex; align-items: center; min-height: 26px;
     padding: 0 var(--space-2);
     border: 0; border-radius: var(--button-radius);
-    background: transparent;
-    color: var(--tone-secondary);
+    background: var(--button-secondary-fill);
+    color: var(--tone-primary);
     font-family: var(--font-ui); font-size: var(--type-small); font-weight: var(--weight-small);
     letter-spacing: normal;
   }
-  .chat-qrow-act:hover:not(:disabled) { background: var(--button-ghost-fill-hover); color: var(--tone-strong); }
+  .chat-qrow-act:hover:not(:disabled) { background: var(--button-secondary-fill-hover); color: var(--tone-strong); }
   .chat-qrow-x {
     display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
-    border-radius: var(--button-radius); color: var(--tone-tertiary);
+    border-radius: var(--button-radius); color: var(--tone-primary);
   }
   .chat-qrow-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
   .chat-qrow-x:hover:not(:disabled) { background: var(--button-ghost-fill-hover); color: var(--tone-strong); background-image: none; }

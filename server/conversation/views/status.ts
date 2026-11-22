@@ -193,7 +193,7 @@ export function read_status(
     };
   }
   let latest_tool: ViewRestTool | null = null;
-  if (lens === 'full' && latest_turn !== null) {
+  if (latest_turn !== null) {
     const tool = sql.get<{
       sequence: number;
     }>(

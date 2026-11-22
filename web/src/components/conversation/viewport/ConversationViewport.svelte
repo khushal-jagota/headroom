@@ -90,6 +90,21 @@
     navigationBase = threadGeometry(thread, reservedSpaceElement).baseHeight();
   }
 
+  /** The thread's shape when the follow decision was last made. A newest line that leaves
+   * the view because the layout changed (a docked card or ask taking the composer's
+   * place, a picture or chart finishing loading, the Latest shelf itself) has not been
+   * left by the reader. Only a change of position on an unchanged shape is the reader's. */
+  let followHeight = 0;
+  let followBase = 0;
+  function noteFollowShape(thread: HTMLDivElement): void {
+    followHeight = thread.clientHeight;
+    followBase = threadGeometry(thread, reservedSpaceElement).baseHeight();
+  }
+  function layoutMovedTheNewestLine(thread: HTMLDivElement): boolean {
+    return thread.clientHeight !== followHeight
+      || Math.abs(threadGeometry(thread, reservedSpaceElement).baseHeight() - followBase) > .01;
+  }
+
   function actualNewestIsHeld(): boolean {
     return reader === null || reader.pages.some(page => page.scope.kind === 'timeline' && page.newer === null);
   }
@@ -334,6 +349,7 @@
     } else if (withTheNewestLineBeforeTheWrite && streamWrites.size === 0 && liveArrivalPixels === 0 && pendingFullMessageKey === null && arrivingMessages.size === 0) {
       moveTheThread(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
     }
+    noteFollowShape(thread);
   }
 
   /** Was the reader with the newest line? Read before the write, while it is still true. */
@@ -500,7 +516,14 @@
       manualReader = false;
       retirementOwner = null;
       withTheNewestLineBeforeTheWrite = true;
-    } else if (!manualReader) withTheNewestLineBeforeTheWrite = !newestLineOutOfSight;
+    } else if (!manualReader) {
+      // A scroll the layout made (native anchoring, a clamp as the thread shrank) keeps a
+      // reader who was with the newest line there; the next layout pass puts it back in view.
+      const keptByLayout = newestLineOutOfSight && withTheNewestLineBeforeTheWrite && layoutMovedTheNewestLine(thread);
+      withTheNewestLineBeforeTheWrite = !newestLineOutOfSight || keptByLayout;
+      if (keptByLayout) requestReconciliation();
+    }
+    noteFollowShape(thread);
     rememberNavigationPosition(thread);
     saveLogicalAnchor(thread);
   }
@@ -914,6 +937,7 @@
           && !newestLineOutOfSight && latestPresented;
         if (latestPlaced) { latestPending = false; manualReader = false; retirementOwner = null; }
         withTheNewestLineBeforeTheWrite = !manualReader && (followingMore || !newestLineOutOfSight) && !latestPending && heldSent === null;
+        noteFollowShape(thread);
         saveLogicalAnchor(thread);
         if (latestPlaced && intent !== null) {
           // Wait for Latest to leave the DOM before returning the keyboard to the thread.
@@ -1020,7 +1044,12 @@
       const thread = threadElement;
       navigationPending = false;
       if (hasUnplacedAcceptedSend()) supersedeRestorationWithAcceptedSend();
-      if (!manualReader && thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) withTheNewestLineBeforeTheWrite = withTheNewestLine(thread);
+      if (!manualReader && thread !== null && canMeasure() && !pendingOpen && !(latestPending && latestIntent?.cause === 'restoration-fallback') && heldSent === null && streamWrites.size === 0 && liveArrivalPixels === 0 && !conversationMotion(thread).active(positionMotion)) {
+        // Measured before the write, unless only the layout has moved the newest line
+        // since the reader was last seen with it.
+        withTheNewestLineBeforeTheWrite = withTheNewestLine(thread) || withTheNewestLineBeforeTheWrite && layoutMovedTheNewestLine(thread);
+        noteFollowShape(thread);
+      }
       noteMessageArrivals();
       requestReconciliation();
     });
@@ -1204,9 +1233,9 @@
     flex: none;
     display: flex;
     justify-content: center;
-    /* Clear air between the thread's faded edge and the pill, so it never reads as
-       sitting on whatever was cut there. */
-    padding-block: var(--space-2) 0;
+    /* A full step of clear air between the thread's edge and the pill, so the pill never
+       reads as sitting on whatever the edge cut. */
+    padding-block: var(--space-3) 0;
   }
   .chat-jump-shelf .chat-jump {
     position: static;
@@ -1219,29 +1248,20 @@
     box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
   }
   .chat-jump-arrow { inline-size: 12px; block-size: 12px; flex: none; }
-  /* Lines leave the thread softly at both edges, never cut flat against the composer.
-     At rest the bottom fade covers only the newest line's own clear space under it
-     (NEWEST_LINE_BOTTOM_GAP_PIXELS), so nothing that was said is dimmed; with more
-     below, it is deeper, so a line cut by the edge reads as continuing. */
-  /* At the very top nothing is above, so nothing fades there: the first message and the
-     time and Copy over it keep their full tone under the head. With more below, the
-     bottom fade is deep enough that whatever the edge cuts (a card's frame, a bubble's
-     corner) has dissolved before the Latest shelf under it. */
+  /* Lines leave the thread softly at both edges, never cut flat against the composer or a
+     docked card. The bottom fade is one depth in every state: the newest line's own clear
+     space under it (NEWEST_LINE_BOTTOM_GAP_PIXELS) at rest, and no deeper with more below,
+     so what the edge cuts (a bullet, a file's name, a chart's bars) stays readable up to
+     the edge instead of dimming into the Latest shelf under it. At the very top nothing is
+     above, so nothing fades there: the first message and the time and Copy over it keep
+     their full tone under the head. */
   .chat-thread {
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
             mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
   }
-  .chat-thread[data-more-below="true"] {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 40px), transparent 100%);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 40px), transparent 100%);
-  }
   .chat-thread[data-at-top="true"] {
     -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
             mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
-  }
-  .chat-thread[data-at-top="true"][data-more-below="true"] {
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%);
-            mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%);
   }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */

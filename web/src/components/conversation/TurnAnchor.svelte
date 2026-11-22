@@ -7,9 +7,10 @@
    * tool calls, and everything it said on the way to the answer it left standing.
    *
    * While the turn runs it counts, honestly, from the moment the prompt landed: a reload
-   * mid-turn shows the real elapsed time rather than starting again from zero. The dots
-   * beside it say the model was alive recently; they never claim to track progress nobody
-   * can see.
+   * mid-turn shows the real elapsed time rather than starting again from zero. The mark
+   * beside it turns while the model was alive recently and holds still when it is not; it
+   * never claims to track progress nobody can see. Under it, when the record names one, is
+   * the tool call running now.
    *
    * It never removes itself. A turn that folded nothing away has nothing to open, but it
    * still says how long it took, in the place it has occupied since the turn began — the
@@ -41,6 +42,7 @@
     expanded = false,
     waiting = null,
     livenessPulse = 0,
+    activity = null,
     onToggle
   }: {
     activityUncertain?: boolean;
@@ -63,6 +65,9 @@
     waiting?: "permission" | "question" | null;
     /** Moves whenever a live frame arrives. Only its movement is read. */
     livenessPulse?: number;
+    /** What the running turn is doing right now, from the record: the sentence its
+     *  running tool call reads as. Absent when nothing is running that anybody can name. */
+    activity?: string | null;
     /** Opens and closes what this turn did. Absent where the reading already shows it. */
     onToggle?: () => void;
   } = $props();
@@ -160,6 +165,11 @@
             data-conversation-alive-fresh={fresh && !activityUncertain ? "true" : "false"}
             role="status"
           >
+            <!-- The live mark: the header's and the rest line's own spinner, so a running
+                 turn reads as running in a still frame too, and never as one that is over.
+                 It turns only while frames arrive; when they stop it holds still. Unknown
+                 activity has no mark, because nothing is known to be running. -->
+            {#if !activityUncertain}<span class="c2-live-mark" class:is-turning={fresh} aria-hidden="true" data-conversation-live-mark></span>{/if}
             <span
               class="c2-alive-word"
               class:live-text-shimmer={fresh && !activityUncertain}
@@ -184,6 +194,10 @@
           </button>
         {/if}
       </div>
+      {#if activity && waitingSentence === null && !activityUncertain}
+        <!-- What it is doing now, in the words its tool row uses. -->
+        <div class="c2-live-activity" data-conversation-live-activity title={activity}>{activity}</div>
+      {/if}
     {/if}
   </div>
 {/if}
@@ -205,6 +219,33 @@
     padding: var(--space-1) 0;
   }
   .c2-alive-word { font-variant-numeric: tabular-nums; }
+  /* A running turn speaks a step brighter than a finished one: finished heads are history
+     in the tertiary tone, the one that is still going is the thread's present. */
+  .c2-alive-line .c2-alive:not(.c2-waiting) { color: var(--text-muted); }
+  .c2-live-mark {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-pill);
+    border: 1.5px solid color-mix(in srgb, var(--text-faintest) 40%, transparent);
+    border-top-color: var(--accent-bright);
+  }
+  .c2-live-mark.is-turning { animation: c2-live-spin var(--motion-loop-spin) linear infinite; }
+  @keyframes c2-live-spin { to { transform: rotate(360deg); } }
+  /* The running call's sentence, under the clock and in from the mark, on one line. */
+  .c2-live-activity {
+    justify-self: start;
+    max-width: 100%;
+    min-width: 0;
+    margin-block-start: calc(var(--space-1) * -1);
+    padding-inline-start: calc(12px + var(--space-2));
+    color: var(--text-faintest);
+    font-family: var(--font-ui);
+    font-size: var(--type-small);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   /* Alive recently is said by `live-text-shimmer`, the app's shared way of showing a thing
      is happening now. When frames stop arriving the words go still and the count carries
      on, so stillness means what it says rather than meaning nothing. */
@@ -268,5 +309,6 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .c2-turn-chevron { transition: none; }
+    .c2-live-mark.is-turning { animation: none; }
   }
 </style>

@@ -214,14 +214,15 @@
   .spacer { flex: 1; }
   /* The ask shell's action row, as the permission ask's: the way out on the left in the
      primary tone (the ghost's secondary tone read as disabled on the composer's fill), the
-     one primary at the right end. A primary that cannot go yet keeps a readable label on
-     the secondary fill rather than fading to the placeholder tone. */
+     one primary at the right end. A primary that cannot go yet loses its fill, not its
+     label: a hairline ring on the composer's own fill, the label in the secondary tone
+     (6:1 there), so it reads as the primary waiting rather than as another option. */
   footer .button--ghost:not(:disabled) { color: var(--text-default); }
   footer .button--ghost:hover:not(:disabled) { color: var(--text-strong); }
   footer .cancel:hover:not(:disabled) { color: var(--accent-error); }
   footer .button--secondary { background: var(--state-step); }
   footer .button--secondary:hover:not(:disabled) { background-image: var(--interaction-hover); }
-  footer .button--primary:disabled { background: var(--state-step); color: var(--text-muted); }
+  footer .button--primary:disabled { background: transparent; box-shadow: inset 0 0 0 var(--border-hairline) var(--border-raised); color: var(--text-muted); }
   .options button:disabled { cursor: default; color: var(--text-faint); }
   input:disabled { opacity: .5; cursor: default; }
 </style>

@@ -93,6 +93,8 @@
   .c2-ask-actions .button--secondary:hover:not(:disabled) { background-image: var(--interaction-hover); }
   .c2-ask-actions .c2-ask-cancel:hover:not(:disabled),
   .c2-ask-actions .c2-ask-answer.is-decline:hover:not(:disabled) { color: var(--accent-error); }
+  /* A primary that cannot go yet, as the question's: no fill, a hairline ring, a readable label. */
+  .c2-ask-actions .button--primary:disabled { background: transparent; box-shadow: inset 0 0 0 var(--border-hairline) var(--border-raised); color: var(--text-muted); }
   /* An answer Panels made up is marked as such: a dashed edge, never a solid one. */
   .c2-ask-answer.is-supplied {
     border: var(--border-hairline) dashed var(--border-raised);

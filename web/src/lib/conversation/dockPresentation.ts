@@ -72,10 +72,27 @@ export function awaitsCredential(
   return false;
 }
 
+/** What went wrong last, if the last thing that happened went wrong: the newest turn ended
+ * failed, or the newest message was refused delivery. Read from the same facts the dock's
+ * line and the transcript's error rows are drawn from, so the bar never says more than they
+ * do. A message sent after a failure is the person moving on, and the failure goes with it. */
+export type PaneFailure = 'turn_failed' | 'not_delivered';
+export function paneFailureFrom(facts: {
+  /** The newest turn boundary (a turn ending or a message starting one) is a failed ending. */
+  lastBoundaryFailed: boolean;
+  /** The kind of the newest thing that happened, as the dock reads it. */
+  latestKind: string | null;
+}): PaneFailure | null {
+  if (facts.latestKind === 'prompt_refused') return 'not_delivered';
+  if (facts.lastBoundaryFailed) return 'turn_failed';
+  return null;
+}
+const FAILURE_TEXT: Record<PaneFailure, string> = { turn_failed: 'Last turn failed', not_delivered: 'Message not delivered' };
+
 /** What the opened conversation is doing, as its top bar says it. `live` draws the moving
- * mark, `attention` the person's own accent, `quiet` words alone. Idle says nothing: the
- * transcript already shows a conversation at rest. */
-export type PaneHeadStatus = { text: string; tone: 'live' | 'attention' | 'quiet' };
+ * mark, `attention` the person's own accent, `failed` the error mark, `quiet` words alone.
+ * Idle says nothing: the transcript already shows a conversation at rest. */
+export type PaneHeadStatus = { text: string; tone: 'live' | 'attention' | 'failed' | 'quiet' };
 export function paneHeadStatus(state: {
   readOnly: boolean;
   activityUncertain: boolean;
@@ -86,12 +103,15 @@ export function paneHeadStatus(state: {
   settingUp: string | null;
   /** Seconds the running turn has taken, or null while that is not known. */
   elapsed: string | null;
+  /** What went wrong last, or null. Anything still moving says that instead. */
+  failure?: PaneFailure | null;
 }): PaneHeadStatus | null {
   if (state.readOnly) return { text: 'Past conversation · read only', tone: 'quiet' };
   if (state.activityUncertain) return { text: 'Activity on this machine unknown', tone: 'quiet' };
   if (state.waitingForYou) return { text: 'Waiting for you', tone: 'attention' };
   if (state.running) return { text: state.elapsed ? `Working · ${state.elapsed}` : 'Working', tone: 'live' };
   if (state.backgroundWorking) return { text: 'Working in the background', tone: 'live' };
+  if (state.failure) return { text: FAILURE_TEXT[state.failure], tone: 'failed' };
   if (state.settingUp) return { text: state.settingUp, tone: 'live' };
   return null;
 }

@@ -33,6 +33,36 @@ describe("a turn's head", () => {
     expect(html).toContain("data-conversation-turn-fold");
   });
 
+  it("marks a running turn as live, and a finished one not", () => {
+    const running = render(TurnAnchor, {
+      props: { settled: false, startedAtUnixMilliseconds: Date.now(), toolCallCount: 3, onToggle: () => {} }
+    }).body;
+    expect(running).toContain("data-conversation-live-mark");
+    const settled = render(TurnAnchor, {
+      props: { settled: true, durationSeconds: 420, toolCallCount: 3, onToggle: () => {} }
+    }).body;
+    expect(settled).not.toContain("data-conversation-live-mark");
+    const unknown = render(TurnAnchor, {
+      props: { settled: false, activityUncertain: true, startedAtUnixMilliseconds: Date.now() }
+    }).body;
+    expect(unknown).not.toContain("data-conversation-live-mark");
+  });
+
+  it("says what the running turn is doing now, only while it is working", () => {
+    const activity = "Ran go test -race -count=50 ./internal/push";
+    const running = render(TurnAnchor, {
+      props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity }
+    }).body;
+    expect(running).toContain("data-conversation-live-activity");
+    expect(running).toContain(activity);
+    const waiting = render(TurnAnchor, {
+      props: { settled: false, startedAtUnixMilliseconds: Date.now(), activity, waiting: "question" }
+    }).body;
+    expect(waiting).not.toContain("data-conversation-live-activity");
+    const settled = render(TurnAnchor, { props: { settled: true, durationSeconds: 60, activity } }).body;
+    expect(settled).not.toContain(activity);
+  });
+
   it("says the turn is waiting on the person rather than working", () => {
     for (const [waiting, sentence] of [
       ["permission", "Waiting for your approval"],

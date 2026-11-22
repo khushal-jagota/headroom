@@ -175,6 +175,10 @@
      drawn on; a settled one is a quiet line on the transcript's card fill. */
   .key-request{width:100%;min-width:0;box-sizing:border-box;background:var(--surface-2);border:0;border-radius:var(--composer-radius);padding:var(--space-3) var(--space-4);font-size:var(--type-sm);overflow-wrap:anywhere}
   .key-request.is-ask{background:var(--composer-surface);border:var(--border-hairline) solid var(--composer-edge);padding:var(--space-4) var(--space-3) var(--space-3) calc(var(--composer-inset) - var(--border-hairline))}
+  /* Docked in the composer's slot, the composer's box is the plane, as it is for the question
+     and the permission ask: no fill, edge or inset of its own, the same band padding as theirs,
+     so the three asks start on the same line and end in the same action row. */
+  :global([data-conversation-box]) .key-request.is-ask{background:transparent;border:0;border-radius:0;padding:var(--space-3) 0 var(--space-1)}
   .request-head{display:grid;gap:var(--space-1);margin-bottom:var(--space-3)}
   .request-eyebrow{color:var(--accent-bright);font-family:var(--font-ui);font-size:var(--type-xs);font-weight:var(--weight-title);letter-spacing:var(--tracking-label);text-transform:uppercase}
   .request-title{margin:0;font:inherit;font-size:var(--type-md);font-weight:var(--weight-title);line-height:1.4;color:var(--text-strong)}
@@ -205,6 +209,7 @@
   .form-footer .button--ghost:not(:disabled){color:var(--text-default)}
   .form-footer .button--ghost:hover:not(:disabled){color:var(--text-strong)}
   .form-footer .reject:hover:not(:disabled){color:var(--accent-error)}
+  .form-footer .button--primary:disabled{background:transparent;box-shadow:inset 0 0 0 var(--border-hairline) var(--border-raised);color:var(--text-muted)}
   .review{justify-self:start;background:var(--state-step)}
   .review:hover:not(:disabled){background:var(--state-step);background-image:var(--interaction-hover)}
   .key-help{color:var(--text-muted);font-size:var(--type-sm);line-height:1.6}

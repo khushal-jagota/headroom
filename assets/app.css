@@ -797,6 +797,12 @@ strong {
   max-width: 100%;
 }
 
+/* In the conversation inline code sits on a lift the eye finds on the dark page (the
+ * page-wide 3% all but vanished there); the words keep the text's own tone. */
+.chat-thread .markdown :not(pre) > code {
+  background: rgb(255 255 255 / 8%);
+}
+
 /* An answer's headings stand clearly over its text: h1 and h2 a size up in the strong
  * tone with room above them, h3 the section-head size. h4-h6 stay the quiet labels. */
 .chat-thread .markdown :is(h1, h2, h3) {
@@ -1556,7 +1562,9 @@ button.list-row:hover .list-row-title {
   flex: none;
   width: var(--space-3);
   height: var(--space-3);
-  border: var(--border-strong) solid var(--border-color);
+  /* The live mark every working state uses (head, dock, task pill, tool row): a track
+     that is visible on the page and one bright arc, so it reads as live in a still frame. */
+  border: var(--border-strong) solid color-mix(in srgb, var(--tone-tertiary) 40%, transparent);
   border-top-color: var(--accent-bright);
   border-radius: var(--radius-pill);
   animation: acp-spin var(--motion-loop-spin) linear infinite;
@@ -2036,7 +2044,8 @@ button.list-row:hover .list-row-title {
   --composer-glyph: var(--conversation-glyph, 22px);
 }
 
-/* Pending attachments share one horizontal strip and a common tile height. */
+/* Pending attachments share one horizontal strip and a common tile height, tall enough that a
+ * picture can be told apart and a file's name and whole size fit on its tile. */
 .chat-attachments {
   display: flex;
   gap: var(--space-2);
@@ -2049,25 +2058,25 @@ button.list-row:hover .list-row-title {
 .chat-att {
   position: relative;
   flex: none;
-  height: 52px;
+  height: 64px;
   min-width: 0;
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--surface-2);
 }
-.chat-att.img { width: 62px; }
+.chat-att.img { width: 96px; }
 .chat-att.img img {
   width: 100%; height: 100%; display: block; object-fit: cover;
   border-radius: calc(var(--radius-md) - var(--border-hairline));
 }
 .chat-att.file {
-  display: flex; align-items: center; gap: var(--space-2); max-width: 190px;
+  display: flex; align-items: center; gap: var(--space-2); max-width: 280px;
   padding-inline: var(--space-2); background: var(--surface-recessed);
 }
-.chat-att.video { max-width: 230px; padding-inline-start: var(--space-1); }
+.chat-att.video { max-width: 300px; padding-inline-start: var(--space-1); }
 .chat-att-thumb {
   position: relative; flex: none; display: grid; place-items: center; overflow: hidden;
-  width: 62px; height: 44px; border-radius: var(--radius-sm); background: var(--surface-2);
+  width: 80px; height: 54px; border-radius: var(--radius-sm); background: var(--surface-2);
 }
 .chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .chat-att-thumb svg {
@@ -2075,7 +2084,7 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-pill); background: var(--text-strong);
 }
 .chat-att-kind {
-  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+  flex: none; display: grid; place-items: center; width: 32px; height: 32px;
   border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-faint);
   font-family: var(--font-mono); font-size: var(--type-xs); letter-spacing: var(--tracking-mono);
 }
@@ -2084,10 +2093,14 @@ button.list-row:hover .list-row-title {
   color: var(--text-strong); font-size: var(--type-xs); font-weight: var(--weight-title);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The size never gives way: a long media type ends in an ellipsis before it. */
 .chat-att-meta {
+  display: flex; min-width: 0;
   color: var(--text-faint); font-family: var(--font-mono); font-size: var(--type-xs);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  white-space: nowrap;
 }
+.chat-att-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chat-att-size { flex: none; }
 .chat-att-x {
   position: absolute; top: -5px; right: -5px; width: 18px; height: 18px;
   display: grid; place-items: center; padding: 0;
@@ -2314,16 +2327,17 @@ button.list-row:hover .list-row-title {
   line-height: 1;
 }
 
-/* Waiting messages share one inset tray directly above the separate input box. */
+/* Waiting messages share one tray over the input box: its own card, as wide as the box and on
+ * the same edges, 8px clear of it, so the box's rounded corners (and its focus edge) never meet
+ * the tray's foot. An open composer popover stands in the room between the two. */
 .chat-box-stack { display: grid; min-width: 0; max-width: 100%; }
 .chat-queue-wrap {
   min-width: 0;
-  margin: 0 var(--space-2);
+  margin: 0 0 var(--space-2);
   padding: var(--space-1) var(--space-2);
   background: var(--surface-recessed);
   border: var(--border-hairline) solid var(--border-color);
-  border-bottom: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: var(--composer-radius);
 }
 .chat-queue-stack {
   margin: 0;
@@ -5044,10 +5058,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .disclosure-band-trailing { margin-left:auto; font-weight:var(--weight-small); color:var(--text-faintest); }
 .disclosure-band-body { padding-bottom:var(--space-4); }
 
-.chat-thread[data-more-below="true"] {
-  mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
-}
 .chat-queue-slot { min-width: 0; flex: none; }
 
 /* One moving decoration per scroller keeps selection distinct from the rail content. */

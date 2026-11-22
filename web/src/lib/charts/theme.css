@@ -6,6 +6,9 @@
   --foreground:var(--text-strong); --surface:var(--chart-surface); --surface-raised:var(--chart-surface-raised);
   --text-secondary:var(--chart-secondary); --text-muted:var(--chart-muted);
   --border:var(--chart-grid); --border-strong:var(--chart-border-strong);
+  /* The second of two compared series: warm sand against the periwinkle first, a clear step
+     apart in hue and lightness and over 3:1 on the card (checked for colour-blind readers). */
+  --chart-compare-second:#e8d2b0;
   --accent:var(--accent-bright); --accent-strong:var(--accent-text); --success:var(--accent-done); --danger:var(--accent-error); --warning:var(--accent-attention);
   --font-body:var(--font-ui); --font-display:var(--font-ui); --tracking-body:0; --tracking-display:-.02em;
   --text-xs:var(--type-small); --text-sm:var(--type-row); --text-3xl:var(--page-reading); --shadow-floating:var(--shadow-float); --leading-body:1.5;

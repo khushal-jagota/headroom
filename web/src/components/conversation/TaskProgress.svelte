@@ -141,8 +141,10 @@
   }
   .task-pill:hover,
   .task-pill:focus-visible { color: var(--text-strong); }
-  /* The pill never outgrows the composer's column: the name gives way, not the count. */
-  .task-pill { max-width: min(100%, 36rem); min-width: 0; }
+  /* The pill never outgrows the composer's column: the name gives way, not the count. One
+     line at every width, a gutter kept on a phone, and nothing drawn past its own edge, so
+     the name always ends in an ellipsis inside the pill rather than being cut by its border. */
+  .task-pill { max-width: min(calc(100% - var(--space-4)), 36rem); min-width: 0; overflow: hidden; white-space: nowrap; }
   .task-count, .task-sep { flex: none; color: var(--text-muted); }
   .task-sep { margin-inline: calc(var(--space-1) * -1); }
   .task-now {

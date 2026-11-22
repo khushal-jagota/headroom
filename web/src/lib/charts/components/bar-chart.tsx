@@ -9,6 +9,13 @@ import { motionTokens } from '../lib/chart-motion';
 import { SeriesLegend } from './series-legend';
 import { seriesColor } from './goal-indicators';
 
+/** Side-by-side series are compared, not summed, so the second one cannot be a dimmer step
+ *  of the first's blue: on the dark card it all but vanished. It takes the warm sand
+ *  instead, a different hue and lightness, at least 3:1 on the card. An authored colour
+ *  still wins, and a stack keeps its one-hue composition ramp. */
+export const comparisonColor = (series: { color?: string }, index: number, palette = 'allocation') =>
+  index === 1 && !series.color ? 'var(--chart-compare-second)' : seriesColor(series as Parameters<typeof seriesColor>[0], index, palette);
+
 Chart.register(...registerables);
 
 export function Bars({ block, data, series, compact, activeKey, onActive, projection, range = 'all', dateAxis, showLegend = false }: {
@@ -31,7 +38,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const unknownVerdict = (summary: typeof latestSummary) => !!block.binding && !!summary && summary.comparison !== null && summary.meets_expectation === null;
   const currentColor = latest?.actual === undefined ? 'var(--chart-muted)' : unknownVerdict(latestSummary) ? 'var(--chart-muted)' : latest.target === undefined ? 'var(--accent-bright)'
     : { good: 'var(--accent-done)', bad: 'var(--accent-error)', attention: 'var(--accent-attention)', neutral: 'var(--chart-muted)' }[currentTone];
-  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? showLegend ? 'var(--accent-bright)' : currentColor : seriesColor(item, i, 'composition') }));
+  const entries = plotted.map((item, i) => ({ key: block.measure_id && i === 0 ? 'actual' : seriesKey(item, i), label: item.name, color: block.stacked ? seriesColor(item, i, 'composition') : i === 0 ? showLegend ? 'var(--accent-bright)' : currentColor : comparisonColor(item, i, 'composition') }));
   const topStackKey = entries.at(-1)?.key;
   if (data.some(d => d.values.target !== undefined)) entries.push({ key: 'target', label: block.target_label ?? 'Target', color: 'var(--chart-reference)' });
 
