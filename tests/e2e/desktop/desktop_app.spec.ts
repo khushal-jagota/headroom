@@ -98,17 +98,49 @@ test('the screens reach the server through the app, and links leave it', async (
     await api.patch(server, `/api/tickets/${ticketId}`, { title: 'Desktop ticket after the change' });
     await expect(title).toHaveText('Desktop ticket after the change', { timeout: WAIT_MS });
 
+    // Record the native POST boundary without payloads, credentials, or cookies. A
+    // bounded diagnostic keeps a forwarding failure visible instead of timing out.
+    await desktop.app.evaluate(({ net }) => {
+      const events: unknown[] = [];
+      (globalThis as { desktopPostEvents?: unknown[] }).desktopPostEvents = events;
+      const original = net.fetch.bind(net);
+      (globalThis as { desktopPostRestore?: () => void }).desktopPostRestore = () => { net.fetch = original; };
+      net.fetch = async (input: string | Request, init?: RequestInit) => {
+        if (init?.method !== 'POST') return original(input, init);
+        const safeHeaders = ['accept', 'content-type', 'content-length', 'origin', 'sec-fetch-mode', 'sec-fetch-site'];
+        const headers = new Headers(init.headers);
+        events.push({ phase: 'start', url: typeof input === 'string' ? input : input.url,
+          headers: Object.fromEntries(safeHeaders.filter(name => headers.has(name)).map(name => [name, headers.get(name)])),
+          hasBody: init.body !== null && init.body !== undefined });
+        try {
+          const response = await original(input, { ...init, signal: AbortSignal.timeout(8_000) });
+          events.push({ phase: 'response', status: response.status });
+          return response;
+        } catch (error) {
+          events.push({ phase: 'error', error: String(error) });
+          throw error;
+        }
+      };
+    });
     // Write: a write from the screens' own relative path passes the server's rules.
     const write = await page.evaluate(async (ticket) => {
-      const response = await fetch('/api/tickets', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(ticket),
-      });
-      return { status: response.status, body: await response.text() };
+      try {
+        const response = await fetch('/api/tickets', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(ticket),
+          signal: AbortSignal.timeout(12_000),
+        });
+        return { status: response.status, body: await response.text() };
+      } catch (error) { return { status: 0, body: String(error) }; }
     }, newTicket('Ticket written by the desktop app'));
-    expect(write.status, write.body).toBe(200);
-    expect(JSON.stringify(await api.get(server, '/api/tickets?detail=summary'))).toContain('Ticket written by the desktop app');
+    const nativePost = await desktop.app.evaluate(() => {
+      (globalThis as { desktopPostRestore?: () => void }).desktopPostRestore?.();
+      return (globalThis as { desktopPostEvents?: unknown[] }).desktopPostEvents;
+    });
+    const serverContainsWrittenTicket = JSON.stringify(await api.get(server, '/api/tickets?detail=summary')).includes('Ticket written by the desktop app');
+    expect(write.status, JSON.stringify({ write, nativePost, serverContainsWrittenTicket })).toBe(200);
+    expect(serverContainsWrittenTicket).toBe(true);
 
     // A page from another site inside the app, such as one an artifact frame opened,
     // cannot write through the forward.

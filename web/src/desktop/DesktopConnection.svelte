@@ -9,7 +9,7 @@
   let address = $state("");
   let busy = $state(false);
 
-  async function probe(): Promise<void> {
+  async function probe(retry = false): Promise<void> {
     busy = true;
     try {
       const response = await fetch("/api/meta", { signal: AbortSignal.timeout(5_000) });
@@ -17,8 +17,12 @@
       failed = !response.ok;
       if (!failed) {
         dismissed = false;
-        retryChangeStream();
-        void queryClient.refetchQueries({ type: "active" });
+        // The automatic probe only observes. Replacing the initial live stream here
+        // can leave a forwarded stream open and consume another server connection.
+        if (retry) {
+          retryChangeStream();
+          void queryClient.refetchQueries({ type: "active" });
+        }
       }
     } catch { failed = get(connectionStatus) !== "connected"; }
     finally { busy = false; }
@@ -33,7 +37,7 @@
 {#if failed && !dismissed}
   <section class="offline" aria-label="Server connection" data-desktop-offline>
     <div class="offline-copy"><h1>Cannot reach the server</h1><p>{address}</p><p>Your last session stays here. Changes need a connection.</p></div>
-    <div class="offline-actions"><button type="button" onclick={probe} disabled={busy}>{busy ? "Checking…" : "Retry"}</button><a href="panels://setup/">Change server</a><button type="button" class="quiet" onclick={() => dismissed = true}>View last session</button></div>
+    <div class="offline-actions"><button type="button" onclick={() => probe(true)} disabled={busy}>{busy ? "Checking…" : "Retry"}</button><a href="panels://setup/">Change server</a><button type="button" class="quiet" onclick={() => dismissed = true}>View last session</button></div>
   </section>
 {/if}
 
