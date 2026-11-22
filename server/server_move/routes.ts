@@ -20,11 +20,13 @@ import { sendFile } from '../core/http/static.ts';
 import { path_is_within } from '../core/path_containment.ts';
 import { authenticate_machine_request } from '../executor/app_transport.ts';
 import { SERVER_MOVE_MAX_REQUEST_BYTES } from './configuration.ts';
+import { SERVER_MOVE_HELD_IDENTITY_PATH } from './contracts.ts';
 import type { HeldServerMove } from './held_service.ts';
 import type { ServerMoveCoordinator, ServerMoveFileSource } from './service.ts';
 
 export function create_server_move_owner_routes(
   coordinator: ServerMoveCoordinator,
+  held: HeldServerMove,
 ): FastifyPluginAsync<AreaServices> {
   return async (app, services) => {
     app.post<{ Params: { machine_id: string } }>(
@@ -41,7 +43,12 @@ export function create_server_move_owner_routes(
         return reply.code(202).send(view);
       },
     );
-    app.get('/server-move', async () => ({ move: coordinator.view() }));
+    app.get('/server-move', async (request) => {
+      requireOwner(services.identity(request));
+      return { move: coordinator.view() };
+    });
+    // Any caller over HTTPS: the old server's commit check tells the held server from itself.
+    app.get(SERVER_MOVE_HELD_IDENTITY_PATH.slice('/api'.length), async () => held.identity());
   };
 }
 
@@ -66,11 +73,12 @@ async function body(request: FastifyRequest): Promise<unknown> {
   }
 }
 
-/** Stream one listed file. Before the pause the digest covers exactly the bytes sent. */
+/** Stream one listed file. Without a listed digest, the digest covers exactly the bytes sent. */
 async function send_state_file(
   reply: FastifyReply,
   data_directory: string,
   source: ServerMoveFileSource,
+  sending: (sha256: string) => void,
 ): Promise<FastifyReply> {
   const path = resolve(source.path);
   if (!path_is_within(resolve(data_directory), path))
@@ -96,6 +104,7 @@ async function send_state_file(
           digest.update(chunk as Buffer);
       sha256 = digest.digest('hex');
     }
+    sending(sha256);
     reply
       .header('content-type', 'application/octet-stream')
       .header('content-length', String(info.size))
@@ -151,8 +160,18 @@ export function create_server_move_executor_routes(
     );
     app.get<Move>(`${prefix}/:move_id/file`, uncompressed, async (request, reply) => {
       const relative = new URL(request.url, 'http://executor').searchParams.get('path') ?? '';
-      const source = coordinator.file(machine(request), request.params.move_id, relative);
-      return send_state_file(reply, services.data_directory, source);
+      const move_id = request.params.move_id;
+      const source = coordinator.file(machine(request), move_id, relative);
+      try {
+        return await send_state_file(reply, services.data_directory, source, (sha256) => {
+          if (source.served) coordinator.served_file_sent(move_id, relative, sha256);
+        });
+      } catch (error) {
+        // A served file that vanished in the pause leaves the complete list.
+        if (source.served && error instanceof PlannerError && error.code === 'not_found')
+          coordinator.served_file_sent(move_id, relative, null);
+        throw error;
+      }
     });
     app.post<Move>(`${prefix}/:move_id/pause`, async (request) => {
       const machine_id = machine(request);

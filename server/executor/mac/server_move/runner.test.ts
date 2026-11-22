@@ -41,14 +41,21 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(options: { package_bytes?: Buffer; commit?: boolean } = {}) {
+function fixture(
+  options: { package_bytes?: Buffer; commit?: boolean; garbled_check?: boolean } = {},
+) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'server-move-')));
   roots.push(home);
   const root = join(home, 'executor');
   const link = join(home, 'new-server.sock');
   const archive = Buffer.from('sealed server package');
   const files_before = { 'state/a.json': '{"a":1}', 'state/gone.json': 'removed later' };
-  const files_after = { 'state/a.json': '{"a":2}', 'planner.db': 'database copy' };
+  // A served file changes after the complete list; another one goes away.
+  const files_after = {
+    'state/a.json': '{"a":2}',
+    'planner.db': 'database copy',
+    'files/tickets/t1/artifacts/note.md': 'written in the pause',
+  };
   const listed = (entries: Record<string, string>) =>
     Object.fromEntries(Object.entries(entries).map(([path, text]) => [path, sha(text)]));
   let paused = false,
@@ -89,10 +96,20 @@ function fixture(options: { package_bytes?: Buffer; commit?: boolean } = {}) {
     }),
     [`${OLD} POST /api/executor/server-move/${MOVE}/pause`]: () => {
       paused = true;
-      return { body: { complete: true, manifest: listed(files_after) } };
+      const manifest = {
+        ...listed(files_after),
+        'files/tickets/t1/artifacts/note.md': sha('listed before the edit'),
+        'files/tickets/t1/artifacts/gone.md': sha('removed in the pause'),
+      };
+      return { body: { complete: true, manifest } };
     },
     [`${OLD} POST /api/executor/server-move/${MOVE}/report`]: (body) => {
       reports.push(body);
+      if (options.garbled_check && (body as { state: string }).state === 'checked') {
+        // The old server committed, but a proxy garbled its answer.
+        instruction.phase = 'committing';
+        return { body: 'not json' };
+      }
       return {
         body: {
           commit: (body as { state: string }).state === 'checked' && options.commit !== false,
@@ -242,6 +259,10 @@ test('a committed move carries exactly the complete list and switches with the o
   expect((await readdir(join(move.install_root, 'data/state'))).sort()).toEqual(['a.json']);
   expect(readFileSync(join(move.install_root, 'data/state/a.json'), 'utf8')).toBe('{"a":2}');
   expect(readFileSync(join(move.install_root, 'data/planner.db'), 'utf8')).toBe('database copy');
+  // A served file takes the digest that the file route reports, and a gone one is dropped.
+  expect(await readdir(join(move.install_root, 'data/files/tickets/t1/artifacts'))).toEqual([
+    'note.md',
+  ]);
   expect(move.reports).toEqual([{ state: 'checked' }]);
   expect(move.saved).toEqual([move.link]);
   expect(move.requests.filter((key) => key.endsWith('/held/commit'))).toHaveLength(1);
@@ -302,6 +323,7 @@ test('after a restart a committed leftover finishes its switch even though no se
     },
     old_address: OLD,
     installation: { root: move.install_root, service: 'com.panels.home', executor_link: move.link },
+    checked_at_ms: 1,
     committed: true,
   });
   move.runner.start();
@@ -309,5 +331,18 @@ test('after a restart a committed leftover finishes its switch even though no se
   expect(move.installs).toEqual([]);
   expect(move.saved).toEqual([move.link]);
   expect(existsSync(join(move.install_root, 'marker'))).toBe(true);
+  expect(existsSync(move.work)).toBe(false);
+});
+
+test('after checked, an unclear answer follows the committing phase and never removes the new server', async () => {
+  const move = fixture({ garbled_check: true });
+  move.runner.start();
+  await settle(move.runner);
+  move.runner.notice({ move_id: MOVE });
+  await settle(move.runner);
+  expect(move.installs.map((request) => request.command)).toEqual(['install']);
+  expect(move.reports).toEqual([{ state: 'checked' }]);
+  expect(move.saved).toEqual([move.link]);
+  expect(existsSync(join(move.install_root, 'data/planner.db'))).toBe(true);
   expect(existsSync(move.work)).toBe(false);
 });

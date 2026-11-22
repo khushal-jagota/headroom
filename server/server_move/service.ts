@@ -19,17 +19,23 @@ import type { ServerMoveNotice } from '../executor/wire.generated.ts';
 import { read_server_location } from '../server_link/data.ts';
 import { parse_server_location, validate_server_address } from '../server_link/logic.ts';
 import type { ServerLocation } from '../server_link/contracts.ts';
+import { SERVER_LOCATION_PATH } from '../server_link/contracts.ts';
 import { mac_is_present } from '../tickets/locale_configuration.ts';
 import type {
   ServerMoveAttempt,
   ServerMoveFiles,
+  ServerMoveHeldIdentity,
   ServerMoveIngress,
   ServerMoveInstruction,
   ServerMovePlatform,
   ServerMoveReportReply,
   ServerMoveView,
 } from './contracts.ts';
-import { SERVER_MOVE_ACTIVE_PHASES, SERVER_MOVE_DIRECTORY } from './contracts.ts';
+import {
+  SERVER_MOVE_ACTIVE_PHASES,
+  SERVER_MOVE_DIRECTORY,
+  SERVER_MOVE_HELD_IDENTITY_PATH,
+} from './contracts.ts';
 import {
   SERVER_MOVE_DRAIN_SECONDS,
   SERVER_MOVE_PAUSE_CHECK_SECONDS,
@@ -67,13 +73,15 @@ export interface ServerMoveCoordinatorOptions {
   readonly state_paths: () => ServerStatePaths;
   readonly revision: string | null;
   readonly trusted_ingress: ServerMoveIngress | null;
+  /** This server's canonical HTTPS origin, which a move must not name as its new address. */
+  readonly canonical_origin: string | null;
   readonly update_barrier: UpdateBarrier;
   /** An update attempt that is not settled, a live installer lock, or a frozen barrier. */
   readonly update_running: () => boolean;
   readonly conversation: () => ConversationSystem | null;
   readonly packages: ServerPackageCache;
-  /** One HTTPS read of `<origin>/api/server-link`. */
-  readonly probe: (origin: string) => Promise<unknown>;
+  /** One HTTPS JSON read of `<origin><path>`. Null when the path answers 404. */
+  readonly probe: (origin: string, path: string) => Promise<unknown>;
   readonly emit_change: () => void;
   readonly now?: () => number;
 }
@@ -81,10 +89,29 @@ export interface ServerMoveCoordinatorOptions {
 /** A file the target may fetch: its path on disk and the digest its answer carries. */
 export interface ServerMoveFileSource {
   readonly path: string;
-  /** Null before the pause: the route digests the live bytes it sends. */
+  /** Null when the route digests the live bytes it sends. */
   readonly sha256: string | null;
+  /**
+   * A served file in the pause: machine code on this machine still writes there. The route
+   * sends its current bytes and reports their digest, or its absence, to `served_file_sent`.
+   */
+  readonly served: boolean;
 }
 
+/** Served files under this prefix may change in the pause (protocol step 6a). */
+const SERVED_PREFIX = 'files/';
+
+function own_origin(value: string | null): string | null {
+  try {
+    return value === null ? null : validate_server_address(value);
+  } catch {
+    return null;
+  }
+}
+function held_identity(value: unknown): ServerMoveHeldIdentity | null {
+  const move_id = (value as { move_id?: unknown } | null)?.move_id;
+  return typeof move_id === 'string' ? { move_id } : null;
+}
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -201,6 +228,11 @@ export class ServerMoveCoordinator {
       target_revision: facts.target_revision,
       target_platform: facts.platform,
       server_revision: this.options.revision,
+      requested_url: request.server_url,
+      own_addresses: [
+        facts.location?.server_url ?? null,
+        own_origin(this.options.canonical_origin),
+      ],
     });
     if (refusal !== null) throw new PlannerError('validation', refusal);
     const attempt = this.write(
@@ -281,18 +313,36 @@ export class ServerMoveCoordinator {
     if (this.complete !== null) {
       if (!Object.hasOwn(this.complete.manifest, path))
         throw new PlannerError('not_found', 'This file is not listed.');
-      const sha256 = this.complete.manifest[path]!;
+      const served = path.startsWith(SERVED_PREFIX);
       return {
         path:
           path === basename(this.options.database_path)
             ? this.copy_path(move_id)
             : join(this.options.data_directory, path),
-        sha256,
+        sha256: served ? null : this.complete.manifest[path]!,
+        served,
       };
     }
     if (this.listed === null || !Object.hasOwn(this.listed, path))
       throw new PlannerError('not_found', 'This file is not listed.');
-    return { path: join(this.options.data_directory, path), sha256: null };
+    return { path: join(this.options.data_directory, path), sha256: null, served: false };
+  }
+
+  /** The complete list follows a served file that changed or vanished in the pause. */
+  served_file_sent(move_id: string, path: string, sha256: string | null): void {
+    const complete = this.complete;
+    if (
+      complete === null ||
+      this.current?.move_id !== move_id ||
+      !path.startsWith(SERVED_PREFIX) ||
+      !Object.hasOwn(complete.manifest, path) ||
+      complete.manifest[path] === sha256
+    )
+      return;
+    const manifest = { ...complete.manifest };
+    if (sha256 === null) delete manifest[path];
+    else manifest[path] = sha256;
+    this.complete = { complete: true, manifest };
   }
 
   pause(machine_id: string, move_id: string): Promise<ServerMoveFiles> {
@@ -380,15 +430,21 @@ export class ServerMoveCoordinator {
       return { commit: false };
     }
     let answer: ServerLocation | null = null;
+    let held: ServerMoveHeldIdentity | null = null;
     try {
-      answer = parse_server_location(await this.options.probe(attempt.server_url));
+      const [location, identity] = await Promise.all([
+        this.options.probe(attempt.server_url, SERVER_LOCATION_PATH),
+        this.options.probe(attempt.server_url, SERVER_MOVE_HELD_IDENTITY_PATH),
+      ]);
+      answer = parse_server_location(location);
+      held = held_identity(identity);
     } catch (error) {
       console.warn('The new server address did not answer the move check', error);
     }
     const settled = this.current;
     if (settled?.move_id !== move_id) return { commit: false };
     if (settled.phase === 'committing') return { commit: true };
-    const decision = report_decision(settled, answer, this.now());
+    const decision = report_decision(settled, answer, held, this.now());
     if (!decision.commit) {
       await this.fail(move_id, decision.reason);
       return { commit: false };
@@ -440,7 +496,7 @@ export class ServerMoveCoordinator {
       if (this.probing || attempt?.phase !== 'committing') return;
       this.probing = true;
       const probe = Promise.resolve()
-        .then(() => this.options.probe(attempt.server_url))
+        .then(() => this.options.probe(attempt.server_url, SERVER_LOCATION_PATH))
         .then((answer) => {
           if (new_server_took_over(attempt, parse_server_location(answer))) this.become_moved();
         })

@@ -88,8 +88,13 @@ test('a failed moved-home start gives the staged data folder back and removes on
       install_moved_home(f.request, { ...f.deps, healthy: async () => false }),
       /did not report ready/,
     );
-    // The caller's folder is back where it was, without the attempt's settings or marker.
-    assert.deepEqual(readdirSync(f.staged).sort(), before);
+    // The caller's folder is back where it was, without the attempt's settings. The marker
+    // travelled with it, so a crash after the rename still leaves a removable root.
+    assert.deepEqual(readdirSync(f.staged).sort(), [...before, 'move-held.json'].sort());
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(f.staged, 'move-held.json'), 'utf8')),
+      f.request.held,
+    );
     assert.equal(readFileSync(join(f.staged, 'planner.db'), 'utf8'), 'copied database');
     assert.equal(readFileSync(join(f.staged, 'secrets/update-token'), 'utf8'), 'copied token\n');
     assert(!existsSync(join(f.base, 'new-parent')));

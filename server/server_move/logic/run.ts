@@ -2,6 +2,7 @@
 import type { ServerLocation } from '../../server_link/contracts.ts';
 import type {
   ServerMoveAttempt,
+  ServerMoveHeldIdentity,
   ServerMoveHeldMarker,
   ServerMoveInstruction,
   ServerMovePhase,
@@ -44,6 +45,9 @@ export interface ServerMoveStartFacts {
   /** The running server's released revision, or null for a source checkout. */
   readonly server_revision: string | null;
   readonly server_active: boolean;
+  /** The requested new address, and this server's own addresses: its link and canonical origin. */
+  readonly requested_url: string;
+  readonly own_addresses: readonly (string | null)[];
 }
 
 export function start_refusal(facts: ServerMoveStartFacts): string | null {
@@ -51,6 +55,8 @@ export function start_refusal(facts: ServerMoveStartFacts): string | null {
   if (facts.move_running) return 'Another server move is running.';
   if (!facts.server_active) return 'This server has already moved.';
   if (!facts.target_known) return 'This machine is unknown.';
+  if (facts.own_addresses.includes(facts.requested_url))
+    return 'This address is the address of this server. Give the address of the new server.';
   if (facts.target_runs_server) return 'The server already runs on this machine.';
   if (facts.server_revision === null || !/^[0-9a-f]{40}$/.test(facts.server_revision))
     return 'This server has no released revision, so it has no package to move.';
@@ -204,11 +210,13 @@ export function pause_expired(attempt: ServerMoveAttempt, now_ms: number): boole
 
 /**
  * The decision on a 'checked' report: commit only when the new address answers for this
- * server at the same move number, still active, and the pause is within its limit.
+ * server at the same move number, still active, names this move as its held move, and the
+ * pause is within its limit.
  */
 export function report_decision(
   attempt: ServerMoveAttempt,
   answer: ServerLocation | null,
+  held: ServerMoveHeldIdentity | null,
   now_ms: number,
 ): { readonly commit: true } | { readonly commit: false; readonly reason: string } {
   if (attempt.phase !== 'paused')
@@ -224,6 +232,13 @@ export function report_decision(
     return {
       commit: false,
       reason: `The new address ${attempt.server_url} does not answer for this server.`,
+    };
+  // The old server answers its own server link the same way, so only the held identity
+  // proves that the address reaches the new server.
+  if (held?.move_id !== attempt.move_id)
+    return {
+      commit: false,
+      reason: `The new address ${attempt.server_url} does not reach the held new server.`,
     };
   return { commit: true };
 }

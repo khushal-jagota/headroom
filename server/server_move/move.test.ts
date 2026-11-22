@@ -26,7 +26,11 @@ import { register_machine } from '../machines/executor_credentials.ts';
 import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { initialize_server_location, read_server_location } from '../server_link/data.ts';
 import type { ServerMoveHeldMarker } from './contracts.ts';
-import { SERVER_MOVE_ATTEMPT_FILE, SERVER_MOVE_HELD_FILE } from './contracts.ts';
+import {
+  SERVER_MOVE_ATTEMPT_FILE,
+  SERVER_MOVE_HELD_FILE,
+  SERVER_MOVE_HELD_IDENTITY_PATH,
+} from './contracts.ts';
 import { HeldServerMove } from './held_service.ts';
 import { startup_move_hold } from './hold.ts';
 import type { ServerPackageCache } from './packages/cache.ts';
@@ -87,7 +91,15 @@ async function server_folder() {
 }
 type Folder = Awaited<ReturnType<typeof server_folder>>;
 
-function coordinator(folder: Folder, probe: (origin: string) => Promise<unknown>) {
+/**
+ * `probe` answers the new address's server link. Its held identity names the running move,
+ * unless `held_answers` says the address reaches no held server.
+ */
+function coordinator(
+  folder: Folder,
+  probe: (origin: string) => Promise<unknown>,
+  held_answers: () => boolean = () => true,
+) {
   const archive = join(folder.root, 'package.tar.gz');
   writeFileSync(archive, 'package');
   const packages = {
@@ -99,7 +111,7 @@ function coordinator(folder: Folder, probe: (origin: string) => Promise<unknown>
     }),
     archive_path: () => archive,
   } as unknown as ServerPackageCache;
-  return new ServerMoveCoordinator({
+  const move: ServerMoveCoordinator = new ServerMoveCoordinator({
     database: folder.database,
     data_directory: folder.root,
     database_path: folder.database_path,
@@ -110,13 +122,20 @@ function coordinator(folder: Folder, probe: (origin: string) => Promise<unknown>
     }),
     revision,
     trusted_ingress: null,
+    canonical_origin: 'https://old.example',
     update_barrier: folder.barrier,
     update_running: () => false,
     conversation: () => folder.conversation,
     packages,
-    probe,
+    probe: async (origin, path) =>
+      path !== SERVER_MOVE_HELD_IDENTITY_PATH
+        ? probe(origin)
+        : held_answers()
+          ? { move_id: move.view()?.move_id }
+          : null,
     emit_change: () => {},
   });
+  return move;
 }
 async function until(check: () => boolean) {
   for (let index = 0; index < 200 && !check(); index++) await new Promise((r) => setTimeout(r, 10));
@@ -126,7 +145,15 @@ async function until(check: () => boolean) {
 test('the pause holds the server and lists the database copy; the commit and the switch make it the responder', async () => {
   const folder = await server_folder();
   let answer: unknown = { ...folder.location, server_url: 'https://new.example' };
-  const move = coordinator(folder, async () => answer);
+  let held_answers = true;
+  const move = coordinator(
+    folder,
+    async () => answer,
+    () => held_answers,
+  );
+  expect(() =>
+    move.start(folder.target.machine_id, { server_url: 'https://old.example', port: 8767 }),
+  ).toThrow(/address of this server/);
   const view = move.start(folder.target.machine_id, {
     server_url: 'https://new.example',
     port: 8767,
@@ -165,13 +192,14 @@ test('the pause holds the server and lists the database copy; the commit and the
   expect(database_file.path).not.toBe(folder.database_path);
   expect(await sha256_file(database_file.path)).toBe(files.manifest['planner.db']);
 
-  answer = { ...folder.location, server_url: 'https://new.example', move_number: 9 };
+  // The old server answers its own server link the same way: only the held identity counts.
+  held_answers = false;
   expect(await move.report(folder.target.machine_id, view.move_id, { state: 'checked' })).toEqual({
     commit: false,
   });
   expect(move.view()).toMatchObject({
     phase: 'failed',
-    failure: expect.stringMatching(/does not answer/),
+    failure: expect.stringMatching(/does not reach the held new server/),
   });
   expect(
     folder.barrier.frozen || folder.barrier.move_hold !== null || folder.admission.closed,
@@ -179,7 +207,7 @@ test('the pause holds the server and lists the database copy; the commit and the
   expect(existsSync(dirname(database_file.path))).toBe(false);
 
   // A second run commits, and the switch notice makes the record the address responder.
-  answer = { ...folder.location, server_url: 'https://new.example' };
+  held_answers = true;
   const second = move.start(folder.target.machine_id, {
     server_url: 'https://new.example',
     port: 8767,

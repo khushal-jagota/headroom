@@ -3,14 +3,19 @@
  * `remove` takes back a moved home that did not take over. Neither makes a database, a
  * credential, an identity or machine code: the target machine already runs machine code.
  */
-import { fstatSync, lstatSync } from 'node:fs';
+import { constants, fstatSync, fsyncSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { lstat, readdir, readFile, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { path_is_within } from '../core/path_containment.ts';
 import { executor_link_socket_path } from '../core/http/executor_link.ts';
 import { assert_installer_path } from '../environments/updates/installer/configuration.ts';
 import { assert_release_execution } from '../environments/release/process.ts';
-import { directory_open_flags, open_relative, rename_relative } from '../executor/mac/platform.ts';
+import {
+  close_native_descriptor,
+  directory_open_flags,
+  open_relative,
+  rename_relative,
+} from '../executor/mac/platform.ts';
 import { SERVER_MOVE_HELD_FILE } from '../server_move/contracts.ts';
 import type { ServerMoveInstallResult } from '../server_move/contracts.ts';
 import {
@@ -51,6 +56,41 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Write the held marker into the staged folder before it moves in. A failed attempt leaves it
+ * there, so a retry of the same move accepts the same marker and refuses any other.
+ */
+function write_held_marker(directory: number, content: string): void {
+  let fd: number;
+  try {
+    fd = open_relative(
+      directory,
+      SERVER_MOVE_HELD_FILE,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const existing = open_relative(
+      directory,
+      SERVER_MOVE_HELD_FILE,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      if (!fstatSync(existing).isFile() || readFileSync(existing, 'utf8') !== content)
+        throw new Error('The staged data folder holds the marker of another move');
+    } finally {
+      close_native_descriptor(existing);
+    }
+    return;
+  }
+  try {
+    writeFileSync(fd, content);
+    fsyncSync(fd);
+  } finally {
+    close_native_descriptor(fd);
+  }
+}
 export async function install_moved_home(
   input: unknown,
   deps: HomeMoveDependencies,
@@ -100,6 +140,9 @@ export async function install_moved_home(
       before = lstatSync(staged.path);
     current_directory(source);
     assert_release_execution(deps.execution);
+    // The marker travels with the data: a moved data folder without it took over.
+    write_held_marker(files.directory(staged.path).fd, JSON.stringify(move.held) + '\n');
+    current_directory(source);
     try {
       rename_relative(source.fd, name, root.fd, 'data');
     } catch (error) {
@@ -127,12 +170,6 @@ export async function install_moved_home(
     const data = files.directory(join(root_path, 'data'));
     if (!same_inode(data.info, before))
       throw new Error(`The moved data folder changed: ${join(root_path, 'data')}`);
-    // The marker comes first: a moved data folder without it is a server that took over.
-    await files.file(
-      join(root_path, 'data', SERVER_MOVE_HELD_FILE),
-      JSON.stringify(move.held) + '\n',
-      0o600,
-    );
     for (const name of ['logs', 'workspaces']) await files.ensure_directory(join(root_path, name));
     await files.file(
       join(root_path, 'data/config.yaml'),

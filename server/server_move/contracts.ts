@@ -120,6 +120,16 @@ export interface ServerMoveHeldMarker {
   readonly move_number: number;
 }
 
+/**
+ * `GET /api/server-move/held` on a held new server, over its HTTPS address. It proves to the old
+ * server that the address reaches the held server of this move, not the old server itself, which
+ * answers the server link with the same identity and move number. 404 when no marker exists.
+ */
+export interface ServerMoveHeldIdentity {
+  readonly move_id: string;
+}
+export const SERVER_MOVE_HELD_IDENTITY_PATH = '/api/server-move/held';
+
 /** `POST /api/executor/server-move/held/probe` on the new server: a test job with no agent. */
 export interface ServerMoveProbeJob {
   readonly job_id: string;

@@ -14,6 +14,8 @@ export interface ServerMoveRunRecord {
   /** The old server's address when the run started. The switch notice goes there. */
   readonly old_address: string;
   readonly installation: ServerMoveInstallation | null;
+  /** When this machine sent `checked`. From then on the old server's phase decides the run. */
+  readonly checked_at_ms: number | null;
   /** The old server answered commit: true. From here the run never removes the new server. */
   readonly committed: boolean;
 }

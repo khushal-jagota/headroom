@@ -5,6 +5,11 @@ export { ARCHIVE_MAX_COMPRESSED_BYTES as MAX_SERVER_MOVE_PACKAGE_BYTES } from '.
 export const SERVER_MOVE_INSTRUCTION_POLL_SECONDS = 5;
 /** How soon a leftover move folder is settled again after a failed attempt. */
 export const SERVER_MOVE_RECOVERY_RETRY_SECONDS = 10;
+/**
+ * After `checked`, how long past the old server's pause limit the run keeps asking for a
+ * settled phase before it reports a failure.
+ */
+export const SERVER_MOVE_SETTLE_MARGIN_SECONDS = 60;
 /** Silence allowed on one ordinary move request or download. */
 export const SERVER_MOVE_REQUEST_SECONDS = 30;
 /** The old server drains its work and copies the database before it answers the pause. */

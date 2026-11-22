@@ -27,6 +27,8 @@ const ready = {
   target_platform: 'darwin',
   server_revision: revision,
   server_active: true,
+  requested_url: 'https://new.example',
+  own_addresses: ['https://old.example', null],
 };
 
 test('a move starts only for a present, current, non-server machine while nothing else runs', () => {
@@ -40,6 +42,7 @@ test('a move starts only for a present, current, non-server machine while nothin
     [{ target_revision: null }, /out of date/],
     [{ target_platform: 'windows' }, /no server package/],
     [{ server_revision: null }, /no released revision/],
+    [{ requested_url: 'https://old.example' }, /address of this server/],
   ] as const)
     expect(start_refusal({ ...ready, ...change })).toMatch(refusal);
   expect(
@@ -81,14 +84,18 @@ test('the old server commits only on the same identity at N within the pause lim
   );
   const paused = transition(copying, 'paused', 2, { paused_at_ms: 1000 });
   const answer = { ...location, server_url: 'https://new.example' };
-  expect(report_decision(paused, answer, 2000)).toEqual({ commit: true });
-  expect(report_decision(copying, answer, 2000).commit).toBe(false);
-  expect(report_decision(paused, null, 2000).commit).toBe(false);
-  expect(report_decision(paused, { ...answer, server_id: 'other' }, 2000).commit).toBe(false);
-  expect(report_decision(paused, { ...answer, move_number: 5 }, 2000).commit).toBe(false);
-  expect(report_decision(paused, { ...answer, state: 'moved' }, 2000).commit).toBe(false);
+  const held = { move_id: 'move' };
+  expect(report_decision(paused, answer, held, 2000)).toEqual({ commit: true });
+  expect(report_decision(copying, answer, held, 2000).commit).toBe(false);
+  expect(report_decision(paused, null, held, 2000).commit).toBe(false);
+  // The old server answers its own link the same way; only the held identity tells them apart.
+  expect(report_decision(paused, answer, null, 2000).commit).toBe(false);
+  expect(report_decision(paused, answer, { move_id: 'other' }, 2000).commit).toBe(false);
+  expect(report_decision(paused, { ...answer, server_id: 'other' }, held, 2000).commit).toBe(false);
+  expect(report_decision(paused, { ...answer, move_number: 5 }, held, 2000).commit).toBe(false);
+  expect(report_decision(paused, { ...answer, state: 'moved' }, held, 2000).commit).toBe(false);
   expect(
-    report_decision(paused, answer, 1000 + SERVER_MOVE_PAUSE_LIMIT_SECONDS * 1000).commit,
+    report_decision(paused, answer, held, 1000 + SERVER_MOVE_PAUSE_LIMIT_SECONDS * 1000).commit,
   ).toBe(false);
   const committing = transition(paused, 'committing', 3);
   expect(() => transition(committing, 'failed', 4)).toThrow();

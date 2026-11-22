@@ -4,7 +4,7 @@
  * Each step is saved in `<executor root>/server-move/<move_id>/run.json`, so a restart either
  * finishes a committed switch or removes what the run made.
  */
-import { lstat, mkdir, readdir, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
@@ -25,7 +25,11 @@ import type {
   ServerMovePlatform,
   ServerMoveRemoveRequest,
 } from '../../../server_move/contracts.ts';
-import { SERVER_MOVE_DEFAULT_SERVICE } from '../../../server_move/contracts.ts';
+import {
+  SERVER_MOVE_DEFAULT_SERVICE,
+  SERVER_MOVE_PAUSE_LIMIT_SECONDS,
+} from '../../../server_move/contracts.ts';
+import { ExecutorHttpError } from '../transport/errors.ts';
 import type { MachineServerRecord } from '../../../server_link/contracts.ts';
 import { parse_server_location } from '../../../server_link/logic.ts';
 import { is_record } from '../../../core/records.ts';
@@ -42,6 +46,7 @@ import {
   SERVER_MOVE_PAYLOAD_DIRECTORY,
   SERVER_MOVE_RECOVERY_RETRY_SECONDS,
   SERVER_MOVE_RUN_FILE,
+  SERVER_MOVE_SETTLE_MARGIN_SECONDS,
   SERVER_MOVE_WORK_DIRECTORY,
 } from './configuration.ts';
 import type { ServerMoveRunRecord } from './contracts.ts';
@@ -130,6 +135,7 @@ function parse_run_record(value: Record<string, unknown> | null): ServerMoveRunR
     instruction.package === null ||
     typeof value.old_address !== 'string' ||
     typeof value.committed !== 'boolean' ||
+    !(value.checked_at_ms === null || Number.isSafeInteger(value.checked_at_ms)) ||
     !(
       installation === null ||
       (is_record(installation) &&
@@ -252,9 +258,9 @@ export class MacServerMove {
       readonly size: number | null;
       readonly name: string;
     },
-  ): Promise<void> {
+  ): Promise<string> {
     const { files } = this.options;
-    await requests.download(path, async (response) => {
+    return requests.download(path, async (response) => {
       let sha256 = expected.sha256;
       if (expected.size === null) {
         const header = response.headers[SERVER_FILE_SHA256_HEADER];
@@ -291,18 +297,27 @@ export class MacServerMove {
       } finally {
         await files.close_transfer(handle, !complete);
       }
+      return sha256!;
     });
   }
-  /** Copies every listed file that is not staged with its digest. Returns the files it missed. */
+  /**
+   * Copies every listed file that is not staged with its digest. Before the pause it returns
+   * the files it missed. In the pause every file must match the list, except a served file
+   * under `files/`: machine code on the old machine still works there, so the file route's
+   * digest replaces the listed one, and a 404 drops the path. The returned list is the one
+   * the staged folder must equal.
+   */
   private async stage(
     requests: ServerMoveRequests,
     move_id: string,
     data: string,
     manifest: ChecksumManifest,
     complete: boolean,
-  ): Promise<number> {
+  ): Promise<{ readonly missed: number; readonly manifest: ChecksumManifest }> {
     let missed = 0;
+    const staged_list: ChecksumManifest = Object.assign(Object.create(null), manifest);
     for (const [relative, digest] of Object.entries(manifest)) {
+      const served = relative.startsWith('files/');
       const target = join(data, relative);
       if (!path_is_within(data, target))
         throw new ServerMoveFailure('The file list leaves its folder.');
@@ -317,18 +332,39 @@ export class MacServerMove {
       try {
         await rm(target, { recursive: true, force: true });
         await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-        await this.receive(requests, requests.file_path(move_id, relative), target, {
-          sha256: complete ? digest : null,
-          size: null,
-          name: `The file ${relative}`,
-        });
+        staged_list[relative] = await this.receive(
+          requests,
+          requests.file_path(move_id, relative),
+          target,
+          { sha256: complete && !served ? digest : null, size: null, name: `The file ${relative}` },
+        );
       } catch (error) {
+        if (this.signal.aborted) throw error;
+        if (complete && served && error instanceof ExecutorHttpError && error.status === 404) {
+          delete staged_list[relative];
+          continue;
+        }
         // Before the pause a file can change or go away. The pause copies it again.
-        if (complete || this.signal.aborted) throw error;
+        if (complete) throw error;
         missed++;
       }
     }
-    return missed;
+    return { missed, manifest: staged_list };
+  }
+  /**
+   * Before the pause: the new root must not exist, and the installer's rename of the staged
+   * folder into it must stay on one filesystem.
+   */
+  private async require_install_root(root: string): Promise<void> {
+    if (await exists(root))
+      throw new ServerMoveFailure(`A server is already installed at ${root}.`);
+    let ancestor = dirname(root);
+    while (!(await exists(ancestor)) && dirname(ancestor) !== ancestor)
+      ancestor = dirname(ancestor);
+    if ((await stat(ancestor)).dev !== (await stat(this.work_root)).dev)
+      throw new ServerMoveFailure(
+        `The new server folder ${root} is on another filesystem than ${this.work_root}.`,
+      );
   }
   /** Removes staged files that the complete list no longer has, then checks the exact set. */
   private async check_staged(data: string, manifest: ChecksumManifest): Promise<void> {
@@ -346,8 +382,7 @@ export class MacServerMove {
       payload = join(work, SERVER_MOVE_PAYLOAD_DIRECTORY),
       archive = join(work, SERVER_MOVE_PACKAGE_FILE);
     let record: ServerMoveRunRecord | undefined,
-      report_sent = false,
-      commit_answered = false;
+      commit_refused = false;
     try {
       record = await this.with_requests(this.options.server_session(), async (old) => {
         const instruction = await this.wait_for_package(old, move_id);
@@ -362,6 +397,7 @@ export class MacServerMove {
           instruction: { ...instruction, package: server_package },
           old_address: this.options.server_address(),
           installation: null,
+          checked_at_ms: null,
           committed: false,
         };
         await mkdir(this.work_root, { recursive: true, mode: 0o700 });
@@ -378,16 +414,17 @@ export class MacServerMove {
         // Extraction runs before the pause, so the pause holds only the copy and the check.
         await this.options.extract(archive, payload, server_package, this.signal);
         const listed = await old.files(move_id);
-        const missed = await this.stage(old, move_id, data, listed.manifest, false);
+        const { missed } = await this.stage(old, move_id, data, listed.manifest, false);
+        const root = server_install_root(this.options.platform, this.options.home);
+        await this.require_install_root(root);
         log(
           `Server move ${move_id}: copied ${Object.keys(listed.manifest).length - missed} files while the server runs; asking it to pause.`,
         );
         const complete = await old.pause(move_id);
         await this.prune(data, complete.manifest);
-        await this.stage(old, move_id, data, complete.manifest, true);
-        await this.check_staged(data, complete.manifest);
+        const staged = await this.stage(old, move_id, data, complete.manifest, true);
+        await this.check_staged(data, staged.manifest);
         log(`Server move ${move_id}: the copied files match the complete list. Installing.`);
-        const root = server_install_root(this.options.platform, this.options.home);
         if (await exists(root))
           throw new ServerMoveFailure(`A server is already installed at ${root}.`);
         current = {
@@ -422,20 +459,24 @@ export class MacServerMove {
           await held.answer_probe_job(await held.probe_job());
         });
         log(`Server move ${move_id}: the new server is healthy and answered the test job.`);
-        report_sent = true;
+        current = { ...current, checked_at_ms: Date.now() };
+        record = current;
+        await this.save(work, current);
         const reply = await old.report(move_id, { state: 'checked' });
-        if (!reply.commit) throw new ServerMoveFailure('The old server did not commit the move.');
-        commit_answered = true;
+        if (!reply.commit) {
+          commit_refused = true;
+          throw new ServerMoveFailure('The old server did not commit the move.');
+        }
         current = { ...current, committed: true };
         await this.save(work, current);
         return current;
       });
     } catch (error) {
       if (this.signal.aborted) return;
-      if (commit_answered || (report_sent && !(error instanceof ServerMoveFailure))) {
+      if (record !== undefined && record.checked_at_ms !== null && !commit_refused) {
         // The old server may be past the point of no return. Its phase decides.
         log(`Server move ${move_id}: the commit answer is uncertain: ${failure_detail(error)}`);
-        this.recovery_needed = true;
+        await this.follow_old_server(work, record);
         return;
       }
       const reason = failure_reason(error);
@@ -455,20 +496,59 @@ export class MacServerMove {
     }
     if (record !== undefined) await this.switch(work, record);
   }
-  /** Before the point of no return: tell the old server, then remove what this run made. */
+  /**
+   * Tell the old server, then remove what this run made. An old server already past the point
+   * of no return answers commit: true, and the run switches instead.
+   */
   private async fail(work: string, record: ServerMoveRunRecord, reason: string): Promise<void> {
     const move_id = record.instruction.move_id;
+    let commit = false;
     try {
-      await this.with_requests(this.options.server_session(), (old) =>
-        old.report(move_id, { state: 'failed', reason }),
-      );
+      commit = (
+        await this.with_requests(this.options.server_session(), (old) =>
+          old.report(move_id, { state: 'failed', reason }),
+        )
+      ).commit;
     } catch (error) {
-      if (this.signal.aborted) throw error;
+      // After `checked` an unanswered report proves nothing. The folder stays for recovery.
+      if (this.signal.aborted || record.checked_at_ms !== null) throw error;
       this.options.log(
         `Server move ${move_id}: the failure report did not arrive: ${failure_detail(error)}`,
       );
     }
+    if (commit) return this.commit_and_switch(work, record);
     await this.remove(work, record);
+  }
+  private async commit_and_switch(work: string, record: ServerMoveRunRecord): Promise<void> {
+    if (!record.installation?.executor_link)
+      throw new ServerMoveFailure(
+        'The old server committed a move that this machine did not install.',
+      );
+    const committed = { ...record, committed: true };
+    await this.save(work, committed);
+    return this.switch(work, committed);
+  }
+  /**
+   * After `checked` without a clear answer: the old server's phase decides. Committing or
+   * moved switches, failed or gone cleans up, and a pause that outlives its limit is reported.
+   */
+  private async follow_old_server(work: string, record: ServerMoveRunRecord): Promise<void> {
+    const move_id = record.instruction.move_id;
+    const limit =
+      record.checked_at_ms! +
+      (SERVER_MOVE_PAUSE_LIMIT_SECONDS + SERVER_MOVE_SETTLE_MARGIN_SECONDS) * 1000;
+    for (;;) {
+      const instruction = await this.with_requests(this.options.server_session(), (old) =>
+        old.instruction(),
+      );
+      const same = instruction !== null && instruction.move_id === move_id;
+      if (same && ['committing', 'moved'].includes(instruction.phase))
+        return this.commit_and_switch(work, record);
+      if (!same || instruction.phase === 'failed') return this.remove(work, record);
+      if (Date.now() >= limit)
+        return this.fail(work, record, 'The old server did not settle the move after the check.');
+      await sleep(SERVER_MOVE_INSTRUCTION_POLL_SECONDS * 1000, undefined, { signal: this.signal });
+    }
   }
   private async remove(work: string, record: ServerMoveRunRecord | null): Promise<void> {
     if (record?.committed) throw new Error('A committed server move is never removed.');
@@ -528,19 +608,13 @@ export class MacServerMove {
     );
     if (record === null) return this.remove(work, null);
     if (record.committed) return this.switch(work, record);
+    if (record.checked_at_ms !== null) return this.follow_old_server(work, record);
     const instruction = await this.with_requests(this.options.server_session(), (old) =>
       old.instruction(),
     );
     const same = instruction !== null && instruction.move_id === move_id;
-    if (same && ['committing', 'moved'].includes(instruction.phase)) {
-      if (!record.installation?.executor_link)
-        throw new ServerMoveFailure(
-          'The old server committed a move that this machine did not install.',
-        );
-      const committed = { ...record, committed: true };
-      await this.save(work, committed);
-      return this.switch(work, committed);
-    }
+    if (same && ['committing', 'moved'].includes(instruction.phase))
+      return this.commit_and_switch(work, record);
     if (same && instruction.phase !== 'failed')
       return this.fail(work, record, 'The machine code restarted during the move.');
     return this.remove(work, record);

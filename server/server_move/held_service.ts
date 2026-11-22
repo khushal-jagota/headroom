@@ -12,6 +12,7 @@ import type { UpdateBarrier } from '../environments/update_barrier.ts';
 import { read_server_location } from '../server_link/data.ts';
 import type {
   ServerMoveCommitReply,
+  ServerMoveHeldIdentity,
   ServerMoveHeldMarker,
   ServerMoveProbeAnswer,
   ServerMoveProbeJob,
@@ -57,6 +58,12 @@ export class HeldServerMove {
       return;
     }
     if (state === 'done') this.release(marker, false);
+  }
+
+  /** `GET /api/server-move/held`: which move holds this server. */
+  identity(): ServerMoveHeldIdentity {
+    if (this.marker === null) throw new PlannerError('not_found', 'No move holds this server.');
+    return { move_id: this.marker.move_id };
   }
 
   /** The routes ask this with the authenticated machine of a local executor link request. */

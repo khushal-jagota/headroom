@@ -122,7 +122,7 @@ Before removal, Panels checks that the Ticket is still ended and the work is saf
 
 Tickets deleted before migration have no reliable end record, so their old folders remain for review. The Mac uses authoritative lifecycle state from the VPS, not absence from a local cache. See [Executor](executor.md).
 
-Renaming the account, moving host state, or changing Tailscale Serve is operator work outside this code.
+A move of the server to another machine is one owner action ([Moving the server](executor.md#moving-the-server)). Renaming the account or changing Tailscale Serve is operator work outside this code.
 
 ## Status
 
