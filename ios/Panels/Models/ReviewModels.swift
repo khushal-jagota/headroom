@@ -30,6 +30,9 @@ struct ReviewItem: Identifiable, Equatable, Sendable {
     var isProposal: Bool { reviewItemType == "proposal" }
     var isMessage: Bool { reviewItemType == "message" }
     var isAsk: Bool { reviewItemType == "ask" }
+    /// An ask whose record holds no time waits last, under this time. Every such ask in a
+    /// conversation shares one identity, so a new one cannot be told from an answered one.
+    static let unknownAskTime: Double = 9_007_199_254_740_991
     var id: String {
         switch reviewItemType {
         case "message": "message:\(conversationId ?? ""):\(waitingSince)"

@@ -20,7 +20,7 @@ struct ReviewProposalCard: View {
     @Environment(AppStore.self) private var store
     @State private var sheet: DecisionSheet?
     @State private var busyAction: String?
-    @State private var resolvedAfterDismiss = false
+    @State private var exit = ReviewCardExit()
     @State private var approvalGuidance: DecisionGuidance?
     @State private var appeared = false
     private var recap: String? { decision.ticket?.recap ?? store.presentation?.ticketsById[item.ticketId]?.recap }
@@ -88,7 +88,7 @@ struct ReviewProposalCard: View {
         .onChange(of: notice != nil) { _, moved in if moved { sheet = nil } }
         .decisionSheets($sheet, ticket: decision.ticket, manifest: decision.manifest, note: approvalGuidance?.text,
             onDismiss: {
-                if resolvedAfterDismiss { resolvedAfterDismiss = false; leave() }
+                if exit.dismissed() { leave() }
             },
             approve: { ceiling, holder in
                 guard notice == nil else { throw APIError(status: 0, message: "Someone else reviews this proposal now.") }
@@ -103,9 +103,10 @@ struct ReviewProposalCard: View {
                 guard notice == nil, let ticket = decision.ticket else { return }
                 let current = try await decision.scopeChange.save(api: store.client, ticket: ticket, ceiling: nil, holder: holder)
                 decision.acceptScopeRead(current)
-                // Moved to someone else here: the card leaves once the sheet closes, and
-                // is held until then, so the move reads as Khushal's, not as a notice.
-                if holder.kind != "owner" { onHold(); onResolveLater() }
+                // Moved to someone else here: the card is held so the move reads as
+                // Khushal's, not as a notice, and leaves once the sheet closes. The stream
+                // can close the sheet first, so a save that finds it closed leaves now.
+                if holder.kind != "owner" { onHold(); if exit.saved(sheetOpen: sheet != nil) { leave() } }
                 await store.refresh()
             })
     }
@@ -137,10 +138,8 @@ struct ReviewProposalCard: View {
         Haptics.light()
         // The decision is saved, so the saved work hides the card from now on.
         onHold()
-        if sheet != nil { onResolveLater(); sheet = nil }
-        else { leave() }
+        if exit.saved(sheetOpen: sheet != nil) { leave() } else { sheet = nil }
     }
-    private func onResolveLater() { resolvedAfterDismiss = true }
     private func leave() { onResolve { busyAction = nil } }
 }
 

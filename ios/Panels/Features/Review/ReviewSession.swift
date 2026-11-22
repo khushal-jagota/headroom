@@ -107,9 +107,11 @@ struct ReviewQueue: Equatable, Sendable {
                             window: [ReviewItem]? = nil) {
         // A handled card stays hidden until saved work hides it, so a refusal can bring it
         // back; an answered ask until the window itself drops it, as its answer can settle
-        // first. A new refusal brings its card back at once.
-        let liveIDs = Set(live.map(\.id)), windowIDs = Set((window ?? live).map(\.id))
-        handled = handled.filter { liveIDs.contains($0) || ($0.hasPrefix("ask:") && windowIDs.contains($0)) }
+        // first. An ask with no time shares its identity with the next ask, so its hold
+        // ends with its answer. A new refusal brings its card back at once.
+        let liveIDs = Set(live.map(\.id))
+        let heldAsks = Set((window ?? live).filter { $0.isAsk && $0.waitingSince != ReviewItem.unknownAskTime }.map(\.id))
+        handled = handled.filter { liveIDs.contains($0) || heldAsks.contains($0) }
         if leaving == nil { handled.subtract(refusals.filter { !seenRefusals.contains($0.refusalID) }.map(\.item.id)) }
         let cards = cards(live, refusals: refusals)
         defer { recordSkippedEntries(cards) }

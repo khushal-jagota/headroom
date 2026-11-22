@@ -276,7 +276,7 @@ struct NavigationPresentation: Sendable {
             guard awaiting != false else { return }
             // An ask raised before the record held its time waits last, as on the server.
             let ask = NavigationReviewAsk(conversationId: conversationId, ownerKind: kind, ownerId: id, title: title, recap: recap,
-                                          waitingSince: conversation.latestAskAt ?? 9_007_199_254_740_991)
+                                          waitingSince: conversation.latestAskAt ?? ReviewItem.unknownAskTime)
             let member: RecordKey
             if kind == "ticket" { member = RecordKey(kind: "ticket", id: id) }
             else {

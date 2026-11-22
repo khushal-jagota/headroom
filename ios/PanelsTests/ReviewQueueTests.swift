@@ -268,4 +268,34 @@ final class ReviewQueueTests: XCTestCase {
         try store.outgoing.enqueueMarkRead(server: "a", owner: .chief, conversationID: "chief", through: 4)
         XCTAssertFalse(ReviewSavedWork.refusals(outbox.reviewSummaries("a"), live: [chiefMessage], title: { _ in nil }).contains { $0.item.isMessage })
     }
+
+    /// Risk: the queue freezes for the rest of the run. A reviewer move on the stream closes
+    /// the Reviewer sheet before the save returns; a save that then waits for the close
+    /// keeps its card leaving forever. Either order must leave exactly once.
+    func testSavedDecisionLeavesWhetherTheSheetClosesBeforeOrAfterTheSave() {
+        var exit = ReviewCardExit()
+        XCTAssertFalse(exit.saved(sheetOpen: true), "An open sheet holds the card until it closes")
+        XCTAssertTrue(exit.dismissed())
+        XCTAssertFalse(exit.dismissed(), "One close leaves once")
+        // The stream closed the sheet first: its close found nothing saved, so the save leaves.
+        var raced = ReviewCardExit()
+        XCTAssertFalse(raced.dismissed())
+        XCTAssertTrue(raced.saved(sheetOpen: false))
+        XCTAssertFalse(raced.dismissed())
+    }
+
+    /// Risk: an ask with no recorded time shares its identity with the next ask in its
+    /// conversation, so a follow-up ask stays hidden behind an answered one.
+    func testAnAskWithNoTimeIsNotHeldPastItsAnswer() {
+        let timeless = ReviewItem(reviewItemType: "ask", title: "Manager", waitingSince: ReviewItem.unknownAskTime,
+                                  conversationId: "manager", ownerKind: "manager", ownerId: "m")
+        var queue = ReviewQueue()
+        queue.returnToCards()
+        queue.reconcile([timeless], refusals: [], moved: { _ in nil }, freshSession: nil)
+        queue.resolve(timeless); queue.finishExit()
+        // The answer is sent; the window still carries an ask under the same identity.
+        queue.reconcile([], refusals: [], moved: { _ in nil }, freshSession: nil, window: [timeless])
+        queue.reconcile([timeless], refusals: [], moved: { _ in nil }, freshSession: nil)
+        XCTAssertTrue(queue.cards([timeless], refusals: []).contains { $0.id == timeless.id }, "The follow-up ask shows")
+    }
 }

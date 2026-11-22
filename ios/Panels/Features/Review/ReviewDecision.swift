@@ -43,6 +43,23 @@ struct DecisionGuidance: Sendable, Equatable {
 }
 
 /// A draft belongs to the exact proposal the person read, including its revision.
+/// When a card whose decision is saved leaves: at once, or once its open sheet closes.
+/// A reviewer move on the stream can close the sheet before the save returns; a save that
+/// then waited for the close would hold the card, and the queue, for the rest of the run.
+struct ReviewCardExit: Equatable {
+    private var waitsForDismiss = false
+    /// The decision is saved. True when the card leaves now.
+    mutating func saved(sheetOpen: Bool) -> Bool {
+        waitsForDismiss = sheetOpen
+        return !sheetOpen
+    }
+    /// The sheet closed. True when a saved decision was waiting for it.
+    mutating func dismissed() -> Bool {
+        defer { waitsForDismiss = false }
+        return waitsForDismiss
+    }
+}
+
 @MainActor @Observable final class ReviewDecision {
     /// The Ticket's view stamp when the last load started; a read-ahead taken before a
     /// later change is not current when its card is shown.
