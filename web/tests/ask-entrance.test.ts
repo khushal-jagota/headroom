@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AskEntranceTracker, type AskEntranceContext } from "../src/lib/conversation/askEntrance";
+import { AskEntranceTracker, statusForAsks, type AskEntranceContext } from "../src/lib/conversation/askEntrance";
 
 describe("waiting ask entrances", () => {
   it("restores a delayed initial status in place, then animates a genuinely new request", () => {
@@ -24,5 +24,18 @@ describe("waiting ask entrances", () => {
     expect(tracker.update({ ...context, mode: "rest" })).toBe(false);
     expect(tracker.update(context)).toBe(false);
     expect(tracker.update({ ...context, source: {} })).toBe(false);
+  });
+});
+
+describe("the status waiting asks are read from", () => {
+  it("is the replaced reader's while its successor for the same conversation has none, so an ask holds still", () => {
+    const replaced = { id: "c", status: "asking" };
+    expect(statusForAsks({ id: "c", status: null, trouble: false }, replaced)).toBe("asking");
+    // The successor's own status wins as soon as it has one.
+    expect(statusForAsks({ id: "c", status: "answered", trouble: false }, replaced)).toBe("answered");
+    // A failed stream knows nothing, and another conversation never inherits the ask.
+    expect(statusForAsks({ id: "c", status: null, trouble: true }, replaced)).toBeNull();
+    expect(statusForAsks({ id: "d", status: null, trouble: false }, replaced)).toBeNull();
+    expect(statusForAsks(null, replaced)).toBeNull();
   });
 });

@@ -327,7 +327,8 @@
   /** The dock's line: setting up, working, idle or machine offline. The setup clock leaves the
    *  setup step out ("Setting up · 1m 35s"). */
   let dockStatus = $derived(dockStatusFrom({
-    state: readConversationState(stateFacts()).state,
+    conversation: stateFacts(),
+    askWaiting: ask !== null || userInput !== null || credentialWaiting,
     offline: activityUncertain,
     setupClock: headSetupElapsed.seconds === null ? null : formatDuration(headSetupElapsed.seconds),
     turnClock: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds)

@@ -72,17 +72,20 @@ describe("the opened pane's top bar", () => {
 
 describe("the dock's status line", () => {
   const clocks = { offline: false, setupClock: "1m 35s", turnClock: "2m 14s" };
-  const status = (facts: Partial<ConversationStateFacts>, offline = false) =>
-    dockStatusFrom({ ...clocks, offline, state: conversationState({ ...quiet, ...facts }).state });
+  const status = (facts: Partial<ConversationStateFacts>, offline = false, askWaiting = false) =>
+    dockStatusFrom({ ...clocks, offline, askWaiting, conversation: { ...quiet, ...facts } });
   it("says one of four states, whatever else waits", () => {
     expect(status({ settingUp: "Setting up · preparing workspace · 1m 35s" })).toEqual({ kind: "setting-up", clock: "1m 35s" });
     expect(status({ running: true })).toEqual({ kind: "working", clock: "2m 14s" });
     expect(status({})).toEqual({ kind: "idle", clock: null });
     // An ask, a proposal, a failure or a stop says itself elsewhere; the dock says Idle.
-    for (const facts of [{ running: true, waitingForYou: true, waitingFor: "answer" as const }, { waitingForYou: true, waitingFor: "approval" as const },
+    expect(status({ running: true, waitingForYou: true, waitingFor: "answer" }, false, true)).toEqual({ kind: "idle", clock: null });
+    for (const facts of [{ waitingForYou: true, waitingFor: "approval" as const },
       { failure: "turn_failed" as const }, { failure: "not_delivered" as const }, { interrupted: true }]) {
       expect(status(facts)).toEqual({ kind: "idle", clock: null });
     }
+    // A proposal on the page does not stop the agent: a running turn still says Working.
+    expect(status({ running: true, waitingForYou: true, waitingFor: "approval" })).toEqual({ kind: "working", clock: "2m 14s" });
   });
   it("says only Machine offline while the machine cannot be read, setting up or not", () => {
     expect(status({ activityUncertain: true, settingUp: "Setting up" }, true)).toEqual({ kind: "offline", clock: null });

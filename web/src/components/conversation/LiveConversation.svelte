@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
+  import type { ConversationViewStatus } from "../../lib/conversation/view/contracts";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../../lib/queryCatalogue";
   import { macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
@@ -24,6 +25,7 @@
   import {SvelteSet} from "svelte/reactivity";
   import { onMount, setContext, tick, untrack, type Snippet } from "svelte";
   import ConversationPane from "./ConversationPane.svelte";
+  import { statusForAsks } from "../../lib/conversation/askEntrance";
   import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
   import {rowForBody} from "../../lib/conversation/view/presentation";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
@@ -252,22 +254,25 @@
   let rows = $derived((reader?.pages ?? []).flatMap(page=>page.items.flatMap(item=>
     item.kind==='row'&&item.body.kind==='inline' ? [rowForBody(item,item.body.value)] : [])));
   let visibleRows = $derived(rows);
+  /** The replaced reader, while its successor for the same conversation has no status yet. */
+  let replacedReader=$state.raw<{id:string;status:ConversationViewStatus|null}|null>(null);
+  let askStatus=$derived(statusForAsks(reader,replacedReader));
   let ask = $derived.by(()=>{
-    if(reader?.status?.pending_permission===null)return null;
+    if(askStatus?.pending_permission===null)return null;
     const row=liveAskFrom(visibleRows);if(row!==null)return row;
     const pending=view?.pending_permission_ask;
-    return pending&&pending.ask_id===reader?.status?.pending_permission?.request_id ? {askId:pending.ask_id,title:pending.title,detail:pending.detail,options:pending.options}:null;
+    return pending&&pending.ask_id===askStatus?.pending_permission?.request_id ? {askId:pending.ask_id,title:pending.title,detail:pending.detail,options:pending.options}:null;
   });
   let userInput = $derived.by(()=>{
-    if(reader?.status?.pending_user_input===null)return null;
+    if(askStatus?.pending_user_input===null)return null;
     const row=liveUserInputFrom(visibleRows);if(row!==null)return row;
     const pending=view?.pending_user_input;
-    return pending&&pending.request_id===reader?.status?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
+    return pending&&pending.request_id===askStatus?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
   });
   let permissionAvailable = $derived(executorAnswerAvailable(view,"permission",ask?.askId,locale,
-    reader?.status?.pending_permission?.request_id === ask?.askId));
+    askStatus?.pending_permission?.request_id === ask?.askId));
   let userInputAvailable = $derived(executorAnswerAvailable(view,"user_input",userInput?.requestId,locale,
-    reader?.status?.pending_user_input?.request_id === userInput?.requestId));
+    askStatus?.pending_user_input?.request_id === userInput?.requestId));
   let executorAnswers = $derived(rows.filter(row => (row.kind === "permission_ask" || row.kind === "user_input") && row.answerFate).flatMap(row => { const sentence = executorAnswerSentence((row as {answerFate:"saved"|"applied"|"unconfirmed"}).answerFate); return sentence === null ? [] : [{answerId:row.key,sentence}]; }));
   let permissionNote = $derived((askNoteKey === `permission:${ask?.askId}` ? askNote : null) ??
     (remote && !permissionAvailable ? EXECUTOR_ASK_UNCERTAIN : null));
@@ -554,7 +559,7 @@
   /** One cancellable reader per selected lens and visible transcript demand. */
   function attachReader(id:string,transcript=documentIsVisible&&conversationState!=="rest"):ConversationViewReader{
     // Read before closing: a closed reader forgets its status.
-    const previous=reader===null?null:{id:reader.id,status:reader.status};
+    replacedReader=reader===null?null:{id:reader.id,status:statusForAsks(reader,replacedReader)};
     closeStream();
     let lastCoverage=-1;
     const local=new ConversationViewReader(id,lens,transcript,()=>{
@@ -567,7 +572,6 @@
         void reconcileReceipts(local).catch(()=>undefined);
       }
     },viewAnchor,viewFolds,openTools);
-    local.continueFrom(previous);
     reader=local;
     return local;
   }

@@ -132,20 +132,25 @@ export function paneHeadStatus(facts: ConversationStateFacts): PaneHeadStatus | 
 }
 
 /** The dock's status line says one of four things, whatever else waits: the ask, the proposal
- * and a failure each say themselves on the page, the ask card or the transcript. A machine
- * Panels cannot read says only that, with no motion and no clock. */
+ * and a failure each say themselves on the page, the ask card or the transcript. An ask in the
+ * conversation stops the agent on the person, so the line says Idle; a proposal on the page
+ * does not stop it, so a running turn still says Working. A machine Panels cannot read says
+ * only that, with no motion and no clock. */
 export type DockStatus =
   | { kind: 'setting-up' | 'working'; clock: string | null }
   | { kind: 'idle' | 'offline'; clock: null };
 export function dockStatusFrom(facts: {
-  state: ConversationActivity;
+  conversation: ConversationStateFacts;
+  /** A question, permission ask or key request waits in the conversation. */
+  askWaiting: boolean;
   offline: boolean;
   setupClock: string | null;
   turnClock: string | null;
 }): DockStatus {
   if (facts.offline) return { kind: 'offline', clock: null };
-  if (facts.state === 'setting-up') return { kind: 'setting-up', clock: facts.setupClock };
-  if (facts.state === 'working') return { kind: 'working', clock: facts.turnClock };
+  const state = conversationState({ ...facts.conversation, waitingForYou: facts.askWaiting }).state;
+  if (state === 'setting-up') return { kind: 'setting-up', clock: facts.setupClock };
+  if (state === 'working') return { kind: 'working', clock: facts.turnClock };
   return { kind: 'idle', clock: null };
 }
 

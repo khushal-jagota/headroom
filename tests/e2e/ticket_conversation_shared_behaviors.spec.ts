@@ -230,7 +230,7 @@ test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire',
     (result) =>
       result.url().endsWith(`/credentials/requests/${requestId}/save`) && result.request().method() === 'POST',
   );
-  await card.getByRole('button', { name: 'Save', exact: true }).click();
+  await card.getByRole('button', { name: 'Save key', exact: true }).click();
   const saved = await savedResponse;
   await expectResponse(saved.status(), 200, saved);
   expect(saved.request().postDataJSON()).toEqual({
