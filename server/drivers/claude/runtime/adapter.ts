@@ -410,6 +410,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     const asked = await this.query_argument(delivered, uuid);
     await this.apply_reasoning_effort(client, reasoning_effort);
     const turn = new TurnInFlight(turn_token);
+    turn.prompt_uuid = uuid;
     turn.sent_user_message_uuids.add(uuid);
     this.turn = turn;
     client.watch_user_message(uuid);
@@ -721,7 +722,7 @@ export class ClaudeAgentSdkBackendChild implements B.BackendChild {
     // results name none of this turn's messages, so they neither end nor charge this turn.
     if (
       !turn.cancel_requested &&
-      turn.sent_user_message_uuids.size &&
+      turn.prompt_uuid !== null &&
       ![...named].some((uuid) => turn.sent_user_message_uuids.has(uuid))
     )
       return;

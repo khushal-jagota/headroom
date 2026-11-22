@@ -361,11 +361,15 @@ it('ends the turn broken after a cancel that Claude never settles, ignoring its 
 });
 
 /** A started child whose results name the prompts that the test says they name. */
-async function child_with_named_results(conversation_id: string) {
+async function child_with_named_results(
+  conversation_id: string,
+  client: Partial<ClaudeSdkClient> = {},
+) {
   const prompt_uuids: string[] = [];
   const named_by_result = new Map<string, ReadonlySet<string>>();
   const live = await live_child(conversation_id, {
     client: {
+      ...client,
       watch_user_message: (uuid) => void prompt_uuids.push(uuid),
       user_message_uuids_for_result: (uuid) => named_by_result.get(uuid ?? '') ?? new Set(),
     },
@@ -451,6 +455,32 @@ it('keeps a turn open across an error result for no prompt, and fails it when th
   expect(turn_endings[0]).toMatchObject({ ending: 'failed', child_disposition: 'broken' });
   expect(turn_endings[0]!.error_summary).toContain("the backend's message stream ended");
   expect(reported.some((event) => event instanceof TokenUsageReported)).toBe(false);
+  await child.stop();
+});
+
+// Risk: a turn whose prompt has no id, or a cancelled turn, stops ending on a result that names no
+// prompt. A steer into a compaction turn, or a cancel, would then leave the turn open.
+it('ends a turn without a prompt id, and a cancelled turn, on a result that names no prompt', async () => {
+  const { child, content, prompt, turn_endings, result } =
+    await child_with_named_results('old-endings');
+  const token = { conversation_id: 'old-endings', turn_number: 1 };
+  await child.write_prompt(token, content, {
+    sender_label: 'Owner',
+    sender_content: content,
+    mode: 'send_now',
+    model_change: null,
+    reasoning_effort_change: null,
+    automatic_compaction: true,
+  });
+  await child.steer(token, content, { sender_label: 'Owner' });
+  result('compaction-result', []);
+  await vi.waitFor(() => expect(turn_endings).toHaveLength(1));
+  expect(turn_endings[0]).toMatchObject({ ending: 'completed' });
+  await prompt(2, 'low');
+  const cancelled = child.cancel_running_turn();
+  result('interrupted-result', [], { terminal_reason: 'aborted_streaming' });
+  await cancelled;
+  expect(turn_endings[1]).toMatchObject({ ending: 'interrupted', child_disposition: 'reusable' });
   await child.stop();
 });
 
