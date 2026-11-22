@@ -32,7 +32,6 @@ import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from datetime import UTC, datetime
 from http.client import HTTPMessage
 from pathlib import Path
 from types import FrameType
@@ -175,8 +174,8 @@ def preflight(args: argparse.Namespace, target: str) -> None:
 
 
 # --- Release source --------------------------------------------------------------------
-# The only part of this script that knows where releases come from: GitHub Actions
-# publications of one repository, read with the GitHub CLI login. The rest of the script
+# The only part of this script that knows where releases come from: GitHub Releases
+# of one repository, read with the GitHub CLI login. The rest of the script
 # uses find_release(), download_release() and release_update_token(). Another source
 # replaces this section and nothing else.
 
@@ -206,9 +205,11 @@ def _github_token() -> str:
     return _run("gh", "auth", "token").stdout.strip()
 
 
-def _api(path: str, destination: Path | None = None) -> Any:
+def _api(
+    path: str, destination: Path | None = None, accept: str = "application/vnd.github+json"
+) -> Any:
     token = _github_token()
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "panels-install"}
+    headers = {"Accept": accept, "User-Agent": "panels-install"}
     if token:
         headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(
@@ -237,65 +238,77 @@ def release_update_token() -> str:
 
 
 def find_release(target: str, command: str, revision: str | None, work: Path) -> dict[str, Any]:
-    """The newest unexpired trusted publication for this target and command, as its receipt."""
-    workflow = PUBLICATION_WORKFLOW
-    runs = _api(
-        f"actions/workflows/{workflow}/runs?branch=main&event=push&status=success&per_page=20"
-    )["workflow_runs"]
-    for run in runs:
-        if revision is not None and run.get("head_sha") != revision:
-            continue
-        if (
-            run.get("path") != f".github/workflows/{workflow}"
-            or run.get("head_branch") != "main"
-            or run.get("event") != "push"
-            or run.get("conclusion") != "success"
-            or run.get("head_repository", {}).get("full_name") != REPOSITORY
-        ):
-            continue
-        artifacts = _api(
-            f"actions/runs/{run['id']}/artifacts?per_page=100",
-        )["artifacts"]
-        by_name = {item["name"]: item for item in artifacts if not item["expired"]}
-        artifact_name = (
-            ("panels-mac-runtime" if target == "darwin" else "panels-linux-executor")
-            if command == "join"
-            else "panels-mac-home"
-            if target == "darwin"
-            else "panels-app"
-        )
-        if "panels-publication-proof" not in by_name or artifact_name not in by_name:
-            continue
-        proof_zip = work / f"proof-{run['id']}.zip"
-        _api(
-            f"actions/artifacts/{by_name['panels-publication-proof']['id']}/zip",
-            proof_zip,
-        )
-        with zipfile.ZipFile(proof_zip) as zipped:
-            original = json.loads(zipped.read("publication.json"))
-        receipt = select_receipt(original, target, command)
-        if (
-            original["publication_run_id"] != run["id"]
-            or receipt["artifact_id"] != by_name[artifact_name]["id"]
-            or receipt["revision"] != run["head_sha"]
-        ):
-            raise ValueError("The release identity differs from its trusted publication.")
-        if datetime.fromisoformat(original["expires_at"].replace("Z", "+00:00")) <= datetime.now(
-            UTC
-        ):
-            continue
-        return receipt
-    raise ValueError(
-        "No supported, unexpired release exists. Publish a checked release before installation."
-    )
+    """The newest permanent trusted server release for this target and command."""
+    page = 1
+    while True:
+        releases = _api(f"releases?per_page=100&page={page}")
+        for release in releases:
+            tag = release.get("tag_name", "")
+            if release.get("draft") or release.get("prerelease") or not tag.startswith("server-"):
+                continue
+            if revision is not None and release.get("target_commitish") != revision:
+                continue
+            assets = {item["name"]: item for item in release.get("assets", [])}
+            if "publication.json" not in assets:
+                continue
+            original = _api(
+                f"releases/assets/{assets['publication.json']['id']}",
+                accept="application/octet-stream",
+            )
+            source = original.get("source_run", {})
+            sha = source.get("source_sha")
+            run_id, attempt = source.get("run_id"), source.get("run_attempt")
+            workflow_path = f".github/workflows/{PUBLICATION_WORKFLOW}"
+            if (
+                source.get("repository") != REPOSITORY
+                or source.get("event") != "push"
+                or source.get("ref") != "refs/heads/main"
+                or source.get("workflow_path") != workflow_path
+                or source.get("workflow_ref") != f"{REPOSITORY}/{workflow_path}@refs/heads/main"
+                or not isinstance(sha, str)
+                or re.fullmatch(r"[0-9a-f]{40}", sha) is None
+                or not isinstance(run_id, str)
+                or re.fullmatch(r"[1-9][0-9]*", run_id) is None
+                or not isinstance(attempt, str)
+                or re.fullmatch(r"[1-9][0-9]*", attempt) is None
+                or tag != f"server-{sha}-{run_id}-{attempt}"
+                or release.get("target_commitish") != sha
+                or original.get("publication_run_id") != int(run_id)
+                or original.get("artifact_source") != "github-release"
+                or "expires_at" not in original
+                or original["expires_at"] is not None
+            ):
+                raise ValueError("The release identity differs from its trusted publication.")
+            asset_name = (
+                ("mac.zip" if target == "darwin" else "linux-executor.zip")
+                if command == "join"
+                else "mac-home.zip" if target == "darwin" else "app.zip"
+            )
+            receipt = select_receipt(original, target, command)
+            asset = assets.get(asset_name, {})
+            if (
+                receipt["revision"] != sha
+                or receipt.get("artifact_source") != "github-release"
+                or not isinstance(receipt.get("artifact_id"), int)
+                or isinstance(receipt["artifact_id"], bool)
+                or receipt["artifact_id"] <= 0
+                or receipt["artifact_id"] != asset.get("id")
+            ):
+                raise ValueError("The release identity differs from its trusted publication.")
+            return receipt
+        if len(releases) < 100:
+            break
+        page += 1
+    raise ValueError("No supported release exists. Publish a checked release before installation.")
 
 
 def download_release(receipt: dict[str, Any], work: Path) -> Path:
     """Fetch the sealed archive that a receipt from find_release() names."""
     artifact_zip = work / "artifact.zip"
     _api(
-        f"actions/artifacts/{receipt['artifact_id']}/zip",
+        f"releases/assets/{receipt['artifact_id']}",
         artifact_zip,
+        accept="application/octet-stream",
     )
     with zipfile.ZipFile(artifact_zip) as zipped:
         candidates = [name for name in zipped.namelist() if name.endswith(".tar.gz")]

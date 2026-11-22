@@ -433,7 +433,12 @@ export class MacUpdateService implements MacUpdateServiceContract {
       try {
         this.signal.throwIfAborted();
         const downloaded = join(temporary, 'artifact.zip');
-        await this.provider.download_artifact(mac.artifact_id, downloaded, this.signal);
+        await this.provider.download_artifact(
+          mac.artifact_id,
+          downloaded,
+          this.signal,
+          mac.artifact_source,
+        );
         this.signal.throwIfAborted();
         try {
           if (
