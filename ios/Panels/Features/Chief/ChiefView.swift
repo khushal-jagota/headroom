@@ -32,7 +32,7 @@ struct ChiefView: View {
         .task(id: store.baseURL.absoluteString + (store.chiefStamp() ?? "")) { await resource.refresh() }
         .navigationDemand("chief", windows: [NavigationScope.children(of: .chief)])
         .panelsRefreshable { await load() }
-        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error, showsRefreshError: false) { await load() }
+        .screenLoadState("Chief of Staff", hasContent: chief != nil, error: error) { await load() }
         .accessibilityIdentifier("chief-screen")
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }

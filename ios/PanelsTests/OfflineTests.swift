@@ -90,7 +90,7 @@ import XCTest
         do {
             let _: String = try await restored.read(ResourceRegistration<String>(key: key))
             XCTFail("A failed fresh lookup cannot return saved content as current")
-        } catch { XCTAssertNotNil(handle.error) }
+        } catch { XCTAssertNotNil(handle.failure); XCTAssertNil(ServerReadFailure.note(error), "The failed lookup stays a connection failure") }
         XCTAssertEqual(handle.value, "Live content", "Saved display remains useful after the failed read")
         restored.stop()
     }

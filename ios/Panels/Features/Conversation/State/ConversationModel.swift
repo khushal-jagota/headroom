@@ -623,8 +623,8 @@ import UniformTypeIdentifiers
     /// A read that could not reach the server says nothing: the screen keeps what it has
     /// and reads again when the connection returns. Other failures still show.
     func reportReadFailure(_ error: Error) {
-        if error is URLError { return }
-        self.error = error.localizedDescription
+        guard let note = ServerReadFailure.note(error) else { return }
+        self.error = note
     }
 
     // MARK: Open tail
@@ -843,7 +843,7 @@ import UniformTypeIdentifiers
             admitHistoryScope(page.scope ?? cursor.scope, keys: Set(page.items.map(\.key)))
             retainDisplay(preferOlder: true)
             saveDisplay()
-        } catch { if !Task.isCancelled, generation == readerGeneration, history == historyGeneration { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readerGeneration, history == historyGeneration { reportReadFailure(error) } }
     }
     func loadBody(_ item: ConversationItem, using service: any ConversationServing) async {
         guard let id = conversationID, let reference = item.body?.reference else { return }
@@ -873,7 +873,7 @@ import UniformTypeIdentifiers
             displayByteSizes["expanded:" + item.key] = (body, bytes)
             expandedBodies[item.key] = body
             retainDisplay()
-        } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readerGeneration { reportReadFailure(error) } }
     }
     @discardableResult func send(to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)

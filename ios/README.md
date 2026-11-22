@@ -701,11 +701,11 @@ recording, shows it as done at once and sends it while the app is in the foregro
 ## Loading and retry states
 
 Review, Workspace, Chief, Orchestrator, Ticket and artifact lists share a labeled
-delayed block skeleton on the first load and a native retry screen when nothing has loaded. Failed
-refreshes keep the last content visible, including an empty result, with a small
-retry notice below the content. The notice does not insert a row above existing
-content. Retry buttons remain disabled until their request finishes. Artifact
-previews also retain their downloaded document after a failed reload.
+delayed block skeleton on the first load. The retry screen appears only when nothing
+has loaded and the server refused the read; a read that cannot reach the server
+keeps the skeleton. Failed refreshes keep the last content visible, including an
+empty result, with no note. Retry buttons remain disabled until their request
+finishes. Artifact previews also retain their downloaded document after a failed reload.
 
 Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull
 feedback without an extra haptic. Workspace pull-to-refresh waits for its activity

@@ -657,7 +657,7 @@ struct ConversationSmokeView: View {
                     }
                 }.padding(.horizontal, 20)
             }.accessibilityIdentifier("conversation-page").panelsScreen().conversationNavigation(owner: .chief, conversationID: "stub", title: "Chief of Staff", refreshError: refreshError, retry: refresh)
-                .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, showsRefreshError: false, retry: refresh)
+                .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, retry: refresh)
                 .task {
                     while !Task.isCancelled {
                         await refresh()
@@ -668,7 +668,7 @@ struct ConversationSmokeView: View {
     }
     private func refresh() async {
         do { _ = try await store.client.chiefConversation(); refreshError = nil }
-        catch { if !Task.isCancelled { refreshError = error.localizedDescription } }
+        catch { if !Task.isCancelled { refreshError = ServerReadFailure.note(error) } }
     }
 }
 #endif

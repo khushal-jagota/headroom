@@ -44,7 +44,7 @@ struct WorkspaceView: View {
         return Array(Set((store.tickets + retained).filter { $0.locale == "macos" }.compactMap(\.machineId))).sorted()
     }
     private var hasContent: Bool { store.chief != nil || store.workspaceLoaded }
-    private var refreshError: String? { store.errors["Navigation"]?.message ?? store.errors["Chief"]?.message ?? goalsHandle?.error }
+    private var refreshError: String? { store.errors["Navigation"]?.note ?? goalsHandle?.error }
     private var held: Bool { fingerDown || scrolling || previewOpen || motionActive }
 
     private func request(_ section: String, owner: ViewOwner? = nil, limit: Int = 60) -> ViewWindowRequest {

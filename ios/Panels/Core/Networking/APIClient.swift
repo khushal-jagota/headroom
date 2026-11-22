@@ -11,16 +11,25 @@ struct APIError: LocalizedError, Sendable {
 }
 
 /// A failed request is not proof that the server itself cannot be reached.
-struct ServerReadFailure: Sendable {
+struct ServerReadFailure: LocalizedError, Sendable {
     let isServerUnreachable: Bool
+    /// Any transport failure: no route, a dropped connection or a timeout.
+    let cannotReach: Bool
     let message: String
+    /// What a screen may say about a failed read. The app shows no connection
+    /// state, so a read that could not reach the server says nothing.
+    var note: String? { cannotReach ? nil : message }
+    var errorDescription: String? { message }
+    static func note(_ error: any Error) -> String? { ServerReadFailure(error).note }
 
     init(_ error: any Error) {
+        if let failure = error as? ServerReadFailure { self = failure; return }
         if let error = error as? URLError {
             isServerUnreachable = [.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .notConnectedToInternet].contains(error.code)
         } else {
             isServerUnreachable = false
         }
+        cannotReach = (error as NSError).domain == NSURLErrorDomain
         message = error.localizedDescription
     }
 }

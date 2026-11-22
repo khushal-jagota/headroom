@@ -16,9 +16,9 @@ retain their requested conversation and remain read only when it is no longer cu
 
 Saved responses can supply display while fresh reads run. New responses apply
 immediately, including changes that move rows. A failed refresh keeps the content
-on screen. A conversation read that cannot reach the server shows nothing and reads
-again when the connection returns. With no saved response, rough blocks appear
-after 300 milliseconds.
+on screen with no note; the next stream event or pull replaces it. A read that
+cannot reach the server shows nothing anywhere and reads again when the connection
+returns. With no saved response, rough blocks appear after 300 milliseconds.
 
 Successful reads publish before serial background cache writes. Bounded pending
 work coalesces replacements by server and key. An identical response still refreshes

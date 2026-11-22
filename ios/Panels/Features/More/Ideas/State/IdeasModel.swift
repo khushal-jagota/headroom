@@ -69,7 +69,7 @@ import Observation
             standaloneReadError = nil
         } catch {
             guard !Task.isCancelled, generation == readGeneration else { return }
-            standaloneReadError = error.localizedDescription
+            standaloneReadError = ServerReadFailure.note(error)
         }
     }
 

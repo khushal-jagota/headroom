@@ -160,10 +160,10 @@ struct UsageView: View {
             let result = try await allowanceRead
             guard store.baseURL == client.baseURL else { return }
             if let failure = result.failure(store.drivers) { failures.append(failure) }
-        } catch { failures.append(error.localizedDescription) }
+        } catch { if let note = ServerReadFailure.note(error) { failures.append(note) } }
         do {
             try await recordedRead
-        } catch { failures.append(error.localizedDescription) }
+        } catch { if let note = ServerReadFailure.note(error) { failures.append(note) } }
         guard store.baseURL == client.baseURL else { return }
         store.resources.invalidate([backendResource.key, summaryResource.key])
         async let backends: Void = backendResource.refresh()

@@ -222,7 +222,7 @@ import UIKit
         XCTAssertEqual(session.readings?.revision, 5)
         XCTAssertEqual(session.readings?.charts["chart"]?["current"].number, 12)
         XCTAssertTrue(session.readingsAreStale)
-        XCTAssertNotNil(session.readError)
+        XCTAssertNil(session.readError, "A read that cannot reach the server leaves no note on the saved readings")
         GoalProtocol.state.setReadings(revision: 9)
         await session.refresh()
         XCTAssertEqual(session.readings?.revision, 9)

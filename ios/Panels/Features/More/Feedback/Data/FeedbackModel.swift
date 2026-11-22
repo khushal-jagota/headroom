@@ -29,7 +29,7 @@ import Observation
             actionError = nil
         } catch {
             guard version == readVersion, !Task.isCancelled else { return }
-            self.actionError = "Couldn’t refresh feedback. \(error.localizedDescription)"
+            self.actionError = ServerReadFailure.note(error).map { "Couldn’t refresh feedback. \($0)" }
         }
     }
 

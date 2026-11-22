@@ -36,7 +36,9 @@ struct ArtifactViewerView: View {
         conversationOwner ?? owner.conversationOwner
     }
 
-    private var waitingForPreview: Bool { isLoading || (target.kind == .html && htmlURL != nil && !webReady && error == nil) }
+    private var hasPreview: Bool { document != nil || webReady }
+    /// A read that could not reach the server leaves no error, so the quiet placeholder stays.
+    private var waitingForPreview: Bool { isLoading || (!hasPreview && error == nil) }
 
     var body: some View {
         ScreenTextEntryScope { textEntry in artifactContent(textEntry: textEntry) }
@@ -62,8 +64,9 @@ struct ArtifactViewerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let error, document != nil || htmlURL != nil {
-                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { reloadPreview() }
+            // A page that never drew has no saved copy to keep; a failed reload says nothing.
+            if let error, htmlURL != nil, !hasPreview {
+                LoadErrorView(message: error) { reloadPreview() }
                     .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
             }
         }
@@ -116,7 +119,8 @@ struct ArtifactViewerView: View {
                 conversationID = nil
             }
         }
-        .task(id: "\(target.id)|\(loadVersion)") { await load() }
+        // With nothing drawn yet, the next connection reads again.
+        .task(id: "\(target.id)|\(loadVersion)|\(hasPreview ? 0 : store.connectionSession)") { await load() }
         .task(id: waitingForPreview) {
             showLoading = false
             if waitingForPreview {
@@ -216,8 +220,8 @@ struct ArtifactViewerView: View {
             self.image = image
             document = result; error = nil; webReady = false; renderVersion += 1
         } catch {
-            if !Task.isCancelled {
-                self.error = error.localizedDescription
+            if !Task.isCancelled, let note = ServerReadFailure.note(error) {
+                self.error = note
                 Haptics.error()
             }
         }

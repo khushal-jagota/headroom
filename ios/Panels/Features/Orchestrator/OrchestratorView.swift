@@ -43,7 +43,7 @@ struct OrchestratorView: View {
         .task(id: store.baseURL.absoluteString + (store.managerStamp(managerID) ?? "")) { await resource.refresh() }
         .navigationDemand("manager:\(managerID)", selected: .manager(managerID), windows: [NavigationScope.children(of: .manager(managerID))])
         .panelsRefreshable { await load() }
-        .screenLoadState("orchestrator", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
+        .screenLoadState("orchestrator", hasContent: detail != nil, error: error) { await load() }
         .accessibilityIdentifier("orchestrator-screen")
     }
 

@@ -186,8 +186,6 @@ private struct WorkspacePreview: View {
                 .background(PanelsTheme.Web.surface, in: RoundedRectangle(cornerRadius: PanelsTheme.Web.cardRadius))
             if let error = loadError ?? configurationError {
                 LoadErrorView(message: error) { refreshVersion += 1 }
-            } else if tailFailed {
-                LoadErrorView(message: "Preview could not refresh.") { refreshVersion += 1 }
             }
         }
         .foregroundStyle(PanelsTheme.Web.text)
@@ -232,7 +230,7 @@ private struct WorkspacePreview: View {
             recap = nextRecap; conversationID = current; resolvedConversation = true
         } catch {
             guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
-            loadError = "Preview could not refresh. \(error.localizedDescription)"
+            loadError = ServerReadFailure.note(error).map { "Preview could not refresh. \($0)" }
         }
     }
     private func loadConfiguration() async {
@@ -249,7 +247,7 @@ private struct WorkspacePreview: View {
             configuration = next; startValues = start; backends = models
         } catch {
             guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
-            configurationError = "Preview could not refresh. \(error.localizedDescription)"
+            configurationError = ServerReadFailure.note(error).map { "Preview could not refresh. \($0)" }
         }
     }
     private func follow(_ id: String) async {

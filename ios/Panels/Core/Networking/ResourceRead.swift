@@ -9,8 +9,8 @@ extension ResourceOwner {
         await handle.refresh()
         try Task.checkCancellation()
         guard generation == admissionGeneration, resourceGeneration == handle.entry.generation,
-              handle.entry.server == server, handle.error == nil, let value = handle.value else {
-            throw APIError(status: 0, message: handle.error ?? "This response is unavailable.")
+              handle.entry.server == server, handle.failure == nil, handle.error == nil, let value = handle.value else {
+            throw handle.failure ?? APIError(status: 0, message: handle.error ?? "This response is unavailable.")
         }
         return value
     }

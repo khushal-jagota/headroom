@@ -10,6 +10,8 @@ final class OfflineOperationTests: XCTestCase {
         "Delivery uncertain · check before another attempt", "Sending…", "Approved", "Sent back",
         "Send again", "Keep waiting", "Check delivery", "Panels can’t reach the server.",
     ]
+    /// Read notes carry the error after their prefix, so they are matched by their start.
+    private static let removedReadNotes = ["Couldn’t refresh", "Couldn’t load"]
 
     @MainActor func testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses() async throws {
         continueAfterFailure = false
@@ -243,6 +245,10 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertFalse(app.buttons["server-unreachable.retry"].exists, "The server cover appeared: \(moment)")
         let notes = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", Self.removedNotes))
         XCTAssertEqual(notes.count, 0, "A removed status note appeared (\(moment)): \(notes.allElementsBoundByIndex.map(\.label))")
+        for prefix in Self.removedReadNotes {
+            let reads = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
+            XCTAssertEqual(reads.count, 0, "A read note appeared (\(moment)): \(reads.allElementsBoundByIndex.map(\.label))")
+        }
     }
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())

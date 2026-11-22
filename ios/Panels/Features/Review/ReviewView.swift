@@ -93,7 +93,7 @@ struct ReviewView: View {
         .onDisappear { appeared = false }
         .onChange(of: savedWork.key) { _, _ in restoreSavedWork() }
         .onChange(of: active) { _, active in if active { restoreSavedWork() } }
-        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]?.message) { await store.refresh() }
+        .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]?.note) { await store.refresh() }
         .navigationTitle("").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .navigationBar)
         .background(PanelsTheme.Web.surface).panelsScreen()
         .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedCard = nil; decisions = [:]; messageDecisions = ReviewMessageDecisions(); reviewPage = nil }
