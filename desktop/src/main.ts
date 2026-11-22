@@ -1,7 +1,7 @@
 // The native side of the Panels desktop app.
 //
 // It holds one server address, serves the screens from the app's own scheme, and forwards
-// their requests to that server. The pages run in the sandbox with context isolation and
+// their requests to that server. It also shows the server's notifications through macOS. The pages run in the sandbox with context isolation and
 // no Node. They reach the native side only through the bridge in bridge.ts.
 import {
   app,
@@ -22,6 +22,7 @@ import {
   registerAppScheme,
 } from './app_scheme';
 import { bridgeChannel } from './bridge';
+import { holdNotificationStream } from './notifications';
 import { loadStoredServerAddress, localServerAddress, serverAddress, useServerAddress } from './server_address';
 import { rememberWindowPlace, savedWindowBounds } from './window_place';
 
@@ -60,6 +61,16 @@ function openWindow(url: string): BrowserWindow {
   mainWindow ??= createWindow();
   void mainWindow.loadURL(url);
   return mainWindow;
+}
+
+/** A click on a notification opens its link in the screens, and brings the window forward. */
+function openRoute(route: string): void {
+  const url = new URL(route, SCREENS_URL);
+  if (url.protocol !== 'panels:' || url.host !== SCREENS_HOST) return;
+  const window = openWindow(url.href);
+  if (window.isMinimized()) window.restore();
+  window.focus();
+  app.focus({ steal: true });
 }
 
 /** The screens if the app holds a server, or one answers on this Mac. Otherwise the address page. */
@@ -111,7 +122,10 @@ function answerBridgeCalls(): void {
     if (!fromAddressPage(event)) throw new Error('Only the address page can change the server address.');
     if (typeof typed !== 'string') throw new Error('The address must be text.');
     const result = await useServerAddress(typed);
-    if (result.ok) void event.sender.loadURL(SCREENS_URL);
+    if (result.ok) {
+      holdNotificationStream(openRoute);
+      void event.sender.loadURL(SCREENS_URL);
+    }
     return result;
   });
 }
@@ -159,6 +173,7 @@ void app.whenReady().then(async () => {
   answerBridgeCalls();
   Menu.setApplicationMenu(applicationMenu());
   openWindow(await firstPage());
+  holdNotificationStream(openRoute);
   // A Mac app stays open with no window. A click on its Dock icon brings the window back.
   app.on('activate', () => {
     if (!mainWindow) openWindow(serverAddress() ? SCREENS_URL : ADDRESS_PAGE_URL);

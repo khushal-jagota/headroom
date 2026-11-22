@@ -7,7 +7,7 @@ The desktop app is Panels as a Mac app. It is an Electron app that carries the s
 The app has two sides and a bridge between them.
 
 - **The screens** are the `web/` build output, packed inside the app with the `assets/` and `static/` files they load. They run in the sandbox, with context isolation and no Node.
-- **The native side** (the Electron main process) holds the one server address, serves the screens, and does the jobs that need the operating system: menus, the window, and opening links in the browser.
+- **The native side** (the Electron main process) holds the one server address, serves the screens, and does the jobs that need the operating system: menus, the window, notifications, and opening links in the browser.
 - **The bridge** is one typed object that the preload script gives each page as `window.panels`. One type file defines it, and each call is answered by the native side.
 
 ```text
@@ -37,12 +37,18 @@ On its first start, the app asks for a Panels server on this Mac, at `http://127
 
 The app has the standard Mac menus. The window opens where it was last left, at the same size. Closing the window does not quit the app; a click on its Dock icon brings the window back.
 
+## Notifications
+
+The native side holds a live stream to the server, `/api/notifications/desktop`, while the app runs, also with its window closed. Each event on it is one notification that the server's [notification rules](notifications.md) allowed, with the same words as on the other devices. The native side shows it through macOS, and a newer one for the same Ticket, Manager or Chief replaces the older one. A click brings the app forward and opens that place in the window, and opens the window if it was closed. When the app quits, the stream ends and the Mac gets no more notifications. The stream reconnects by itself after the server comes back, and it moves to the new server after "Change Server…". The switches in Settings are the server's, the same for every device. In the app, the device row says that the Mac gets the notifications, and macOS Settings control banners and sounds.
+
+**Known limit: no replay.** The app shows only notifications that arrive while it is connected. A notification sent while the app is closed, the Mac sleeps, or the connection is down does not reach the Mac later. The browser and iPhone still get it.
+
 ## Artifacts and the bridge
 
 Artifact HTML runs at the screens' own origin, so a script in an artifact can reach the bridge. Today the bridge has only the address calls, and they answer the address page alone. **Do not add a bridge call that acts until artifacts are isolated.**
 
 ## Where the code lives
 
-`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/bridge.ts` (the bridge type), and the address page. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
+`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/bridge.ts` (the bridge type), and the address page. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
 _Last verified: 2026-11-22._

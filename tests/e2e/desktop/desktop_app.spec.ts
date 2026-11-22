@@ -10,7 +10,7 @@
  */
 import { createServer } from 'node:net';
 import type { Page } from '@playwright/test';
-import { WAIT_MS, api, captureSuccess, cli, expect, stopServer, test } from '../support/fixtures.ts';
+import { WAIT_MS, api, captureSuccess, cli, expect, proposeAsWorker, stopServer, test } from '../support/fixtures.ts';
 import { launchDesktopApp, waitForScreens } from '../support/desktop.ts';
 
 const WORKSPACE = 'section[data-screen="workspace"]';
@@ -167,5 +167,58 @@ test('the app takes an address when no local server answers, and keeps it and it
     expect(bounds).toEqual(place);
   } finally {
     await second.app.close();
+  }
+});
+
+/** What the test reads of an Electron notification the app tried to show. */
+type RecordedNotification = { title: string; body: string; emit(event: 'click'): boolean };
+
+// Only the built app against a live server can prove the native path: Electron's network
+// stack holds the server's notification stream, the native side shows what the policy
+// allowed, and a click opens the right screen. macOS itself is replaced by a recorder.
+test('the native side shows a notification from the server, and a click opens its place', async ({ server }) => {
+  const ticketId = String((await api.post(server, '/api/tickets', newTicket('Ticket that waits on Khushal'))).id);
+  await api.post(server, `/api/tickets/${ticketId}/accept/brief`, {
+    next_ceiling: 'needs_what_changes',
+    next_holder: { kind: 'owner', id: 'owner' },
+  });
+  const desktop = await launchDesktopApp({ localServerAddress: server.base });
+  try {
+    const page = desktop.window;
+    await desktop.app.evaluate(({ Notification }) => {
+      const shown: RecordedNotification[] = [];
+      (globalThis as { shownNotifications?: RecordedNotification[] }).shownNotifications = shown;
+      Notification.prototype.show = function (this: RecordedNotification) {
+        shown.push(this);
+      };
+    });
+    await waitForScreens(page, WORKSPACE);
+
+    // In the app, Settings says that the Mac gets the notifications, not that Web Push is missing.
+    // The native side opened its stream at start, long before this screen is up.
+    await page.evaluate(() => (location.hash = '#/settings/notifications'));
+    const device = page.locator('[data-settings-row="notifications:device"]');
+    await expect(device).toContainText('This Mac gets the notifications', { timeout: WAIT_MS });
+    await captureSuccess(page, 'desktop-notification-settings.png');
+
+    await proposeAsWorker(server, ticketId, 'A proposal for Khushal.');
+    await api.post(server, '/api/test/poll/notifications', {});
+    const shown = () =>
+      desktop.app.evaluate(() =>
+        ((globalThis as { shownNotifications?: RecordedNotification[] }).shownNotifications ?? []).map(
+          ({ title, body }) => ({ title, body }),
+        ),
+      );
+    await expect.poll(shown, { timeout: WAIT_MS }).toEqual([
+      { title: 'Ticket that waits on Khushal', body: expect.stringContaining('waits for your approval') },
+    ]);
+
+    await desktop.app.evaluate(() =>
+      (globalThis as { shownNotifications?: RecordedNotification[] }).shownNotifications![0]!.emit('click'),
+    );
+    await expect.poll(() => pageUrl(page), { timeout: WAIT_MS }).toBe(`panels://app/#/workspace/${ticketId}`);
+    await expect(page.locator('.ticket-title')).toHaveText('Ticket that waits on Khushal', { timeout: WAIT_MS });
+  } finally {
+    await desktop.app.close();
   }
 });
