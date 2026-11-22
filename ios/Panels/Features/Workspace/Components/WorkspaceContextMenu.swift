@@ -104,7 +104,6 @@ private struct WorkspacePreview: View {
     @State private var startValues: ConversationConfiguration?
     @State private var backends: [TicketBackend] = []
     @State private var status: ConversationStatus?
-    @State private var tailFailed = false
     @State private var refreshVersion = 0
     private var owner: ConversationOwner {
         switch route { case .ticket(let id): .ticket(id); case .orchestrator(let id): .manager(id); default: .chief }
@@ -142,8 +141,9 @@ private struct WorkspacePreview: View {
         if unknownMac { return "Activity unknown on Mac" }
         if !resolvedConversation { return nil }
         if conversationID == nil { return "Idle" }
-        guard let status else { return tailFailed ? "Activity unknown" : nil }
-        guard !tailFailed, status.authority == "current" else { return "Activity unknown" }
+        // A dropped live update keeps the last activity seen; the next one replaces it.
+        guard let status else { return nil }
+        guard status.authority == "current" else { return "Activity unknown" }
         if status.pendingPermission != nil || status.pendingUserInput != nil { return "Waiting for you" }
         return status.turnRunning == true || status.hasBackgroundTaskAfterTheTurn ? "Working" : "Idle"
     }
@@ -252,7 +252,6 @@ private struct WorkspacePreview: View {
     }
     private func follow(_ id: String) async {
         let generation = store.resources.admissionGeneration
-        tailFailed = false
         do {
             let initial = try await store.client.conversationSnapshot(id, lens: .full, transcript: false)
             guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
@@ -278,11 +277,9 @@ private struct WorkspacePreview: View {
                     status = next
                     if changedTurn { await loadConfiguration() }
                 }
-                if !reset { tailFailed = true; return }
+                if !reset { return }
             }
         } catch {
-            guard !Task.isCancelled, generation == store.resources.admissionGeneration else { return }
-            tailFailed = true
         }
     }
     private func stageSentence(_ ticket: TicketSummary, label: String) -> String {
