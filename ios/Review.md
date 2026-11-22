@@ -92,8 +92,10 @@ waits for the connection.
 
 The read-only proposal card, shared with the Ticket page, shows the stage on the left
 and the reviewer (`You ⌄`) on the right; the reviewer opens the shared Reviewer
-sheet. Below it the dock holds the note for the worker with its microphone, then Skip,
-Return and Approve in one equal-width row. Nothing in it is editable: Khushal returns
+sheet. Below it the dock holds the note for the worker with its Attach button and
+microphone, then Skip, Return and Approve in one equal-width row. Attach uses the
+shared Attach sheet, paste and attachment tray; pictures are prepared as a message's
+are, and kept beside the note under the same draft identity. Nothing in it is editable: Khushal returns
 a proposal with a note. Return is absent for briefs; with no existing worker
 conversation it is off and says why. An empty Return focuses the note. Links resolve
 against the server address; a managed file opens the in-app viewer and other links
@@ -108,7 +110,9 @@ gates; Review does not assume coding stages. After approval succeeds, the card's
 waits for the sheet's dismissal.
 
 A decision is saved before its card leaves the screen, with no receipt or status
-row. It freezes its canonical command, operation identity and proposal identity once.
+row. It freezes its canonical command, with the note's pictures and files, its
+operation identity and proposal identity once, so every resend is the same bytes.
+An applied receipt clears the note and its pictures; a refusal keeps both.
 It first looks up the original operation receipt, even if the Ticket already
 advanced. Only an explicit receipt absence permits a POST with the same ID and exact
 frozen bytes. The server commits the decision and receipt together. A lost response
@@ -153,8 +157,9 @@ page on top of Review; Back returns to the card.
 
 An ask card reads its wording from the conversation, as the web's ask card does
 (`pending_user_input` or `pending_permission_ask`). A worker question lists its
-options as choices, takes words when the question allows them, and docks Skip and
-Send answer. A permission ask shows its request and docks Skip, Decline and Approve,
+options as choices and docks Skip and Send answer. When the question takes words, the
+app's shared composer is docked above them, with attachments off; its send answers
+too, and words replace a one-answer choice. A permission ask shows its request and docks Skip, Decline and Approve,
 which answer with the ask's own reject and allow options. The answer is saved through
 `Outbox.enqueueAskAnswer` and the card leaves at once, and stays hidden while the
 answer waits to be sent, even after a relaunch; the outbox checks the answer's
@@ -194,7 +199,11 @@ Simulator.
   identity on Try Again, Mark read and an ask answer saved from the phone's saved copy
   offline, historical send prevention and recovery sender attribution.
 - `ReviewDecisionTests` covers approval with the visible revision, next gate and
-  holder; changed proposals; send-back guidance; voice; and deployment expiry.
+  holder; changed proposals; send-back guidance; a refused decision bringing back its
+  note and attachments; voice; and deployment expiry.
+- `OutboxRecoveryTests` (in `OfflineTests.swift`) checks that a decision's
+  attachments are frozen before sending, resent as the same bytes after a lost
+  request, and land once after a lost reply.
 
 Simulator checks reuse the offline stub (`ios/scripts/test-offline-simulator.py`) on
 an already booted lane under its lock; `PANELS_OFFLINE_DEVICE` names the lane's UDID.

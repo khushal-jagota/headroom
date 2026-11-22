@@ -103,14 +103,15 @@ server's read point catches up; a newer message brings it back.
 
 ## Decisions
 
-An approval or send-back freezes its command, operation ID and exact body bytes
-once, with the proposal's field, revision and creation time. Before every submit it
+An approval or send-back freezes its command, with its note's pictures and files,
+its operation ID and exact body bytes once, with the proposal's field, revision and
+creation time. Before every submit it
 checks its receipt. A receipt settles it: applied is done, refused restores the
 proposal with the server's note. Only an explicit absence permits a submit, with the
 same operation ID and frozen bytes. The server commits the decision and its receipt
 in one transaction, or refuses it without changing the proposal. A receipt confirms
-the recorded decision, not delivery to an agent's prompt. A send-back note draft
-clears only after an applied receipt, and only if the draft has not changed since.
+the recorded decision, not delivery to an agent's prompt. A decision note's words and
+pictures clear only after an applied receipt, and only if they have not changed since.
 
 ## Ask answers
 
