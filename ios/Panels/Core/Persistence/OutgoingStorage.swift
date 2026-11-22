@@ -58,15 +58,16 @@ import SwiftData
         proposalCreatedAt = work.protectedProposalCreatedAt ?? work.proposal?.createdAt
     }
 
-    /// One request at a time per lane keeps each conversation's messages in order.
+    /// One request at a time per lane. All of an owner's messages and answers share one
+    /// lane, so they go out in the order they were saved, whichever screen saved them.
     static func lane(kind: PendingWork.Kind, conversationID: String?, ownerKey: String?, ticketID: String?, draftID: String?, identity: String) -> String {
         switch kind {
         case .markRead: return "read:\(conversationID ?? identity)"
         case .approval, .sendBack: return "ticket:\(ticketID ?? identity)"
         case .voice: return "draft:\(draftID ?? identity)"
         case .message, .askAnswer:
-            if let conversationID { return "conversation:\(conversationID)" }
-            return "start:\(ownerKey ?? identity)"
+            if let ownerKey { return "owner:\(ownerKey)" }
+            return "conversation:\(conversationID ?? identity)"
         }
     }
 
@@ -223,9 +224,9 @@ import SwiftData
         var work = try JSONDecoder().decode(PendingWork.self, from: row.payload)
         work.state = PendingWork.State(rawValue: metadata.state) ?? .failed
         work.note = metadata.note; work.completed = metadata.completed
-        // Only a never-sent message takes the destination its lane created. A resend is
-        // always the exact body that went out before.
-        if let message = work.message, !metadata.attempted, metadata.conversationID != message.conversationId {
+        // A message saved before its conversation existed takes the conversation the first
+        // message created, before it is ever sent. Every send of it is then the same body.
+        if let message = work.message, metadata.conversationID != message.conversationId {
             work.message = ConversationSend(conversationId: metadata.conversationID, content: message.content,
                 senderLabel: message.senderLabel, mode: message.mode,
                 backendKey: metadata.omitCreationSettings ? nil : message.backendKey,
@@ -382,20 +383,17 @@ import SwiftData
     }
     /// A first message created a conversation: later, never-sent messages behind it go there too.
     private func adopt(_ conversationID: String, from row: OutgoingMetadata, server: String) throws {
-        let oldLane = row.lane
-        row.conversationID = conversationID
-        guard oldLane.hasPrefix("start:") else { return }
-        let destination = "conversation:\(conversationID)"
+        let created = row.conversationID == nil
         var inherited = try work(server: server, id: row.identity)?.message
-        for successor in try laneRows(server, oldLane) where successor.sequence > row.sequence && !successor.attempted && successor.conversationID == nil && successor.kind == "message" {
+        row.conversationID = conversationID
+        guard created, row.kind == "message" else { return }
+        for successor in try laneRows(server, row.lane) where successor.sequence > row.sequence && !successor.attempted && successor.conversationID == nil && successor.kind == "message" {
             let chosen = try work(server: server, id: successor.identity)?.message
             successor.conversationID = conversationID; successor.omitCreationSettings = true
             successor.omitModel = chosen?.model == inherited?.model
             successor.omitEffort = chosen?.reasoningEffort == inherited?.reasoningEffort
             inherited = chosen
-            successor.lane = destination
         }
-        row.lane = destination
     }
     /// A refused message retried by tap: a new identity takes the old one's place in its lane.
     func replace(server: String, id: String, with replacement: PendingWork, capturedDraft: DraftCapture? = nil) throws {

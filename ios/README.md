@@ -796,8 +796,8 @@ rows give Yours the same attention emphasis as desktop.
 Review's embedded reply field keeps the same horizontal alignment before and after
 typing. A refused reply can be edited, including its attachments, and those edits
 survive relaunch. Sending it again creates a new message identity while keeping
-the read boundary of the refused attempt. During a successful retry the outgoing card retains its status, Retry row
-and scroll position through the short fade. Retry gives light feedback; Mark read
+the read boundary of the refused attempt. A saved reply leaves the card at once; the
+outgoing card keeps its scroll position through the short fade. Retry gives light feedback; Mark read
 gives success feedback. Message and proposal headings share the same
 top padding. Chief's Workspace link extends its touch area into the existing card
 padding, preserving its visible spacing.

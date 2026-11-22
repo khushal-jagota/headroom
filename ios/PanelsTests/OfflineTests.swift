@@ -215,6 +215,16 @@ import XCTest
         XCTAssertThrowsError(try outgoing.enqueue(work, server: "a", capturedDraft: try outgoing.captureDraft(server: "a", id: "draft")))
         XCTAssertEqual(LocalStore(url: url).draft(server: "a", id: "draft"), "Newer words")
     }
+    /// A Review message to Chief has no conversation ID; the Chief screen's has one. They
+    /// still go out in the order they were saved.
+    func testOwnersMessagesShareOneLaneWhateverTheirDestination() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        try store.outgoing.enqueue(pending("known", conversation: "c"), server: "a")
+        try store.outgoing.enqueue(pending("current"), server: "a")
+        XCTAssertEqual(try store.outgoing.runnable(server: "a").map(\.id), ["known"])
+    }
     private func pending(_ id: String, conversation: String? = nil, created: Date = .now) -> PendingWork {
         PendingWork(id: id, created: created, kind: .message, owner: .chief,
             message: ConversationSend(conversationId: conversation, content: [.init(text: id)], backendKey: "backend", model: "model", reasoningEffort: "high", senderMessageId: id, sentAtUnixMilliseconds: 123))
@@ -327,16 +337,21 @@ import XCTest
         try store.outgoing.enqueue(message("start", conversation: nil), server: server)
         try store.outgoing.enqueue(message("follow", conversation: nil, at: 2), server: server)
         OfflineProtocol.state.createdConversation = "created"
+        OfflineProtocol.state.loseResponseIDs = ["follow"]
         OfflineProtocol.state.loseResponse = true
         await outbox.drain(api: api)
         outbox = relaunch()
         await outbox.drain(api: api)
+        // The follow-up loses its response too: its resend names the conversation again.
+        outbox = relaunch()
+        await outbox.drain(api: api)
         let sent = OfflineProtocol.state.messageBodies
-        XCTAssertEqual(sent.map(\.0), ["start", "start", "follow"])
+        XCTAssertEqual(sent.map(\.0), ["start", "start", "follow", "follow"])
+        XCTAssertEqual(try json(sent[2].1), try json(sent[3].1), "Every send of the follow-up is the same body")
         XCTAssertEqual(try json(sent[0].1), try json(sent[1].1), "The creating message resends unchanged, with no destination")
         let start = try JSONSerialization.jsonObject(with: sent[1].1) as! [String: Any]
         XCTAssertNil(start["conversation_id"]); XCTAssertEqual(start["backend_key"] as? String, "codex")
-        let follow = try JSONSerialization.jsonObject(with: sent[2].1) as! [String: Any]
+        let follow = try JSONSerialization.jsonObject(with: sent[3].1) as! [String: Any]
         XCTAssertEqual(follow["conversation_id"] as? String, "created")
         XCTAssertNil(follow["backend_key"], "Creation settings stay with the creating message")
         XCTAssertEqual(outbox.entries(server).map(\.state), [.sent, .sent])
@@ -565,6 +580,7 @@ private final class OfflineState: @unchecked Sendable {
         var messageBodies: [(String, Data)] = []
         var deliveredMessages: [String] = []
         var refuseMessageIDs: Set<String> = []
+        var loseResponseIDs: Set<String> = []
         var createdConversation: String?
         var requests: [String] = []
         var reads: [(String, Int)] = []
@@ -586,6 +602,7 @@ private final class OfflineState: @unchecked Sendable {
     var loseResponse: Bool { get { value(\.loseResponse) } set { store(\.loseResponse, newValue) } }
     var loseAnswerBeforeSave: Bool { get { value(\.loseAnswerBeforeSave) } set { store(\.loseAnswerBeforeSave, newValue) } }
     var refuseMessageIDs: Set<String> { get { value(\.refuseMessageIDs) } set { store(\.refuseMessageIDs, newValue) } }
+    var loseResponseIDs: Set<String> { get { value(\.loseResponseIDs) } set { store(\.loseResponseIDs, newValue) } }
     var createdConversation: String? { get { value(\.createdConversation) } set { store(\.createdConversation, newValue) } }
     var answerFate: String { get { value(\.answerFate) } set { store(\.answerFate, newValue) } }
     var answerReceipts: [String: String] { get { value(\.answerReceipts) } set { store(\.answerReceipts, newValue) } }
@@ -692,6 +709,7 @@ private final class OfflineState: @unchecked Sendable {
             // The server drops a repeat by its sender message ID.
             if !values.deliveredMessages.contains(id) { values.deliveredMessages.append(id) }
             let conversation = body["conversation_id"] as? String ?? values.createdConversation ?? "conversation"
+            if values.loseResponseIDs.remove(id) != nil { throw URLError(.networkConnectionLost) }
             return try respond(JSONSerialization.data(withJSONObject: ["conversation_id": conversation, "fate": "started"]))
         }
     }

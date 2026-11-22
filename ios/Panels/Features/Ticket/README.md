@@ -13,7 +13,7 @@ then Who reviews. The final stage approves with one tap. The approver control op
 Who reviews directly and changes only the reviewer. Earlier or current How far
 choices change scope and leave the proposal waiting. Scope and reviewer changes
 send one online-only PATCH, never an Outbox operation. The choice stays visible
-when offline. An uncertain answer triggers a fresh Ticket read, which compares
+when offline. An unconfirmed answer triggers a fresh Ticket read, which compares
 the absolute ceiling and reviewer. It never triggers an automatic retry. The sheet
 states that nothing was approved. A further check reads settings without another
 PATCH. These changes have no durable operation receipt. Send it back requires a
@@ -23,10 +23,11 @@ An empty note focuses the note field. The Ticket has no microphone in this area.
 A note belongs to the exact server, Ticket, proposal field, creation time, and
 revision. It survives redraws and relaunch. Approval captures the visible note
 before its sheet opens. A newer draft stays separate from that snapshot. Both
-decisions use the existing protected Outbox operation. Saved and uncertain decisions
-stay locked. Refusals stay visible, and a changed proposal needs a fresh read.
+decisions use the protected Outbox operation, which checks its receipt before every
+submit. A saved decision locks the card at once. A refusal shows its note on the card,
+and a changed proposal needs a fresh read.
 Proposal text is selectable and read-only. The phone never submits edited proposal
-text. Existing saved operations and their retention rules stay intact.
+text.
 
 Otherwise the stage card shows the stage and its approval limit. The approval-limit
 sheet retains its existing behavior. Done shows only Done. User-owned field values

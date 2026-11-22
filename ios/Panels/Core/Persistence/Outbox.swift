@@ -88,6 +88,10 @@ import Observation
     /// The outbox entry point for an answer to an agent's ask. Returns the answer's operation ID.
     @discardableResult
     func enqueueAskAnswer(_ answer: AskAnswer, owner: ConversationOwner, api: APIClient) throws -> String {
+        // The question and the chosen labels are what a late answer says.
+        guard !answer.questions.isEmpty, answer.questions.allSatisfy({ !$0.prompt.isEmpty && !$0.labels.isEmpty }) else {
+            throw OutgoingStore.StoreError.invalidTransition
+        }
         let work = PendingWork(id: UUID().uuidString, created: now(), kind: .askAnswer, owner: owner, askAnswer: answer)
         try store.outgoing.enqueue(work, server: LocalStore.server(api.baseURL))
         Task { await drain(api: api) }
@@ -278,6 +282,18 @@ import Observation
             work = saved
         } catch {
             try? store.outgoing.settle(server: server, id: row.id, state: .failed, note: "This saved item could not be read.")
+            return
+        }
+        let complete: Bool
+        switch work.kind {
+        case .message: complete = work.message != nil && work.owner != nil
+        case .voice: complete = work.audioFile != nil
+        case .markRead: complete = work.readConversationID != nil && work.readThroughSequence != nil
+        case .askAnswer: complete = work.askAnswer != nil
+        case .approval, .sendBack: complete = true
+        }
+        guard complete else {
+            try? store.outgoing.settle(server: server, id: row.id, state: .failed, note: "This saved item is incomplete.")
             return
         }
         switch work.kind {

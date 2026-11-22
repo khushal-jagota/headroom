@@ -51,10 +51,13 @@ so a relaunch or a regained network tries again at once. Outside the foreground
 nothing is sent, except the one short attempt a
 [notification reply](NOTIFICATIONS.md) gets.
 
-Each conversation, ticket, draft and read point is a lane. One request runs per lane,
-which keeps a conversation's messages in order, and at most two run per server.
+Each conversation owner (Chief, a Manager, a Ticket), ticket decision, draft and read
+point is a lane. One request runs per lane, so an owner's messages and answers go out
+in the order they were saved, from any screen, and at most two run per server.
 
-An item is waiting (it looks done), sent, or refused. Only a refusal shows:
+An item is waiting (it looks done), sent, or refused. A recording is the one item
+that cannot look done: its words come from the server, so it shows "transcribing"
+until they arrive. Only a refusal shows a mark:
 
 - A refused message gets a red mark in its conversation. Tapping it shows the
   server's reason and Try Again, which sends the same words with a new ID in the
