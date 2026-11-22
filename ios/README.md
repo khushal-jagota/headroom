@@ -45,13 +45,21 @@ what is on screen, as desktop does: a snapshot first, then patches. Review is
 always in that scope, for its badge. Workspace adds its rail windows while it is
 visible: active orchestrators, Chief's tickets and each card's tickets. A detail
 page adds its own record (and, for Chief and orchestrators, a children window). A
-new demand opens a stream for the new scope while the last view stays on screen,
-unless the running stream already carries it, as for a Ticket opened from
-Workspace or Review; leaving a screen only narrows the next stream. One coherent view replaces the
+new demand opens a stream for the new scope beside the current one, as the web does.
+The current stream keeps the view live until the new snapshot lands, and then it
+closes, so two streams are open only during that wait. A demand the running stream
+already carries, as for a Ticket opened from Workspace or Review, waits for the next
+stream. Leaving a screen, or Review holding fewer conversations, only narrows the next
+stream. One coherent view replaces the
 earlier Review, manager and ticket list reads; the phone no longer reads
-`/api/review`. A launch shows the last saved view at once. A return to the
-foreground, a dropped connection, a gap, a reset or a closed stream all start a
-fresh stream, whose first frame is a fresh snapshot. A stream that was current
+`/api/review`. A launch shows the last saved view at once, if it is less than seven
+days old. A pull on Review or Workspace opens a fresh stream the same way, and the
+pull ends when its snapshot lands. A return from the background, a dropped connection,
+a gap, a reset or a closed stream all start a
+fresh stream, whose first frame is a fresh snapshot. A brief inactive moment, such as
+Control Center or a notification pull-down, keeps the streams. A stream with no bytes
+for 35 seconds fails; the server's heartbeat every 15 seconds keeps a good one open.
+A stream that was current
 reconnects after one second, as the web does; failures retry after 1, 2, 4 and
 then 8 seconds and show Reconnecting. Then saved work drains, as before.
 
@@ -324,8 +332,9 @@ rate, delivery through APNs, or every navigation route.
 | `project.yml`, `Panels.xcodeproj` | Integration owner; regenerate once after combining added files |
 
 Inject `AppStore` through SwiftUI's environment. Use `store.client` for detail
-reads. The shell owns `store.run()`, which follows the view stream and the change
-stream, cancels both in background and reconnects after disconnect. Screens state
+reads. The shell owns `store.run()`, keyed on `AppStore.follows(scenePhase)`. It follows the view stream and the change
+stream, cancels both in background and reconnects after disconnect. Pull to refresh on
+view-backed screens calls `store.pull()`; refreshes after confirmed writes call `store.refresh()`. Screens state
 their windows with `store.setNavigationDemand`; detail pages use `.navigationDemand`
 and key reloads with `.reload(onChangeOf:)` on `store.ticketStamp`,
 `managerStamp` or `chiefStamp`. Overview reads run

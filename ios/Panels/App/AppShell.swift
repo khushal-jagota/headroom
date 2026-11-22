@@ -82,8 +82,8 @@ struct AppShell: View {
         .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await Outbox.shared.run(api: store.client) }
         }
-        .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
-            if scenePhase == .active { await store.run() }
+        .task(id: "\(store.baseURL.absoluteString):\(AppStore.follows(scenePhase))") {
+            if AppStore.follows(scenePhase) { await store.run() }
         }
     }
 
