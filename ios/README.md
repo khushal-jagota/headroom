@@ -456,7 +456,7 @@ Manager link opens that destination at its root. `/#/review` opens Review at its
 Ticket and Orchestrator pages expand their artifact catalog beneath the Artifacts
 row. `ArtifactsRow(owner:count:)` supplies the shared 50pt entry row and count;
 it is absent at zero. Chief has no artifact catalog. Folders expand in place too.
-`AppRoute.artifact(owner:path:title:)` opens a specific managed file. Catalog links
+`AppRoute.artifact(owner:path:title:dock:)` opens a specific managed file. Catalog links
 retain their actual file owner, including links to files on another ticket.
 
 The inline list reads on expansion and when the owner's file count changes, with paging and a search
