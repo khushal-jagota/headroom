@@ -662,7 +662,7 @@ export async function run_work_command(inv: Invocation): Promise<CommandResult> 
       }
       return raw(
         [
-          "Use this same home's trusted HTTPS origin. Check the address before you share the credential.",
+          "Use this same home's trusted HTTPS origin, or its local executor link socket on the home's own account. Check the address before you share the credential.",
           'On the new machine, use an authenticated GitHub CLI and run:',
           command,
           'At the private credential prompt, paste this value:',

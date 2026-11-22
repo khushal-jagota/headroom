@@ -97,8 +97,9 @@ export class MacHttpClient {
   readonly sessions: HttpSessions;
   readonly server_link: ServerLinkAdmission | undefined;
   private readonly initial_server_url: string;
+  /** An HTTPS origin, or the local link's socket path. */
   get server_url(): string {
-    return this.sessions.origin;
+    return this.sessions.address;
   }
   private request_headers: Readonly<Record<string, string>>;
   private readonly identity: Readonly<ExecutorIdentity>;

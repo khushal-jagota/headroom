@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
-import { executor_paths } from './configuration.ts';
+import { executor_paths, validate_server_url } from './configuration.ts';
 import { python_executor_root } from './platform.ts';
 
 const roots: string[] = [];
@@ -65,3 +65,21 @@ test.skipIf(process.platform !== 'linux')(
     ).toThrow('absolute');
   },
 );
+
+// The launch, join and transport all take this one value, so the one check gates them all.
+test('the home address is an HTTPS origin or an absolute socket path, nothing else', () => {
+  const socket = '/home/owner/Panels/data/executor-link/server.sock';
+  expect(validate_server_url(socket)).toBe(socket);
+  expect(validate_server_url('/Users/owner/Library/Application Support/PanelsHome/s.sock')).toBe(
+    '/Users/owner/Library/Application Support/PanelsHome/s.sock',
+  );
+  expect(validate_server_url('https://home.example.ts.net/')).toBe('https://home.example.ts.net');
+  for (const refused of [
+    'http://127.0.0.1:8767',
+    'relative/server.sock',
+    '/data/../executor-link/server.sock',
+    '/data/executor-link/',
+    '/data/executor-link/server.sock\n',
+  ])
+    expect(() => validate_server_url(refused), refused).toThrow();
+});

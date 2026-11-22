@@ -11,7 +11,6 @@ import {
   readable_path,
   readable_file,
 } from './declarations.ts';
-import { PROVISION_SKILLS_HOME_OPTIONS } from '../environments/command_contracts.ts';
 
 export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand {
   const root = new CliCommand([], 'Operate the local planner server.');
@@ -260,20 +259,6 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     }),
     option('json_output', '--json', boolean, { default: false }),
   ]);
-  command(
-    'environment provision-skills',
-    'Reconcile Panels skills into each production agent home.',
-    [
-      option('database_parent', '--database-parent <DIRECTORY>', readable_path('directory', true), {
-        required: true,
-      }),
-      ...PROVISION_SKILLS_HOME_OPTIONS.map(({ cli_option, destination }) =>
-        option(destination, `${cli_option} <DIRECTORY>`, readable_path('directory', false), {
-          required: true,
-        }),
-      ),
-    ],
-  );
   command('environment remove', 'Remove the stopped staging environment.', [
     option('kind', '--kind <CHOICE>', choice(['staging']), { required: true }),
     option('instance_id', '--instance-id <TEXT>', text, {}),

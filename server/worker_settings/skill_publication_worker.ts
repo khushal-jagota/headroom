@@ -1,7 +1,7 @@
 /** Blocking filesystem publication settles before normal server work starts. */
 import { parentPort, workerData } from 'node:worker_threads';
 import { provision_workspace_skills } from '../skills/sources.ts';
-import { provision_account_skills } from '../skills/account.ts';
+import { remove_server_account_skill_links } from '../skills/account.ts';
 import type { AccountSkillHome } from '../skills/account.ts';
 export interface SkillPublicationInput {
   parent: string;
@@ -16,7 +16,7 @@ try {
     warning:
       input.account_homes === null
         ? null
-        : provision_account_skills(input.parent, input.account_homes),
+        : remove_server_account_skill_links(input.parent, input.account_homes),
   });
 } catch (error) {
   parentPort.postMessage({ error: error instanceof Error ? error.message : String(error) });

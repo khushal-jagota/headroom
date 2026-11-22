@@ -5,21 +5,21 @@ A skill is the standing instruction for a kind of agent: the shared Worker skill
 ## What it is made of
 
 - **The skill row.** Shared role text lives in the database. Structured preset guidance generates specialist skill rows.
-- **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. Every agent home, as each backend driver declares it, links to those copies (Antigravity's in `~/.gemini/config/skills`), and a server with an explicit workspace links it there too.
+- **The published copies.** Headroom writes each row out as a skill file whenever a database opens and whenever a skill is saved. A server with an explicit workspace links it to those copies. The server does not link agent homes. Machine code (the executor) makes its own copies from the rows, and it links every agent home to them, as each backend driver declares it (Antigravity's in `~/.gemini/config/skills`). Machine code refuses a link that it did not make, so an installed server removes its own old links from the agent homes when it starts.
 - **The seed.** The skill tree packaged with the code fills a database that has no skills yet. Nothing reads it after that.
 - **Skill history.** The editor keeps saved versions in the database. Worker steps do not record skill versions.
 - **Supporting files.** A skill folder can hold other files beside `SKILL.md`. They live only on disk: no row holds them, the skills backup copies them, and republication leaves them alone.
 - **The editor and the command.** One editor in Settings opens every role's skill. `panels skill list`, `show`, `edit`, `apply`, `delete`, and `write-file` reach the same owner-only writer.
 
 ```
- editor or panels skill ──► skill row ──► published copy ◄── agent homes link here
-                               ▲
+ editor or panels skill ──► skill row ─┬─► published copy ◄──── workspace links here
+                               ▲       └─► machine code copy ◄── agent homes link here
  packaged seed (fresh database only)
 ```
 
 ## How it works
 
-Khushal and the Chief stand above skills, so both may edit them. `panels skill delete` removes a skill's row and its whole folder, and refuses a role skill and any skill that a Worker type uses. Tickets use their saved guide after their specialist skill is deleted. The next server start removes the dead links that a deleted skill leaves in agent homes. `panels skill write-file` writes a supporting file inside a skill folder, and never the skill's own `SKILL.md`. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
+Khushal and the Chief stand above skills, so both may edit them. `panels skill delete` removes a skill's row and its whole folder, and refuses a role skill and any skill that a Worker type uses. Tickets use their saved guide after their specialist skill is deleted. Machine code removes the links of a deleted skill from agent homes when it next starts a Ticket. `panels skill write-file` writes a supporting file inside a skill folder, and never the skill's own `SKILL.md`. A Worker or a Manager that wants a skill changed hands the exact text to the owner or the Chief. A reviewed batch applies in one transaction. Specialist guidance changes through its structured preset editor.
 
 Every Worker follows its own Ticket's workflow guide, which it receives at kickoff. A specialist skill is the current guide of its preset, for reading and editing. It does not reach a Ticket made earlier. See [Worker types](worker-types.md). A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
 

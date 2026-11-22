@@ -242,9 +242,6 @@ test.skipIf(!admitted)(
           environment: { PATH: process.env.PATH, PLAN_SERVER_URL: 'http://127.0.0.1:1' },
           execution: execution(),
           command,
-          warning: (message) => {
-            throw new Error(message);
-          },
           service: async (value, host) => {
             plan = await (system === 'darwin'
               ? create_darwin_home_service(value, host)

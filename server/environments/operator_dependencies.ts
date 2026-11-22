@@ -300,7 +300,6 @@ export async function create_production_operator_dependencies(
     case 'prepare':
     case 'reset':
     case 'remove':
-    case 'provision-skills':
       return path_inputs();
     case 'backup-current': {
       const paths = await path_inputs();

@@ -78,7 +78,6 @@ export interface HomeInstallDependencies extends HomeInstallHost {
     request: HomeInstallRequest,
     host: HomeInstallHost,
   ) => Promise<HomeServicePlan>;
-  readonly warning: (message: string) => void;
 }
 /** A bounded observer cannot release descriptors still used by a native cleanup. */
 export class HomeCleanupUnsettled extends Error {

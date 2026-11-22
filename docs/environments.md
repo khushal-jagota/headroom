@@ -36,15 +36,13 @@ Full-state checks use the same SHA256 file hashes and exact file-list comparison
 
 The home uses one platform contract for service identity, app-child launch, process evidence, private sockets, locks, and resource collection. The Linux adapter preserves the existing systemd and kernel operations. Shared installation paths keep explicit configuration and current defaults. Runtime selection separates the operating system, architecture, and home or executor role. Existing archive formats and integrity checks stay the same. A Mac executor archive cannot become a home release.
 
-An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. Separate launchd jobs run verified backups, proof-bound maintenance, and stall alarms through the existing commands. Logout stops the home, and sleep makes it unreachable. A sealed release uses the same custody and account skill guard. Its app stays separate from data, logs, and Ticket files. See the [Mac installation procedures](../ops/mac-home/installation.md).
+An Apple Silicon Mac can run a home from source in the owner's login session. Its launchd job owns the supervisor and app process group, so a hard supervisor crash does not leave the app behind. Private short sockets support long installation paths. Separate launchd jobs run verified backups, proof-bound maintenance, and stall alarms through the existing commands. Logout stops the home, and sleep makes it unreachable. A sealed release uses the same custody. Its app stays separate from data, logs, and Ticket files. See the [Mac installation procedures](../ops/mac-home/installation.md).
 
-A real home provisions its managed skills in the provider account folders. One operating system account supports one Panels instance. If another instance owns the Panels skill links, the second home starts but leaves those links unchanged. Setup output and the server log explain the conflict and the account limit. Its Workers cannot receive their own home's skills through that account. Use a separate operating system account for a second instance.
+A home does not link skills in the provider account folders. Machine code links them. At startup, an installed home removes only its own old links from those folders, and it keeps every other entry.
 
-The home provisions workspace and account skill files on awaited worker threads, so file removal does not block the event loop. Startup waits for provisioning before normal work starts.
+The home links workspace skills and removes its old account links on an awaited worker thread, so file removal does not block the event loop. Startup waits for this work before normal work starts.
 
 Eligible Ticket folders use directory descriptors for safe removal on Linux and Mac. Replacement directories and symlinks cannot redirect recursive removal. Unknown ownership, unpublished work, or uncertain process retirement retains the folder. Retirement retries keep the same checks and recorded scratch snapshot.
-
-Disposable tests can disable provisioning explicitly and read the existing instance's skills. Test mode alone does not suppress account provisioning.
 
 A release-installed Mac home uses an external Node 22 runtime. Its first installation and independent update LaunchAgent use native TypeScript. The installer stays outside the app that it replaces. Its jobs run only during the graphical login session.
 
@@ -93,7 +91,7 @@ env -i PATH="$PATH" HOME="$TEST_SERVER_ROOT/home" TMPDIR="$TMPDIR" \
   PLAN_DISPATCHER_LOCK_PATH="$TEST_SERVER_ROOT/dispatcher.lock" \
   PLAN_SERVER_CONTROL_SOCKET="$TEST_SERVER_ROOT/control.sock" \
   PLAN_PORT="$TEST_SERVER_PORT" PLAN_DISPATCH_ENABLED=false \
-  PLAN_NOTIFICATIONS_ENABLED=false PLAN_PROVISION_ACCOUNT_SKILLS=false npm run test-server
+  PLAN_NOTIFICATIONS_ENABLED=false npm run test-server
 ```
 
 The command runs the normal server in test mode with an empty environment apart from these values. Stop it when the work ends. The Worker runtime owns the temporary directory and removes it when the backend process ends. The production smoke uses a populated fixture and the production composition; this test server uses a fresh database and the test-mode composition.

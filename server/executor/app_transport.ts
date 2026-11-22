@@ -9,6 +9,7 @@ import { PlannerError } from '../core/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
 import { sendFile } from '../core/http/static.ts';
 import { trusted_ingress_login } from '../core/http/middleware.ts';
+import { is_executor_link_connection } from '../core/http/executor_link.ts';
 import { is_os_error } from '../core/system_errors.ts';
 import { integer_text, decimal_digit } from '../core/python_integer.ts';
 import { strip_unicode_space } from '../core/whitespace.ts';
@@ -68,10 +69,19 @@ function header_map(request: IncomingMessage): Map<string, string[]> {
   }
   return headers;
 }
-/** Credentials bind this claim to a destination after trusted ingress admission. */
+/**
+ * Credentials bind this claim to a destination after trusted ingress admission. Trusted
+ * ingress is the Tailscale login, or the local executor link in its place.
+ */
 export function executor_ingress_claim(raw: IncomingMessage, trusted_login: string | null): string {
-  if (!trusted_login) throw new ExecutorValidationError('trusted executor ingress is required');
   const headers = header_map(raw);
+  if (is_executor_link_connection(raw.socket)) {
+    if (headers.has('tailscale-user-login'))
+      throw new ExecutorValidationError(
+        'the local executor link does not accept a Tailscale login',
+      );
+  } else if (!trusted_login)
+    throw new ExecutorValidationError('trusted executor ingress is required');
   for (const [name, values] of headers)
     if (SINGLETON.has(name) && values.length !== 1)
       throw new ExecutorValidationError('duplicate executor security header is not allowed');
@@ -664,7 +674,8 @@ function install_old_websocket_refusal(app: FastifyInstance, services: ExecutorH
         config = services.config;
       let trusted_login: string | null = null;
       try {
-        trusted_login = trusted_ingress_login(config, headers, 'websocket');
+        if (!is_executor_link_connection(request.socket))
+          trusted_login = trusted_ingress_login(config, headers, 'websocket');
       } catch (error) {
         if (!(error instanceof PlannerError)) throw error;
         return close_before_accept(socket, { code: 1008, reason: error.message });

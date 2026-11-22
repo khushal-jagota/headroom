@@ -232,7 +232,7 @@ The packaged entrypoint creates `MacSkillsPublisher` from `server/executor/mac/s
 Linux covers the synthetic publication flow and a failed descriptor close with successful retry. It does not prove Darwin flags or native filesystem behavior.
 The shared server publisher retains its API. Its workspace `openat` now uses a variadic declaration and an explicit promoted `int` argument.
 The Mac publisher imports the neutral account module and uses native operations only through the Mac platform module.
-The Mac requires an absolute, existing provider home and an existing real `skills` directory before it writes any state.
+The executor requires an absolute, existing provider home before it writes any state. It makes a missing `skills` directory, because it is the only program that links skills.
 The trusted adapter host supplies that configured home separately from the command snapshot. A different resolved path refuses.
 The Mac never converts a legacy `skills` symlink. Refuse linked homes, linked `skills` entries, and linked state-root ancestors before the session.
 Native `/tmp` and `/var` are aliases. Use their reviewed canonical paths or a private path under the real account home.

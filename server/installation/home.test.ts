@@ -117,9 +117,6 @@ async function fixture() {
       return false;
     },
     service: async () => service,
-    warning: () => {
-      throw new Error('Isolated installation must not inspect account skills');
-    },
   };
   return {
     base,

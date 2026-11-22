@@ -38,11 +38,6 @@ export const operator_commands: OperatorTable = {
     'environment',
     async () => (await import('./cli.ts')).environment_backup_current,
   ),
-  'provision-skills': definition(
-    'provision-skills',
-    'environment',
-    async () => (await import('./cli.ts')).environment_provision_skills,
-  ),
   restore: definition(
     'restore',
     'environment',

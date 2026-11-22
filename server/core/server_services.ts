@@ -39,6 +39,11 @@ import { CLEANUP_INTERVAL_SECONDS } from '../conversation/video_uploads/configur
 import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
 import type { EnvironmentRuntime } from '../environments/contracts.ts';
 import { HttpRequestScope } from './http/lifetime.ts';
+import {
+  executor_link_socket_path,
+  open_executor_link,
+  type ExecutorLinkListener,
+} from './http/executor_link.ts';
 import { is_shutdown_business_cancellation } from '../conversation/shutdown.ts';
 import type {
   OwnedChildProcesses,
@@ -123,6 +128,7 @@ export class ServerServices {
   publication: SignalPublicationCoordinator | undefined;
   environmentsStarting: Promise<void> | undefined;
   video_cleanup_timer: ReturnType<typeof setInterval> | undefined;
+  executor_link: ExecutorLinkListener | undefined;
   video_cleanup_work: Promise<unknown> | undefined;
   recovery: Promise<void> | undefined;
   readonly update_barrier: UpdateBarrier;
@@ -646,14 +652,19 @@ export class ServerServices {
   private async listen(app: FastifyInstance): Promise<string> {
     const inherited = process.env.PLAN_SERVER_LISTENER_FD;
     const listening = begin_startup_phase('HTTP listener');
+    let address: string;
     if (inherited !== undefined) {
       const fd = Number(inherited);
       if (!Number.isInteger(fd) || fd < 0) throw new Error('invalid PLAN_SERVER_LISTENER_FD');
-      const address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
-      listening();
-      return address;
-    }
-    const address = await app.listen({ host: '127.0.0.1', port: this.config.port });
+      address = await app.listen({ fd } as FastifyListenOptions & { fd: number });
+    } else address = await app.listen({ host: '127.0.0.1', port: this.config.port });
+    const link = await open_executor_link(
+      app.server,
+      executor_link_socket_path(this.config.db_path),
+    );
+    this.executor_link = link ?? undefined;
+    // The 'HTTP listener' stop closes a published link; a stop that already ran needs this one.
+    if (this.lifetime.isClosing()) link?.close();
     listening();
     return address;
   }
