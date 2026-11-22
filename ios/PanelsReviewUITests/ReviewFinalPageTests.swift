@@ -45,7 +45,8 @@ final class ReviewFinalPageTests: XCTestCase {
         app.buttons["review.approve"].tap()
         let consequences = app.buttons["decision.stage.needs_consequences"]
         XCTAssertTrue(waitForDecisionStage(consequences))
-        XCTAssertFalse(app.buttons["decision.stage.done"].exists)
+        // Approval offers only stages after the waiting one, as the web does.
+        XCTAssertFalse(app.buttons["decision.stage.needs_implementation"].exists)
         capture(app, "consequences-implementation-approval-choices")
         consequences.tap()
         app.buttons["sheet-confirm"].tap()
@@ -342,7 +343,8 @@ final class ReviewFinalPageTests: XCTestCase {
         let hierarchy = XCTAttachment(string: app.debugDescription)
         hierarchy.name = "design-review-restored-normal-hierarchy"
         hierarchy.lifetime = .keepAlways; add(hierarchy)
-        // A reviewer change is not an approval: it waits in its sheet and keeps the proposal pending.
+        // A reviewer change is not an approval: it waits in its sheet, then the proposal
+        // leaves the owner's Review because Chief now holds it. The next card shows.
         app.buttons["decision.reviewer"].tap()
         let chief = app.buttons["decision.reviewer.chief"]
         XCTAssertTrue(chief.waitForExistence(timeout: 5))
@@ -350,8 +352,10 @@ final class ReviewFinalPageTests: XCTestCase {
         chief.tap()
         XCTAssertTrue(chief.waitForNonExistence(timeout: 8))
         XCTAssertTrue(approve.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Make the work that needs your attention easy to read."].exists)
-        XCTAssertEqual(note.value as? String, "Keep this proposal note")
+        let emptied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", ""), object: note)
+        let emptiedResult = await XCTWaiter.fulfillment(of: [emptied], timeout: 5)
+        XCTAssertEqual(emptiedResult, .completed, "The next card has its own empty note; the handed-off proposal left Review")
+        capture(app, "design-reviewer-changed")
         let (beforeDecision, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: beforeDecision) as? [String]), [])
         let (scopeData, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/scopes")!)
@@ -359,6 +363,7 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual(scopeWrites.count, 1)
         let scopeBody = try XCTUnwrap(scopeWrites.first?["body"] as? [String: Any])
         XCTAssertNil(scopeBody["ceiling"])
+        XCTAssertEqual((scopeBody["ceiling_holder"] as? [String: Any])?["kind"] as? String, "chief")
         approve.tap()
         XCTAssertTrue(waitForDecisionStage(stage)); stage.tap()
         app.buttons["sheet-confirm"].tap()
