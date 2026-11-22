@@ -545,6 +545,7 @@ import UniformTypeIdentifiers
         let held = json.replacingOccurrences(of: #""held_prompt_id""#, with: #""queue_reason":"attachment","held_prompt_id""#)
         model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(held.utf8)))
         XCTAssertEqual(model.heldPrompts.first?.note, "Queued · attachments wait for the turn to end")
+        XCTAssertNil(model.rows.first?.note, "A held message is not refused: its row carries no mark")
         // Risk: a backend that cannot join a running turn still offers Steer, or an older
         // server's view, which has no supports_steer, loses it.
         XCTAssertTrue(configuration.supportsSteer, "A view without supports_steer keeps Steer")

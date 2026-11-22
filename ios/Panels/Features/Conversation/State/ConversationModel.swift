@@ -465,7 +465,7 @@ import UniformTypeIdentifiers
                                    retryID: local?.retryable == true ? local?.id : nil, item: item)
         }
         var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
-            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
+            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
         }
         if let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
         let positions = Dictionary(uniqueKeysWithValues: rowOrder.enumerated().map { ($0.element, $0.offset) })
@@ -492,9 +492,6 @@ import UniformTypeIdentifiers
         return status.rest.latestOwnerMessagePreview ?? latestMessage?.previewText ?? "Conversation"
     }
 
-    private func heldNote(_ id: String) -> String? {
-        heldPrompts.first { ($0.senderMessageId ?? $0.heldPromptId) == id }?.note
-    }
     /// Held prompts whose rows have arrived: the server's queue has moved on.
     var deliveredHeldPromptCount: Int {
         let received = Set(items.compactMap(\.senderMessageId))
