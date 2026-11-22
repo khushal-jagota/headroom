@@ -80,6 +80,11 @@ export async function installed_update_root(
 export function validate_release(release: PublishedUpdate): void {
   if (release.manifest.runtime_contract === null)
     throw new UpdateConflict('This publication lacks a runtime contract. Republish the app.');
+  if (release.expires_at === null) {
+    if (release.artifact_source !== 'github-release')
+      throw new UpdateConflict('Only GitHub Releases can have no expiry.');
+    return;
+  }
   // Publication retention is a real-world boundary, independent of a service test clock.
   let expired = false;
   try {

@@ -9,8 +9,8 @@ Atomic replacement preserves unknown fields as native JSON values. GitHub IDs us
 A lock wait blocks Node's event loop.
 Strict UTF-8 reads treat invalid bytes and BOM input as an unreadable record.
 
-The provider reads GitHub publications. It checks the repository, workflow, branch, event, conclusion,
-SHA, pinned artifacts, Mac artifact, expiry, and runtime metadata. Downloads stream with a 60-second timeout for each network read.
+The provider reads permanent GitHub Release assets and their publication manifest. It checks the repository, workflow provenance,
+source revision, pinned assets, and runtime metadata. Legacy attempts retain Actions artifact reads and expiration checks. Downloads stream with a 60-second timeout for each network read.
 Disk writes consume no read deadline. Proof ZIP reads check size and CRC.
 Credentials stay outside records and public errors. Installation requires a running SHA, canonical installed app root, and this server's own unit.
 

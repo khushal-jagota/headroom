@@ -50,20 +50,29 @@ export interface AppManifest {
   artifact_digest: string;
   runtime_contract: RuntimeContract | null;
 }
+export type ArtifactSource = 'github-release';
+export interface ReleaseParts {
+  server: { app_sha: string; artifact_digest: string };
+  screens: { sha256: string };
+  machines: Record<string, { archive_sha256: string; build_id: string | null }>;
+}
 export interface PublishedMacUpdate {
+  artifact_source?: ArtifactSource;
   artifact_id: number;
   archive_sha256: string;
   archive_size: number;
 }
 export type PublishedLinuxExecutorUpdate = PublishedMacUpdate;
 export interface PublishedUpdate {
+  artifact_source?: ArtifactSource;
+  parts?: ReleaseParts;
   publication_run_id: number;
   artifact_id: number;
   proof_artifact_id: number;
   manifest: AppManifest;
   archive_sha256: string;
   schema_floor: string;
-  expires_at: string;
+  expires_at: string | null;
   mac: PublishedMacUpdate | null;
   linux_executor?: PublishedLinuxExecutorUpdate | null;
 }
@@ -120,7 +129,12 @@ export interface UpdateExperienceOptions {
 }
 export interface UpdateProvider {
   available(): Promise<PublishedUpdate | null>;
-  download_artifact(artifact_id: number, destination: string, signal?: AbortSignal): Promise<void>;
+  download_artifact(
+    artifact_id: number,
+    destination: string,
+    signal?: AbortSignal,
+    source?: ArtifactSource,
+  ): Promise<void>;
 }
 /** Required adapters; callers cannot silently replace an unavailable operation. */
 export interface ReleaseStaging {

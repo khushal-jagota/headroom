@@ -298,6 +298,9 @@ jobs:
           retention-days: 30
 
   receipt:
+    permissions:
+      contents: write
+      actions: read
     needs: [linux, mac, linux-executor]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.linux.result == 'success' && needs.mac.result == 'success' && needs.linux-executor.result == 'success'
     runs-on: ubuntu-24.04
@@ -403,3 +406,7 @@ jobs:
           path: ${{ runner.temp }}/panels-publication/receipt/
           if-no-files-found: error
           retention-days: 30
+      - name: Publish permanent server assets without changing the latest desktop release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node server/environments/release/github_publication_main.ts "$RUNNER_TEMP/panels-publication"

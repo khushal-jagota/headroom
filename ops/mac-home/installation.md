@@ -33,7 +33,7 @@ It checks the publication identity, target, and archive checksum before it execu
 It refuses an existing installation root, service name, or occupied port.
 It starts only the new server and machine code.
 It checks the exact release health and an accepted machine connection before it reports its address.
-A private repository requires GitHub access to its contents and Actions artifacts.
+A private repository requires GitHub access to its Release assets. Legacy update attempts also require access to Actions artifacts.
 The command uses the GitHub CLI login for release access. It keeps that token in `data/secrets/update-token` for updates. It refuses an existing `~/.local/bin/panels`, then writes a small `panels` command there that runs the installed app.
 
 The Mac default root is `~/Library/Application Support/PanelsHome`. The service name is `com.panels.home`.

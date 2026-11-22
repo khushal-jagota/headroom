@@ -32,7 +32,7 @@ import {
 } from './configuration.ts';
 import { extract_app_archive, inspect_mac_archive, remove_owned_tree } from './archive.ts';
 import { MacArchiveInspectionUnsettled } from './contracts.ts';
-import { validate_app_manifest } from './identity.ts';
+import { digest_app_source, validate_app_manifest } from './identity.ts';
 import type { ReleaseExecution } from './contracts.ts';
 import { manifest_identity } from './logic/manifest.ts';
 import { migration_frontier, read_migration_graph } from './migrations.ts';
@@ -412,12 +412,31 @@ export async function write_publication_receipt(
     for (const artifact of artifacts)
       if ((await sha256_file(artifact.path)) !== artifact.sha256)
         throw new Error('Bound artifact ZIP changed during receipt validation');
+    const parts = {
+      server: {
+        app_sha: actual_manifest.app_sha,
+        artifact_digest: actual_manifest.artifact_digest,
+      },
+      screens: { sha256: await digest_app_source(join(sealed, 'web/dist')) },
+      machines: {
+        'darwin-arm64': { archive_sha256: published_mac.archive_sha256, build_id: null },
+        ...(published_linux_executor
+          ? {
+              'linux-x86_64': {
+                archive_sha256: published_linux_executor.archive_sha256,
+                build_id: null,
+              },
+            }
+          : {}),
+      },
+    };
     await remove_owned_tree(work);
     fence();
     const receipt: PublicationReceipt = {
       publication_run_id: integer(Number(source_run.run_id)),
       artifact_id,
       manifest: actual_manifest,
+      parts,
       archive_sha256,
       mac: published_mac,
       ...(mac_home ? { mac_home } : {}),
