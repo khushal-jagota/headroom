@@ -58,8 +58,8 @@ final class NotificationDeliveryTests: XCTestCase {
         _ = try await waitState(base) { ($0["accepted"] as? [[String: Any]])?.count == 2 }
         XCTAssertNotEqual(app.state, .runningForeground, "A terminated launch must handle the reply in the background")
 
-        // Accept a third reply but drop its response. Hide receipts until relaunch.
-        // The existing recovery path must reconcile it without another send.
+        // Accept a third reply but drop its response. After relaunch the outbox sends it
+        // again with the same sender message ID, which the server drops as a repeat.
         app.terminate()
         try await control(base, "/proof/drop-reply-response")
         try await reply(base, name: "reply-recovery", text: "Recover the notification receipt", springboard: springboard)
@@ -70,14 +70,10 @@ final class NotificationDeliveryTests: XCTestCase {
         app.terminate()
         try await control(base, "/proof/recover")
         app.launch()
-        let state = try await waitState(base) { state in
-            guard let receipts = state["receipts"] as? [[String: Any]] else { return false }
-            return receipts.contains { receipt in
-                receipt["available"] as? Bool == true && (receipt["ids"] as? [String])?.contains(recoveryID) == true
-            }
-        }
+        let state = try await waitState(base) { ($0["attempts"] as? [[String: Any]])?.count == 4 }
         let attempts = try XCTUnwrap(state["attempts"] as? [[String: Any]])
-        XCTAssertEqual(attempts.count, 3, "A receipt recovery must not resend the accepted reply")
+        let resent = try XCTUnwrap(attempts.last?["body"] as? [String: Any])
+        XCTAssertEqual(resent["sender_message_id"] as? String, recoveryID, "The lost reply is resent with its own identity")
         var identities = Set<String>()
         var texts = Set<String>()
         for entry in attempts {

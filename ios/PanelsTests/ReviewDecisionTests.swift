@@ -62,6 +62,19 @@ import XCTest
         return (decision, api, item)
     }
 
+    /// The card never names the connection: a dropped read keeps the loaded proposal
+    /// ready, with no error under its buttons, and Approve still saves at once.
+    func testDroppedTicketReadShowsNoErrorAndKeepsTheCardReady() async throws {
+        let (decision, api, item) = try await setupDecision()
+        ReviewStub.state.configureScope(mode: "success", failNextRead: true)
+        await decision.load(item: item, api: api)
+        XCTAssertNil(decision.error)
+        XCTAssertTrue(decision.ready)
+        let saved = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
+        XCTAssertTrue(saved)
+        XCTAssertNil(decision.error)
+    }
+
     func testReadOnlyApprovalIgnoresLegacyEditsAndCarriesExactRevisionAndNextGate() async throws {
         let (original, api, item) = try await setupDecision()
         let revision = try XCTUnwrap(original.proposal?.revision)
@@ -297,7 +310,7 @@ import XCTest
         let staleGesture = await decision.approve(api: api, ceiling: "needs_implementation", holder: Principal(kind: "owner", id: "owner"))
         XCTAssertTrue(staleGesture) // Saved locally; the protected server compares this exact revision.
         await settle(api)
-        XCTAssertEqual(Outbox.shared.entries("https://review.invalid").last?.state, .changed)
+        XCTAssertEqual(Outbox.shared.entries("https://review.invalid").last?.state, .failed)
         XCTAssertEqual(ReviewStub.state.protectedWrites.count, 1)
         XCTAssertTrue(ReviewStub.state.writes.isEmpty)
     }
@@ -314,7 +327,7 @@ import XCTest
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
         try assertProtectedDecisionBody(body, named: "send_back", decision: "send_back", field: "wireframe")
         let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
-        XCTAssertEqual(work.state, .changed)
+        XCTAssertEqual(work.state, .failed)
         let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
         XCTAssertEqual(command.message, "  Clarify the transition.\n ")
         XCTAssertNil(work.proposal); XCTAssertNil(work.approval); XCTAssertNil(work.guidance)
@@ -326,16 +339,16 @@ import XCTest
         let server = LocalStore.server(api.baseURL)
         for (id, ticketID, field, revision, created, state) in [
             ("success", item.ticketId, proposal.field, proposal.revision, proposal.createdAt, PendingWork.State.sent),
-            ("field", item.ticketId, "other-field", proposal.revision, proposal.createdAt, .changed),
-            ("revision", item.ticketId, proposal.field, proposal.revision + 10, proposal.createdAt, .changed),
-            ("time", item.ticketId, proposal.field, proposal.revision, proposal.createdAt + 100, .changed),
-            ("ticket", "other-ticket", proposal.field, proposal.revision, proposal.createdAt, .changed),
+            ("field", item.ticketId, "other-field", proposal.revision, proposal.createdAt, .failed),
+            ("revision", item.ticketId, proposal.field, proposal.revision + 10, proposal.createdAt, .failed),
+            ("time", item.ticketId, proposal.field, proposal.revision, proposal.createdAt + 100, .failed),
+            ("ticket", "other-ticket", proposal.field, proposal.revision, proposal.createdAt, .failed),
         ] {
             let other = TicketProposal(field: field, body: "Other", proposedBy: "worker", createdAt: created, revision: revision)
             try Outbox.shared.save(PendingWork(id: id, created: .now, kind: .sendBack, state: state,
                 note: "Unrelated \(id)", ticketID: ticketID, proposal: other), server: server)
         }
-        try Outbox.shared.save(PendingWork(id: "foreign", created: .now, kind: .sendBack, state: .changed,
+        try Outbox.shared.save(PendingWork(id: "foreign", created: .now, kind: .sendBack, state: .failed,
             note: "Other server", ticketID: item.ticketId, proposal: proposal), server: server + "-foreign")
         defer { try? LocalStore.shared.remove(server: server + "-foreign", kind: "outbox", id: "foreign") }
         let restored = ReviewDecision()
@@ -362,7 +375,7 @@ import XCTest
             expectedProposalRevision: proposal.revision, message: "Keep these words")
         let body = try APIClient.encodeReviewDecision(command)
         try Outbox(store: LocalStore(url: url)).save(PendingWork(id: "restored", created: .now,
-            kind: .sendBack, state: .sending, ticketID: decision.ticket!.id,
+            kind: .sendBack, state: .waiting, ticketID: decision.ticket!.id,
             protectedDecisionBody: body, protectedProposalCreatedAt: proposal.createdAt), server: server)
         let restored = Outbox(store: LocalStore(url: url))
         // Restored attempted work looks up its operation before any current proposal read.
@@ -374,7 +387,7 @@ import XCTest
         XCTAssertEqual(posted["expected_proposal_revision"] as? Int, proposal.revision)
         XCTAssertEqual(ReviewStub.state.protectedWrites.count, 1)
         let saved = try XCTUnwrap(Outbox(store: LocalStore(url: url)).entries(server).first)
-        XCTAssertEqual(saved.state, .changed)
+        XCTAssertEqual(saved.state, .failed)
         XCTAssertEqual(saved.note, "Not sent · the visible proposal changed; read it again before sending it back")
         XCTAssertEqual(saved.protectedDecisionBody, body)
         XCTAssertNil(saved.guidance)
@@ -515,7 +528,7 @@ import XCTest
     private func settle(_ api: APIClient) async {
         await Outbox.shared.drain(api: api)
         for _ in 0..<100 {
-            if !Outbox.shared.entries("https://review.invalid").contains(where: { [.waiting, .sending].contains($0.state) }) { return }
+            if !Outbox.shared.entries("https://review.invalid").contains(where: { $0.state == .waiting }) { return }
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Outbox did not finish the stub request")

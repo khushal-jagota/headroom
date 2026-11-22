@@ -109,3 +109,38 @@ extension APIClient {
         }
     }
 }
+
+extension APIClient {
+    /// Sends one ask answer under its operation ID. Returns the fate: applied, saved or refused.
+    func answerAsk(_ answer: AskAnswer, operationID: String) async throws -> String {
+        let path: String
+        var body: [String: Any] = ["operation_id": operationID]
+        switch answer.request {
+        case .permission(let askID, let optionID):
+            path = "permission-answers"; body["ask_id"] = askID; body["option_id"] = optionID
+        case .userInput(let requestID):
+            path = "user-input-answers"; body["request_id"] = requestID
+            // Question IDs are sent exactly as the server named them.
+            body["answers"] = Dictionary(answer.questions.map { ($0.id, ["answers": $0.answers]) }, uniquingKeysWith: { _, last in last })
+        }
+        var request = try self.request(try url("/api/conversation/conversations/\(answer.conversationID)/\(path)"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 25
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response, data: data)
+        struct Response: Decodable { let fate: String }
+        return try Self.decoder().decode(Response.self, from: data).fate
+    }
+    /// The saved fate of an answer, or nil when the server saved none.
+    func askAnswerReceipt(conversationID: String, operationID: String) async throws -> String? {
+        struct Receipt: Decodable { let operationId: String; let fate: String }
+        struct Response: Decodable { let receipt: Receipt? }
+        let (data, _) = try await responseData("/api/conversation/conversations/\(conversationID)/answer-receipts/\(operationID)")
+        let value = try Self.decoder().decode(Response.self, from: data)
+        guard let receipt = value.receipt else { return nil }
+        guard receipt.operationId == operationID else { throw APIError(status: 0, message: "The answer receipt names another answer.") }
+        return receipt.fate
+    }
+}

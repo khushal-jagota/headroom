@@ -50,8 +50,8 @@ final class ComposerAttachmentTests: XCTestCase {
 
         app.buttons["Send message"].tap()
         let thread = app.scrollViews["conversation-thread"]
-        XCTAssertTrue(app.staticTexts["Sending…"].firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(thread.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch.exists)
+        // The saved message shows at once with its preview; there is no sending note.
+        XCTAssertTrue(thread.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(tiles.count, 0)
         capture("sending-with-preview")
     }

@@ -370,6 +370,21 @@ def main() -> int:
         "goal_patch_attempts": 0,
         "chief_conversation": "stub",
         "tail_requests": [],
+        # Delivery faults for OfflineOperationTests, armed per kind (message, decision,
+        # read) by /proof/drop/<kinds> and /proof/lose/<kinds>. A drop closes the
+        # connection before the write; a lost response closes it after a first commit.
+        "drop": set(),
+        "lose": set(),
+        "dropped": [],
+        "lost": [],
+        "refuse_messages": 0,
+        "refused_messages": [],
+        "message_attempts": {},
+        "decision_posts": {},
+        "decision_receipt_reads": {},
+        "reads": [],
+        "read_attempts": {},
+        "agent_messages": 0,
     }
     state.update(
         read_through=3 if TABLE_SCROLL_SMOKE else 1,
@@ -423,7 +438,7 @@ def main() -> int:
         ]
         if len(matches) != 1:
             raise ValueError("The owned replacement app has no unique data container")
-        store = matches[0] / "Library/Application Support/PanelsPhone/phone.store"
+        store = matches[0] / "Library/Application Support/PanelsPhoneStore/phone.store"
         with sqlite3.connect("file:" + str(store) + "?mode=ro", uri=True) as connection:
             rows = connection.execute(
                 "SELECT ZKEY, ZPAYLOAD FROM ZLOCALRECORD WHERE ZKIND = 'cache' AND ZSERVER = ?",
@@ -921,6 +936,27 @@ def main() -> int:
             ]
             value["coverage"]["through_sequence"] = 8
             value["status"]["rest"]["latest_happened"] = {"kind": "agent_message", "excerpt": text}
+        if not REVIEW_MESSAGES and not REPLACEMENT_SMOKE:
+            # Agent messages the owner has not read: an open conversation marks them read.
+            for index in range(1, state["agent_messages"] + 1):
+                value["page"]["items"].append(
+                    {
+                        "kind": "row",
+                        "key": f"agent-{index}",
+                        "source_sequence": 1 + index,
+                        "body": {
+                            "kind": "inline",
+                            "value": {
+                                "kind": "agent_message",
+                                "content": [{"piece": "text", "text": f"Agent update {index}"}],
+                            },
+                        },
+                    }
+                )
+            if state["agent_messages"]:
+                value["coverage"]["through_sequence"] = max(
+                    len(state["messages"]), 1 + state["agent_messages"]
+                )
         if REVIEW_MESSAGES and "/conversations/history/" in path:
             value["page"]["items"] = [
                 {
@@ -955,13 +991,42 @@ def main() -> int:
 
         def disconnected(self) -> bool:
             if state["offline"]:
-                try:
-                    self.connection.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-                self.connection.close()
+                self.drop_connection()
                 return True
             return False
+
+        def drop_connection(self) -> None:
+            self.close_connection = True
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self.connection.close()
+
+        def delivery(self) -> dict[str, Any]:
+            """Exactly-once evidence: effects, attempts and the faults that fired."""
+            def text(message: dict[str, Any]) -> str:
+                return "\n".join(
+                    piece.get("text", "")
+                    for piece in message.get("content", [])
+                    if piece.get("piece") == "text"
+                )
+            return {
+                "writes": [write for write in state["writes"] if isinstance(write, str)],
+                "messages": [
+                    {"id": message["sender_message_id"], "text": text(message)}
+                    for message in state["messages"]
+                ],
+                "message_attempts": state["message_attempts"],
+                "refused_messages": state["refused_messages"],
+                "decision_posts": state["decision_posts"],
+                "decision_receipt_reads": state["decision_receipt_reads"],
+                "reads": state["reads"],
+                "read_attempts": state["read_attempts"],
+                "armed": sorted(state["drop"]) + sorted(state["lose"]),
+                "dropped": state["dropped"],
+                "lost": state["lost"],
+            }
 
         def do_GET(self) -> None:
             value: dict[str, Any]
@@ -1125,6 +1190,20 @@ def main() -> int:
                     return
                 elif name == "writes":
                     self.respond(state["writes"])
+                    return
+                elif name.startswith(("drop/", "lose/")):
+                    fault, kinds = name.split("/", 1)
+                    with lock:
+                        state[fault].update(kinds.split(","))
+                elif name == "refuse/message":
+                    with lock:
+                        state["refuse_messages"] += 1
+                elif name == "agent-message":
+                    with lock:
+                        state["agent_messages"] += 1
+                elif name == "delivery":
+                    with lock:
+                        self.respond(self.delivery())
                     return
                 elif name.startswith("start/") and (
                     os.environ.get("PANELS_OFFLINE_RECORD_CLIPS", "0" if server_only else "1")
@@ -1499,6 +1578,10 @@ def main() -> int:
             elif path.endswith("/manifest"):
                 value = manifest
             elif "/decision-operations/" in path:
+                with lock:
+                    operation = path.rsplit("/", 1)[-1]
+                    reads = state["decision_receipt_reads"]
+                    reads[operation] = reads.get(operation, 0) + 1
                 self.respond({"receipt_contract": 1, "receipt": decision_receipts.get(path)})
                 return
             elif path.endswith("/view/receipts"):
@@ -1585,7 +1668,32 @@ def main() -> int:
                 return
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
+            kind = (
+                "message" if path.endswith("/send")
+                else "decision" if "/decision-operations/" in path
+                else "read" if path.endswith("/owner-read")
+                else None
+            )
+            identity_of = {
+                "message": lambda: body.get("sender_message_id"),
+                "decision": lambda: path.rsplit("/", 1)[-1],
+                "read": lambda: str(body.get("through_sequence")),
+            }
+            committed = False
             with lock:
+                if kind:
+                    attempts = {
+                        "message": state["message_attempts"],
+                        "decision": state["decision_posts"],
+                        "read": state["read_attempts"],
+                    }[kind]
+                    attempt = identity_of[kind]()
+                    attempts[attempt] = attempts.get(attempt, 0) + 1
+                    if kind in state["drop"]:
+                        state["drop"].discard(kind)
+                        state["dropped"].append({"kind": kind, "id": attempt})
+                        self.drop_connection()
+                        return
                 if GOALS_SMOKE and path == "/api/measures/words/manual-writes":
                     identity = body["request_id"]
                     if identity in manual_receipts:
@@ -1648,10 +1756,25 @@ def main() -> int:
                         value = {"conversation_id": "stub", "fate": "queued"}
                 elif path.endswith("/send"):
                     identity = body["sender_message_id"]
-                    if not any(m["sender_message_id"] == identity for m in state["messages"]):
-                        state["messages"].append(body)
-                        state["writes"].append("message")
-                    value = {"conversation_id": "stub", "fate": "started"}
+                    landed = any(m["sender_message_id"] == identity for m in state["messages"])
+                    if not landed and state["refuse_messages"]:
+                        state["refuse_messages"] -= 1
+                        state["refused_messages"].append(identity)
+                        value = {"conversation_id": "stub", "fate": "refused"}
+                    else:
+                        if not landed:
+                            state["messages"].append(body)
+                            state["writes"].append("message")
+                            committed = True
+                        value = {"conversation_id": "stub", "fate": "started"}
+                elif path.endswith("/owner-read"):
+                    # A read only moves forward; a repeat at the same point has no effect.
+                    if body["through_sequence"] > state["read_through"]:
+                        state["read_through"] = body["through_sequence"]
+                        state["reads"].append(body["through_sequence"])
+                        state["writes"].append("read")
+                        committed = True
+                    value = {"owner_read_through_sequence": state["read_through"]}
                 elif "/decision-operations/" in path:
                     if path in decision_receipts:
                         self.respond({"receipt_contract": 1, "receipt": decision_receipts[path]})
@@ -1694,6 +1817,7 @@ def main() -> int:
                         ),
                     )
                     decision_receipts[path] = receipt
+                    committed = True
                     if not refused:
                         if DESIGN_REVIEW:
                             ticket.update(receipt["transition"])
@@ -1729,6 +1853,14 @@ def main() -> int:
                     self.respond({}, 404)
                     return
                 (output / "operations.json").write_text(json.dumps(state["writes"]))
+                if committed and kind in state["lose"]:
+                    # The write is done; the reply never reaches the phone.
+                    state["lose"].discard(kind)
+                    state["lost"].append({"kind": kind, "id": identity_of[kind]()})
+                    (output / "delivery.json").write_text(json.dumps(self.delivery()))
+                    self.drop_connection()
+                    return
+                (output / "delivery.json").write_text(json.dumps(self.delivery()))
             self.respond(value)
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)

@@ -212,10 +212,12 @@ struct DecisionGuidance: Sendable, Equatable {
             restoreDrafts(api: api, ticket: fetched, proposal: incoming, discard: discardDraft)
             ticket = fetched; manifest = lifecycle; changed = false
             let facts = (try? LocalStore.shared.outgoing.decisionSummaries(server: LocalStore.server(api.baseURL), ticketID: fetched.id)) ?? []
-            let terminal = facts.last { $0.proposalField == incoming.field && $0.proposalRevision == incoming.revision && $0.proposalCreatedAt == incoming.createdAt && $0.state == "changed" }
+            let terminal = facts.last { $0.proposalField == incoming.field && $0.proposalRevision == incoming.revision && $0.proposalCreatedAt == incoming.createdAt && $0.refused }
             error = terminal?.note
         } catch {
-            guard !Task.isCancelled else { return }
+            // A read that cannot reach the server says nothing: the card keeps what it
+            // has, and its decision is saved and sent when the server answers.
+            guard !Task.isCancelled, !(error is URLError) else { return }
             self.error = error.localizedDescription
         }
     }
@@ -345,7 +347,7 @@ struct ReviewQueue {
     private var saved: [OutgoingStore.Summary] = []
     init(outbox: Outbox = .shared, read: ((String) -> [OutgoingStore.Summary])? = nil) {
         self.outbox = outbox
-        self.read = read ?? outbox.decisionSummaries
+        self.read = read ?? outbox.reviewSummaries
     }
     func refresh(_ server: String) {
         let next = Key(server: server, revision: outbox.store.outgoingRevision(server))
@@ -360,15 +362,25 @@ struct ReviewQueue {
     static func pendingDecisionTickets(in cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> Set<String> {
         Set(cards.flatMap(\.parts).filter { item in
             !item.isMessage && item.proposalRevision != nil && decisions.contains {
-                $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince
-                    && $0.proposalRevision == item.proposalRevision && ["waiting", "sending"].contains($0.state)
+                decides($0, item) && $0.state == "waiting"
             }
         }.map(\.ticketId))
     }
+    private static func decides(_ saved: OutgoingStore.Summary, _ item: ReviewItem) -> Bool {
+        ["approval", "sendBack"].contains(saved.kind) && item.proposalRevision != nil && saved.proposalRevision == item.proposalRevision
+            && saved.ticketID == item.ticketId && saved.proposalField == item.field && saved.proposalCreatedAt == item.waitingSince
+    }
+    /// A saved mark read or reply covers the messages read before it, until the server's
+    /// own read point catches up. A newer message then shows again.
+    private static func covers(_ saved: OutgoingStore.Summary, _ item: ReviewItem) -> Bool {
+        ["markRead", "message"].contains(saved.kind) && saved.conversationID != nil && saved.conversationID == item.conversationId
+            && (saved.ownerReadThroughSequence ?? 0) > item.ownerReadThroughSequence
+    }
+    /// Decided proposals and handled messages leave Review at once. A refusal brings them back.
     static func cards(_ cards: [ReviewCard], decisions: [OutgoingStore.Summary]) -> [ReviewCard] {
         cards.compactMap { card in
             let parts = card.parts.filter { item in
-                !decisions.contains { item.proposalRevision != nil && $0.proposalRevision == item.proposalRevision && $0.ticketID == item.ticketId && $0.proposalField == item.field && $0.proposalCreatedAt == item.waitingSince && ["waiting", "sending", "uncertain", "sent"].contains($0.state) }
+                !decisions.contains { !$0.refused && (item.isMessage ? covers($0, item) : decides($0, item)) }
             }
             return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
         }

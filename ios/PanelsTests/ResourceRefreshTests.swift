@@ -12,9 +12,20 @@ import XCTest
         for code in [URLError.timedOut, .networkConnectionLost, .cancelled, .secureConnectionFailed, .badServerResponse] {
             XCTAssertFalse(ServerReadFailure(URLError(code)).isServerUnreachable, "\(code)")
         }
+        // The app shows no connection state: a passing transport failure leaves no note.
+        for code in [URLError.timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .notConnectedToInternet] {
+            XCTAssertNil(ServerReadFailure.note(URLError(code)), "\(code)")
+            XCTAssertNil(ServerReadFailure.note(NSError(domain: NSURLErrorDomain, code: code.rawValue)), "\(code)")
+        }
+        // A failure that will not pass by itself shows on a screen with nothing loaded.
+        for code in [URLError.secureConnectionFailed, .serverCertificateUntrusted, .clientCertificateRequired,
+                     .appTransportSecurityRequiresSecureConnection, .badURL, .unsupportedURL, .badServerResponse, .cannotDecodeRawData] {
+            XCTAssertNotNil(ServerReadFailure.note(NSError(domain: NSURLErrorDomain, code: code.rawValue)), "\(code)")
+        }
         let failure = ServerReadFailure(APIError(status: 503, message: "Request failed on the reachable server."))
         XCTAssertFalse(failure.isServerUnreachable)
         XCTAssertEqual(failure.message, "Request failed on the reachable server.")
+        XCTAssertEqual(failure.note, "Request failed on the reachable server.", "A server that refused the read still says why")
         XCTAssertFalse(ServerReadFailure(NSError(domain: NSPOSIXErrorDomain, code: URLError.cannotFindHost.rawValue)).isServerUnreachable)
     }
 
@@ -31,6 +42,7 @@ import XCTest
         XCTAssertTrue(store.serverUnreachable)
         XCTAssertTrue(store.errors["Navigation"]?.isServerUnreachable == true)
         XCTAssertNotNil(store.review, "The unavailable screen must not delete the saved view")
+        XCTAssertNil(store.errors["Navigation"]?.note, "Review and Workspace show no note for a server they cannot reach")
         RefreshProtocol.state.withLock { $0.failure = .badServerResponse }
         await store.refresh()
         XCTAssertFalse(store.serverUnreachable, "Other request failures retain the current refresh behavior")
@@ -57,7 +69,8 @@ import XCTest
         let shared = ResourceOwner(api: api)
         let handle = shared.handle(ChiefResources.settings)
         await handle.refresh()
-        XCTAssertNotNil(handle.error)
+        XCTAssertNotNil(handle.failure)
+        XCTAssertNil(handle.error, "A timeout leaves no note on screen")
         XCTAssertEqual(RefreshProtocol.state.withLock { $0.paths }, ["/api/resource-body"], "A timeout gets one request, not another ordinary GET")
         RefreshProtocol.state.withLock { $0.paths = []; $0.failure = nil; $0.supportsVersions = false }
         await handle.refresh()
@@ -692,7 +705,8 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(handle.value, "3", "A→B→A does not restore an old generation's authority")
         await transport.failReads(); await handle.refresh()
         XCTAssertEqual(handle.value, "3", "A failed refresh retains admitted live content")
-        XCTAssertNotNil(handle.error)
+        XCTAssertNotNil(handle.failure)
+        XCTAssertNil(handle.error, "A read that cannot reach the server keeps the content with no note")
         let invalidOwner = ResourceOwner(api: APIClient(baseURL: URL(string: "https://bad.invalid")!), transport: ResourceTransport(
             versions: { _, _ in throw URLError(.timedOut) },
             read: { _, _, _ in ResourceRead(data: Data("42".utf8), epoch: "e", revision: "r") }))
@@ -844,7 +858,7 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         handle.acquire()
         await handle.refresh(); await handle.entry.restoring?.value
         XCTAssertNil(handle.value, "Revisiting offline cannot restore the disk body discarded after a terminal failure")
-        XCTAssertNotNil(handle.error)
+        XCTAssertNotNil(handle.failure)
         handle.release()
         await transport.recover(); await handle.refresh()
         XCTAssertEqual(handle.value, "1", "A successful fresh body can admit content again")

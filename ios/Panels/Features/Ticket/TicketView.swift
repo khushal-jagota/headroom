@@ -59,7 +59,7 @@ struct TicketView: View {
         }
         .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() }, textEntry: textEntry)
         .panelsRefreshable { await load(); await loadArtifacts() }
-        .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
+        .screenLoadState("ticket", hasContent: detail != nil, error: error) { await load() }
         .resourceDemand(resource)
         .task(id: store.baseURL.absoluteString + "|" + (detail?.workerType ?? "") + "|" + String(detail?.workflow == nil)) {
             guard detail?.workflow == nil, let handle = manifestResource else { return }
@@ -68,7 +68,7 @@ struct TicketView: View {
             while !Task.isCancelled { do { try await Task.sleep(for: .seconds(3600)) } catch { return } }
         }
         .navigationDemand("ticket:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
-        .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
+        .task(id: "\(store.baseURL)|\(artifacts == nil ? store.connectionSession : 0)") { await loadArtifacts() }
         .sheet(isPresented: $scopeOpen) {
             if let presentation {
                 TicketApprovalLimitSheet(presentation: presentation) { ceiling, holder in
@@ -247,7 +247,7 @@ struct TicketView: View {
             try Task.checkCancellation()
             guard client.baseURL == store.baseURL else { return }
             artifacts = result; artifactError = nil
-        } catch { if !Task.isCancelled { artifactError = error.localizedDescription } }
+        } catch { if !Task.isCancelled { artifactError = ServerReadFailure.note(error) } }
     }
     private func perform(_ action: () async throws -> String?) async {
         guard !busy else { return }

@@ -255,7 +255,7 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
             accept(next, date: requested)
             if let date { selectedDate = date }
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
     }
     func write(value: Double? = nil, delta: Double? = nil) async {
         guard !busy, pending == nil, let state = value != nil ? draftBasis ?? state : state else { return }

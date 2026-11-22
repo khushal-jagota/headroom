@@ -13,22 +13,13 @@ import Observation
     private var generation = 0
     private var api: APIClient?
     private var server: String { api.map { LocalStore.server($0.baseURL) } ?? "" }
-    var blocked: Bool {
-        busy || storageError != nil || attempt.map { [.waiting, .sending, .uncertain].contains($0.state) } == true
-    }
-    var canCheckDelivery: Bool { storageError == nil && attempt?.state == .uncertain }
+    var blocked: Bool { busy || storageError != nil }
+    /// Only a refusal shows. A saved message looks sent at once.
     var note: String? {
-        guard let attempt else { return nil }
-        switch attempt.state {
-        case .sent: return "Sent to Chief"
-        case .serverQueued: return "Queued for Chief"
-        case .failed, .changed:
-            return composer.draft.isEmpty && composer.attachments.isEmpty
-                ? "The message did not reach Chief. Open Chief to review the saved message."
-                : "The message did not reach Chief. Your draft is ready to retry."
-        case .uncertain: return "Delivery is uncertain. Your draft is kept."
-        default: return attempt.note
-        }
+        guard let attempt, attempt.state == .failed else { return nil }
+        return composer.draft.isEmpty && composer.attachments.isEmpty
+            ? "The message did not reach Chief. Open Chief to review the saved message."
+            : "The message did not reach Chief. Your draft is ready to retry."
     }
     func restore(api: APIClient) {
         if self.api?.baseURL != api.baseURL { generation += 1; busy = false; attempt = nil; error = nil }
@@ -42,14 +33,16 @@ import Observation
         guard api != nil else { return }
         do {
             let summaries = try LocalStore.shared.outgoing.summaries(server: server, draftID: Self.attemptDraftID)
-            if let summary = summaries.last(where: \.scheduled) {
+            if let summary = summaries.last {
                 guard let saved = try LocalStore.shared.outgoing.work(server: server, id: summary.id) else {
                     throw OutgoingStore.StoreError.missingWork
                 }
                 attempt = saved
             } else { attempt = nil }
             storageError = nil
-            if let attempt, [.sent, .serverQueued].contains(attempt.state) { clearAcceptedDraft(attempt) }
+            if let attempt, attempt.state != .failed { clearAcceptedDraft(attempt) }
+            // A refused photo puts its draft back in the saved composer.
+            else if attempt?.state == .failed { composer.reloadDraft() }
         } catch {
             storageError = "The saved delivery could not be read. Open Chief before you send again."
         }
@@ -88,66 +81,22 @@ import Observation
         catch { self.error = error.localizedDescription; return false }
         guard generation == self.generation, !content.isEmpty else { return false }
         let created = Date.now
-        let server = LocalStore.server(api.baseURL)
         do {
-            // Resolve once before dispatch. Later pointer changes cannot move this attempt.
-            let destination = try await api.chiefConversation().conversationId
-            guard generation == self.generation else { return false }
+            // No conversation ID: the server sends it to Chief's current conversation,
+            // or starts one. A resend with the same ID lands there once.
             let id = UUID().uuidString
-            let message = ConversationSend(conversationId: destination, content: content, mode: "queue",
+            let message = ConversationSend(conversationId: nil, content: content, mode: "queue",
                 senderMessageId: id, sentAtUnixMilliseconds: Int64(created.timeIntervalSince1970 * 1000))
             let work = PendingWork(id: id, created: created, kind: .message, owner: .chief,
                 message: message, draftID: Self.attemptDraftID)
-            if let previous = attempt, previous.state == .failed,
-               previous.message?.conversationId == nil, destination == nil {
-                // A confirmed refusal of creation permits an explicit new creation attempt.
-                try LocalStore.shared.outgoing.replace(server: server, id: previous.id, with: work)
-                try LocalStore.shared.outgoing.releaseHold(server: server, id: id, destination: .newConversation)
-            } else {
-                try LocalStore.shared.outgoing.enqueue(work, server: server)
-            }
+            // The draft clears in the same save. A refused photo puts it back.
+            let server = LocalStore.server(api.baseURL)
+            let outgoing = try LocalStore.shared.outgoing
+            try outgoing.enqueue(work, server: server, capturedDraft: outgoing.captureDraft(server: server, id: Self.chiefDraftID))
+            composer.reloadDraft()
             refreshAttempt()
-            await Outbox.shared.drain(api: api)
-            guard generation == self.generation else { return false }
-            refreshAttempt()
-            if attempt?.state == .failed { error = attempt?.note }
-            return attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false
+            Task { await Outbox.shared.drain(api: api) }
+            return true
         } catch { if generation == self.generation { self.error = error.localizedDescription }; return false }
-    }
-    /// Receipt and held-prompt reads only. Missing evidence never admits another POST.
-    func checkDelivery() async {
-        guard let api, let work = attempt, work.state == .uncertain, !busy, storageError == nil else { return }
-        let server = LocalStore.server(api.baseURL)
-        let generation = self.generation
-        busy = true; error = nil
-        defer { if generation == self.generation { busy = false } }
-        do {
-            let destination: String?
-            if let captured = work.message?.conversationId { destination = captured }
-            else { destination = try await api.chiefConversation().conversationId }
-            guard generation == self.generation, let destination else { return }
-            let receipt = try await api.conversationReceipts(destination, messageIDs: [work.id]).first(where: { $0.senderMessageId == work.id })
-            guard generation == self.generation else { return }
-            if let receipt {
-                let state: PendingWork.State
-                switch receipt.fate {
-                case "prompt": state = .sent
-                case "prompt_refused": state = .failed
-                case "prompt_discarded": state = .changed
-                default: state = .uncertain
-                }
-                try LocalStore.shared.outgoing.settle(server: server, id: work.id, state: state,
-                    note: state == .sent ? "Sent" : state == .uncertain ? "Delivery uncertain" : "Not sent",
-                    conversationID: destination)
-            } else {
-                let configuration = try await api.conversationConfiguration(.chief, id: destination)
-                guard generation == self.generation else { return }
-                if configuration.heldPrompts.contains(where: { $0.senderMessageId == work.id }) {
-                    try LocalStore.shared.outgoing.settle(server: server, id: work.id,
-                        state: .serverQueued, note: "Queued on server", conversationID: destination)
-                }
-            }
-            refreshAttempt()
-        } catch { if generation == self.generation { self.error = error.localizedDescription } }
     }
 }

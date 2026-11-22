@@ -57,7 +57,7 @@ _Last verified: 2026-11-15._
 
 ## Native iOS push
 
-The native app uses Apple Push Notification service (APNs). Press and hold a message notification to reply after device authentication. The app saves that reply in its ordinary outbox, addressed to the original conversation. Offline and uncertain replies follow the existing recovery flow. The action can launch the app in the background without an extension. The system permits one bounded delivery attempt, and pending work resumes when the app next opens. The browser keeps its
+The native app uses Apple Push Notification service (APNs). Press and hold a message notification to reply after device authentication. The app saves that reply in its ordinary outbox, addressed to the original conversation. The outbox sends it again with the same identity until the server answers. The action can launch the app in the background without an extension. The system permits one bounded delivery attempt, and pending work resumes when the app next opens. The browser keeps its
 existing Web Push path. Each path records delivery separately for the same attention
 edge and notification preference. Native retries stop after five minutes or five attempts.
 No Apple credentials means no native network calls and no claim of successful delivery.

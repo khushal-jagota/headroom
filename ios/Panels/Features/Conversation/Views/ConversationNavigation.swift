@@ -105,7 +105,7 @@ private struct ConversationSurface: View {
     var body: some View {
         conversation
         .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)|\(currentReferenceKey)") {
-            guard active, !store.serverUnreachable, scenePhase == .active else { return }
+            guard active, scenePhase == .active else { return }
             if checksCurrentConversation { model.selectConversation(conversationID) }
             else if let current = currentReference { model.selectConversation(current) }
             model.restore(owner: owner, api: store.client, recoverConversationID: false)
@@ -128,7 +128,7 @@ private struct ConversationSurface: View {
                     currentConversationConfirmed = current == conversationID
                 } catch {
                     guard !Task.isCancelled, generation == model.readerGeneration else { return }
-                    model.error = error.localizedDescription
+                    model.reportReadFailure(error)
                 }
             }
             // The open tail below delivers the transcript and status. A conversation that
@@ -136,7 +136,7 @@ private struct ConversationSurface: View {
             if model.conversationID == nil { await readConfiguration() }
         }
         .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)") {
-            guard active, !store.serverUnreachable, scenePhase == .active, let id = model.conversationID else { return }
+            guard active, scenePhase == .active, let id = model.conversationID else { return }
             var misses = 0
             while !Task.isCancelled {
                 let generation = model.beginTail()
@@ -154,7 +154,7 @@ private struct ConversationSurface: View {
                     }
                 } catch {
                     if Task.isCancelled || model.conversationID != id { return }
-                    model.error = error.localizedDescription
+                    model.reportReadFailure(error)
                     applied = false
                     failed = true
                 }
@@ -172,10 +172,9 @@ private struct ConversationSurface: View {
             let before = model.outgoing
             model.syncOutbox()
             // A saved message can be held by the server; its queue lives in the configuration.
-            if active, !store.serverUnreachable, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
+            if active, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel(); model.saveDisplay(force: true) } }
-        .onChange(of: store.serverUnreachable) { _, covered in if covered { speech.cancel() } }
         .onDisappear { speech.cancel() }
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
@@ -207,7 +206,7 @@ private struct ConversationSurface: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
             }
             if isPage {
-                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && !store.serverUnreachable && scenePhase == .active)
+                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
             }
             if readOnly {
                 Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)
@@ -256,8 +255,8 @@ private struct ConversationSurface: View {
                         Text(.init(model.compactPreview))
                             .font(PanelsTheme.TypeScale.small).lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        if latest?.own == true, let note = latest?.note, note != "Sent" {
-                            Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
+                        if latest?.own == true, latest?.note != nil {
+                            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not delivered")
                         }
                         Image(systemName: "chevron.right").font(.system(size: 11))
                     }
@@ -324,7 +323,7 @@ private struct ConversationSurface: View {
 }
 
 struct ConversationThread: View {
-    @State private var recoveryID: String?
+    @State private var refusedNote: (note: String, retryID: String?)?
     @Bindable var model: ConversationModel
     let owner: ConversationOwner
     var readOnly = false
@@ -339,6 +338,18 @@ struct ConversationThread: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
     @State private var position = ScrollPosition(edge: .bottom)
+    /// The server refused this message. Like Messages: a red mark that offers Try Again.
+    private func refusedMark(note: String, retryID: String?) -> some View {
+        Button { refusedNote = (note, retryID) } label: {
+            Image(systemName: "exclamationmark.circle.fill").font(.title3).foregroundStyle(.red)
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.sending || model.preparingPhoto)
+        .accessibilityLabel("Not delivered")
+        .accessibilityHint(note)
+        .accessibilityIdentifier("conversation.refused")
+    }
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -351,6 +362,7 @@ struct ConversationThread: View {
                     ForEach(model.rows) { row in
                         HStack {
                             if row.own { Spacer(minLength: 28) }
+                            if row.own, let note = row.note { refusedMark(note: note, retryID: readOnly ? nil : row.retryID) }
                             VStack(alignment: .leading, spacing: 6) {
                                 if let sender = row.senderLabel {
                                     Text(sender).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
@@ -368,28 +380,8 @@ struct ConversationThread: View {
                                 if !row.attachments.isEmpty {
                                     ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
                                 }
-                                if let note = row.note, note != "Sent" {
-                                    HStack {
-                                        if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
-                                        Text(note).foregroundStyle(note.hasPrefix("Not sent") ? PanelsTheme.error : PanelsTheme.faint)
-                                        if let id = row.retryID, !readOnly {
-                                            Button {
-                                                if model.recoveries[id] == nil || model.recoveries[id] == .retry { Task { await model.retry(id, to: owner, using: store.client) } }
-                                                else { recoveryID = id }
-                                            } label: {
-                                                Text(model.recoveryLabel(id)).padding(.horizontal, 8).padding(.vertical, 4)
-                                                    .background(PanelsTheme.accentSurface, in: Capsule())
-                                                    .contentShape(Rectangle().inset(by: -8))
-                                            }.disabled(model.sending || model.preparingPhoto)
-                                            .confirmationDialog("The earlier result is unknown. Another attempt can send this message twice.", isPresented: Binding(get: { recoveryID == id }, set: { if !$0 { recoveryID = nil } }), titleVisibility: .visible) {
-                                                Button(model.recoveries[id]?.unknownDestination == true ? "Start a new conversation with this message" : model.recoveryLabel(id)) {
-                                                    Task { await model.recover(id, using: store.client, startNew: model.recoveries[id]?.unknownDestination == true) }
-                                                    recoveryID = nil
-                                                }
-                                                Button("Keep waiting", role: .cancel) { recoveryID = nil }
-                                            }
-                                        }
-                                    }.font(PanelsTheme.TypeScale.small).frame(minHeight: 28)
+                                if !row.own, let note = row.note {
+                                    Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
                             if !row.own { Spacer(minLength: 0) }
@@ -403,6 +395,13 @@ struct ConversationThread: View {
                 }.padding(.horizontal, 20).padding(.bottom, 12)
             }
             .accessibilityIdentifier("conversation-thread")
+            .confirmationDialog(refusedNote?.note ?? "", isPresented: Binding(get: { refusedNote != nil }, set: { if !$0 { refusedNote = nil } }), titleVisibility: .visible) {
+                if let id = refusedNote?.retryID {
+                    Button("Try Again") { Task { await model.retry(id, to: owner, using: store.client) } }
+                        .accessibilityIdentifier("conversation.retry")
+                }
+                Button("Cancel", role: .cancel) { refusedNote = nil }
+            }
             .onAppear { appeared = true }
             .onDisappear { appeared = false; visibleRowIDs = []; model.setVisibleRows([]) }
             .onChange(of: visibleRowIDs) { _, ids in model.setVisibleRows(ids) }
@@ -658,7 +657,7 @@ struct ConversationSmokeView: View {
                     }
                 }.padding(.horizontal, 20)
             }.accessibilityIdentifier("conversation-page").panelsScreen().conversationNavigation(owner: .chief, conversationID: "stub", title: "Chief of Staff", refreshError: refreshError, retry: refresh)
-                .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, showsRefreshError: false, retry: refresh)
+                .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, retry: refresh)
                 .task {
                     while !Task.isCancelled {
                         await refresh()
@@ -669,7 +668,7 @@ struct ConversationSmokeView: View {
     }
     private func refresh() async {
         do { _ = try await store.client.chiefConversation(); refreshError = nil }
-        catch { if !Task.isCancelled { refreshError = error.localizedDescription } }
+        catch { if !Task.isCancelled { refreshError = ServerReadFailure.note(error) } }
     }
 }
 #endif

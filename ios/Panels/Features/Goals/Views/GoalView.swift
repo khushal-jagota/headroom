@@ -37,7 +37,7 @@ private struct GoalDetailContent: View {
         }.panelsScreen().toolbar(.hidden, for: .navigationBar)
             .modifier(PageArtifactNavigation(holder: session.goal?.holder))
             .modifier(GoalHolderConversation(session: session, openConversationID: openConversationID))
-            .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError, showsRefreshError: false) { await session.refresh() }
+            .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError) { await session.refresh() }
             .panelsRefreshable { await session.refresh() }
             .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await session.follow() } }
             .environment(\.pageTicketHolder, session.goal?.holder)

@@ -99,9 +99,7 @@ stream coverage or read credit. Conversation display retains at most 300 items
 and 512 KiB of inline and expanded bodies. Visible rows keep their neighborhood.
 Older paging remains available; Latest returns to the current edge after trimming.
 Collapsed conversations request status without transcript content; their preview
-follows those compact facts while preserving the latest unsent local message. The connection
-cover cancels conversation dictation and keeps text already saved in the composer.
-Review voice capture instead preserves its recording for recovery.
+follows those compact facts while preserving the latest unsent local message.
 
 The view code lives in `Core/Navigation`. The wire subset is hand-written Codable,
 pinned to projection 7 and wire 3, and ignores fields the server adds. Ticket,
@@ -120,9 +118,9 @@ view.
 The full conversation acknowledges remote rows only after they enter its visible
 scroll area. Polls, stream progress, the dock, hidden screens and inactive scenes
 earn no read credit. A deferred message earns credit only after its body is loaded
-and visible. The request carries that row's exact conversation and sequence;
-confirmed read positions never move backwards when an older configuration arrives.
-A failed acknowledgment leaves the messages unread.
+and visible. The read point for that row's exact conversation and sequence moves
+on screen at once, and the outbox carries it to the server. Read positions never
+move backwards when an older configuration arrives.
 Overlapping refresh requests share a following read instead of being dropped.
 The transcript projection is retained until its message, expanded body, outgoing
 receipt, live text or ordering changes. An unchanged live-output reference reuses
@@ -142,7 +140,7 @@ within the server's existing 3 MiB message limit. Supported photos that already 
 retain their bytes. File attachments keep their existing handling.
 
 The same preparation applies to restored editable drafts, Review replies and explicit
-retries of failed messages. It never changes an in-flight or uncertain outgoing body.
+retries of failed messages. It never changes a saved outgoing body.
 If the server still returns HTTP 422, the phone shows a photo-specific error and keeps
 the draft. An ordinary conversation restores its cleared draft only when both saved
 composer versions still match the cleared versions. Newer edits stay intact. An explicit
@@ -281,8 +279,8 @@ Use one-off Simulator reviews for appearance and visual polish.
 | `ConversationOperationTests/testOperationsAgainstLocalStub` | Open a conversation, read, reply, and paste and send one image. |
 | `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` | Reach Review from Workspace, reply, and follow the conversation route. |
 | `ReviewMessagesTests/testStackedTicketCard` | Act on a Review item and return to skipped work. |
-| `OfflineOperationTests/testDroppedConnectionRequiresExplicitRecoveryAndSlowColdLoad` | Recover uncertain delivery with an explicit Send again confirmation. |
-| `ServerReachabilityTests/testUnreachableServerReplacesContentAndRecovers` | See the unreachable-server cover and recover without a relaunch. |
+| `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once with no cover or status note. Try Again resends a refused message once. |
+| `ServerReachabilityTests/testUnreachableServerShowsNoCoverAndRecovers` | Lose the server: no cover appears, the app stays usable, and Review opens again without a relaunch. |
 
 Discover the native tests before a release run. Discovery must find all five
 methods. A selection that executes zero tests fails, even if Xcode returns success.
@@ -573,19 +571,17 @@ The plus menu accepts files, library pictures, camera photos and a slash command
 use the existing delivery modes; Steer is offered only when the conversation's backend can join a running turn. Stop interrupts the running turn. The separate
 microphone remains available while working or editing a draft.
 
-Messages appear immediately with Sending, Queued or an explicit failure.
-Successfully delivered messages have no delivery label in the thread.
-The local message and its server row share one visual identity and position.
-Confirmed refusal and connection failures offer Retry in place. A timeout or lost
-response remains uncertain and cannot be retried blindly. Suppressed delivery
-says why the message was not delivered. A held message shows the server's reason,
-such as attachments or a model change waiting for the turn to end. Held messages are recovered from the
-conversation detail. Its held-prompt records make Steer in and removal available,
-including after relaunch, independently of delivery-note wording; receipts settle delivery
-even when the corresponding row falls outside the loaded window.
+A message appears at once with no delivery label, and the outbox sends it again
+with the same ID until the server answers. The local message and its server row
+share one visual identity and position. Only a refusal shows: a red mark that
+offers Try Again in place. Suppressed delivery says why the message was not
+delivered. A message the server holds, such as attachments or a model change
+waiting for the turn to end, appears above the composer with the server's reason,
+Steer in and removal, including after relaunch. Receipts settle delivery even when
+the corresponding row falls outside the loaded window.
 System and other-agent prompts retain their sender labels in the thread and latest
 line; only owner prompts are attributed to You. Conversation pages share one refresh
-error inside the composer. Speech errors, attachments and retry controls also stay
+error inside the composer; a read that cannot reach the server shows none. Speech errors, attachments and retry controls also stay
 inside its border. Parent refresh failures never add a footer between the
 input and keyboard.
 
@@ -699,17 +695,17 @@ layout and assistive interaction require the deferred runtime check.
 ## Saved work and offline recovery
 
 [Saved data and interrupted connections](Offline.md) describes the on-phone cache,
-persisted drafts, message and decision outbox, Review audio recovery and the exact
-server guarantees. The foreground app drains saved work after reconnect or relaunch.
+saved drafts, and the outbox that saves every message, decision, mark read and Review
+recording, shows it as done at once and sends it while the app is in the foreground.
 
 ## Loading and retry states
 
 Review, Workspace, Chief, Orchestrator, Ticket and artifact lists share a labeled
-delayed block skeleton on the first load and a native retry screen when nothing has loaded. Failed
-refreshes keep the last content visible, including an empty result, with a small
-retry notice below the content. The notice does not insert a row above existing
-content. Retry buttons remain disabled until their request finishes. Artifact
-previews also retain their downloaded document after a failed reload.
+delayed block skeleton on the first load. The retry screen appears only when nothing
+has loaded and the server refused the read; a read that cannot reach the server
+keeps the skeleton. Failed refreshes keep the last content visible, including an
+empty result, with no note. Retry buttons remain disabled until their request
+finishes. Artifact previews also retain their downloaded document after a failed reload.
 
 Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull
 feedback without an extra haptic. Workspace pull-to-refresh waits for its activity
@@ -764,7 +760,6 @@ the page does not permanently enlarge the underlying page's reserved bottom spac
 `SyncMainTests` contains two host checks: independent success deadlines (old coverage
 had one deadline), blocked Agent classification (old coverage checked rail exclusion
 only). They reuse the existing host package and decoder, with no connected host.
-The conversation host test adds the new suppressed fate so it cannot be mistaken for uncertain delivery or retried.
 
 The iOS app no longer displays interruption accounts or manual worker restart in
 More. The conversation Stop control only interrupts the current turn; it does
@@ -801,10 +796,9 @@ rows give Yours the same attention emphasis as desktop.
 Review's embedded reply field keeps the same horizontal alignment before and after
 typing. A refused reply can be edited, including its attachments, and those edits
 survive relaunch. Sending it again creates a new message identity while keeping
-the read boundary of the refused attempt. In-flight and uncertain replies stay
-locked. During a successful retry the outgoing card retains its status, Retry row
-and scroll position through the short fade. Retry gives light feedback; a confirmed
-Mark read gives success feedback. Message and proposal headings share the same
+the read boundary of the refused attempt. A saved reply leaves the card at once; the
+outgoing card keeps its scroll position through the short fade. Retry gives light feedback; Mark read
+gives success feedback. Message and proposal headings share the same
 top padding. Chief's Workspace link extends its touch area into the existing card
 padding, preserving its visible spacing.
 
@@ -906,7 +900,7 @@ Goal screens share a full project catalogue read for labels, filters and editing
 
 A goal page opens its holder's conversation. Previous goal transcripts use the
 existing historical reader and remain read only. Retired goal file links cannot
-open; old queued goal sends keep their words without replay.
+open.
 Ordinary Ticket and Manager files still use the native reader.
 Project, deadline, state, title and explanation can be edited in place. Saved page
 text can be edited too; Markdown keeps its links and offers Edit on a long press.
@@ -930,7 +924,7 @@ Tapping a manual reading turns the number into a field with the whole reading
 selected. Cancel and Done sit above the keyboard, no copy menu covers the
 number, and a whole reading shows without a decimal.
 
-Goal edits do not enter the offline message outbox. Failed edits keep their draft
+Goal edits do not enter the outbox. Failed edits keep their draft
 and offer Retry save and Discard edit. A stale revision cannot replace a newer
 page. Manual retries preserve the original request identity, date and value;
 the app never retries a measurement write by itself. There is no Saved toast.
@@ -969,8 +963,8 @@ note editor or separate chat send. Proposal edits remain separate from notes.
 
 Send back preserves whitespace, line breaks, and Unicode. A whitespace-only note
 still cannot be sent. The outbox clears a note draft only after an applied receipt,
-and only when its text and saved timestamp still match the captured draft. Offline,
-refused, stale, and uncertain decisions retain drafts. Newer edits survive an older
+and only when its text and saved timestamp still match the captured draft. Waiting
+and refused decisions retain drafts. Newer edits survive an older
 receipt, including edits that restore the same text.
 
 ## Text entry and navigation

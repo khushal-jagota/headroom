@@ -1,48 +1,15 @@
 import Foundation
 import SwiftData
 
-/// Original installed schema. Keep the entity and property names for on-disk admission.
-enum PhoneOriginalSchema: VersionedSchema {
-    static var versionIdentifier: Schema.Version { Schema.Version(1, 0, 0) }
-    static var models: [any PersistentModel.Type] { [LocalRecord.self] }
-    @Model final class LocalRecord {
-        @Attribute(.unique) var key: String
-        var server: String
-        var kind: String
-        var payload: Data
-        var updated: Date
-        init(key: String, server: String, kind: String, payload: Data, updated: Date) {
-            self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updated = updated
-        }
-    }
-}
-
-enum PhoneRenamedSchema: VersionedSchema {
-    static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
-    static var models: [any PersistentModel.Type] { [LocalRecord.self] }
-}
-
-enum PhoneOutgoingSchema: VersionedSchema {
-    static var versionIdentifier: Schema.Version { Schema.Version(3, 0, 0) }
-    static var models: [any PersistentModel.Type] { [LocalRecord.self, OutgoingMetadata.self] }
-}
-
-enum PhoneStoreMigration: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [PhoneOriginalSchema.self, PhoneRenamedSchema.self, PhoneOutgoingSchema.self] }
-    static var stages: [MigrationStage] {
-        [.lightweight(fromVersion: PhoneOriginalSchema.self, toVersion: PhoneRenamedSchema.self),
-         .lightweight(fromVersion: PhoneRenamedSchema.self, toVersion: PhoneOutgoingSchema.self)]
-    }
-}
-
 /// Queryable scheduling and presentation facts. The original payload stays once in LocalRecord.
 @Model final class OutgoingMetadata {
-    #Index<OutgoingMetadata>([\.state], [\.server, \.expiresAt], [\.audioFile], [\.server, \.state], [\.server, \.kind], [\.server, \.conversationID], [\.server, \.sequence], [\.server, \.lane, \.sequence], [\.server, \.ownerKey], [\.server, \.draftID], [\.server, \.replacementID])
+    #Index<OutgoingMetadata>([\.server, \.expiresAt], [\.audioFile], [\.server, \.state], [\.server, \.kind], [\.server, \.conversationID], [\.server, \.lane, \.sequence], [\.server, \.ownerKey], [\.server, \.draftID])
     @Attribute(.unique) var key: String
     var server: String
     var identity: String
     var ownerKey: String?
     var conversationID: String?
+    /// A Review reply's read boundary, or a mark read's read point.
     var ownerReadThroughSequence: Int?
     var ticketID: String?
     var draftID: String?
@@ -51,59 +18,61 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     var lane: String
     var kind: String
     var state: String
-    var note: String = "Waiting for connection"
+    var note: String = ""
+    /// Set on a never-sent message that inherits a conversation its lane just created.
     var omitCreationSettings: Bool = false
     var omitModel: Bool = false
     var omitEffort: Bool = false
     var created: Date
     var completed: Date?
     var sequence: Int64
-    var provenance: String
-    var scheduled: Bool
-    var predecessorID: String?
-    var replacementID: String?
-    var holdReason: String?
-    var failure: String?
+    /// The phone has sent this at least once. An ask answer checks its receipt first.
+    var attempted: Bool = false
+    /// Attempts the server answered without settling the item: 5xx, 408, 429, an
+    /// unreadable reply, or an ask that still waits. A passing transport failure does
+    /// not count. Kept on disk, so a phone opened briefly still reaches the bound.
+    var unsettledAttempts: Int = 0
     var proposalField: String?
     var proposalRevision: Int?
     var proposalCreatedAt: Double?
-    var hasProtectedDecisionBody: Bool = false
 
-    init(record: LocalRecord, work: PendingWork?, sequence: Int64, now: Date = .now) {
-        let savedIdentity = work?.id ?? record.key.components(separatedBy: "\u{1f}").last ?? record.key
-        let savedOwner = work?.owner.map(Self.ownerKey)
-        let savedConversation = work?.message?.conversationId
-        let savedTicket = work?.ticketID, savedDraft = work?.draftID
-        let savedLane: String
-        if let savedConversation { savedLane = "conversation:\(savedConversation)" }
-        else if let savedTicket { savedLane = "ticket:\(savedTicket)" }
-        else if let savedDraft { savedLane = "draft:\(savedDraft)" }
-        else { savedLane = "start:\(savedOwner ?? "unknown"):\(savedIdentity)" }
-        key = record.key; server = record.server
-        identity = savedIdentity; ownerKey = savedOwner; conversationID = savedConversation
-        ownerReadThroughSequence = work?.message?.ownerReadThroughSequence
-        ticketID = savedTicket; draftID = savedDraft; lane = savedLane
-        audioFile = work?.audioFile
-        if let work {
-            switch work.state {
-            case .sent, .changed: expiresAt = (work.completed ?? work.created).addingTimeInterval(86400)
-            case .uncertain: expiresAt = now.addingTimeInterval(7 * 86400)
-            default: expiresAt = nil
-            }
-        } else { expiresAt = nil }
-        kind = work?.kind.rawValue ?? "unknown"
-        note = work?.note ?? "Saved work needs attention"
-        state = work?.state.rawValue ?? "storageError"
-        created = work?.created ?? record.updatedAt; completed = work?.completed
+    init(key: String, server: String, work: PendingWork, sequence: Int64) {
+        let owner = work.owner.map(Self.ownerKey)
+        let destination: String?, through: Int?
+        switch work.kind {
+        case .markRead: destination = work.readConversationID; through = work.readThroughSequence
+        case .askAnswer: destination = work.askAnswer?.conversationID; through = nil
+        default: destination = work.message?.conversationId; through = work.message?.ownerReadThroughSequence
+        }
+        let command = work.protectedDecisionBody.flatMap { try? APIClient.decoder().decode(DecisionCommand.self, from: $0) }
+        self.key = key; self.server = server
+        identity = work.id
+        ownerKey = owner
+        conversationID = destination
+        ownerReadThroughSequence = through
+        kind = work.kind.rawValue
+        state = work.state.rawValue
+        note = work.note
+        created = work.created; completed = work.completed
         self.sequence = sequence
-        provenance = "unknown"
-        scheduled = work.map { ![.sent, .changed].contains($0.state) } ?? false
-        let command = work?.protectedDecisionBody.flatMap { try? APIClient.decoder().decode(DecisionCommand.self, from: $0) }
-        proposalField = command?.field ?? work?.proposal?.field
-        proposalRevision = command?.expectedProposalRevision ?? work?.proposal?.revision
-        proposalCreatedAt = work?.protectedProposalCreatedAt ?? work?.proposal?.createdAt
-        hasProtectedDecisionBody = work?.protectedDecisionBody != nil
-        failure = work == nil ? "Saved outgoing work could not be decoded. Its original bytes remain on this phone." : nil
+        ticketID = work.ticketID; draftID = work.draftID; audioFile = work.audioFile
+        lane = Self.lane(kind: work.kind, conversationID: destination, ownerKey: owner, ticketID: work.ticketID, draftID: work.draftID, identity: work.id)
+        proposalField = command?.field ?? work.proposal?.field
+        proposalRevision = command?.expectedProposalRevision ?? work.proposal?.revision
+        proposalCreatedAt = work.protectedProposalCreatedAt ?? work.proposal?.createdAt
+    }
+
+    /// One request at a time per lane. All of an owner's messages and answers share one
+    /// lane, so they go out in the order they were saved, whichever screen saved them.
+    static func lane(kind: PendingWork.Kind, conversationID: String?, ownerKey: String?, ticketID: String?, draftID: String?, identity: String) -> String {
+        switch kind {
+        case .markRead: return "read:\(conversationID ?? identity)"
+        case .approval, .sendBack: return "ticket:\(ticketID ?? identity)"
+        case .voice: return "draft:\(draftID ?? identity)"
+        case .message, .askAnswer:
+            if let ownerKey { return "owner:\(ownerKey)" }
+            return "conversation:\(conversationID ?? identity)"
+        }
     }
 
     static func ownerKey(_ owner: ConversationOwner) -> String {
@@ -112,51 +81,6 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         case .manager(let id): "manager:\(id)"
         case .ticket(let id): "ticket:\(id)"
         case .goal(let id): "goal:\(id)"
-        }
-    }
-}
-
-/// Add metadata once, without rewriting any saved intent or making it dispatchable.
-@MainActor enum OutgoingStoreMigration {
-    static let markerID = "outgoing-v1"
-    static func storageError(_ context: ModelContext) throws -> String? {
-        var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.state == "storageError" })
-        query.fetchLimit = 1
-        return try context.fetch(query).first?.failure
-    }
-    static func backfill(_ context: ModelContext, now: Date = .now, beforeSave: (() throws -> Void)? = nil) throws -> String? {
-        do {
-            let markerKey = LocalStore.key("", "outgoingMigration", markerID)
-            var marker = FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == markerKey })
-            marker.fetchLimit = 1
-            if try !context.fetch(marker).isEmpty { return try storageError(context) }
-            let indexed = try context.fetch(FetchDescriptor<OutgoingMetadata>())
-            for row in indexed where row.provenance == "unknown" && ["waiting", "sending"].contains(row.state) {
-                row.state = "uncertain"; row.note = "Delivery uncertain · check before another attempt"; row.expiresAt = now.addingTimeInterval(7 * 86400)
-            }
-            let keys = Set(indexed.map(\.key))
-            let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.kind == "outbox" }))
-            let pending = rows.filter { !keys.contains($0.key) }.map { row in
-                (row, try? JSONDecoder().decode(PendingWork.self, from: row.payload))
-            }.sorted {
-                let lhs = $0.1?.created ?? $0.0.updatedAt, rhs = $1.1?.created ?? $1.0.updatedAt
-                return lhs == rhs ? $0.0.key < $1.0.key : lhs < rhs
-            }
-            var sequence = indexed.map(\.sequence).max() ?? 0
-            for (record, work) in pending {
-                sequence += 1
-                let metadata = OutgoingMetadata(record: record, work: work, sequence: sequence, now: now)
-                if ["waiting", "sending"].contains(metadata.state) {
-                    metadata.state = "uncertain"; metadata.note = "Delivery uncertain · check before another attempt"; metadata.expiresAt = now.addingTimeInterval(7 * 86400)
-                }
-                context.insert(metadata)
-            }
-            context.insert(LocalRecord(key: markerKey, server: "", kind: "outgoingMigration", payload: Data([1]), updated: now))
-            if context.hasChanges { try beforeSave?(); try context.save() }
-            return try storageError(context)
-        } catch {
-            context.rollback()
-            throw error
         }
     }
 }
@@ -173,7 +97,6 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         let text: Value?
         let attachments: Value?
     }
-    enum Destination { case conversation(String), newConversation }
     enum StoreError: Error { case missingWork, duplicateIdentity, invalidTransition }
     struct Summary: Identifiable, Sendable, Equatable {
         let id: String
@@ -187,15 +110,11 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         let kind: String
         let note: String
         let sequence: Int64
-        let provenance: String
-        let scheduled: Bool
-        let predecessorID: String?
-        let replacementID: String?
-        let holdReason: String?
+        let attempted: Bool
+        let unsettledAttempts: Int
         let proposalField: String?
         let proposalRevision: Int?
         let proposalCreatedAt: Double?
-        let hasProtectedDecisionBody: Bool
         let created: Date
         let completed: Date?
         let expiresAt: Date?
@@ -203,13 +122,17 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             id = value.identity; ownerKey = value.ownerKey; conversationID = value.conversationID; ownerReadThroughSequence = value.ownerReadThroughSequence
             ticketID = value.ticketID; draftID = value.draftID; lane = value.lane
             state = value.state; kind = value.kind; note = value.note; sequence = value.sequence
-            provenance = value.provenance; scheduled = value.scheduled
-            predecessorID = value.predecessorID; replacementID = value.replacementID; holdReason = value.holdReason
+            attempted = value.attempted; unsettledAttempts = value.unsettledAttempts
             proposalField = value.proposalField; proposalRevision = value.proposalRevision
             proposalCreatedAt = value.proposalCreatedAt
-            hasProtectedDecisionBody = value.hasProtectedDecisionBody; created = value.created; completed = value.completed; expiresAt = value.expiresAt
+            created = value.created; completed = value.completed; expiresAt = value.expiresAt
         }
+        var refused: Bool { state == PendingWork.State.failed.rawValue }
+        /// Failed without a settling answer from the server, which may already hold it.
+        /// Try Again sends it again with the same identity.
+        var gaveUp: Bool { refused && unsettledAttempts > 0 }
     }
+    nonisolated static let finishedLifetime: TimeInterval = 24 * 60 * 60
     private let context: ModelContext
     private let beforeSave: (() throws -> Void)?
     private let onPayloadDecode: (() -> Void)?
@@ -218,6 +141,7 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     init(context: ModelContext, beforeSave: (() throws -> Void)? = nil, onPayloadDecode: (() -> Void)? = nil, changed: @escaping (String) -> Void, failed: @escaping (Error) -> Void) {
         self.context = context; self.beforeSave = beforeSave; self.onPayloadDecode = onPayloadDecode; self.changed = changed; self.failed = failed
     }
+    @discardableResult
     private func transaction<T>(_ server: String, _ body: () throws -> T) throws -> T {
         do {
             let result = try body()
@@ -240,105 +164,67 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
     private func laneRows(_ server: String, _ lane: String) throws -> [OutgoingMetadata] {
         try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.lane == lane }, sortBy: [SortDescriptor(\.sequence)]))
     }
-    /// Keep filtering inside the limited fetch so retained lane history is not materialized.
-    static func predecessorQuery(server: String, lane: String) -> FetchDescriptor<OutgoingMetadata> {
-        let releasedStates = ["sent", "changed", "serverQueued"]
-        let predicate = #Predicate<OutgoingMetadata> {
-            ($0.server == server && $0.lane == lane) &&
-            ($0.scheduled && !releasedStates.contains($0.state)) &&
-            ($0.state != "failed" || $0.conversationID == nil)
-        }
-        var query = FetchDescriptor<OutgoingMetadata>(predicate: predicate, sortBy: [SortDescriptor(\.sequence, order: .reverse)])
-        query.fetchLimit = 1
-        return query
-    }
     private func nextSequence(_ server: String) throws -> Int64 {
         var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server }, sortBy: [SortDescriptor(\.sequence, order: .reverse)])
         query.fetchLimit = 1
         return (try context.fetch(query).first?.sequence ?? 0) + 1
     }
+    private func sorted(_ predicate: Predicate<OutgoingMetadata>) throws -> [Summary] {
+        try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: predicate, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+    }
+
+    // MARK: Reads
+
     func summary(server: String, id: String) throws -> Summary? { try metadata(server, id).map(Summary.init) }
     func summaries(server: String, owner: ConversationOwner) throws -> [Summary] {
         let ownerKey = OutgoingMetadata.ownerKey(owner)
-        return try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.ownerKey == ownerKey }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+        return try sorted(#Predicate { $0.server == server && $0.ownerKey == ownerKey })
     }
     func summaries(server: String, draftID: String) throws -> [Summary] {
-        try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.draftID == draftID }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+        try sorted(#Predicate { $0.server == server && $0.draftID == draftID })
     }
     func summaries(server: String, conversationID: String) throws -> [Summary] {
-        try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.conversationID == conversationID }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+        try sorted(#Predicate { $0.server == server && $0.conversationID == conversationID })
     }
-    /// Preserve latest-lane selection, including a provisional start with no known destination.
+    func allSummaries(server: String) throws -> [Summary] { try sorted(#Predicate { $0.server == server }) }
+    /// The conversation of the owner's newest message, including a start with no known destination.
     func latestConversationID(server: String, owner: ConversationOwner) throws -> String? {
         let ownerKey = OutgoingMetadata.ownerKey(owner)
         var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
-            ($0.server == server && $0.ownerKey == ownerKey) && ($0.kind == "message" && $0.scheduled)
+            $0.server == server && $0.ownerKey == ownerKey && $0.kind == "message"
         }, sortBy: [SortDescriptor(\.sequence, order: .reverse)])
         query.fetchLimit = 1
         return try context.fetch(query).first?.conversationID
     }
-    /// Selected destination and its active provisional start, plus independently retained originals.
+    /// Messages for one destination, plus the owner's messages that wait for a new conversation.
     func conversationSummaries(server: String, owner: ConversationOwner, conversationID: String?) throws -> [Summary] {
         let ownerKey = OutgoingMetadata.ownerKey(owner)
-        var rows: [OutgoingMetadata] = []
-        if conversationID != nil {
-            let destinationQuery = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
-                $0.server == server && $0.ownerKey == ownerKey && $0.conversationID == conversationID
-            })
-            rows = try context.fetch(destinationQuery).filter { $0.kind == "message" }
-        }
-        let provisionalQuery = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
-            ($0.server == server && $0.ownerKey == ownerKey) && ($0.conversationID == nil && $0.scheduled)
-        })
-        let provisional = try context.fetch(provisionalQuery).filter { $0.kind == "message" }
-        var selectedKeys = Set(rows.map(\.key))
-        rows.append(contentsOf: provisional.filter { selectedKeys.insert($0.key).inserted })
-        // One metadata-only query selects retired links in this owner/destination scope.
-        // Walking those links in memory avoids a fetch for every retained sent message.
-        let ancestorPredicate = #Predicate<OutgoingMetadata> {
-            ($0.server == server && $0.ownerKey == ownerKey) && (!$0.scheduled && $0.replacementID != nil)
-        }
-        let ancestorQuery = FetchDescriptor<OutgoingMetadata>(predicate: ancestorPredicate)
-        let ancestors = try context.fetch(ancestorQuery)
-        var byReplacement: [String: [OutgoingMetadata]] = [:]
-        for original in ancestors where original.kind == "message" && (original.conversationID == nil || original.conversationID == conversationID) {
-            if let replacementID = original.replacementID { byReplacement[replacementID, default: []].append(original) }
-        }
-        var known = Set(rows.map(\.identity))
-        var links = rows.filter(\.scheduled).map(\.identity)
-        var traversed = Set(links)
-        var linkIndex = 0
-        while linkIndex < links.count {
-            let replacementID = links[linkIndex]
-            linkIndex += 1
-            for original in byReplacement[replacementID, default: []] {
-                if known.insert(original.identity).inserted { rows.append(original) }
-                if traversed.insert(original.identity).inserted { links.append(original.identity) }
-            }
-        }
-        return rows.sorted { $0.sequence < $1.sequence }.map(Summary.init)
+        let rows = try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
+            $0.server == server && $0.ownerKey == ownerKey && $0.kind == "message"
+        }, sortBy: [SortDescriptor(\.sequence)]))
+        return rows.filter { $0.conversationID == nil || $0.conversationID == conversationID }.map(Summary.init)
     }
-    func corruptSummaries(server: String) throws -> [Summary] {
-        try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.state == "storageError" }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
-    }
-    func storageFailure() throws -> String? { try OutgoingStoreMigration.storageError(context) }
     func replySummaries(server: String, conversationID: String) throws -> [Summary] {
-        try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && $0.conversationID == conversationID && $0.ownerReadThroughSequence != nil }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
-    }
-    func allSummaries(server: String) throws -> [Summary] {
-        try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+        try sorted(#Predicate { $0.server == server && $0.conversationID == conversationID && $0.kind == "message" && $0.ownerReadThroughSequence != nil })
     }
     func decisionSummaries(server: String, ticketID: String) throws -> [Summary] {
-        try laneRows(server, "ticket:\(ticketID)").filter { ["approval", "sendBack"].contains($0.kind) }.map(Summary.init)
+        try decisionSummaries(server: server).filter { $0.ticketID == ticketID }
     }
     func decisionSummaries(server: String) throws -> [Summary] {
         let kinds = ["approval", "sendBack"]
-        return try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && kinds.contains($0.kind) }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+        return try sorted(#Predicate { $0.server == server && kinds.contains($0.kind) })
     }
-    /// The bounded scheduler reads metadata only. Detail payloads decode on demand.
-    func schedulingSummaries(server: String) throws -> [Summary] {
-        let states = ["waiting", "sending", "uncertain", "serverQueued"]
-        return try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && states.contains($0.state) }, sortBy: [SortDescriptor(\.sequence)])).map(Summary.init)
+    /// What Review hides at once: decisions, mark reads and replies that carry a read boundary.
+    func reviewSummaries(server: String) throws -> [Summary] {
+        let kinds = ["approval", "sendBack", "markRead"]
+        return try sorted(#Predicate { $0.server == server && (kinds.contains($0.kind) || $0.ownerReadThroughSequence != nil) })
+    }
+    /// Each lane's first unfinished row, when it can be sent now. Metadata only.
+    func runnable(server: String) throws -> [Summary] {
+        let open = ["waiting", "recording"]
+        let rows = try context.fetch(FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.server == server && open.contains($0.state) }, sortBy: [SortDescriptor(\.sequence)]))
+        var seen: Set<String> = []
+        return rows.filter { seen.insert($0.lane).inserted && $0.state == "waiting" }.map(Summary.init)
     }
     func work(server: String, id: String) throws -> PendingWork? {
         guard let row = try raw(server, "outbox", id), let metadata = try metadata(server, id) else { return nil }
@@ -346,7 +232,9 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         var work = try JSONDecoder().decode(PendingWork.self, from: row.payload)
         work.state = PendingWork.State(rawValue: metadata.state) ?? .failed
         work.note = metadata.note; work.completed = metadata.completed
-        if let message = work.message, metadata.conversationID != message.conversationId || metadata.omitCreationSettings {
+        // A message saved before its conversation existed takes the conversation the first
+        // message created, before it is ever sent. Every send of it is then the same body.
+        if let message = work.message, metadata.conversationID != message.conversationId {
             work.message = ConversationSend(conversationId: metadata.conversationID, content: message.content,
                 senderLabel: message.senderLabel, mode: message.mode,
                 backendKey: metadata.omitCreationSettings ? nil : message.backendKey,
@@ -358,6 +246,14 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         }
         return work
     }
+    func audioIsUnowned(_ file: String) throws -> Bool {
+        var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.audioFile == file })
+        query.fetchLimit = 1
+        return try context.fetch(query).isEmpty
+    }
+
+    // MARK: Drafts
+
     func captureDraft(server: String, id: String) throws -> DraftCapture {
         func value(_ kind: String) throws -> DraftCapture.Value? {
             try raw(server, kind, id).map { .init(payload: $0.payload, updated: $0.updatedAt) }
@@ -372,29 +268,6 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         }
         try clear("draft", capture.text, empty: Data())
         try clear("attachments", capture.attachments, empty: Data("[]".utf8))
-    }
-    private func insert(_ work: PendingWork, server: String, payload: Data? = nil) throws -> OutgoingMetadata {
-        guard try metadata(server, work.id) == nil, try raw(server, "outbox", work.id) == nil else { throw StoreError.duplicateIdentity }
-        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        let row = LocalRecord(key: LocalStore.key(server, "outbox", work.id), server: server, kind: "outbox", payload: try payload ?? encoder.encode(work), updated: .now)
-        let metadata = OutgoingMetadata(record: row, work: work, sequence: try nextSequence(server))
-        metadata.provenance = work.state == .waiting || work.state == .recording ? "unattempted" : "unknown"
-        if work.kind == .message, work.message?.conversationId == nil, let ownerKey = metadata.ownerKey {
-            // All queued messages behind one unresolved creation keep that exact start lane.
-            var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate {
-                $0.server == server && $0.ownerKey == ownerKey && $0.kind == "message" && $0.conversationID == nil && $0.scheduled
-            }, sortBy: [SortDescriptor(\.sequence, order: .reverse)])
-            query.fetchLimit = 1
-            if let previous = try context.fetch(query).first, !["sent", "changed"].contains(previous.state) { metadata.lane = previous.lane }
-        }
-        let predecessor = try context.fetch(Self.predecessorQuery(server: server, lane: metadata.lane)).first
-        metadata.predecessorID = predecessor?.identity
-        if (predecessor?.state == "failed" && predecessor?.conversationID == nil) || predecessor?.holdReason == "destinationUnresolved" {
-            metadata.holdReason = "destinationUnresolved"
-            metadata.note = "Not sent · choose a conversation or start a new one"
-        }
-        context.insert(row); context.insert(metadata)
-        return metadata
     }
     private func capturePhotoDraft(_ work: PendingWork, server: String, capturedDraft: DraftCapture?) throws -> PendingWork {
         var frozen = work
@@ -415,77 +288,6 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         }
         return frozen
     }
-    func enqueue(_ work: PendingWork, server: String, capturedDraft: DraftCapture? = nil) throws {
-        try transaction(server) {
-            let frozen = try capturePhotoDraft(work, server: server, capturedDraft: capturedDraft)
-            _ = try insert(frozen, server: server)
-        }
-    }
-    func canSubmit(server: String, id: String) throws -> Bool {
-        guard let row = try metadata(server, id), row.scheduled, row.state == "waiting", row.provenance == "unattempted", row.holdReason == nil else { return false }
-        guard let predecessor = row.predecessorID else { return true }
-        // Missing predecessors require an explicit decision, never an inferred release.
-        guard let previous = try metadata(server, predecessor) else { return false }
-        return Self.releasesLane(previous)
-    }
-    private static func releasesLane(_ row: OutgoingMetadata) -> Bool {
-        ["sent", "changed", "serverQueued"].contains(row.state) || (row.state == "failed" && row.conversationID != nil)
-    }
-    func beginAttempt(server: String, id: String) throws {
-        try transaction(server) {
-            guard try canSubmit(server: server, id: id), let row = try metadata(server, id) else { throw StoreError.invalidTransition }
-            row.provenance = "attempted"; row.state = "sending"; row.note = "Sending…"
-        }
-    }
-    /// Receipts update their exact operation even after a replacement retires its schedule.
-    func settle(server: String, id: String, state: PendingWork.State, note: String, conversationID: String? = nil, now: Date = .now, decisionDraft: (id: String, text: String, updated: Date)? = nil, restoreRejectedPhotoDraft: Bool = false) throws {
-        try transaction(server) {
-            guard let row = try metadata(server, id) else { throw StoreError.missingWork }
-            if restoreRejectedPhotoDraft, let work = try work(server: server, id: id) {
-                try restorePhotoDraft(work, server: server, restoredAt: row.completed ?? now)
-            }
-            if state == .sent, let decisionDraft,
-               let draft = try raw(server, "draft", decisionDraft.id), draft.payload == Data(decisionDraft.text.utf8), draft.updatedAt == decisionDraft.updated {
-                draft.payload = Data(); draft.updatedAt = .now
-            }
-            let oldLane = row.lane
-            let enteredUncertain = state == .uncertain && row.state != "uncertain"
-            let enteredFailed = state == .failed && row.state != "failed"
-            if row.state != state.rawValue { row.state = state.rawValue }
-            if row.note != note { row.note = note }
-            if [.sent, .changed, .failed].contains(state), row.completed == nil { row.completed = now }
-            let deadline: Date?
-            switch state {
-            case .sent, .changed: deadline = (row.completed ?? row.created).addingTimeInterval(86400)
-            case .uncertain: deadline = enteredUncertain ? now.addingTimeInterval(7 * 86400) : row.expiresAt ?? now.addingTimeInterval(7 * 86400)
-            case .failed where !row.scheduled: deadline = enteredFailed ? now.addingTimeInterval(86400) : row.expiresAt ?? now.addingTimeInterval(86400)
-            default: deadline = nil
-            }
-            if row.expiresAt != deadline { row.expiresAt = deadline }
-            if state == .failed, row.scheduled, row.conversationID == nil, conversationID == nil {
-                for successor in try laneRows(server, oldLane) where successor.scheduled && successor.provenance == "unattempted" && successor.sequence > row.sequence {
-                    successor.holdReason = "destinationUnresolved"
-                    successor.note = "Not sent · choose a conversation or start a new one"
-                }
-            }
-            if let conversationID, row.conversationID != conversationID {
-                row.conversationID = conversationID
-                // A late original receipt never retargets a replacement's successors.
-                if row.scheduled {
-                    var inherited = try work(server: server, id: row.identity)?.message
-                    for successor in try laneRows(server, oldLane) where successor.sequence > row.sequence && successor.scheduled && successor.provenance == "unattempted" && successor.conversationID == nil {
-                        let chosen = try work(server: server, id: successor.identity)?.message
-                        successor.conversationID = conversationID; successor.omitCreationSettings = true
-                        successor.omitModel = chosen?.model == inherited?.model
-                        successor.omitEffort = chosen?.reasoningEffort == inherited?.reasoningEffort
-                        inherited = chosen
-                        successor.lane = "conversation:\(conversationID)"
-                    }
-                    row.lane = "conversation:\(conversationID)"
-                }
-            }
-        }
-    }
     private func restorePhotoDraft(_ work: PendingWork, server: String, restoredAt: Date) throws {
         guard let recovery = work.rejectedPhotoDraft, let message = work.message else { return }
         let current = try captureDraft(server: server, id: recovery.id)
@@ -504,29 +306,149 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
                 kind: "attachments", payload: payload, updated: restoredAt))
         }
     }
-    /// An explicit resend occupies the old logical position; the original keeps its own receipt.
-    func replace(server: String, id: String, with replacement: PendingWork, now: Date = .now, capturedDraft: DraftCapture? = nil) throws {
+    private func writeDraft(_ text: String, server: String, id: String, updated: Date = .now) throws {
+        if let row = try raw(server, "draft", id) {
+            row.payload = Data(text.utf8); row.updatedAt = updated
+        } else {
+            context.insert(LocalRecord(key: LocalStore.key(server, "draft", id), server: server, kind: "draft", payload: Data(text.utf8), updated: updated))
+        }
+    }
+
+    // MARK: Writes
+
+    @discardableResult
+    private func insert(_ work: PendingWork, server: String, sequence: Int64? = nil) throws -> OutgoingMetadata {
+        guard try metadata(server, work.id) == nil, try raw(server, "outbox", work.id) == nil else { throw StoreError.duplicateIdentity }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let key = LocalStore.key(server, "outbox", work.id)
+        let row = LocalRecord(key: key, server: server, kind: "outbox", payload: try encoder.encode(work), updated: .now)
+        let metadata = OutgoingMetadata(key: key, server: server, work: work, sequence: try sequence ?? nextSequence(server))
+        if [.sent, .failed].contains(work.state) { metadata.expiresAt = Self.expiry(kind: work.kind.rawValue, state: work.state, completed: work.completed ?? work.created) }
+        context.insert(row); context.insert(metadata)
+        return metadata
+    }
+    private static func expiry(kind: String, state: PendingWork.State, completed: Date) -> Date? {
+        switch state {
+        case .sent: return completed.addingTimeInterval(finishedLifetime)
+        // A refused message or recording keeps its retry until the person acts on it.
+        case .failed where kind != "message" && kind != "voice": return completed.addingTimeInterval(finishedLifetime)
+        default: return nil
+        }
+    }
+    func enqueue(_ work: PendingWork, server: String, capturedDraft: DraftCapture? = nil) throws {
         try transaction(server) {
-            guard let original = try metadata(server, id), original.scheduled, (["uncertain", "failed"].contains(original.state) || (original.state == "waiting" && original.provenance == "unknown")), replacement.state == .waiting else { throw StoreError.invalidTransition }
-            guard original.state == "failed" || !(replacement.priorMessageIDs ?? []).contains(id) else { throw StoreError.invalidTransition }
-            let frozen = try capturePhotoDraft(replacement, server: server, capturedDraft: capturedDraft)
-            let next = try insert(frozen, server: server)
-            next.sequence = original.sequence; next.lane = original.lane; next.predecessorID = original.predecessorID
-            next.conversationID = original.conversationID; next.omitCreationSettings = original.omitCreationSettings; next.omitModel = original.omitModel; next.omitEffort = original.omitEffort
-            if original.conversationID == nil {
-                next.holdReason = "destinationUnresolved"
-                next.note = "Not sent · choose a conversation or start a new one"
+            try insert(try capturePhotoDraft(work, server: server, capturedDraft: capturedDraft), server: server)
+        }
+    }
+    /// Save a new item, or update the state and note of a saved one. Its bytes stay as saved.
+    func save(_ work: PendingWork, server: String) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, work.id) else { try insert(work, server: server); return }
+            if row.state != work.state.rawValue { row.state = work.state.rawValue }
+            if row.note != work.note { row.note = work.note }
+            if row.completed != work.completed { row.completed = work.completed }
+        }
+    }
+    /// The server only moves a read point forward, so one waiting read per conversation
+    /// carries the highest point asked for.
+    func enqueueMarkRead(server: String, owner: ConversationOwner?, conversationID: String, through: Int, now: Date = .now) throws {
+        try transaction(server) {
+            let rows = try summaries(server: server, conversationID: conversationID).filter { $0.kind == "markRead" }
+            if rows.contains(where: { !$0.refused && ($0.ownerReadThroughSequence ?? 0) >= through }) { return }
+            for row in rows where row.state == "waiting" {
+                if let metadata = try metadata(server, row.id) { context.delete(metadata) }
+                if let payload = try raw(server, "outbox", row.id) { context.delete(payload) }
             }
-            if original.state == "waiting" && original.provenance == "unknown" { original.state = "uncertain"; original.expiresAt = now.addingTimeInterval(7 * 86400) }
-            original.scheduled = false; original.replacementID = next.identity
-            if original.state == "failed" { original.expiresAt = now.addingTimeInterval(86400) }
-            for successor in try laneRows(server, original.lane) where successor.identity != next.identity && successor.predecessorID == id {
-                successor.predecessorID = next.identity
+            try insert(PendingWork(id: UUID().uuidString, created: now, kind: .markRead, owner: owner,
+                readConversationID: conversationID, readThroughSequence: through), server: server)
+        }
+    }
+    /// Saved before each send, so a relaunch knows the item may have reached the server.
+    func beginAttempt(server: String, id: String) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.state == "waiting" else { throw StoreError.invalidTransition }
+            if !row.attempted { row.attempted = true }
+        }
+    }
+    func settle(server: String, id: String, state: PendingWork.State, note: String = "", conversationID: String? = nil, now: Date = .now,
+                decisionDraft: (id: String, text: String, updated: Date)? = nil, restoreRejectedPhotoDraft: Bool = false) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, id) else { throw StoreError.missingWork }
+            if restoreRejectedPhotoDraft, let work = try work(server: server, id: id) {
+                try restorePhotoDraft(work, server: server, restoredAt: row.completed ?? now)
             }
+            if state == .sent, let decisionDraft,
+               let draft = try raw(server, "draft", decisionDraft.id), draft.payload == Data(decisionDraft.text.utf8), draft.updatedAt == decisionDraft.updated {
+                draft.payload = Data(); draft.updatedAt = .now
+            }
+            if row.state != state.rawValue { row.state = state.rawValue }
+            if row.note != note { row.note = note }
+            if row.unsettledAttempts != 0 { row.unsettledAttempts = 0 }
+            if [.sent, .failed].contains(state), row.completed == nil { row.completed = now }
+            let deadline = Self.expiry(kind: row.kind, state: state, completed: row.completed ?? now)
+            if row.expiresAt != deadline { row.expiresAt = deadline }
+            if let conversationID, row.conversationID != conversationID { try adopt(conversationID, from: row, server: server) }
+        }
+    }
+    /// One more attempt the server answered without settling. At the bound the item
+    /// fails with its note, keeps its count (so Try Again keeps its identity), and its
+    /// lane moves on. Returns whether it failed.
+    func countUnsettledAttempt(server: String, id: String, bound: Int, note: String, now: Date = .now) throws -> Bool {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.state == "waiting" else { throw StoreError.invalidTransition }
+            row.unsettledAttempts += 1
+            guard row.unsettledAttempts >= bound else { return false }
+            row.state = PendingWork.State.failed.rawValue; row.note = note
+            if row.completed == nil { row.completed = now }
+            row.expiresAt = Self.expiry(kind: row.kind, state: .failed, completed: row.completed ?? now)
+            return true
+        }
+    }
+    /// Try Again for an item that keeps its identity: it waits again in its old place.
+    func requeue(server: String, id: String) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.state == "failed" else { throw StoreError.invalidTransition }
+            row.state = PendingWork.State.waiting.rawValue; row.note = ""; row.unsettledAttempts = 0
+            row.completed = nil; row.expiresAt = nil
+        }
+    }
+    /// A first message created a conversation: later, never-sent messages behind it go there too.
+    private func adopt(_ conversationID: String, from row: OutgoingMetadata, server: String) throws {
+        let created = row.conversationID == nil
+        var inherited = try work(server: server, id: row.identity)?.message
+        row.conversationID = conversationID
+        guard created, row.kind == "message" else { return }
+        for successor in try laneRows(server, row.lane) where successor.sequence > row.sequence && !successor.attempted && successor.conversationID == nil && successor.kind == "message" {
+            let chosen = try work(server: server, id: successor.identity)?.message
+            successor.conversationID = conversationID; successor.omitCreationSettings = true
+            successor.omitModel = chosen?.model == inherited?.model
+            successor.omitEffort = chosen?.reasoningEffort == inherited?.reasoningEffort
+            inherited = chosen
+        }
+    }
+    /// A refused message retried by tap: a new identity takes the old one's place in its lane.
+    func replace(server: String, id: String, with replacement: PendingWork, capturedDraft: DraftCapture? = nil) throws {
+        try transaction(server) {
+            guard let original = try metadata(server, id), original.state == "failed", replacement.state == .waiting else { throw StoreError.invalidTransition }
+            let next = try insert(try capturePhotoDraft(replacement, server: server, capturedDraft: capturedDraft), server: server, sequence: original.sequence)
+            next.lane = original.lane; next.conversationID = original.conversationID
+            next.omitCreationSettings = original.omitCreationSettings; next.omitModel = original.omitModel; next.omitEffort = original.omitEffort
+            if let payload = try raw(server, "outbox", id) { context.delete(payload) }
+            context.delete(original)
+        }
+    }
+    /// The ask stopped waiting before its answer landed. In one transaction the answer is
+    /// settled and its words become an ordinary message in that conversation.
+    func convertLateAnswer(server: String, id: String, message: PendingWork) throws {
+        try transaction(server) {
+            guard let row = try metadata(server, id), row.kind == "askAnswer", row.state == "waiting" else { throw StoreError.invalidTransition }
+            row.state = PendingWork.State.sent.rawValue; row.completed = .now
+            row.expiresAt = Self.expiry(kind: row.kind, state: .sent, completed: .now)
+            if try metadata(server, message.id) == nil { try insert(message, server: server, sequence: row.sequence) }
         }
     }
     nonisolated static let expiryBatchLimit = 64
-    /// The due index and limit bound every recurring foreground cleanup transaction.
+    /// The due index and limit bound every foreground cleanup transaction.
     @discardableResult
     func expire(server: String, now: Date = .now) throws -> [String] {
         let never = Date.distantFuture
@@ -537,90 +459,10 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
         return try transaction(server) {
             let files = Set(due.compactMap(\.audioFile))
             for row in due {
-                for successor in try laneRows(server, row.lane) where successor.predecessorID == row.identity {
-                    if !Self.releasesLane(row) {
-                        successor.holdReason = successor.conversationID == nil ? "destinationUnresolved" : "predecessorExpired"
-                        successor.note = "Not sent · choose how to send this message"
-                    }
-                    successor.predecessorID = nil
-                }
                 if let payload = try raw(server, "outbox", row.identity) { context.delete(payload) }
                 context.delete(row)
             }
             return Array(files)
-        }
-    }
-    func audioIsUnowned(_ file: String) throws -> Bool {
-        var query = FetchDescriptor<OutgoingMetadata>(predicate: #Predicate { $0.audioFile == file })
-        query.fetchLimit = 1
-        return try context.fetch(query).isEmpty
-    }
-
-    func releaseHold(server: String, id: String, destination: Destination) throws {
-        try transaction(server) {
-            guard let row = try metadata(server, id), row.provenance == "unattempted", row.state == "waiting", row.holdReason != nil else { throw StoreError.invalidTransition }
-            let oldLane = row.lane
-            switch destination {
-            case .conversation(let conversationID):
-                guard !conversationID.isEmpty, row.conversationID == nil || row.conversationID == conversationID else { throw StoreError.invalidTransition }
-                row.conversationID = conversationID; row.lane = "conversation:\(conversationID)"; row.omitCreationSettings = true
-            case .newConversation:
-                guard row.conversationID == nil else { throw StoreError.invalidTransition }
-                row.lane = "start:\(row.ownerKey ?? "unknown"):\(row.identity)"
-            }
-            // Carry only the dependent, never-attempted chain. Other work in the old
-            // lane or a retired original does not inherit this explicit choice.
-            var predecessors: Set<String> = [row.identity]
-            var inherited = try work(server: server, id: row.identity)?.message
-            for successor in try laneRows(server, oldLane) where successor.identity != row.identity && successor.scheduled && successor.provenance == "unattempted" {
-                guard let predecessor = successor.predecessorID, predecessors.contains(predecessor) else { continue }
-                let chosen = try work(server: server, id: successor.identity)?.message
-                successor.lane = row.lane; successor.conversationID = row.conversationID
-                successor.holdReason = nil; successor.note = "Waiting for connection"
-                successor.omitCreationSettings = row.omitCreationSettings
-                successor.omitModel = row.conversationID != nil && chosen?.model == inherited?.model
-                successor.omitEffort = row.conversationID != nil && chosen?.reasoningEffort == inherited?.reasoningEffort
-                inherited = chosen
-                predecessors.insert(successor.identity)
-            }
-            row.holdReason = nil; row.predecessorID = nil; row.note = "Waiting for connection"
-        }
-    }
-    /// Compatibility entry point for saved work. Existing intent is never reencoded.
-    func saveEncoded(_ data: Data, server: String, id: String, draft: (String, String)? = nil) throws {
-        try transaction(server) {
-            let decoded = try? JSONDecoder().decode(PendingWork.self, from: data)
-            if let row = try metadata(server, id) {
-                if let decoded {
-                    let enteredUncertain = decoded.state == .uncertain && row.state != "uncertain"
-                    let enteredFailed = decoded.state == .failed && row.state != "failed"
-                    if row.state != decoded.state.rawValue { row.state = decoded.state.rawValue }
-                    if row.note != decoded.note { row.note = decoded.note }
-                    if row.completed != decoded.completed { row.completed = decoded.completed }
-                    let deadline: Date?
-                    switch decoded.state {
-                    case .sent, .changed: deadline = (decoded.completed ?? decoded.created).addingTimeInterval(86400)
-                    case .uncertain: deadline = enteredUncertain ? Date.now.addingTimeInterval(7 * 86400) : row.expiresAt ?? Date.now.addingTimeInterval(7 * 86400)
-                    case .failed where !row.scheduled: deadline = enteredFailed ? Date.now.addingTimeInterval(86400) : row.expiresAt ?? Date.now.addingTimeInterval(86400)
-                    default: deadline = nil
-                    }
-                    if row.expiresAt != deadline { row.expiresAt = deadline }
-                }
-            } else if let decoded {
-                _ = try insert(decoded, server: server, payload: data)
-            } else {
-                let payload = LocalRecord(key: LocalStore.key(server, "outbox", id), server: server, kind: "outbox", payload: data, updated: .now)
-                context.insert(payload)
-                context.insert(OutgoingMetadata(record: payload, work: nil, sequence: try nextSequence(server)))
-            }
-            if let (draftID, text) = draft { try writeDraft(text, server: server, id: draftID) }
-        }
-    }
-    private func writeDraft(_ text: String, server: String, id: String, updated: Date = .now) throws {
-        if let row = try raw(server, "draft", id) {
-            row.payload = Data(text.utf8); row.updatedAt = updated
-        } else {
-            context.insert(LocalRecord(key: LocalStore.key(server, "draft", id), server: server, kind: "draft", payload: Data(text.utf8), updated: updated))
         }
     }
     func finishVoice(server: String, id: String, transcript: String, now: Date = .now) throws {
@@ -630,35 +472,22 @@ enum PhoneStoreMigration: SchemaMigrationPlan {
             let draft = try raw(server, "draft", draftID).flatMap { String(data: $0.payload, encoding: .utf8) } ?? ""
             let text = draft.isEmpty ? transcript : draft + "\n\n" + transcript
             try writeDraft(text, server: server, id: draftID)
-            row.state = "sent"; row.note = "Transcribed"; row.completed = now; row.audioFile = nil; row.expiresAt = now.addingTimeInterval(86400)
+            row.state = "sent"; row.note = ""; row.completed = now; row.audioFile = nil; row.expiresAt = now.addingTimeInterval(Self.finishedLifetime)
         }
     }
     func retryVoice(server: String, id: String) throws {
         try transaction(server) {
-            guard let row = try metadata(server, id), row.kind == "voice", ["waiting", "failed", "uncertain", "recording"].contains(row.state) else { throw StoreError.invalidTransition }
-            row.provenance = "unattempted"; row.state = "waiting"; row.note = "Waiting for connection"; row.expiresAt = nil
+            guard let row = try metadata(server, id), row.kind == "voice", ["waiting", "failed", "recording"].contains(row.state) else { throw StoreError.invalidTransition }
+            row.state = "waiting"; row.note = ""; row.unsettledAttempts = 0; row.expiresAt = nil
         }
     }
     func remove(server: String, ids: [String]) throws {
         guard !ids.isEmpty else { return }
         try transaction(server) {
             for id in ids {
-                guard let row = try metadata(server, id) else { continue }
-                for successor in try laneRows(server, row.lane) where successor.predecessorID == id {
-                    successor.holdReason = successor.conversationID == nil ? "destinationUnresolved" : "predecessorExpired"
-                    successor.predecessorID = nil
-                }
+                if let row = try metadata(server, id) { context.delete(row) }
                 if let payload = try raw(server, "outbox", id) { context.delete(payload) }
-                context.delete(row)
             }
         }
     }
-
-    func rejectAdmission(server: String, id: String, note: String) throws {
-        try transaction(server) {
-            guard let row = try metadata(server, id), row.scheduled, row.provenance == "attempted", row.state == "sending" else { throw StoreError.invalidTransition }
-            row.provenance = "unattempted"; row.state = "waiting"; row.note = note
-        }
-    }
-
 }

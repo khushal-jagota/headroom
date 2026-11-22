@@ -137,7 +137,7 @@ import UniformTypeIdentifiers
             await model.refresh(using: service, transcript: true)
             XCTAssertEqual(model.rows.first?.own, sender == "owner")
             XCTAssertEqual(model.rows.first?.senderLabel, sender == "owner" ? nil : sender)
-            XCTAssertEqual(model.rows.first?.note, sender == "owner" ? "Sent" : nil)
+            XCTAssertNil(model.rows.first?.note, "A delivered message shows no status")
             XCTAssertEqual(model.latestLine, "\(sender == "owner" ? "You" : sender): Continue the authorized step.")
         }
     }
@@ -156,10 +156,9 @@ import UniformTypeIdentifiers
         await model.refresh(using: service, transcript: true)
         XCTAssertEqual(model.latestLine, "After")
         XCTAssertEqual(model.projectionBuildCount, count + 1)
-        model.outgoing = [.init(id: "pending", text: "New", note: "Queued")]
-        XCTAssertEqual(model.latestLine, "You: New · Queued")
-        model.outgoing[0].note = "Sent"
+        model.outgoing = [.init(id: "pending", text: "New")]
         XCTAssertEqual(model.latestLine, "You: New")
+        XCTAssertEqual(model.projectionBuildCount, count + 2)
         model.expandedBodies["reply"] = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"agent_message","content":[{"piece":"text","text":"Expanded"}]}"#.utf8))
         XCTAssertEqual(model.rows.first?.text, "Expanded")
     }
@@ -258,7 +257,7 @@ import UniformTypeIdentifiers
         let continued = await model.applyTail(try changes(from: 5), using: service)
         XCTAssertTrue(continued)
     }
-    func testSendKeepsUncertainMessageAndDoesNotRetry() async {
+    func testUncertainSendShowsNoStatusAndDoesNotRetry() async {
         let model = ConversationModel()
         let service = ConversationStub(fate: "uncertain")
         model.draft = " \n "
@@ -268,7 +267,8 @@ import UniformTypeIdentifiers
         let result = await model.send(to: .chief, using: service)
         XCTAssertFalse(result)
         XCTAssertEqual(model.outgoing.first?.text, "Keep my words")
-        XCTAssertEqual(model.outgoing.first?.note, "Delivery uncertain · do not resend")
+        XCTAssertNil(model.outgoing.first?.note)
+        XCTAssertFalse(model.outgoing.first?.retryable ?? true)
         XCTAssertEqual(model.draft, "")
         let calls = await service.calls
         XCTAssertEqual(calls, 1)
@@ -487,12 +487,12 @@ import UniformTypeIdentifiers
         model.deliveryMode = "queue"
         _ = await model.send(to: .chief, using: service)
         let rowID = try XCTUnwrap(model.rows.first?.id)
-        XCTAssertEqual(model.rows.first?.note, "Queued")
-        XCTAssertEqual(model.latestLine, "You: Hello · Queued")
+        XCTAssertNil(model.rows.first?.note)
+        XCTAssertEqual(model.latestLine, "You: Hello")
         await model.refresh(using: service, transcript: true)
         XCTAssertEqual(model.rows.count, 1)
         XCTAssertEqual(model.rows.first?.id, rowID)
-        XCTAssertEqual(model.rows.first?.note, "Sent")
+        XCTAssertNil(model.rows.first?.note)
         XCTAssertEqual(model.latestLine, "You: Hello")
     }
 
@@ -530,6 +530,16 @@ import UniformTypeIdentifiers
         }
     }
 
+    func testConnectionErrorShowsOnlyWhileTheConversationHasNothingLoaded() throws {
+        let model = ConversationModel()
+        model.reportReadFailure(URLError(.secureConnectionFailed))
+        XCTAssertNotNil(model.error, "A TLS failure shows when nothing is loaded")
+        model.error = nil
+        model.items = [try APIClient.decoder().decode(ConversationItem.self, from: Data(#"{"kind":"row","key":"row-1","body":{"kind":"inline","value":{"kind":"prompt","content":[{"piece":"text","text":"Hello"}]}}}"#.utf8))]
+        model.reportReadFailure(URLError(.secureConnectionFailed))
+        XCTAssertNil(model.error, "With content on screen a failed refresh stays silent")
+    }
+
     func testHeldPromptRecoveredWithoutDuplicatingLocalQueue() async throws {
         let model = ConversationModel()
         let json = #"{"backend_key":"codex","model":"sol","reasoning_effort":"medium","held_prompts":[{"held_prompt_id":"held-1","sender_message_id":"message-1","content":[{"piece":"text","text":"Waiting"}]}]}"#
@@ -538,13 +548,14 @@ import UniformTypeIdentifiers
         model.applyConfiguration(configuration)
         XCTAssertEqual(model.rows.count, 1)
         XCTAssertEqual(model.rows.first?.id, "message-1")
-        XCTAssertEqual(model.latestLine, "You: Waiting · Queued")
+        XCTAssertEqual(model.latestLine, "You: Waiting")
         model.selectedModel = "user-selection"
         model.applyConfiguration(configuration)
         XCTAssertEqual(model.selectedModel, "user-selection")
         let held = json.replacingOccurrences(of: #""held_prompt_id""#, with: #""queue_reason":"attachment","held_prompt_id""#)
         model.applyConfiguration(try APIClient.decoder().decode(ConversationConfiguration.self, from: Data(held.utf8)))
-        XCTAssertEqual(model.latestLine, "You: Waiting · Queued · attachments wait for the turn to end")
+        XCTAssertEqual(model.heldPrompts.first?.note, "Queued · attachments wait for the turn to end")
+        XCTAssertNil(model.rows.first?.note, "A held message is not refused: its row carries no mark")
         // Risk: a backend that cannot join a running turn still offers Steer, or an older
         // server's view, which has no supports_steer, loses it.
         XCTAssertTrue(configuration.supportsSteer, "A view without supports_steer keeps Steer")

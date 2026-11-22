@@ -14,10 +14,6 @@ struct ReviewChiefMessage: View {
                 Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
             }
             HStack {
-                if message.canCheckDelivery {
-                    Button("Check delivery") { Task { await message.checkDelivery() } }
-                        .disabled(message.busy).accessibilityIdentifier("review.chief.checkDelivery")
-                }
                 Spacer()
                 ScreenTextEntryNavigationLink("Open Chief", value: AppRoute.chief)
             }

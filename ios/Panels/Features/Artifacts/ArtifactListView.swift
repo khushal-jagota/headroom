@@ -79,7 +79,7 @@ struct ArtifactListView: View {
             } else { entries = page.entries }
             nextOffset = page.offset + page.entries.count
             total = page.total; revision = page.revision; hasLoaded = true; error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
     }
 }
 
@@ -137,6 +137,6 @@ private struct ArtifactFolderSection: View {
             try Task.checkCancellation()
             entries = append ? entries + page.entries.filter { item in !entries.contains { $0.id == item.id } } : page.entries
             total = page.total; revision = page.revision; error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
     }
 }

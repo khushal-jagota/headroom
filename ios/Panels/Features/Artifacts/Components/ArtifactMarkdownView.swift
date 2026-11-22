@@ -85,7 +85,7 @@ private struct ArtifactInlineMediaPreview: View {
                 LoadErrorView(message: error) { await load() }
             } else { RingSpinner() }
         }
-        .task(id: store.baseURL.absoluteString + "|" + target.id) { await load() }
+        .task(id: "\(store.baseURL)|\(target.id)|\(image == nil && document == nil ? store.connectionSession : 0)") { await load() }
     }
 
     private func follow() {
@@ -100,6 +100,6 @@ private struct ArtifactInlineMediaPreview: View {
                 throw APIError(status: 0, message: "This image could not be opened.")
             }
             image = loadedImage; document = result; error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
     }
 }

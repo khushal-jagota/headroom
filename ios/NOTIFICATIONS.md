@@ -63,13 +63,11 @@ The app saves the reply through the ordinary durable outbox before it sends or
 completes the action. The notification identity, original message, recipient,
 server, and reply text determine one outgoing identity. A repeated callback reuses
 that identity. Replies preserve the original conversation and never create or select
-a replacement conversation. The same transport, receipts, compatibility gate,
-and offline or uncertain-delivery rules apply to replies from a notification.
-The delegate allows at most 15 seconds for its delivery attempt. Remaining work
-resumes through the existing foreground drainer. It does not promise another
-background retry. Known limit: if the 15-second window cancels a POST before dispatch,
-the reply becomes uncertain. The user must retry it by hand. Finished work expires after 24 hours, uncertain work after seven
-days, and pending or failed work has no age limit.
+a replacement conversation. The same outbox, transport and compatibility gate apply
+to replies from a notification. The delegate allows at most 15 seconds for its
+delivery attempt. An unfinished reply is sent again with the same identity the next
+time the app is in the foreground; there is no other background retry. Finished
+work expires after a day; a refused reply stays until the user acts on it.
 
 Settings → Notifications exposes switches for the same event preferences as the
 web. A successful save uses the server response. A failed save retains the last
@@ -319,8 +317,8 @@ untrusted notification metadata to a fixed recipient and conversation. A failed
 local commit leaves no dispatchable reply and preserves an unrelated composer.
 These tests reuse XCTest, SwiftData scratch stores, and the existing URLProtocol.
 The existing lost-response test now starts through the notification outbox entry
-point. It covers offline persistence, repeated callbacks after relaunch, and receipt
-reconciliation without a second send. This replaces the generic initiation of the
+point. It covers offline persistence, repeated callbacks after relaunch, and a lost
+response resent with the same identity. This replaces the generic initiation of the
 same recovery case rather than adding a duplicate transport matrix.
 
 `PanelsReviewUITests` holds the opt-in notification review. Its distinct boundary
@@ -329,7 +327,8 @@ outbox, including background and terminated app launches. Pure parser and outbox
 tests cannot prove that the system exposes the Reply action or launches its callback.
 The same one-off loopback host also checks the visible approval text and preference
 switches. Its operation ledger records local preference writes and replies. It can
-lose a reply response and expose a receipt to check recovery without another send.
+lose a reply response; after relaunch the phone sends it again with the same identity,
+and the ledger shows one accepted reply.
 No real backend messages or APNs registrations are enabled.
 
 The DEBUG `--conversation-stub` launch option selects and saves the loopback server
