@@ -9,12 +9,13 @@
     toggleUserInputChoice,
     userInputOptionForKey,
     userInputAnswerFor,
+    withOwnAnswer,
     type UserInputDraft
   } from "../../lib/conversation/userInput";
   // One name for ending the turn on every ask: the permission ask's own words.
   import { CANCEL_TURN_ACTION } from "../../lib/conversation/composer";
   import type { Snippet } from "svelte";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import AskShell from "./AskShell.svelte";
 
   let {
@@ -24,6 +25,10 @@
     note = null,
     framed = true,
     replyStrip,
+    ownAnswer = null,
+    acceptsOwnAnswer = $bindable(false),
+    onOwnAnswerUsed,
+    onWriteOwnAnswer,
     onSubmit,
     onCancelTurn
   }: {
@@ -35,6 +40,15 @@
     framed?: boolean;
     /** The composer's one-line reply, under the answers. */
     replyStrip?: Snippet;
+    /** The words in the composer, when the composer is where an own answer is written (it is
+     *  docked right under the question). Null: the panel draws its own field for them. */
+    ownAnswer?: string | null;
+    /** Whether the question on screen takes an own answer, for the composer to say so. */
+    acceptsOwnAnswer?: boolean;
+    /** The composer's words were taken as an answer, so the composer can let them go. */
+    onOwnAnswerUsed?: () => void;
+    /** The person chose "Something else": the composer takes the cursor. */
+    onWriteOwnAnswer?: () => void;
     onSubmit?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
   } = $props();
@@ -58,6 +72,29 @@
   let canContinue = $derived(currentAnswers.length > 0);
   let isLast = $derived(step === request.questions.length - 1);
   let optionsElement = $state<HTMLDivElement | null>(null);
+  let composerAnswers = $derived(ownAnswer !== null);
+  let ownWords = $derived(question === undefined ? "" : (draft.other[question.question_id] ?? "").trim());
+
+  $effect(() => { acceptsOwnAnswer = question?.allow_other === true; });
+
+  // The composer's words are this question's own answer while it is the place to type.
+  $effect(() => {
+    const words = ownAnswer;
+    if (words === null) return;
+    untrack(() => {
+      if (question === undefined || !question.allow_other || busy || !answerAvailable) return;
+      draft = withOwnAnswer(draft, question, words);
+    });
+  });
+
+  /** Answers the question on screen with the composer's words and goes on, as Next would.
+   *  False when this question takes no own answer, so the words stay where they are. */
+  export function answerWith(words: string): boolean {
+    if (question === undefined || !question.allow_other || busy || !answerAvailable || words.trim() === "") return false;
+    draft = withOwnAnswer(draft, question, words);
+    continueOrSubmit();
+    return true;
+  }
 
   // The decision is where the person's attention goes: the first answer takes focus when the
   // ask appears, unless they are already somewhere else on the page.
@@ -105,6 +142,7 @@
 
   function continueOrSubmit(): void {
     if (!canContinue || question === undefined || busy || !answerAvailable) return;
+    if (composerAnswers && ownWords !== "") onOwnAnswerUsed?.();
     if (!isLast) {
       step += 1;
       return;
@@ -196,7 +234,28 @@
       {/each}
     </div>
 
-    {#if question.allow_other}
+    {#if question.allow_other && composerAnswers}
+      <!-- The own answer is written in the composer right below, the one place to type; this
+           row says so, and shows the words as the chosen answer once there are some. -->
+      <div class="options own" role="group" aria-label="Your own answer">
+        <button
+          type="button"
+          class:selected={ownWords !== ""}
+          data-user-input-own
+          aria-pressed={ownWords !== ""}
+          disabled={busy || !answerAvailable}
+          onclick={() => onWriteOwnAnswer?.()}
+        >
+          <span class="key" aria-hidden="true">
+            {#if ownWords !== ""}<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></svg>{:else}<svg viewBox="0 0 16 16"><path d="M10.5 3.2a1.5 1.5 0 0 1 2.1 2.1L6 11.9l-2.8.7.7-2.8z" /></svg>{/if}
+          </span>
+          <span class="words">
+            <span class="label">{ownWords !== "" ? ownWords : "Something else"}</span>
+            <small>{ownWords !== "" ? "Your own answer" : "Type your own answer in the message box"}</small>
+          </span>
+        </button>
+      </div>
+    {:else if question.allow_other}
       <label class="other">
         <span class="visually-hidden">Other answer</span>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3.2a1.5 1.5 0 0 1 2.1 2.1L6 11.9l-2.8.7.7-2.8z" /></svg>
@@ -232,6 +291,10 @@
   .sep { color: var(--cv-t4); }
   .count { flex: none; }
   .options { display: grid; gap: var(--cv-s1); }
+  .options.own { margin-block-start: var(--cv-s1); }
+  .own .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .own .words { min-width: 0; }
+  .own .key svg { stroke-width: 1.5; }
   /* An option is a two-line row (label, then its description) with its number key on the
      left. Hover is one step up; the chosen one takes the control fill and a check in place
      of its key: tone and a mark, not a coloured edge. */

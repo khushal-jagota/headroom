@@ -58,7 +58,7 @@
   }
   async function resend(): Promise<void> { if (!local || busy) return; busy = true; try { await onSendAgain?.(local.messageId); } finally { busy = false; } }
 </script>
-<article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
+<article class={label === null ? 'chat-u' : 'chat-system'} class:attaches-files={attachesFiles} class:undelivered={row?.kind === 'prompt_refused' || row?.kind === 'prompt_discarded'} data-conversation-accepted={row?.kind === "prompt" || local?.accepted ? "true" : undefined} data-conversation-row={row?.kind} data-conversation-outgoing={local?.messageId}>
   {#if label !== null}
     <!-- Someone other than the person wrote this (Panels, another agent). It is a quiet
          system row: an arrow, who sent it, then their words, all in the meta voice. No box:
@@ -81,7 +81,7 @@
       <TranscriptStatusRow {status} align={label === null ? 'end' : 'start'} role={status.tone === 'error' ? 'alert' : 'status'}
         data-conversation-message-status={status.tone} data-conversation-outgoing-label={local && !row ? '' : undefined}>
         {#snippet actions()}
-          {#if offersResend && !resent}<button type="button" class="cv-button cv-button--secondary cv-button--small" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
+          {#if offersResend && !resent}<button type="button" class="cv-button cv-button--primary cv-button--small" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
           {#if heldActions.includes('send_again')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
           {#if heldActions.includes('stop_drawing')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
         {/snippet}
@@ -151,6 +151,15 @@
     line-height: var(--cv-leading-meta);
   }
   .c2-system-body :global(.markdown strong) { color: var(--cv-t2); }
+
+  /* A message that never reached the agent is not drawn as one that did: the bubble gives up
+     its raised fill for an open outline and its words step down a tone, so it reads as still
+     in the person's hands. Its status note under it says why, and offers Resend. */
+  .chat-u.undelivered :global(.c2-bubble) {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--cv-line-strong);
+    color: var(--cv-t2);
+  }
 
   .message-status-window { align-self: stretch; margin-block-start: calc(var(--cv-gap-bubble-stack) * -1); }
   .message-status { display: flex; flex-direction: column; }

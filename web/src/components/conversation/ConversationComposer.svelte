@@ -349,6 +349,20 @@
   /** The asks that bring their own actions, so the box draws none of its own under them. */
   // Every ask draws its own answers in its shell's footer, so the box's own foot gives way to it.
   let panelTakesTheBox = $derived(userInput !== null || ask !== null || credentialInTheBox);
+  /** The question on screen, when it takes an own answer: the composer is then the one place
+   *  to write it, right under the question, and its send answers. */
+  let questionPanel = $state<{ answerWith: (words: string) => boolean } | null>(null);
+  let questionTakesOwnAnswer = $state(false);
+  /** What a waiting ask makes of the draft (runControls contracts). Words alone answer a
+   *  question that takes an own answer; anything else waits for the blocked turn, or ends it. */
+  let askWaiting = $derived<"answers" | "holds" | null>(
+    !panelTakesTheBox
+      ? null
+      : userInput !== null && questionTakesOwnAnswer && attachments.length === 0
+        ? "answers"
+        : "holds"
+  );
+  let shownPlaceholder = $derived(askWaiting === "answers" ? "Type your own answer…" : placeholder);
   // The composer stays usable under a waiting ask (owner): the ask is answered in its own
   // shell, and a message still goes as the delivery chip says.
   let inputDisabled = $derived(disabled || attachmentIntakesInFlight > 0);
@@ -401,7 +415,8 @@
     hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0,
     sendsInFlight,
     deliveryMode,
-    supportsSteer
+    supportsSteer,
+    askWaiting
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
   $effect(() => {
@@ -546,6 +561,15 @@
 
   async function send(): Promise<void> {
     await intakeTail;
+    // Words written under a question that takes an own answer are that answer: they go to
+    // the question, not into the turn, and leave the box once taken.
+    if (askWaiting === "answers" && questionPanel !== null && text.trim() !== "") {
+      if (questionPanel.answerWith(text.trim())) {
+        text = "";
+        cursorAt = 0;
+        return;
+      }
+    }
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0) || inputDisabled) return;
     const capturedRetryContext = restoredSendContext;
@@ -1193,7 +1217,7 @@
     <HeldPromptStack
       rows={heldPromptRows}
       {conversationId}
-      {supportsSteer}
+      supportsSteer={supportsSteer && askWaiting === null}
       {running}
       onDiscard={onDiscardHeldPrompt}
       onPromote={onPromoteHeldPrompt}
@@ -1208,6 +1232,11 @@
     <div class="chat-ask" data-conversation-ask-dock data-conversation-taken-over="true">
         {#if userInput}
           <UserInputQuestionPanel
+            bind:this={questionPanel}
+            bind:acceptsOwnAnswer={questionTakesOwnAnswer}
+            ownAnswer={attachments.length === 0 ? text : ""}
+            onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
+            onWriteOwnAnswer={() => inputElement?.focus()}
             request={userInput}
             busy={disabled}
             answerAvailable={userInputAvailable}
@@ -1242,7 +1271,6 @@
       class="chat-box"
       bind:this={boxElement}
       class:drag={draggingAttachments}
-      class:is-compact={panelTakesTheBox && attachments.length === 0 && voiceState.phase === "idle" && text.length === 0}
       class:has-attachments={attachments.length > 0}
       class:keyboard-focus={keyboardFocus}
       class:is-voice={voiceState.phase !== "idle"}
@@ -1350,7 +1378,7 @@
         class="chat-ta"
         data-conversation-input
         rows="1"
-        {placeholder}
+        placeholder={shownPlaceholder}
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
@@ -1930,5 +1958,7 @@
   }
   .chat-att-x:hover:not(:disabled) svg { background: var(--cv-control-hover); }
   .chat-att-x:disabled { color: var(--cv-t4); cursor: default; }
-  .chat-att.file { padding-inline-end: var(--cv-s5); }
+  /* The same corner on every tile: the file tile keeps that corner clear of its words, so the
+     round never crowds the name. */
+  .chat-att.file { padding-inline-end: 36px; }
 </style>

@@ -1,14 +1,18 @@
 <script lang="ts">
   /** One conversation plan, presented either in the rest line or in its own strip. */
   import type { ConversationTaskProgress } from "../../lib/conversation/taskProgress";
+  import { codeSpans } from "../../lib/conversation/codeSpans";
 
   let {
     progress,
     variant,
     running = progress.turnRunning,
     moving = running,
+    placement = "above",
     composerGap: _composerGap = false
   }: {
+    /** Where the plan opens: over the pill in the composer stack, or under it in the thread. */
+    placement?: "above" | "below";
     progress: ConversationTaskProgress;
     variant: "rest" | "strip";
     running?: boolean;
@@ -49,10 +53,12 @@
   const SEGMENT_LIMIT = 12;
 </script>
 
+{#snippet words(text: string)}{#each codeSpans(text) as span, index (index)}{#if span.code}<code class="cv-code">{span.text}</code>{:else}{span.text}{/if}{/each}{/snippet}
+
 {#snippet checklist()}
   <span class="task-pop" role="list" aria-label="Tasks" data-conversation-task-list>
     {#if variant === "strip"}
-      <span class="task-pop-head" aria-hidden="true">Tasks · {progress.completedCount} of {total} done</span>
+      <span class="task-pop-head" aria-hidden="true">Steps · {progress.completedCount} of {total} done</span>
     {/if}
     {#each progress.entries as entry, index (index)}
       <span
@@ -69,7 +75,7 @@
             <span class="task-ring"></span>
           {/if}
         </span>
-        <span class="task-plan-text">{entry.text}</span>
+        <span class="task-plan-text">{@render words(entry.text)}</span>
         <span class="cv-visually-hidden">{entry.status === "completed" ? ", done" : entry.status === "in_progress" ? ", in progress" : ""}</span>
       </span>
     {/each}
@@ -94,7 +100,7 @@
     </button>
   {/if}
 {:else if visible}
-  <div class="task-strip" role="group" data-conversation-task-strip onpointerleave={releaseIfOutside}>
+  <div class="task-strip" class:opens-below={placement === "below"} role="group" data-conversation-task-strip onpointerleave={releaseIfOutside}>
     <button
       type="button"
       class="task-pill"
@@ -104,7 +110,7 @@
       onpointerleave={releaseIfOutside}
       onblur={releaseIfOutside}
       data-conversation-task-progress
-      aria-label={`Task ${position} of ${total}${currentText ? `: ${currentText}` : ""}, ${progress.completedCount} complete`}
+      aria-label={`Step ${position} of ${total}${currentText ? `: ${currentText}` : ""}, ${progress.completedCount} complete`}
     >
       <!-- Where the plan stands, drawn: one small square per step, the done ones quiet, the one
            in hand bright, the rest barely there. A long plan keeps its count in words only. -->
@@ -115,8 +121,8 @@
           {/each}
         </span>
       {/if}
-      <span class="task-count">Task {position} of {total}</span>
-      {#if currentText}<span class="task-now" data-conversation-task-current>{currentText}</span>{/if}
+      <span class="task-count">Step {position} of {total}</span>
+      {#if currentText}<span class="task-now" data-conversation-task-current>{@render words(currentText)}</span>{/if}
     </button>
     {@render checklist()}
   </div>
@@ -162,10 +168,17 @@
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: var(--cv-focus-offset);
   }
-  .task-segments { flex: none; display: inline-flex; gap: 2px; }
-  .task-segment { width: 6px; height: 6px; border-radius: 2px; background: rgb(255 255 255 / 14%); }
+  /* Done steps are small filled squares; the step in hand is a longer bar that breathes, so
+     the mark counts the same as the words: two done, one in hand, the rest to come. */
+  .task-segments { flex: none; display: inline-flex; align-items: center; gap: 3px; }
+  .task-segment { width: 6px; height: 6px; border-radius: 2px; background: rgb(255 255 255 / 16%); }
   .task-segment.done { background: var(--cv-t3); }
-  .task-segment.now { background: var(--cv-t1); }
+  .task-segment.now {
+    width: 14px;
+    background: var(--cv-t1);
+    animation: task-segment-breathe 2s ease-in-out infinite;
+  }
+  @keyframes task-segment-breathe { 50% { opacity: 0.55; } }
   .task-count { flex: none; color: var(--cv-t3); }
   .task-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-t2); }
   .task-pill:hover .task-now,
@@ -206,6 +219,8 @@
   }
   /* The pointer travels from the pill to the list across the 8px between them. */
   .task-pop::after { content: ""; position: absolute; inset: 100% 0 auto; height: var(--cv-s2); }
+  .opens-below .task-pop { bottom: auto; top: calc(100% + var(--cv-s2)); }
+  .opens-below .task-pop::after { inset: auto 0 100%; }
   .task-pill:hover ~ .task-pop,
   .task-pill:focus ~ .task-pop,
   .task-pill:focus-visible ~ .task-pop,
@@ -260,6 +275,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .task-spin { animation: none; }
+    .task-segment.now { animation: none; }
     .task-pill:hover ~ .task-pop, .task-pill:focus ~ .task-pop, .task-pop:hover { animation: none; }
   }
 </style>

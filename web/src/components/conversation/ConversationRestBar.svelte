@@ -4,7 +4,10 @@
    * derived state the opened pane's header reads), the way to open it, and the latest unread
    * message under them. Its words never name a tool or a command, in either lens. */
   let { preview = null, roleLabel = "Worker", state, connectionTrouble = false,
-    waitingTitle = null, offline = false, feedback = null, onOpen }: {
+    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, onOpen }: {
+    /** The page above draws the waiting ask itself (a proposal to approve): the dock does not
+     *  say it a second time, and keeps only the way into the conversation. */
+    pageHoldsTheAsk?: boolean;
     preview?: string | null;
     roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
     /** The conversation's one state (conversationState in dockPresentation). */
@@ -30,6 +33,7 @@
   );
   /** The setup the machine cannot confirm keeps saying setup; one chip says why it is still. */
   let offlineChip = $derived(offline && state.state === "setting-up");
+  let saysState = $derived(!(pageHoldsTheAsk && state.state === "waiting"));
   let label = $derived(
     state.state === "idle" ? `${ROLE_NAMES[roleLabel]} idle`
     : state.state === "unknown" ? (feedback ?? state.text)
@@ -49,14 +53,16 @@
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
-      {#if state.mark === "spinner"}<span class="cv-spinner" role="img" aria-label={state.state === "setting-up" ? (offline ? "setting up, not confirmed" : "setting up") : "working"} data-unconfirmed={offlineChip || undefined}></span>
-      {:else if state.mark === "dot"}<span class="cv-dot" aria-hidden="true"></span>
+      {#if saysState && state.mark === "spinner"}<span class="cv-spinner" role="img" aria-label={state.state === "setting-up" ? (offline ? "setting up, not confirmed" : "setting up") : "working"} data-unconfirmed={offlineChip || undefined}></span>
+      {:else if saysState && state.mark === "dot"}<span class="cv-dot" aria-hidden="true"></span>
       {:else if state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
       {:else if state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
       {:else if state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
+      {#if saysState}
       <span class="c2-rest-line" data-conversation-rest-line>
         <span class="c2-rest-label">{label}</span>{#if detail}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
       </span>
+      {/if}
       {#if offlineChip}<span class="c2-rest-chip" title={feedback ?? undefined} data-conversation-offline-chip>Machine offline</span>{/if}
       {#if connectionTrouble}<svg class="cv-glyph cv-glyph--danger" viewBox="0 0 16 16" role="img" aria-label="Connection trouble"><path d="M2.5 6.2a8 8 0 0 1 11 0" /><path d="M4.6 8.6a5 5 0 0 1 6.8 0" /><path d="M8 11.6v.1" /><path d="m3 3 10 10" /></svg>{/if}
     </span>

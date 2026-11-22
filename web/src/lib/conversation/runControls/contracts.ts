@@ -36,6 +36,12 @@ export type ComposerRunControlsInput = Readonly<{
   /** Whether the running turn can take a message into itself. Absent is the older
    *  caller that never asked, and keeps Steer on offer. */
   supportsSteer?: boolean;
+  /** What a waiting ask makes of the draft. "answers": the draft is the person's own answer
+   *  to the question on screen, so it goes to the question and not into the turn. "holds":
+   *  the turn is blocked on the person (a permission, a key, a question with fixed answers),
+   *  so nothing can be read into it until they decide; a message waits for the turn to end,
+   *  or ends the turn now. Absent or null, no ask is waiting. */
+  askWaiting?: "answers" | "holds" | null;
 }>;
 
 export type ComposerRunSelectionIntent =

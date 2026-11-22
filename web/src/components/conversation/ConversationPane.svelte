@@ -28,6 +28,7 @@
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
   import { restLineFrom, restLineMarksFrom, whatThisRowSays } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
+  import { LIVE_PLAN, type LivePlan } from "../../lib/conversation/livePlan";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
   import type {
@@ -227,6 +228,13 @@
   } = $props();
 
   setContext(CREDENTIAL_REQUEST_READ_ONLY, () => readOnly);
+  // In Focus the running turn's live line carries the plan step, so the opened pane says
+  // what is moving in the one place the eye already is; the status slot keeps it only in Full
+  // and at rest, where there is no live line to carry it.
+  let planInTheLiveLine = $derived(lens === "focus" && conversationState !== "rest");
+  setContext<() => LivePlan>(LIVE_PLAN, () => planInTheLiveLine
+    ? { progress: taskProgress, moving: !activityUncertain && running && ask === null && userInput === null }
+    : null);
   const credentialDrafts = $derived.by(() => { conversationId; return new Map() as CredentialRequestDrafts; });
   setContext(CREDENTIAL_REQUEST_DRAFTS, () => credentialDrafts);
   /** The key request asked in the composer's place: the newest pending one, never in a
@@ -646,6 +654,7 @@
       state={restState}
       {connectionTrouble}
       waitingTitle={restLine?.waiting ? restWaitingTitle : null}
+      pageHoldsTheAsk={waitingOnPage !== null && ask === null && userInput === null && !credentialWaiting}
       offline={activityUncertain}
       feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
@@ -655,6 +664,7 @@
        composer, so neither ever covers a line of what was said; empty, it takes no room. -->
   <div class="cv-status-slot" data-conversation-status-slot>
     <div class="cv-status-start">
+      {#if !planInTheLiveLine}
       <TaskProgress
         progress={taskProgress}
         variant="strip"
@@ -662,6 +672,7 @@
         moving={!activityUncertain && running && ask === null && userInput === null}
         composerGap={false}
       />
+      {/if}
     </div>
     {#if jump && conversationState !== "rest"}
       <button

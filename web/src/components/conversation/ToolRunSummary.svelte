@@ -45,13 +45,11 @@
   aria-controls={controls}
   onclick={onToggle}
 >
-  {#if live}
-    <span class="c2-run-spin" role="img" aria-label="Running"></span>
-  {:else}
-    <svg class="c2-run-icon" viewBox="0 0 24 24" aria-hidden="true">
-      {#each summary.iconPaths as path (path)}<path d={path} />{/each}
-    </svg>
-  {/if}
+  <!-- One live mark per turn: the turn's head already turns its spinner, so a running call
+       keeps its own glyph and says it is live by breathing, not with a second spinner. -->
+  <svg class="c2-run-icon" class:is-live={live} viewBox="0 0 24 24" role={live ? "img" : undefined} aria-label={live ? "Running" : undefined} aria-hidden={live ? undefined : "true"}>
+    {#each summary.iconPaths as path (path)}<path d={path} />{/each}
+  </svg>
   <span class="c2-run-line" title={live ? summary.running?.sentence : summary.sentence}>
     {#if live && summary.running}
       <span class="c2-run-verb">{summary.running.title}</span>{#if summary.running.summary}<span class="c2-run-subject" class:c2-run-subject--literal={summary.running.summaryIsLiteral}>{summary.running.summary}</span>{/if}
@@ -59,7 +57,7 @@
       <span class="c2-run-verb">{summary.sentence}</span>
     {/if}
   </span>
-  <span class="c2-run-status" class:c2-run-status--failed={summary.failedCount > 0} data-conversation-work-status>{label}</span>
+  <span class="c2-run-status" class:c2-run-status--failed={summary.failedCount > 0} data-conversation-work-status>{#if label}<span class="c2-run-dot" aria-hidden="true">·</span>{label}{/if}</span>
   <svg class="c2-run-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
 </button>
 
@@ -70,7 +68,7 @@
     display: grid;
     grid-template-columns: 14px minmax(0, auto) auto 14px;
     align-items: center;
-    column-gap: 10px;
+    column-gap: var(--cv-s2);
     justify-self: start;
     width: fit-content;
     max-width: calc(100% + var(--cv-s2) * 2);
@@ -103,16 +101,8 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .c2-run-spin {
-    width: 12px;
-    height: 12px;
-    margin-inline-start: 1px;
-    border-radius: var(--cv-r-pill);
-    border: 2px solid rgb(255 255 255 / 22%);
-    border-top-color: var(--cv-t1);
-    animation: c2-run-spin var(--cv-spin) linear infinite;
-  }
-  @keyframes c2-run-spin { to { transform: rotate(360deg); } }
+  .c2-run-icon.is-live { stroke: var(--cv-t2); animation: c2-run-breathe 1.6s ease-in-out infinite; }
+  @keyframes c2-run-breathe { 50% { opacity: 0.4; } }
   /* One line, always: the subject gives way with an ellipsis inside the column. */
   .c2-run-line {
     display: flex;
@@ -127,7 +117,8 @@
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--cv-t2);
+    /* The work's own sentence stands a tone under the agent's words: quiet, not bright. */
+    color: var(--cv-t3);
     font-weight: var(--cv-weight-label);
   }
   .c2-run-subject {
@@ -135,11 +126,14 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--cv-t3);
+    color: var(--cv-t4);
   }
-  .c2-run-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-code); }
+  /* Code in the line is set at the line's own size, so it reads as one line, not a smaller one. */
+  .c2-run-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-meta); }
   .c2-run-status {
-    min-width: 0;
+    display: inline-flex;
+    gap: 6px;
+    min-width: max-content;
     color: var(--cv-t4);
     font-size: var(--cv-type-caption);
     font-variant-numeric: tabular-nums;
@@ -158,10 +152,11 @@
     transition: transform var(--cv-dur-expand) var(--cv-ease-out), stroke var(--cv-dur-fast) var(--cv-ease-out);
   }
   .c2-run-summary:hover .c2-run-verb, .c2-run-summary:focus-visible .c2-run-verb { color: var(--cv-t1); }
+  .c2-run-summary:hover .c2-run-subject, .c2-run-summary:focus-visible .c2-run-subject { color: var(--cv-t3); }
   .c2-run-summary:hover .c2-run-chevron, .c2-run-summary:focus-visible .c2-run-chevron { stroke: var(--cv-t2); }
   .c2-run-summary.is-open .c2-run-chevron { transform: rotate(90deg); }
   @media (prefers-reduced-motion: reduce) {
-    .c2-run-spin { animation: none; }
+    .c2-run-icon.is-live { animation: none; }
     .c2-run-summary, .c2-run-chevron { transition: none; }
   }
 </style>

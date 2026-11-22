@@ -46,6 +46,9 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
     if (!ref.current) return;
     const tokens = getComputedStyle(ref.current), color = (token: string) => tokens.getPropertyValue(token).trim();
     const resolve = (css: string) => css.replace(/var\((--[a-z-]+)\)/g, (_, name: string) => color(name));
+    // A chat snapshot (the one bar chart with its own key) reads its axes a step larger and
+    // brighter: it stands alone in a conversation, with no page around it to carry the scale.
+    const axis = { color: (showLegend && color('--chart-axis')) || color('--chart-muted'), font: { size: showLegend ? 12 : 11 } };
     const datasets: ChartDataset<'bar' | 'line', (number | null)[]>[] = entries.map(entry => entry.key === 'target' ? {
       type: 'line', label: entry.label, data: data.map(d => d.values.target ?? null),
       borderColor: color('--chart-reference'), borderDash: [4, 5], borderWidth: 1.5, pointRadius: 0,
@@ -74,8 +77,8 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
             callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y === null ? 'No reading' : formatReading(block, ctx.parsed.y)}` } },
         },
         scales: {
-          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxRotation: 0, maxTicksLimit: dateAxis ? 4 : undefined } },
-          y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { color: color('--chart-muted'), font: { size: 11 }, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
+          x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { ...axis, maxRotation: 0, maxTicksLimit: dateAxis ? 4 : undefined } },
+          y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { ...axis, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
         },
         onHover: (event, elements) => {
           const i = elements[0]?.index ?? null;
@@ -89,7 +92,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
       chart.current.options = configuration.options;
       chart.current.update();
     } else chart.current = new Chart<'bar' | 'line'>(ref.current, configuration);
-  }, [data, block, series, reduce, projection, range, dateAxis]);
+  }, [data, block, series, reduce, projection, range, dateAxis, showLegend]);
 
   useEffect(() => () => { chart.current?.destroy(); chart.current = null; }, []);
 

@@ -106,7 +106,7 @@
         <div class="c2-status-actions">
           {#if actions}{@render actions()}{/if}
           {#if status.action === "choose-model"}
-            <button type="button" class="cv-button cv-button--secondary cv-button--small" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
+            <button type="button" class="cv-button cv-button--primary cv-button--small" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
           {/if}
           {@render detailsToggle()}
         </div>

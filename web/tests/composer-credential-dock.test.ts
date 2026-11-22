@@ -28,10 +28,13 @@ describe("a key request is asked in the composer's place", () => {
     expect(body).toMatch(/data-conversation-ask-dock[^>]*data-conversation-taken-over="true"/);
     // The ask stands above the box, never inside it.
     expect(body.indexOf("data-conversation-ask-dock")).toBeLessThan(body.indexOf("data-conversation-box"));
-    // The person can still write: the field is there, enabled, and the box is one line.
+    // The person can still write: the field is there, enabled, and the box keeps its one
+    // shape, with the same add button and model choice it has in every other state.
     expect(body).not.toMatch(/<textarea[^>]*hidden/);
     expect(body).not.toMatch(/<textarea[^>]*disabled/);
-    expect(body).toMatch(/class="chat-box[^"]*is-compact/);
+    expect(body).not.toContain("is-compact");
+    expect(body).toContain("data-conversation-add");
+    expect(body).toContain("data-conversation-model-picker");
   });
 
   it("ends the running turn from the request, and offers no such end with no turn running", () => {

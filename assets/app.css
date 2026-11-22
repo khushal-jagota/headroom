@@ -1284,15 +1284,25 @@ a.pv-name:focus-visible { outline:0; }
 }
 /* Inline code: the code face at 0.87em on the control step, in the first tone. In a bubble
  * (the raised step) the control step still stands one level above it. */
-.chat-thread .markdown :not(pre) > code {
+/* One inline-code style everywhere in the conversation: Markdown's `code`, code tokens in plain
+ * status words (.cv-code: the task pill, plan steps), and the proposal's summary. The pad is
+ * small enough that a comma after it still reads as part of the sentence. */
+.chat-thread .markdown :not(pre) > code,
+.worker-proposal .proposal-prose :not(pre) > code,
+.cv-code {
   font-family: var(--cv-mono);
   font-size: var(--cv-type-inline-code);
+  font-weight: var(--cv-weight-body);
   line-height: 1;
-  padding: 1px 5px;
+  padding: 0.1em 0.3em;
   border-radius: var(--cv-r-sm);
   background: var(--cv-control);
   color: var(--cv-t1);
+  -webkit-box-decoration-break: clone;
+          box-decoration-break: clone;
 }
+/* On a control-filled surface (the task pill on hover) the code keeps one step of lift. */
+.cv-code { background: rgb(255 255 255 / 8%); }
 /* A link is the first tone with a soft underline; the accent stays "needs you". */
 .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) {
   color: var(--cv-t1);
@@ -2011,8 +2021,13 @@ button.list-row:hover .list-row-title {
 .cv-button--ghost:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
 .cv-button--danger { color: var(--cv-danger); }
 .cv-button:disabled { cursor: default; background: transparent; color: var(--cv-t4); }
-.cv-button--primary:disabled,
 .cv-button--secondary:disabled { box-shadow: inset 0 0 0 1px var(--cv-line-strong); }
+/* A primary that cannot go yet keeps the primary's shape and fill, at half strength, so the
+ * step it will take is recognisable before it is ready (dark ink on it stays 5:1). */
+.cv-button--primary:disabled {
+  background: color-mix(in srgb, var(--cv-primary-fill) 52%, var(--cv-raised));
+  color: var(--cv-primary-ink);
+}
 .cv-button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
 .chat-thread-shell {
@@ -2293,19 +2308,9 @@ button.list-row:hover .list-row-title {
   font-family: var(--cv-font);
   font-size: var(--cv-type-meta);
 }
-/* Under a waiting ask the composer is one line: the draft and its send on a single row, the
- * way to answer otherwise. It grows back to its two rows the moment something is written,
- * attached or recorded. The model choice and the add menu wait for that. */
+/* Under a waiting ask the composer keeps its one shape: the same frame and the same two rows
+ * of controls, so the box never changes form between states. */
 .chat-ask { display: flex; flex-direction: column; min-width: 0; margin-block-end: var(--cv-s2); }
-.chat-box.is-compact {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--cv-s1);
-  padding: var(--cv-s2) var(--cv-s2) var(--cv-s2) var(--cv-s3);
-}
-.chat-box.is-compact .chat-ta { flex: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
-.chat-box.is-compact .chat-foot { flex: none; width: auto; margin-top: 0; }
-.chat-box.is-compact .chat-foot > :is(.chat-add, [data-conversation-model-picker]) { display: none; }
 .chat-foot > [data-conversation-model-picker] { flex: 0 1 auto; min-width: 0; margin-inline-start: auto; }
 /* Icon buttons: 32px, 8px round, the glyph in the quiet tone, lifting on a control fill. */
 .chat-image {
@@ -2360,8 +2365,8 @@ button.list-row:hover .list-row-title {
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:disabled { opacity: 1; color: var(--cv-t4); }
 [data-conversation-composer] .chat-foot .listbox-picker-chevron,
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] .listbox-picker-chevron-drawn { display: none; }
-[data-conversation-composer] .chat-foot .model-picker-face { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
-[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--cv-t3); font-weight: var(--cv-weight-body); text-transform: capitalize; }
+[data-conversation-composer] .chat-foot .model-picker-face { color: var(--cv-t1); font-weight: var(--cv-weight-label); }
+[data-conversation-composer] .chat-foot .model-picker-effort { color: var(--cv-t2); font-weight: var(--cv-weight-body); text-transform: capitalize; }
 [data-conversation-composer] .chat-foot .listbox-picker-trigger:hover .model-picker-face { color: var(--cv-t1); }
 .chat-submit {
   flex: none;
@@ -2383,7 +2388,9 @@ button.list-row:hover .list-row-title {
   border: 0;
   border-radius: 50%;
   background: var(--cv-control);
-  color: var(--cv-t4);
+  /* Quiet but legible while there is nothing to send: the arrow stays readable (5.7:1); the
+   * inverse fill alone says it is ready. */
+  color: var(--cv-t3);
   cursor: pointer;
   line-height: 1;
   display: grid;
@@ -5361,8 +5368,10 @@ details:not([open]) > summary > .manager-workspace-chevron {
   content: "";
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
+  /* Across the content column only, the same edges as the page's text and the composer. */
+  left: 50%;
+  width: min(var(--page-measure), calc(100% - 2 * var(--space-5)));
+  transform: translateX(-50%);
   height: var(--border-hairline);
   background: var(--border-color);
   opacity: var(--conversation-dock-line, 1);

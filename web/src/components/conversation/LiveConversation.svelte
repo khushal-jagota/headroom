@@ -1131,7 +1131,7 @@
         <path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5Z" />
       </svg>
       <p class="conversation-empty-title">No messages yet</p>
-      <p class="conversation-empty-body">Replies, and anything that needs you, will appear here.</p>
+      <p class="conversation-empty-body">Write below to start. Replies, and anything that needs you, will appear here.</p>
     </div>
   {/if}
 {/snippet}

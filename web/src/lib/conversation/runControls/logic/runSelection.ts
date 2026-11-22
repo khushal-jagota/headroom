@@ -59,8 +59,11 @@ function shownBackend(
 /** What a running turn can do with a new message. Steer is only offered to a turn that
  *  can take one. */
 export function deliveryModesFor(
-  input: Pick<ComposerRunControlsInput, "supportsSteer">
+  input: Pick<ComposerRunControlsInput, "supportsSteer" | "askWaiting">
 ): readonly PromptDeliveryMode[] {
+  // A turn blocked on the person reads nothing until they decide: a steer would sit unread
+  // behind the ask, so it is not offered. The message waits for the turn, or ends it.
+  if (input.askWaiting === "holds") return ["queue", "send_now"];
   return input.supportsSteer === false ? ["queue", "send_now"] : ["steer", "queue", "send_now"];
 }
 
@@ -69,7 +72,7 @@ export function deliveryModesFor(
  *  steer into an idle conversation exactly that way. While a turn runs the person's
  *  choice holds, unless this turn cannot take it, and then the first mode it can. */
 export function effectiveDeliveryMode(
-  input: Pick<ComposerRunControlsInput, "running" | "deliveryMode" | "supportsSteer">
+  input: Pick<ComposerRunControlsInput, "running" | "deliveryMode" | "supportsSteer" | "askWaiting">
 ): PromptDeliveryMode {
   if (!input.running) return "steer";
   const offered = deliveryModesFor(input);
@@ -85,7 +88,9 @@ function submitProjection(
   const mode = effectiveDeliveryMode(input);
   const words = sending
     ? "On its way"
-    : !input.running
+    : input.askWaiting === "answers"
+      ? "Send this as your answer"
+      : !input.running
       ? "Send this message"
       : mode === "steer"
         ? "Steer this message"
@@ -156,7 +161,8 @@ export function resolveComposerRunControls(
     submit: submitProjection(input),
     showStop: input.running,
     deliveryMode: effectiveDeliveryMode(input),
-    showDeliveryMode: input.running,
+    // A draft that answers the question on screen is not delivered into the turn at all.
+    showDeliveryMode: input.running && input.askWaiting !== "answers",
     deliveryModes: deliveryModesFor(input)
   };
 }

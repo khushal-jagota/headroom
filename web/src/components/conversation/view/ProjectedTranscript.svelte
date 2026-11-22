@@ -85,6 +85,24 @@
     previousDisplay = retained;
     return retained;
   });
+  /** The order things are drawn in. In Focus a running turn shows nothing of its own but its
+   *  live line, so a message the person steered into it would land under "Working" and read
+   *  as if it came after the work in hand. While the only things after the running turn's
+   *  head are the person's own messages, the live line is drawn after them: the newest thing
+   *  on the screen is the work still going on, in time order. Full keeps the head on top,
+   *  over the prose and tool runs it heads. */
+  const drawnSlots = $derived.by(() => {
+    if (reader.lens !== 'focus') return displaySlots;
+    const at = displaySlots.findLastIndex(slot => slot.item?.kind === 'turn');
+    if (at < 0 || at === displaySlots.length - 1) return displaySlots;
+    const head = displaySlots[at];
+    if (head.item?.kind !== 'turn' || head.item.settled || reader.status?.turn_key !== head.item.key) return displaySlots;
+    const after = displaySlots.slice(at + 1);
+    // Work Focus does not draw (the turn's tool calls) is no reason to keep the head on top.
+    if (!after.every(slot => slot.local !== null || slot.item === null || isMessageRow(slot.item) || !presentation.has(slot.item.key))) return displaySlots;
+    if (!after.some(slot => slot.local !== null || slot.item !== null && isMessageRow(slot.item))) return displaySlots;
+    return [...displaySlots.slice(0, at), ...after, head];
+  });
   /** What a running turn waits on the person for: its ask is docked over the composer. */
   function turnWaiting(item: ConversationViewItem & { kind: 'turn' }): 'permission' | 'question' | null {
       if (item.settled || reader.status?.turn_key !== item.key) return null;
@@ -137,7 +155,7 @@
       // A turn whose head draws nothing still starts a turn: what comes first in it takes
       // the turn gap.
       let turnOpens = false;
-      for (const slot of displaySlots) {
+      for (const slot of drawnSlots) {
           const item = slot.item;
           // A held page edge does not establish who is adjacent across the gap.
           if (item !== null && before.has(item.key)) previous = null;
@@ -220,7 +238,7 @@
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
   {/each}
-  {#each displaySlots as slot (slot.key)}
+  {#each drawnSlots as slot (slot.key)}
     {@const item = slot.item}
     {#each historyEdges.filter(boundary => boundary.direction === 'older' && boundary.anchorKey === item?.key) as boundary (`older:${boundary.scope.kind}:${boundary.scope.key}`)}
       <div use:edge={boundary} data-conversation-history-edge="older" aria-hidden="true"></div>

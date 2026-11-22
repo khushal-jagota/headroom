@@ -195,8 +195,8 @@ describe("task progress", () => {
         }
       }
     });
-    expect(body).toContain("Task 3 of 5");
-    expect(body).toContain("Task 3 of 5: Confirm, 2 complete");
+    expect(body).toContain("Step 3 of 5");
+    expect(body).toContain("Step 3 of 5: Confirm, 2 complete");
     expect(body).toContain("2 of 5 done");
   });
 
@@ -215,7 +215,10 @@ describe("task progress", () => {
         }
       }
     });
-    expect(body).toMatch(/data-conversation-task-current[^>]*>Run the sync test under -race on a CI-sized runner</);
+    const current = /data-conversation-task-current[^>]*>([\s\S]*?)<\/span>/.exec(body)?.[1] ?? "";
+    expect(current.replace(/<!--[^>]*-->/g, "").replace(/<[^>]+>/g, "")).toBe("Run the sync test under -race on a CI-sized runner");
+    // The flag in the step is set in the one inline-code face.
+    expect(current).toMatch(/<code class="cv-code[^"]*">-race<\/code>/);
   });
 });
 
@@ -237,5 +240,38 @@ describe("the ask shell", () => {
     expect(body).toContain("data-ask-shell");
     expect(body).toContain('data-ask-kind="permission"');
     expect(body).not.toContain("cv-ask-reply");
+  });
+});
+
+describe("an own answer written in the composer", () => {
+  const single = { question_id: "style", header: "Style", question: "Which?", multi_select: false, allow_other: true, options: [{ label: "Soft shapes", description: "" }] };
+  const multi = { ...single, question_id: "tone", multi_select: true };
+
+  it("replaces a chosen option on a single-answer question, and is the answer sent", async () => {
+    const { withOwnAnswer, toggleUserInputChoice, emptyUserInputDraft, completeUserInputAnswers } = await import("../src/lib/conversation/userInput");
+    const chosen = toggleUserInputChoice(emptyUserInputDraft(), single, "Soft shapes");
+    const own = withOwnAnswer(chosen, single, "Hand-drawn ink");
+    expect(own.selected.style).toEqual([]);
+    expect(completeUserInputAnswers(own, [single])).toEqual({ style: { answers: ["Hand-drawn ink"] } });
+    // Clearing the words takes the own answer back and leaves nothing chosen.
+    expect(completeUserInputAnswers(withOwnAnswer(own, single, ""), [single])).toBeNull();
+  });
+
+  it("joins the chosen options on a multi-answer question", async () => {
+    const { withOwnAnswer, toggleUserInputChoice, emptyUserInputDraft, completeUserInputAnswers } = await import("../src/lib/conversation/userInput");
+    const chosen = toggleUserInputChoice(emptyUserInputDraft(), multi, "Soft shapes");
+    expect(completeUserInputAnswers(withOwnAnswer(chosen, multi, "Warm"), [multi])).toEqual({ tone: { answers: ["Soft shapes", "Warm"] } });
+  });
+
+  it("is written in the composer when the panel is docked over it: no second field, a row that says where", () => {
+    const { body } = render(UserInputQuestionPanel, {
+      props: { request: { requestId: "q-own", questions: [single] }, ownAnswer: "", onSubmit: () => {} }
+    });
+    expect(body).not.toContain("data-user-input-other");
+    expect(body).toContain("data-user-input-own");
+    expect(body).toContain("Type your own answer in the message box");
+    // Standing alone (no composer under it) it keeps its own field.
+    const alone = render(UserInputQuestionPanel, { props: { request: { requestId: "q-own", questions: [single] }, onSubmit: () => {} } }).body;
+    expect(alone).toContain("data-user-input-other");
   });
 });

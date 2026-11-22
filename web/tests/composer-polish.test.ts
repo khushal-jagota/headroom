@@ -48,6 +48,24 @@ describe("delivery mode only matters while a turn runs", () => {
     expect(view.deliveryModes).toEqual(["queue", "send_now"]);
     expect(view.deliveryMode).toBe("queue");
   });
+
+  it("does not offer Steer into a turn blocked on the person: the message waits, or ends the turn", () => {
+    // The turn reads nothing new until the ask is answered (a Claude turn admits a steer but
+    // only reads it after the parked tool call returns), so Steer would sit unread.
+    const view = resolveComposerRunControls(runInput({ running: true, deliveryMode: "steer", supportsSteer: true, askWaiting: "holds" }));
+    expect(view.showDeliveryMode).toBe(true);
+    expect(view.deliveryModes).toEqual(["queue", "send_now"]);
+    expect(view.deliveryMode).toBe("queue");
+    expect(view.submit.ariaLabel).toBe("Queue this message");
+    // The same choice comes back once the ask is answered.
+    expect(resolveComposerRunControls(runInput({ running: true, deliveryMode: "steer", supportsSteer: true, askWaiting: null })).deliveryMode).toBe("steer");
+  });
+
+  it("sends words written under a question as its answer, with no delivery choice", () => {
+    const view = resolveComposerRunControls(runInput({ running: true, deliveryMode: "steer", supportsSteer: true, askWaiting: "answers" }));
+    expect(view.showDeliveryMode).toBe(false);
+    expect(view.submit.ariaLabel).toBe("Send this as your answer");
+  });
 });
 
 describe("plain-text log files", () => {

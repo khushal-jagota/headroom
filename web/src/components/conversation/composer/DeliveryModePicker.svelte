@@ -106,7 +106,8 @@
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;
     right: var(--cv-mode-menu-right, 0px);
-    bottom: calc(100% + var(--cv-s2));
+    /* Clear of the shell's focus halo as well as its edge, so the menu never touches it. */
+    bottom: calc(100% + var(--cv-s3));
     width: 168px;
   }
 </style>

@@ -54,8 +54,19 @@
       }
     });
   });
-  /** A message this long may not fit its line: it shows a chevron that says it opens. */
-  const LONG_ROW = 64;
+  /** One rule for the chevron: a line whose words do not fit shows that it opens, every
+   *  such line and no other. Whether they fit is measured, not guessed from a count. */
+  function truncation(node: HTMLElement) {
+    const row = node.closest<HTMLElement>("[data-conversation-held-row]");
+    const measure = (): void => {
+      if (row === null || row.classList.contains("open")) return;
+      row.dataset.truncated = node.scrollWidth > node.clientWidth + 0.5 ? "true" : "false";
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
   /** Rows whose whole message is showing; the rest are one line. */
   let expanded = $state(new Set<string>());
   function toggle(key: string): void {
@@ -137,8 +148,8 @@
           onclick={() => toggle(row.key)}
         >
           <span class="chat-qrow-line">
-            <span class="chat-qrow-txt">{label}</span>
-            {#if label.length > LONG_ROW}<svg class="chat-qrow-more" class:is-open={expanded.has(row.key)} viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg>{/if}
+            <span class="chat-qrow-txt" use:truncation>{label}</span>
+            <svg class="chat-qrow-more" class:is-open={expanded.has(row.key)} viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5" /></svg>
           </span>
           {#if why}<span class="chat-qrow-why">{why}</span>{/if}
         </button>
@@ -230,7 +241,9 @@
     /* Padding, not margin: the slot's height is measured from its content's box, and the
        clear space under the lines must be part of it. */
     margin: 0;
-    padding: 0 var(--cv-s1) var(--cv-s3) var(--cv-s4);
+    /* On the composer's own grid: the clock stands where the draft's first letter does (16 in),
+       and the remove cross is centred over the send round (its 28px centred 24 from the edge). */
+    padding: 0 10px var(--cv-s3) var(--cv-s4);
     list-style: none;
     max-height: 168px;
     overflow-y: auto;
@@ -269,11 +282,14 @@
   }
   .chat-qrow-line { display: flex; align-items: center; gap: var(--cv-s1); min-width: 0; }
   .chat-qrow-more {
+    display: none;
     flex: none; width: 14px; height: 14px; fill: none; stroke: var(--cv-t3); stroke-width: 1.7;
     stroke-linecap: round; stroke-linejoin: round;
     transition: transform var(--cv-dur-expand) var(--cv-ease-out);
   }
   .chat-qrow-more.is-open { transform: rotate(180deg); }
+  .chat-qrow:global([data-truncated="true"]) .chat-qrow-more,
+  .chat-qrow.open .chat-qrow-more { display: block; }
   .chat-qrow-words:hover .chat-qrow-more { stroke: var(--cv-t1); }
   .chat-qrow.open .chat-qrow-line { align-items: flex-start; }
   .chat-qrow.open .chat-qrow-more { margin-block-start: 3px; }
@@ -302,13 +318,23 @@
     color: var(--cv-t3); font-family: var(--cv-font); font-size: var(--cv-type-meta);
     text-decoration: underline; text-decoration-color: var(--cv-link-underline); text-underline-offset: 3px;
   }
-  .chat-qrow-actions { flex: none; display: flex; align-items: center; gap: 2px; }
-  /* Small actions: the ghost button at 28px, in the label tone so they read at a glance. */
-  .chat-qrow-act { color: var(--cv-t2); padding: 0 var(--cv-s2); font-weight: var(--cv-weight-label); }
+  .chat-qrow-actions { flex: none; display: flex; align-items: center; gap: 6px; margin-inline-start: var(--cv-s2); }
+  /* Small actions read as controls, a step under the words: a 24px outlined chip, caption
+     size, the quiet tone, lifting to a fill and the strongest tone under the pointer. */
+  .chat-qrow-actions :global(.chat-qrow-act) {
+    height: 24px;
+    padding: 0 var(--cv-s2);
+    border: 1px solid var(--cv-line-strong);
+    border-radius: var(--cv-r-sm);
+    color: var(--cv-t3);
+    font-size: var(--cv-type-caption);
+    line-height: var(--cv-leading-caption);
+  }
+  .chat-qrow-actions :global(.chat-qrow-act:hover:not(:disabled)) { border-color: transparent; }
   .chat-qrow-x {
     display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
     background: none; border: 0; border-radius: var(--cv-r-md);
-    color: var(--cv-t2); cursor: pointer;
+    color: var(--cv-t3); cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-qrow-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }

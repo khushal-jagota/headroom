@@ -264,7 +264,7 @@
         bind:selectedPastConversationId
         label="Manager"
         title={workspace.data?.title ?? null}
-        composerPlaceholder="Message this manager…"
+        composerPlaceholder={workspace.data?.title ? `Message ${workspace.data.title}…` : "Message this manager…"}
         bind:backends
         startValues={startValues.data ?? null}
         senderLabel="owner"

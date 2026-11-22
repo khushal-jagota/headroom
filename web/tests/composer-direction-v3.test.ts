@@ -67,11 +67,23 @@ describe("the queue is light", () => {
     expect(body.indexOf("data-conversation-held-stack")).toBeLessThan(body.indexOf("data-conversation-box"));
   });
 
-  it("shows that a long waiting message opens to its whole text, and a short one does not", () => {
+  it("gives every line the same opening chevron, shown by measurement only where its words do not fit", () => {
     const long = "After that, log each 429 with the share token's first 6 characters so we can spot abuse patterns";
     const { body } = render(HeldPromptStack, { props: { rows: [held("a", long), held("b", "Short")], supportsSteer: true, running: true } });
-    expect(body.match(/class="chat-qrow-more/g)?.length).toBe(1);
+    // One rule, not a character count: each line carries the chevron, and the measured
+    // data-truncated mark (set in the browser) decides whether it shows.
+    expect(body.match(/class="chat-qrow-more/g)?.length).toBe(2);
+    expect(body).not.toContain('data-truncated="true"');
     expect(body).toMatch(/class="chat-qrow-words[^"]*"[^>]*aria-expanded="false"/);
+  });
+
+  it("offers no Steer while the turn is blocked on an ask, since nothing is read until it is answered", () => {
+    const ask = { askId: "a-1", title: "Upload build 41", detail: null, options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" }] };
+    const { body } = render(ComposerWithQueryClient, {
+      props: { ...base, running: true, supportsSteer: true, ask, heldPromptRows: [held("a", "Hold the upload")] }
+    });
+    expect(body).not.toContain('data-conversation-held-promote="steer"');
+    expect(body).toContain('data-conversation-held-promote="send_now"');
   });
 
   it("offers no Steer for a turn that cannot take one", () => {

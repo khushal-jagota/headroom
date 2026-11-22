@@ -246,7 +246,8 @@
   }
   /* Only the exact thing the call acted on (a command, a path, a pattern) is set as code.
      Words about the call ("0 of 5 done") stay in the thread's own face. */
-  .c2-tool-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-code); }
+  /* Code in the row is set at the row's own size, so the line reads as one size. */
+  .c2-tool-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-meta); }
   .acp-step:hover .c2-tool-verb, .acp-step:focus-visible .c2-tool-verb { color: var(--cv-t1); }
   .c2-tool-outcome { display: flex; justify-content: flex-end; min-width: 0; }
   .c2-tool-state {

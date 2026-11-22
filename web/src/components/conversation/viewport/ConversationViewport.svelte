@@ -1156,6 +1156,24 @@
     };
   });
 
+  // One column. The scroller keeps a stable gutter for its scrollbar, which would pull every
+  // line of the transcript in from the column's right edge by the scrollbar's width while the
+  // header, the asks and the composer reach it. The scroller instead reaches past the column
+  // by exactly that width, measured, so its content box is the column itself and the scrollbar
+  // stands just outside it.
+  $effect(() => {
+    const thread = threadElement;
+    if (thread === null) return;
+    const measure = (): void => {
+      const gutter = Math.max(0, thread.offsetWidth - thread.clientWidth);
+      thread.style.setProperty("--cv-scrollbar-gutter", `${gutter}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(thread);
+    return () => observer.disconnect();
+  });
+
   // The jump is drawn by the pane in its status slot, so it never covers a line of the
   // transcript. It shows while there is something below to go back to.
   const jumpShown = $derived(newestLineBelowTheView || newerHistory || newerThanUnplacedAnchor || latestPending);
@@ -1235,12 +1253,31 @@
   .chat-thread {
     /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
     padding-bottom: 32px;
-    --cv-fade-top: 24px;
-    --cv-fade-bottom: 24px;
+    margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
+    max-width: none;
+    /* Under the header the edge is the hairline: content passes under it cleanly, with no
+       half-faded line left in open space. Toward the composer a short fade softens the cut. */
+    --cv-fade-top: 0px;
+    --cv-fade-bottom: 16px;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-fade-top), #000 calc(100% - var(--cv-fade-bottom)), transparent 100%);
             mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-fade-top), #000 calc(100% - var(--cv-fade-bottom)), transparent 100%);
   }
   .chat-thread[data-at-top="true"] { --cv-fade-top: 0px; }
+  /* The header's clean edge: while anything is scrolled up under it, one hairline across the
+     column marks where the header ends, and the text passes cleanly under that edge, so no
+     line is left half-drawn in open space. At the top the edge is not drawn. */
+  .chat-thread-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 1px;
+    background: var(--cv-line);
+    opacity: 0;
+    transition: opacity var(--cv-dur-fast) var(--cv-ease-out);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .chat-thread-shell:has(> .chat-thread[data-at-top="false"])::before { opacity: 1; }
   .chat-thread[data-more-below="false"] { --cv-fade-bottom: 0px; }
   /* A conversation shorter than the view reads from the top, under its header, as a page
      does; the composer stays docked at the bottom. (Bottom-anchoring left the top half of a

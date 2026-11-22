@@ -149,10 +149,14 @@
  * lightness in different hues. Charts elsewhere (goals, pages, artifacts) are unchanged. The
  * plot reads these names from the canvas, so scoping them here recolours only this chart. */
 .chat-thread .chat-chart .goal-chart-host {
-  --accent-bright: var(--cv-data-1);
-  --chart-compare-second: var(--cv-data-2);
+  /* Two series that hold their own on the dark well: the same lightness band, more colour
+     than the accent's pastel, so the bars read as data rather than as washed-out chrome. */
+  --accent-bright: var(--cv-data-1-strong, #8fa9f2);
+  --chart-compare-second: var(--cv-data-2-strong, #e4ad62);
   --chart-grid: var(--cv-chart-grid);
   --chart-muted: var(--cv-t4);
+  /* Axis numbers in the meta tone, a step brighter than the grid they label. */
+  --chart-axis: var(--cv-t3);
   --chart-legend: var(--cv-t3);
   --chart-surface: var(--cv-well);
   --chart-card-border: var(--cv-line);

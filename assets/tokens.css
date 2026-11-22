@@ -631,8 +631,8 @@
   --cv-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --cv-type-prose: 15px;   --cv-leading-prose: 24px;
   --cv-type-h1: 20px;      --cv-leading-h1: 28px;
-  --cv-type-h2: 17px;      --cv-leading-h2: 24px;
-  --cv-type-h3: 15px;      --cv-leading-h3: 24px;
+  --cv-type-h2: 18px;      --cv-leading-h2: 26px;
+  --cv-type-h3: 16px;      --cv-leading-h3: 24px;
   --cv-type-title: 15px;   --cv-leading-title: 24px;
   --cv-type-ui: 14px;      --cv-leading-ui: 20px;
   --cv-type-meta: 13px;    --cv-leading-meta: 20px;
