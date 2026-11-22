@@ -8,7 +8,7 @@ import type { ToolCallPresentation } from "../src/lib/conversation/toolCallPrese
 
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const pane = source("../src/components/conversation/ConversationPane.svelte");
 const shell = source("../src/components/conversation/AskShell.svelte");
 const status = source("../src/components/conversation/TranscriptStatusRow.svelte");
@@ -45,8 +45,8 @@ describe("v16 (3): the Focus/Full control", () => {
 
 describe("v16 (4): attachment chips", () => {
   it("a picture has a 28px top scrim under the remove button; a file chip ends with 40px", () => {
-    expect(composer).toContain(".chat-att.img::after { background: linear-gradient(rgb(0 0 0 / 55%), transparent) top / 100% 28px no-repeat; }");
-    expect(composer).toContain(".chat-att.file { padding-inline-end: 40px; }");
+    expect(composer).toContain("background: linear-gradient(rgb(0 0 0 / 55%), transparent) top / 100% 28px no-repeat;");
+    expect(composer).toContain("padding-inline: 12px 40px;");
   });
 });
 
@@ -111,7 +111,7 @@ describe("v16 (10): the queued more button", () => {
 describe("v16 (12): quiet text one step up", () => {
   it("option descriptions, attachment meta, the empty hint, From Panels, queued and steered details", () => {
     expect(shell).toContain(":global([data-conversation-pane] .cv-ask-sub) { color: #c4c4c4; }");
-    expect(composer).toContain(".chat-att-meta { color: #b8b8b8; }");
+    expect(composer).toContain(".chat-att-meta { color: #b8b8b8;");
     expect(pane).toMatch(/\.cv-empty-hint \{[^}]*color: #b8b8b8;/);
     expect(user).toContain(".c2-system-note { color: #c4c4c4; }");
     expect(held).toContain(".chat-qrow-note, .chat-qrow-sep, .chat-qrow-detail { color: #c4c4c4; }");

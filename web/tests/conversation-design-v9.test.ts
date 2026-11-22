@@ -22,7 +22,7 @@ import type { ToolCallRow as ToolCallRowData } from "../src/lib/conversation/tra
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
 const tokens = source("../../assets/tokens.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const pane = source("../src/components/conversation/ConversationPane.svelte");
 
 const turn: ConversationViewTurn = {

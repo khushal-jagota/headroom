@@ -7,7 +7,7 @@ import { NEWEST_LINE_BOTTOM_GAP_PIXELS } from "../src/components/conversation/vi
 
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const pane = source("../src/components/conversation/ConversationPane.svelte");
 const run = source("../src/components/conversation/ToolRunSummary.svelte");
 const status = source("../src/components/conversation/TranscriptStatusRow.svelte");

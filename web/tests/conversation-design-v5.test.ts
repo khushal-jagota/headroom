@@ -98,7 +98,7 @@ describe("design v5.1: turn timing at the top, Paused under a waiting ask", () =
     expect(html).not.toContain("data-conversation-paused");
     expect(html).not.toContain("data-conversation-alive-word");
     // v6: no Paused line anywhere; the ask card's own label is the one waiting label.
-    const composer = source("../src/components/conversation/ConversationComposer.svelte");
+    const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
     expect(composer).not.toContain("chat-paused");
   });
 
@@ -213,7 +213,7 @@ describe("design v5.2: surfaces", () => {
     expect(app).toMatch(/:is\(\.chat-u, \.chat-qrow\) \.file-preview-media > :is\(\.file-preview-image, \.file-preview-video-poster\) \{\s*max-width: 100%;\s*max-height: 200px;/);
     expect(app).toContain(":is(.chat-u, .chat-qrow) .file-preview-media { max-width: min(100%, 320px);");
     expect(app).toMatch(/\.file-preview-media > \.file-preview-image,\s*\.file-preview-media > \.file-preview-video-poster \{[^}]*width: auto;\s*height: auto;\s*object-fit: contain;/);
-    const composer = source("../src/components/conversation/ConversationComposer.svelte");
+    const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
     expect(composer).toMatch(/\.chat-att\.img \{ width: 76px; height: 76px;/);
     // p12c: the file chip is as tall, its content centred.
     expect(composer).toMatch(/\.chat-att\.file \{\s*height: 76px;\s*align-items: center;/);

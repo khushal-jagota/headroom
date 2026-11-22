@@ -15,7 +15,7 @@ import type { ConversationViewReader } from "../src/lib/conversation/view/reader
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
 const shell = source("../src/components/conversation/AskShell.svelte");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 
 describe("design v4.2: the dock line under which an ask waits", () => {
   const facts = { readOnly: false, activityUncertain: false, waitingForYou: true, waitingFor: "approval" as const, running: true, backgroundWorking: false, settingUp: null, elapsed: null };
@@ -218,10 +218,10 @@ describe("design v4.3", () => {
   it("inline code is lighter: 6% white fill, radius 4, padding 0 4px, #e0e0e0", () => {
     expect(app).toMatch(/\.chat-thread \.markdown :not\(pre\) > code,\n\.cv-code \{\s*padding: 0 4px;[^}]*border-radius: 4px;[^}]*background: rgb\(255 255 255 \/ 6%\);[^}]*color: #e0e0e0;/);
   });
-  it("v10 (11): an attachment's remove button sits inside the chip's top-right corner, 6px in, a 20px rgba(0,0,0,0.6) circle with a white x", () => {
-    expect(composer).toMatch(/\.chat-att-x \{\s*top: 6px;\s*right: 6px;\s*width: 20px;\s*height: 20px;[^}]*border-radius: 50%;\s*background: rgb\(0 0 0 \/ 60%\);\s*box-shadow: none;\s*color: #ffffff;/);
-    expect(composer).toMatch(/\.chat-attachments \{ gap: var\(--cv-s2\); padding-block-start: 4px; padding-inline-end: 0; \}/);
-    expect(composer).toContain(".chat-att.file { padding-inline-end: 32px; }");
+  it("the final attachment remove button stays inside the chip, with a dark fill and light ring", () => {
+    expect(composer).toMatch(/\.chat-att-x \{\s*top: 6px;\s*right: 6px;\s*width: 20px;\s*height: 20px;[^}]*border-radius: 50%;\s*background: rgb\(20 20 20 \/ 85%\);\s*box-shadow: inset 0 0 0 1px rgb\(255 255 255 \/ 24%\);\s*color: #ececec;/);
+    expect(composer).toMatch(/\.chat-attachments \{ gap: var\(--cv-s2\); padding-block-start: 0; margin-block-start: 0; padding-inline-end: 0; \}/);
+    expect(composer).toContain("padding-inline: 12px 40px;");
   });
   it("rhythm: 32 between turns, 6 from a meta line to its prose, 12 between paragraphs", () => {
     expect(tokens).toMatch(/--cv-gap-turn: 32px;/);
@@ -236,8 +236,8 @@ describe("pass 11 strict review fixes", () => {
     expect(pane).toContain('<div class="chat-head-identity" data-conversation-head-identity>');
     expect(pane).not.toContain("data-conversation-subtitle");
   });
-  it("v7: a file waiting to go is an attachment card, a Surface (#1c1c1c, a 1px #2a2a2a edge, radius 20)", () => {
-    expect(composer).toMatch(/\.chat-att \{\s*height: 56px;\s*border: 1px solid #2a2a2a;\s*border-radius: 20px;\s*background: #1c1c1c;/);
+  it("a pending file keeps its final 76px surface, 1px edge, and 10px radius", () => {
+    expect(composer).toMatch(/\.chat-att \{\s*height: 76px;\s*border: 1px solid #2a2a2a;\s*border-radius: 10px;\s*background: #1c1c1c;/);
   });
 });
 

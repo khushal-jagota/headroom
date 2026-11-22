@@ -9,7 +9,7 @@ import TranscriptStatusRow from "../src/components/conversation/TranscriptStatus
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
 const pane = source("../src/components/conversation/ConversationPane.svelte");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
 const shell = source("../src/components/conversation/AskShell.svelte");
 const v10 = app.slice(app.indexOf("v10 (22 Nov, after round 16)"));
@@ -100,7 +100,7 @@ describe("v10 (7, 8, 9, 12): answers", () => {
     expect(source("../src/lib/charts/components/bar-chart.tsx")).toContain("font: showLegend ? { size: 13, lineHeight: 16 / 13 } : { size: 11 } }");
     expect(app).toContain("background: rgba(255, 255, 255, 0.16); /* v11 (8) */");
     expect(v10).toContain("[data-conversation-pane] .file-preview-media::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); }");
-    expect(composer).toContain(".chat-att.img::after { content: \"\"; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); pointer-events: none; }");
+    expect(composer).toContain(".chat-att.img::after { content: \"\"; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); pointer-events: none; background: linear-gradient(rgb(0 0 0 / 55%), transparent) top / 100% 28px no-repeat; }");
   });
   it("inline code is #232323 with 1px 4px padding; in narration its text is #b4b4b4", () => {
     expect(v10).toMatch(/\[data-conversation-pane\] \.cv-code \{ padding: 1px 4px; background: #232323; \}/);

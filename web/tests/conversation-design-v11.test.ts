@@ -9,7 +9,7 @@ import type { HeldPromptRow } from "../src/lib/conversation/heldPrompts";
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
 const v11 = app.slice(app.indexOf("v11 (22 Nov, after round 17)"));
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const pane = source("../src/components/conversation/ConversationPane.svelte");
 const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
 

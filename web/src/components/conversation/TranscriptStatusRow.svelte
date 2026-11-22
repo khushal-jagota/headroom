@@ -10,9 +10,10 @@
    *
    *  Tone is said by the glyph and the words' colour, and by a faint wash on a failed
    *  callout. Never by a coloured edge or rule. */
-  import { untrack, type Snippet } from "svelte";
+  import { getContext, untrack, type Snippet } from "svelte";
   import type { TranscriptStatus } from "../../lib/conversation/transcript";
-  import { registerCallout } from "../../lib/conversation/newestCallout";
+  import { NEWEST_CALLOUTS, type NewestCallouts } from "../../lib/conversation/newestCallout";
+  const callouts = getContext<NewestCallouts | undefined>(NEWEST_CALLOUTS);
   let { status, align = "start", mark = null, weight = undefined, actions, ...attributes }: {
     status: TranscriptStatus | (Omit<TranscriptStatus, "tone"> & { tone: "quiet" });
     /** A line about a message stands under that message; a line about a turn starts where the thread does. */
@@ -82,8 +83,8 @@
    *  as the newest. */
   let newest = $state(true);
   $effect(() => {
-    if (root === null || shownWeight !== "callout" || status.tone !== "error") return;
-    return registerCallout(root, (value) => (newest = value));
+    if (!callouts || root === null || shownWeight !== "callout" || status.tone !== "error") return;
+    return callouts.registerCallout(root, (value) => (newest = value));
   });
   const uid = $props.id();
   const detailsId = `c2-status-details-${uid}`;

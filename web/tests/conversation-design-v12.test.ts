@@ -7,7 +7,7 @@ import ConversationComposer from "../src/components/conversation/ConversationCom
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
 const tokens = source("../../assets/tokens.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 
 describe("v12 (1): agent answers are plain text again", () => {
   it("no answer bubble: no rule gives a final answer a surface, radius or padding", () => {

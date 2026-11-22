@@ -7,7 +7,7 @@ import { fitTitle, TITLE_ELLIPSIS } from "../src/lib/conversation/titleFit";
 
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const shell = source("../src/components/conversation/AskShell.svelte");
 const questions = source("../src/components/conversation/UserInputQuestionPanel.svelte");
 const pieces = source("../src/components/conversation/MessagePieces.svelte");
@@ -52,13 +52,13 @@ describe("v13 (5): the question pager", () => {
 
 describe("v13 (6): composer attachment chips", () => {
   it("picture and file: one height, radius 10, the remove circle 6px inside the top-right corner", () => {
-    expect(composer).toContain(".chat-att, .chat-att.img, .chat-att.file { height: 76px; border-radius: 10px; }");
+    expect(composer).toMatch(/\.chat-att \{\s*height: 76px;[^}]*border-radius: 10px;/);
     expect(composer).toMatch(/\.chat-att-x \{\s*top: 6px;\s*right: 6px;\s*width: 20px;\s*height: 20px;/);
     expect(composer).toContain(".chat-att.file > .chat-att-x { top: 5px; right: 5px; }");
   });
   it("a file chip ends just after the circle; a picture crops from the top", () => {
-    expect(composer).toContain(".chat-att.file { padding-inline-end: 34px; }");
-    expect(composer).toContain(".chat-att.img img { object-position: left top; }");
+    expect(composer).toContain("padding-inline: 12px 40px;");
+    expect(composer).toContain(".chat-att.img img { border-radius: 10px; object-position: left top; }");
   });
 });
 

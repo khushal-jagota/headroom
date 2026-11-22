@@ -160,3 +160,39 @@ describe("the weight of a status line", () => {
     expect(note).toContain("c2-status--note");
   });
 });
+
+// The former module registry shared ownership across panes. Existing SSR cases cannot
+// prove independent lifetimes or document order. This uses no browser or server host.
+describe("conversation-owned error callouts", () => {
+  it("keeps sibling registries independent and restores the previous error after removal", async () => {
+    const { createNewestCallouts } = await import("../src/lib/conversation/newestCallout");
+    const { vi } = await import("vitest");
+    vi.stubGlobal("Node", { DOCUMENT_POSITION_FOLLOWING: 4 });
+    try {
+      const element = (position: number) => ({
+        isConnected: true,
+        position,
+        compareDocumentPosition(other: { position: number }) { return other.position > position ? 4 : 2; }
+      }) as unknown as HTMLElement;
+      const firstPane = createNewestCallouts();
+      const secondPane = createNewestCallouts();
+      let earlier = true;
+      let later = true;
+      let sibling = true;
+      // Register out of order: document order, not registration order, selects the newest.
+      const removeLater = firstPane.registerCallout(element(2), value => { later = value; });
+      const removeEarlier = firstPane.registerCallout(element(1), value => { earlier = value; });
+      const removeSibling = secondPane.registerCallout(element(3), value => { sibling = value; });
+      await Promise.resolve();
+      expect({ earlier, later, sibling }).toEqual({ earlier: false, later: true, sibling: true });
+      removeLater();
+      await Promise.resolve();
+      expect({ earlier, sibling }).toEqual({ earlier: true, sibling: true });
+      removeEarlier();
+      removeSibling();
+      await Promise.resolve();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

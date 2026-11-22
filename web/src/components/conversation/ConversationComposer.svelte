@@ -28,9 +28,12 @@
   import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
+  import { catalogEntriesForTrigger, catalogEntriesMatching } from "./composer/catalog";
+  import ComposerAttachments from "./composer/ComposerAttachments.svelte";
+  import ComposerAddMenu from "./composer/ComposerAddMenu.svelte";
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
   import {
-    orderedComposerAttachments, attachmentByteLabel, attachmentKindLabel, attachmentDisplayName,
+    orderedComposerAttachments, attachmentByteLabel,
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
@@ -84,7 +87,6 @@
   } from "../../lib/conversation/pendingFiles";
   import type {
     ComposerCatalogEntry,
-    ComposerCatalogEntryKind,
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
@@ -810,12 +812,6 @@
     } else entry.error = "Your newer draft is kept. Finish it, then return this message to the composer.";
     videoChanged();
   }
-  /** Shows the first frame of a video still held in memory; the browser draws it, nothing is uploaded. */
-  function localFrame(node: HTMLVideoElement, file: File) {
-    const url = URL.createObjectURL(file);
-    node.src = `${url}#t=0.1`;
-    return { destroy: () => URL.revokeObjectURL(url) };
-  }
   function videoProgress(video: PendingVideo): string {
     return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / video.byteCount * 100)}%`
       : video.phase === "validating" ? "Checking video…" : video.phase === "ready" ? attachmentByteLabel(video.byteCount)
@@ -922,44 +918,6 @@
   function textChanged(): void {
     recordDraftChange();
     readWhereTheCursorIs();
-  }
-
-  function catalogEntriesForTrigger(
-    entries: readonly ComposerCatalogEntry[],
-    trigger: "/" | "$" | "@" | null
-  ): ComposerCatalogEntry[] {
-    const kinds: readonly ComposerCatalogEntryKind[] = trigger === "/"
-      ? ["command"]
-      : trigger === "$"
-        ? ["skill"]
-        : trigger === "@"
-          ? ["app", "plugin"]
-          : [];
-    return entries.filter((entry) => kinds.includes(entry.kind));
-  }
-
-  /** Prefix matches come before contains matches, alphabetically within each group. */
-  function catalogEntriesMatching(
-    entries: readonly ComposerCatalogEntry[],
-    typed: string,
-    trigger: "/" | "$" | "@" | null
-  ): ComposerCatalogEntry[] {
-    const wanted = typed.toLowerCase();
-    const searchable = (entry: ComposerCatalogEntry): string => {
-      const displayText = entry.display_text.toLowerCase();
-      return trigger !== null && displayText.startsWith(trigger)
-        ? displayText.slice(trigger.length)
-        : displayText;
-    };
-    const byDisplayText = (one: ComposerCatalogEntry, other: ComposerCatalogEntry): number =>
-      one.display_text.localeCompare(other.display_text);
-    const startsWithIt = entries.filter((entry) =>
-      searchable(entry).startsWith(wanted)
-    );
-    const containsIt = entries.filter(
-      (entry) => !searchable(entry).startsWith(wanted) && searchable(entry).includes(wanted)
-    );
-    return [...startsWithIt.sort(byDisplayText), ...containsIt.sort(byDisplayText)];
   }
 
   /** Replace the active token with the entry's exact insertion text. */
@@ -1375,73 +1333,11 @@
         {/if}
       </div>
       {/if}
-      {#if attachments.length > 0}
-        <div class="chat-attachments" data-conversation-attachments aria-label="Attached and waiting to send">
-          {#each attachments as attachment (`${attachment.kind}-${attachment.value.id}`)}
-            {@const item = attachment.value}
-            {@const videoFailed = attachment.kind === "video" && (attachment.value.phase === "failed" || attachment.value.phase === "interrupted")}
-            <div
-              class="chat-att"
-              class:img={attachment.kind === "image"}
-              class:file={attachment.kind === "file" || attachment.kind === "video"}
-              class:video={attachment.kind === "video"}
-              class:failed={videoFailed}
-              data-chat-image-preview={attachment.kind === "image" ? "" : undefined}
-              data-chat-image-name={attachment.kind === "image" ? item.fileName : undefined}
-              data-chat-file-preview={attachment.kind === "file" ? "" : undefined}
-              data-chat-file-name={attachment.kind === "file" ? item.fileName : undefined}
-              title={`${item.fileName || "pasted image"} · ${attachmentKindLabel(item.fileName, item.mediaType)} · ${attachmentByteLabel(item.byteCount)}`}
-            >
-              {#if attachment.kind === "image"}
-                <img src={attachment.value.previewUrl} alt="" />
-              {:else if attachment.kind === "video"}
-                <span class="chat-att-thumb" aria-hidden="true">
-                  {#if attachment.value.file}<video use:localFrame={attachment.value.file} muted playsinline preload="metadata" tabindex="-1"></video>{/if}
-                  <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg>
-                </span>
-                <span class="chat-att-words"><span class="chat-att-name">{attachmentDisplayName(item.fileName)}</span>
-                  <span class="chat-att-meta" role="status"><span class="chat-att-type">{videoProgress(attachment.value)}</span></span>
-                </span>
-                {#if attachment.value.phase === "interrupted" || (attachment.value.phase === "failed" && !attachment.value.file)}
-                  <button type="button" class="cv-btn cv-btn--ghost cv-btn--small chat-att-again" onclick={() => fileInput?.click()}>Choose again</button>
-                {/if}
-                {#if attachment.value.phase === "failed" && attachment.value.file}
-                  <button type="button" class="cv-btn cv-btn--ghost cv-btn--small chat-att-again" onclick={() => void transfers.start(attachment.value)}>Retry</button>
-                {/if}
-                {#if attachment.value.phase === "uploading"}
-                  <span
-                    class="chat-att-progress"
-                    role="progressbar"
-                    aria-label={`Uploading ${item.fileName}`}
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                    aria-valuenow={Math.floor(attachment.value.receivedBytes / Math.max(1, attachment.value.byteCount) * 100)}
-                    style:--chat-att-progress={`${Math.min(100, attachment.value.receivedBytes / Math.max(1, attachment.value.byteCount) * 100)}%`}
-                  ></span>
-                {/if}
-              {:else}
-                <span class="chat-att-kind" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8zM14 3.5V8h4.5M9 12.5h6M9 16h4" /></svg>
-                </span>
-                <span class="chat-att-words">
-                  <span class="chat-att-name">{attachmentDisplayName(item.fileName)}</span>
-                  <span class="chat-att-meta"><span class="chat-att-type">{attachmentKindLabel(item.fileName, item.mediaType)}</span><span class="chat-att-size">&nbsp;· {attachmentByteLabel(item.byteCount)}</span></span>
-                </span>
-              {/if}
-              <button
-                type="button"
-                class="chat-att-x"
-                data-chat-image-remove={attachment.kind === "image" ? "" : undefined}
-                data-chat-file-remove={attachment.kind === "file" ? "" : undefined}
-                aria-label={`Remove ${attachment.kind} ${item.fileName || "pasted image"}`}
-                title="Remove"
-                disabled={inputDisabled}
-                onclick={() => attachment.kind === "image" ? removeImage(attachment.value) : attachment.kind === "video" ? removeVideo(attachment.value) : removeFile(attachment.value)}
-              ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
-            </div>
-          {/each}
-        </div>
-      {/if}
+      <ComposerAttachments {attachments} {inputDisabled} {videoProgress}
+        onChooseAgain={() => fileInput?.click()}
+        onRetry={(video) => void transfers.start(video)}
+        onRemove={(attachment) => attachment.kind === "image" ? removeImage(attachment.value) : attachment.kind === "video" ? removeVideo(attachment.value) : removeFile(attachment.value)}
+      />
 
       <!-- A voice take stands where the words go: its level and its clock, on the draft's row,
            at the draft's height, so the composer keeps its size. -->
@@ -1546,84 +1442,11 @@
               <svg viewBox="0 0 24 24"><path d="M15.2 5.3a2.1 2.1 0 0 1 3 3L8.6 17.9l-4.1 1.1 1.1-4.1z" /></svg>
             </span>
           {/if}
-          <div class="chat-add" bind:this={addMenuElement}>
-            <button
-              type="button"
-              class="chat-image chat-add-btn"
-              data-conversation-add
-              aria-haspopup="menu"
-              aria-expanded={addMenuOpen}
-              aria-label="Add a picture, a file, a photo, or a command"
-              title="Add a picture, a file, a photo, or a command"
-              disabled={inputDisabled}
-              onclick={() => (addMenuOpen = !addMenuOpen)}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
-            {#if addMenuOpen}
-              <div class="chat-add-menu" role="menu">
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-image
-                  data-conversation-image-count={pendingImages.length || undefined}
-                  onclick={() => { addMenuOpen = false; imageInput?.click(); }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM4.5 16l4.2-4.2a1.5 1.5 0 0 1 2.1 0l4.7 4.7M13.5 14.5l1.2-1.2a1.5 1.5 0 0 1 2.1 0l2.7 2.7M14.5 9h.01" />
-                  </svg>
-                  <span>Picture</span>
-                  {#if pendingImages.length > 0}<span class="chat-add-count">{pendingImages.length}</span>{/if}
-                </button>
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-file
-                  data-conversation-file-count={pendingFiles.length || undefined}
-                  onclick={() => { addMenuOpen = false; fileInput?.click(); }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8" />
-                  </svg>
-                  <span>File</span>
-                  {#if pendingFiles.length > 0}<span class="chat-add-count">{pendingFiles.length}</span>{/if}
-                </button>
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-camera
-                  onclick={() => { addMenuOpen = false; cameraInput?.click(); }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M3.5 8.5a2 2 0 0 1 2-2h2l1.5-2h6l1.5 2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-                  </svg>
-                  <span>Take a picture</span>
-                </button>
-                <!-- The cursor stays in the box: everything this does is done to what is
-                     being written there. -->
-                <button
-                  type="button"
-                  class="chat-add-item"
-                  role="menuitem"
-                  disabled={inputDisabled}
-                  data-conversation-slash
-                  onmousedown={(event) => event.preventDefault()}
-                  onclick={() => { addMenuOpen = false; void startWritingACommand(); }}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4.5l-5 15" /></svg>
-                  <span>Write a command</span>
-                </button>
-              </div>
-            {/if}
-          </div>
+          <ComposerAddMenu bind:open={addMenuOpen} bind:root={addMenuElement}
+            disabled={inputDisabled} imageCount={pendingImages.length} fileCount={pendingFiles.length}
+            onPicture={() => imageInput?.click()} onFile={() => fileInput?.click()} onCamera={() => cameraInput?.click()}
+            onCommand={() => void startWritingACommand()}
+          />
           <input
             bind:this={cameraInput}
             class="chat-image-input"
@@ -1713,7 +1536,7 @@
   .c2-composer { display: grid; gap: var(--cv-s2); }
 
   /* --- one button set (§2.7), for the few buttons the composer draws itself ------------------ */
-  .cv-btn {
+  :global(.c2-composer .cv-btn) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1730,18 +1553,17 @@
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .cv-btn--small { height: 28px; padding: 0 10px; }
+  :global(.c2-composer .cv-btn--small) { height: 28px; padding: 0 10px; }
   /* v4.2: the conversation's one primary style. */
-  .cv-btn--primary { border-radius: 18px; background: #f2f2f2; color: #121212; }
-  .cv-btn--primary:hover { background: #ffffff; }
-  .cv-btn--secondary { background: var(--cv-control); color: var(--cv-t1); }
-  .cv-btn--secondary:hover { background: var(--cv-control-hover); }
-  .cv-btn--ghost { background: transparent; color: var(--cv-t2); }
-  .cv-btn--ghost:hover { background: var(--cv-control); color: var(--cv-t1); }
-  .cv-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-  .cv-btn:focus-visible,
-  .chat-add-item:focus-visible,
-  .chat-att-x:focus-visible {
+  :global(.c2-composer .cv-btn--primary) { border-radius: 18px; background: #f2f2f2; color: #121212; }
+  :global(.c2-composer .cv-btn--primary:hover) { background: #ffffff; }
+  :global(.c2-composer .cv-btn--secondary) { background: var(--cv-control); color: var(--cv-t1); }
+  :global(.c2-composer .cv-btn--secondary:hover) { background: var(--cv-control-hover); }
+  :global(.c2-composer .cv-btn--ghost) { background: transparent; color: var(--cv-t2); }
+  :global(.c2-composer .cv-btn--ghost:hover) { background: var(--cv-control); color: var(--cv-t1); }
+  :global(.c2-composer .cv-btn svg) { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  :global(.c2-composer .cv-btn:focus-visible),
+  :global(.c2-composer .chat-att-x:focus-visible) {
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: var(--cv-focus-offset);
   }
@@ -1766,66 +1588,6 @@
   .chat-local-send-text { margin: 0; white-space: pre-wrap; color: var(--cv-t1); font-size: var(--cv-type-ui); line-height: var(--cv-leading-ui); }
   .chat-local-send-file { color: var(--cv-t2); }
   .chat-local-send-actions { display: flex; flex-wrap: wrap; gap: var(--cv-s1); margin: var(--cv-s1) 0 0 calc(var(--cv-s3) * -1); }
-
-  /* --- the add menu (§3.14): the floating plane, upward from the + ---------------------------- */
-  .chat-add { position: relative; display: inline-flex; }
-  .chat-add-menu {
-    position: absolute;
-    z-index: 40;
-    min-width: 220px;
-    display: flex;
-    flex-direction: column;
-    /* v7: a menu is a Surface with the float shadow; its rows are quiet Buttons. */
-    padding: 6px;
-    background: #1c1c1c;
-    border: 1px solid #2a2a2a;
-    border-radius: 20px;
-    box-shadow: var(--cv-shadow-float);
-    animation: chat-pop-in var(--cv-dur-base) var(--cv-ease-out);
-  }
-  @keyframes chat-pop-in {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: none; }
-  }
-  .chat-add-item {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    gap: 6px;
-    min-height: 32px;
-    padding: 6px 14px;
-    background: none;
-    border: none;
-    border-radius: 999px;
-    color: #bdbdbd;
-    font-family: var(--cv-font);
-    font-size: 13px;
-    font-weight: var(--cv-weight-label);
-    line-height: 20px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .chat-add-item:hover:not(:disabled),
-  .chat-add-item:focus-visible { color: #ececec; background: #2a2a2a; }
-  .chat-add-item:disabled { color: var(--cv-t4); cursor: default; }
-  .chat-add-item svg {
-    width: 16px;
-    height: 16px;
-    flex: none;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    color: #bdbdbd;
-  }
-  .chat-add-item:hover svg { color: #ececec; }
-  .chat-add-count {
-    margin-inline-start: auto;
-    font-size: var(--cv-type-caption);
-    font-variant-numeric: tabular-nums;
-    color: var(--cv-t3);
-  }
 
   /* --- drag over (§3.13): the whole shell becomes the place to drop -------------------------- */
   /* The shell takes the accent wash and the words "Drop to attach" stand alone in its middle;
@@ -1908,7 +1670,6 @@
   @media (prefers-reduced-motion: reduce) {
     .chat-voice-bar { transition: none; }
     .chat-voice-shimmer { animation: none; color: var(--cv-t2); background: none; }
-    .chat-add-menu { animation: none; }
   }
 
   /* --- one line, two rows, an ask: the box's three shapes ------------------------------------ */
@@ -1929,7 +1690,7 @@
   .chat-box.is-compact > .chat-ta { flex: 1 1 0; order: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
   .chat-box.is-compact > .chat-foot { display: contents; }
   .chat-box.is-compact > .chat-foot > :global(*) { order: 2; }
-  .chat-box.is-compact > .chat-foot > :is(.chat-add, .chat-ask-pen) { order: 0; }
+  .chat-box.is-compact > .chat-foot > :is(:global(.chat-add), .chat-ask-pen) { order: 0; }
   .chat-box.is-compact > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-start: 0; }
   /* v11 (12): 8px between each control on the right (model, Steer, mic, Send/Stop), on the
      line and grown alike: the model chip adds 4 to the row's 4px gap. */
@@ -1942,10 +1703,10 @@
      composer's own line is its last row: a pen, the draft, the microphone and the ask's
      primary pill in the send slot. No add, no model, no mode chip and no Stop under it. */
   .chat-box.has-ask, .chat-box.has-ask.is-compact { border-radius: 20px; padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
-  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s3); }
+  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
-  .chat-box.has-ask > .chat-foot :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
+  .chat-box.has-ask > .chat-foot :is(:global(.chat-add), :global([data-conversation-model-picker])) { display: none; }
   .chat-ask-pen { flex: none; display: grid; place-items: center; width: 32px; height: 32px; color: var(--cv-quiet-ink, #bdbdbd); }
   .chat-ask-pen svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   /* v4.2: the ask's own-answer line sits in its own well (#141414, radius 12, 44 high) so it
@@ -2057,7 +1818,6 @@
      model and delivery pickers from their chips' right). It overlays what is above and never
      moves it. Their height is capped by the room over the composer (app.css). */
   .chat-box :global(:is(.listbox-picker-panel, .chat-menu)) { z-index: 40; }
-  .chat-add { position: relative; }
   /* v6: every menu opens with its bottom 8px above the composer's top edge, not above its chip:
      --c2-menu-lift is how far each anchor stands under the composer's top edge (measured). */
   .chat-box .chat-foot :global([data-conversation-model-picker] > .listbox-picker-panel) {
@@ -2065,163 +1825,7 @@
     right: 0;
     bottom: calc(100% + 8px + var(--c2-menu-lift, 0px));
   }
-  .chat-add-menu { inset-block-end: calc(100% + 8px + var(--c2-menu-lift, 0px)); inset-inline-start: 0; }
 
-  /* --- pending attachments (§3.9) -------------------------------------------------------------- */
-  /* A picture is a 56px square that its thumbnail fills; a file is a 56px tile up to 240px wide
-     on the control fill: a 32px glyph tile, its name, and its kind and size in words. */
-  /* v7: a file waiting to go is an attachment card, a Surface (#1c1c1c, a 1px #2a2a2a edge,
-     radius 20); a picture is the picture, radius 12 with the same 1px edge, as in messages. */
-  .chat-att {
-    height: 56px;
-    border: 1px solid #2a2a2a;
-    border-radius: 20px;
-    background: #1c1c1c;
-  }
-  .chat-att.img { width: 76px; height: 76px; border: 0; border-radius: 12px; background: #1c1c1c; }
-  .chat-att.img img { border-radius: 12px; }
-  /* v10 (9): a thumbnail's edge is 1px rgba(255,255,255,0.12). */
-  .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%); pointer-events: none; }
-  /* Pass 11: a file tile sits on #242424, one step under the #2a2a2a remove circle in its
-     corner, so the circle reads as on a picture (on #2a2a2a it vanished and the x floated). */
-  /* p12c: a file chip is as tall as a picture chip (76), its content centred. */
-  .chat-att.file {
-    height: 76px;
-    align-items: center;
-    gap: 10px;
-    max-width: 240px;
-    padding: 0 16px 0 12px;
-    background: #1c1c1c;
-  }
-  .chat-att.video { max-width: 280px; padding-inline-start: var(--cv-s1); }
-  .chat-att-kind {
-    /* v7: the file's 16px icon alone, #bdbdbd, as on the attachment card in the transcript. */
-    width: 32px;
-    height: 32px;
-    background: transparent;
-    color: #bdbdbd;
-  }
-  .chat-att-kind svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .chat-att-thumb {
-    position: relative; flex: none; display: grid; place-items: center; overflow: hidden;
-    width: 64px; height: 48px; border-radius: var(--cv-r-sm); background: var(--cv-raised);
-  }
-  .chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .chat-att-thumb svg {
-    position: relative; width: 20px; height: 20px; padding: 4px; fill: var(--cv-primary-ink);
-    border-radius: 50%; background: var(--cv-primary-fill);
-  }
-  .chat-att-words { gap: 0; }
-  .chat-att-name {
-    color: #ececec;
-    font-family: var(--cv-font);
-    font-size: 14px;
-    line-height: 20px;
-    font-weight: var(--cv-weight-label);
-  }
-  .chat-att-meta {
-    color: #b0b0b0;
-    font-family: var(--cv-font);
-    font-size: 13px;
-    line-height: 20px;
-    font-variant-numeric: tabular-nums;
-  }
-  /* A failed upload says so in its own words, in the danger tone, with Retry beside it. */
-  .chat-att.failed .chat-att-meta { color: var(--cv-danger); }
-  .chat-att-again { flex: none; margin-inline-start: auto; }
-  /* Upload progress: a 2px bar along the tile's foot in the body tone, never the accent. */
-  .chat-att-progress {
-    position: absolute;
-    inset: auto var(--cv-s2) 4px var(--cv-s2);
-    height: 2px;
-    border-radius: 1px;
-    background: rgb(255 255 255 / 10%);
-    overflow: hidden;
-  }
-  .chat-att-progress::after {
-    content: "";
-    display: block;
-    width: var(--chat-att-progress, 0%);
-    height: 100%;
-    background: var(--cv-t2);
-    transition: width var(--cv-dur-base) linear;
-  }
-  /* v10 (11): the remove button sits inside the chip's top-right corner, 6px in: a 20px
-     rgba(0,0,0,0.6) circle with a white x. Nothing overhangs the chip, so the row needs no
-     room around it; chips are 8px apart. */
-  .chat-attachments { gap: var(--cv-s2); padding-block-start: 4px; padding-inline-end: 0; }
-  .chat-att-x {
-    top: 6px;
-    right: 6px;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    background: rgb(0 0 0 / 60%);
-    box-shadow: none;
-    color: #ffffff;
-    z-index: 1;
-    transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
-  }
-  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { background: rgb(0 0 0 / 80%); background-image: none; color: #ffffff; }
-  .chat-att-x svg {
-    display: block;
-    width: 20px;
-    height: 20px;
-    padding: 5px;
-    box-sizing: border-box;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.5;
-    stroke-linecap: round;
-  }
-  .chat-att-x:disabled { color: var(--cv-t3); cursor: default; }
-  /* v10 (11): the circle is inside the tile's corner, so a file tile's words stop short of it. */
-  .chat-att.file { padding-inline-end: 32px; }
-  /* v13 (6): the picture chip and the file chip are one shape: 76 high, radius 10, the remove
-     circle 6px inside the top-right corner of both. A file chip is as wide as its words plus
-     the circle: the words stop 8px before the circle (6 + 20 + 8 = 34), no wide empty end.
-     A picture crops from its top, so a chart's or a screen's title shows. */
-  .chat-att, .chat-att.img, .chat-att.file { height: 76px; border-radius: 10px; }
-  .chat-att.img img, .chat-att.img::after { border-radius: 10px; }
-  .chat-att.img img { object-position: left top; }
-  .chat-att.file { padding-inline-end: 34px; }
-  /* The file chip's 1px edge is part of its box: its circle sits 5px inside the edge, so it is
-     6px from the chip's outer corner, as on the picture (which has no edge). */
-  .chat-att.file > .chat-att-x { top: 5px; right: 5px; }
-  /* v15 (2): the remove button is a 20px rgba(20,20,20,0.85) circle with a 1px
-     rgba(255,255,255,0.24) ring and an #ececec x, inside the chip's top-right corner, 6px in, on
-     both chips (v14 (9)'s white badge half outside the chip is withdrawn). Nothing overhangs, so
-     the row needs no room around it. The file chip has 12px before its icon; after its words it
-     leaves room for the button only (6 + 20 + 6 = 32). */
-  .chat-attachments { gap: var(--cv-s2); padding-block-start: 0; margin-block-start: 0; padding-inline-end: 0; }
-  .chat-att-x, .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible {
-    top: 6px;
-    right: 6px;
-    background: rgb(20 20 20 / 85%);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 24%);
-    color: #ececec;
-  }
-  .chat-att-x:hover:not(:disabled) { background: rgb(36 36 36 / 92%); color: #ffffff; }
-  .chat-att.file > .chat-att-x { top: 5px; right: 5px; }
-  .chat-att-x svg { stroke-width: 1.5; }
-  .chat-att.file { padding-inline: 12px 32px; }
-  .chat-att.file > .chat-att-kind { width: 16px; }
-  /* v15 (7): 16px between an ask's last option and its answer well (options stay 8 apart). */
-  .chat-box.has-ask > .chat-ask { margin-block-end: var(--cv-s4); }
-  /* v16 (4): the v15 circle stays. A picture gets a 28px scrim at its top, inside the thumbnail
-     (under the circle, over the picture), so the button never sits on chart detail. The file
-     chip's right padding is 40px, so its words stay 12px or more from the button (6 + 20 + 12
-     = 38, rounded to 40). */
-  .chat-att.img::after { background: linear-gradient(rgb(0 0 0 / 55%), transparent) top / 100% 28px no-repeat; }
-  .chat-att.file { padding-inline-end: 40px; }
-  /* v16 (12): attachment meta ("Text · 692 B") one step up, #b8b8b8. */
-  .chat-att-meta { color: #b8b8b8; }
-  /* v16 (11): grown (attachments or several lines), the composer's bottom padding equals its top
-     (12px), so the foot's buttons sit as far from the bottom edge as the first row from the top. */
+  /* Grown drafts keep equal top and bottom padding. */
   .chat-box:not(.is-compact, .has-ask) { padding-block-end: var(--cv-s3); }
-  /* v15 (1): in the grown composer (attachments or several lines) the chips and the draft start at
-     the composer's inner left padding, the add button's left edge (v14 (10) withdrawn). The
-     one-line composer keeps the add button, then the draft. */
 </style>

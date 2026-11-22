@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
+  import { NEWEST_CALLOUTS, createNewestCallouts } from "../../lib/conversation/newestCallout";
   import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
   import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** One composer and viewport survive movement between the reserved dock and full conversation. */
@@ -235,6 +236,7 @@
     onNewConversation?: () => void;
   } = $props();
 
+  setContext(NEWEST_CALLOUTS, createNewestCallouts());
   setContext(CREDENTIAL_REQUEST_READ_ONLY, () => readOnly);
   const credentialDrafts = $derived.by(() => { conversationId; return new Map() as CredentialRequestDrafts; });
   setContext(CREDENTIAL_REQUEST_DRAFTS, () => credentialDrafts);

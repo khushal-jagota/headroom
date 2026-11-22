@@ -15,6 +15,7 @@
   import type { Snippet } from "svelte";
   import { untrack } from "svelte";
   import AskShell from "./AskShell.svelte";
+  import AskOptionContent from "./AskOptionContent.svelte";
 
   let {
     request,
@@ -244,13 +245,8 @@
           onclick={() => choose(option.label)}
           onfocus={() => (focusedOption = index)}
         >
-          <span class="cv-ask-key" aria-hidden="true">
-            {#if selected}<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></svg>{:else if index < 9}{index + 1}{/if}
-          </span>
-          <span class="cv-ask-words">
-            <span class="cv-ask-label">{option.label}</span>
-            {#if option.description}<small class="cv-ask-sub">{option.description}</small>{/if}
-          </span>
+          <AskOptionContent label={option.label} description={option.description}
+            digit={index < 9 ? index + 1 : null} {selected} />
         </button>
       {/each}
     </div>

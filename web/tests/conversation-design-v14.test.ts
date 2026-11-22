@@ -6,7 +6,7 @@ import ComposerWithQueryClient from "./fixtures/ComposerWithQueryClient.svelte";
 
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
 const shell = source("../src/components/conversation/AskShell.svelte");
 const pane = source("../src/components/conversation/ConversationPane.svelte");

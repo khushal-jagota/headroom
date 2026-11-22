@@ -11,6 +11,7 @@
    */
   import type { Snippet } from "svelte";
   import AskShell from "./AskShell.svelte";
+  import AskOptionContent from "./AskOptionContent.svelte";
   import {
     askChoiceForDigit,
     askQuestionChoices,
@@ -122,8 +123,7 @@
         disabled={busy || !answerAvailable}
         onclick={() => pick(row.optionId)}
       >
-        <kbd class="cv-ask-key" aria-hidden="true">{row.shortcutDigit ?? ""}</kbd>
-        <span class="cv-ask-words"><span class="cv-ask-label">{row.label}</span></span>
+        <AskOptionContent label={row.label} digit={row.shortcutDigit} keyTag="kbd" />
       </button>
     {/each}
   </div>

@@ -7,7 +7,7 @@ import PermissionAskCard from "../src/components/conversation/PermissionAskCard.
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
 const tokens = source("../../assets/tokens.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 
 describe("v8 type: one agent face (Inter), no serif", () => {
   it("Newsreader and its notice are gone; nothing in the app names a serif face", () => {

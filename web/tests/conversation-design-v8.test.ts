@@ -15,7 +15,7 @@ import type { HeldPromptRow } from "../src/lib/conversation/heldPrompts";
 
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const viewport = source("../src/components/conversation/viewport/ConversationViewport.svelte");
 
 const turn: ConversationViewTurn = {

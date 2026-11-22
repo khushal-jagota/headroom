@@ -8,7 +8,7 @@ import { ASK_REPLY_PLACEHOLDER, COMPOSER_PLACEHOLDER, composerPlaceholderFor } f
 const source = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8") as string;
 const app = source("../../assets/app.css");
 const tokens = source("../../assets/tokens.css");
-const composer = source("../src/components/conversation/ConversationComposer.svelte");
+const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
 const pane = source("../src/components/conversation/ConversationPane.svelte");
 const live = source("../src/components/conversation/LiveConversation.svelte");
 const shell = source("../src/components/conversation/AskShell.svelte");
@@ -24,13 +24,13 @@ describe("v15 (1): the grown composer starts at its own inner padding", () => {
 
 describe("v15 (2): the attachment remove button", () => {
   it("is a dark 20px circle with a light ring and an #ececec x, 6px inside the corner of both chips", () => {
-    expect(composer).toMatch(/\.chat-att-x, \.chat-att-x:hover:not\(:disabled\), \.chat-att-x:focus-visible \{\s*top: 6px;\s*right: 6px;\s*background: rgb\(20 20 20 \/ 85%\);\s*box-shadow: inset 0 0 0 1px rgb\(255 255 255 \/ 24%\);\s*color: #ececec;\s*\}/);
+    expect(composer).toMatch(/\.chat-att-x \{[^}]*width: 20px;[^}]*background: rgb\(20 20 20 \/ 85%\);[^}]*box-shadow: inset 0 0 0 1px rgb\(255 255 255 \/ 24%\);[^}]*color: #ececec;/);
     // The file chip's 1px edge is part of its box, so its circle is 5px inside the edge.
     expect(composer).toContain(".chat-att.file > .chat-att-x { top: 5px; right: 5px; }");
     expect(composer).not.toContain("top: -10px; right: -10px;");
   });
   it("the file chip has 12px before its icon and room for the button only after its words", () => {
-    expect(composer).toContain(".chat-att.file { padding-inline: 12px 32px; }");
+    expect(composer).toContain("padding-inline: 12px 40px;");
     expect(composer).toContain(".chat-attachments { gap: var(--cv-s2); padding-block-start: 0; margin-block-start: 0; padding-inline-end: 0; }");
   });
 });
@@ -112,7 +112,7 @@ describe("v15 (7): asks", () => {
 
 describe("v15 (7): ask spacing", () => {
   it("16px between the last option and the answer well", () => {
-    expect(composer).toContain(".chat-box.has-ask > .chat-ask { margin-block-end: var(--cv-s4); }");
+    expect(composer).toMatch(/\.chat-box > \.chat-ask \{[^}]*margin-block-end: var\(--cv-s4\);/);
   });
 });
 
