@@ -7,6 +7,8 @@ describe('conversation file validation', () => {
   });
 
   it('refuses a binary .log file', () => {
-    expect(() => validated_file_media_type(Buffer.from([0xff, 0xfe, 0x00, 0x80]), 'crash.log')).toThrow();
+    expect(() =>
+      validated_file_media_type(Buffer.from([0xff, 0xfe, 0x00, 0x80]), 'crash.log'),
+    ).toThrow();
   });
 });

@@ -15,10 +15,11 @@ function seed(database: Database, state: string): void {
     tx.run("INSERT OR REPLACE INTO navigation_records(kind,id,value) VALUES('ticket','t-key',?)", [
       JSON.stringify({ conversation_id: 'c-key', ticket_status: 'agent', stage: 'build' }),
     ]);
-    tx.run(
-      "INSERT INTO credential_requests VALUES('r-1','c-key','ticket','t-key','{}',?,?,?)",
-      [JSON.stringify({ kind: 'credential_request', request_id: 'r-1', state }), now, now],
-    );
+    tx.run("INSERT INTO credential_requests VALUES('r-1','c-key','ticket','t-key','{}',?,?,?)", [
+      JSON.stringify({ kind: 'credential_request', request_id: 'r-1', state }),
+      now,
+      now,
+    ]);
   });
 }
 

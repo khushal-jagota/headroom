@@ -3952,14 +3952,13 @@ select {
 .conversation-layer > .conversation-column {
   position: relative;
 }
-/* v4.3: the opened conversation is one column (--cv-col, 640 since v12): header content, transcript and
+/* The opened conversation is one column (--cv-col): header content, transcript and
  * composer align to it. Docked at rest under a work page, it keeps the page's own column so
  * the status line and composer stand on the page text's edges. */
 [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
   width: min(var(--cv-col), calc(100% - 2 * var(--space-5)));
 }
-/* v9 (21): the 640 reading column is the full conversation's only. Docked on a work page, the
- * status row, composer and ask keep the page's column (760), on the page text's edges. */
+/* The docked status row, composer and ask retain the page column on its text edges. */
 /* No hairline above the composer zone: the zone is the composer and its status line. */
 .conversation-layer > .conversation-column::before {
   content: none;

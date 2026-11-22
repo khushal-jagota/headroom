@@ -157,7 +157,10 @@ export function createBackendRoutes(
       // sentence, which the composer shows as written; the planner envelope it used to
       // answer with reached the person as a bare "The server answered 400."
       if (source === null)
-        throw new HttpError(409, 'This machine is not connected to Panels, so its models cannot be listed.');
+        throw new HttpError(
+          409,
+          'This machine is not connected to Panels, so its models cannot be listed.',
+        );
       const snapshots = await Promise.all(
         runtime.backend_ids.map((key) =>
           source.snapshot(key, { refresh: refresh_requested, signal: signal_of(request) }),
