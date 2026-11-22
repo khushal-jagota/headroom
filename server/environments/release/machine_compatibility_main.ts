@@ -161,92 +161,16 @@ const proxy = createServer(
     incoming.pipe(peer);
   },
 );
-proxy.listen(0, '127.0.0.1');
-await once(proxy, 'listening');
-const address = proxy.address();
-assert.ok(address && typeof address !== 'string');
-const origin = `https://127.0.0.1:${address.port}`;
-const home = join(root, 'home');
-for (const name of [
-  'home',
-  'server/data',
-  'server/logs',
-  'server/workspace',
-  'server/runtime',
-  'server/backups',
-  'server/files',
-])
-  await mkdir(join(root, name), { recursive: true });
-await writeFile(join(root, 'server/config.json'), '{}');
-Object.assign(process.env, {
-  PLAN_CONFIG_PATH: join(root, 'server/config.json'),
-  PLAN_DB_PATH: join(root, 'server/data/planner.sqlite'),
-  PLAN_DATA_DIR: join(root, 'server/data'),
-  PLAN_APP_ROOT: source,
-  PLAN_LOGS_DIR: join(root, 'server/logs'),
-  PLAN_WORKSPACE_ROOT: join(root, 'server/workspace'),
-  PLAN_BACKUP_DIR: join(root, 'server/backups'),
-  PLAN_TICKET_FILES_DIR: join(root, 'server/files'),
-  PLAN_TICKET_SCRATCH_ROOT: join(root, 'server/scratch'),
-  PLAN_TICKET_SCRATCH_DATABASE: join(root, 'server/data/planner.sqlite'),
-  PLAN_CREDENTIAL_KEY_PATH: join(root, 'server/data/key'),
-  PLAN_DISPATCHER_LOCK_PATH: join(root, 'server/runtime/dispatcher.lock'),
-  PLAN_SERVER_CONTROL_SOCKET: join(root, 'server/runtime/control.sock'),
-  PLAN_SERVER_LIFECYCLE_LEASE_PATH: join(root, 'server/runtime/lifecycle.lock'),
-  PLAN_TEST_MODE: '1',
-  PLAN_PORT: '0',
-  PLAN_HOST: '127.0.0.1',
-  PLAN_SERVER_URL: origin,
-  PLAN_APP_SHA: run.source_sha,
-  PLAN_EXECUTOR_ID: 'test-executor',
-  PLAN_DISPATCH_ENABLED: 'false',
-  PLAN_TRUSTED_INGRESS_PROVIDER: 'tailscale',
-  PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN: 'compatibility@example.invalid',
-  PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN: origin,
-});
-const { createEnvironmentRuntime } = await import('../runtime.ts');
-const { create_test_environment_operations } = await import('../testing/composition.ts');
-const { create_mac_update_composition } = await import('../updates/mac/composition.ts');
-const { SUPPORTED_UPDATE_SCHEMA_FLOOR } = await import('../updates/configuration.ts');
-const { start_native_server } = await import('../../executor/mac/testing/native_server.ts');
-const { write_credential, credential_path } = await import('../../executor/credential_file.ts');
-const { attempt_path, FileUpdateAttemptStore } = await import('../updates/attempts.ts');
-const publication = {
-  publication_run_id: Number(run.run_id),
-  artifact_id: 1,
-  proof_artifact_id: 1,
-  manifest: {
-    app_sha: run.source_sha,
-    source_digest: '0'.repeat(64),
-    artifact_digest: '0'.repeat(64),
-    runtime_contract: null,
-  },
-  archive_sha256: '0'.repeat(64),
-  schema_floor: SUPPORTED_UPDATE_SCHEMA_FLOOR,
-  expires_at: null,
-  mac: {
-    artifact_id: 1,
-    archive_sha256: evidence.archive_sha256,
-    archive_size: evidence.archive_size,
-  },
-  linux_executor: {
-    artifact_id: 1,
-    archive_sha256: evidence.archive_sha256,
-    archive_size: evidence.archive_size,
-  },
-  parts: {
-    server: { app_sha: run.source_sha, artifact_digest: '0'.repeat(64) },
-    screens: { sha256: '0'.repeat(64) },
-    machines: {
-      [platform === 'linux' ? 'linux-x86_64' : 'darwin-arm64']: {
-        archive_sha256: evidence.archive_sha256,
-        build_id: evidence.build_id,
-      },
-    },
-  },
-};
-let service: ReturnType<typeof create_mac_update_composition>['service'] | undefined;
-let server: Awaited<ReturnType<typeof start_native_server>> | undefined;
+let service:
+  | ReturnType<
+      typeof import('../updates/mac/composition.ts').create_mac_update_composition
+    >['service']
+  | undefined;
+let server:
+  | Awaited<
+      ReturnType<typeof import('../../executor/mac/testing/native_server.ts').start_native_server>
+    >
+  | undefined;
 let active: ReturnType<ChildProcesses['spawn']> | undefined;
 let active_closed: Promise<unknown> | undefined;
 const wait = async (read: () => unknown | Promise<unknown>) => {
@@ -269,6 +193,90 @@ const stop_machine = async () => {
   active = undefined;
 };
 try {
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  const address = proxy.address();
+  assert.ok(address && typeof address !== 'string');
+  const origin = `https://127.0.0.1:${address.port}`;
+  const home = join(root, 'home');
+  for (const name of [
+    'home',
+    'server/data',
+    'server/logs',
+    'server/workspace',
+    'server/runtime',
+    'server/backups',
+    'server/files',
+  ])
+    await mkdir(join(root, name), { recursive: true });
+  await writeFile(join(root, 'server/config.json'), '{}');
+  Object.assign(process.env, {
+    PLAN_CONFIG_PATH: join(root, 'server/config.json'),
+    PLAN_DB_PATH: join(root, 'server/data/planner.sqlite'),
+    PLAN_DATA_DIR: join(root, 'server/data'),
+    PLAN_APP_ROOT: source,
+    PLAN_LOGS_DIR: join(root, 'server/logs'),
+    PLAN_WORKSPACE_ROOT: join(root, 'server/workspace'),
+    PLAN_BACKUP_DIR: join(root, 'server/backups'),
+    PLAN_TICKET_FILES_DIR: join(root, 'server/files'),
+    PLAN_TICKET_SCRATCH_ROOT: join(root, 'server/scratch'),
+    PLAN_TICKET_SCRATCH_DATABASE: join(root, 'server/data/planner.sqlite'),
+    PLAN_CREDENTIAL_KEY_PATH: join(root, 'server/data/key'),
+    PLAN_DISPATCHER_LOCK_PATH: join(root, 'server/runtime/dispatcher.lock'),
+    PLAN_SERVER_CONTROL_SOCKET: join(root, 'server/runtime/control.sock'),
+    PLAN_SERVER_LIFECYCLE_LEASE_PATH: join(root, 'server/runtime/lifecycle.lock'),
+    PLAN_TEST_MODE: '1',
+    PLAN_PORT: '0',
+    PLAN_HOST: '127.0.0.1',
+    PLAN_SERVER_URL: origin,
+    PLAN_APP_SHA: run.source_sha,
+    PLAN_EXECUTOR_ID: 'test-executor',
+    PLAN_DISPATCH_ENABLED: 'false',
+    PLAN_TRUSTED_INGRESS_PROVIDER: 'tailscale',
+    PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN: 'compatibility@example.invalid',
+    PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN: origin,
+  });
+  const { createEnvironmentRuntime } = await import('../runtime.ts');
+  const { create_test_environment_operations } = await import('../testing/composition.ts');
+  const { create_mac_update_composition } = await import('../updates/mac/composition.ts');
+  const { SUPPORTED_UPDATE_SCHEMA_FLOOR } = await import('../updates/configuration.ts');
+  const { start_native_server } = await import('../../executor/mac/testing/native_server.ts');
+  const { write_credential, credential_path } = await import('../../executor/credential_file.ts');
+  const { attempt_path, FileUpdateAttemptStore } = await import('../updates/attempts.ts');
+  const publication = {
+    publication_run_id: Number(run.run_id),
+    artifact_id: 1,
+    proof_artifact_id: 1,
+    manifest: {
+      app_sha: run.source_sha,
+      source_digest: '0'.repeat(64),
+      artifact_digest: '0'.repeat(64),
+      runtime_contract: null,
+    },
+    archive_sha256: '0'.repeat(64),
+    schema_floor: SUPPORTED_UPDATE_SCHEMA_FLOOR,
+    expires_at: null,
+    mac: {
+      artifact_id: 1,
+      archive_sha256: evidence.archive_sha256,
+      archive_size: evidence.archive_size,
+    },
+    linux_executor: {
+      artifact_id: 1,
+      archive_sha256: evidence.archive_sha256,
+      archive_size: evidence.archive_size,
+    },
+    parts: {
+      server: { app_sha: run.source_sha, artifact_digest: '0'.repeat(64) },
+      screens: { sha256: '0'.repeat(64) },
+      machines: {
+        [platform === 'linux' ? 'linux-x86_64' : 'darwin-arm64']: {
+          archive_sha256: evidence.archive_sha256,
+          build_id: evidence.build_id,
+        },
+      },
+    },
+  };
   server = await start_native_server({
     platform,
     expected_protocol: JSON.parse(
@@ -453,7 +461,8 @@ try {
   owner.force_kill(performance.now() / 1000 + 30);
   await owner.settled();
   proxy.closeAllConnections();
-  await new Promise<void>((resolve, reject) =>
-    proxy.close((error) => (error ? reject(error) : resolve())),
-  );
+  if (proxy.listening)
+    await new Promise<void>((resolve, reject) =>
+      proxy.close((error) => (error ? reject(error) : resolve())),
+    );
 }
