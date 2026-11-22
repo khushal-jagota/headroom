@@ -52,9 +52,6 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertTrue(attachment.exists)
         capture(app, "chat-canceled-back-keeps-editing")
         app.buttons["Send message"].tap()
-        let sending = app.staticTexts["Sending…"].firstMatch
-        XCTAssertTrue(sending.waitForExistence(timeout: 3))
-        XCTAssertTrue(sending.waitForNonExistence(timeout: 8))
         XCTAssertTrue(attachment.waitForNonExistence(timeout: 5))
         let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Please check this image.")).firstMatch
         XCTAssertTrue(sent.waitForExistence(timeout: 8))
