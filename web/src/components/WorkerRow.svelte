@@ -1,6 +1,7 @@
 <script lang="ts">
   import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import DestinationIcon from "./DestinationIcon.svelte";
+  import StageMark from "./StageMark.svelte";
   import type { TicketLocale } from "../lib/ticketMachines";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import type { AgentHoldFacts } from "../lib/workAttentionPresentation";
@@ -17,6 +18,7 @@
     lead = undefined,
     titleMark = undefined,
     approval = null,
+    waiting = false,
     agentHold = undefined,
     class: extraClass = "",
     ...rest
@@ -36,6 +38,9 @@
     titleMark?: import("svelte").Snippet;
     /** Whose approval the Ticket waits on, drawn in the mark column as the Review icon. */
     approval?: "owner" | "agent" | null;
+    /** Whether its conversation is stopped on an ask only the owner can answer. Its turn is
+     *  still open, so `signal.working` stays true; the row must not draw that as working. */
+    waiting?: boolean;
     /** Whether an agent holds the Ticket, for what a Mac Ticket says while the Mac is away. */
     agentHold?: AgentHoldFacts;
     class?: string;
@@ -48,10 +53,14 @@
   <span class="ticket-row-title">{#if titleMark}{@render titleMark()}{/if}<span class="ticket-row-text">{title}</span></span>
   <!-- The mark column says what matters most about the row (owner): an unread message's dot first;
        else the Review icon in the accent when it waits on your approval; the icon greyed when it
-       waits on an agent's approval and nothing else is showing; otherwise the working mark, or
-       nothing. -->
+       waits on an agent's approval and nothing else is showing; the needs-me dot while its turn
+       waits on your answer; otherwise the working mark, or nothing. -->
   {#if approval === "owner" && !signal?.message_for_owner}
     <span class="conversation-signal-marks approval-mark approval-mark--owner" role="img" aria-label="Needs your approval" data-approval-mark="owner" data-conversation-id={conversationId ?? undefined}><DestinationIcon name="review" /></span>
+  {:else if waiting && !signal?.message_for_owner}
+    <!-- Waiting for you is not working: the needs-me dot, never the spinner, so the row agrees
+         with the conversation's own "Waiting for you". -->
+    <span class="conversation-signal-marks" data-conversation-signal="waiting" data-conversation-id={conversationId ?? undefined}><StageMark state="needs-me" aria-label="Waiting for you" /></span>
   {:else if approval === "agent" && !signal?.message_for_owner && !signal?.working}
     <span class="conversation-signal-marks approval-mark approval-mark--agent" role="img" aria-label="Awaiting an agent's approval" data-approval-mark="agent" data-conversation-id={conversationId ?? undefined}><DestinationIcon name="review" /></span>
   {:else}

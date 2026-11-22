@@ -797,6 +797,30 @@ strong {
   max-width: 100%;
 }
 
+/* An answer's headings stand clearly over its text: h1 and h2 a size up in the strong
+ * tone with room above them, h3 the section-head size. h4-h6 stay the quiet labels. */
+.chat-thread .markdown :is(h1, h2, h3) {
+  margin-block: var(--space-5) var(--space-2);
+  color: var(--tone-strong);
+  letter-spacing: var(--tracking-title);
+}
+
+.chat-thread .markdown :is(h1, h2) {
+  font-size: var(--type-conversation-heading);
+  line-height: 1.35;
+}
+
+.chat-thread .markdown > :is(h1, h2, h3):first-child {
+  margin-block-start: 0;
+}
+
+/* The agent's prose keeps the reading measure every page uses (about 85 characters), so
+ * a line on a wide window is still one the eye can follow back. Code, tables, charts and
+ * pictures keep the column's full width. */
+.chat-a .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+  max-inline-size: var(--page-prose-measure);
+}
+
 .markdown pre code {
   background: none;
   padding: 0;
@@ -863,12 +887,25 @@ strong {
   table-layout: fixed;
 }
 
+/* One table for every Markdown surface (a conversation answer, a Ticket, an artifact
+ * preview): rows, not a grid. Hairlines between rows only, the heading set apart by weight
+ * and one firmer rule, and no padding outside the first and last columns, so the words
+ * line up with the text around the table. */
 .markdown th,
 .markdown td {
-  padding: var(--space-2);
-  border: var(--border-hairline) solid var(--border-color);
+  padding: var(--space-2) var(--space-4) var(--space-2) 0;
+  border: 0;
+  border-block-end: var(--border-hairline) solid var(--border-color);
   text-align: left;
   vertical-align: top;
+}
+
+.markdown :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.markdown tr:last-child > td {
+  border-block-end: 0;
 }
 
 .chat-thread .markdown th,
@@ -877,12 +914,11 @@ strong {
   overflow-wrap: anywhere;
 }
 
-/* Table heads, as staging: bold in the strong tone over a recessed band, at the table's
- * own size. */
+/* Table heads: bold in the strong tone over the firmer rule, at the table's own size. */
 .markdown th {
   color: var(--tone-strong);
   font-weight: var(--weight-title);
-  background: var(--surface-recessed);
+  border-block-end-color: var(--border-hover);
 }
 
 .markdown img {
@@ -1557,21 +1593,6 @@ button.list-row:hover .list-row-title {
   overflow-wrap: anywhere;
 }
 
-/* Turn-end and wire-exception pills: centred, flat, outline. */
-.acp-turn-end {
-  align-self: center;
-  border: var(--border-hairline) solid var(--text-faintest);
-  border-radius: var(--radius-pill);
-  padding: var(--space-1) var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-}
-.acp-turn-end--error {
-  border-color: var(--accent-error);
-  color: var(--accent-error);
-}
-
 /* Something happening right now, said in movement: the words themselves travel. The app's
    one way of showing a thing is live, so a turn working reads the same as a thought
    forming. Shared rather than component-local — a gradient is a design decision, and the
@@ -1602,6 +1623,22 @@ button.list-row:hover .list-row-title {
 .chat-panel {
   --conversation-glyph: 22px;
   --conversation-target: 32px;
+  /* Quiet text in the conversation is one tone: the secondary (#a7a7a7), which holds 4.5:1
+     on every surface the conversation draws (7.8 on the page, 6.0 on the composer, 5.1 on
+     a selected row). The tertiary step under it read as faint on the dark page, so every
+     name for it — and the aliases resolved from it at the root — lands on the secondary
+     here. The ladder in the conversation is strong, primary, secondary; faint is left for
+     placeholders and disabled controls. Hierarchy among quiet things is size and weight. */
+  --tone-tertiary: var(--tone-secondary);
+  --text-faintest: var(--tone-secondary);
+  --chart-muted: var(--tone-secondary);
+  --chart-legend: var(--tone-secondary);
+  --code-syntax-comment: var(--tone-secondary);
+  /* Marks that are not words (a tool's kind glyph, a chevron at rest) stay a step under the
+     text they sit beside, and above 3:1 on the page and the row's hover. */
+  /* An answer's h1 and h2: between the section head (15) and the page reading (22). */
+  --type-conversation-heading: 18px;
+  --conversation-mark-quiet: color-mix(in srgb, var(--tone-secondary) 50%, var(--tone-faint));
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -1801,8 +1838,10 @@ button.list-row:hover .list-row-title {
   /* The transcript lines up with the well below it. Inside a card the card holds the
      inset for both of them; in a host that draws no card — the Chief of Staff — the well
      carries its own, so the transcript matches it rather than sitting a few pixels
-     further out. */
-  padding: var(--space-5) var(--space-3) 12px;
+     further out. The newest line keeps a full step of air over the composer, so a draft
+     that grows several lines tall never sits against what was last said
+     (NEWEST_LINE_BOTTOM_GAP_PIXELS in viewport/viewportConfiguration.ts is this value). */
+  padding: var(--space-5) var(--space-3) var(--space-5);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
 }
@@ -2226,7 +2265,7 @@ button.list-row:hover .list-row-title {
 }
 .chat-voice-fail { font-size: var(--type-sm); color: var(--text-muted); }
 .chat-voice-fail .chat-voice-time { font-size: var(--type-sm); color: var(--text-faint); }
-/* The X undoes; drawn in the stop idiom (.chat-send.stop): red hairline, transparent. */
+/* The X undoes: a plain icon button, as the composer's other glyph buttons are. */
 .chat-voice-cancel {
   width: var(--space-5);
   height: var(--space-5);
@@ -2234,14 +2273,16 @@ button.list-row:hover .list-row-title {
   place-items: center;
   padding: 0;
   background: transparent;
-  border: var(--border-hairline) solid var(--accent-error);
+  border: 0;
   border-radius: var(--radius-md);
-  color: var(--accent-error);
+  color: var(--text-muted);
   cursor: pointer;
 }
+.chat-voice-cancel:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
 .chat-voice-cancel svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.6; }
-/* The going-forward action sits where the send arrow does: filled accent, far right. */
-.chat-voice-stop,
+/* The going-forward action sits where the send arrow does, far right. Retry is filled
+   accent; Stop is the one stop the app draws (.chat-send.stop): a round with a red
+   hairline and a red square. */
 .chat-voice-retry {
   margin-left: auto;
   border: none;
@@ -2251,13 +2292,20 @@ button.list-row:hover .list-row-title {
   cursor: pointer;
 }
 .chat-voice-stop {
+  margin-left: auto;
   width: var(--space-5);
   height: var(--space-5);
   display: grid;
   place-items: center;
   padding: 0;
+  border: var(--border-hairline) solid var(--accent-error);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--accent-error);
+  cursor: pointer;
 }
-.chat-voice-square { width: 9px; height: 9px; border-radius: 2px; background: var(--surface-ink); }
+.chat-voice-stop:hover { background-image: var(--interaction-hover); }
+.chat-voice-square { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
 .chat-voice-retry {
   height: var(--space-5);
   padding: 0 var(--space-3);

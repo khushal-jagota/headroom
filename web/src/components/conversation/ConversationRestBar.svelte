@@ -25,7 +25,7 @@
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
-      {#if running || backgroundWorking}<span class="c2-mark--running" role="img" aria-label="working"></span>{:else if settingUp}<span class="c2-mark--running" role="img" aria-label="setting up" data-unconfirmed={activityKnown ? undefined : true}></span>{/if}
+      {#if running || backgroundWorking}<span class="c2-mark--running" role="img" aria-label="working"></span>{:else if settingUp && activityKnown}<span class="c2-mark--running" role="img" aria-label="setting up"></span>{:else if settingUp}<svg class="c2-mark--unconfirmed" viewBox="0 0 16 16" role="img" aria-label="setting up, not confirmed" data-unconfirmed><circle cx="8" cy="8" r="6.25" /><path d="M8 4.75v3.75" /><path d="M8 11.1v.15" /></svg>{/if}
       {#if connectionTrouble}<span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>{/if}
       {#if activity}<span data-conversation-rest-line>{activity}</span>{/if}
     </span>
@@ -35,7 +35,9 @@
   </span>
   {#if preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
 </button>
-{#if feedback}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
+<!-- While the machine cannot say what it is doing, the line under the status is a warning,
+     not a note: it is the reason the status above it cannot be trusted. -->
+{#if feedback}<div class="c2-rest-feedback" class:is-warning={!activityKnown} role="status" data-conversation-dock-feedback>{feedback}</div>{/if}
 
 <style>
   /* Staging's status line in the page's tokens: Small print in the tertiary tone, a 32px row
@@ -69,8 +71,10 @@
   .c2-mark--running { flex:none; width:var(--space-3); height:var(--space-3);
     border-radius:var(--radius-pill); border:var(--border-strong) solid color-mix(in srgb, var(--tone-tertiary) 40%, transparent); border-top-color:var(--accent-bright);
     animation:spin var(--motion-loop-spin) linear infinite; }
-  /* Setup the machine cannot confirm right now is recorded, not seen moving: a still, dashed ring. */
-  .c2-mark--running[data-unconfirmed] { border:var(--border-strong) dashed var(--tone-tertiary); animation:none; }
+  /* Setup the machine cannot confirm right now is recorded, not seen moving: no ring that
+     could pass for a spinner, but the warning mark the line under it explains. */
+  .c2-mark--unconfirmed { flex:none; width:14px; height:14px; fill:none; stroke:var(--accent-attention); stroke-width:1.5; stroke-linecap:round; }
+  .c2-rest-feedback.is-warning { color:var(--accent-attention); }
   @keyframes spin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion:reduce) { .c2-mark--running { animation:none; } .c2-rest-control { transition:none; } }
 </style>

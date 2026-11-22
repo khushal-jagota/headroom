@@ -36,6 +36,7 @@ type ToolGlyphKind =
   | "search"
   | "execute"
   | "think"
+  | "todo"
   | "fetch"
   | "switch_mode"
   | "other";
@@ -56,6 +57,7 @@ const TOOL_GLYPH_KINDS: readonly ToolGlyphKind[] = [
   "search",
   "execute",
   "think",
+  "todo",
   "fetch",
   "switch_mode",
   "other"
@@ -82,6 +84,8 @@ const STEP_ICON_PATHS: Record<ToolGlyphKind, readonly string[]> = {
     "M12 3a5 5 0 0 0-3 9c.6.5 1 1.2 1 2v1h4v-1c0-.8.4-1.5 1-2a5 5 0 0 0-3-9z",
     "M10 20h4"
   ],
+  // A checklist: a to-do update is the list, not an edit to a file.
+  todo: ["m4 6.5 1.5 1.5L8.5 5", "M12 6.5h8", "m4 13.5 1.5 1.5 3-3", "M12 13.5h8", "M5 20h.01", "M12 20h8"],
   fetch: ["M12 3v12", "m7 10 5 5 5-5", "M5 21h14"],
   switch_mode: ["M4 9h13", "m14 6 3 3-3 3", "M20 15H7", "m10 12-3 3 3 3"],
   other: ["M6 12h.01", "M12 12h.01", "M18 12h.01"]
@@ -94,6 +98,8 @@ const STEP_ICON_PATHS: Record<ToolGlyphKind, readonly string[]> = {
  * An unrecognised word gets the neutral glyph instead of a guess.
  */
 const TOOL_NAME_HINTS: readonly (readonly [ToolGlyphKind, readonly string[]])[] = [
+  // First, because a to-do tool's name also says what it does to the list ("TodoWrite").
+  ["todo", ["todo"]],
   ["execute", ["bash", "shell", "exec", "command", "terminal", "process"]],
   ["search", ["search", "grep", "glob", "find", "list", "ls"]],
   ["fetch", ["fetch", "http", "curl", "download", "web"]],
@@ -101,7 +107,7 @@ const TOOL_NAME_HINTS: readonly (readonly [ToolGlyphKind, readonly string[]])[] 
   ["read", ["read", "view", "open", "cat"]],
   ["delete", ["delete", "remove", "trash"]],
   ["move", ["move", "rename"]],
-  ["think", ["think", "plan", "task", "todo", "reason"]]
+  ["think", ["think", "plan", "task", "reason"]]
 ];
 
 /** The verb a row leads with when the call names its subject. The subject follows in the

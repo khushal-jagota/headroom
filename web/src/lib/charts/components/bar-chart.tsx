@@ -101,7 +101,10 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   const selected = index === null ? undefined : data[index];
   const reading = chartHeadline(block, data, selected?.key ?? null, projection, range).value;
   const readingLabel = selected?.label ?? (block.binding ? categoryRange(projection, range)?.label : data.at(-1)?.label) ?? 'No readings';
+  // The key stands above the plot, under the title, so it is read before the bars and is
+  // never the part a scrolled card leaves below the fold.
   return <>
+    {showLegend && <SeriesLegend series={entries} />}
     <div className="bar-plot" style={{ height: block.plot_height ?? (compact ? 176 : 242) }}>
       <canvas ref={ref} role="slider" tabIndex={data.length ? 0 : -1} aria-label={`${block.title ?? 'Chart'}, explore observations`}
         aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={Math.max(1, (index ?? data.length - 1) + 1)}
@@ -119,6 +122,5 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
           inspect(next, 'keyboard');
         }} />
     </div>
-    {showLegend && <SeriesLegend series={entries} />}
   </>;
 }

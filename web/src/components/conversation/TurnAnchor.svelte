@@ -170,6 +170,8 @@
           </div>
         {/if}
         {#if foldCount !== ""}
+          <!-- The same separator a settled head puts between its clock and its count. -->
+          <span class="c2-turn-count" aria-hidden="true">·</span>
           <button
             type="button"
             class="c2-turn-fold c2-turn-fold--live"
@@ -253,7 +255,7 @@
     column-gap: var(--space-2);
     min-width: 0;
   }
-  .c2-turn-fold--live { margin-inline: 0; }
+  .c2-turn-fold--live { margin-inline: calc(var(--space-2) * -1) 0; }
   /* Waiting on the person is the one state this head speaks in the accent: it is the
      brand's "needs the human", and it does not move, because nothing is moving. */
   .c2-waiting { color: var(--accent-bright); }

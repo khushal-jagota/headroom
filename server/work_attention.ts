@@ -1,10 +1,34 @@
 import type { Database } from './core/database/contracts.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
+import type { ReadSql } from './core/database/contracts.ts';
 import { readDurableFactsFor } from './conversation/publication/durable.ts';
+/** Conversations holding a key request the owner has not answered. Like a permission ask or a
+ *  question, it stops on the owner, so it counts as awaiting an answer. It is a stored row,
+ *  not live turn state, so it holds across restarts and after the turn that asked ended. */
+export function pendingCredentialConversations(sql: ReadSql, ids: Set<string>): Set<string> {
+  if (
+    ids.size === 0 ||
+    sql.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_requests'") ===
+      undefined
+  )
+    return new Set();
+  const sorted = [...ids].sort();
+  return new Set(
+    sql
+      .all<{ conversation_id: string }>(
+        'SELECT DISTINCT conversation_id FROM credential_requests WHERE conversation_id IN (' +
+          sorted.map(() => '?').join(',') +
+          ") AND json_extract(body,'$.state')='pending'",
+        sorted,
+      )
+      .map((row) => row.conversation_id),
+  );
+}
 async function signals(
   durableRows: ReturnType<typeof readDurableFactsFor>,
   system: ConversationSystem | undefined,
   ids: Set<string>,
+  pending_keys: ReadonlySet<string> = new Set(),
 ) {
   const durable = new Map(durableRows.map((r) => [r.conversation_id, r.durable]));
   const result = new Map<
@@ -23,6 +47,7 @@ async function signals(
         message_for_owner: !!d?.message_for_owner,
       },
       awaiting_answer:
+        pending_keys.has(id) ||
         !!(await system?.has_pending_permission_ask(id)) ||
         !!(await system?.has_pending_user_input(id)),
       last_turn_failed: !!d?.last_turn_failed,
@@ -88,7 +113,7 @@ export async function add_work_attention(
 ): Promise<void> {
   const manager_ids = new Set(managers.map((row) => String(row.id)));
   const ticket_ids = new Set(tickets.map((row) => String(row.id)));
-  const { records, children, links, conversation_ids, durable } = database.read((sql) => {
+  const { records, children, links, conversation_ids, durable, pending_keys } = database.read((sql) => {
     const children = new Map<string, string[]>([...manager_ids].map((id) => [id, []]));
     const links = new Map<string, string>();
     if (manager_ids.size) {
@@ -131,9 +156,10 @@ export async function add_work_attention(
       links,
       conversation_ids,
       durable: readDurableFactsFor(sql, conversation_ids),
+      pending_keys: pendingCredentialConversations(sql, conversation_ids),
     };
   });
-  const conversations = await signals(durable, system, conversation_ids);
+  const conversations = await signals(durable, system, conversation_ids, pending_keys);
   const attention = new Map<string, WorkAttention>();
   for (const [id, stored] of records) {
     const c = conversations.get(String(stored.conversation_id));

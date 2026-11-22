@@ -112,7 +112,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   // The period switch stands where staging put it: at the top right of a full chart, and as
   // one full-width row under the plot of a compact (card) chart.
   const rangeOnTop = !compact;
-  const plot = <>{chart}{chatSnapshot && block.kind === 'line' && <SeriesLegend series={series} />}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
+  const plot = <>{chatSnapshot && block.kind === 'line' && <SeriesLegend series={series} />}{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
   if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${compact ? 'compact ' : ''}${foldable ? 'completion-summary ' : ''}${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? null : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : null} /></article>;
   if (foldable) {

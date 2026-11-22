@@ -22,7 +22,7 @@ export type WorkspaceSettledManager = Pick<WorkspaceManager,
   & WorkItemAttentionFacts & {settled:true};
 export type WorkspaceRailManager = WorkspaceManager | WorkspaceSettledManager;
 export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
-  & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
+  & {awaiting_reply:boolean | null;awaiting_answer?:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
 
 export type WorkspaceTicketGroup = {
   key: string;
@@ -37,6 +37,8 @@ export type WorkspaceRailItem = {
   createdAt: number;
   updatedAt: number;
   conversationSignal: WorkspaceManager["conversation_signal"];
+  /** Its own conversation is stopped on an ask only the owner can answer. */
+  awaitingAnswer: boolean;
   conversationId: string | null;
   groups: WorkspaceTicketGroup[];
   rested: boolean;
@@ -104,15 +106,15 @@ export function refreshWorkspaceRailSignals(current: WorkspaceRail, next: Worksp
   const heads = new Map(items.map((item) => [item.id, item]));
   const refreshTicket = (ticket: WorkItemTicketFacts): WorkItemTicketFacts => {
     const fresh = tickets.get(ticket.id);
-    return fresh ? {...ticket, conversation_signal: fresh.conversation_signal,
+    return fresh ? {...ticket, conversation_signal: fresh.conversation_signal, awaiting_answer: fresh.awaiting_answer,
       conversation_id: fresh.conversation_id, worker_setup: fresh.worker_setup} : {...ticket,conversation_signal:undefined};
   };
   const refreshGroups = (groups: WorkspaceTicketGroup[]) => groups.map((group) =>
     ({...group, cards: group.cards.map(refreshTicket)}));
   const refreshItems = (rows: WorkspaceRailItem[]) => rows.map((item) => {
     const fresh = heads.get(item.id);
-    return {...item, ...(fresh ? {conversationSignal: fresh.conversationSignal,
-      conversationId: fresh.conversationId} : {conversationSignal:undefined}), groups: refreshGroups(item.groups),
+    return {...item, ...(fresh ? {conversationSignal: fresh.conversationSignal, awaitingAnswer: fresh.awaitingAnswer,
+      conversationId: fresh.conversationId} : {conversationSignal:undefined, awaitingAnswer:false}), groups: refreshGroups(item.groups),
       tickets: item.tickets.map(refreshTicket)};
   });
   return {...current, groups: refreshGroups(current.groups), chiefGroups: refreshGroups(current.chiefGroups),
@@ -154,6 +156,7 @@ export function buildWorkspaceRail(
     createdAt: item.created_at,
     updatedAt: item.updated_at,
     conversationSignal: item.conversation_signal,
+    awaitingAnswer: item.awaiting_answer === true,
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets),
     ...("recap" in item ? {recap:item.recap,recap_reference:item.recap_reference,

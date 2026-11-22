@@ -67,8 +67,8 @@
   .delivery-mode-name { color: var(--text-strong); }
   .delivery-mode-hint { color: var(--tone-tertiary); font-size: var(--type-small); white-space: nowrap; }
   /* The panel opens from the composer's right edge, 8px above the box, like the model
-   * picker's: a whole raised layer over the queue tray, never a strip that leaves half of a
-   * row's actions showing beside it. */
+   * picker's, and ConversationComposer lifts it past the queue tray: a whole raised layer over
+   * the transcript, never over the queued messages it is choosing between. */
   :global(.chat-box .chat-submit [data-conversation-send-mode]) { position: static; }
   :global(.chat-box .chat-submit [data-conversation-send-mode] > .listbox-picker-panel.compact) {
     left: auto;

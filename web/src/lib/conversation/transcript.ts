@@ -220,6 +220,66 @@ export function turnEndingSentence(
   return ending === "failed" && errorSummary ? errorSummary : base;
 }
 
+/** A line in the thread that says what happened to a turn or a message, rather than
+ *  anything anybody said. Every one of them is drawn the same way: a mark in its tone, a
+ *  plain sentence a person can act on, and, when the backend said something more exact,
+ *  that exact text beneath it, quieter, so nothing it said is lost. */
+export type TranscriptStatus = {
+  tone: "error" | "warning" | "neutral";
+  title: string;
+  detail: string | null;
+};
+
+/** The plain reason a turn failed, read from the backend's own words. Only causes those
+ *  words name are said; anything else is said as an error, and the words stay beneath. */
+const TURN_FAILURE_CAUSES: readonly [RegExp, string][] = [
+  [/rate[ _-]?limit|usage limit|quota|too many requests|\b429\b/i, "The turn stopped because the model's rate limit was reached."],
+  [/unauthori[sz]ed|authenticat|\b401\b|\bapi key\b|not signed in|sign[ -]?in/i, "The turn stopped because the provider would not accept the sign-in."],
+  [/disconnect|connection (?:reset|closed|refused|lost)|network|socket hang up|econnreset|timed out|timeout/i, "The turn stopped because the connection to the model dropped."],
+  [/exited with code|exited unexpectedly|crashed|was killed|\bsignal\b|sigkill|sigterm/i, "The turn stopped because the agent's process exited."]
+];
+
+export function turnFailureSentence(errorSummary: string | null): string {
+  const said = errorSummary?.trim() ?? "";
+  for (const [pattern, sentence] of TURN_FAILURE_CAUSES) if (pattern.test(said)) return sentence;
+  return "The turn stopped because of an error.";
+}
+
+/** How a turn's ending is drawn in the thread, or null when it draws nothing. */
+export function turnEndingStatus(
+  ending: ConversationTurnEnding,
+  errorSummary: string | null
+): TranscriptStatus | null {
+  if (ending === "failed") return { tone: "error", title: turnFailureSentence(errorSummary), detail: errorSummary?.trim() || null };
+  if (ending === "interrupted") return { tone: "neutral", title: "Turn interrupted", detail: null };
+  return null;
+}
+
+/** A turn the record never wrote an ending for, in the same family. */
+export const TURN_STOPPED_STATUS: TranscriptStatus = {
+  tone: "neutral",
+  title: "Turn stopped before it finished",
+  detail: null
+};
+
+/** What became of a message the person sent, under the message rather than inside it: the
+ *  failure is the system's, and the words above it are still theirs. */
+export function promptOutcomeStatus(
+  row: { kind: "prompt_refused"; reason: PromptDeliveryRefusalReason; sentence: string } | { kind: "prompt_uncertain" | "prompt_discarded" }
+): TranscriptStatus {
+  if (row.kind !== "prompt_refused") {
+    return row.kind === "prompt_uncertain"
+      ? { tone: "warning", title: "Delivery not confirmed. It may have arrived, so do not send it again.", detail: null }
+      : { tone: "neutral", title: "Discarded without being delivered", detail: null };
+  }
+  const plain = REFUSAL_SENTENCES[row.reason] ?? "the delivery was impossible";
+  return {
+    tone: "error",
+    title: `Not delivered: ${plain}.`,
+    detail: row.sentence.trim() !== "" && row.sentence !== plain ? row.sentence : null
+  };
+}
+
 export type TranscriptReading = {
   /** The conversation system says no turn is running while the rows still leave one
    *  open. The turn stopped without an ending, so the pane says the ending the record

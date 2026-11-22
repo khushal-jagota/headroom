@@ -299,7 +299,13 @@
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-default); }
   /* A real space between the model and its effort, so the words read and copy as two. */
   .model-picker-effort { color: var(--text-faint); }
-  .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
+  /* The panel's tools (Refresh, Reasoning) are a group of their own under the backends: set
+   * apart by an inset hairline that reads on the raised plane, with room on both sides of it. */
+  .model-picker-tools { position: relative; margin-top: auto; padding-top: var(--space-2); }
+  .model-picker-tools::before {
+    content: ""; position: absolute; top: var(--space-1); inset-inline: var(--space-3);
+    border-top: var(--border-hairline) solid var(--border-hover);
+  }
   .model-picker-tools svg { width: 13px; height: 13px; }
   .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

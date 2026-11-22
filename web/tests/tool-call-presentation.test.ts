@@ -126,6 +126,12 @@ describe("a to-do update", () => {
     expect(presented.canExpand).toBe(true);
   });
 
+  it("has its own glyph, not the pencil of a file edit", () => {
+    const edit = presentToolCall(row("Write", "Write", '{"file_path":"/repo/a.ts"}', "ok"));
+    expect(presented.iconPaths).not.toEqual(edit.iconPaths);
+    expect(presentToolCall(row("TodoWrite", "TodoWrite", "{}", "ok")).iconPaths).toEqual(presented.iconPaths);
+  });
+
   it("still says what it did when the list did not come with it", () => {
     expect(presentToolCall(row("TodoWrite", "think", "{}", "Todos have been modified successfully."))).toMatchObject({
       title: "Updated to-dos", summary: null, detail: null, canExpand: false

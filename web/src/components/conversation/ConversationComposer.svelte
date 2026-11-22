@@ -1008,6 +1008,37 @@
     ".conversation-layer .chat-box:not(:has(> :not(.chat-ta, .chat-foot, .chat-drop-label)))";
   let boxElement = $state<HTMLDivElement | null>(null);
 
+  // --- what stands over the box -----------------------------------------------------------------
+  /** The box's stack: messages waiting to go (the queue tray, local sends) and, at its foot, the
+   *  box. */
+  let stackElement = $state<HTMLDivElement | null>(null);
+  /** How far the box sits under the top of its stack. Every popover the composer opens (add,
+   *  catalog, model, delivery) is lifted by this much, so it opens over the transcript and
+   *  never covers the queued messages or their actions. */
+  let popoverLift = $state(0);
+  $effect(() => {
+    const stack = stackElement;
+    const box = boxElement;
+    if (stack === null || box === null) return;
+    const measure = (): void => {
+      popoverLift = Math.max(0, Math.round(box.offsetTop - stack.offsetTop));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(stack);
+    return () => observer.disconnect();
+  });
+
+  // --- keyboard focus -----------------------------------------------------------------------------
+  /** Whether the last thing the person did was on the keyboard rather than a pointer. A field
+   *  reached with the keyboard draws the focus ring (a 2px accent edge); one pressed into keeps
+   *  the quiet 1px edge, since the caret already shows where the pointer went. */
+  let lastInputWasKeyboard = false;
+  let keyboardFocus = $state(false);
+  function inputModality(event: KeyboardEvent | PointerEvent): void {
+    lastInputWasKeyboard = event.type === "keydown";
+  }
+
   /** Whether focus now arriving in the field is the composer handing it back. */
   let returningFocus = false;
   function returnFocusToTheField(): void {
@@ -1027,6 +1058,7 @@
     });
   });
   function fieldFocused(): void {
+    keyboardFocus = lastInputWasKeyboard;
     readWhereTheCursorIs();
     if (!returningFocus) onFieldChosen?.();
   }
@@ -1073,7 +1105,7 @@
     const add = foot?.querySelector<HTMLElement>(":scope > .chat-add") ?? null;
     if (foot === null || add === null) return null;
     const following = Array.from(foot.children).filter(
-      (element) => element !== add && element.getClientRects().length > 0
+      (element) => element !== add && !element.matches(".chat-menu") && element.getClientRects().length > 0
     );
     if (following.length === 0) return null;
     const between = Math.min(...following.map((element) => element.getBoundingClientRect().left))
@@ -1120,7 +1152,8 @@
     }
     const foot = box.querySelector<HTMLElement>(":scope > .chat-foot");
     const controls = Array.from(foot?.children ?? []).filter(
-      (element): element is HTMLElement => element instanceof HTMLElement && element.getClientRects().length > 0
+      (element): element is HTMLElement => element instanceof HTMLElement
+        && !element.matches(".chat-menu") && element.getClientRects().length > 0
     );
     draftRowsMoving = moveBetweenDraftRows(box, [input, ...controls], draftRowsMoving, change, {
       duration: DRAFT_ROWS_MOTION_MS,
@@ -1198,7 +1231,9 @@
 </script>
 
 <svelte:window
+  onkeydowncapture={inputModality}
   onpointerdown={(event) => {
+    inputModality(event);
     if (!addMenuOpen) return;
     const pressed = event.target;
     if (pressed instanceof Node && addMenuElement?.contains(pressed)) return;
@@ -1210,7 +1245,7 @@
   class="c2-composer"
   data-conversation-composer
 >
-  <div class="chat-box-stack">
+  <div class="chat-box-stack" bind:this={stackElement}>
     {#each localSends as entry (entry.context.messageId)}
       <article class="chat-local-send" data-local-video-send={entry.context.messageId} aria-label="Local pending message">
         <p>{entry.attempt.draftBeforeSend.text}</p>
@@ -1250,6 +1285,9 @@
       bind:this={boxElement}
       class:drag={draggingAttachments}
       class:has-ask={takenOver}
+      class:has-attachments={userInput === null && attachments.length > 0}
+      class:keyboard-focus={keyboardFocus}
+      style:--composer-popover-lift={`${popoverLift}px`}
       data-conversation-box
       data-conversation-taken-over={takenOver ? "true" : undefined}
       role="group"
@@ -1277,17 +1315,6 @@
           busy={disabled}
           note={askNote}
           onAnswer={(optionId) => onAnswer?.(optionId)}
-        />
-      {/if}
-
-      {#if catalogMenuIsOpen}
-        <ComposerCatalogMenu
-          entries={matchingCatalogEntries}
-          activeIndex={activeCatalogEntryIndex}
-          anyEntriesAtAll={eligibleCatalogEntries.length > 0}
-          onChoose={(entry) => void takeTheCatalogEntry(entry)}
-          onHighlight={(index) => (activeCatalogEntryIndex = index)}
-          pointerReallyMoved={() => pointerReallyMoved}
         />
       {/if}
 
@@ -1338,7 +1365,7 @@
                 title="Remove"
                 disabled={inputDisabled}
                 onclick={() => attachment.kind === "image" ? removeImage(attachment.value) : attachment.kind === "video" ? removeVideo(attachment.value) : removeFile(attachment.value)}
-              >×</button>
+              ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg></button>
             </div>
           {/each}
         </div>
@@ -1358,12 +1385,24 @@
         onkeyup={readWhereTheCursorIs}
         onclick={fieldPressed}
         onfocus={fieldFocused}
-        onblur={() => (theCursorIsInTheBox = false)}
+        onblur={() => { theCursorIsInTheBox = false; keyboardFocus = false; }}
         onpaste={onPaste}
       ></textarea>
 
       {#if userInput === null}
       <div class="chat-foot" class:has-ask={takenOver}>
+        <!-- The catalog floats over the box from inside its foot, so opening it never changes
+             what the box holds and the box keeps its one layout. -->
+        {#if catalogMenuIsOpen}
+          <ComposerCatalogMenu
+            entries={matchingCatalogEntries}
+            activeIndex={activeCatalogEntryIndex}
+            anyEntriesAtAll={eligibleCatalogEntries.length > 0}
+            onChoose={(entry) => void takeTheCatalogEntry(entry)}
+            onHighlight={(index) => (activeCatalogEntryIndex = index)}
+            pointerReallyMoved={() => pointerReallyMoved}
+          />
+        {/if}
         {#if takenOver && ask}
           <PermissionAskActions
             ask={ask}
@@ -1374,8 +1413,9 @@
           />
         {:else if voiceState.phase !== "idle"}
           <!-- A voice take keeps the composer's one row: the X that undoes it where the + is,
-               the take itself where the words go, and its one going-forward action (stop, or
-               retry) where send is, drawn as send is drawn. -->
+               the take itself where the words go, and its one going-forward action where send is.
+               Its stop is the composer's one stop, drawn as the turn's is (a red ring round a
+               square), so stopping looks the same whatever is being stopped. -->
           <button
             type="button"
             class="chat-image chat-voice-x"
@@ -1412,7 +1452,7 @@
             {#if voiceState.phase === "recording"}
               <button
                 type="button"
-                class="chat-send on"
+                class="chat-send stop"
                 data-voice-stop
                 aria-label="Stop recording and transcribe"
                 title="Stop recording and transcribe"
@@ -1435,7 +1475,6 @@
             <button
               type="button"
               class="chat-image chat-add-btn"
-              class:on={pendingImages.length + pendingFiles.length + pendingVideos.length > 0}
               data-conversation-add
               aria-haspopup="menu"
               aria-expanded={addMenuOpen}
@@ -1764,4 +1803,93 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
   }
+
+  /* --- keyboard focus ---------------------------------------------------------------------- */
+  /* A field reached with the keyboard wears the app's focus ring: a 2px accent edge (the 1px
+     border and 1px outside it), well over 3:1 against both the page and the resting box. A
+     field pressed into keeps the quiet 1px edge. */
+  .chat-box.keyboard-focus {
+    border-color: var(--focus-ring);
+    box-shadow: 0 0 0 var(--border-hairline) var(--focus-ring);
+  }
+
+  /* --- popovers ------------------------------------------------------------------------------ */
+  /* Every popover the composer opens stands on the one raised plane and opens above the whole
+     stack: lifted past the queue tray and local sends (--composer-popover-lift, measured), so
+     queued messages and their actions stay readable while a menu is open. A deeper shadow,
+     falling on every side, sets the plane off from the transcript it opens over. */
+  .chat-box :global(:is(.listbox-picker-panel, .chat-menu)),
+  .chat-add-menu {
+    translate: 0 calc(-1 * var(--composer-popover-lift, 0px));
+    box-shadow: 0 0 0 var(--border-hairline) rgb(0 0 0 / 40%), 0 10px 32px rgb(0 0 0 / 55%), 0 0 12px rgb(0 0 0 / 35%);
+  }
+  /* A composer that scrolls keeps its popovers in its own flow (app.css): nothing to lift. */
+  :global([data-conversation-composer-constrained]) .chat-box :global(:is(.listbox-picker-panel, .chat-menu)),
+  :global([data-conversation-composer-constrained]) .chat-add-menu { translate: none; }
+  /* The model picker opens from the box's right edge in every state, as it does on the one row. */
+  :global(.conversation-layer) .chat-box .chat-foot > :global([data-conversation-model-picker]) { position: static; }
+  :global(.conversation-layer) .chat-box .chat-foot > :global([data-conversation-model-picker] > .listbox-picker-panel) {
+    left: auto;
+    right: 0;
+    bottom: calc(100% + var(--space-2));
+  }
+
+  /* --- with attachments: the same box ------------------------------------------------------- */
+  /* Attachments add a strip over the draft and nothing else. The box keeps the one row's
+     measures and the controls keep its columns (the + at the left; model, delivery, voice and
+     send at the right, 4px apart), exactly where they stand under a long draft. */
+  :global(.conversation-layer) .chat-box.has-attachments {
+    padding: var(--space-1) var(--space-2) calc((var(--composer-height) - var(--composer-control)) / 2 - var(--border-hairline));
+  }
+  :global(.conversation-layer) .chat-box.has-attachments > .chat-attachments {
+    margin-inline: calc(var(--composer-inset) - var(--space-2) - var(--border-hairline) - var(--space-1));
+  }
+  :global(.conversation-layer) .chat-box.has-attachments > .chat-ta {
+    width: auto;
+    margin: calc((var(--composer-control) - 24px) / 2) calc(var(--composer-inset) - var(--space-2) - var(--border-hairline));
+    line-height: 24px;
+  }
+  :global(.conversation-layer) .chat-box.has-attachments > .chat-foot {
+    gap: var(--space-1);
+    padding-top: 0;
+  }
+  :global(.conversation-layer) .chat-box.has-attachments > .chat-foot > :global([data-conversation-model-picker]) {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 0;
+    margin-inline-start: auto;
+  }
+  :global(.conversation-layer) .chat-box.has-attachments > .chat-foot > :global([data-conversation-model-picker] + .chat-submit) {
+    margin-inline-start: 0;
+  }
+
+  /* --- pending attachments ------------------------------------------------------------------- */
+  /* The remove control sits inside the tile's corner: a 24px target around a 16px round on
+     the raised plane, so it never hangs off the tile and covers little of a small picture. A
+     file tile keeps its words clear of it. */
+  .chat-att-x {
+    top: 0;
+    right: 0;
+    width: 24px;
+    height: 24px;
+    padding: 4px;
+    border: 0;
+    background: none;
+    color: var(--tone-strong);
+  }
+  .chat-att-x svg {
+    width: 16px;
+    height: 16px;
+    padding: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--surface-raised);
+    box-shadow: 0 0 0 var(--border-hairline) var(--border-raised), 0 1px 3px rgb(0 0 0 / 45%);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+  }
+  .chat-att-x:hover:not(:disabled) { border-color: transparent; background-image: none; color: var(--accent-error); }
+  .chat-att-x:focus-visible { outline: var(--focus-width) solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-pill); }
+  .chat-att.file { padding-inline-end: 24px; }
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
   /** What a message offers when the reader points at it: when it was said, and a copy of
-   *  its words. It sits in the space above the message, so showing it moves nothing. */
+   *  its words. It sits in the space above the message, so showing it moves nothing. Its
+   *  words are the conversation's quiet tone, which holds 4.5:1 on the page. */
   import { messageCopyText, messageTimeLabel } from "../../lib/conversation/transcript";
   let { content, createdAt = null }: {
     content: readonly { piece: string; text?: string }[];
@@ -57,7 +58,10 @@
 <style>
   .message-actions {
     position: absolute;
-    inset-block-end: 100%;
+    /* It reaches a step into the message's own top edge (a bubble's padding, the first
+       line's leading), so it keeps air under whatever is above the message, the head's
+       rule included, without moving anything. */
+    inset-block-end: calc(100% - var(--space-1));
     inset-inline-end: 0;
     block-size: var(--space-5);
     display: flex;

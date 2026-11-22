@@ -8,6 +8,8 @@
   import ConversationTranscript from '../ConversationTranscript.svelte';
   import ConversationCredentialRequestCard from '../ConversationCredentialRequestCard.svelte';
   import ToolCallRow from '../ToolCallRow.svelte';
+  import TranscriptStatusRow from '../TranscriptStatusRow.svelte';
+  import { turnEndingStatus, TURN_STOPPED_STATUS } from '../../../lib/conversation/transcript';
   import type { BackendModel } from '../../../lib/conversation/wire';
   import type { SvelteMap, SvelteSet } from 'svelte/reactivity';
   let { activityUncertain = false, item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
@@ -26,6 +28,9 @@
   const presentationAttempt = $derived(reader.restorationAnchor?.key === item.key ? reader.restorationAttempt : 0);
   const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
   const row = $derived(body === null ? null : rowForBody(item, body));
+  // A turn's ending and a turn that stopped without one are status lines, drawn in the
+  // same family as a message that was not delivered.
+  const endingStatus = $derived(row?.kind === 'turn_ended' && row.automaticCompactionResult !== 'not_compacted' ? turnEndingStatus(row.ending, row.errorSummary) : row?.kind === 'turn_stopped' ? TURN_STOPPED_STATUS : null);
   $effect(() => { if (body !== null) { reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); } });
   $effect(() => {
       if (item.body.kind === 'deferred' && body?.kind === 'turn_ended' && body.ending === 'completed' && body.automatic_compaction_result !== 'not_compacted')
@@ -60,6 +65,8 @@
 <SkeletonRegion shape="block" loading={row === null && !error} loadingText="Loading conversation detail…">
 {#if row?.kind==='tool_call'}
   <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow {activityUncertain} row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
+{:else if row !== null && endingStatus !== null}
+  <TranscriptStatusRow status={endingStatus} role={endingStatus.tone === 'error' ? 'alert' : 'status'} data-conversation-row={row.kind} data-conversation-turn-ending={row.kind === 'turn_ended' ? row.ending : undefined}/>
 {:else if row?.kind==='credential_request'}
   <ConversationCredentialRequestCard request={row.request}/>
 {:else if row!==null}

@@ -107,7 +107,7 @@
   }
 </script>
 
-<section bind:this={root} class="key-request" aria-label={`${current.provider} API key request`} data-conversation-row="credential_request" data-credential-request={current.request_id} data-credential-state={current.state}>
+<section bind:this={root} class="key-request" class:is-ask={current.state === 'pending' && !readOnly} aria-label={`${current.provider} API key request`} data-conversation-row="credential_request" data-credential-request={current.request_id} data-credential-state={current.state}>
   {#if current.state !== 'pending'}
     <div bind:this={result} class="result-status" role="status" tabindex="-1">
       <div class="saved-row"><span class="saved-provider">{current.provider} API key</span><span class="saved-name">{current.credential?.reference.name ?? current.name}</span><span class="saved-status">{outcome}</span></div>
@@ -123,7 +123,10 @@
   {:else if readOnly}
     <div class="saved-row"><span class="saved-provider">{current.provider} API key</span><span class="saved-name">{current.name}</span><span class="saved-status">Requested</span></div>
   {:else}
+    <!-- The ask shell every blocking ask shares: an accent label saying what it needs, the
+         title under it, the body, then the action row with the one primary at its right end. -->
     <header class="request-head">
+      <span class="request-eyebrow">Needs your key</span>
       <h3 class="request-title" id={`${uid}-title`}>{replacement ? `Replace the ${current.provider} API key` : `${current.provider} API key`}</h3>
       {#if current.use}<p class="request-use">{current.use}</p>{/if}
     </header>
@@ -156,33 +159,41 @@
       {#if draft.error}<p id={`${uid}-error`} class="error-note" role="alert">{draft.error}</p>{/if}
       {#if draft.stale}<button bind:this={reviewButton} type="button" class="button button--secondary review" disabled={draft.busy} onclick={() => void action('review')}>Review current key</button>{/if}
       {#if draft.reviewed}<p class="state-note">Current key · updated just now</p>{/if}
-      <!-- THE button (app.css, "Buttons"): the one primary, then a ghost to decline. -->
+      <!-- THE button (app.css, "Buttons"), in the ask shell's order: the ghost that declines,
+           then the one primary at the right end, as a permission ask ends in Allow once. -->
       <div class="form-footer">
-        {#if !draft.stale}<button type="button" class="button button--primary" disabled={draft.busy} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace' : 'Save'}</button>{/if}
         <button type="button" class="button button--ghost reject" disabled={draft.busy} onclick={() => void action('reject')}>Reject</button>
+        {#if !draft.stale}<button type="button" class="button button--primary" disabled={draft.busy} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace' : 'Save'}</button>{/if}
       </div>
     </form>
   {/if}
 </section>
 
 <style>
-  .key-request{align-self:flex-start;width:100%;max-width:calc(var(--credential-request-width) + var(--space-7)*2);min-width:0;box-sizing:border-box;background:var(--surface-2);border:0;border-radius:var(--radius-lg);padding:var(--space-4) var(--space-5) var(--space-5);font-size:var(--type-sm);overflow-wrap:anywhere}
-  .request-head{display:grid;gap:var(--space-1);margin-bottom:var(--space-4)}
+  /* The column's full width, as every ask is. A pending request stands on the composer's own
+     plane (its fill, edge and radius), the shell the question and the permission ask are
+     drawn on; a settled one is a quiet line on the transcript's card fill. */
+  .key-request{width:100%;min-width:0;box-sizing:border-box;background:var(--surface-2);border:0;border-radius:var(--composer-radius);padding:var(--space-3) var(--space-4);font-size:var(--type-sm);overflow-wrap:anywhere}
+  .key-request.is-ask{background:var(--composer-surface);border:var(--border-hairline) solid var(--composer-edge);padding:var(--space-4) var(--space-3) var(--space-3) calc(var(--composer-inset) - var(--border-hairline))}
+  .request-head{display:grid;gap:var(--space-1);margin-bottom:var(--space-3)}
+  .request-eyebrow{color:var(--accent-bright);font-family:var(--font-ui);font-size:var(--type-xs);font-weight:var(--weight-title);letter-spacing:var(--tracking-label);text-transform:uppercase}
   .request-title{margin:0;font:inherit;font-size:var(--type-md);font-weight:var(--weight-title);line-height:1.4;color:var(--text-strong)}
   .request-use{margin:0;color:var(--text-muted);line-height:1.5}
-  form{display:grid;gap:var(--space-4);margin:0;min-width:0}
+  form{display:grid;gap:var(--space-3);margin:0;min-width:0}
   .stacked-fields{display:grid;gap:var(--space-3)}
   .field{display:grid;gap:var(--space-1);min-width:0}
   .field-label{color:var(--text-muted);font-size:var(--type-xs)}
-  .key-name,.fixed-name{box-sizing:border-box;min-width:0;width:100%;padding:var(--space-2) var(--space-3);min-height:40px;background:var(--surface-input);border:0;border-radius:var(--radius-md);color:var(--text-strong);font-family:var(--font-mono);font-size:var(--type-code);letter-spacing:var(--tracking-mono);line-height:1.5}
+  .key-name,.fixed-name{box-sizing:border-box;min-width:0;width:100%;padding:var(--space-2) var(--space-3);min-height:40px;background:transparent;border:var(--border-hairline) solid var(--border-raised);border-radius:var(--radius-md);color:var(--text-strong);font-family:var(--font-mono);font-size:var(--type-code);letter-spacing:var(--tracking-mono);line-height:1.5}
   .key-name::placeholder{color:var(--text-muted)}
   /* A fixed name is a value, not a field: no fill, so it cannot be mistaken for one. */
-  .fixed-name{display:flex;align-items:center;overflow-wrap:anywhere;background:transparent;padding-inline:0;min-height:0}
-  .key-name:hover{background:var(--surface-input-hover)}
-  .private-input{min-width:0;display:flex;align-items:center;background:var(--surface-input);border:0;border-radius:var(--radius-md)}
+  .fixed-name{display:flex;align-items:center;overflow-wrap:anywhere;background:transparent;border:0;padding-inline:0;min-height:0}
+  .key-name:hover{background:var(--state-step)}
+  /* The fields are the question's own answer field: a hairline on the composer's fill, since
+     the input fill is that fill and drew nothing there. */
+  .private-input{min-width:0;display:flex;align-items:center;background:transparent;border:var(--border-hairline) solid var(--border-raised);border-radius:var(--radius-md)}
   .private-input input{width:100%;min-width:0;box-sizing:border-box;min-height:40px;padding:var(--space-2) var(--space-3);border:0;border-radius:var(--radius-md);background:transparent;color:var(--text-strong);font-family:var(--font-ui);font-size:var(--type-input);line-height:1.5}
   .private-input input::placeholder{color:var(--text-muted)}
-  .private-input:hover{background:var(--surface-input-hover)}
+  .private-input:hover{background:var(--state-step)}
   .quiet-affordance{display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;font:inherit;line-height:1.6;padding:var(--space-1);border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);cursor:pointer}
   .quiet-affordance:hover{color:var(--text-strong)}
   .reveal-button{flex:none;margin-right:var(--space-2)}
@@ -190,9 +201,12 @@
   .help{display:grid;gap:var(--space-2);justify-items:start}
   .help-toggle{min-height:24px;padding:0;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);font:inherit;font-size:var(--type-xs);text-decoration:underline;text-decoration-color:var(--border-raised);text-underline-offset:3px;cursor:pointer}
   .help-toggle:hover{color:var(--text-strong)}
-  .form-footer{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
-  .reject:hover:not(:disabled){color:var(--accent-error)}
-  .review{justify-self:start}
+  .form-footer{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;justify-content:flex-end}
+  .form-footer .button--ghost:not(:disabled){color:var(--text-default)}
+  .form-footer .button--ghost:hover:not(:disabled){color:var(--text-strong)}
+  .form-footer .reject:hover:not(:disabled){color:var(--accent-error)}
+  .review{justify-self:start;background:var(--state-step)}
+  .review:hover:not(:disabled){background:var(--state-step);background-image:var(--interaction-hover)}
   .key-help{color:var(--text-muted);font-size:var(--type-sm);line-height:1.6}
   .key-help a{color:var(--accent-bright);white-space:nowrap}
   .replacement-note,.state-note,.error-note{margin:0;font-size:var(--type-sm);line-height:1.5;color:var(--text-muted)}
@@ -204,5 +218,5 @@
   .result-status>.state-note,.delivery-state{margin-top:var(--space-2)}
   .delivery-state .button{margin-top:var(--space-2)}
   .result-status:focus{outline:none}
-  @media(max-width:560px){.key-request{padding:var(--space-4)}.private-input input{font-size:var(--space-4)}.key-name{font-size:var(--space-4)}}
+  @media(max-width:560px){.key-request.is-ask{padding:var(--space-4) var(--space-3) var(--space-3)}.private-input input{font-size:var(--space-4)}.key-name{font-size:var(--space-4)}}
 </style>

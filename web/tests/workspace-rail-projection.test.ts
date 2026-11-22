@@ -150,6 +150,15 @@ describe("manager rail projection", () => {
     expect(after.chiefGroups.find((group) => group.key === "agent")?.cards.find((row) => row.id === "working")?.conversation_signal?.working).toBe(true);
   });
 
+  it("carries a manager's own waiting-for-you to its card, and refreshes it with the signals", () => {
+    const waiting = buildWorkspaceRail([], [item("asks", {awaiting_answer:true, conversation_signal:{working:true, message_for_owner:false}})]);
+    expect(waiting.items[0].awaitingAnswer).toBe(true);
+    const answered = buildWorkspaceRail([], [item("asks", {conversation_signal:{working:true, message_for_owner:false}})]);
+    expect(answered.items[0].awaitingAnswer).toBe(false);
+    expect(refreshWorkspaceRailSignals(waiting, answered).items[0].awaitingAnswer).toBe(false);
+    expect(refreshWorkspaceRailSignals(answered, waiting).items[0].awaitingAnswer).toBe(true);
+  });
+
   it("passes the authoritative recap through and returns nothing when it is absent", () => {
     const source = item("recap", {recap:"Full body.\n" + "The rest of the recap is available. ".repeat(12),recap_preview:"Full body.…", tickets:[card("live"), card("done", {stage:"done"})]});
     const rail = buildWorkspaceRail([], [source]);

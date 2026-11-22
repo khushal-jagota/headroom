@@ -80,6 +80,13 @@
 </div>
 
 <style>
+  /* The catalog stands on the same raised plane as the composer's other popovers, and its
+     highlighted entry wears the same selected fill as theirs. */
+  .chat-menu {
+    background: var(--surface-raised);
+    border-color: var(--border-raised);
+  }
+  .chat-menu-item.on { background: var(--surface-selected); }
   .c2-catalog-argument {
     flex: none;
     color: var(--text-faintest);

@@ -23,6 +23,10 @@
         ? running && progress.currentEntry !== null
         : running && progress.hasUnfinishedEntry)
   );
+  // The step in hand, by name: the count alone hid what is being done until hovered.
+  let currentText = $derived(
+    (progress.currentEntry ?? progress.entries.find((entry) => entry.status === "in_progress") ?? null)?.text.trim() || null
+  );
   let position = $derived(
     progress.currentPosition ??
       progress.entries.findIndex((entry) => entry.status !== "completed") + 1
@@ -94,11 +98,13 @@
       onpointerleave={releaseIfOutside}
       onblur={releaseIfOutside}
         data-conversation-task-progress
-        aria-label={`Task ${position} of ${total}, ${progress.completedCount} complete`}
+        aria-label={`Task ${position} of ${total}${currentText ? `: ${currentText}` : ""}, ${progress.completedCount} complete`}
       >
         {#if moving}<span class="acp-spin" aria-hidden="true"></span>{/if}
-        <!-- The step being worked on, not a count of finished ones: "3 / 5" read as three done. -->
+        <!-- The step being worked on, not a count of finished ones: "3 / 5" read as three done.
+             Its name follows, cut to the pill's measure; the list above has it whole. -->
         <span class="task-count">Task {position} of {total}</span>
+        {#if currentText}<span class="task-sep" aria-hidden="true">·</span><span class="task-now" data-conversation-task-current>{currentText}</span>{/if}
       </button>
       {@render checklist()}
   </div>
@@ -135,6 +141,19 @@
   }
   .task-pill:hover,
   .task-pill:focus-visible { color: var(--text-strong); }
+  /* The pill never outgrows the composer's column: the name gives way, not the count. */
+  .task-pill { max-width: min(100%, 36rem); min-width: 0; }
+  .task-count, .task-sep { flex: none; color: var(--text-muted); }
+  .task-sep { margin-inline: calc(var(--space-1) * -1); }
+  .task-now {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-default);
+  }
+  .task-pill:hover .task-now,
+  .task-pill:focus-visible .task-now { color: var(--text-strong); }
   .c2-rest-progress {
     flex: none;
     position: relative;
@@ -209,12 +228,9 @@
     text-align: center;
   }
   .task-plan-text { min-width: 0; overflow-wrap: anywhere; }
-  .task-plan-item--done {
-    color: var(--text-muted);
-    text-decoration: line-through;
-    text-decoration-color: color-mix(in srgb, var(--text-muted) 55%, transparent);
-  }
-  .task-plan-item--done .task-plan-mark { color: var(--accent-done); text-decoration: none; }
+  /* Done is said by the green check; a strike through the words only made them read faint. */
+  .task-plan-item--done { color: var(--text-muted); }
+  .task-plan-item--done .task-plan-mark { color: var(--accent-done); }
   .task-plan-item--now { color: var(--text-strong); }
   .task-plan-item--now .task-plan-mark { color: var(--accent-bright); }
   :global(.task-pill .acp-spin) { flex: none; margin-left: 0; }

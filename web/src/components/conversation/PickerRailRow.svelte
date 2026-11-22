@@ -53,8 +53,9 @@
 
 <style>
   /* The rail speaks the interface face at the list's own size, so the two halves of the
-   * panel read as one menu. A part that cannot be chosen now stays legible in the tertiary
-   * tone (4.6:1 on the raised plane); only its mark is greyed. */
+   * panel read as one menu. A part that cannot be chosen now keeps the rows' own tone (6.4:1 on the raised plane), so
+   * it reads as plainly as the rest; its greyed mark and plain cursor say it cannot be taken,
+   * and pressing it says why. */
   .picker-rail-row {
     display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 32px; background: transparent;
     border: 0; color: var(--text-muted); cursor: pointer; font-family: var(--font-ui);
@@ -66,9 +67,9 @@
   .picker-rail-row:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
   .picker-rail-row.held { color: var(--text-strong); }
   .picker-rail-row.on { background: var(--surface-selected); color: var(--text-strong); }
-  .picker-rail-row.dim { color: var(--tone-tertiary); cursor: default; }
-  .picker-rail-row.dim:hover { background-image: none; color: var(--tone-tertiary); }
+  .picker-rail-row.dim { color: var(--text-muted); cursor: default; }
+  .picker-rail-row.dim:hover { background-image: none; color: var(--text-muted); }
   /* A backend mark is the one coloured icon a row carries. An unavailable part greys it. */
-  .picker-rail-row.dim :global(.model-picker-mark) { filter: grayscale(1); opacity: .6; }
+  .picker-rail-row.dim :global(.model-picker-mark) { filter: grayscale(1); opacity: .8; }
   :global(.listbox-picker-panel[aria-busy="true"]) .picker-rail-row { cursor: progress; opacity: .55; }
 </style>

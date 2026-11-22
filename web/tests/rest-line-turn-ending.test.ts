@@ -15,9 +15,13 @@ function turnEnded(ending: "completed" | "failed" | "interrupted", errorSummary:
 }
 
 describe("the rest line after a turn ends", () => {
-  it("says nothing for a completed or interrupted turn, and the error for a failed one", () => {
+  it("says nothing for a completed or interrupted turn, and the plain reason for a failed one", () => {
     expect(whatThisRowSays(turnEnded("completed", null), "you")).toBeNull();
     expect(whatThisRowSays(turnEnded("interrupted", null), "you")).toBeNull();
-    expect(whatThisRowSays(turnEnded("failed", "backend exited"), "you")).toEqual({ who: null, text: "backend exited" });
+    expect(whatThisRowSays(turnEnded("failed", "codex app-server exited with code 1"), "you"))
+      .toEqual({ who: null, text: "The turn stopped because the agent's process exited." });
+    expect(whatThisRowSays(turnEnded("failed", "stream disconnected before completion: rate limit reached for gpt-6.1-sol"), "you"))
+      .toEqual({ who: null, text: "The turn stopped because the model's rate limit was reached." });
+    expect(whatThisRowSays(turnEnded("failed", null), "you")).toEqual({ who: null, text: "The turn stopped because of an error." });
   });
 });

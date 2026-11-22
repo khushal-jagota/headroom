@@ -73,8 +73,20 @@ describe("the question panel", () => {
     });
     expect(body).toContain("1 of 2");
     expect(body).toContain("Choose one.");
-    expect(body).toMatch(/class="button button--primary"[^>]*data-user-input-continue/);
+    expect(body).toMatch(/class="button button--primary[^"]*"[^>]*data-user-input-continue/);
     expect(body).toContain("Next");
+  });
+
+  it("names ending the turn as the permission ask does, never 'Stop'", () => {
+    const { body } = render(UserInputQuestionPanel, {
+      props: { request: { requestId: "q-2", questions: [] } }
+    });
+    expect(body).toMatch(/data-user-input-cancel[^>]*>Cancel turn</);
+    expect(body).not.toMatch(/>Stop</);
+    const actions = render(PermissionAskActions, {
+      props: { ask, onAnswer: () => {}, onCancelTurn: () => {} }
+    }).body;
+    expect(actions).toMatch(/data-conversation-ask-action="cancel_turn"[^>]*>Cancel turn</);
   });
 });
 
@@ -104,6 +116,23 @@ describe("the credential request", () => {
     expect(body).not.toMatch(/>\?<\/button>/);
     expect(body).toMatch(/class="button button--primary"[^>]*>Save</);
   });
+
+  it("wears the ask shell: an accent label, and the one primary last in its action row", () => {
+    const { body } = render(ConversationCredentialRequestCard, { props: { request } });
+    expect(body).toContain("Needs your key");
+    expect(body).toMatch(/class="key-request[^"]*is-ask/);
+    expect(body.indexOf(">Reject<")).toBeGreaterThan(-1);
+    expect(body.indexOf(">Reject<")).toBeLessThan(body.indexOf(">Save<"));
+  });
+
+  it("keeps a settled request a quiet line, without the ask label", () => {
+    const { body } = render(ConversationCredentialRequestCard, {
+      props: { request: { ...request, state: "rejected" } }
+    });
+    expect(body).not.toContain("Needs your key");
+    expect(body).not.toMatch(/class="key-request[^"]*is-ask/);
+    expect(body).toContain("Rejected");
+  });
 });
 
 describe("task progress", () => {
@@ -129,7 +158,25 @@ describe("task progress", () => {
       }
     });
     expect(body).toContain("Task 3 of 5");
-    expect(body).toContain("Task 3 of 5, 2 complete");
+    expect(body).toContain("Task 3 of 5: Confirm, 2 complete");
     expect(body).toContain("2 of 5 done");
+  });
+
+  it("names the step in hand on the pill, from the indexed excerpt before the list is read", () => {
+    const { body } = render(TaskProgress, {
+      props: {
+        variant: "strip",
+        progress: {
+          entries: [],
+          totalCount: 5,
+          currentPosition: 3,
+          currentEntry: { text: "Run the sync test under -race on a CI-sized runner", status: "in_progress" },
+          completedCount: 2,
+          hasUnfinishedEntry: true,
+          turnRunning: true
+        }
+      }
+    });
+    expect(body).toMatch(/data-conversation-task-current[^>]*>Run the sync test under -race on a CI-sized runner</);
   });
 });

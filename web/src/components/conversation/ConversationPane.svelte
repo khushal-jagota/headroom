@@ -21,7 +21,7 @@
     keyTogglesConversationLens,
     type ConversationLens
   } from "../../lib/conversation/lens";
-  import { dockFeedbackFor, dockPreviewText, latestUnreadReply, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
+  import { awaitsCredential, dockFeedbackFor, dockPreviewText, latestUnreadReply, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../../lib/conversation/dockPresentation";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
@@ -274,10 +274,12 @@
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
   const headElapsed = elapsedTurnTime(() => conversationState !== "rest" && running && !activityUncertain ? turnStartedAt : null);
   const headSetupElapsed = elapsedTurnTime(() => conversationState !== "rest" && headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
+  // A key request blocks on the person as an ask or a question does, so the bar says so too.
+  let credentialWaiting = $derived(!readOnly && awaitsCredential(rows, reader?.pages.flatMap(page => page.items) ?? []));
   let headStatus = $derived(paneHeadStatus({
     readOnly,
     activityUncertain,
-    waitingForYou: ask !== null || userInput !== null,
+    waitingForYou: ask !== null || userInput !== null || credentialWaiting,
     running,
     backgroundWorking,
     settingUp: headSettingUp && workerSetup ? workerSetupSentence(workerSetup, headSetupElapsed.seconds) : null,
@@ -302,7 +304,7 @@
       ? reader.status.rest.latest_owner_message_preview : null
     : latestUnreadReply(rows, ownerReadThroughSequence)));
   let dockFeedback = $derived.by(() => {
-    if (userInput) return "Waiting for you";
+    if (userInput || credentialWaiting) return "Waiting for you";
     if (restLine?.waiting) return restLine.text;
     const latest = reader?.status?.rest.latest_happened ?? rows.at(-1);
     const said = reader?.status ? happened(reader.status.rest.latest_happened, ownSenderLabel ?? "") : latest ? whatThisRowSays(latest as TranscriptRow, ownSenderLabel ?? "") : null;

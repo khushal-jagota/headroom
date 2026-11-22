@@ -10,6 +10,8 @@
     userInputAnswerFor,
     type UserInputDraft
   } from "../../lib/conversation/userInput";
+  // One name for ending the turn on every ask: the permission ask's own words.
+  import { CANCEL_TURN_ACTION } from "../../lib/conversation/composer";
 
   let {
     request,
@@ -150,11 +152,11 @@
     <footer>
       <button
         type="button"
-        class="button button--ghost stop"
+        class="button button--ghost cancel"
         data-user-input-cancel
         disabled={busy}
         onclick={() => onCancelTurn?.()}
-      >Stop</button>
+      >{CANCEL_TURN_ACTION.label}</button>
       <span class="spacer"></span>
       {#if step > 0}
         <button
@@ -176,7 +178,7 @@
   {:else}
     <p class="note" role="alert">This question request contained no questions.</p>
     <footer>
-      <button type="button" class="button button--ghost stop" onclick={() => onCancelTurn?.()}>Stop</button>
+      <button type="button" class="button button--ghost cancel" data-user-input-cancel onclick={() => onCancelTurn?.()}>{CANCEL_TURN_ACTION.label}</button>
     </footer>
   {/if}
 </section>
@@ -210,7 +212,16 @@
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .spacer { flex: 1; }
-  .stop:hover:not(:disabled) { color: var(--accent-error); }
+  /* The ask shell's action row, as the permission ask's: the way out on the left in the
+     primary tone (the ghost's secondary tone read as disabled on the composer's fill), the
+     one primary at the right end. A primary that cannot go yet keeps a readable label on
+     the secondary fill rather than fading to the placeholder tone. */
+  footer .button--ghost:not(:disabled) { color: var(--text-default); }
+  footer .button--ghost:hover:not(:disabled) { color: var(--text-strong); }
+  footer .cancel:hover:not(:disabled) { color: var(--accent-error); }
+  footer .button--secondary { background: var(--state-step); }
+  footer .button--secondary:hover:not(:disabled) { background-image: var(--interaction-hover); }
+  footer .button--primary:disabled { background: var(--state-step); color: var(--text-muted); }
   .options button:disabled { cursor: default; color: var(--text-faint); }
   input:disabled { opacity: .5; cursor: default; }
 </style>

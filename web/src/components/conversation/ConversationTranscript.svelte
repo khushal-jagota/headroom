@@ -15,6 +15,7 @@
   import MessageActions from "./MessageActions.svelte";
   import TurnAnchor from "./TurnAnchor.svelte";
   import WorkGroup from "./WorkGroup.svelte";
+  import TranscriptStatusRow from "./TranscriptStatusRow.svelte";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
   import {
@@ -29,9 +30,9 @@
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
     promptLabelFor,
-    turnEndingSentence,
+    turnEndingStatus,
     PROMPT_DISCARDED_SENTENCE,
-    TURN_STOPPED_SENTENCE,
+    TURN_STOPPED_STATUS,
     ASK_CARD_CONTEXT,
     askShownByItsCard,
     type AskCardReading
@@ -267,16 +268,10 @@
       <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
         {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}
       </div>
-    {:else if item.row.kind === "turn_ended" && item.row.ending === "failed"}
-      <div class="acp-turn-end acp-turn-end--error" role="alert" data-conversation-row="turn_ended">
-        {turnEndingSentence(item.row.ending, item.row.errorSummary)}
-      </div>
-    {:else if item.row.kind === "turn_ended" && item.row.ending === "interrupted"}
-      <div class="acp-turn-end" data-conversation-row="turn_ended">
-        {turnEndingSentence(item.row.ending, item.row.errorSummary)}
-      </div>
+    {:else if item.row.kind === "turn_ended" && turnEndingStatus(item.row.ending, item.row.errorSummary) !== null}
+      <TranscriptStatusRow status={turnEndingStatus(item.row.ending, item.row.errorSummary)!} role={item.row.ending === "failed" ? "alert" : "status"} data-conversation-row="turn_ended"/>
     {:else if item.row.kind === "turn_stopped"}
-      <div class="acp-turn-end" data-conversation-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>
+      <TranscriptStatusRow status={TURN_STOPPED_STATUS} role="status" data-conversation-row="turn_stopped"/>
     {/if}
     {/if}
   {/each}

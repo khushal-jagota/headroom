@@ -80,22 +80,31 @@
   <span class="acp-step-title c2-tool-line">
     <span class="c2-tool-verb">{presentation.title}</span>{#if presentation.summary}<span class="c2-tool-subject" data-conversation-tool-summary title={presentation.summaryInFull ?? presentation.summary}>{presentation.summary}</span>{/if}
   </span>
-  {#if presentation.outcome === "completed"}
-    <svg class="c2-tool-mark c2-tool-mark--ok" viewBox="0 0 24 24" role="img" aria-label="Completed"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
-  {:else if presentation.outcome === "failed"}
-    <span class="c2-tool-state c2-tool-state--failed">
-      <svg class="c2-tool-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" /></svg>
-      <span>Failed</span>
-    </span>
-  {:else if presentation.outcome === "no_matches"}
-    <span class="c2-tool-state" data-conversation-tool-no-matches>No matches</span>
-  {:else if activityUncertain}
-    <span class="c2-tool-state">activity unknown</span>
-  {:else}
-    <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
-  {/if}
+  <!-- How it went, in one column at the row's end, so a run of rows reads its outcomes
+       straight down rather than wherever each line happened to stop. A word that says the
+       outcome comes before its mark, so the marks themselves stay in the column. -->
+  <span class="c2-tool-outcome">
+    {#if presentation.outcome === "completed"}
+      <svg class="c2-tool-mark c2-tool-mark--ok" viewBox="0 0 24 24" role="img" aria-label="Completed"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+    {:else if presentation.outcome === "failed"}
+      <span class="c2-tool-state c2-tool-state--failed">
+        <span>Failed</span>
+        <svg class="c2-tool-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" /></svg>
+      </span>
+    {:else if presentation.outcome === "no_matches"}
+      <span class="c2-tool-state" data-conversation-tool-no-matches>No matches</span>
+    {:else if activityUncertain}
+      <span class="c2-tool-state">activity unknown</span>
+    {:else}
+      <span class="acp-spin c2-tool-spin" role="img" aria-label="Running"></span>
+    {/if}
+  </span>
+  <!-- The chevron's column is kept on every row, open-able or not, so the outcomes above
+       and below it stand in the same place. -->
   {#if presentation.canExpand}
     <svg class="c2-tool-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+  {:else}
+    <span class="c2-tool-chevron-slot" aria-hidden="true"></span>
   {/if}
 {/snippet}
 
@@ -158,7 +167,7 @@
     width: 14px;
     height: 14px;
     fill: none;
-    stroke: var(--text-faintest);
+    stroke: var(--conversation-mark-quiet);
     stroke-width: 1.6;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -172,6 +181,8 @@
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
+    /* The line takes what it needs and the outcome column takes the row's end. */
+    margin-inline-end: auto;
     color: inherit;
     font-size: inherit;
     letter-spacing: normal;
@@ -186,6 +197,13 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);
+  }
+  .c2-tool-outcome {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-inline-size: 14px;
   }
   .c2-tool-mark {
     flex: none;
@@ -209,25 +227,27 @@
   }
   .c2-tool-state--failed { color: var(--accent-error); }
   .c2-tool-spin { margin: 0; }
-  /* What opens the row, said where the line ends. Quiet until the row is pointed
-     at, focused or open; always there where nothing can point. */
-  .c2-tool-chevron {
+  /* What opens the row, said where the line ends: there at rest in the quiet mark tone, so
+     a row that opens says so before it is pointed at, and brighter when pointed at,
+     focused or open. A row that does not open keeps the column empty. */
+  .c2-tool-chevron,
+  .c2-tool-chevron-slot {
     flex: none;
     width: 14px;
     height: 14px;
+  }
+  .c2-tool-chevron {
     fill: none;
-    stroke: var(--text-faintest);
+    stroke: var(--conversation-mark-quiet);
     stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
-    opacity: 0;
-    transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+    transition: stroke var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
   }
   .c2-tool:hover .c2-tool-chevron,
   .acp-step:focus-visible .c2-tool-chevron,
-  .c2-tool.is-open .c2-tool-chevron { opacity: 1; }
+  .c2-tool.is-open .c2-tool-chevron { stroke: var(--text-muted); }
   .c2-tool.is-open .c2-tool-chevron { transform: rotate(90deg); }
-  @media (hover: none) { .c2-tool-chevron { opacity: 1; } }
   .acp-step--expandable { width: 100%; background: transparent; border: 0; cursor: pointer; }
   .acp-step--expandable:hover .c2-tool-verb { color: var(--text-strong); }
   .acp-step--expandable:hover .c2-tool-subject { color: var(--text-muted); }

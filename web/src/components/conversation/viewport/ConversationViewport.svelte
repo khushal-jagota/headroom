@@ -136,6 +136,8 @@
   let newestLineOutOfSight = $state(false);
   // Latest points down, so a newest line above the view does not call for it.
   let newestLineBelowTheView = $state(false);
+  /** Whether the thread is scrolled to its very top, where there is nothing above to fade. */
+  let atTheTop = $state(true);
   let belowCount = $state(0);
   const newerHistory = $derived(reader?.pages.some(page => page.scope.kind === "timeline" && page.newer !== null) ?? false);
   const newerThanUnplacedAnchor = $derived.by(() => {
@@ -1136,12 +1138,13 @@
     tabindex="0"
     bind:this={threadElement}
     onloadcapture={() => { navigationPending = false; requestReconciliation(); }}
-    onscroll={onThreadScroll}
+    onscroll={(event) => { atTheTop = event.currentTarget.scrollTop <= 0.5; onThreadScroll(); }}
     onscrollend={() => { navigationPending = false; }}
     onwheel={stopAutomaticTravel}
     ontouchmove={stopAutomaticTravel}
     onpointerdown={(event) => { if (event.target === event.currentTarget) stopAutomaticTravel(); }}
     onkeydown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stopAutomaticTravel(); }}
+    data-at-top={atTheTop ? "true" : "false"}
     data-more-below={newestLineBelowTheView || newerHistory ? "true" : "false"}
   >
     <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
@@ -1201,7 +1204,9 @@
     flex: none;
     display: flex;
     justify-content: center;
-    padding-block: var(--space-1) 0;
+    /* Clear air between the thread's faded edge and the pill, so it never reads as
+       sitting on whatever was cut there. */
+    padding-block: var(--space-2) 0;
   }
   .chat-jump-shelf .chat-jump {
     position: static;
@@ -1218,28 +1223,26 @@
      At rest the bottom fade covers only the newest line's own clear space under it
      (NEWEST_LINE_BOTTOM_GAP_PIXELS), so nothing that was said is dimmed; with more
      below, it is deeper, so a line cut by the edge reads as continuing. */
+  /* At the very top nothing is above, so nothing fades there: the first message and the
+     time and Copy over it keep their full tone under the head. With more below, the
+     bottom fade is deep enough that whatever the edge cuts (a card's frame, a bubble's
+     corner) has dissolved before the Latest shelf under it. */
   .chat-thread {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 12px), transparent 100%);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 12px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 24px), transparent 100%);
   }
   .chat-thread[data-more-below="true"] {
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 28px), transparent 100%);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 28px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 40px), transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 40px), transparent 100%);
   }
-  /* Tables in the thread read as rows, not a grid: hairlines between rows only, and a
-     heading set apart by weight and one firmer rule. */
-  .chat-thread :global(.markdown th),
-  .chat-thread :global(.markdown td) {
-    border: 0;
-    border-block-end: var(--border-hairline) solid var(--border-color);
-    padding: var(--space-2) var(--space-4) var(--space-2) 0;
+  .chat-thread[data-at-top="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
   }
-  .chat-thread :global(.markdown th) {
-    background: transparent;
-    border-block-end-color: var(--border-hover);
+  .chat-thread[data-at-top="true"][data-more-below="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%);
   }
-  .chat-thread :global(.markdown tr:last-child > td) { border-block-end: 0; }
-  .chat-thread :global(.markdown :is(th, td):last-child) { padding-inline-end: 0; }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */

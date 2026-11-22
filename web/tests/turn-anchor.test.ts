@@ -70,4 +70,13 @@ describe("a tool call row", () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("c2-tool-chevron");
   });
+
+  it("keeps its outcome in the column every row shares, opening or not", () => {
+    const closed = draw({ ...base, title: "ls", status: "completed", detail: "" });
+    expect(closed).toContain("c2-tool-outcome");
+    expect(closed).toContain("c2-tool-chevron-slot");
+    expect(closed).not.toContain('class="c2-tool-chevron"');
+    const failed = draw({ ...base, title: "npm run check", detail: "svelte-check found 1 error" });
+    expect(failed.indexOf("Failed")).toBeLessThan(failed.indexOf("c2-tool-chevron"));
+  });
 });

@@ -1,6 +1,8 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
-import { paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../src/lib/conversation/dockPresentation";
+import { awaitsCredential, paneHeadStatus, paneTitleFor, uncertainActivityFeedback } from "../src/lib/conversation/dockPresentation";
+import type { ConversationViewItem, CredentialRequestRowBody } from "../src/lib/conversation/view/contracts";
+import type { TranscriptRow } from "../src/lib/conversation/transcript";
 import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
 
 const quiet = { readOnly: false, activityUncertain: false, waitingForYou: false, running: false, backgroundWorking: false, settingUp: null, elapsed: null };
@@ -35,10 +37,37 @@ describe("setting up while the machine cannot be read", () => {
     expect(html).toContain("Setting up · preparing workspace");
     expect(html).toContain("data-unconfirmed");
     expect(html.match(/data-conversation-dock-feedback/g)).toHaveLength(1);
+    // A warning, not a spinner: no moving ring beside it, and the line under it in the warning tone.
+    expect(html).not.toContain("c2-mark--running");
+    expect(html).toMatch(/c2-rest-feedback[^"]*is-warning/);
   });
   it("keeps the moving mark while setup is known", () => {
     const html = render(ConversationRestBar, { props: { onOpen: () => {}, workerSetup } }).body;
     expect(html).toContain('aria-label="setting up"');
     expect(html).not.toContain("data-unconfirmed");
+  });
+});
+
+describe("a key request waiting on the person", () => {
+  const request: CredentialRequestRowBody = {
+    kind: "credential_request", request_id: "r-1", name: "SENTRY_AUTH_TOKEN", provider: "Sentry",
+    use: "Upload dSYMs.", auth_kind: "bearer", header_name: null, help: null, help_url: null,
+    replacement: null, state: "pending", credential: null, delivery: null
+  };
+  const item = (state: CredentialRequestRowBody["state"], changed: number): ConversationViewItem => ({
+    kind: "row", key: "row-1", row_kind: "credential_request", order: { sequence: 4, slot: 0 },
+    source_sequence: 4, sender_message_id: null, changed_through_sequence: changed, created_at: 0,
+    turn_key: null, work_group_key: null, fold_rule: "never",
+    body: { kind: "inline", value: { ...request, state } }
+  });
+  it("counts as waiting for you while it is pending, from the record's rows or the view's", () => {
+    const row = { key: "e4", kind: "credential_request", sequence: 4, createdAt: 0, request } as TranscriptRow;
+    expect(awaitsCredential([row])).toBe(true);
+    expect(awaitsCredential([], [item("pending", 4)])).toBe(true);
+    expect(awaitsCredential([], [])).toBe(false);
+  });
+  it("lets the newest version of the row speak for it", () => {
+    expect(awaitsCredential([], [item("pending", 4), item("saved", 6)])).toBe(false);
+    expect(awaitsCredential([], [item("saved", 6), item("pending", 4)])).toBe(false);
   });
 });

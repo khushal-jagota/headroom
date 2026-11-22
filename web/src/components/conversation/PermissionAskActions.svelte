@@ -83,8 +83,16 @@
     overflow-wrap: anywhere;
     line-height: 1.25;
   }
-  .c2-ask-cancel:hover:not(:disabled) { color: var(--accent-error); }
-  .c2-ask-answer.is-decline:hover:not(:disabled) { color: var(--accent-error); }
+  /* The ask shell's action row, shared with the question and the key request. On the
+     composer's fill the ghost's secondary tone read as disabled and the secondary fill was
+     the composer's own, so neither showed: the ways out keep the primary tone, and the
+     backend's other options take one step of white, as a question's answers do. */
+  .c2-ask-actions .button--ghost:not(:disabled) { color: var(--text-default); }
+  .c2-ask-actions .button--ghost:hover:not(:disabled) { color: var(--text-strong); }
+  .c2-ask-actions .button--secondary { background: var(--state-step); }
+  .c2-ask-actions .button--secondary:hover:not(:disabled) { background-image: var(--interaction-hover); }
+  .c2-ask-actions .c2-ask-cancel:hover:not(:disabled),
+  .c2-ask-actions .c2-ask-answer.is-decline:hover:not(:disabled) { color: var(--accent-error); }
   /* An answer Panels made up is marked as such: a dashed edge, never a solid one. */
   .c2-ask-answer.is-supplied {
     border: var(--border-hairline) dashed var(--border-raised);

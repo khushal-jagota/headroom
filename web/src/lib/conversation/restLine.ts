@@ -18,7 +18,7 @@
 import {
   liveAskFrom,
   promptLabelFor,
-  turnEndingSentence,
+  turnFailureSentence,
   workingSentence,
   PROMPT_DISCARDED_SENTENCE,
   TURN_STOPPED_SENTENCE
@@ -245,9 +245,10 @@ export function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Hap
     case "turn_ended":
       // A turn that finished or was interrupted is not news — what it said before is, and
       // the transcript already says an interrupted turn stopped. A turn that failed is the
-      // news, and the reason travels with it.
+      // news. At rest it is said as the plain reason; the backend's own words stay with
+      // the failure in the opened transcript.
       return row.ending === "failed"
-        ? { who: null, text: oneLine(turnEndingSentence(row.ending, row.errorSummary)) }
+        ? { who: null, text: turnFailureSentence(row.errorSummary) }
         : null;
     case "turn_stopped":
       return { who: null, text: TURN_STOPPED_SENTENCE };
