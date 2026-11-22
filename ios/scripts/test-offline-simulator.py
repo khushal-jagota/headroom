@@ -433,6 +433,8 @@ def main() -> int:
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
     if REVIEW_QUEUE:
+        # The Ticket page shows the waiting proposal for its stage's gating field.
+        manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
         tickets["offline-1"].update(
             title="Rebuild the iPhone Review queue",
             recap="Review shows one card per purpose and a summary at the end.",
