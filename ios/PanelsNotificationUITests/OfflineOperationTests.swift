@@ -68,7 +68,16 @@ final class OfflineOperationTests: XCTestCase {
         sendBack.tap()
         assertQuiet(app, "offline decisions")
         app.terminate(); app.launch()
-        XCTAssertTrue(workspace.waitForExistence(timeout: 12)); workspace.tap()
+        // After this relaunch the app draws at once, but XCTest's accessibility snapshot of
+        // the hosted tab content can stay empty until the scene is activated again. A trip
+        // to the Home Screen refreshes it.
+        var found = workspace.waitForExistence(timeout: 8)
+        for _ in 0..<3 where !found {
+            XCUIDevice.shared.press(.home)
+            app.activate()
+            found = workspace.waitForExistence(timeout: 8)
+        }
+        XCTAssertTrue(found); workspace.tap()
         XCTAssertTrue(chief.waitForExistence(timeout: 12), "Cached Workspace did not restore offline")
         app.tabBars.buttons["Review"].tap()
         XCTAssertTrue(element(app, containing: "Record offline").waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")
