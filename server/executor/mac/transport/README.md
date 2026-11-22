@@ -20,13 +20,13 @@ remain retained until actual completion. `reset()` replaces sessions and joins t
 Imports start no loops or providers. The host explicitly starts `MacLeaseLoop`.
 Its lease reports backlog and working turns, offers updates, and fences a replaced incarnation.
 It captures the journal cursor before the request so a restore cannot erase a concurrent poll advance.
-`MacLiveSender` sends each conversation independently and drops failed batches and excess waiting events.
+`MacLiveSender` retains the legacy lossy transport. Current machine code sends all backend events through the ordered outbox, including text deltas and tool progress. The server emits transient frames only after the first committed intake.
 Both owners use the host's shared stop deadline and expose their actual loop settlement.
 
 `MacOutboxSender` uses the existing store for ordered batches and durable receipts.
 It listens for committed appends before its first scan and remains idle without a scan timer.
 Four active senders rotate conversations after each batch. Each conversation owns its capped retry delay.
-An item gets five minutes from its first attempt. Items carry no files, so no file transfer uses that time. The first-attempt timestamp survives restart.
+An item gets seven minutes from its first attempt: five minutes for a server pause and two minutes for reconnection and its response. Items carry no files, so no file transfer uses that time. The first-attempt timestamp survives restart.
 Definite HTTP refusals settle the item locally. At expiry, the sender retains the failed content and advances to later items.
 A local failure receipt uses `result.local_delivery_failure`, `result.delivery_outcome`, and a zero VPS timestamp.
 An unconfirmed outcome means that the VPS can already hold the effect. It does not prove remote refusal or safe repetition.

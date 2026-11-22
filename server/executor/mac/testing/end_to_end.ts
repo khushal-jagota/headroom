@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { request as ipc_request } from '../ipc_client.ts';
+import { executor_link_socket_path } from '../../../core/http/executor_link.ts';
+import { local_server_address } from '../../../server_link/logic.ts';
 import { MacService } from '../host/service.ts';
 import { production_bindings } from '../host/entry.ts';
 import type { MacHostBindings } from '../host/contracts.ts';
@@ -53,23 +56,32 @@ console.debug = console.error;
 
 const input = JSON.parse(await readFile(process.argv[2], 'utf8'));
 // These values come from the parent's bound fixture, before MacService can open a root or HTTP session.
-const origin = new URL(input.origin);
-assert.equal(origin.protocol, 'https:');
-assert.equal(origin.hostname, '127.0.0.1');
-assert.equal(origin.origin, input.fixture_origin);
-assert.equal(Number(origin.port), input.allocated_port);
-assert.ok(input.allocated_port > 1023 && input.allocated_port !== 8767);
-assert.equal(origin.pathname, '/');
-assert.equal(origin.username + origin.password + origin.search + origin.hash, '');
+const local = local_server_address(input.origin);
+const origin = local === null ? new URL(input.origin) : null;
+if (local !== null) {
+  assert.ok(input.fixture_database_path.startsWith(input.fixture_root + '/'));
+  assert.ok(input.root.startsWith(input.fixture_root + '/'));
+  assert.equal(local, executor_link_socket_path(input.fixture_database_path));
+}
+if (origin !== null) {
+  assert.equal(origin.protocol, 'https:');
+  assert.equal(origin.hostname, '127.0.0.1');
+  assert.equal(origin.origin, input.fixture_origin);
+  assert.equal(Number(origin.port), input.allocated_port);
+  assert.ok(input.allocated_port > 1023 && input.allocated_port !== 8767);
+  assert.equal(origin.pathname, '/');
+  assert.equal(origin.username + origin.password + origin.search + origin.hash, '');
+}
+const server_address: string = local ?? origin!.origin;
 
 const options = () => ({ deadline: performance.now() / 1000 + 20 });
 const configuration = {
   paths: new ExecutorPaths(input.root),
   revision: input.revision,
   executor_id: 'test-executor',
-  panels_server_url: origin.origin,
+  panels_server_url: server_address,
   runtime: input.runtime ?? { child: true, ready_path: null, handoff_path: null },
-  http: { tls: { ca: await readFile(input.ca_path) } },
+  http: local === null ? { tls: { ca: await readFile(input.ca_path) } } : {},
 };
 const drivers = await load_executor_drivers();
 const concrete = production_bindings(configuration, input.environment, drivers);
@@ -106,7 +118,7 @@ const bindings: MacHostBindings = {
       ...owners,
       drivers,
       environment: input.environment,
-      panels_server_url: origin.origin,
+      panels_server_url: server_address,
       executable_path: () => null,
     });
     const record_scripted_worker = async (resolved: ResolvedConversationStart) => {
@@ -133,7 +145,7 @@ const bindings: MacHostBindings = {
           const claude = host.drivers.find((driver) => driver.instance_id === 'claude')!;
           const launch = {
             claude_executable: claude.host.executable,
-            environment_overrides: [['PLAN_SERVER_URL', origin.origin]] as [string, string][],
+            environment_overrides: [['PLAN_SERVER_URL', server_address]] as [string, string][],
           };
           const create = create_claude_backend_child_factory(launch, {
             ...owners,
@@ -495,6 +507,21 @@ try {
   for await (const line of lines) {
     const command = JSON.parse(line);
     try {
+      if (command.operation === 'ipc') {
+        const child = service.runner.native_children.retained_children()[0]!;
+        const environment = {
+          ...input.environment,
+          PLAN_EXECUTOR_ROOT: input.root,
+          PLAN_EXECUTOR_CHILD_ID: child.reference.child_id,
+          PLAN_EXECUTOR_CAPABILITY: child.capability,
+        };
+        // Keep the fixture control channel available while the actual IPC request waits.
+        void ipc_request(command.kind, command.payload, environment).then(
+          (result) => write({ id: command.id, result }),
+          (error) => write({ id: command.id, error: String(error) }),
+        );
+        continue;
+      }
       if (command.operation === 'stop') {
         await service.stop(options());
         await service.settled();

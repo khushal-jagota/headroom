@@ -250,6 +250,16 @@ export async function take_backend_event_with_receipt(
     applied = true;
     if (agent_acted) state.background_tasks_stopped_since_the_agent_last_acted.clear();
     host.note_written(state, result.written);
+    if (
+      live &&
+      token !== null &&
+      (event instanceof AgentMessageDelta ||
+        event instanceof ModelThinkingHappened ||
+        event instanceof ToolCallProgress)
+    )
+      // Durable transport receipts deduplicate replay. The frame remains transient,
+      // as it does for local children, and only the committed first intake emits it.
+      publish_live(host, state, token, event);
     if (live && event instanceof VendorSessionCursorRebound) {
       state.record = new ConversationRecord({
         ...state.record,

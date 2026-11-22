@@ -1,8 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
 import type { Socket } from 'node:net';
-import type { ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { HttpError } from './errors.ts';
+
+/** Only an admitted in-process relay can attach this exact invocation's scope. */
+export const ADMITTED_REQUEST_SCOPE = Symbol('admitted request scope');
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -124,7 +127,13 @@ export function install_request_lifetime(
   app.decorate('request_lifetime', scope);
   app.decorateRequest('request_lifetime', null);
   app.addHook('onRequest', async (request, reply) => {
-    if (scope.sealed) {
+    const continuation =
+      (
+        request.raw as IncomingMessage & {
+          readonly [ADMITTED_REQUEST_SCOPE]?: HttpRequestScope;
+        }
+      )[ADMITTED_REQUEST_SCOPE] === scope;
+    if (scope.sealed && !continuation) {
       reply.code(503).send({ detail: 'the server is shutting down' });
       return;
     }
