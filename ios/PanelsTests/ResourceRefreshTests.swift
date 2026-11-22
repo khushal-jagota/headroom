@@ -208,6 +208,67 @@ import XCTest
         await new.value
     }
 
+    /// Risk: a pull while a stream is open must still land fresh data, and the overload of
+    /// an earlier version must not return: a replacement stream closes the stream it
+    /// replaces once its snapshot lands, so two are open only during that wait.
+    func testPullOpensFreshStreamAndClosesTheOldOneWhenItsSnapshotLands() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let run = Task { await store.run() }
+        defer { run.cancel() }
+        func open() -> Int { RefreshProtocol.state.withLock { $0.openStreams } }
+        func opened() -> Int { RefreshProtocol.state.withLock { $0.events.count } }
+        try await until { store.view?.contentVersion == "1" && store.connection == "Following changes" }
+
+        let pull = Task { await store.pull() }
+        // The new stream opens beside the followed one, which keeps the view live meanwhile.
+        try await until { open() == 2 }
+        XCTAssertEqual(store.view?.contentVersion, "1")
+        await pull.value
+        XCTAssertEqual(store.view?.contentVersion, "2", "The pull ends on the new stream's snapshot")
+        try await until { open() == 1 }
+
+        // Pulls in quick succession share one new stream.
+        async let first: () = store.pull()
+        async let second: () = store.pull()
+        _ = await (first, second)
+        XCTAssertEqual(opened(), 3)
+        XCTAssertEqual(store.view?.contentVersion, "3")
+        try await until { open() == 1 }
+
+        // More held conversations widen the scope at once; fewer wait for the next stream.
+        let review = [ViewWindowRequest(section: "review", limit: NavigationScope.reviewWindowLimit)]
+        store.setNavigationDemand("review", review, reviewConversationIDs: ["cA", "cB"])
+        try await until { store.view?.contentVersion == "4" }
+        store.setNavigationDemand("review", review, reviewConversationIDs: ["cA"])
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(opened(), 4)
+        try await until { open() == 1 }
+
+        // Offline, the new stream fails at once: the pull ends then, and the followed stream stays.
+        RefreshProtocol.state.withLock { $0.failStreams = true }
+        let started = ContinuousClock.now
+        await store.pull()
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(5))
+        XCTAssertEqual(store.view?.contentVersion, "4")
+        XCTAssertEqual(open(), 1)
+        XCTAssertEqual(RefreshProtocol.state.withLock { $0.maxOpenStreams }, 2)
+        XCTAssertEqual(store.connection, "Following changes")
+    }
+
+    /// Risk: a run that ends must not leave the view marked as following. Otherwise the
+    /// next open trusts a stream that is gone, and a refresh does not reconnect.
+    func testEndedRunClosesItsStreamAndNoLongerReadsAsFollowing() async throws {
+        RefreshProtocol.state.withLock { $0 = RefreshFixture(); $0.pullStreams = true }
+        let store = AppStore(baseURL: URL(string: "https://refresh.invalid")!, session: RefreshProtocol.session)
+        let run = Task { await store.run() }
+        try await until { store.connection == "Following changes" }
+        run.cancel()
+        await run.value
+        XCTAssertEqual(store.connection, "Connecting")
+        try await until { RefreshProtocol.state.withLock { $0.openStreams } == 0 }
+    }
+
     private func until(within limit: Duration = .seconds(10), _ condition: @MainActor () -> Bool) async throws {
         let deadline = ContinuousClock.now + limit
         while !condition() {
@@ -243,6 +304,12 @@ private struct RefreshFixture {
     var healthFailure: URLError.Code?
     var sections: [String] = []
     var holdCancellationStreams = false
+    /// Every events stream sends one snapshot and stays open; streams after the first
+    /// delay it, so the replaced stream can be seen still open meanwhile.
+    var pullStreams = false
+    var openStreams = 0
+    var failStreams = false
+    var maxOpenStreams = 0
     static var authority: [String: Any] { ["delivery_session_id": "d", "availability": ["state": "current", "generation": "1", "reason": NSNull()], "permit": ["scope": "s", "runtime_epoch": "r", "installation_id": "i", "generation": "1"]] }
     static func coverage(_ revision: String) -> [String: Any] {
         ["scope": "s", "schema_version": 11, "semantics": "attention-knowledge-v11-recap-freshness", "epoch": "e", "revision": revision]
@@ -303,6 +370,11 @@ private struct RefreshFixture {
              "coverage": Self.coverage(to), "previous_coverage": Self.coverage(from), "content_version": to, "previous_content_version": from,
              "authority": Self.authority, "upserts": upserts, "evictions": evictions, "windows": Self.windows(windowRequests, members: members),
              "counts": Self.counts, "review_context": [], "review_summary": ["skipped": 0, "new": 0]]
+        }
+        if failStreams { throw URLError(.notConnectedToInternet) }
+        if pullStreams {
+            let frame = try Self.frame(snapshot(String(events.count), working: false, updated: 1))
+            return ([(events.count == 1 ? 0 : 0.3, [frame])], false)
         }
         if holdCancellationStreams {
             // No delayed gap or snapshot can advance this cancellation test's phases.
@@ -376,7 +448,13 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
         }
         if url.path == "/api/navigation/view/events" {
             do {
-                let (schedule, finish) = try Self.state.withLock { $0.paths.append(url.path); return try $0.events(url) }
+                let (schedule, finish) = try Self.state.withLock {
+                    $0.paths.append(url.path)
+                    let events = try $0.events(url)
+                    $0.openStreams += 1; $0.maxOpenStreams = max($0.maxOpenStreams, $0.openStreams)
+                    return events
+                }
+                countedStream.withLock { $0 = true }
                 client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
                 for (index, step) in schedule.enumerated() {
                     DispatchQueue.global().asyncAfter(deadline: .now() + step.delay) { [self] in
@@ -399,7 +477,11 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
-    override func stopLoading() { stopped.withLock { $0 = true } }
+    private let countedStream = OSAllocatedUnfairLock(initialState: false)
+    override func stopLoading() {
+        stopped.withLock { $0 = true }
+        if countedStream.withLock({ counted in defer { counted = false }; return counted }) { Self.state.withLock { $0.openStreams -= 1 } }
+    }
 }
 
 /// These cases exercise shared admission, not a second HTTP host. The controlled

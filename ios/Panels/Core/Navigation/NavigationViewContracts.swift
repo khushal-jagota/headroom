@@ -421,8 +421,9 @@ extension APIClient {
                     var urlRequest = try self.request(try navigationViewURL("/api/navigation/view/events", request))
                     urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
-                    // Longer than the server's 15 s heartbeat, so a silent socket is noticed.
-                    urlRequest.timeoutInterval = 45
+                    // An idle limit that each server heartbeat (every 15 s) resets: two
+                    // missed heartbeats and a margin, so a silent socket is replaced.
+                    urlRequest.timeoutInterval = 35
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     try Self.validate(response)
                     let decoder = Self.decoder()

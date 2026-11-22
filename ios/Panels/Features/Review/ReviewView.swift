@@ -6,6 +6,8 @@ struct ReviewView: View {
     @State private var appeared = false
     private var active: Bool { isActive && appeared && scenePhase == .active && !store.serverUnreachable }
     var openTicket: ((String) -> Void)? = nil
+    /// How many pending asks are read before they reach the screen.
+    private static let readAhead = 3
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @State private var queue = ReviewQueue()
@@ -80,12 +82,12 @@ struct ReviewView: View {
                     }
                     .gesture(TapGesture().onEnded { textEntry.endEditing() })
                     .scrollDismissesKeyboard(.interactively)
-                    .panelsRefreshable { await store.refresh() }
+                    .panelsRefreshable { await store.pull() }
                 }
                 .opacity(emptyVisible ? 1 : 0)
                 .task { withAnimation(.easeOut(duration: ReviewStyle.fadeOut)) { emptyVisible = true } }
                 .onDisappear { emptyVisible = false }
-            } else { ScrollView { Color.clear.frame(height: 1) }.panelsRefreshable { await store.refresh() } }
+            } else { ScrollView { Color.clear.frame(height: 1) }.panelsRefreshable { await store.pull() } }
         }
         .onAppear { appeared = true }
         .onDisappear { appeared = false }
@@ -104,7 +106,7 @@ struct ReviewView: View {
             if snapshotCurrent { holdShownCard() }
         }
         .onChange(of: pageSkipped) { _, skipped in if skipped { advancePage() } }
-        .task(id: "\(store.baseURL):\(active):\(savedWork.key?.revision ?? -1):\(pending.prefix(30).map(\.id).joined(separator: ","))") {
+        .task(id: "\(store.baseURL):\(active):\(savedWork.key?.revision ?? -1):\(pending.prefix(Self.readAhead).map(\.id).joined(separator: ","))") {
             guard active, snapshotCurrent else { return }
             holdShownCard()
             await prefetch()
@@ -149,7 +151,7 @@ struct ReviewView: View {
     private func prefetch() async {
         let api = store.client
         var loads: [@MainActor @Sendable () async -> Void] = []
-        for item in pending.prefix(30) {
+        for item in pending.prefix(Self.readAhead) {
             if item.isMessage {
                 let decision = messageDecisions.decision(for: item, savedWork: savedWork)
                 if !decision.isCurrent(for: item) { loads.append { await decision.load(item: item, api: api) } }

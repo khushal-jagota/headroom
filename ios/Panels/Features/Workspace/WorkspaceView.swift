@@ -369,7 +369,7 @@ struct WorkspaceView: View {
     }
 
     private func refresh() async {
-        await store.refresh()
+        await store.pull()
         await goalsHandle?.refresh()
         await machinesHandle?.refresh()
         for handle in healthHandles.values { await handle.refresh() }
