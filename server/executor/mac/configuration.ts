@@ -26,13 +26,15 @@ export const MAX_TOOL_DETAIL_CHARACTERS = 64 * 1024;
 export const FILE_MODIFIED_WINDOW_NS = 2_000_000_000;
 export const FILE_CHUNK_BYTES = 256 * 1024;
 export const TRANSFER_CHUNK_BYTES = 64 * 1024;
-export const CLI_RESULT_TIMEOUT_SECONDS = 30;
+// Five minutes offline, then two minutes for discovery, retry backoff, and the answer.
+export const CLI_RESULT_TIMEOUT_SECONDS = 420;
+export const CLI_READ_RETRY_SECONDS = 1;
 export const CLI_TRANSPORT_RESERVE_SECONDS = 5;
 export const REQUEST_TIMEOUT_SECONDS = 30;
 export const HTTP_CONNECT_TIMEOUT_SECONDS = 10;
 export const HTTP_CLOSE_TIMEOUT_SECONDS = 5;
 export const MAX_OUTBOX_SENDERS = 4;
-export const OUTBOX_ITEM_DELIVERY_SECONDS = 300;
+export const OUTBOX_ITEM_DELIVERY_SECONDS = CLI_RESULT_TIMEOUT_SECONDS;
 export const OUTBOX_RETRY_INITIAL_SECONDS = 1;
 export const OUTBOX_RETRY_MAX_SECONDS = 60;
 export const CONNECTION_FAILURE_LOG_INTERVAL_SECONDS = 60;

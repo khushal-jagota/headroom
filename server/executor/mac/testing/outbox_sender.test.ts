@@ -1,6 +1,7 @@
 import { test, expect, vi, afterEach } from 'vitest';
 import { EventEmitter, once } from 'node:events';
 import { setImmediate } from 'node:timers/promises';
+import { OUTBOX_ITEM_DELIVERY_SECONDS } from '../configuration.ts';
 import { MacOutboxSender } from '../transport/outbox.ts';
 import type { OutboxSenderOptions } from '../transport/outbox.ts';
 import { ExecutorHttpError } from '../transport/errors.ts';
@@ -207,7 +208,7 @@ test('an expired persisted start survives restart without another delivery attem
   const old = row('old', 1);
   old.kind = 'cli_write';
   f.rows.push(old, row('turn_end', 2));
-  f.starts.set('old', Date.now() - 300_001);
+  f.starts.set('old', Date.now() - OUTBOX_ITEM_DELIVERY_SECONDS * 1000 - 1);
   f.sender.start();
   await flush();
   expect(sent).toEqual(['turn_end']);
@@ -253,7 +254,7 @@ test('four active senders rotate after one batch before a busy conversation gets
   await f.stop();
 });
 
-test('network retries cap their delay and fail visibly at five minutes before later items proceed', async () => {
+test('network retries survive a five-minute pause and expire after the recovery allowance', async () => {
   fake_time();
   const f = fixture(async (_, batch) => {
     if (batch.items[0]!.envelope.submission_id === 'offline')
@@ -266,6 +267,13 @@ test('network retries cap their delay and fail visibly at five minutes before la
   f.sender.start();
   await flush();
   await vi.advanceTimersByTimeAsync(300_000);
+  await flush();
+  expect(f.pending().map((item) => item.submission_id)).toEqual(['offline', 'turn_end']);
+  expect(f.receipts).toEqual([]);
+  await vi.advanceTimersByTimeAsync(OUTBOX_ITEM_DELIVERY_SECONDS * 1000 - 300_000 - 1);
+  await flush();
+  expect(f.receipts).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
   await flush();
   expect(f.pending()).toEqual([]);
   const delays = f.warnings.flatMap((message) => {

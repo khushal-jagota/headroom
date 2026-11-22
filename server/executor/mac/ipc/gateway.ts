@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { PreviewError } from '../../../previews/contracts.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { MacPermissionDenied } from '../runner/contracts.ts';
@@ -16,11 +17,12 @@ import type {
   IpcRequest,
   IpcResponse,
   JsonObject,
+  LiveReadRequest,
 } from '../../wire.generated.ts';
 import { safe_component } from '../files.ts';
-import { CLI_RESULT_TIMEOUT_SECONDS } from '../configuration.ts';
+import { CLI_RESULT_TIMEOUT_SECONDS, CLI_READ_RETRY_SECONDS } from '../configuration.ts';
 import { same_reference } from '../../child_reference.ts';
-import { ExecutorHttpError } from '../transport/errors.ts';
+import { ExecutorHttpError, HttpTimeout } from '../transport/errors.ts';
 import { failure_detail } from '../failure_detail.ts';
 import type { GatewayOptions, Publication } from './contracts.ts';
 import { GatewayListener } from './listener.ts';
@@ -121,6 +123,12 @@ export class AgentGateway {
         };
       if (request.operation === 'quiesce') return await this.quiesce(request);
       const child = this.options.runner.authenticate(request.child_id, request.capability);
+      let deadline = monotonic() + CLI_RESULT_TIMEOUT_SECONDS;
+      if (request.response_deadline != null) {
+        if (!Number.isFinite(request.response_deadline))
+          throw new ExecutorValidationError('invalid IPC response deadline');
+        deadline = Math.min(deadline, request.response_deadline);
+      }
       if (request.operation === 'preview') {
         if (!this.options.previews) throw connection('Machine previews are unavailable');
         try {
@@ -143,13 +151,13 @@ export class AgentGateway {
           throw connection('VPS unavailable; reads never use journal');
         let result: JsonObject;
         try {
-          result = await this.options.client.read(
+          result = await this.read_through_restart(
             {
               child: child.reference,
               path: scalar_text(request.payload.path),
               params: (request.payload.params ?? {}) as JsonObject,
             },
-            this.controller.signal,
+            deadline,
           );
         } catch (error) {
           if (error instanceof ExecutorHttpError) {
@@ -189,12 +197,6 @@ export class AgentGateway {
       }
       if (request.operation !== 'write')
         throw new ExecutorValidationError('unsupported executor IPC operation');
-      let deadline = monotonic() + CLI_RESULT_TIMEOUT_SECONDS;
-      if (request.response_deadline != null) {
-        if (!Number.isFinite(request.response_deadline))
-          throw new ExecutorValidationError('invalid IPC response deadline');
-        deadline = Math.min(deadline, request.response_deadline);
-      }
       const incoming = decode_value(request.payload, 'IpcWritePayload');
       const submission = safe_component(request.request_id);
       if (this.options.runner.admission_stopped) throw permission('executor admission stopped');
@@ -205,12 +207,9 @@ export class AgentGateway {
         const update = `${support.label} is not supported by Home yet; update Home before retrying`;
         let capabilities: JsonObject;
         try {
-          capabilities = await this.options.client.read(
+          capabilities = await this.read_through_restart(
             { child: child.reference, path: '/api/executor/capabilities', params: {} },
-            AbortSignal.any([
-              this.controller.signal,
-              AbortSignal.timeout(Math.max(1, Math.floor((deadline - monotonic()) * 1000))),
-            ]),
+            deadline,
           );
         } catch (error) {
           if (error instanceof ExecutorHttpError) {
@@ -274,6 +273,37 @@ export class AgentGateway {
         result: null,
         error: { code, message: (error as Error).message, detail: {} },
       };
+    }
+  }
+  /** Reads have no effects. Only transport failures and temporary refusals repeat. */
+  private async read_through_restart(
+    request: LiveReadRequest,
+    deadline: number,
+  ): Promise<JsonObject> {
+    const signal = AbortSignal.any([
+      this.controller.signal,
+      AbortSignal.timeout(Math.max(1, Math.ceil((deadline - monotonic()) * 1000))),
+    ]);
+    for (;;) {
+      try {
+        signal.throwIfAborted();
+        return await this.options.client!.read(request, signal);
+      } catch (error) {
+        const temporary =
+          error instanceof ExecutorHttpError
+            ? [408, 429, 502, 503, 504].includes(error.status) || error.code === 'retry_later'
+            : error instanceof HttpTimeout ||
+              is_os_error(error) ||
+              (error instanceof Error &&
+                'code' in error &&
+                error.code === 'ERR_STREAM_PREMATURE_CLOSE');
+        if (!temporary || signal.aborted || monotonic() >= deadline) throw error;
+        await sleep(
+          Math.min(CLI_READ_RETRY_SECONDS, Math.max(0, deadline - monotonic())) * 1000,
+          undefined,
+          { signal },
+        );
+      }
     }
   }
   private release_publication(submission: string, publication: Publication): void {

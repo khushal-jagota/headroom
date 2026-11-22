@@ -16,7 +16,7 @@ import type {
   BackendEventValue,
 } from '../../../conversation/backends/contracts.ts';
 import { as_object, encode_backend_event, ExecutorValidationError } from '../../protocol.ts';
-import type { BackendEvent, ChildReference, TurnToken } from '../../wire.generated.ts';
+import type { ChildReference, TurnToken } from '../../wire.generated.ts';
 import type { MacEventsDependencies, MacRunnerEventsContract } from './lifecycle_contracts.ts';
 import { bounded_detail, same_wire } from './logic/outcomes.ts';
 import { same_reference } from '../../child_reference.ts';
@@ -36,7 +36,6 @@ function bounded_event(event: BackendEventValue): BackendEventValue {
 }
 export class MacRunnerEvents implements MacRunnerEventsContract {
   private readonly dependencies: MacEventsDependencies;
-  private live_failure_reported = false;
   constructor(dependencies: MacEventsDependencies) {
     this.dependencies = dependencies;
   }
@@ -44,31 +43,8 @@ export class MacRunnerEvents implements MacRunnerEventsContract {
     return {
       report: async (turn, input) => {
         const event = bounded_event(input);
-        const [method, arguments_] = encode_backend_event(event);
-        if (
-          method === 'agent_message_delta' ||
-          method === 'model_thinking_happened' ||
-          method === 'tool_call_progress'
-        ) {
-          const child = this.dependencies.native_children.get(reference.child_id);
-          if (
-            this.dependencies.state.is_retired(reference.child_id) ||
-            child === null ||
-            !same_reference(child.reference, reference)
-          )
-            return;
-          const payload: BackendEvent = { child: reference, method, turn, arguments: arguments_ };
-          as_object(payload, 'BackendEvent');
-          try {
-            this.dependencies.live?.send(payload);
-          } catch (error) {
-            if (!this.live_failure_reported) {
-              this.live_failure_reported = true;
-              console.debug('Mac live event was dropped:', error);
-            }
-          }
-          return;
-        }
+        // All events share the outbox sequence. A server pause cannot discard deltas
+        // or let completed output overtake the tool progress that precedes it.
         await this.report_event(reference, turn, event);
       },
     };

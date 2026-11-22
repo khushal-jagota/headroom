@@ -77,7 +77,7 @@ The outbox saves each durable event before delivery. Each conversation sends its
 
 During a home update trial, the home defers new result receipts. Extra machines retain output until the healthy home or restored previous home accepts it. A rollback never removes an accepted result from that boundary.
 
-Live text and tool progress remain lossy. Finished messages and durable events enter the outbox before delivery. The Mac retries transient failures within a finite delivery window. At expiry, it retains the failed content and shows the failure in its local status and log. A lost reply leaves the result uncertain, even when the Mac stops its attempt. Later items can proceed, and conversations share delivery capacity fairly. Native command failures also reach the conversation core directly, so artifact delays cannot leave a failed turn active. A matching native refusal to steer into an absent turn ends the stale active turn without changing its historical prompt delivery.
+Agent text deltas, tool progress, finished messages, and lifecycle events enter the same ordered outbox before delivery. The home presents text deltas and progress as transient updates, while completed messages and lifecycle events form the historical record. The Mac retries transient failures within a finite delivery window. At expiry, it retains the failed content and shows the failure in its local status and log. A lost reply leaves the result uncertain, even when the Mac stops its attempt. Later items can proceed, and conversations share delivery capacity fairly. Native command failures also reach the conversation core directly, so artifact delays cannot leave a failed turn active. A matching native refusal to steer into an absent turn ends the stale active turn without changing its historical prompt delivery.
 
 Ticket files travel apart from items. An item never carries a file and never waits for one, so a message that links a new file can arrive a few seconds before the file does. After each item and at each start, the executor compares the Ticket's `artifacts/` folder with the versions the home confirmed. It sends each new or changed file once and removes each file the folder no longer has. A failed file retries without delay to any item or to the other files. The home accepts a file only for a Ticket or a Manager that runs on the sending machine, checks its bytes on a separate thread, and then puts it in the Ticket's served folder. A matching digest does not grant another machine access.
 
@@ -101,7 +101,11 @@ Machine code also owns provider sign-in, allowance reads, and application previe
 
 ## Restarts and recovery
 
-A home restart preserves mailboxes, assignments, results, and receipts. The conversation system adopts accepted remote runs. Pending prompts remain busy until their existing native result arrives. Neither path sends the prompt again.
+A graceful server restart leaves machine code and its current agent turns alive, including machine code on the server’s own machine. The server preserves mailboxes, assignments, results, and receipts, then adopts the same remote children. Pending prompts remain busy until their existing native result arrives. Neither path sends the prompt again.
+
+Agent commands wait through a server pause of up to five minutes, with two additional minutes for reconnection and the response. Reads retry transient connection failures. Writes retain their original submission identity and return the saved receipt. The server retains admitted generic requests through their final response and receipt before graceful shutdown completes. A forced process kill during an arbitrary external effect can still leave its outcome unconfirmed. Do not submit that write as a new operation.
+
+Machine code retains output and events during the pause and delivers them in order after reconnection. If the delivery window expires, the local failure retains the content and an unconfirmed result. A timeout does not prove that a write failed.
 
 An executor restart preserves its journal and outbox. The home separates commands that never ran from uncertain deliveries. It waits for each affected conversation's retained output before recovery. Proven undelivered prompts can start afresh. Other interrupted turns receive the existing recovery prompt. A timeout alone never proves refusal or process termination.
 

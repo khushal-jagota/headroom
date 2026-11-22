@@ -21,7 +21,7 @@ import type {
   MacLoop,
   ReplyReader,
 } from './contracts.ts';
-import { HttpTimeout } from './errors.ts';
+import { HttpTimeout, http_error } from './errors.ts';
 import { ExecutorLinkAgent } from './executor_link.ts';
 /** Requests to the local link name `localhost`; the agent connects to the socket. */
 function request_origin(address: string): string {
@@ -54,15 +54,16 @@ export async function read_bounded(response: IncomingMessage, limit: number): Pr
 export async function read_server_location_probe(incoming: IncomingMessage): Promise<unknown> {
   const body = await read_bounded(incoming, 16384);
   if (incoming.statusCode !== 200 && incoming.statusCode !== 503)
-    throw new ExecutorValidationError('The server identity probe failed.');
+    throw http_error(incoming.statusCode ?? 0, body);
   let location: unknown;
   try {
     location = JSON.parse(body.toString('utf8')) as unknown;
   } catch {
+    if (incoming.statusCode === 503) throw http_error(503, body);
     throw new ExecutorValidationError('The server identity probe is invalid.');
   }
-  if (incoming.statusCode === 503 && (location as { state?: unknown })?.state !== 'moved')
-    throw new ExecutorValidationError('The server identity probe failed.');
+  if (incoming.statusCode === 503 && (location as { state?: unknown } | null)?.state !== 'moved')
+    throw http_error(503, body);
   return location;
 }
 export class HttpSessions {

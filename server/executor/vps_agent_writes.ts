@@ -1,5 +1,6 @@
 /** Bind canonical agent mutations and native message dispatch to one inbox position. */
 import { IncomingMessage } from 'node:http';
+import { ADMITTED_REQUEST_SCOPE } from '../core/http/lifetime.ts';
 import type { FastifyInstance, InjectOptions } from 'fastify';
 import type { Clock } from '../core/clock.ts';
 import type { Principal, RequestContext } from '../core/contracts.ts';
@@ -8,7 +9,6 @@ import { failure_payload } from '../cli/http.ts';
 import { PlannerError } from '../core/contracts.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { admitCommand, unidentifiedCommandRefusal } from '../core/authority/intake.ts';
-import { observe_promise } from '../core/promise_observer.ts';
 import type { ExecutorIdentity } from '../execution_identity.ts';
 import type {
   ConversationSystem,
@@ -50,7 +50,6 @@ import type { JsonValue } from './wire.generated.ts';
 import { require_current_incarnation_in_transaction } from './vps_presence_store.ts';
 import { decode_value, ExecutorValidationError } from './protocol.ts';
 import { now_ms } from './clock.ts';
-import { AGENT_REQUEST_SERVER_LIMIT_SECONDS } from './configuration.ts';
 import { is_record as is_json_object } from './../core/records.ts';
 
 type Json = WireValue<'JsonObject'>;
@@ -108,6 +107,9 @@ export function inject_agent_request(
       ? {}
       : { payload: JSON.stringify(request.body), headers: { 'content-type': 'application/json' } }),
     Request: class extends IncomingMessage {
+      get [ADMITTED_REQUEST_SCOPE]() {
+        return app.request_lifetime;
+      }
       get [IN_PROCESS_REQUEST_CONTEXT]() {
         return context;
       }
@@ -331,8 +333,9 @@ export class AgentWrites {
     );
   }
   /**
-   * Exactly one route run per inbox position. A lost answer, or a route that runs out of time,
-   * leaves an uncertain receipt.
+   * Exactly one route run per inbox position. The admitted route and receipt remain owned
+   * together through graceful shutdown, even after its HTTP caller disconnects.
+   * A process crash during an arbitrary external effect still leaves an uncertain receipt.
    */
   private async relay_request(
     envelope: WireValue<'QueuedEnvelope'>,
@@ -364,18 +367,9 @@ export class AgentWrites {
       return { previous: unfinished, request };
     });
     if (reserved.request === null) return reserved.previous;
-    // The conversation's later items wait for this one, so the route gets a bounded time.
-    const controller = new AbortController();
-    const answer = await observe_promise(
-      inject_agent_request(this.app, context, reserved.request, controller.signal),
-      AGENT_REQUEST_SERVER_LIMIT_SECONDS * 1000,
-    );
-    if (!answer.completed) {
-      // The route may still act. Its receipt stays uncertain, and nothing runs it again.
-      controller.abort();
-      return reserved.previous;
-    }
-    const response = answer.value;
+    // accept_items retains this complete operation, and endpoint shutdown joins it before
+    // the database closes. An HTTP observation timeout must not discard the final receipt.
+    const response = await inject_agent_request(this.app, context, reserved.request);
     const result = agent_response_json(response.statusCode, response.body, response.headers);
     const disposition = Object.hasOwn(result, 'error') ? 'refused' : 'accepted';
     return this.store.database.write((tx) =>

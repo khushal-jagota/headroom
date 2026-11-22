@@ -48,7 +48,8 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
     owners: HttpSessions[] = [];
   let old_origin = '',
     new_origin = '',
-    mode: 'announce' | 'moved' | 'foreign' | 'stale' | 'unavailable' = 'announce';
+    mode: 'announce' | 'moved' | 'foreign' | 'stale' | 'unavailable' | 'probe_unavailable' =
+      'announce';
   let release_late: (() => void) | undefined;
   let late_entered: (() => void) | undefined;
   let old_work = 0,
@@ -72,6 +73,10 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
       if (!old && mode === 'stale') location = active(origin, 0);
       if (request.url === SERVER_LOCATION_PATH) {
         probes++;
+        if (mode === 'probe_unavailable') {
+          response.writeHead(503).end('<html>Restart in progress</html>');
+          return;
+        }
         if (request.headers.authorization || request.headers['x-panels-executor-credential'])
           probe_credentials++;
         response.writeHead(location.state === 'moved' ? 503 : 200, {
@@ -215,6 +220,13 @@ test('TLS link follows a moved pointer, fences uploads, and adopts lease address
     expect(consumed).toBe(7);
     const restart = new MachineServerLink(join(root, 'fresh-machine'), old_origin);
     expect(restart.current_url).toBe(new_origin);
+    // A proxy's temporary 503 page is availability failure, not a corrupt server identity.
+    mode = 'probe_unavailable';
+    const waiting_link = new MachineServerLink(join(root, 'restart-machine'), old_origin);
+    const waiting_owner = make_owner(waiting_link);
+    await expect(request(waiting_owner)).rejects.toMatchObject({ status: 503 });
+    mode = 'moved';
+    expect(await request(waiting_owner)).toBe('work');
   } finally {
     await Promise.all(owners.map((owner) => owner.close()));
     await Promise.all(

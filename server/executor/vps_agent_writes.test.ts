@@ -8,11 +8,12 @@ import { expect, test, vi } from 'vitest';
 import { fixture } from '../tests/ticket_fixture.ts';
 import { buildClock } from '../core/clock.ts';
 import { loadConfig } from '../core/config.ts';
+import { install_request_lifetime } from '../core/http/lifetime.ts';
 import { requestContext } from '../core/authority/identity.ts';
 import type { Principal } from '../core/contracts.ts';
-import { AGENT_REQUEST_SERVER_LIMIT_SECONDS } from './configuration.ts';
 import { ORIGINAL_MAC_MACHINE_ID, type ExecutorIdentity } from '../execution_identity.ts';
 import { InboxStore } from './data/inbox.ts';
+import { MacInbox } from './vps_inbox.ts';
 import { AgentWrites, agent_request_context, agent_response_json } from './vps_agent_writes.ts';
 import type { FileStaging } from './vps_files.ts';
 import type { JsonObject, QueuedEnvelope } from './wire.generated.ts';
@@ -88,12 +89,17 @@ test('an agent request runs its route once as the child and keeps that one recei
   const seen: unknown[] = [];
   let answer: { status: number; body: unknown } = { status: 200, body: { ok: true } };
   const app = Fastify();
+  const scope = install_request_lifetime(app);
+  let route_release: Promise<void> | undefined;
+  let route_started: (() => void) | undefined;
   app.post('/api/probe', async (request, reply) => {
     seen.push({
       context: requestContext(request),
       query: request.query,
       body: request.body,
     });
+    route_started?.();
+    await route_release;
     return reply.code(answer.status).send(answer.body);
   });
   await app.ready();
@@ -145,14 +151,44 @@ test('an agent request runs its route once as the child and keeps that one recei
     });
     expect(seen).toHaveLength(3);
 
+    // A nested relay continues admitted work after the external HTTP door seals.
+    // It stays in the same scope until the real handler completes.
+    scope.seal();
+    expect((await app.inject({ method: 'POST', url: '/api/probe', payload: {} })).statusCode).toBe(
+      503,
+    );
+    let release!: () => void;
+    route_release = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      route_started = resolve;
+    });
+    answer = { status: 200, body: { continued: true } };
+    const continuation = send(envelope(5, probe));
+    await started;
+    let settled = false;
+    const settlement = scope.settled().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    expect(await continuation).toMatchObject({
+      disposition: 'accepted',
+      result: { continued: true },
+    });
+    await settlement;
+    expect(settled).toBe(true);
+
     // A child whose assignment closed cannot act for its former principal.
     database.write((tx) =>
       tx.run('UPDATE executor_child_assignments SET closed_at_ms=1 WHERE child_id=?', [
         child.child_id,
       ]),
     );
-    await expect(send(envelope(5, probe))).rejects.toMatchObject({ code: 'agent_forbidden' });
-    expect(seen).toHaveLength(3);
+    await expect(send(envelope(6, probe))).rejects.toMatchObject({ code: 'agent_forbidden' });
+    expect(seen).toHaveLength(4);
   } finally {
     await app.close();
   }
@@ -187,32 +223,52 @@ test('a generic conversation child makes only the writes of an agent without an 
   ).rejects.toMatchObject({ code: 'agent_forbidden' });
 });
 
-// Risk: a relayed write that never answers holds every later item of its conversation behind
-// the item lock. Gap: only a lost answer was proven, never a route that keeps running.
-test('a relayed write that runs out of time leaves its one uncertain receipt', async () => {
+// Risk: a route exceeds the old 15-second observation limit and HTTP retries expose its
+// unfinished receipt as terminal. Existing coverage proves only immediate replay. Reuse the
+// real inbox, including its retry and shutdown owners, with a controlled injected route.
+test('a slow relayed write retains its receipt through retries and shutdown', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     const { writes, envelope, send } = world({ kind: 'manager', id: 'm_one' });
-    const signals: AbortSignal[] = [];
-    writes.app = {
-      inject: (options: { signal: AbortSignal }) => {
-        signals.push(options.signal);
-        return new Promise(() => {});
-      },
-    } as unknown as FastifyInstance;
+    const inbox = new MacInbox(writes.store, writes.clock, writes.runs);
+    let finish!: (response: unknown) => void;
+    const inject = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    inbox.agent_writes.app = { inject } as unknown as FastifyInstance;
     const item = envelope(1, 'cli.request', { method: 'POST', path: '/api/probe', body: null });
-    const answering = send(item);
-    await vi.advanceTimersByTimeAsync(AGENT_REQUEST_SERVER_LIMIT_SECONDS * 1000);
-    const receipt = await answering;
-    expect(receipt).toMatchObject({
-      disposition: 'uncertain',
-      result: { error: { code: 'uncertain' } },
+    const batch = { sender_id: item.sender_id, items: [{ envelope: item, sender_refusal: null }] };
+    const answering = inbox.accept_batch(item.conversation_id, batch, identity);
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(await answering).toMatchObject({ receipts: [], stop: { reason: 'retry_later' } });
+    // A second HTTP request waits for the original producer instead of returning its
+    // provisional uncertain receipt. Later items remain behind that producer as well.
+    const retrying = inbox.accept_batch(item.conversation_id, batch, identity);
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(await retrying).toMatchObject({ receipts: [], stop: { reason: 'retry_later' } });
+    expect(inject).toHaveBeenCalledTimes(1);
+    let settled = false;
+    void inbox.settled().then(() => {
+      settled = true;
     });
-    expect((receipt.result.error as { message: string }).message).not.toContain('stopped');
-    expect(signals.map((signal) => signal.aborted)).toEqual([true]);
-    // A repeat of the item reads that receipt and never runs the route again.
-    expect(await send(item)).toEqual(receipt);
-    expect(signals).toHaveLength(1);
+    const stopping = inbox.stop({ deadline: performance.now() / 1000 });
+    const observed_stop = expect(stopping).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(1);
+    await observed_stop;
+    expect(settled).toBe(false);
+    finish({
+      statusCode: 200,
+      body: '{"applied":true}',
+      headers: { 'content-type': 'application/json' },
+    });
+    await inbox.settled();
+    expect(settled).toBe(true);
+    // After the old owner drains, the next server receives the final receipt unchanged.
+    expect(await send(item)).toMatchObject({ disposition: 'accepted', result: { applied: true } });
+    expect(inject).toHaveBeenCalledTimes(1);
   } finally {
     vi.useRealTimers();
   }
