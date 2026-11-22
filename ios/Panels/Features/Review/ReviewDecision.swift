@@ -262,7 +262,14 @@ struct DecisionGuidance: Sendable, Equatable {
             if latest[key] == nil { order.append(key) }
             if latest[key].map({ $0.sequence < saved.sequence }) ?? true { latest[key] = saved }
         }
-        return order.compactMap { key in
+        // A refused reply or mark read brings its message card forward the same way.
+        var messages: [String: ReviewRefusal] = [:]
+        for saved in decisions where ["message", "markRead"].contains(saved.kind) && saved.refused {
+            guard let item = live.first(where: { $0.isMessage && $0.conversationId == saved.conversationID }) else { continue }
+            messages[item.id] = ReviewRefusal(item: item, note: saved.note, summaryID: saved.id)
+        }
+        let replies = live.compactMap { messages[$0.id] }
+        return replies + order.compactMap { key in
             guard let saved = latest[key], saved.refused, let ticket = saved.ticketID, let field = saved.proposalField,
                   let created = saved.proposalCreatedAt else { return nil }
             if let item = live.first(where: { $0.isProposal && decides(saved, $0) }) {
