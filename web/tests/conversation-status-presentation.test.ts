@@ -122,12 +122,6 @@ describe("turn timing at the top, Paused under a waiting ask", () => {
     const composer = (source("../src/components/conversation/ConversationComposer.svelte") + source("../src/components/conversation/composer/ComposerAttachments.svelte") + source("../src/components/conversation/composer/ComposerAddMenu.svelte") + source("../src/components/conversation/composer/catalog.ts"));
     expect(composer).not.toContain("chat-paused");
   });
-  it("the dock's Working · time is spaced as the transcript's (three parts, 6px apart)", () => {
-    const facts = { readOnly: false, activityUncertain: false, waitingForYou: false, waitingFor: null, running: true, backgroundWorking: false, settingUp: null, elapsed: "2m 14s" };
-    const html = render(ConversationRestBar, { props: { onOpen: () => { }, state: conversationState(facts as never) } }).body;
-    expect(html).toMatch(/c2-rest-label[^>]*>Working<\/span><span class="c2-rest-sep[^"]*" aria-hidden="true">·<\/span><span class="c2-rest-clock/);
-    expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-working { display:inline-flex; align-items:center; gap:6px; }");
-  });
 });
 
 describe("the live edge", () => {
@@ -201,12 +195,6 @@ describe("one live indicator in every view", () => {
     expect(html).toContain('class="c2-tool-icon');
     expect(html).not.toContain("c2-tool-spin");
     expect(html).toContain('data-conversation-tool-status="running"');
-  });
-});
-
-describe("quiet text contrast", () => {
-  it("the dock's Working timer is #b8b8b8", () => {
-    expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-clock { color:#b8b8b8; }");
   });
 });
 

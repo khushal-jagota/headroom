@@ -119,7 +119,10 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
     (response) =>
       response.url().endsWith(`/held-prompts/${discardId}`) && response.request().method() === 'DELETE',
   );
-  await page.locator(`[data-conversation-held-discard="${discardId}"]`).click();
+  // A queued row's actions sit in its "more" menu, which opens first.
+  const discardControl = page.locator(`[data-conversation-held-discard="${discardId}"]`);
+  await page.locator('[data-conversation-held-row]', { has: discardControl }).locator('[data-conversation-held-more]').click();
+  await discardControl.click();
   const discarded = await discardedResponse;
   expect(await discarded.json()).toEqual({ discarded: true });
   await expect(page.locator('[data-conversation-held-row]')).toHaveCount(1, { timeout: WAIT_MS });
@@ -128,9 +131,9 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
     (response) =>
       response.url().endsWith(`/held-prompts/${promoteId}/promote`) && response.request().method() === 'POST',
   );
-  await page
-    .locator(`[data-conversation-held-promote="send_now"][data-held-prompt-id="${promoteId}"]`)
-    .click();
+  const promoteControl = page.locator(`[data-conversation-held-promote="send_now"][data-held-prompt-id="${promoteId}"]`);
+  await page.locator('[data-conversation-held-row]', { has: promoteControl }).locator('[data-conversation-held-more]').click();
+  await promoteControl.click();
   const promoted = await promotedResponse;
   expect(promoted.request().postDataJSON()).toEqual({ mode: 'send_now' });
   expect(await promoted.json()).toEqual({ promoted: true, fate: 'started' });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DockStatus } from "../../lib/conversation/dockPresentation";
+  import SystemLine from "./SystemLine.svelte";
   /** The dock's status line, at rest on a work page: what the conversation is doing, the way
    * to open it, and the latest unread message under them. It always says one of four states
    * (dockStatusFrom), also while an ask or a proposal waits. */
@@ -22,8 +23,8 @@
   data-conversation-rest-state={status.kind} data-conversation-rest-ask-below={askBelow || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
-    <!-- No whitespace between the mark and the words: the line's text is exactly its words. -->
-    <span class="c2-rest-line" data-conversation-rest-line><span class="c2-rest-mark" aria-hidden="true">{#if live}<span class="cv-spinner"></span>{:else}<span class="c2-rest-dot"></span>{/if}</span><span class="c2-rest-label">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</span></span>
+    <!-- The shared system line, with its mark inline: the dock has no gutter on its left. -->
+    <SystemLine mark={live ? "spinner" : "dot"} hangMark={false} data-conversation-rest-line="">{LABELS[status.kind]}{#if status.clock !== null}{" · "}<span data-conversation-rest-clock>{status.clock}</span>{/if}</SystemLine>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open</span>
       <!-- The one exception to the no-chevron rule: a 12px up arrow after the label says the
@@ -47,12 +48,6 @@
     background:linear-gradient(to bottom, transparent, var(--cv-canvas)); pointer-events:none; }
   .c2-rest-status { display:flex; align-items:center; justify-content:space-between; gap:var(--cv-s3);
     min-width:0; min-height:40px; }
-  /* A system line: 13/20 #8f8f8f, no box, a 16px slot for its mark (a spinner while live,
-     otherwise a 6px dot), 8px before the words. */
-  .c2-rest-line { display:flex; align-items:center; gap:var(--cv-s2); min-width:0; color:#8f8f8f; }
-  .c2-rest-mark { flex:none; display:grid; place-items:center; width:16px; height:16px; }
-  .c2-rest-dot { width:6px; height:6px; border-radius:50%; background:#8f8f8f; }
-  .c2-rest-label { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   /* "Open" is a quiet text control: no fill and no edge at rest, a fill on hover. */
   .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px 0 14px;
     border:0; border-radius:999px; background:transparent; color:#d0d0d0; font-weight:var(--cv-weight-label);

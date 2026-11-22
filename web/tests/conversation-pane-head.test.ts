@@ -95,17 +95,19 @@ describe("the dock's status line", () => {
     render(ConversationRestBar, { props: { onOpen: () => {}, status, ...props } }).body.replace(/<!--[^]*?-->/g, "");
   it("draws the state with its clock, a spinner only while live, and Open with its arrow", () => {
     const working = rest({ kind: "working", clock: "29h 28m" });
-    expect(working).toMatch(/class="cv-spinner[^"]*"/);
+    expect(working).toContain('data-conversation-system-mark="spinner"');
     expect(working).toMatch(/Working · <span data-conversation-rest-clock[^>]*>29h 28m<\/span>/);
     expect(rest({ kind: "setting-up", clock: "1m 35s" })).toMatch(/Setting up · <span data-conversation-rest-clock[^>]*>1m 35s</);
     for (const [kind, words] of [["idle", "Idle"], ["offline", "Machine offline"]] as const) {
       const html = rest({ kind, clock: null });
       expect(html).toContain(`>${words}</span>`);
-      expect(html).not.toContain("cv-spinner");
+      expect(html).toContain('data-conversation-system-mark="dot"');
+      expect(html).not.toContain('data-conversation-system-mark="spinner"');
       expect(html).not.toContain("data-conversation-rest-clock");
     }
-    // The line's text is exactly its words, with nothing before them.
-    expect(rest({ kind: "idle", clock: null })).toMatch(/data-conversation-rest-line[^>]*><span class="c2-rest-mark[^>]*>(<span[^>]*><\/span>)+<\/span><span class="c2-rest-label[^>]*>Idle</);
+    // The status is the shared system line, its mark inline (the dock has no gutter).
+    expect(rest({ kind: "idle", clock: null })).toMatch(/<div class="cv-system-line[^"]*"[^>]*data-conversation-rest-line/);
+    expect(rest({ kind: "idle", clock: null })).not.toContain("is-hanging");
     const open = rest({ kind: "idle", clock: null });
     expect(open).toMatch(/<button[^>]*data-conversation-rest-bar/);
     expect(open).toMatch(/c2-rest-control-label[^>]*>Open<\/span>[\s\S]*?<svg class="c2-rest-control-arrow[^"]*" viewBox="0 0 16 16" data-conversation-open-arrow=""><path d="m4 10 4-4 4 4"><\/path><\/svg>/);

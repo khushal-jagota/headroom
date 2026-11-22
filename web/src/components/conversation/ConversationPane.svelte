@@ -840,18 +840,14 @@
   .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
-  /* --- Lens: a segmented control. The track is a well; the chosen segment is a control. */
-  /* v9 (16): Focus and Full sit in one segmented track: #1c1c1c, radius 10, a 2px inset; the
-     shown lens is a #2a2a2a segment (#ececec), the other quiet (#bdbdbd, hover #ececec on
-     #242424). Segments 28 tall (the track 32), radius 8, 13/20 500, padding 0 12. Then 16px
-     (the header's 12 gap + 4) before Dock and more, which are quiet buttons. */
+  /* --- Lens: Focus and Full. No track and no fill at rest: only the shown lens has a fill
+     (#424242, #ffffff 500). The other lens is #d0d0d0 400 text, with a #242424 fill on hover.
+     Segments are 28 tall, radius 8, padding 0 12, 2 px apart. */
   .cv-segmented {
     display: inline-flex;
     flex: none;
     gap: 2px;
     padding: 2px;
-    border-radius: 10px;
-    background: #1c1c1c;
     margin-inline-end: 4px;
   }
   .cv-segment {
@@ -861,22 +857,14 @@
     border: 0;
     border-radius: 8px;
     background: transparent;
-    color: #bdbdbd;
-    font: var(--cv-weight-label) var(--cv-type-control)/20px var(--cv-font);
+    color: #d0d0d0;
+    font: 400 var(--cv-type-control)/20px var(--cv-font);
     cursor: pointer;
     transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .cv-segment:hover { background: #242424; color: #ececec; }
-  .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #2a2a2a; color: #ececec; }
+  .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #424242; color: #ffffff; font-weight: var(--cv-weight-label); }
   .cv-segment:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
-  /* v15 (4): the shown lens is a #363636 segment with #f2f2f2 500 text; the other has no fill and
-     #a6a6a6 400 text (hover keeps the #242424 fill and #ececec). */
-  .cv-segment { color: #a6a6a6; font-weight: 400; }
-  .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #363636; color: #f2f2f2; font-weight: 500; }
-  /* v16 (3): more contrast both ways. The other lens is #d0d0d0 400; the shown one is a #424242
-     segment with #ffffff 500 text. The track keeps its fill. */
-  .cv-segment { color: #d0d0d0; }
-  .cv-segment[aria-pressed="true"], .cv-segment[aria-pressed="true"]:hover { background: #424242; color: #ffffff; }
 
   .conversation-read-only {
     flex: none;
