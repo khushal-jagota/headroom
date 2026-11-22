@@ -77,8 +77,11 @@ describe("page version headers", () => {
       await fetchJson("/api/example", { method: "DELETE" });
       const mutations = request.mock.calls.filter(([path]) => path === "/api/example");
       expect(mutations).toHaveLength(3);
-      for (const [,options] of mutations) expect(options?.headers).toMatchObject({"X-Panels-App-SHA":"booted"});
-      expect(await mutationHeaders({"Content-Type":"application/octet-stream"})).toEqual({"content-type":"application/octet-stream","X-Panels-App-SHA":"booted"});
+      for (const [,options] of mutations) {
+        expect(options?.headers).toMatchObject({"X-Panels-App-SHA":"booted"});
+        expect(JSON.parse((options?.headers as Record<string,string>)["X-Panels-Client"])).toMatchObject({kind:"browser",version:"booted"});
+      }
+      expect(await mutationHeaders({"Content-Type":"application/octet-stream"})).toMatchObject({"content-type":"application/octet-stream","X-Panels-App-SHA":"booted"});
       await expect(fetchJson("/api/refused", {method:"POST",body:{}})).rejects.toMatchObject({code:"validation",message:"Refresh page before making changes."});
       expect(request.mock.calls.filter(([path]) => path === "/api/meta")).toHaveLength(1);
       expect(reload).not.toHaveBeenCalled();

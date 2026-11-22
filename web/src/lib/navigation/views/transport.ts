@@ -1,3 +1,4 @@
+import { clientFetch } from "../../clientIdentity";
 import type {ViewFrame,ViewRequest,ViewSnapshot} from '../contracts';
 
 function path(kind:'snapshot'|'events',view:ViewRequest) {
@@ -7,7 +8,7 @@ function path(kind:'snapshot'|'events',view:ViewRequest) {
 export function createViewTransport() {
   return {
     async snapshot(view:ViewRequest,signal:AbortSignal):Promise<ViewSnapshot> {
-      const response=await fetch(path('snapshot',view),{signal,cache:'no-store'});
+      const response=await clientFetch(path('snapshot',view),{signal,cache:'no-store'});
       if(!response.ok) throw new Error(`Navigation view unavailable (${response.status})`);
       return await response.json() as ViewSnapshot;
     },

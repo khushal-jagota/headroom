@@ -5,7 +5,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.ts';
 import { PlannerError } from '../contracts.ts';
 import { MAX_CONVERSATION_SEND_REQUEST_BYTES } from '../config.ts';
-import { MINIMUM_SUPPORTED_BUILD } from '../../ios_compatibility/policy.ts';
+import {
+  CLIENT_COMPATIBILITY,
+  supported_ios_build,
+  supported_desktop_bridge,
+} from '../../client_versions/policy.ts';
+import { parse_client_identity } from '../../client_versions/identity.ts';
+import { remember_client_version } from '../../client_versions/data.ts';
+import type { ClientIdentity } from '../../client_versions/contracts.ts';
+import type { Database } from '../database/contracts.ts';
+import type { Clock } from '../clock.ts';
 import { TRUSTED_INGRESS_CONFIGURED } from '../authority/identity.ts';
 import type { HttpRequestScope } from './lifetime.ts';
 export interface WorkspaceAdmission {
@@ -67,7 +76,9 @@ export function installMiddleware(
   workspace?: WorkspaceAdmission,
   lifetime?: HttpRequestScope,
   update_barrier?: UpdateBarrier,
+  client_versions?: { database: Database; clock: Clock },
 ): void {
+  const identities = new WeakMap<FastifyRequest, ClientIdentity>();
   app.addHook('onRequest', async (request, reply) => {
     const operation = async () => {
       // Raw headers also reach the streams that hijack or flush their own headers.
@@ -84,6 +95,46 @@ export function installMiddleware(
         }
       }
       const path = new URL(request.url, 'http://localhost').pathname;
+      Object.assign(request, { [TRUSTED_INGRESS_CONFIGURED]: !!config.trusted_ingress_provider });
+      const raw = rawHeaders(request);
+      let login: string | null;
+      try {
+        login = trusted_ingress_login(config, raw, request.method);
+      } catch (error) {
+        if (!(error instanceof PlannerError)) throw error;
+        reject(reply, error.message);
+        return;
+      }
+      if (login !== null) {
+        Object.assign(request, { authenticatedOwner: true, trustedLogin: login });
+      }
+      let client: ClientIdentity | null;
+      try {
+        client = parse_client_identity(raw.get('x-panels-client'));
+      } catch (error) {
+        reply
+          .code(400)
+          .send({ error: { code: 'validation', message: (error as Error).message, detail: {} } });
+        return;
+      }
+      if (client) identities.set(request, client);
+      if (
+        client?.kind === 'desktop' &&
+        !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
+        !supported_desktop_bridge(client)
+      ) {
+        reply
+          .code(426)
+          .header('cache-control', 'no-store')
+          .send({
+            error: {
+              code: 'desktop_update_required',
+              message: 'Update the Panels desktop app.',
+              details: CLIENT_COMPATIBILITY.desktop_shell,
+            },
+          });
+        return;
+      }
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
         const sha = request.headers['x-panels-app-sha'];
         if (sha !== undefined && sha !== config.app_sha) {
@@ -128,15 +179,14 @@ export function installMiddleware(
           reply.raw.once('close', release);
         }
       }
-      Object.assign(request, { [TRUSTED_INGRESS_CONFIGURED]: !!config.trusted_ingress_provider });
-      const raw = rawHeaders(request);
       const builds = raw.get('x-panels-ios-build');
       if (
-        builds &&
-        (builds.length !== 1 ||
-          builds[0]!.length > 10 ||
-          !/^\d+$/.test(builds[0]!) ||
-          Number(builds[0]) < MINIMUM_SUPPORTED_BUILD)
+        (builds &&
+          (builds.length !== 1 ||
+            builds[0]!.length > 10 ||
+            !/^\d+$/.test(builds[0]!) ||
+            !supported_ios_build(Number(builds[0])))) ||
+        (client?.kind === 'ios' && !supported_ios_build(client.build))
       ) {
         reply
           .code(426)
@@ -145,21 +195,10 @@ export function installMiddleware(
             error: {
               code: 'ios_update_required',
               message: 'Update Panels from TestFlight',
-              details: { minimum_build: MINIMUM_SUPPORTED_BUILD },
+              details: { minimum_build: CLIENT_COMPATIBILITY.ios.minimum_build },
             },
           });
         return;
-      }
-      let login: string | null;
-      try {
-        login = trusted_ingress_login(config, raw, request.method);
-      } catch (error) {
-        if (!(error instanceof PlannerError)) throw error;
-        reject(reply, error.message);
-        return;
-      }
-      if (login !== null) {
-        Object.assign(request, { authenticatedOwner: true, trustedLogin: login });
       }
       if (request.method === 'POST' && SEND_PATHS.some((pattern) => pattern.test(path))) {
         const length = request.headers['content-length'];
@@ -192,6 +231,10 @@ export function installMiddleware(
     return payload.pipe(limited);
   });
   app.addHook('onSend', async (request, reply, payload) => {
+    const client = identities.get(request);
+    identities.delete(request);
+    if (client && client_versions && reply.statusCode !== 401 && reply.statusCode !== 403)
+      remember_client_version(client_versions.database, client, client_versions.clock.nowUnix());
     (
       request as FastifyRequest & {
         releaseWorkspace?: () => void;

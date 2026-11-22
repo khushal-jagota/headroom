@@ -1,3 +1,4 @@
+import { clientFetch, clientIdentityHeaders } from "./clientIdentity";
 import { writable } from "svelte/store";
 
 export type ReleaseSnapshot = {
@@ -26,7 +27,7 @@ export function readBootAppSha(document: Pick<Document, "querySelector">): strin
 }
 
 export function createReleaseMonitor(options: ReleaseMonitorOptions) {
-  const fetchMeta = options.fetchMeta ?? fetch;
+  const fetchMeta = options.fetchMeta ?? clientFetch;
   const reload = options.reload ?? (() => window.location.reload());
   let snapshot: ReleaseSnapshot = {
     updateAvailable: false,
@@ -167,7 +168,7 @@ export function requestReleaseReload(): void {
 
 /** Attach the page version. The server rejects an outdated browser. */
 export async function mutationHeaders(headers?: HeadersInit): Promise<Record<string, string>> {
-  const result = Object.fromEntries(new Headers(headers).entries());
+  const result = clientIdentityHeaders(new Headers(headers));
   if (sharedBootSha) result["X-Panels-App-SHA"] = sharedBootSha;
   return result;
 }

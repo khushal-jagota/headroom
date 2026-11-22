@@ -8,6 +8,7 @@ import { net, protocol, session } from 'electron';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { serverAddress } from './server_address';
+import { desktopIdentityHeaders } from './client_identity';
 
 // Node gives a URL of a custom scheme the origin "null", so pages are told apart by host.
 export const SCREENS_HOST = 'app';
@@ -129,6 +130,7 @@ async function forward(request: Request, url: URL): Promise<Response> {
   if (address === null) return Response.error();
   const headers = new Headers(request.headers);
   for (const name of REQUEST_HEADERS_NOT_FORWARDED) headers.delete(name);
+  for (const [name, value] of Object.entries(desktopIdentityHeaders())) headers.set(name, value);
   // `net.fetch` follows redirects itself. The server's only redirects under `/api` add or
   // drop a trailing slash on the same server.
   const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers };
