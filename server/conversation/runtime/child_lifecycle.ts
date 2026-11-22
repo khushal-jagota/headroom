@@ -138,7 +138,9 @@ export async function recheck_worker_cleanup(
       if (row === undefined) return null;
       const local_ids = sql
         .all<{ conversation_id: string }>(
-          'SELECT w.conversation_id FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=?',
+          // Machine code's conversations also get a custody row and a workspace registration.
+          // Only a conversation that machine code never ran can hold a local process.
+          'SELECT w.conversation_id FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=? AND NOT EXISTS (SELECT 1 FROM executor_child_assignments a WHERE a.conversation_id=w.conversation_id)',
           [ticket_id],
         )
         .map((item) => item.conversation_id);

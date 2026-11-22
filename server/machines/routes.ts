@@ -19,7 +19,7 @@ async function machine_views(services: AreaServices): Promise<{ machines: Machin
     const records = list_machines(sql);
     const present = new Set(
       records
-        .filter((machine) => machine.is_home || mac_is_present(sql, now_ms(), machine.machine_id))
+        .filter((machine) => mac_is_present(sql, now_ms(), machine.machine_id))
         .map((machine) => machine.machine_id),
     );
     const tickets = sql.all<Record<string, unknown>>(

@@ -150,8 +150,8 @@ export class VpsExecutor {
     this.app = app;
     this.update_barrier = update_barrier;
     this.mailbox.start_admission = conversations.start_admission;
-    this.presence.returned = () => {
-      void this.catalog.connected();
+    this.presence.returned = async () => {
+      this.catalog.connected();
       // A server start skips the recovery of a Ticket whose machine is away. When the machine
       // connects, for example the server's own machine code after the switch, it runs now.
       void this.recover_waiting_turns(conversations).catch((error: unknown) => {
