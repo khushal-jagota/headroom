@@ -4,7 +4,7 @@
 // serves the bundle that ships inside the app and forwards `/api` and `/files` to the one
 // server address. The screens never need that address. Requests reach the server from the
 // native side with no Origin header.
-import { net, protocol } from 'electron';
+import { net, protocol, session } from 'electron';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { serverAddress } from './server_address';
@@ -34,9 +34,10 @@ const MIME: Record<string, string> = {
   '.map': 'application/json',
 };
 
-// Chromium adds these for the hop to the app scheme. `net.fetch` sets its own, and it
-// decodes compressed bodies, so the server must not compress for the screens.
-const HEADERS_NOT_FORWARDED = ['host', 'origin', 'referer', 'connection', 'content-length', 'accept-encoding'];
+// Chromium adds these for the hop to the app scheme, and `net.fetch` sets its own.
+const REQUEST_HEADERS_NOT_FORWARDED = ['host', 'origin', 'referer', 'connection', 'content-length'];
+// `net.fetch` hands back the body already decoded, so the encoding and length no longer apply.
+const RESPONSE_HEADERS_NOT_RETURNED = ['content-encoding', 'content-length'];
 
 /** Call before the app is ready. */
 export function registerAppScheme(): void {
@@ -53,11 +54,32 @@ export function handleAppScheme(): void {
   protocol.handle('panels', (request) => {
     const url = new URL(request.url);
     if (url.host === SCREENS_HOST) {
-      if (/^\/(api|files)(\/|$)/.test(url.pathname)) return forward(request, url);
-      return packedFile(screensFile(url.pathname));
+      if (isForwarded(url)) return forward(request, url);
+      return packedFile(url.pathname, screensFile);
     }
-    if (url.host === ADDRESS_PAGE_HOST) return packedFile(addressPageFile(url.pathname));
+    if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, addressPageFile);
     return notFound();
+  });
+  refuseWritesFromOtherSites();
+}
+
+function isForwarded(url: URL): boolean {
+  return /^\/(api|files)(\/|$)/.test(url.pathname);
+}
+
+/**
+ * Only the app's own pages may write through the forward.
+ *
+ * A page from another site can run inside the app, for example in an artifact frame. Its
+ * requests to the app scheme carry no Origin header, so neither the forward nor the
+ * server could tell them from the screens' own. Here Electron names the frame that sent
+ * each request, so a write from any frame outside `panels://app` is cancelled.
+ */
+function refuseWritesFromOtherSites(): void {
+  session.defaultSession.webRequest.onBeforeRequest({ urls: [`panels://${SCREENS_HOST}/*`] }, (details, callback) => {
+    const write = details.method !== 'GET' && details.method !== 'HEAD';
+    const fromTheApp = details.frame?.origin === `panels://${SCREENS_HOST}`;
+    callback({ cancel: write && !fromTheApp && isForwarded(new URL(details.url)) });
   });
 }
 
@@ -72,9 +94,18 @@ function addressPageFile(pathname: string): string | null {
   return `address_page/${pathname === '/' ? 'index.html' : pathname.slice(1)}`;
 }
 
-async function packedFile(relative: string | null): Promise<Response> {
+/** Serve one file of the packed bundle. A path that climbs, even encoded, is refused. */
+async function packedFile(pathname: string, choose: (decoded: string) => string | null): Promise<Response> {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return notFound();
+  }
+  if (decoded.includes('\\') || decoded.split('/').includes('..')) return notFound();
+  const relative = choose(decoded);
   if (relative === null) return notFound();
-  const file = normalize(join(PACKED, decodeURIComponent(relative)));
+  const file = normalize(join(PACKED, relative));
   if (!file.startsWith(PACKED + sep)) return notFound();
   try {
     const body = await readFile(file);
@@ -97,17 +128,23 @@ async function forward(request: Request, url: URL): Promise<Response> {
   const address = serverAddress();
   if (address === null) return Response.error();
   const headers = new Headers(request.headers);
-  for (const name of HEADERS_NOT_FORWARDED) headers.delete(name);
+  for (const name of REQUEST_HEADERS_NOT_FORWARDED) headers.delete(name);
+  // `net.fetch` follows redirects itself. The server's only redirects under `/api` add or
+  // drop a trailing slash on the same server.
   const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers };
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     init.body = request.body;
     init.duplex = 'half';
   }
+  let response: Response;
   try {
-    return await net.fetch(`${address}${url.pathname}${url.search}`, init);
+    response = await net.fetch(`${address}${url.pathname}${url.search}`, init);
   } catch {
     return Response.error();
   }
+  const returned = new Headers(response.headers);
+  for (const name of RESPONSE_HEADERS_NOT_RETURNED) returned.delete(name);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: returned });
 }
 
 function notFound(): Response {

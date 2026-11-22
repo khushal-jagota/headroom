@@ -75,6 +75,26 @@ test('the screens reach the server through the app, and links leave it', async (
     expect(write.status, write.body).toBe(200);
     expect(JSON.stringify(await api.get(server, '/api/ideas'))).toContain('Idea from the desktop app');
 
+    // A page from another site inside the app, such as one an artifact frame opened,
+    // cannot write through the forward.
+    await page.evaluate(
+      (src) =>
+        new Promise<void>((done) => {
+          const frame = Object.assign(document.createElement('iframe'), { src, name: 'foreign' });
+          frame.onload = () => done();
+          document.body.append(frame);
+        }),
+      `${server.base}/api/meta`,
+    );
+    await page.frame({ name: 'foreign' })!.evaluate(() =>
+      fetch('panels://app/api/ideas', {
+        method: 'POST',
+        mode: 'no-cors',
+        body: new Blob([JSON.stringify({ title: 'Idea from a foreign page' })]),
+      }).catch(() => undefined),
+    );
+    expect(JSON.stringify(await api.get(server, '/api/ideas'))).not.toContain('Idea from a foreign page');
+
     // Links that leave the app go to the browser, and the app stays on its screens.
     await page.evaluate(() => {
       window.open('https://example.com/new-window', '_blank');

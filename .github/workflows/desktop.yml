@@ -4,10 +4,10 @@ name: Desktop app
 on:
   pull_request:
     branches: [staging]
-    paths: ['desktop/**', 'web/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   push:
     branches: [staging]
-    paths: ['desktop/**', 'web/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
+    paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

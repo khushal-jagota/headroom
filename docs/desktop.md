@@ -23,11 +23,11 @@ The app has two sides and a bridge between them.
 
 ## How the screens reach the server
 
-The screens keep the relative paths they use in the browser. The app serves them from its own scheme, `panels://app`, and the native side forwards every `/api` and `/files` request to the server address. So the screens never need the address, and every server path in the page, such as an icon, a video or an artifact frame, works as it does in the browser.
+The screens keep the relative paths they use in the browser. The app serves them from its own scheme, `panels://app`, and the native side forwards every `/api` and `/files` request to the server address. So the screens never need the address, and server paths in the page, such as icons, videos and artifact frames, work as they do in the browser. Only the app's own pages may write through the forward: a write from a page of another site, such as one opened inside an artifact frame, is cancelled.
 
 Requests reach the server from the native side with no Origin header. The server treats them as it treats any caller without one; see [Who may act](authority.md). A server behind Tailscale Serve still gets its identity header from Serve. When the server cannot be reached, the forward fails as a network error, so the live streams reconnect by themselves when it is back.
 
-The app's copy of the screens carries no server release tag, so the server's guard against writes from an older web build does not apply to it.
+The app's copy of the screens carries no server release tag, so the server's guard against writes from an older web build does not apply to it. The service worker, which only serves web push, does not run in the app.
 
 ## The server address
 
