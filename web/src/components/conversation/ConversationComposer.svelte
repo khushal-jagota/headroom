@@ -1682,7 +1682,8 @@
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .cv-btn--small { height: 28px; padding: 0 10px; }
-  .cv-btn--primary { background: var(--cv-primary-fill); color: var(--cv-primary-ink); }
+  /* v4.2: the conversation's one primary style. */
+  .cv-btn--primary { border-radius: 18px; background: #f2f2f2; color: #121212; }
   .cv-btn--primary:hover { background: #ffffff; }
   .cv-btn--secondary { background: var(--cv-control); color: var(--cv-t1); }
   .cv-btn--secondary:hover { background: var(--cv-control-hover); }
@@ -1890,11 +1891,51 @@
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
   .chat-box.has-ask > .chat-foot :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
-  .chat-box.has-ask.is-compact > .chat-ta { padding-inline-start: var(--cv-s1); }
   .chat-ask-pen { flex: none; display: grid; place-items: center; width: 36px; height: 36px; color: var(--cv-t3); }
   .chat-ask-pen svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  /* v4.2: the ask's own-answer line sits in its own well (#141414, radius 12, 44 high) so it
+     reads as an input: the pen, the draft and the microphone share one fill, joined edge to
+     edge; the primary pill stands outside it, on its right, 8px off. The send slot gives its
+     two pieces to the line (display: contents) so the microphone can sit inside the well. */
+  /* The line stands on the tiles' edges (8px further in than the box's own padding) and as
+     far off the box's foot as the tiles are off its sides. */
+  .chat-box.has-ask.is-compact { column-gap: 0; padding-block-end: var(--cv-s4); }
+  .chat-box.has-ask.is-compact > .chat-foot > :global(.chat-submit) { display: contents; }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > *) { order: 2; }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-primary) { order: 3; margin-inline: var(--cv-s2); }
+  .chat-box.has-ask.is-compact > .chat-foot > .chat-ask-pen {
+    align-self: stretch;
+    width: 40px;
+    height: auto;
+    min-height: 44px;
+    box-sizing: border-box;
+    margin-inline-start: var(--cv-s2);
+    padding-inline-start: 4px;
+    border-radius: 12px 0 0 12px;
+    background: #141414;
+  }
+  .chat-box.has-ask.is-compact > .chat-ta {
+    align-self: stretch;
+    padding-block: 10px;
+    padding-inline: var(--cv-s1) var(--cv-s2);
+    background: #141414;
+  }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic) {
+    align-self: stretch;
+    width: 40px;
+    height: auto;
+    min-height: 44px;
+    padding-inline-end: 4px;
+    border-radius: 0 12px 12px 0;
+    background: #141414;
+  }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic:hover:not(:disabled)) { background: #141414; color: var(--cv-t1); }
+  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic)) > .chat-ta { border-radius: 0 12px 12px 0; }
+  /* A draft that wraps grows the box to two rows: the draft itself is then the well. */
+  .chat-box.has-ask:not(.is-compact) > .chat-ta { padding: 10px var(--cv-s3); border-radius: 12px; background: #141414; }
+  .chat-box.has-ask:not(.is-compact) > .chat-foot > .chat-ask-pen { display: none; }
   /* The ask's primary in the send slot: a 36px pill, #f2f2f2 with dark words; unavailable it
-     is #2a2a2a with #8c8c8c words. */
+     is #2a2a2a with #a3a3a3 words (v4.2: not dimmer). */
   .chat-box :global(.chat-ask-primary) {
     flex: none;
     height: 36px;
@@ -1909,7 +1950,7 @@
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-box :global(.chat-ask-primary:hover:not(:disabled)) { background: #ffffff; }
-  .chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: var(--cv-placeholder); cursor: default; }
+  .chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: var(--cv-t3); cursor: default; }
   .chat-box :global(.chat-ask-primary:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow
@@ -1961,18 +2002,20 @@
   .chat-att.img img { border-radius: var(--cv-r-md); }
   /* A picture keeps a hairline frame, so a dark image still reads as a tile. */
   .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--cv-line-strong); pointer-events: none; }
+  /* Pass 11: a file tile sits on #242424, one step under the #2a2a2a remove circle in its
+     corner, so the circle reads as on a picture (on #2a2a2a it vanished and the x floated). */
   .chat-att.file {
     gap: 10px;
     max-width: 240px;
     padding: 0 var(--cv-s3) 0 var(--cv-s3);
-    background: var(--cv-control);
+    background: #242424;
   }
   .chat-att.video { max-width: 280px; padding-inline-start: var(--cv-s1); }
   .chat-att-kind {
     width: 32px;
     height: 32px;
     border-radius: var(--cv-r-sm);
-    background: var(--cv-raised);
+    background: #2a2a2a;
     color: var(--cv-t3);
   }
   .chat-att-kind svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -2020,39 +2063,36 @@
     background: var(--cv-t2);
     transition: width var(--cv-dur-base) linear;
   }
-  /* Remove: one rule for every tile. A 20px round on the floating plane, centred over the
-     tile's top-right corner and ringed in the composer's own fill, so it reads as lifted off
-     the tile, picture or file alike. Its target is 24px. It is always there: a control people
-     rely on is never hidden until hover. */
-  .chat-attachments { padding-block-start: var(--cv-s2); padding-inline-end: var(--cv-s3); }
+  /* Remove (v4.3): one rule for every tile. A 20px circle inside the tile's top-right corner,
+     inset 6px, #2a2a2a with the x in #d9d9d9. Nothing hangs over a tile's edge. It is always
+     there: a control people rely on is never hidden until hover. */
+  .chat-attachments { padding-block-start: var(--cv-s2); }
   .chat-att-x {
-    top: -8px;
-    right: -8px;
-    width: 24px;
-    height: 24px;
-    padding: 2px;
+    top: 6px;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
     border: 0;
     border-radius: 50%;
-    background: none;
-    color: var(--cv-t2);
+    background: #2a2a2a;
+    color: #d9d9d9;
     z-index: 1;
-    transition: color var(--cv-dur-fast) var(--cv-ease-out);
+    transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { color: var(--cv-t1); }
+  .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { background: #333333; background-image: none; color: var(--cv-t1); }
   .chat-att-x svg {
     display: block;
     width: 20px;
     height: 20px;
     padding: 5px;
-    border-radius: 50%;
-    background: var(--cv-control-hover);
-    box-shadow: 0 0 0 2px var(--cv-raised);
+    box-sizing: border-box;
     fill: none;
     stroke: currentColor;
     stroke-width: 2.2;
     stroke-linecap: round;
   }
-  .chat-att-x:hover:not(:disabled) svg { background: rgb(255 255 255 / 24%); }
-  .chat-att-x:disabled { color: var(--cv-t4); cursor: default; }
-  .chat-att.file { padding-inline-end: var(--cv-s4); }
+  .chat-att-x:disabled { color: var(--cv-t3); cursor: default; }
+  /* A file tile keeps its words clear of the circle in its corner (6 + 20 + 6). */
+  .chat-att.file { padding-inline-end: 32px; }
 </style>

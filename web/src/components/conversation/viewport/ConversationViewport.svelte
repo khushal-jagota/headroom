@@ -1254,19 +1254,32 @@
   /* The thread's top edge: the header above is a solid canvas, and while anything is scrolled
      up under it the thread fades in over a short distance from the header's bottom edge, so a
      line passing under it is drawn out softly, never sliced and never ruled off. At the top
-     there is nothing beyond the edge and it stands sharp. The bottom edge is the composer's:
-     content is cut cleanly there, with no fade over the last lines. */
+     there is nothing beyond the edge and it stands sharp. At the bottom, only while newer
+     content is below the view, a 24px fade above the composer (pass 11). */
   .chat-thread {
     /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
     padding-bottom: 32px;
     margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
     max-width: none;
-    /* v4: the header's solid #121212 backing, then a 32px fade under it, so scrolled content
-       never shows through the header and a line under its edge is drawn out, never sliced. */
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 8px, rgb(0 0 0 / 25%) 16px, rgb(0 0 0 / 70%) 25px, #000 32px);
-            mask-image: linear-gradient(to bottom, transparent 0, transparent 8px, rgb(0 0 0 / 25%) 16px, rgb(0 0 0 / 70%) 25px, #000 32px);
+    /* Pass 11: the header's solid #121212 backing hides what is under it outright (the first
+       16px of the thread), then one short 8px fade, so a line scrolled to the header's edge is
+       either clearly visible or gone, never left half-faded. While newer content sits below the
+       view, the bottom edge dissolves over 24px above the composer instead of cutting a block
+       flat. */
+    --c2-top-fade: transparent 0, transparent 16px, #000 24px;
+    --c2-bottom-fade: #000 calc(100% - 24px), transparent 100%;
+    -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
+            mask-image: linear-gradient(to bottom, var(--c2-top-fade));
   }
   .chat-thread[data-at-top="true"] { -webkit-mask-image: none; mask-image: none; }
+  .chat-thread[data-more-below="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade), var(--c2-bottom-fade));
+            mask-image: linear-gradient(to bottom, var(--c2-top-fade), var(--c2-bottom-fade));
+  }
+  .chat-thread[data-at-top="true"][data-more-below="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
+            mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
+  }
   /* One anchoring rule for every state: a conversation shorter than the view reads from the
      top, under its header, as a page does. Asks are the composer and waiting messages stand
      in the thread, so nothing at the bottom needs the thread to sink down to it. */

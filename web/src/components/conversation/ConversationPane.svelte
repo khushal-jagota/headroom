@@ -274,17 +274,36 @@
   // the bar is not drawn: the dock's status line says the same there.
   let headTitle = $derived(paneTitleFor(title, roleLabel));
   /** The role stands after the title only while the title needs no more than 70% of the
-   *  header row; past that the title keeps the room and ellipsizes alone (v4). */
+   *  header row; past that the title keeps the room and ellipsizes alone (v4). The row is the
+   *  room the identity has beside the lens and menu controls (pass 11: measured against the
+   *  whole head, a long title was cut while the role still stood beside it). */
   let headRowWidth = $state(0);
   let headTitleElement = $state<HTMLElement | null>(null);
   let headTitleWidth = $state(0);
+  let headRoleWidth = $state(0);
   $effect(() => {
-    void headTitle; void headRowWidth;
+    void headTitle; void headRowWidth; void subtitle;
     const element = headTitleElement;
     if (element === null) return;
     headTitleWidth = element.scrollWidth;
+    headRoleWidth = roleTextWidth(subtitle, element);
   });
-  let showsRole = $derived(headRowWidth === 0 || headTitleWidth <= headRowWidth * 0.7);
+  /** The role's natural width, measured whether or not it is drawn, so hiding it never
+   *  changes the answer (no flicker between the two layouts). */
+  let roleCanvas: HTMLCanvasElement | null = null;
+  function roleTextWidth(text: string | null | undefined, title: HTMLElement): number {
+    if (!text || typeof document === "undefined") return 0;
+    roleCanvas ??= document.createElement("canvas");
+    const context = roleCanvas.getContext("2d");
+    if (context === null) return 0;
+    context.font = `400 13px ${getComputedStyle(title).fontFamily}`;
+    return Math.ceil(context.measureText(text).width);
+  }
+  /** Pass 11: the role shows only while the title needs no more than 70% of the room and the
+   *  title and role both fit whole (8px between them). If the title would truncate beside the
+   *  role, the role goes and the title keeps the room. */
+  let showsRole = $derived(headRowWidth === 0
+    || (headTitleWidth <= headRowWidth * 0.7 && headTitleWidth + 8 + headRoleWidth <= headRowWidth));
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
   const headElapsed = elapsedTurnTime(() => running && !activityUncertain ? turnStartedAt : null);
   const headSetupElapsed = elapsedTurnTime(() => headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
@@ -448,8 +467,8 @@
   data-conversation-lens={lens}
   bind:this={paneElement}
 >
-  <div class="chat-head" bind:clientWidth={headRowWidth}>
-    <div class="chat-head-identity" data-conversation-head-identity>
+  <div class="chat-head">
+    <div class="chat-head-identity" data-conversation-head-identity bind:clientWidth={headRowWidth}>
       <span class="chat-head-name">
         <span class="chat-head-title" data-conversation-title title={headTitle} bind:this={headTitleElement}>{headTitle}</span>
         {#if subtitle && subtitle !== headTitle && showsRole}<span class="chat-head-subtitle" data-conversation-subtitle>{subtitle}</span>{/if}
@@ -667,7 +686,7 @@
       {connectionTrouble}
       waitingTitle={restLine?.waiting ? restWaitingTitle : null}
       pageHoldsTheAsk={waitingOnPage !== null && ask === null && userInput === null && !credentialWaiting}
-      proposalBesideAsk={waitingOnPage !== null && (ask !== null || userInput !== null || credentialWaiting)}
+      askBelow={ask !== null || userInput !== null || credentialWaiting}
       offline={activityUncertain}
       feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
@@ -761,9 +780,11 @@
 
   /* --- Header: title, state, lens, collapse, options. 56 tall; space, not a rule, sets it
      off from the transcript (the transcript's own 16px fade takes what scrolls under it). */
+  /* Pass 11: at least 24px between the title (or role) and the Focus/Full control. */
   .chat-head-identity {
     display: flex;
     flex: 1 1 auto;
+    margin-inline-end: 12px;
     align-items: center;
     gap: var(--cv-s3);
     min-width: 0;

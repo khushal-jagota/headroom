@@ -85,24 +85,20 @@
     previousDisplay = retained;
     return retained;
   });
-  /** The order things are drawn in. In Focus a running turn shows nothing of its own but its
-   *  live line, so a message the person steered into it would land under "Working" and read
-   *  as if it came after the work in hand. While the only things after the running turn's
-   *  head are the person's own messages, the live line is drawn after them: the newest thing
-   *  on the screen is the work still going on, in time order. Full keeps the head on top,
-   *  over the prose and tool runs it heads. */
-  const drawnSlots = $derived.by(() => {
-    if (reader.lens !== 'focus') return displaySlots;
+  /** v4.2: the running turn's live line ("Working · 2m 14s") is always the last thing in the
+   *  transcript, in both lenses: after the person's steered messages, after the live prose
+   *  and after the running tool row (and Full's live output). So the running turn's head is
+   *  taken out of the drawn order and drawn on its own at the tail (liveHead). A head that
+   *  draws nothing (a turn held by an ask) stays where it is. */
+  const liveHead = $derived.by(() => {
     const at = displaySlots.findLastIndex(slot => slot.item?.kind === 'turn');
-    if (at < 0 || at === displaySlots.length - 1) return displaySlots;
+    if (at < 0) return null;
     const head = displaySlots[at];
-    if (head.item?.kind !== 'turn' || head.item.settled || reader.status?.turn_key !== head.item.key) return displaySlots;
-    const after = displaySlots.slice(at + 1);
-    // Work Focus does not draw (the turn's tool calls) is no reason to keep the head on top.
-    if (!after.every(slot => slot.local !== null || slot.item === null || isMessageRow(slot.item) || !presentation.has(slot.item.key))) return displaySlots;
-    if (!after.some(slot => slot.local !== null || slot.item !== null && isMessageRow(slot.item))) return displaySlots;
-    return [...displaySlots.slice(0, at), ...after, head];
+    if (head.item?.kind !== 'turn' || head.item.settled || reader.status?.turn_key !== head.item.key) return null;
+    if (!presentation.has(head.item.key)) return null;
+    return { slot: head, opensKey: displaySlots[at + 1]?.key ?? null };
   });
+  const drawnSlots = $derived(liveHead === null ? displaySlots : displaySlots.filter(slot => slot !== liveHead.slot));
   /** What a running turn waits on the person for: its ask is docked over the composer. */
   function turnWaiting(item: ConversationViewItem & { kind: 'turn' }): 'permission' | 'question' | null {
       if (item.settled || reader.status?.turn_key !== item.key) return null;
@@ -157,6 +153,8 @@
       let turnOpens = false;
       for (const slot of drawnSlots) {
           const item = slot.item;
+          // The first thing of a running turn whose head is drawn at the tail opens the turn.
+          if (liveHead !== null && slot.key === liveHead.opensKey) turnOpens = true;
           // A held page edge does not establish who is adjacent across the gap.
           if (item !== null && before.has(item.key)) previous = null;
           if (item !== null && item.kind === 'turn' && !presentation.has(item.key)) { turnOpens = true; result.set(slot.key, 'none'); continue; }
@@ -178,6 +176,10 @@
               : 'block');
           previous = beat;
       }
+      // The live line at the tail: a turn gap when it stands right under the person's message
+      // (nothing of the turn drawn yet), otherwise the block gap under the turn's last thing.
+      if (liveHead !== null)
+          result.set(liveHead.slot.key, previous === null ? 'first' : previous === 'prompt' ? 'turn' : 'block');
       return result;
   });
   // Bodies that stopped being true are dropped where they are held, so the rows that
@@ -276,6 +278,20 @@
   {/each}
   {#if reader.lens==='full'&&reader.status?.live_output}
     <ViewItem itemKey="live-output" rhythm={reader.status.live_output.byte_count===0 ? 'none' : 'block'}><LiveOutput {reader}/></ViewItem>
+  {/if}
+  {#if liveHead !== null && liveHead.slot.item?.kind === 'turn'}
+    {@const item = liveHead.slot.item}
+    {#each historyEdges.filter(boundary => boundary.direction === 'older' && boundary.anchorKey === item.key) as boundary (`older:${boundary.scope.kind}:${boundary.scope.key}`)}
+      <div use:edge={boundary} data-conversation-history-edge="older" aria-hidden="true"></div>
+    {/each}
+    <ViewItem itemKey={item.key} rhythm={rhythm.get(liveHead.slot.key) ?? 'block'}>
+      <div use:demand={item} data-conversation-live-tail>
+        <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+      </div>
+    </ViewItem>
+    {#each historyEdges.filter(boundary => boundary.direction === 'newer' && boundary.anchorKey === item.key) as boundary (`newer:${boundary.scope.kind}:${boundary.scope.key}`)}
+      <div use:edge={boundary} data-conversation-history-edge="newer" aria-hidden="true"></div>
+    {/each}
   {/if}
   {#if reader.status?.stopped_without_ending}<TranscriptStatusRow status={TURN_STOPPED_STATUS} role="status" data-conversation-row="turn_stopped"/>{/if}
   <!-- The turn has ended but work it started is still live: say so, one line per task,

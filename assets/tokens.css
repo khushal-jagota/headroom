@@ -654,8 +654,8 @@
   --cv-s6: 32px;
   --cv-s7: 48px;
   /* Rhythm (margins on the transcript's direct children). */
-  --cv-gap-turn: 28px;
-  --cv-gap-meta: 8px;
+  --cv-gap-turn: 32px;   /* v4.3 */
+  --cv-gap-meta: 6px;    /* v4.3: meta line to its prose */
   --cv-gap-block: 16px;
   --cv-gap-paragraph: 12px;
   --cv-gap-heading-above: 24px;

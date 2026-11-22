@@ -77,7 +77,9 @@ describe("the dock's status line", () => {
     render(ConversationRestBar, { props: { onOpen: () => {}, state: conversationState({ ...quiet, ...facts }), ...props } }).body;
   it("reads the same derived state the header does", () => {
     expect(rest({})).toContain("Worker idle");
-    expect(rest({ running: true, elapsed: "2m 14s" })).toContain("Working · 2m 14s");
+    // "Working" in the body tone, its duration in the meta tone (pass 11), the same words.
+    const working = rest({ running: true, elapsed: "2m 14s" });
+    expect(working).toMatch(/class="c2-rest-label[^"]*">Working<\/span><span class="c2-rest-clock[^"]*" data-conversation-rest-clock[^>]*> · 2m 14s</);
     const waiting = rest({ waitingForYou: true, waitingFor: "approval" }, { waitingTitle: "Upload build 41 to TestFlight" });
     expect(waiting).toContain("Needs your approval");
     expect(waiting).toContain(" — Upload build 41 to TestFlight");

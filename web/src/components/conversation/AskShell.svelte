@@ -119,6 +119,9 @@
     font-weight: var(--cv-weight-body);
     font-variant-numeric: tabular-nums;
   }
+  /* v4.2: the pager's arrows stay in the meta tone, #a3a3a3, even when one cannot go further. */
+  .cv-ask-context :global(.cv-icon-button), .cv-ask-context :global(.cv-icon-button:disabled) { color: var(--cv-t3); }
+  .cv-ask-context :global(.cv-icon-button:hover:not(:disabled)) { color: var(--cv-t1); }
   .cv-ask-title {
     margin: 6px 0 0;
     color: var(--cv-t1);
@@ -173,9 +176,9 @@
   .cv-ask-stop:disabled { cursor: default; }
 
   /* --- the one answer tile every ask uses (v4) ------------------------------------------- */
-  /* Tiles 6px apart, radius 12, padding 12 16 (v4.1): no fill at rest, #242424 on hover. Only
-     the chosen one is filled, #2a2a2a with a 1px accent edge, its number chip in the accent.
-     Every answer, a declining one too, is labelled in the same tone: its words say it. */
+  /* Tiles 6px apart, radius 12, padding 12 16 (v4.2): filled #222222 at rest so they read as
+     clickable, #262626 on hover. The chosen one is #2a2a2a with a 1px accent edge, its number
+     chip in the accent. Every answer, a declining one too, is labelled in the same tone. */
   :global(.cv-ask-rows) { display: grid; gap: 6px; }
   :global(.cv-ask-row) {
     display: flex;
@@ -186,14 +189,14 @@
     padding: var(--cv-s3) var(--cv-s4);
     border: 0;
     border-radius: var(--cv-r-lg);
-    background: transparent;
+    background: #222222;
     color: var(--cv-t1);
     cursor: pointer;
     font: var(--cv-weight-body) var(--cv-type-prose)/var(--cv-leading-ui) var(--cv-font);
     text-align: start;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), box-shadow var(--cv-dur-fast) var(--cv-ease-out);
   }
-  :global(.cv-ask-row:hover:not(:disabled)) { background: #242424; }
+  :global(.cv-ask-row:hover:not(:disabled)) { background: #262626; }
   :global(.cv-ask-row.is-selected), :global(.cv-ask-row.is-selected:hover:not(:disabled)) { background: #2a2a2a; box-shadow: inset 0 0 0 1px rgb(169 187 227 / 55%); }
   :global(.cv-ask-row:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
   :global(.cv-ask-row:disabled) { cursor: default; }

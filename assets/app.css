@@ -1311,6 +1311,16 @@ a.pv-name:focus-visible { outline:0; }
 }
 /* On a control-filled surface (the task pill on hover) the code keeps one step of lift. */
 .cv-code { background: rgb(255 255 255 / 8%); }
+/* v4.3: in the conversation inline code is lighter, so a sentence with five code spans still
+ * reads as a sentence: mono 13 in #e0e0e0 on a 6% white fill, radius 4, padding 0 4px. */
+.chat-thread .markdown :not(pre) > code,
+.cv-code {
+  padding: 0 4px;
+  margin-inline-end: 0;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 6%);
+  color: #e0e0e0;
+}
 /* A link is the first tone with a soft underline; the accent stays "needs you". */
 .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) {
   color: var(--cv-t1);
@@ -2019,7 +2029,9 @@ button.list-row:hover .list-row-title {
 }
 .cv-button svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .cv-button--small { min-height: 28px; padding: 0 10px; }
-.cv-button--primary { background: var(--cv-primary-fill); color: var(--cv-primary-ink); }
+/* v4.2: one primary button style everywhere in the conversation: #f2f2f2 fill, #121212 words,
+ * radius 18, 32-36 high (the ask's pill in the composer is the 36 one). */
+.cv-button--primary { border-radius: 18px; padding-inline: var(--cv-s4); background: #f2f2f2; color: #121212; }
 .cv-button--primary:hover:not(:disabled) { background: #ffffff; }
 .cv-button--secondary { background: var(--cv-control); color: var(--cv-t1); }
 .cv-button--secondary:hover:not(:disabled) { background: var(--cv-control-hover); }
@@ -2134,7 +2146,7 @@ button.list-row:hover .list-row-title {
 .chat-a--narration :is(strong, b) { color: var(--cv-t2); }
 /* Its code wears the one inline-code chip the answers wear: a file or an identifier looks
    the same wherever the agent names it. Only its ink steps back with the prose. */
-.chat-thread .chat-a--narration .markdown :not(pre) > code { color: var(--cv-t2); }
+.chat-thread .chat-a--narration .markdown :not(pre) > code { color: #e0e0e0; }
 
 /* THE COMPOSER (ConversationComposer.svelte), design direction v3 §3.12-3.13. One shell on the
  * raised plane, 16px round, two rows that never trade places: the draft (and, over it, waiting
@@ -3925,6 +3937,12 @@ select {
 /* The document's own bottom padding lets its last line scroll fully clear of the zone. */
 .conversation-layer > .conversation-column {
   position: relative;
+}
+/* v4.3: the opened conversation is one 680px column (--cv-col): header content, transcript and
+ * composer align to it. Docked at rest under a work page, it keeps the page's own column so
+ * the status line and composer stand on the page text's edges. */
+[data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
+  width: min(var(--cv-col), calc(100% - 2 * var(--space-5)));
 }
 /* No hairline above the composer zone: the zone is the composer and its status line. */
 .conversation-layer > .conversation-column::before {

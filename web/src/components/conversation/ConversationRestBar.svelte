@@ -4,11 +4,12 @@
    * derived state the opened pane's header reads), the way to open it, and the latest unread
    * message under them. Its words never name a tool or a command, in either lens. */
   let { preview = null, roleLabel = "Worker", state, connectionTrouble = false,
-    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, proposalBesideAsk = false, onOpen }: {
-    /** Owner, 22 Nov: a proposal waits on the page while an ask (permission, question, key)
-     *  waits in the conversation. The ask is the composer under this line; the line keeps the
-     *  proposal's "Waiting for your approval", quiet, and never stands in for the ask. */
-    proposalBesideAsk?: boolean;
+    waitingTitle = null, offline = false, feedback = null, pageHoldsTheAsk = false, askBelow = false, onOpen }: {
+    /** v4.2: an ask (permission, question, key) waits in the conversation and is drawn as the
+     *  composer under this line. The ask already says what waits, so the line carries no status
+     *  text at all (not even a proposal's "Waiting for your approval") and keeps only
+     *  "Open conversation". */
+    askBelow?: boolean;
     /** The page above draws the waiting ask itself (a proposal to approve): the dock does not
      *  say it a second time, and keeps only the way into the conversation. */
     pageHoldsTheAsk?: boolean;
@@ -39,15 +40,21 @@
   let offlineChip = $derived(offline && state.state === "setting-up");
   /** The page above draws the waiting ask (a proposal): v4 has the line say "Waiting for your
    *  approval" with the accent dot, and not repeat the proposal's title. */
-  let pageWaits = $derived((pageHoldsTheAsk || proposalBesideAsk) && state.state === "waiting");
-  let quietProposal = $derived(proposalBesideAsk && state.state === "waiting");
-  let saysState = $derived(true);
+  let pageWaits = $derived(pageHoldsTheAsk && !askBelow && state.state === "waiting");
+  let saysState = $derived(!askBelow);
   let label = $derived(
     pageWaits ? "Waiting for your approval"
     : state.state === "idle" ? `${ROLE_NAMES[roleLabel]} idle`
     : state.state === "unknown" ? (feedback ?? state.text)
     : state.text
   );
+  /** Working: "Working" in #d9d9d9 and its duration in #a3a3a3, as the transcript's live line
+   *  draws it (pass 11: the dock drew the whole "Working · 2m 14s" in one tone). */
+  let workingClock = $derived.by(() => {
+    if (state.state !== "working" || pageWaits) return null;
+    const at = label.indexOf(" · ");
+    return at < 0 ? null : { word: label.slice(0, at), clock: label.slice(at + 3) };
+  });
   /** A second line only for news the label does not already carry (a message whose delivery
    *  is uncertain, one that was discarded). */
   let aside = $derived(
@@ -58,32 +65,32 @@
 <!-- One row: the state on the left and the way to open the conversation on the right, both
      one button, so the whole line opens it. The unread message sits under it. -->
 <button type="button" class="c2-rest" data-conversation-rest-bar data-conversation-expand data-conversation-state-control
-  data-conversation-rest-state={state.state}
+  data-conversation-rest-state={state.state} data-conversation-rest-ask-below={askBelow || undefined}
   aria-label="Open the conversation full height" title="Open the conversation full height" onclick={onOpen}>
   <span class="c2-rest-status">
     <span class="c2-rest-activity">
       {#if saysState && state.mark === "spinner"}<span class="cv-spinner" role="img" aria-label={state.state === "setting-up" ? (offline ? "setting up, not confirmed" : "setting up") : "working"} data-unconfirmed={offlineChip || undefined}></span>
-      {:else if saysState && state.mark === "dot" && !quietProposal}<span class="cv-dot" aria-hidden="true"></span>
-      {:else if state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
-      {:else if state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
-      {:else if state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
+      {:else if saysState && state.mark === "dot"}<span class="cv-dot" aria-hidden="true"></span>
+      {:else if saysState && state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
+      {:else if saysState && state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
+      {:else if saysState && state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
       {#if saysState || pageWaits}
-      <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined} data-conversation-rest-quiet={quietProposal || undefined}>
-        <span class="c2-rest-label">{label}</span>{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
+      <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined}>
+        {#if workingClock !== null}<span class="c2-rest-label">{workingClock.word}</span><span class="c2-rest-clock" data-conversation-rest-clock>{` · ${workingClock.clock}`}</span>{:else}<span class="c2-rest-label">{label}</span>{/if}{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
       </span>
       {/if}
-      {#if offlineChip}<span class="c2-rest-chip" title={feedback ?? undefined} data-conversation-offline-chip>Machine offline</span>{/if}
-      {#if connectionTrouble}<svg class="cv-glyph cv-glyph--danger" viewBox="0 0 16 16" role="img" aria-label="Connection trouble"><path d="M2.5 6.2a8 8 0 0 1 11 0" /><path d="M4.6 8.6a5 5 0 0 1 6.8 0" /><path d="M8 11.6v.1" /><path d="m3 3 10 10" /></svg>{/if}
+      {#if saysState && offlineChip}<span class="c2-rest-chip" title={feedback ?? undefined} data-conversation-offline-chip>Machine offline</span>{/if}
+      {#if saysState && connectionTrouble}<svg class="cv-glyph cv-glyph--danger" viewBox="0 0 16 16" role="img" aria-label="Connection trouble"><path d="M2.5 6.2a8 8 0 0 1 11 0" /><path d="M4.6 8.6a5 5 0 0 1 6.8 0" /><path d="M8 11.6v.1" /><path d="m3 3 10 10" /></svg>{/if}
     </span>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open conversation</span>
       <svg viewBox="0 0 16 16"><path d="m4 10 4-4 4 4" /></svg>
     </span>
   </span>
-  {#if preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
+  {#if saysState && preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
 </button>
-{#if aside}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{aside}</div>{/if}
-{#if offlineChip && feedback}<span class="c2-rest-offline-reason" role="status" data-conversation-dock-feedback>{feedback}</span>{/if}
+{#if saysState && aside}<div class="c2-rest-feedback" role="status" data-conversation-dock-feedback>{aside}</div>{/if}
+{#if saysState && offlineChip && feedback}<span class="c2-rest-offline-reason" role="status" data-conversation-dock-feedback>{feedback}</span>{/if}
 
 <style>
   /* The status line: a 40px row of meta type over the composer, the state on the left and
@@ -105,10 +112,9 @@
   /* Tone follows the state, never a line: working is the brighter text and its motion,
      waiting is the accent with its title in t2, a failure is the danger colour. */
   [data-conversation-rest-state="working"] .c2-rest-label { color:var(--cv-t2); }
+  .c2-rest-clock { color:var(--cv-t3); }
   [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
-  /* The proposal's line beside an ask in the composer: quiet, the ask below carries the accent. */
-  [data-conversation-rest-quiet] .c2-rest-label { color:var(--cv-t3); font-weight:var(--cv-weight-body); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }
   [data-conversation-rest-state="unknown"] .c2-rest-label { color:var(--cv-t2); }

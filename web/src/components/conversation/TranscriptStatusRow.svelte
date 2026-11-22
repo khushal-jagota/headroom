@@ -227,23 +227,23 @@
   /* Details is a quiet ghost beside the real next step, never above it. Its chevron sits
      right after its word. */
   .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t2); }
-  /* The callout's two buttons, one size (32 high, radius 8): the main one on #2a2a2a in the
-     first tone, the other bare in the second. The same in every callout. */
+  /* The callout's buttons (v4.2), one size, 32 high: the first action wears the one primary
+     style of the conversation (#f2f2f2, #121212 words, radius 18), whether it is Resend or,
+     alone, Choose another model; the others are bare in #d9d9d9. The same in every callout. */
   :global(.c2-status-main), :global(.c2-status-second) {
     min-height: 32px;
-    padding: 0 var(--cv-s3);
-    border-radius: var(--cv-r-md);
+    padding: 0 var(--cv-s4);
+    border-radius: 18px;
     font-size: var(--cv-type-meta);
   }
-  :global(.c2-status-main) { background: #2a2a2a; color: var(--cv-t1); }
-  :global(.c2-status-main:hover:not(:disabled)) { background: var(--cv-control-hover); color: var(--cv-t1); }
-  :global(.c2-status-main:disabled) { color: var(--cv-t3); }
+  :global(.c2-status-main) { background: #f2f2f2; color: #121212; }
+  :global(.c2-status-main:hover:not(:disabled)) { background: #ffffff; color: #121212; }
+  :global(.c2-status-main:disabled) { background: #2a2a2a; color: var(--cv-t3); }
   :global(.c2-status-second) { background: transparent; color: var(--cv-t2); }
   :global(.c2-status-second:hover:not(:disabled)) { background: #2a2a2a; color: var(--cv-t1); }
-  /* The first action is always the filled one: with no Resend before it, Choose another
-     model takes the fill. */
-  .c2-status-actions > :global(.c2-status-second:first-child) { background: #2a2a2a; color: var(--cv-t1); }
-  .c2-status-actions > :global(.c2-status-second:first-child:hover:not(:disabled)) { background: var(--cv-control-hover); }
+  /* With no Resend before it, Choose another model is the first action and takes the primary. */
+  .c2-status-actions > :global(.c2-status-second:first-child) { background: #f2f2f2; color: #121212; }
+  .c2-status-actions > :global(.c2-status-second:first-child:hover:not(:disabled)) { background: #ffffff; color: #121212; }
   .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { color: var(--cv-t1); }
   .c2-status-actions > .c2-status-toggle:first-child { margin-inline-start: calc(var(--cv-s2) * -1); }
   .c2-status-chevron {

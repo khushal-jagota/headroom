@@ -218,11 +218,12 @@
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: calc(var(--cv-focus-width) * -1);
   }
+  /* v4.2: tool rows are quieter than prose: the icon #8c8c8c, the label #a3a3a3. */
   .c2-tool-icon {
     width: 14px;
     height: 14px;
     fill: none;
-    stroke: var(--cv-t4);
+    stroke: #8c8c8c;
     stroke-width: 1.6;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -238,7 +239,7 @@
     font-size: inherit;
     letter-spacing: normal;
   }
-  .c2-tool-verb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  .c2-tool-verb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cv-t3); font-weight: var(--cv-weight-label); }
   .c2-tool-subject-slot { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
   .c2-tool-subject {
     flex: 0 1 auto;

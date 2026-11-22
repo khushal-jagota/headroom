@@ -240,12 +240,13 @@
     animation: chat-qrow-in var(--cv-dur-base) var(--cv-ease-out);
   }
   @keyframes chat-qrow-in { from { opacity: 0; } to { opacity: 1; } }
-  /* v4: not sent yet, at a glance: a ghost of the bubble it will become. No fill, a 1px
-     frame where the bubble's edge will be, the words in the meta tone. */
+  /* v4.2: not sent yet, at a glance: a ghost of the bubble it will become. No fill and a 1px
+     frame where the bubble's edge will be; the frame and the Queued chip say "not sent", so
+     the words stay readable in #d9d9d9. */
   .chat-qrow :global(.c2-bubble) {
     background: transparent;
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%);
-    color: var(--cv-t3);
+    color: var(--cv-t2);
   }
   /* A picture waiting to go is a thumbnail of itself: what it is, not the picture at size. */
   .chat-qrow :global(.c2-piece-image-slot) { display: flex; justify-content: flex-end; max-width: 100%; margin: 0; }
