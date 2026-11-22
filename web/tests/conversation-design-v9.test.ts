@@ -103,9 +103,9 @@ describe("v9 (5, 8, 9, 15, 21, 22): measures", () => {
     expect(shell).toMatch(/:global\(\[data-conversation-pane\]\) \.cv-ask-stop \{[^}]*background: #2a2a2a;\s*color: #ececec;/);
     expect(shell).toContain(":global([data-conversation-pane]) .cv-ask-context :global(.cv-icon-button:disabled) { color: #a6a6a6; }");
   });
-  it("narration in Full is 14/22; v11 (13): the column is 680", () => {
+  it("narration in Full is 14/22; v12 (1): the column is 640", () => {
     expect(app).toMatch(/\[data-conversation-pane\] \.c2-streaming \.markdown \{\s*font-family: var\(--cv-font\);\s*font-size: 14px;\s*line-height: 22px;\s*color: #b4b4b4;/);
-    expect(tokens).toContain("--cv-col: 680px;");
+    expect(tokens).toContain("--cv-col: 640px;");
     // Docked on a work page, the conversation keeps the page's 760 column.
     expect(app).not.toMatch(/\n\.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\)/);
   });

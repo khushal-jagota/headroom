@@ -28,8 +28,7 @@ function row(overrides: Partial<HeldPromptRow> = {}): HeldPromptRow {
 }
 
 describe("v11 (1): narration in Full is activity", () => {
-  it("13/20 #a6a6a6, 24px in (the tool rows' text edge: 16px icon + 8px gap), in Full only", () => {
-    expect(v11).toContain('[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) { padding-inline-start: 24px; }');
+  it("13/20 #a6a6a6, in Full only (v12 (2) removed the 24px indent)", () => {
     expect(v11).toContain('[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { font-size: 13px; line-height: 20px; color: #a6a6a6; }');
     expect(source("../src/components/conversation/ToolRunSummary.svelte")).toMatch(/\.c2-run-summary \{[^}]*column-gap: var\(--cv-s2\);/);
   });
@@ -116,25 +115,9 @@ describe("v11 (9, 10): answers", () => {
   });
 });
 
-describe("v11 (13, owner): agent answers sit in a bubble", () => {
-  it("a message to the person is #1c1c1c, radius 18, padding 16 20, left, as wide as its content up to the column", () => {
-    expect(v11).toMatch(/\[data-conversation-pane\] \.chat-thread \.chat-a:not\(\.chat-a--narration, \.c2-streaming\) \{[^}]*align-self: flex-start;\s*width: fit-content;\s*max-width: 100%;[^}]*padding: 16px 20px;\s*border-radius: 18px;\s*background: #1c1c1c;/);
-  });
-  it("a bubble holding a chart takes the full column", () => {
-    expect(v11).toContain(".chat-a:not(.chat-a--narration, .c2-streaming):has(.chat-chart, .goal-chart-host) { width: 100%; }");
-  });
-  it("the reading column is 680 again", () => {
-    expect(source("../../assets/tokens.css")).toContain("--cv-col: 680px;");
-  });
-});
-
-describe("v11 (3, 13): pass 17 fit and finish", () => {
+describe("v11 (3): pass 17 fit and finish", () => {
   it("the one Stop is #f2f2f2 with a #141414 square", () => {
     expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #141414; }");
-  });
-  it("in a bubble, inline code is #2a2a2a and a first heading has no extra space above it", () => {
-    expect(v11).toContain(".chat-a:not(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { background: #2a2a2a; }");
-    expect(v11).toContain(".chat-a.chat-a.chat-a.chat-a:not(.chat-a--narration, .c2-streaming) .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 0; }");
   });
 });
 

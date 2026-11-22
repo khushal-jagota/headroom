@@ -208,8 +208,8 @@ describe("design v4.2: the Working line is always the last thing in the transcri
 
 describe("design v4.3", () => {
   const tokens = source("../../assets/tokens.css");
-  it("v11 (13): the full conversation is one 680px column; docked on a work page it keeps the page's column", () => {
-    expect(tokens).toContain("--cv-col: 680px;");
+  it("v12 (1): the full conversation is one 640px column; docked on a work page it keeps the page's column", () => {
+    expect(tokens).toContain("--cv-col: 640px;");
     expect(app).not.toMatch(/\n\.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\)/);
     expect(app).toMatch(/\.ticket-head,\n\.ticket-col,\n\.conversation-column,\n\.manager-column \{\s*width: min\(var\(--page-measure\), calc\(100% - 2 \* var\(--space-5\)\)\);/);
     expect(app).toMatch(/\[data-conversation-dock-state="opened"\] > \.conversation-layer > \.conversation-column \{\s*width: min\(var\(--cv-col\), calc\(100% - 2 \* var\(--space-5\)\)\);/);

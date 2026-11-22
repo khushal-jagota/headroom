@@ -1538,9 +1538,10 @@
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
           {#if panelTakesTheBox && running && onStop}
-            <!-- v11 (3): one Stop everywhere: under an ask the same 32px round #f2f2f2 Stop with
-                 its #141414 square as the composer's, at the right end of the bottom row, after
-                 the answer well. -->
+            <!-- v11 (3): one Stop everywhere: under an ask the same 32px round Stop as the
+                 composer's, at the right end of the bottom row, after the answer well. v12 (3):
+                 there it is secondary (#2a2a2a, #ececec square); the composer's Stop while
+                 working stays #f2f2f2. -->
             <button type="button" class="chat-send stop chat-ask-stop" data-conversation-stop={true} data-conversation-ask-stop
               title="Stop turn" aria-label="Stop turn" disabled={disabled} onclick={() => onStop?.()}><span class="chat-send-fill" aria-hidden="true"></span></button>
           {/if}
@@ -1954,6 +1955,9 @@
      square) at the right end of the bottom row, 8px after the answer well, its right edge on
      the option rows' right edge. */
   .chat-box.has-ask > .chat-foot > .chat-ask-stop { flex: none; order: 4; align-self: center; margin-inline: var(--cv-s2); }
+  /* v12 (3): Stop inside an ask is secondary: #2a2a2a with a #ececec square. */
+  .chat-send.stop.chat-ask-stop { background: #2a2a2a; color: #ececec; }
+  .chat-send.stop.chat-ask-stop:hover:not(:disabled) { background: #333333; }
   .chat-ask-stop:disabled { background: #333333; color: #bdbdbd; }
   .chat-ask-stop:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
   .chat-ask-pen { flex: none; display: grid; place-items: center; width: 32px; height: 32px; color: var(--cv-quiet-ink, #bdbdbd); }

@@ -3961,7 +3961,7 @@ select {
 .conversation-layer > .conversation-column {
   position: relative;
 }
-/* v4.3: the opened conversation is one 680px column (--cv-col): header content, transcript and
+/* v4.3: the opened conversation is one column (--cv-col, 640 since v12): header content, transcript and
  * composer align to it. Docked at rest under a work page, it keeps the page's own column so
  * the status line and composer stand on the page text's edges. */
 [data-conversation-dock-state="opened"] > .conversation-layer > .conversation-column {
@@ -5663,10 +5663,8 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* ==========================================================================================
  * v11 (22 Nov, after round 17) — clearance. Scoped to the conversation pane.
  * ========================================================================================== */
-/* (1) Narration in Full is activity: 13/20 #a6a6a6, indented to the text edge of the tool rows
- * ("Ran 2 commands", "Running": a 16px icon and an 8px gap, so 24px in). Inline code in it is
- * the same 13px, #a6a6a6, no fill. Final answers stay flush left 15/24 #ececec. */
-[data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) { padding-inline-start: 24px; }
+/* (1) Narration in Full is activity: 13/20 #a6a6a6. v12 (2): flush left, no indent. Inline code
+ * in it is the same 13px, #a6a6a6, no fill. Final answers stay flush left 15/24 #ececec. */
 [data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming),
 [data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown { font-size: 13px; line-height: 20px; color: #a6a6a6; }
 [data-conversation-pane][data-conversation-lens="full"] :is(.chat-a--narration, .c2-streaming) .markdown :is(strong, b) { color: #bdbdbd; }
@@ -5676,25 +5674,4 @@ details:not([open]) > summary > .manager-workspace-chevron {
 /* (10) Links in answers: #ececec with a 50% underline (the accent means "needs you" only). */
 [data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act) { color: #ececec; text-decoration-color: rgb(236 236 236 / 50%); }
 [data-conversation-pane] .chat-thread .markdown a:not(.file-preview-artifact-link, .pv-act):hover { color: #ffffff; text-decoration-color: #ececec; }
-/* (13, owner) Agent answers sit in a bubble: the agent's messages to the person (not narration,
- * not a message still streaming) are a #1c1c1c surface, radius 18, padding 16 20, on the left, as
- * wide as their content up to the full column. Tables, charts and code blocks sit inside; a chart
- * has no width of its own, so a bubble holding one takes the full column. "Worked for" stays
- * above, outside it. */
-[data-conversation-pane] .chat-thread .chat-a:not(.chat-a--narration, .c2-streaming) {
-  position: relative;
-  align-self: flex-start;
-  width: fit-content;
-  max-width: 100%;
-  box-sizing: border-box;
-  padding: 16px 20px;
-  border-radius: 18px;
-  background: #1c1c1c;
-}
-[data-conversation-pane] .chat-thread .chat-a:not(.chat-a--narration, .c2-streaming):has(.chat-chart, .goal-chart-host) { width: 100%; }
-/* Inside the bubble its 16px padding is the space above a first heading (the heading after
- * "Worked for" loses its extra 16), so the bubble's top and bottom insets match. */
-[data-conversation-pane] .chat-thread .chat-a.chat-a.chat-a.chat-a:not(.chat-a--narration, .c2-streaming) .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 0; }
-/* Inline code in an answer bubble: the #232323 chip all but vanishes on the #1c1c1c bubble, so
- * there it is #2a2a2a (one step up, as the composer controls' hover). */
-[data-conversation-pane] .chat-thread .chat-a:not(.chat-a--narration, .c2-streaming) .markdown :not(pre) > code { background: #2a2a2a; }
+/* (13, owner) Agent answer bubbles: withdrawn by v12 (1). Answers are plain text, flush left. */
