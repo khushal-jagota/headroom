@@ -142,7 +142,6 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     label:chiefRecord.value.label,conversation_id:chiefRecord.value.conversation_id,
     conversation_signal:signal(chiefRecord.value.conversation_id === null ? undefined : view.conversations.get(chiefRecord.value.conversation_id)),
     awaiting_reply:chiefRecord.value.conversation_id === null ? null : value(view.conversations.get(chiefRecord.value.conversation_id)?.message_for_owner),
-    awaiting_answer:chiefRecord.value.conversation_id === null ? null : value(view.conversations.get(chiefRecord.value.conversation_id)?.awaiting_answer),
   } : null;
   const byTicket=new Map(tickets.map(ticket=>[ticket.id,ticket]));
   const messages: WorkspaceMessageConversation[]=[];

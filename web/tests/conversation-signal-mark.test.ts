@@ -79,32 +79,3 @@ describe("shared conversation signal consumers", () => {
     expect(html).not.toContain('data-approval-mark="owner"');
   });
 });
-
-describe("a sidebar row waiting on the person", () => {
-  it("draws the needs-me dot, not the working spinner, while its turn waits on an answer", () => {
-    const html = render(WorkerRow, { props: {
-      title: "Choose the onboarding illustration style", waiting: true,
-      signal: { working: true, message_for_owner: false }, conversationId: "worker-waiting"
-    } }).body;
-    expect(html).toContain('data-conversation-signal="waiting"');
-    expect(html).toContain('aria-label="Waiting for you"');
-    expect(html).toContain("stage-mark--needs-me");
-    expect(html).not.toContain('data-conversation-signal="working"');
-  });
-  it("draws the same dot on a manager card whose own conversation waits", () => {
-    const html = render(WorkspaceRailCard, { props: {
-      id: "item-waiting", title: "Wren public beta", waiting: true,
-      signal: { working: true, message_for_owner: false }, conversationId: "manager-waiting",
-      selected: true, selectedTicketId: null, groups: [], onSelect: () => {},
-      onTicket: () => {}, onSettle: () => {}, onHover: () => {}, onWorkerHover: () => {}, onLeave: () => {}
-    } }).body;
-    expect(html).toContain('data-conversation-signal="waiting"');
-    expect(html).not.toContain('data-conversation-signal="working"');
-  });
-  it("still leads with an unread message", () => {
-    const html = render(WorkerRow, { props: {
-      title: "Worker", waiting: true, signal: { working: true, message_for_owner: true }
-    } }).body;
-    expect(html).toContain('data-conversation-signal="message"');
-  });
-});

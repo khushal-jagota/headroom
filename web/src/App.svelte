@@ -189,7 +189,7 @@
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
-      <button type="button" class="bar-item" data-screen="more" bind:this={moreButtonElement} aria-expanded={moreOpen} aria-controls="destination-sheet" onclick={toggleMore}>More <svg class="bar-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg></button>
+      <button type="button" class="bar-item" data-screen="more" bind:this={moreButtonElement} aria-expanded={moreOpen} aria-controls="destination-sheet" onclick={toggleMore}>More <span class="bar-caret" aria-hidden="true">▾</span></button>
     </div>
   </nav>
 </div>

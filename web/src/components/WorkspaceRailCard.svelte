@@ -13,19 +13,18 @@
   import type { WorkspaceTicketGroup } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
-  import StageMark from "./StageMark.svelte";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import WorkerRow from "./WorkerRow.svelte";
   import type {GoalResponse} from "../lib/goals/contracts";
   import {worstGoal} from "../lib/goals/railPresentation";
   import {workspaceAddress} from "../lib/workspaceAddress";
   import ManagerEyebrow from "./ManagerEyebrow.svelte";
-  let { goals = [], showChiefEyebrow = true, onGoalNavigate, beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, id, title, project = null, chief = false, signal = undefined, waiting = false, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+  let { goals = [], showChiefEyebrow = true, onGoalNavigate, beforeGroups, suppressBackgroundPreview=false, scrollCoordinator=undefined, scrollPublicationId=null, navigationWindow=undefined, onWindow=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
     beforeGroups?: Snippet; goals?: GoalResponse[]; showChiefEyebrow?: boolean; onGoalNavigate?: () => void;
     suppressBackgroundPreview?: boolean;
     scrollCoordinator?:ScrollWindowCoordinator;scrollPublicationId?:number|null;
     navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;
-    id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; /** Its own conversation is stopped on an ask only the owner can answer: drawn as waiting, not working. */ waiting?: boolean; conversationId?: string | null; selected: boolean;
+    id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; conversationId?: string | null; selected: boolean;
     selectedTicketId: string | null; groups: WorkspaceTicketGroup[]; busy?: boolean;
     onSelect: () => void; onTicket: (id: string) => void; onSettle: () => void;
     onHover: (target: HTMLElement, immediate?: boolean, focusTarget?: HTMLElement) => void; onWorkerHover: (target: HTMLElement, ticket: WorkItemTicketFacts, immediate?: boolean) => void; onLeave: () => void;
@@ -61,11 +60,7 @@
     {#if !chief || showChiefEyebrow}<ManagerEyebrow {project} {title} {chief} rail {busy} {onSettle} goal={tagGoal} onGoalFocus={(event)=>onHover((event.currentTarget as HTMLElement).closest('.identity') as HTMLElement,true,event.currentTarget as HTMLElement)} onGoalBlur={(event)=>{if(!(event.relatedTarget instanceof Node)||!(event.currentTarget as HTMLElement).closest('.identity')?.contains(event.relatedTarget))onLeave();}} onGoal={()=>{if(tagGoal){onGoalNavigate?.();window.location.hash=workspaceAddress({kind:'goal',id:tagGoal.id});}}}/>{/if}
     <button type="button" class="item-head" data-unread={signal?.message_for_owner === true} onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={(event) => {if (!(event.relatedTarget instanceof Node) || !event.currentTarget.closest(".identity")?.contains(event.relatedTarget)) input().leave(event);}} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={(event) => input().leave(event)}>
       <span class="item-title">{title}</span>
-      {#if waiting && !signal?.message_for_owner}
-        <span class="conversation-signal-marks waiting-mark" data-conversation-signal="waiting" data-conversation-id={conversationId ?? undefined}><StageMark state="needs-me" aria-label="Waiting for you" /></span>
-      {:else}
-        <ConversationSignalMark {signal} {conversationId} />
-      {/if}
+      <ConversationSignalMark {signal} {conversationId} />
     </button>
   </div>
   {#if beforeGroups}{@render beforeGroups()}{/if}
@@ -75,7 +70,7 @@
     <div class="bucket workspace-ticket-bucket" transition:groupSlide data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
       <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
-        <WorkerRow agentHold={ticket} approval={ticket.awaiting_approval ? "owner" : ticket.awaiting_agent_approval ? "agent" : null} waiting={ticket.awaiting_answer === true} machineId={ticket.machine_id} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
+        <WorkerRow agentHold={ticket} approval={ticket.awaiting_approval ? "owner" : ticket.awaiting_agent_approval ? "agent" : null} machineId={ticket.machine_id} locale={ticket.locale} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-unread={ticket.conversation_signal?.message_for_owner === true} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} data-rail-motion={`row:${ticket.id}`} onclick={() => { if (input(ticket).click()) onTicket(ticket.id); }} onpointerenter={(event: PointerEvent) => {event.stopPropagation(); input(ticket).pointerEnter(event);}} onpointerleave={(event: PointerEvent) => input(ticket).leave(event)} onpointerdown={(event: PointerEvent) => input(ticket).down(event)} onpointermove={(event: PointerEvent) => input(ticket).move(event)} onpointerup={() => input(ticket).end()} onpointercancel={() => input(ticket).cancel()} onfocus={(event: FocusEvent) => input(ticket).focus(event)} onblur={(event: FocusEvent) => input(ticket).leave(event)} />
       {/each}
     </div>
   {/each}
@@ -114,9 +109,6 @@
   .manager-card.chief .identity:not(:has(:global(.manager-eyebrow))) .item-head { top:0; }
   .item-head { position:relative; top:var(--rail-title-nudge); display:grid; grid-template-columns:minmax(0,1fr) var(--rail-mark-column); align-items:start; width:100%; min-height:var(--rail-title-line); padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-head > :global(.conversation-signal-marks) { grid-column:2; justify-self:end; align-self:start; height:var(--rail-title-line); }
-  /* Waiting for you: the header's dot, 8px in the accent, in a flex box so it stays a dot. */
-  .waiting-mark { display:inline-flex; align-items:center; }
-  .waiting-mark :global(.stage-mark--needs-me) { width:var(--space-2); height:var(--space-2); background:var(--accent-bright); border-color:var(--accent-bright); }
   /* The name leads the block by size and weight (18/600 on a 24px line) and wraps in full.
      It rests dim unless it needs the person (an unread message for them); the pointer on its
      header or its own page open brings it to full brightness. */
