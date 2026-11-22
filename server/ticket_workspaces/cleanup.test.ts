@@ -94,6 +94,34 @@ test('durable child uncertainty fences deletion until positive retirement', asyn
   expect(removed.removed).toContain(folder);
   expect(existsSync(folder)).toBe(false);
 });
+// Machine code on the server's machine works in this same folder. The server's cleanup must
+// leave the workspaces that machine code registered, so the two cleanups never share one.
+test('the server leaves a workspace that machine code registered in its folder', async () => {
+  const { db, path, ticket, folder, identity, options } = setup();
+  db.write((sql) => {
+    sql.run(
+      "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) VALUES('machine-child','codex',?,'full',0)",
+      [folder],
+    );
+    register_workspace(sql, ticket.id, 'machine-child', identity);
+    // The server ran this conversation before the switch, and its old process is retired.
+    sql.run(
+      "INSERT INTO conversation_child_custody(conversation_id,generation,state) VALUES('machine-child','synthetic-generation','retired')",
+    );
+    sql.run(
+      "INSERT INTO executor_child_assignments(executor_incarnation,child_id,conversation_id,principal_kind,principal_id,created_at_ms) VALUES('synthetic-incarnation','synthetic-child','machine-child','ticket',?,0)",
+      [ticket.id],
+    );
+  });
+  const result = await clean_for_database(path, RETENTION_SECONDS, options);
+  expect(result.removed).not.toContain(folder);
+  expect(existsSync(folder)).toBe(true);
+  expect(
+    db.read((sql) =>
+      sql.get('SELECT 1 FROM ticket_workspace_retirements WHERE ticket_id=?', [ticket.id]),
+    ),
+  ).toBeUndefined();
+});
 test('a failed database commit restores the detached physical folder and rolls back its grant', async () => {
   const { db, path, ticket, folder, identity, options } = setup();
   injection.fail_commit = true;

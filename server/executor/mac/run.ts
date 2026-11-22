@@ -8,7 +8,9 @@ import { mac_runtime_settings } from '../../core/config.ts';
 import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { CliFailure, human_error } from '../../cli/errors.ts';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
-import { executor_paths, validate_executor_launch } from './configuration.ts';
+import { ExecutorPaths, executor_paths, validate_executor_launch } from './configuration.ts';
+import { local_server_address } from '../../server_link/logic.ts';
+import { executor_link_ticket_root } from './transport/executor_link.ts';
 import { FilesService } from './files.ts';
 import { run_mac_service } from './host/entry.ts';
 import { supervise } from './runtime/supervisor.ts';
@@ -16,7 +18,7 @@ import { supervise } from './runtime/supervisor.ts';
 export async function run_executor(invocation: Invocation): Promise<CommandResult> {
   const executor_id = invocation.values.executor_id as string;
   const revision = invocation.values.application_revision as string;
-  const paths = executor_paths(invocation.environment);
+  let paths = executor_paths(invocation.environment);
   let panels_server_url: string;
   try {
     panels_server_url = new MachineServerLink(
@@ -28,6 +30,9 @@ export async function run_executor(invocation: Invocation): Promise<CommandResul
     if (!(error instanceof ExecutorValidationError) && !(error instanceof SyntaxError)) throw error;
     throw new CliFailure(human_error(invocation.command, error.message));
   }
+  const local_link = local_server_address(panels_server_url);
+  if (local_link !== null)
+    paths = new ExecutorPaths(paths.root, executor_link_ticket_root(local_link));
   const runtime = mac_runtime_settings(invocation.environment);
   if (runtime.child)
     return {

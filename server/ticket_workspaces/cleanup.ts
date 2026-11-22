@@ -47,6 +47,33 @@ function custody_retired(
     ) === undefined
   );
 }
+function local_workspace_machine(db_path: string): string | null {
+  try {
+    return (
+      readFileSync(
+        join(dirname(filesRoot(db_path, 'ticket')), '.workspace-machine-id'),
+        'utf8',
+      ).trim() || null
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+/** Machine code retires the workspaces that it registered in this folder. The server leaves them. */
+function without_machine_code_workspaces(
+  sql: ReadSql,
+  states: Map<string, WorkspaceState>,
+  local_machine: string | null,
+): Map<string, WorkspaceState> {
+  if (local_machine === null) return states;
+  for (const { ticket_id } of sql.all<{ ticket_id: string }>(
+    'SELECT DISTINCT w.ticket_id FROM ticket_workspace_conversations w JOIN executor_child_assignments a USING(conversation_id) WHERE w.machine_id=?',
+    [local_machine],
+  ))
+    states.delete(ticket_id);
+  return states;
+}
 export async function clean_for_database(
   db_path: string,
   now: number,
@@ -54,9 +81,10 @@ export async function clean_for_database(
 ): Promise<CleanupResult> {
   const reader = createReadAccess(db_path);
   let snapshot: { states: Map<string, WorkspaceState>; active: Set<string> };
+  const local_machine = local_workspace_machine(db_path);
   try {
     snapshot = reader.read((sql) => ({
-      states: read_workspace_states(sql),
+      states: without_machine_code_workspaces(sql, read_workspace_states(sql), local_machine),
       active: new Set(
         sql
           .all<{ id: string }>("SELECT id FROM tickets WHERE worker_step_claim='out'")

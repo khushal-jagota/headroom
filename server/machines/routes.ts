@@ -5,7 +5,6 @@ import { requireOwner } from '../core/authority/identity.ts';
 import { PlannerError } from '../core/contracts.ts';
 import { is_record } from '../core/records.ts';
 import { JsonNumber } from '../core/http/numeric_json.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { now_ms } from '../executor/clock.ts';
 import { validate_server_url } from '../executor/mac/configuration.ts';
 import { join_command, require_released_revision } from '../installation/join_command.ts';
@@ -38,7 +37,7 @@ async function machine_views(services: AreaServices): Promise<{ machines: Machin
   }
   return {
     machines: records.map((machine) => {
-      const available = machine.machine_id === HOME_MACHINE_ID || present.has(machine.machine_id);
+      const available = present.has(machine.machine_id);
       const rows = by_destination.get(machine.machine_id) ?? [];
       // A Worker that is setting up already holds the machine.
       const running = rows.filter(
@@ -127,8 +126,16 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     await app.executor_registry?.ensure(grant.machine_id);
     return { machine_id: grant.machine_id, home_url, command, credential: grant.credential };
   });
-  app.post<{ Params: { machine_id: string } }>('/machines/:machine_id/credential', (request) => {
-    requireOwner(services.identity(request));
-    return services.database.write((tx) => replace_credential(tx, request.params.machine_id));
-  });
+  app.post<{ Params: { machine_id: string } }>(
+    '/machines/:machine_id/credential',
+    async (request) => {
+      requireOwner(services.identity(request));
+      const grant = services.database.write((tx) =>
+        replace_credential(tx, request.params.machine_id),
+      );
+      // The home identity has no executor owner until its first credential.
+      await app.executor_registry?.ensure(grant.machine_id);
+      return grant;
+    },
+  );
 };

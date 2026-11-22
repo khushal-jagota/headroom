@@ -21,6 +21,7 @@ import { create_backend_runtime } from './conversation/snapshot/composition.ts';
 import { TicketModelSnapshots } from './conversation/snapshot/testing/ticket_models.ts';
 import { makeUsageService } from './conversation/usage/composition.ts';
 import { BackendStateStore } from './conversation/backend_state.ts';
+import { seed_present_home_machine } from './machines/testing/present_home.ts';
 import {
   canonical_ticket_execution_refusal,
   conversation_execution_refusal,
@@ -110,6 +111,9 @@ await startServer({
         ]),
   ],
   beforePublication(database) {
+    // This host runs the home's Tickets on scripted local children. Production runs them
+    // through the home's machine code, which readiness requires to be present.
+    database.write(seed_present_home_machine, { changeSignal: 'silent' });
     // Rebuild copied Python projections through the actual TS writer. Comparing
     // copied rows alone would leave writer drift hidden behind the fixture oracle.
     // This existing test-host bootstrap seam produces no HTTP event writes.

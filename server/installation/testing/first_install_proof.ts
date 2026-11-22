@@ -16,6 +16,7 @@ import { shell_quote } from '../../conversation/worker_unit/logic.ts';
 import { accepted_lease } from '../../environments/linux_executor/logic/lease.ts';
 import { executor_link_socket_path } from '../../core/http/executor_link.ts';
 import { mac_installation_paths } from '../../executor/mac/platform.ts';
+import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'This proof requires a disposable hosted runner');
 const system = process.platform;
@@ -250,7 +251,7 @@ try {
   );
   report.server_machines = machines;
   const first_identity = JSON.parse(await readFile(join(first_state, 'identity.json'), 'utf8'));
-  assert.ok(first_identity.machine_id);
+  assert.equal(first_identity.machine_id, HOME_MACHINE_ID);
   assert.ok(
     machines.machines.some(
       (item: Record<string, unknown>) => item.machine_id === first_identity.machine_id,

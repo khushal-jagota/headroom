@@ -10,7 +10,6 @@ import { decode_json } from '../../executor/protocol.ts';
 import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { LEASE_CONTINUITY_SECONDS } from '../../executor/configuration.ts';
 import { cleanup_result } from '../../worker_supervision/inspection.ts';
-import { HOME_MACHINE_ID } from '../../execution_identity.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { same_reference } from '../../executor/child_reference.ts';
 import type { ConversationSystem } from '../contracts.ts';
@@ -183,64 +182,65 @@ export async function recheck_worker_cleanup(
     });
   const ticket = read();
   if (ticket === null) return cleanup_result(false, 'The Ticket is unavailable');
-  if (ticket.machine_id !== HOME_MACHINE_ID) {
-    const state =
-      ticket.conversation_id === null ? null : host.conversation_state(ticket.conversation_id);
-    const source =
-      state === null
-        ? null
-        : (host.retained_run(state)?.reference ?? state.retained_child_reference);
-    const source_key = (item: ChildReference) =>
-      JSON.stringify([item.executor_incarnation, item.child_id, item.conversation_id]);
-    const sources = new Map(ticket.historical.map((item) => [source_key(item), item]));
-    if (source !== null) sources.set(source_key(source), source);
-    if (sources.size === 0) {
-      const current = read();
-      const current_source =
-        state === null
-          ? null
-          : (host.retained_run(state)?.reference ?? state.retained_child_reference);
-      if (
-        !current ||
-        current.machine_id !== ticket.machine_id ||
-        current.conversation_id !== ticket.conversation_id ||
-        current.historical.length ||
-        current_source !== null
-      )
-        return cleanup_result(false, 'The Worker source changed during cleanup inspection');
-      return cleanup_result(
-        ticket.fresh && current.fresh,
-        ticket.fresh && current.fresh
-          ? 'No retained Worker source needs cleanup'
-          : 'Fresh executor cleanup evidence is unavailable',
-      );
-    }
-    if (host.worker_cleanup_recheck === null)
-      return cleanup_result(false, 'The executor cleanup checker is unavailable');
-    for (const recorded of sources.values()) {
-      const result = await host.worker_cleanup_recheck(recorded, ticket_id);
-      if (!result.complete) return result;
-    }
+  // A process that the server started before the switch to machine code keeps its record.
+  const local = await recheck_local_custody(host, ticket.local_ids);
+  if (local !== null) return local;
+  const state =
+    ticket.conversation_id === null ? null : host.conversation_state(ticket.conversation_id);
+  const source =
+    state === null ? null : (host.retained_run(state)?.reference ?? state.retained_child_reference);
+  const source_key = (item: ChildReference) =>
+    JSON.stringify([item.executor_incarnation, item.child_id, item.conversation_id]);
+  const sources = new Map(ticket.historical.map((item) => [source_key(item), item]));
+  if (source !== null) sources.set(source_key(source), source);
+  if (sources.size === 0) {
     const current = read();
     const current_source =
       state === null
         ? null
         : (host.retained_run(state)?.reference ?? state.retained_child_reference);
-    const historical = new Set(ticket.historical.map(source_key));
     if (
       !current ||
       current.machine_id !== ticket.machine_id ||
       current.conversation_id !== ticket.conversation_id ||
-      !isDeepStrictEqual(current_source, source) ||
-      current.historical.some((item) => !historical.has(source_key(item)))
+      current.historical.length ||
+      current_source !== null
     )
       return cleanup_result(false, 'The Worker source changed during cleanup inspection');
-    if (!current.fresh)
-      return cleanup_result(false, 'Fresh executor cleanup evidence is unavailable');
-    return cleanup_result(true, 'Recorded Worker cleanup is complete');
+    return cleanup_result(
+      ticket.fresh && current.fresh,
+      ticket.fresh && current.fresh
+        ? 'No retained Worker source needs cleanup'
+        : 'Fresh executor cleanup evidence is unavailable',
+    );
   }
-  const ids = new Set(ticket.local_ids);
-  if (ticket.conversation_id !== null) ids.add(ticket.conversation_id);
+  if (host.worker_cleanup_recheck === null)
+    return cleanup_result(false, 'The executor cleanup checker is unavailable');
+  for (const recorded of sources.values()) {
+    const result = await host.worker_cleanup_recheck(recorded, ticket_id);
+    if (!result.complete) return result;
+  }
+  const current = read();
+  const current_source =
+    state === null ? null : (host.retained_run(state)?.reference ?? state.retained_child_reference);
+  const historical = new Set(ticket.historical.map(source_key));
+  if (
+    !current ||
+    current.machine_id !== ticket.machine_id ||
+    current.conversation_id !== ticket.conversation_id ||
+    !isDeepStrictEqual(current_source, source) ||
+    current.historical.some((item) => !historical.has(source_key(item)))
+  )
+    return cleanup_result(false, 'The Worker source changed during cleanup inspection');
+  if (!current.fresh)
+    return cleanup_result(false, 'Fresh executor cleanup evidence is unavailable');
+  return cleanup_result(true, 'Recorded Worker cleanup is complete');
+}
+
+async function recheck_local_custody(
+  host: SqliteProcessConversationSystem,
+  ids: readonly string[],
+): Promise<CleanupResult | null> {
   for (const id of ids) {
     const state = host.conversation_state(id);
     if (state === null) return cleanup_result(false, 'The recorded conversation is unavailable');
@@ -278,7 +278,7 @@ export async function recheck_worker_cleanup(
     });
     if (result !== null) return result;
   }
-  return cleanup_result(true, 'Recorded Worker cleanup is complete');
+  return null;
 }
 
 async function take_recorded_settlement(
@@ -393,26 +393,19 @@ export async function confirm_killed_source(
       };
     };
     const before = host.options.store.start_admission_database.read((sql) => capture(sql, false));
-    if (before.machine_id !== HOME_MACHINE_ID) {
-      const result = await host.recheck_worker_cleanup(restart.ticket_id);
-      if (!result.complete) throw new PlannerError('retry_later', result.reason);
-      remote_inspected = true;
-      const inspected = host.options.store.start_admission_database.read((sql) =>
-        capture(sql, true),
-      );
-      if (!isDeepStrictEqual(before, inspected))
+    const result = await host.recheck_worker_cleanup(restart.ticket_id);
+    if (!result.complete) throw new PlannerError('retry_later', result.reason);
+    remote_inspected = true;
+    const inspected = host.options.store.start_admission_database.read((sql) => capture(sql, true));
+    if (!isDeepStrictEqual(before, inspected))
+      throw new PlannerError('retry_later', 'The Worker source changed during cleanup inspection');
+    check_cleanup = (sql) => {
+      if (!isDeepStrictEqual(capture(sql, true), inspected))
         throw new PlannerError(
           'retry_later',
           'The Worker source changed during cleanup inspection',
         );
-      check_cleanup = (sql) => {
-        if (!isDeepStrictEqual(capture(sql, true), inspected))
-          throw new PlannerError(
-            'retry_later',
-            'The Worker source changed during cleanup inspection',
-          );
-      };
-    }
+    };
   }
   await state.lock.run(async () => {
     const retained = host.retained_run(state);

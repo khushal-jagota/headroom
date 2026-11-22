@@ -1,4 +1,4 @@
-/** Non-Home Ticket children cross this seam. Recovery never allocates a local child. */
+/** Every Ticket child runs through its machine's code. Recovery never allocates a local child. */
 import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
 import { machine_can_run, machine_driver_kinds } from './machine_drivers.ts';
 import type {
@@ -12,7 +12,6 @@ import type {
 import type { Database } from '../core/database/contracts.ts';
 import { canonical_principal } from '../agent_identity/data.ts';
 import { authenticated_local_child } from '../agent_identity/launch.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 
 export class LocaleBackendChildFactory {
   private readonly database: Database;
@@ -45,9 +44,7 @@ export class LocaleBackendChildFactory {
               principal.id,
             ])
           : undefined;
-      return row === undefined || row.machine_id === HOME_MACHINE_ID
-        ? null
-        : machine_driver_kinds(sql, row.machine_id);
+      return row === undefined ? null : machine_driver_kinds(sql, row.machine_id);
     });
     const remote = driver_kinds !== null;
     if (remote && !machine_can_run(driver_kinds, options.resolved_start.backend_key))

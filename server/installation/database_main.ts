@@ -3,7 +3,7 @@ import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { createDatabaseFromSeed, checkpointDatabase } from '../core/database/index.ts';
 import type { ApplicationSchemaSeed } from '../core/database/contracts.ts';
-import { register_machine } from '../machines/executor_credentials.ts';
+import { issue_home_machine_credential } from '../machines/executor_credentials.ts';
 import { credential_path, write_credential } from '../executor/credential_file.ts';
 import { join } from 'node:path';
 import { bootstrap_application } from '../environments/bootstrap.ts';
@@ -34,7 +34,8 @@ try {
       const machine_root = process.argv[3];
       if (!isAbsolute(machine_root) || machine_root.includes('\0'))
         throw new Error('Expected an absolute machine state path');
-      const grant = database.write((tx) => register_machine(tx, 'First machine', process.platform));
+      // The first machine is the server's own machine, so it takes the home identity.
+      const grant = database.write((tx) => issue_home_machine_credential(tx, process.platform));
       await write_credential(credential_path(machine_root), grant.credential);
       writeFileSync(
         join(machine_root, 'identity.json'),

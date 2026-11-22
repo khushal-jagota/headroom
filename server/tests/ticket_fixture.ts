@@ -12,6 +12,7 @@ import {
 } from '../core/database/index.ts';
 import { seed_home_machine_row } from '../environments/bootstrap.ts';
 import { seed_original_mac_rows } from '../machines/testing/original_mac.ts';
+import { seed_present_home_machine } from '../machines/testing/present_home.ts';
 import { load_worker_runtime_definitions } from '../worker_types/configuration.ts';
 import { seed_packaged_skills } from '../skills/data.ts';
 import { seed_shipped_worker_types, seed_chief_settings } from '../worker_types/shipped.ts';
@@ -31,6 +32,7 @@ createDatabaseFromSeed(seed, schema, (tx) => {
     "INSERT INTO projects (id,name,created_at,updated_at) VALUES ('project_other','Other',0,0),('project_vylo','Vylo',0,0)",
   );
   seed_home_machine_row(tx);
+  seed_present_home_machine(tx);
   seed_original_mac_rows(tx);
   seed_packaged_skills(tx);
   seed_shipped_worker_types(tx);

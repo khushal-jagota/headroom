@@ -1,21 +1,7 @@
 import { revoke_launch_tokens } from '../agent_identity/data.ts';
 import { prepare_agent_home } from '../agent_homes/agent_home.ts';
-import { HOME_MACHINE_ID } from '../execution_identity.ts';
 import { read_machine } from '../machines/data.ts';
-import { filesRoot } from '../files/logic/paths.ts';
 import {
-  git_mirror_root,
-  prepare_workspace,
-  workspace_identity,
-} from '../ticket_workspaces/filesystem.ts';
-import type { WorkspaceIdentity } from '../ticket_workspaces/contracts.ts';
-import {
-  close_home_worker_setup,
-  declare_worker_setup,
-  type WorkerSetupStep,
-} from '../ticket_workspaces/worker_setup.ts';
-import {
-  register_workspace,
   ensure_workspace_activity,
   conversation_workspace_retired,
 } from '../ticket_workspaces/data.ts';
@@ -243,10 +229,7 @@ export function worker_resolve(
     worker_type_launch_defaults: defaults,
     ticket_last_chosen: ticket.employee_launch_model === null ? null : defaults,
     overrides,
-    workspace_folder:
-      ticket.machine_id === HOME_MACHINE_ID
-        ? join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id)
-        : project_workspace,
+    workspace_folder: project_workspace,
     workspace_path_policy,
   });
   values.role_materials = new ConversationRoleMaterials({
@@ -264,12 +247,7 @@ export function worker_resolve(
       '\n\n[Ticket machine]\n' +
       `This Ticket runs on ${database.read((sql) => read_machine(sql, ticket.machine_id).name)}. ` +
       `Its fixed destination is ${ticket.machine_id}. ` +
-      'A rename never changes this destination.\n[/Ticket machine]' +
-      (ticket.machine_id === HOME_MACHINE_ID
-        ? '\n\n[Panels-owned Ticket workspace]\n' +
-          `Panels starts you in the Ticket folder: ${values.workspace_folder}. Panels supplies this worktree: ${join(values.workspace_folder, 'worktree')}. Put reviewable output in ${join(filesRoot(context(database, options).db_path, 'ticket'), ticket.id, 'artifacts')}. ` +
-          'Follow the repository setup instructions and install dependencies yourself. Use this worktree for code, dependencies, and scratch. Do not create or remove worktrees. Workers commit, push, open PRs, and merge through the approved repository route. Stop the processes you start. Panels removes everything in the Ticket folder except logs/ seven days after the Ticket ends, unless unpublished work or a failed safety check prevents removal. This workspace instruction supersedes older instructions to create or remove your own worktree.\n[/Panels-owned Ticket workspace]'
-        : ''),
+      'A rename never changes this destination.\n[/Ticket machine]',
   });
   if (ticket.employee_launch_model === null || overrides.model != null)
     database.read((sql) =>
@@ -354,69 +332,6 @@ export async function start_ticket_conversation(
     const refusal = configured_ticket_execution_refusal(database, sql, current);
     if (refusal !== null) throw refusal;
   });
-  // Home sets up inside this process, so the server declares Home's setup itself. The
-  // setup stays open after success, until the caller's first prompt lands.
-  const home = ticket.machine_id === HOME_MACHINE_ID;
-  const declare = (step: WorkerSetupStep) =>
-    database.write((tx) =>
-      declare_worker_setup(tx, {
-        ticket_id: ticket.id,
-        conversation_id: options.conversation_id,
-        machine_id: HOME_MACHINE_ID,
-        step,
-        now: options.now,
-      }),
-    );
-  if (home) declare('preparing_workspace');
-  try {
-    return await start_prepared_ticket_conversation(system, database, ticket, values, options, {
-      home,
-      declare,
-    });
-  } catch (error) {
-    if (home)
-      database.write((tx) => close_home_worker_setup(tx, ticket.id, options.conversation_id));
-    throw error;
-  }
-}
-async function start_prepared_ticket_conversation(
-  system: ConversationSystem,
-  database: Database,
-  ticket: Ticket,
-  values: ConversationStartValues,
-  options: { conversation_id: string; signal?: AbortSignal; now: number },
-  setup: { home: boolean; declare: (step: WorkerSetupStep) => void },
-): Promise<LinkedConversation> {
-  let identity: WorkspaceIdentity | null = null;
-  if (setup.home) {
-    const ticket_folder = join(filesRoot(context(database).db_path, 'ticket'), ticket.id);
-    const repository =
-      ticket.project_id === null
-        ? { repository_url: null, default_branch: null }
-        : database.read((sql) => {
-            const project = readProject(sql, ticket.project_id!);
-            return {
-              repository_url: project.repository_url,
-              default_branch: project.default_branch,
-            };
-          });
-    try {
-      await prepare_workspace(ticket_folder, ticket.id, repository, {
-        signal: options.signal,
-        mirror_root: git_mirror_root(context(database).db_path),
-      });
-      values = { ...values, workspace_folder: ticket_folder };
-      identity = workspace_identity(ticket_folder);
-    } catch (error) {
-      if (options.signal?.aborted) throw new ConversationStartAborted();
-      throw new PlannerError(
-        'validation',
-        `Cannot prepare the Ticket workspace: ${String(error)}`,
-        { ticket_id: ticket.id },
-      );
-    }
-    setup.declare('starting_worker');
-  }
   const request = start_request(options.conversation_id, values);
   await observe_conversation_operation(() => system.start_conversation(request), options.signal);
   let linked: Ticket;
@@ -436,7 +351,6 @@ async function start_prepared_ticket_conversation(
         reasoning_effort: actual ? actual.reasoning_effort : values.reasoning_effort,
         now: options.now,
       });
-      if (identity !== null) register_workspace(tx, ticket.id, request.conversation_id, identity);
       return linked;
     });
   } catch (error) {
@@ -588,65 +502,60 @@ export async function send_to_ticket_conversation(
       now: options.now,
       signal: options.signal,
     });
-    try {
-      if (!linked.made_here) {
-        await let_go_ticket(system, database, ticket_id, making, options.now);
-        return send_existing_ticket(
-          system,
-          database,
-          ticket_id,
-          linked.conversation_id,
-          await observe_conversation_operation(
-            () => message_content_for(content, linked.conversation_id),
-            options.signal,
-          ),
-          options,
-        );
-      }
-      let fate: PromptDeliveryFate;
-      try {
-        fate = await observe_conversation_operation(
-          async () =>
-            system.send(
-              making,
-              await observe_conversation_operation(
-                () => message_content_for(content, making),
-                options.signal,
-              ),
-              send_options(options, true),
-            ),
+    if (!linked.made_here) {
+      await let_go_ticket(system, database, ticket_id, making, options.now);
+      return send_existing_ticket(
+        system,
+        database,
+        ticket_id,
+        linked.conversation_id,
+        await observe_conversation_operation(
+          () => message_content_for(content, linked.conversation_id),
           options.signal,
-        );
-        if (fate instanceof PromptDeliveryStarted)
-          database.write((tx) =>
-            tickets.write_ticket_last_chosen_configuration(tx, ticket_id, {
-              expected_conversation_id: making,
-              employee_backend: values.backend_key,
-              model: values.model,
-              reasoning_effort: values.reasoning_effort,
-              now: options.now,
-            }),
-          );
-      } catch (error) {
-        if (error instanceof ConversationStartAborted) throw error;
-        await let_go_ticket(system, database, ticket_id, making, options.now);
-        throw error;
-      }
-      if (fate instanceof PromptDeliveryRefused) {
-        if (
-          options.retain_definite_start_refusal &&
-          (fate.refusal_reason === 'backend_did_not_start' ||
-            fate.refusal_reason === 'model_resolution_failed')
-        )
-          return { conversation_id: making, fate };
-        await let_go_ticket(system, database, ticket_id, making, options.now);
-        return { conversation_id: null, fate };
-      }
-      return { conversation_id: making, fate };
-    } finally {
-      // The first prompt landed, or this start ended: Home's setup is over either way.
-      database.write((tx) => close_home_worker_setup(tx, ticket_id, making));
+        ),
+        options,
+      );
     }
+    let fate: PromptDeliveryFate;
+    try {
+      fate = await observe_conversation_operation(
+        async () =>
+          system.send(
+            making,
+            await observe_conversation_operation(
+              () => message_content_for(content, making),
+              options.signal,
+            ),
+            send_options(options, true),
+          ),
+        options.signal,
+      );
+      if (fate instanceof PromptDeliveryStarted)
+        database.write((tx) =>
+          tickets.write_ticket_last_chosen_configuration(tx, ticket_id, {
+            expected_conversation_id: making,
+            employee_backend: values.backend_key,
+            model: values.model,
+            reasoning_effort: values.reasoning_effort,
+            now: options.now,
+          }),
+        );
+    } catch (error) {
+      if (error instanceof ConversationStartAborted) throw error;
+      await let_go_ticket(system, database, ticket_id, making, options.now);
+      throw error;
+    }
+    if (fate instanceof PromptDeliveryRefused) {
+      if (
+        options.retain_definite_start_refusal &&
+        (fate.refusal_reason === 'backend_did_not_start' ||
+          fate.refusal_reason === 'model_resolution_failed')
+      )
+        return { conversation_id: making, fate };
+      await let_go_ticket(system, database, ticket_id, making, options.now);
+      return { conversation_id: null, fate };
+    }
+    return { conversation_id: making, fate };
   }
   const sending_into = options.conversation_id ?? ticket.conversation_id;
   if (sending_into === null || sending_into !== ticket.conversation_id)

@@ -9,7 +9,7 @@ import { CLEANUP_SCOPE } from '../../worker_supervision/inspection.ts';
 import { createDatabase } from '../../core/database/index.ts';
 import { ChangeSignal } from '../../core/changes/index.ts';
 import { TestClock } from '../../core/clock.ts';
-import { HOME_MACHINE_ID, valid_uuid } from '../../execution_identity.ts';
+import { valid_uuid } from '../../execution_identity.ts';
 import {
   ResolvedConversationStart,
   ConversationRoleMaterials,
@@ -513,7 +513,7 @@ if (spec.mode === 'machines') {
     const unknown_present = registry.is_present(unknown);
     const unknown_allocated = registry.get(unknown) !== null;
     const refused_destinations = [];
-    for (const machine of [unknown, HOME_MACHINE_ID]) {
+    for (const machine of [unknown]) {
       try {
         await registry.ensure(machine);
         refused_destinations.push(false);
@@ -572,7 +572,7 @@ if (spec.mode === 'machines') {
       access: 'full',
     });
     try {
-      for (const machine of [...spec.machines, HOME_MACHINE_ID]) {
+      for (const machine of spec.machines) {
         db.write((tx) =>
           tx.run('UPDATE tickets SET machine_id=? WHERE id=?', [machine, spec.ticket]),
         );

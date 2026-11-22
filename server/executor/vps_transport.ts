@@ -349,8 +349,9 @@ export class VpsExecutor {
               'WHERE w.ticket_id=? AND w.machine_id=? AND w.workspace_id=? AND i.machine_id=? LIMIT 1',
             [state.ticket_id, workspace.machine_id, workspace.workspace_id, this.machine_id],
           );
-          if (proof === undefined)
-            throw new PlannerError('agent_forbidden', 'workspace belongs to another machine');
+          // The Ticket is this machine's. A workspace that the server registered before
+          // the switch to machine code stays with the server's own cleanup.
+          if (proof === undefined) return { authorized: false };
           return {
             authorized: options.replay
               ? has_committed_retirement(tx, state, workspace)
