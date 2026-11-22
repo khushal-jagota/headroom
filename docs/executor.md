@@ -4,7 +4,7 @@ Extra machines let Workers use files, apps, provider sign-ins, and permissions a
 
 Several extra machines can pull work from one home. Each Ticket names its destination. The home runs its own Workers directly. An extra machine receives only work for its destination. If that machine is away, its work waits. There is no fallback destination. The Chief and Managers stay at home.
 
-Mac arm64 and Linux x86_64 executors use the same pull link and Worker supervisor. Enrollment screens remain outside this system.
+Apple Silicon and Linux x86_64 machine code use the same pull link and Worker supervisor. The first-install command sets up the server and separate machine code at one revision. It connects the first machine automatically through the local executor link. The join command adds another machine through its own credential. Enrollment screens remain outside this system.
 
 The TypeScript Mac executor gives each new Worker its own launchd job. A saved job label identifies that launch through stop, crash cleanup, and executor recovery. A restart waits for the old job to disappear. After job removal, a best-effort sweep stops same-user tools that retain that job's environment marker. Tools can clear the marker, so the sweep logs this limit and never blocks restart. Historical records still use exact process birth evidence until their old launches retire. Linux retains its cgroup custody.
 

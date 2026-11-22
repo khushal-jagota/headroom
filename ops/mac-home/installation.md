@@ -1,7 +1,8 @@
 # A home on Mac or Linux
 
-One command installs a home on an Apple Silicon Mac or a Linux x86_64 server.
-The host holds the record. The Mac home runs in your graphical login session.
+One command installs the server and machine code on Apple Silicon or Linux x86_64.
+The server holds the record. Machine code runs as a separate service on the same account.
+The installer connects the two through the local executor link, without a credential prompt. The Mac home runs in your graphical login session.
 Logout stops the Mac home. Sleep makes it unreachable. Linux uses a systemd user service.
 Linux setup requires user lingering so that the home and its backup stay available after logout.
 Tailscale supplies remote HTTPS access.
@@ -30,7 +31,8 @@ panels_setup=$(mktemp) && gh api repos/khushal-jagota/headroom/contents/scripts/
 The command selects a successful publication from the trusted release workflow on `main`.
 It checks the publication identity, target, and archive checksum before it executes the sealed installer.
 It refuses an existing installation root, service name, or occupied port.
-It starts only the new home and checks the exact release health before it reports its address.
+It starts only the new server and machine code.
+It checks the exact release health and an accepted machine connection before it reports its address.
 A private repository requires GitHub access to its contents and Actions artifacts.
 The command uses the GitHub CLI login for release access. It keeps that token in `data/secrets/update-token` for updates. It refuses an existing `~/.local/bin/panels`, then writes a small `panels` command there that runs the installed app.
 
@@ -38,8 +40,12 @@ The Mac default root is `~/Library/Application Support/PanelsHome`. The service 
 Linux uses `~/.local/share/panels-home` and the user service `com.panels.home.service`.
 Both hosts schedule the backup at 02:30 each day, maintenance at 03:15 each day, and the stall watchdog every 30 seconds.
 Linux uses a user service and timer for each job, for example `com.panels.home.backup.service` and `com.panels.home.backup.timer`.
-The Linux home service restarts after any exit and owns its Worker groups.
-The Mac registers its jobs for this installation and future logins.
+The server service and its separate machine service restart after an exit.
+Apple Silicon registers the server and machine jobs for this installation and future logins.
+The machine job uses the server label plus `.machine`, for example `com.panels.home.machine`.
+Linux adds `.service` to that label.
+The machine state stays under `machine/data` in the installation root.
+Its runtime snapshot stays under `machine/runtime`, separate from the server app and data.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
 On the Mac, the command records the external Node at `/opt/homebrew/bin/node` for updates. It must stay outside the home and remain available.
@@ -52,8 +58,10 @@ python3 "$panels_setup" home --archive /private/panels-app.tar.gz --receipt /pri
 
 Use the Mac home publication on Mac and the Linux home publication on Linux.
 The receipt must match the exact archive. Do not use an executor archive for a home.
+The server archive supplies both programs at the same revision. A second download is not required.
 Use `--isolated-providers` for disposable checks. It prevents account skill links and uses private provider folders.
-If setup fails, it stops only its new jobs and removes only its created root, links, and unit files.
+If setup fails, it stops its new machine job before the server jobs.
+It removes only its created root, links, and unit files.
 Existing roots and services remain untouched. If cleanup cannot confirm a stopped job, setup retains its files and reports that job.
 No existing home is restarted or replaced. Updates still use the owner Update action.
 Mac updates stop this installation's home and auxiliary jobs before replacement.
@@ -129,7 +137,9 @@ A second machine runs Workers for this home. It needs step 4 first, because it r
 panels machine join-command "Second machine" --home https://MACHINE.TAILNET.ts.net
 ```
 
-Run the printed command on the other machine. A Linux machine joins with this command. See [Install an extra Linux machine](../linux-executor/installation.md). The new machine signs in to its own providers, as in step 1.
+Run the printed command on the other machine. The same command supports Linux x86_64 and Apple Silicon.
+See the [Linux installation notes](../linux-executor/installation.md) or [Apple Silicon installation notes](../mac-executor/typescript-installation.md).
+The new machine signs in to its own providers, as in step 1.
 
 ## Stop, restart, and backup
 
@@ -140,31 +150,31 @@ export PANELS_ROOT="$HOME/Library/Application Support/PanelsHome"
 export PANELS_LABEL=com.panels.home
 ```
 
-Before stop, record the supervisor and app identities for this home.
-Stop the exact jobs, with the auxiliary jobs first:
+Before stop, record the server and machine process identities.
+Stop the exact jobs, with the machine job first:
 
 ```sh
-for suffix in maintenance stall-watchdog backup; do
+for suffix in machine maintenance stall-watchdog backup; do
   launchctl bootout "gui/$(id -u)/$PANELS_LABEL.$suffix"
 done
 launchctl bootout "gui/$(id -u)/$PANELS_LABEL"
 ```
 Wait until `launchctl print "gui/$(id -u)/$PANELS_LABEL"` reports that the job is absent.
-Check that the recorded supervisor and app ended and that the port has no listener.
+Check that the recorded server and machine processes ended and that the port has no listener.
 If the stop exceeds 30 seconds, record the output and stop. Do not bootstrap a replacement until these checks pass.
-Apply the same job-absence and recorded-process checks to every auxiliary label before reload.
-Start them again, the home first. This is also the ordinary service restart route.
+Apply the same job-absence and recorded-process checks to every machine and auxiliary label before reload.
+Start the server first, then the machine and auxiliary jobs. This is also the ordinary service restart route.
 
 ```sh
 launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.plist"
-for suffix in backup maintenance stall-watchdog; do
+for suffix in machine backup maintenance stall-watchdog; do
   launchctl bootstrap "gui/$(id -u)" "$PANELS_ROOT/agents/$PANELS_LABEL.$suffix.plist"
 done
 ```
 
 The supervisor remains in launchd custody. Its hard death also removes the app and permits a fresh start.
 
-To remove the installation, first complete those stop checks for all four labels.
+To remove the installation, first complete those stop checks for all five labels.
 Remove only login symlinks whose targets equal this installation's generated plists.
 Do not remove foreign entries, provider folders, or data during job removal.
 Keep the installation folder until all recorded jobs and processes retire.
@@ -177,7 +187,7 @@ Retain a separate copy of those files when you need them. Database restore does 
 ## Jobs, sleep, and logs
 
 Logs live in `$PANELS_ROOT/logs/`. Mac cleanup truncates oversized live logs in place because launchd retains their open descriptors.
-The login session owns all four jobs. Logout stops them. Sleep makes the home unreachable.
+The login session owns all five jobs. Logout stops them. Sleep makes the home unreachable.
 Calendar jobs missed during sleep run after wake. Several missed calendar events coalesce into one run.
 The watchdog skips intervals during sleep. It resumes at a later interval and does not replay each missed check.
 After login or a missed watchdog stretch, the first interval defers only a stale-checker alarm.

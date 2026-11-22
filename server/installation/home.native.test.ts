@@ -293,6 +293,16 @@ test.skipIf(!admitted)(
             record.database_initialization =
               system === 'darwin' ? 'real candidate child' : 'injected mini-app boundary';
           },
+          // This service-custody fixture retains its mini application boundary. The separate
+          // full-command hosted proof covers actual machine enrollment and protocol traffic.
+          prepare_machine: async (_candidate, runtime) => {
+            await mkdir(join(runtime, 'server/installation'), { recursive: true });
+            await writeFile(
+              join(runtime, 'server/installation/machine_main.ts'),
+              "process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);\n",
+            );
+          },
+          machine_healthy: async () => {},
           healthy: async (port, sha, signal) => {
             await wait_for(async () => {
               try {

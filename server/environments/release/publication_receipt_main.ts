@@ -37,7 +37,11 @@ try {
         !linux_executor_fields.every((key) => key in request))
     )
       throw new Error('Invalid publication receipt request');
-    const provenance = await source_run(publication_text(process.env.GITHUB_SHA, 'GITHUB_SHA'));
+    const provenance = await source_run(
+      publication_text(process.env.GITHUB_SHA, 'GITHUB_SHA'),
+      publication_text(request.source_root, 'source_root'),
+      execution,
+    );
     require_publication_run(provenance);
     if (process.env.GITHUB_WORKFLOW_SHA !== provenance.source_sha)
       throw new Error('Publication workflow source differs from the selected SHA');

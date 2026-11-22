@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: '17 */4 * * *'
   workflow_dispatch:
+    inputs:
+      prove_first_install:
+        description: Run only the complete first-install proof on Linux and Apple Silicon
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -16,7 +21,12 @@ permissions:
   contents: read
 
 jobs:
+  first-install:
+    if: github.event_name == 'workflow_dispatch' && inputs.prove_first_install
+    uses: ./.github/workflows/typescript-first-install.yml
+
   linux-executor:
+    if: ${{ !inputs.prove_first_install }}
     name: Linux executor sealed archive and relocation (Node 22)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -117,6 +127,7 @@ jobs:
           if-no-files-found: warn
 
   darwin-locks:
+    if: ${{ !inputs.prove_first_install }}
     name: Darwin arm64 lifecycle, archive, and Worker process ABI (Node 22)
     runs-on: macos-15
     timeout-minutes: 45

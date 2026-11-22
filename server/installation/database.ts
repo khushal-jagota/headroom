@@ -11,6 +11,7 @@ export async function initialize_candidate_home_database(
   path: string,
   execution: ReleaseExecution,
   node_executable: string,
+  machine_root?: string,
 ): Promise<void> {
   assert_release_execution(execution);
   if ([app, path, node_executable].some((value) => !isAbsolute(value) || value.includes('\0')))
@@ -18,7 +19,12 @@ export async function initialize_candidate_home_database(
   const state = await mkdtemp(join(tmpdir(), 'panels-home-database-'));
   try {
     await run_release_command(
-      [node_executable, join(app, 'server/installation/database_main.ts'), path],
+      [
+        node_executable,
+        join(app, 'server/installation/database_main.ts'),
+        path,
+        ...(machine_root ? [machine_root] : []),
+      ],
       {
         cwd: app,
         timeout_seconds: HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,

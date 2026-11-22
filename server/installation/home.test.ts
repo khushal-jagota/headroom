@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer as http_server } from 'node:http';
 import { createServer } from 'node:net';
 import { shell_quote } from '../conversation/worker_unit/logic.ts';
@@ -75,6 +76,9 @@ async function fixture() {
       assert(events.includes('initialize'));
       events.push('start');
     },
+    async start_machine() {
+      events.push('machine');
+    },
     async start_auxiliaries() {
       events.push('auxiliary');
     },
@@ -113,6 +117,8 @@ async function fixture() {
       assert(existsSync(dirname(path)));
       events.push('initialize');
     },
+    async prepare_machine() {},
+    async machine_healthy() {},
     async healthy() {
       return false;
     },
@@ -213,7 +219,20 @@ test('fresh database initialization closes its child before activation and faile
   }) as ChildProcesses['spawn'];
   const began = performance.now();
   try {
-    await initialize_candidate_home_database(candidate, path, f.deps.execution, process.execPath);
+    const machine = join(f.base, 'machine-data');
+    mkdirSync(machine);
+    await initialize_candidate_home_database(
+      candidate,
+      path,
+      f.deps.execution,
+      process.execPath,
+      machine,
+    );
+    const identity = JSON.parse(readFileSync(join(machine, 'identity.json'), 'utf8'));
+    const credential_file = join(machine, 'machine-credential.json');
+    const credential = JSON.parse(readFileSync(credential_file, 'utf8')).credential;
+    assert.equal(statSync(credential_file).mode & 0o777, 0o600);
+    assert.match(credential, /^[A-Za-z0-9_-]{43}$/);
     assert.equal(spawns, 1);
     assert.equal(closes, 1);
     require_application_schema(path);
@@ -231,6 +250,15 @@ test('fresh database initialization closes its child before activation and faile
             0,
         );
         assert(sql.get('SELECT 1 FROM chief_page WHERE singleton=1'));
+        const registered = sql.get<{ credential_sha256: string; is_home: number }>(
+          'SELECT credential_sha256,is_home FROM machine_executor_credentials JOIN machines USING(machine_id) WHERE machine_id=?',
+          [identity.machine_id],
+        );
+        assert.equal(
+          registered?.credential_sha256,
+          createHash('sha256').update(credential).digest('hex'),
+        );
+        assert.equal(registered?.is_home, 0);
       });
     } finally {
       reader.close();
@@ -434,6 +462,7 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
     assert.deepEqual(Object.keys(units).sort(), [
       'com.panels.test.backup.service',
       'com.panels.test.backup.timer',
+      'com.panels.test.machine.service',
       'com.panels.test.maintenance.service',
       'com.panels.test.maintenance.timer',
       'com.panels.test.service',
@@ -460,7 +489,14 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
     const token_file = join(root, 'data/secrets/update-token');
     for (const [name, content] of Object.entries(units)) {
       assert(!content.includes(f.request.update_token), name);
-      if (name.endsWith('.service')) {
+      if (name === 'com.panels.test.machine.service') {
+        assert(!content.includes('PLAN_UPDATE_TOKEN_FILE'));
+        assert(content.includes(`PLAN_EXECUTOR_ROOT=${join(root, 'machine/data')}`));
+        assert(content.includes(join(root, 'machine/providers')));
+        assert(!content.includes(join(root, 'app/agent_backends')));
+      } else if (name.endsWith('.service')) {
+        assert(!content.includes('CODEX_HOME'));
+        assert(!content.includes('CLAUDE_CONFIG_DIR'));
         assert(content.includes('Environment="PLAN_UPDATE_REPOSITORY=khushal-jagota/headroom"'));
         assert(content.includes(`Environment="PLAN_UPDATE_TOKEN_FILE=${token_file}"`));
       }
@@ -479,6 +515,29 @@ test('a Linux home installs every scheduled job, writes the panels command, and 
     );
     assert(!existsSync(second.root));
     assert.equal(readFileSync(command_link, 'utf8'), wrapper);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a refused first-machine connection rolls back the complete new installation', async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(
+      install_home(f.request, {
+        ...f.deps,
+        healthy: async () => true,
+        machine_healthy: async () => {
+          throw new Error('first machine refused');
+        },
+      }),
+      /first machine refused/,
+    );
+    assert.deepEqual(f.events, ['initialize', 'start', 'machine', 'stop']);
+    assert(!existsSync(f.request.root));
+    assert(!existsSync(f.unit));
+    assert(!existsSync(join(f.account, '.local/bin/panels')));
+    assert.equal(readFileSync(f.foreign, 'utf8'), 'existing account data');
   } finally {
     await f.close();
   }

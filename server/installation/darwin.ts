@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as pause } from 'node:timers/promises';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
-import { home_service_environment } from './environment.ts';
+import { first_machine_arguments } from './machine.ts';
+import { home_service_environment, machine_service_environment } from './environment.ts';
 import { external_home_node } from '../environments/updates/darwin/identity.ts';
 import { darwin_schedule_jobs, read_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
@@ -30,6 +31,8 @@ import type {
 export function darwin_home_jobs(
   request: HomeInstallRequest,
   environment: Readonly<Record<string, string>>,
+  machine_environment: Readonly<Record<string, string>>,
+  host: HomeInstallHost,
 ): Record<string, Record<string, unknown>> {
   const root = request.root,
     label = request.service;
@@ -53,6 +56,17 @@ export function darwin_home_jobs(
       KeepAlive: true,
       ThrottleInterval: 5,
       ...log_paths('home'),
+    },
+    [label + '.machine']: {
+      ...common,
+      Label: label + '.machine',
+      WorkingDirectory: join(root, 'machine'),
+      EnvironmentVariables: machine_environment,
+      ProgramArguments: first_machine_arguments(request, host),
+      RunAtLoad: true,
+      KeepAlive: true,
+      ThrottleInterval: 5,
+      ...log_paths('machine'),
     },
     [label + '.backup']: {
       ...common,
@@ -80,11 +94,17 @@ export async function create_darwin_home_service(
 ): Promise<HomeServicePlan> {
   if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(request.service))
     throw new Error('Use a valid launchd label');
-  const jobs = darwin_home_jobs(request, await home_service_environment(request, host));
+  const jobs = darwin_home_jobs(
+    request,
+    await home_service_environment(request, host),
+    await machine_service_environment(request, host),
+    host,
+  );
   const labels = [
     request.service,
     request.service + '.backup',
     ...HOME_SCHEDULE_SUFFIXES.map((suffix) => request.service + suffix),
+    request.service + '.machine',
   ];
   const files: HomeInstallationFile[] = labels.map((label) => ({
     path: join(request.root, 'agents', label + '.plist'),
@@ -157,6 +177,7 @@ export async function create_darwin_home_service(
       }
     },
     start_home: (execution) => start(0, execution),
+    start_machine: (execution) => start(4, execution),
     async start_auxiliaries(execution) {
       for (const index of [1, 2, 3]) await start(index, execution);
     },
@@ -179,7 +200,7 @@ export async function create_darwin_home_service(
         uid: host.uid,
         account_home: host.account_home,
       });
-      for (const index of [...attempted].reverse()) {
+      for (const index of [...attempted].sort((a, b) => (a === 4 ? -1 : b === 4 ? 1 : b - a))) {
         assert_release_execution(scope);
         const label = labels[index]!,
           path = files[index]!.path;
