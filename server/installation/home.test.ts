@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer as http_server } from 'node:http';
 import { createServer } from 'node:net';
+import { shell_quote } from '../conversation/worker_unit/logic.ts';
 import {
   existsSync,
   linkSync,
@@ -405,7 +406,7 @@ test('replacement root and changed service files retain their trees before any u
   }
 });
 
-test('a Linux home installs every scheduled job, links panels, and keeps the update token out of its units', async () => {
+test('a Linux home installs every scheduled job, writes the panels command, and keeps the update token out of its units', async () => {
   const f = await fixture(),
     commands: string[] = [];
   try {
@@ -441,13 +442,11 @@ test('a Linux home installs every scheduled job, links panels, and keeps the upd
       'com.panels.test.service',
       'com.panels.test.stall-watchdog.service',
       'com.panels.test.stall-watchdog.timer',
-      'panels-workers.slice',
     ]);
     for (const timer of ['backup', 'maintenance', 'stall-watchdog'])
       assert(commands.includes(`systemctl --user enable --now com.panels.test.${timer}.timer`));
     assert.match(units['com.panels.test.service']!, /^Restart=always$/m);
     assert.match(units['com.panels.test.service']!, /^Delegate=yes$/m);
-    assert.match(units['panels-workers.slice']!, /^CPUWeight=10$/m);
     const panels = JSON.stringify(join(root, 'app/bin/panels'));
     assert(
       units['com.panels.test.maintenance.service']!.includes(
@@ -472,7 +471,9 @@ test('a Linux home installs every scheduled job, links panels, and keeps the upd
     assert.equal(readFileSync(token_file, 'utf8'), f.request.update_token + '\n');
     assert.equal(statSync(token_file).mode & 0o777, 0o600);
     assert.equal(statSync(dirname(token_file)).mode & 0o777, 0o700);
-    assert.equal(readlinkSync(command_link), join(root, 'app/bin/panels'));
+    const wrapper = `#!/bin/sh\nexec ${shell_quote(join(root, 'app/bin/panels'))} "$@"\n`;
+    assert.equal(readFileSync(command_link, 'utf8'), wrapper);
+    assert.equal(statSync(command_link).mode & 0o777, 0o755);
     // A second home refuses the existing command before it writes anything.
     const second = { ...f.request, root: join(f.base, 'second'), service: 'com.panels.other' };
     await assert.rejects(
@@ -480,7 +481,7 @@ test('a Linux home installs every scheduled job, links panels, and keeps the upd
       /panels command already exists/,
     );
     assert(!existsSync(second.root));
-    assert.equal(readlinkSync(command_link), join(root, 'app/bin/panels'));
+    assert.equal(readFileSync(command_link, 'utf8'), wrapper);
   } finally {
     await f.close();
   }

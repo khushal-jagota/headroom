@@ -37,10 +37,11 @@ import {
 } from '../executor/mac/platform.ts';
 import { account_skill_homes, account_skill_provisioning_conflict } from '../skills/account.ts';
 import { BUILT_IN_MANIFESTS } from '../drivers/built_in_manifests.ts';
+import { shell_quote } from '../conversation/worker_unit/logic.ts';
 import { home_install_request, validate_home_host } from './logic/home.ts';
 import {
   HOME_CLEANUP_TIMEOUT_SECONDS,
-  HOME_COMMAND_LINK,
+  HOME_COMMAND,
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
   HOME_UPDATE_TOKEN_FILE,
 } from './configuration.ts';
@@ -107,8 +108,8 @@ async function canonical_new_root(path: string, home: string): Promise<string> {
   }
   throw new Error(`The installation root already exists: ${path}`);
 }
-/** Like a service file, an existing command link belongs to someone else and is never replaced. */
-async function require_absent_command_link(path: string): Promise<void> {
+/** Like a service file, an existing command belongs to someone else and is never replaced. */
+async function require_absent_command(path: string): Promise<void> {
   try {
     await lstat(path);
   } catch (error) {
@@ -404,7 +405,7 @@ export async function install_home(
   const { update_token, ...validated } = home_install_request(input);
   let request: HomeInstallRequest = validated;
   validate_home_host(request, deps);
-  const command_link = join(deps.account_home, HOME_COMMAND_LINK);
+  const command_link = join(deps.account_home, HOME_COMMAND);
   assert_release_execution(deps.execution);
   const root_path = await canonical_new_root(request.root, deps.account_home);
   assert_installer_path(root_path, deps.environment);
@@ -418,7 +419,7 @@ export async function install_home(
   try {
     service = await deps.service(request, deps);
     await service.preflight(deps.execution);
-    await require_absent_command_link(command_link);
+    await require_absent_command(command_link);
     await check_home_port(request.port);
     assert_release_execution(deps.execution);
     const ancestor = files.directory(await existing_ancestor(dirname(root_path)));
@@ -492,8 +493,13 @@ export async function install_home(
       }
     }
     for (const link of service.links) await files.link(link.path, link.target);
-    // The path names the app folder, so it follows each update that swaps that folder.
-    await files.link(command_link, join(root_path, 'app/bin/panels'));
+    // A wrapper, not a link: the app's own bin/panels finds its app from its own path.
+    // It names the app folder, so it follows each update that swaps that folder.
+    await files.file(
+      command_link,
+      `#!/bin/sh\nexec ${shell_quote(join(root_path, 'app/bin/panels'))} "$@"\n`,
+      0o755,
+    );
     current_directory(root);
     const data = files.directory(join(root_path, 'data'));
     await deps.initialize_database(

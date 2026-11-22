@@ -5,7 +5,7 @@ import { ChildProcesses } from '../lifecycle/owned_processes.ts';
 import { home_install_request } from './logic/home.ts';
 import { install_home } from './home.ts';
 import { production_home_dependencies } from './production.ts';
-import { HOME_COMMAND_LINK } from './configuration.ts';
+import { HOME_COMMAND } from './configuration.ts';
 
 export async function home_main(): Promise<number> {
   const child_processes = new ChildProcesses(),
@@ -42,7 +42,7 @@ export async function home_main(): Promise<number> {
     console.log(`Installed Panels at ${request.root}. Open ${address} on this machine.`);
     // Either spelling of the account home counts: the resolved one and the shell's HOME.
     const directories = [deps.account_home, deps.environment.HOME ?? deps.account_home].map(
-      (home) => dirname(join(home, HOME_COMMAND_LINK)),
+      (home) => dirname(join(home, HOME_COMMAND)),
     );
     if (
       !(deps.environment.PATH ?? '')

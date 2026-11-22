@@ -57,10 +57,10 @@ Guidance is instruction for a capable agent, not documentation. Amending it is m
 
 The writes are not yours to make. Hand them to the owner or Chief during this review. They review the exact content before they run the approved commands.
 
-1. Prove the record before you hand it over. Validate it with the code that runs live, without a database and without writes to the installed tree:
+1. Prove the record before you hand it over. Validate it with the code that runs live, without a database and without writes to the installed tree. Set `PANELS_APP` to the `app` folder of the installed server:
 
    ```sh
-   PANELS_APP="$(dirname "$(dirname "$(readlink -f "$(command -v panels)")")")" \
+   PANELS_APP="<installation root>/app" \
    node --input-type=module -e '
    const app = process.env.PANELS_APP + "/server/worker_types";
    const { readFileSync } = await import("node:fs");

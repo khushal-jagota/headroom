@@ -32,13 +32,13 @@ It checks the publication identity, target, and archive checksum before it execu
 It refuses an existing installation root, service name, or occupied port.
 It starts only the new home and checks the exact release health before it reports its address.
 A private repository requires GitHub access to its contents and Actions artifacts.
-The command uses the GitHub CLI login for release access. It keeps that token in `data/secrets/update-token` for updates. It refuses an existing `~/.local/bin/panels`, then links that name to the installed `panels` command.
+The command uses the GitHub CLI login for release access. It keeps that token in `data/secrets/update-token` for updates. It refuses an existing `~/.local/bin/panels`, then writes a small `panels` command there that runs the installed app.
 
 The Mac default root is `~/Library/Application Support/PanelsHome`. The service name is `com.panels.home`.
 Linux uses `~/.local/share/panels-home` and the user service `com.panels.home.service`.
 Both hosts schedule the backup at 02:30 each day, maintenance at 03:15 each day, and the stall watchdog every 30 seconds.
 Linux uses a user service and timer for each job, for example `com.panels.home.backup.service` and `com.panels.home.backup.timer`.
-Linux also writes `panels-workers.slice`, which gives Workers a low CPU share. The home service restarts after any exit and owns its Worker groups.
+The Linux home service restarts after any exit and owns its Worker groups.
 The Mac registers its jobs for this installation and future logins.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
@@ -89,7 +89,7 @@ A new home has no projects. The browser app shows projects but does not make the
 panels project create --name "My project" --repository-url https://github.com/OWNER/REPO.git
 ```
 
-The installer links `panels` into `~/.local/bin`. If the installer said that this folder is not on your path, add it first. If you chose a `--port`, set `PLAN_SERVER_URL=http://127.0.0.1:PORT` before you use `panels`. Check with `panels project list`.
+The installer puts `panels` in `~/.local/bin`. If the installer said that this folder is not on your path, add it first. If you chose a `--port`, set `PLAN_SERVER_URL=http://127.0.0.1:PORT` before you use `panels`. Check with `panels project list`.
 
 Make the first project before step 4. After step 4, the home trusts only the Tailscale login, and a terminal on this machine is no longer the owner. Then ask the Chief to make each new project.
 

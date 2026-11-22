@@ -123,7 +123,6 @@ def preflight(args: argparse.Namespace, target: str) -> None:
             [args.service]
             if args.command == "join"
             else [
-                "panels-workers.slice",
                 *(
                     args.service + suffix
                     for suffix in (

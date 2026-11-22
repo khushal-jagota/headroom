@@ -25,7 +25,7 @@ import { install_home, check_home_port } from './home.ts';
 import { create_linux_home_service } from './linux.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import { initialize_candidate_home_database } from './database.ts';
-import { HOME_COMMAND_LINK } from './configuration.ts';
+import { HOME_COMMAND } from './configuration.ts';
 import type { HomeInstallDependencies, HomeServicePlan, HomeCommand } from './contracts.ts';
 import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts';
 import { observe_promise } from '../core/promise_observer.ts';
@@ -86,7 +86,7 @@ test.skipIf(!admitted)(
     if (!evidence) throw new Error('Native home proof requires an evidence directory');
     const base = await realpath(await mkdtemp(join(tmpdir(), 'p7home-')));
     const account = system === 'linux' ? userInfo().homedir : join(base, 'account');
-    const command_link = join(account, HOME_COMMAND_LINK);
+    const command_link = join(account, HOME_COMMAND);
     await mkdir(join(base, 'account'), { mode: 0o700 });
     const report: Record<string, unknown> = {
       system,

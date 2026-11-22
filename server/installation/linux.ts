@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { resolved_path } from '../environments/paths.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { home_service_environment } from './environment.ts';
-import { SLICE_CPU_WEIGHT_MAX, WORKER_SLICE } from '../conversation/worker_unit/configuration.ts';
 import {
   HOME_SCHEDULE_SUFFIXES,
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
@@ -69,10 +68,6 @@ export function linux_home_units(
     },
   };
   const units: Record<string, string> = {
-    // The Worker slice comes first so a rollback stops it after the home that fills it.
-    [WORKER_SLICE]:
-      '[Unit]\nDescription=Panels Worker CPU share\n[Slice]\n' +
-      `MemoryAccounting=yes\nCPUAccounting=yes\nCPUWeight=${SLICE_CPU_WEIGHT_MAX}\n`,
     [request.service + '.service']:
       '[Unit]\nDescription=Panels home\nAfter=network-online.target\n' +
       '[Service]\nType=simple\n' +
