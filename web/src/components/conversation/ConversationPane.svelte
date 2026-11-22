@@ -10,7 +10,7 @@
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
-  import TaskProgress from "./TaskProgress.svelte";
+  import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
   import { DOCKED_CREDENTIAL_REQUEST, pendingCredentialRequest, type RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
@@ -28,7 +28,6 @@
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
   import { restLineFrom, restLineMarksFrom, whatThisRowSays } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
-  import { LIVE_PLAN, type LivePlan } from "../../lib/conversation/livePlan";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
   import type {
@@ -47,6 +46,7 @@
   let {
     conversationId,
     title = null,
+    subtitle = null,
     workerSetup = null,
     roleLabel = "Worker",
     backendKey = null,
@@ -127,6 +127,8 @@
     /** Who this conversation is with, in the page's own words ("Vylo pricing and launch",
      *  "Coding worker"), for the opened pane's top bar. Without it the role names it. */
     title?: string | null;
+    /** Who does the work, in a quieter voice after the title (a ticket's "Coding worker"). */
+    subtitle?: string | null;
     /** The owning Ticket's Worker being prepared; the status line says so until a turn runs. */
     workerSetup?: import("../../lib/navigation/contracts").WorkerSetup | null;
     roleLabel?: "Worker" | "Manager" | "Chief" | "Goal";
@@ -228,13 +230,6 @@
   } = $props();
 
   setContext(CREDENTIAL_REQUEST_READ_ONLY, () => readOnly);
-  // In Focus the running turn's live line carries the plan step, so the opened pane says
-  // what is moving in the one place the eye already is; the status slot keeps it only in Full
-  // and at rest, where there is no live line to carry it.
-  let planInTheLiveLine = $derived(lens === "focus" && conversationState !== "rest");
-  setContext<() => LivePlan>(LIVE_PLAN, () => planInTheLiveLine
-    ? { progress: taskProgress, moving: !activityUncertain && running && ask === null && userInput === null }
-    : null);
   const credentialDrafts = $derived.by(() => { conversationId; return new Map() as CredentialRequestDrafts; });
   setContext(CREDENTIAL_REQUEST_DRAFTS, () => credentialDrafts);
   /** The key request asked in the composer's place: the newest pending one, never in a
@@ -256,20 +251,9 @@
   let backgroundWorking = $derived(!activityUncertain && hasBackgroundTaskAfterTheTurn(reader?.status));
   // The dock has an activity header. Full conversation has the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
-  let planEntries = $state<import('../../lib/conversation/wire').PlanEntry[]>([]);
-  let planController:AbortController|null=null;
-  let planVersion='';
-  let planLoading=false;
-  async function demandPlan():Promise<void>{
-    const currentReader=reader;
-    const reference=currentReader?.status?.plan;
-    if(!currentReader||!reference||planLoading||planVersion===reference.version)return;
-    planController?.abort();const controller=new AbortController();planController=controller;planLoading=true;
-    try{const value=JSON.parse(await currentReader.body(reference,controller.signal)) as {entries:import('../../lib/conversation/wire').PlanEntry[]};if(!controller.signal.aborted&&reader===currentReader){planEntries=value.entries;planVersion=reference.version;}}
-    catch{}finally{if(planController===controller)planLoading=false;}
-  }
-  $effect(()=>{const version=reader?.status?.plan?.version??'';if(version!==planVersion){planEntries=[];planVersion='';}return()=>planController?.abort();});
-  let taskProgress = $derived(reader?.status ? {...progressFor(reader.status),entries:planEntries,onDemand:()=>void demandPlan(),onRelease:()=>{planController?.abort();planEntries=[];planVersion='';}} : taskProgressFrom(rowsForLens));
+  // The plan is not drawn in the conversation (owner): the dock's one line reads it only to
+  // say what the turn is on.
+  let taskProgress = $derived(reader?.status ? progressFor(reader.status) : taskProgressFrom(rowsForLens));
   let restLine = $derived(
     conversationState === "rest"
       ? reader?.status ? restFor(reader.status,ownSenderLabel ?? "",ownerReadThroughSequence,taskProgress) : restLineFrom(
@@ -454,7 +438,10 @@
 >
   <div class="chat-head">
     <div class="chat-head-identity" data-conversation-head-identity>
-      <span class="chat-head-title" data-conversation-title title={headTitle}>{headTitle}</span>
+      <span class="chat-head-name">
+        <span class="chat-head-title" data-conversation-title title={headTitle}>{headTitle}</span>
+        {#if subtitle && subtitle !== headTitle}<span class="chat-head-subtitle" data-conversation-subtitle>{subtitle}</span>{/if}
+      </span>
       {#if headStatus}
         <!-- One derived state (conversationState), the same the dock's line reads. -->
         <span class="cv-state" data-conversation-head-status={headStatus.state}
@@ -609,6 +596,18 @@
     </div>
   </div>
 
+  {#snippet waitingMessages()}
+    <HeldPromptStack
+      rows={heldPromptRows}
+      {conversationId}
+      supportsSteer={supportsSteer && ask === null && userInput === null}
+      {running}
+      onDiscard={onDiscardHeldPrompt}
+      onPromote={onPromoteHeldPrompt}
+      onStopDrawing={onStopDrawingHeldPrompt}
+      onSendAgain={onSendHeldPromptAgain}
+    />
+  {/snippet}
   <div class="conversation-reader" hidden={conversationState === "rest" || !transcriptVisible}>
   <!-- The conversation is never taken off the screen to say that it is loading. A
        region that removes its children while it waits removes the transcript the
@@ -642,6 +641,8 @@
     {activityUncertain}
     {conversationState}
     {emptyState}
+    anchorToEnd={running || ask !== null || userInput !== null || credentialRequest !== null || heldPromptRows.length > 0}
+    afterTranscript={readOnly ? undefined : waitingMessages}
     bind:jump
   />
   </div>
@@ -659,22 +660,11 @@
       feedback={activityUncertain ? uncertainActivityFeedback(!running && !backgroundWorking && workerSetup !== null) : dockFeedback} onOpen={moveThroughTheStates} />
   {/if}
 
-  <!-- The composer stack's status slot: the task pill on the left and the way back to the
-       newest line in the middle. It is in the flow, between the transcript and the
-       composer, so neither ever covers a line of what was said; empty, it takes no room. -->
+  <!-- The composer stack's status slot: the way back to the newest line, in the flow between
+       the transcript and the composer, so it never covers a line of what was said; empty, it
+       takes no room. -->
+  {#if jump && conversationState !== "rest"}
   <div class="cv-status-slot" data-conversation-status-slot>
-    <div class="cv-status-start">
-      {#if !planInTheLiveLine}
-      <TaskProgress
-        progress={taskProgress}
-        variant="strip"
-        {running}
-        moving={!activityUncertain && running && ask === null && userInput === null}
-        composerGap={false}
-      />
-      {/if}
-    </div>
-    {#if jump && conversationState !== "rest"}
       <button
         type="button"
         class="cv-jump"
@@ -682,8 +672,8 @@
         aria-label="Jump to latest message"
         onclick={(event) => jump?.go(event.currentTarget)}
       ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9" /></svg>{jump.label}</button>
-    {/if}
   </div>
+  {/if}
 
   {#if readOnly}
     <div class="conversation-read-only" data-conversation-read-only-notice>
@@ -765,7 +755,15 @@
     min-width: 0;
     overflow: hidden;
   }
-  /* The title gives way first: it ellipsizes before the state does. */
+  /* The ticket's title, the name the person knows it by, and after it in the meta voice who
+     is doing the work. The title gives way first: it ellipsizes before the role and the state. */
+  .chat-head-name { display: flex; align-items: baseline; gap: var(--cv-s2); min-width: 0; flex: 0 1 auto; }
+  .chat-head-subtitle {
+    flex: none;
+    color: var(--cv-t3);
+    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    white-space: nowrap;
+  }
   .chat-head-title {
     flex: 0 100 auto;
     min-width: 0;

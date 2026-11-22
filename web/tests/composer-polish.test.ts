@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveComposerRunControls } from "../src/lib/conversation/runControls/logic/runSelection";
+import { composerPlaceholderFor, resolveComposerRunControls } from "../src/lib/conversation/runControls/logic/runSelection";
 import type { ComposerRunControlsInput } from "../src/lib/conversation/runControls/contracts";
 import { conversationFileMediaType, createPendingConversationFiles } from "../src/lib/conversation/pendingFiles";
 import { resolveModelPicker } from "../src/lib/conversation/modelPicker";
@@ -56,9 +56,19 @@ describe("delivery mode only matters while a turn runs", () => {
     expect(view.showDeliveryMode).toBe(true);
     expect(view.deliveryModes).toEqual(["queue", "send_now"]);
     expect(view.deliveryMode).toBe("queue");
-    expect(view.submit.ariaLabel).toBe("Queue this message");
+    expect(view.submit.ariaLabel).toBe("Hold this message until the turn ends");
     // The same choice comes back once the ask is answered.
     expect(resolveComposerRunControls(runInput({ running: true, deliveryMode: "steer", supportsSteer: true, askWaiting: null })).deliveryMode).toBe("steer");
+  });
+
+  it("says in the empty composer what a message written under an ask will do", () => {
+    const base = "Message the Coding worker...";
+    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base })).toBe(base);
+    expect(composerPlaceholderFor({ askWaiting: "answers", mode: "queue", running: true, base })).toBe("Type your own answer…");
+    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "queue", running: true, base })).toBe("Or write a message. It is held until this turn ends");
+    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "send_now", running: true, base })).toBe("Or write a message. Sending it stops this turn");
+    // A key request left by a finished turn holds nothing: the next message starts a turn.
+    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "steer", running: false, base })).toBe(base);
   });
 
   it("sends words written under a question as its answer, with no delivery choice", () => {

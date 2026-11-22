@@ -33,9 +33,13 @@
   );
   /** The setup the machine cannot confirm keeps saying setup; one chip says why it is still. */
   let offlineChip = $derived(offline && state.state === "setting-up");
-  let saysState = $derived(!(pageHoldsTheAsk && state.state === "waiting"));
+  /** The page above draws the waiting ask (a proposal): the line does not say it a second
+   *  time. It says what the conversation itself is doing, which is nothing until the person
+   *  decides: the quiet idle line, with no mark. */
+  let pageWaits = $derived(pageHoldsTheAsk && state.state === "waiting");
+  let saysState = $derived(!pageWaits);
   let label = $derived(
-    state.state === "idle" ? `${ROLE_NAMES[roleLabel]} idle`
+    state.state === "idle" || pageWaits ? `${ROLE_NAMES[roleLabel]} idle`
     : state.state === "unknown" ? (feedback ?? state.text)
     : state.text
   );
@@ -58,9 +62,9 @@
       {:else if state.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
       {:else if state.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>
       {:else if state.state === "unknown"}<svg class="cv-glyph cv-glyph--caution" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.3 13H1.7z" /><path d="M8 6.5v3" /><path d="M8 11.4v.1" /></svg>{/if}
-      {#if saysState}
-      <span class="c2-rest-line" data-conversation-rest-line>
-        <span class="c2-rest-label">{label}</span>{#if detail}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
+      {#if saysState || pageWaits}
+      <span class="c2-rest-line" data-conversation-rest-line data-conversation-rest-page-waits={pageWaits || undefined}>
+        <span class="c2-rest-label">{label}</span>{#if detail && !pageWaits}<span class="c2-rest-detail">{` — ${detail}`}</span>{/if}
       </span>
       {/if}
       {#if offlineChip}<span class="c2-rest-chip" title={feedback ?? undefined} data-conversation-offline-chip>Machine offline</span>{/if}
@@ -96,7 +100,7 @@
   /* Tone follows the state, never a line: working is the brighter text and its motion,
      waiting is the accent with its title in t2, a failure is the danger colour. */
   [data-conversation-rest-state="working"] .c2-rest-label { color:var(--cv-t2); }
-  [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
+  [data-conversation-rest-state="waiting"] .c2-rest-line:not([data-conversation-rest-page-waits]) .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }

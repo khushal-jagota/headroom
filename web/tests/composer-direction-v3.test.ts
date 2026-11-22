@@ -1,8 +1,8 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
 import ComposerWithQueryClient from "./fixtures/ComposerWithQueryClient.svelte";
+import PaneWithQueryClient from "./fixtures/PaneWithQueryClient.svelte";
 import HeldPromptStack from "../src/components/conversation/composer/HeldPromptStack.svelte";
-import TaskProgress from "../src/components/conversation/TaskProgress.svelte";
 import { DELIVERY_MODE_CHOICES, deliveryModeChoices } from "../src/components/conversation/composer/deliveryModes";
 import { attachmentDisplayName, attachmentKindLabel } from "../src/components/conversation/composer/attachments";
 import type { HeldPromptRow } from "../src/lib/conversation/heldPrompts";
@@ -30,12 +30,28 @@ describe("the composer's controls row", () => {
     expect(body).not.toContain("data-conversation-stop");
   });
 
-  it("offers Stop turn while a turn runs, and keeps the draft and controls in their two rows", () => {
+  it("offers Stop turn while a turn runs, on the composer's one line", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true } });
     expect(body).toMatch(/data-conversation-stop[^>]*aria-label="Stop turn"|aria-label="Stop turn"[^>]*data-conversation-stop/);
     expect(body).not.toContain("data-conversation-send=");
-    // The draft comes before the controls' row, which never moves beside it.
-    expect(body.indexOf("data-conversation-input")).toBeLessThan(body.indexOf('class="chat-foot'));
+    expect(body).toMatch(/class="chat-box[^"]*is-compact/);
+    expect(body).toContain('data-conversation-box-shape="line"');
+  });
+
+  it("is one line at rest, with add, the model, voice and send in that one row", () => {
+    const { body } = render(ComposerWithQueryClient, { props: base });
+    expect(body).toMatch(/class="chat-box[^"]*is-compact/);
+    expect(body).toContain("data-conversation-add");
+    expect(body).toContain("data-conversation-model-picker");
+  });
+
+  it("keeps the one stop button in the composer while an ask waits, and no stop on the ask", () => {
+    const ask = { askId: "a-1", title: "Upload build 41", detail: "xcrun altool --upload-app", options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }, { option_id: "deny", label: "Deny", option_kind: "reject_once" as const }] };
+    const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, ask, onCancelTurn: () => {} } });
+    expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
+    expect(body).not.toContain('data-conversation-ask-action="cancel_turn"');
+    // Waiting is said in the composer: a message written now is held, and says so.
+    expect(body).toContain('placeholder="Or write a message. It is held until this turn ends"');
   });
 
   it("says only Drop to attach while something is dragged over it", () => {
@@ -44,43 +60,54 @@ describe("the composer's controls row", () => {
   });
 });
 
-describe("the queue is light", () => {
-  it("draws the waiting messages with their actions, and no header or count", () => {
+describe("the queue is light, and stands in the thread", () => {
+  it("draws each waiting message as the person's own message not sent yet, with its actions and no header", () => {
     const { body } = render(HeldPromptStack, {
-      props: { rows: [held("a", "Log each 429"), held("b", "Match the dark style")], supportsSteer: true, running: true }
+      props: { rows: [held("a", "Log each 429"), held("b", "Match the dark style")], supportsSteer: true, running: true, conversationId: "c-1" }
     });
     expect(body).not.toContain("chat-queue-head");
     expect(body).not.toMatch(/>Queued</);
     expect(body).toContain('aria-label="2 queued messages"');
     expect(body.match(/data-conversation-held-row=/g)?.length).toBe(2);
+    // Each is a bubble of the person's words, with one quiet line under it saying so.
+    expect(body.match(/data-conversation-bubble/g)?.length).toBe(2);
+    expect(body.match(/Queued · sends when this turn ends/g)?.length).toBe(2);
     expect(body.indexOf("Log each 429")).toBeLessThan(body.indexOf("Match the dark style"));
-    expect(body.match(/data-conversation-held-promote="steer"/g)?.length).toBe(2);
+    expect(body.match(/data-conversation-held-promote="steer"[^>]*>Steer now</g)?.length).toBe(2);
     expect(body.match(/data-conversation-held-promote="send_now"/g)?.length).toBe(2);
     expect(body.match(/data-conversation-held-discard="hp-/g)?.length).toBe(2);
     expect(body).toContain('aria-label="Remove this message from the queue"');
   });
 
-  it("stands over the composer's box, outside it", () => {
+  it("is never drawn over the composer", () => {
     const { body } = render(ComposerWithQueryClient, {
       props: { ...base, running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")] }
     });
-    expect(body.indexOf("data-conversation-held-stack")).toBeLessThan(body.indexOf("data-conversation-box"));
+    expect(body).not.toContain("data-conversation-held-stack");
   });
 
-  it("gives every line the same opening chevron, shown by measurement only where its words do not fit", () => {
-    const long = "After that, log each 429 with the share token's first 6 characters so we can spot abuse patterns";
-    const { body } = render(HeldPromptStack, { props: { rows: [held("a", long), held("b", "Short")], supportsSteer: true, running: true } });
-    // One rule, not a character count: each line carries the chevron, and the measured
-    // data-truncated mark (set in the browser) decides whether it shows.
-    expect(body.match(/class="chat-qrow-more/g)?.length).toBe(2);
-    expect(body).not.toContain('data-truncated="true"');
-    expect(body).toMatch(/class="chat-qrow-words[^"]*"[^>]*aria-expanded="false"/);
+  it("is drawn at the end of the thread, after everything said, and the thread reads from its end", () => {
+    const { body } = render(PaneWithQueryClient, {
+      props: {
+        conversationId: "c-1", draftKey: "pane-queue", onSend: async () => true, conversationState: "opened",
+        running: true, supportsSteer: true, heldPromptRows: [held("a", "After that, log each 429")]
+      }
+    });
+    const content = body.indexOf("data-conversation-content");
+    const stack = body.indexOf("data-conversation-held-stack");
+    expect(content).toBeGreaterThan(-1);
+    expect(stack).toBeGreaterThan(content);
+    expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
+    expect(body).toMatch(/data-conversation-thread[^>]*data-anchor-end="true"/);
   });
 
   it("offers no Steer while the turn is blocked on an ask, since nothing is read until it is answered", () => {
-    const ask = { askId: "a-1", title: "Upload build 41", detail: null, options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" }] };
-    const { body } = render(ComposerWithQueryClient, {
-      props: { ...base, running: true, supportsSteer: true, ask, heldPromptRows: [held("a", "Hold the upload")] }
+    const ask = { askId: "a-1", title: "Upload build 41", detail: null, options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }] };
+    const { body } = render(PaneWithQueryClient, {
+      props: {
+        conversationId: "c-1", draftKey: "pane-queue-ask", onSend: async () => true, conversationState: "opened",
+        running: true, supportsSteer: true, ask, heldPromptRows: [held("a", "Hold the upload")]
+      }
     });
     expect(body).not.toContain('data-conversation-held-promote="steer"');
     expect(body).toContain('data-conversation-held-promote="send_now"');
@@ -118,29 +145,3 @@ describe("pending attachment tiles", () => {
   });
 });
 
-describe("the task pill", () => {
-  it("draws one segment per step: the done ones, the one in hand, the rest", () => {
-    const { body } = render(TaskProgress, {
-      props: {
-        variant: "strip",
-        progress: {
-          entries: [
-            { text: "Reproduce", status: "completed" },
-            { text: "Read", status: "completed" },
-            { text: "Confirm", status: "in_progress" },
-            { text: "Write", status: "pending" },
-            { text: "Propose", status: "pending" }
-          ],
-          currentPosition: 3,
-          currentEntry: null,
-          completedCount: 2,
-          hasUnfinishedEntry: true,
-          turnRunning: true
-        }
-      }
-    });
-    expect(body.match(/class="task-segment[ "]/g)?.length).toBe(5);
-    expect(body.match(/task-segment[^"]*done/g)?.length).toBe(2);
-    expect(body.match(/task-segment[^"]*now/g)?.length).toBe(1);
-  });
-});

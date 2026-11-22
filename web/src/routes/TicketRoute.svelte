@@ -548,7 +548,8 @@
             persistenceKey={`owner:ticket:${detail.id}`}
             uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
-            title={conversationEmployeeLabel(detail)}
+            title={masthead.title || conversationEmployeeLabel(detail)}
+            subtitle={masthead.title ? conversationEmployeeLabel(detail) : null}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"

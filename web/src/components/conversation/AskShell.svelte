@@ -32,7 +32,8 @@
     titleId?: string;
     description?: string | null;
     children?: Snippet;
-    /** The way out (Stop turn), on the left. */
+    /** Anything on the left of the footer (none of the asks draws one: the turn is stopped
+     *  from the composer's own stop button). */
     footerStart?: Snippet;
     /** The answers, ending in the one primary, on the right. */
     footerEnd?: Snippet;

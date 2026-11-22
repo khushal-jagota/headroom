@@ -22,9 +22,6 @@
   } from "../../lib/conversation/transcript";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import type { ConversationTurnEnding } from "../../lib/conversation/wire";
-  import { getContext } from "svelte";
-  import { LIVE_PLAN, type LivePlan } from "../../lib/conversation/livePlan";
-  import TaskProgress from "./TaskProgress.svelte";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
    *  frames, short enough that a stalled backend stops claiming to be alive. */
@@ -69,8 +66,6 @@
     onToggle?: () => void;
   } = $props();
 
-  const livePlan = getContext<(() => LivePlan) | undefined>(LIVE_PLAN);
-  let plan = $derived(livePlan?.() ?? null);
   let fresh = $state(true);
   const elapsed = elapsedTurnTime(() => settled ? null : startedAtUnixMilliseconds);
 
@@ -140,13 +135,6 @@
           {/if}
         {/if}
       </div>
-      <!-- In Focus the live line says where the work stands: the plan step the agent is on,
-           from its own plan, never its tool calls. It opens the whole plan below it. -->
-      {#if plan !== null && !activityUncertain}
-        <div class="c2-live-plan" data-conversation-live-plan>
-          <TaskProgress progress={plan.progress} variant="strip" placement="below" running moving={plan.moving} />
-        </div>
-      {/if}
     {/if}
   </div>
 {/if}
@@ -219,8 +207,6 @@
   }
   @keyframes c2-meta-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
   .c2-meta-clock { color: var(--cv-t3); }
-  .c2-live-plan { margin-block-start: var(--cv-s2); max-width: 100%; min-width: 0; }
-  .c2-live-plan:empty { display: none; }
   @media (prefers-reduced-motion: reduce) {
     .c2-meta--fold, .c2-meta-chevron { transition: none; }
     .c2-meta-spin.is-turning { animation: none; }

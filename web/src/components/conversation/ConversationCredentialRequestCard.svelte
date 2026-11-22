@@ -3,19 +3,15 @@
   import type { CredentialRequestRowBody } from '../../lib/conversation/view/contracts';
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, CredentialRequestDraft, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import { CredentialRequestWireError, mutateCredentialRequest } from '../../lib/conversation/wire';
-  import { CANCEL_TURN_ACTION } from '../../lib/conversation/composer';
   import type { Snippet } from 'svelte';
   import AskShell from './AskShell.svelte';
 
-  let { request, onCancelTurn, framed = true, replyStrip }: {
+  let { request, framed = true, replyStrip }: {
     request: CredentialRequestRowBody;
     /** Whether the ask draws its own raised plane (the composer gives up its own for it). */
     framed?: boolean;
     /** The composer's one-line reply, under the answers. */
     replyStrip?: Snippet;
-    /** Given where a turn is running while the request waits (the composer passes it when it
-     *  docks the request), so the card ends a turn as the question and the permission ask do. */
-    onCancelTurn?: () => void;
   } = $props();
   const paneReadOnly = getContext<(() => boolean) | undefined>(CREDENTIAL_REQUEST_READ_ONLY);
   const readOnly = $derived(paneReadOnly?.() ?? false);
@@ -121,9 +117,6 @@
   }
 </script>
 
-{#snippet stopTurn()}
-  <button type="button" class="cv-button cv-button--ghost cancel" data-credential-cancel-turn disabled={draft.busy} onclick={() => onCancelTurn?.()}><svg class="cv-stop-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" /></svg><span>{CANCEL_TURN_ACTION.label}</span></button>
-{/snippet}
 {#snippet answers()}
   <button type="button" class="cv-button cv-button--outline reject" data-credential-decline disabled={draft.busy} onclick={() => void action('reject')}>Decline</button>
   {#if !draft.stale}<button type="button" class="cv-button cv-button--primary" data-credential-save disabled={draft.busy || !canSave} onclick={() => void submit()}>{draft.busy ? 'Saving…' : draft.saveFailed ? 'Retry' : replacement ? 'Replace key' : 'Save key'}</button>{/if}
@@ -149,7 +142,7 @@
     <div class="saved-row"><span class="saved-provider">{current.provider} API key</span><span class="saved-name">{current.name}</span><span class="saved-status">Requested</span></div>
   {:else}
     <!-- The ask shell every blocking ask shares (AskShell): the accent eyebrow saying what it
-         needs, the title, the fields, then Stop turn on the left and the one primary last. -->
+         needs, the title, the fields, then the answers ending in the one primary. -->
     <AskShell
       kind="credential"
       eyebrow="Needs a key"
@@ -158,7 +151,6 @@
       description={current.use}
       {framed}
       {replyStrip}
-      footerStart={onCancelTurn ? stopTurn : undefined}
       footerEnd={answers}
     >
     <form autocomplete="off" aria-labelledby={`${uid}-title`} aria-describedby={draft.error && !draft.invalid ? `${uid}-error` : undefined}

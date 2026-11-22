@@ -94,7 +94,7 @@ function submitProjection(
       ? "Send this message"
       : mode === "steer"
         ? "Steer this message"
-        : mode === "send_now" ? "Send this message now" : "Queue this message";
+        : mode === "send_now" ? "Send this message now" : input.askWaiting === "holds" ? "Hold this message until the turn ends" : "Queue this message";
   return {
     active: input.hasSendableContent,
     sending,
@@ -200,4 +200,24 @@ export function applyComposerRunSelectionIntent(
         effortIsSet: true
       };
   }
+}
+
+/** What the empty composer says it will do with a message. Under a waiting ask the turn
+ *  reads nothing until the person decides, so the words say plainly where a message goes:
+ *  an own answer to the question on screen, held until the turn ends, or sent now by
+ *  stopping the turn. Otherwise the conversation's own placeholder stands. */
+export function composerPlaceholderFor(input: {
+  askWaiting: ComposerRunControlsInput["askWaiting"];
+  mode: PromptDeliveryMode;
+  running: boolean;
+  base: string;
+}): string {
+  if (input.askWaiting === "answers") return "Type your own answer…";
+  if (input.askWaiting === "holds") {
+    if (!input.running) return input.base;
+    return input.mode === "send_now"
+      ? "Or write a message. Sending it stops this turn"
+      : "Or write a message. It is held until this turn ends";
+  }
+  return input.base;
 }

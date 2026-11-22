@@ -115,7 +115,9 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
   // never the part a scrolled card leaves below the fold.
   return <>
     {showLegend && <SeriesLegend series={entries} />}
-    <div className="bar-plot" style={{ height: block.plot_height ?? (compact ? 176 : 242) }}>
+    {/* A chat snapshot is a figure in a sentence, not a dashboard: a shorter plot, so the
+        whole of it, axis labels included, reads in one glance with the words around it. */}
+    <div className="bar-plot" style={{ height: block.plot_height ?? (showLegend ? 156 : compact ? 176 : 242) }}>
       <canvas ref={ref} role="slider" tabIndex={data.length ? 0 : -1} aria-label={`${block.title ?? 'Chart'}, explore observations`}
         aria-valuemin={1} aria-valuemax={Math.max(1, data.length)} aria-valuenow={Math.max(1, (index ?? data.length - 1) + 1)}
         aria-valuetext={`${readingLabel}: ${reading === undefined ? 'No reading' : formatReading(block, reading)}`}

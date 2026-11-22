@@ -117,10 +117,13 @@
     pastConversations = [],
     selectedPastConversationId = $bindable(null),
     workerSetup = null,
-    title = null
+    title = null,
+    subtitle = null
   }: {
     /** Who this conversation is with, for the pane's top bar. */
     title?: string | null;
+    /** Who is doing the work, said quietly after the title ("Debugging worker"). */
+    subtitle?: string | null;
     /** The conversation to show, or null for a caller that has not started one. */
     locale?: TicketLocale;
     machineId?: string;
@@ -1048,6 +1051,7 @@
 <ConversationPane
   onPreviewRunSelection={(selection) => { composerSelection = selection; }}
   title={title ?? null}
+  subtitle={subtitle ?? null}
   roleLabel={historyOwner?.kind === "manager" ? "Manager" : label === "Chief of Staff" ? "Chief" : label === "Manager" ? "Manager" : "Worker"}
   {withdrawnDisplayIds}
   conversationId={openedId ?? ""}
@@ -1169,6 +1173,8 @@
   }
   .conversation-empty-body {
     margin-block-start: var(--cv-s1) !important;
+    /* Two even lines, never a word or two left alone on the second. */
+    text-wrap: balance;
     color: var(--cv-t3);
     font-size: var(--cv-type-ui);
     line-height: 22px;

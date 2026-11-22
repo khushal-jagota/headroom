@@ -1,13 +1,10 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
-import PermissionAskActions from "../src/components/conversation/PermissionAskActions.svelte";
 import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
 import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 import ConversationCredentialRequestCard from "../src/components/conversation/ConversationCredentialRequestCard.svelte";
-import TaskProgress from "../src/components/conversation/TaskProgress.svelte";
 import { userInputOptionForKey } from "../src/lib/conversation/userInput";
 import type { CredentialRequestRowBody } from "../src/lib/conversation/view/contracts";
-import type { PlanEntry } from "../src/lib/conversation/wire";
 
 const command = "xcrun altool --upload-app -f build/Wren-41.ipa -t ios --apiKey $ASC_KEY_ID";
 const ask = {
@@ -33,28 +30,32 @@ describe("the permission ask", () => {
     expect(count(body, "xcrun altool")).toBe(1);
   });
 
-  it("answers with the shared button: cancel first, approve once the one primary, last", () => {
-    const { body } = render(PermissionAskActions, {
-      props: { ask, onAnswer: () => {}, onCancelTurn: () => {} }
-    });
+  it("answers with one list of numbered rows: approve once first as the default, decline last", () => {
+    const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } });
     const order = [...body.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1]);
-    expect(order).toEqual(["cancel_turn", "deny", "always", "allow"]);
-    expect(count(body, "cv-button--primary")).toBe(1);
-    expect(body).toMatch(/class="cv-button[^"]*cv-button--primary[^"]*"[^>]*data-conversation-ask-action="allow"/);
-    expect(body).toMatch(/class="cv-button[^"]*cv-button--secondary[^"]*"[^>]*data-conversation-ask-action="always"/);
-    // Deny is an outline: a full button, a step below the filled standing permission, never red.
-    expect(body).toMatch(/class="cv-button[^"]*cv-button--outline[^"]*"[^>]*data-conversation-ask-action="deny"/);
-    expect(body).not.toContain("cv-button--danger");
+    expect(order).toEqual(["allow", "always", "deny"]);
+    // No row of big buttons on the composer: rows, each with its number key.
+    expect(body).not.toContain("cv-button--primary");
+    expect(body).not.toContain("cv-button--outline");
+    expect(body).toMatch(/class="c2-ask-choice[^"]*is-default[^"]*"[^>]*data-conversation-ask-action="allow"/);
+    expect(count(body, "is-default")).toBe(1);
+    expect(body).toMatch(/data-conversation-ask-action="allow"[^>]*aria-keyshortcuts="1"/);
+    expect(body).toMatch(/data-conversation-ask-action="deny"[^>]*aria-keyshortcuts="3"/);
+    // The command is read before the answers.
+    expect(body.indexOf("xcrun altool")).toBeLessThan(body.indexOf('data-conversation-ask-action="allow"'));
   });
 
-  it("draws its own answers in the shell's footer when it is given the way out", () => {
-    const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, onCancelTurn: () => {} } });
+  it("draws no way to stop the turn: that is the composer's one stop button", () => {
+    const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } });
+    expect(body).not.toContain("cancel_turn");
+    expect(body).not.toContain("Stop turn");
+  });
+
+  it("still answers an ask that offered nothing, with the answers Panels supplies", () => {
+    const { body } = render(PermissionAskCard, { props: { ask: { ...ask, options: [] }, onAnswer: () => {} } });
     const order = [...body.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1]);
-    expect(order).toEqual(["cancel_turn", "deny", "always", "allow"]);
-    expect(body).toContain("<span>Stop turn</span>");
-    // Without it the host draws them, so they are never drawn twice.
-    const bare = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } }).body;
-    expect(bare).not.toContain("data-conversation-ask-action");
+    expect(order).toEqual(["allow_once", "reject_once"]);
+    expect(body).toContain('data-conversation-ask-supplied="false"');
   });
 });
 
@@ -96,16 +97,12 @@ describe("the question panel", () => {
     expect(body).toContain("Something else…");
   });
 
-  it("names ending the turn as the permission ask does: Stop turn", () => {
+  it("draws no stop of its own: the turn is stopped from the composer", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: { request: { requestId: "q-2", questions: [] } }
     });
-    expect(body).toMatch(/data-user-input-cancel[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
-    expect(body).not.toMatch(/>Cancel turn</);
-    const actions = render(PermissionAskActions, {
-      props: { ask, onAnswer: () => {}, onCancelTurn: () => {} }
-    }).body;
-    expect(actions).toMatch(/data-conversation-ask-action="cancel_turn"[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
+    expect(body).not.toContain("data-user-input-cancel");
+    expect(body).not.toContain("Stop turn");
   });
 });
 
@@ -155,14 +152,6 @@ describe("the credential request", () => {
     expect(body).toMatch(/class="help-toggle[^"]*"[^>]*aria-expanded="false"[^>]*>How to get a key<svg class="help-chevron/);
   });
 
-  it("ends a running turn as the other asks do, first in its row, and only when one runs", () => {
-    const running = render(ConversationCredentialRequestCard, { props: { request, onCancelTurn: () => {} } }).body;
-    expect(running).toMatch(/data-credential-cancel-turn[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
-    expect(running.indexOf("<span>Stop turn</span>")).toBeLessThan(running.indexOf(">Decline<"));
-    const settled = render(ConversationCredentialRequestCard, { props: { request } }).body;
-    expect(settled).not.toContain("Stop turn");
-  });
-
   it("keeps a settled request a quiet line, without the ask label", () => {
     const { body } = render(ConversationCredentialRequestCard, {
       props: { request: { ...request, state: "rejected" } }
@@ -170,55 +159,6 @@ describe("the credential request", () => {
     expect(body).not.toContain("Needs a key");
     expect(body).not.toMatch(/class="key-request[^"]*is-ask/);
     expect(body).toContain("Rejected");
-  });
-});
-
-describe("task progress", () => {
-  it("reads as the step in hand, not a count of finished ones", () => {
-    const entries = [
-      { text: "Reproduce", status: "completed" },
-      { text: "Read", status: "completed" },
-      { text: "Confirm", status: "in_progress" },
-      { text: "Write", status: "pending" },
-      { text: "Propose", status: "pending" }
-    ] satisfies PlanEntry[];
-    const { body } = render(TaskProgress, {
-      props: {
-        variant: "strip",
-        progress: {
-          entries,
-          currentPosition: 3,
-          currentEntry: null,
-          completedCount: 2,
-          hasUnfinishedEntry: true,
-          turnRunning: true
-        }
-      }
-    });
-    expect(body).toContain("Step 3 of 5");
-    expect(body).toContain("Step 3 of 5: Confirm, 2 complete");
-    expect(body).toContain("2 of 5 done");
-  });
-
-  it("names the step in hand on the pill, from the indexed excerpt before the list is read", () => {
-    const { body } = render(TaskProgress, {
-      props: {
-        variant: "strip",
-        progress: {
-          entries: [],
-          totalCount: 5,
-          currentPosition: 3,
-          currentEntry: { text: "Run the sync test under -race on a CI-sized runner", status: "in_progress" },
-          completedCount: 2,
-          hasUnfinishedEntry: true,
-          turnRunning: true
-        }
-      }
-    });
-    const current = /data-conversation-task-current[^>]*>([\s\S]*?)<\/span>/.exec(body)?.[1] ?? "";
-    expect(current.replace(/<!--[^>]*-->/g, "").replace(/<[^>]+>/g, "")).toBe("Run the sync test under -race on a CI-sized runner");
-    // The flag in the step is set in the one inline-code face.
-    expect(current).toMatch(/<code class="cv-code[^"]*">-race<\/code>/);
   });
 });
 
@@ -269,7 +209,7 @@ describe("an own answer written in the composer", () => {
     });
     expect(body).not.toContain("data-user-input-other");
     expect(body).toContain("data-user-input-own");
-    expect(body).toContain("Type your own answer in the message box");
+    expect(body).toContain("Type your own answer below");
     // Standing alone (no composer under it) it keeps its own field.
     const alone = render(UserInputQuestionPanel, { props: { request: { requestId: "q-own", questions: [single] }, onSubmit: () => {} } }).body;
     expect(alone).toContain("data-user-input-other");

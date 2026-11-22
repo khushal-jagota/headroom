@@ -35,7 +35,6 @@
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
-  import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
   import UserInputQuestionPanel from "./UserInputQuestionPanel.svelte";
   import ConversationCredentialRequestCard from "./ConversationCredentialRequestCard.svelte";
@@ -50,6 +49,7 @@
   import { readComposerDraft, writeComposerDraft } from "../../lib/conversation/composerDraft";
   import {
     applyComposerRunSelectionIntent,
+    composerPlaceholderFor,
     resolveComposerRunControls
   } from "../../lib/conversation/runControls/logic/runSelection";
   import type {
@@ -362,7 +362,13 @@
         ? "answers"
         : "holds"
   );
-  let shownPlaceholder = $derived(askWaiting === "answers" ? "Type your own answer…" : placeholder);
+  /** One line until there is more to hold than one line: the add button, the draft, the run
+   *  chips, the microphone and send/stop share a single row. Words that wrap, a line break,
+   *  an attachment or a voice take grow it into its two rows; it goes back to one line only
+   *  once the draft is empty again, so it never flickers between the two while typing. */
+  let draftWraps = $state(false);
+  let compact = $derived(!draftWraps && attachments.length === 0 && voiceState.phase === "idle");
+  $effect(() => { if (text === "") draftWraps = false; });
   // The composer stays usable under a waiting ask (owner): the ask is answered in its own
   // shell, and a message still goes as the delivery chip says.
   let inputDisabled = $derived(disabled || attachmentIntakesInFlight > 0);
@@ -419,6 +425,7 @@
     askWaiting
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
+  let shownPlaceholder = $derived(composerPlaceholderFor({ askWaiting, mode: runControlsView.deliveryMode, running, base: placeholder }));
   $effect(() => {
     const selection = runSelection;
     if (onPreviewRunSelection) untrack(() => onPreviewRunSelection?.(selection));
@@ -1023,6 +1030,7 @@
       textareaMeasurement = createComposerTextareaMeasurement(input);
     }
     const size = textareaMeasurement.measure(style);
+    if (!draftWraps && (size.growth > 0 || input.value.includes("\n"))) draftWraps = true;
     const height = `${size.height}px`;
     const host = input.closest<HTMLElement>(".ticket-page, .manager-page") ?? input.closest<HTMLElement>("[data-conversation-pane]");
     host?.style.setProperty("--composer-growth", `${size.growth}px`);
@@ -1031,6 +1039,35 @@
   }
 
   let boxElement = $state<HTMLDivElement | null>(null);
+
+  /** The box morphs between its shapes (one line, two rows, an ask) rather than jumping: its
+   *  height is read before the change and eased from there to its new natural height. The
+   *  words inside are laid out at once; only the frame travels. */
+  let morphFrom: number | null = null;
+  let morphAnimation: Animation | null = null;
+  $effect.pre(() => {
+    compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
+    untrack(() => { morphFrom = boxElement?.isConnected ? boxElement.getBoundingClientRect().height : null; });
+  });
+  $effect(() => {
+    compact; panelTakesTheBox; userInput; ask; credentialInTheBox;
+    untrack(() => {
+      const box = boxElement;
+      const from = morphFrom;
+      morphFrom = null;
+      if (box === null || from === null || !box.isConnected) return;
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+      morphAnimation?.cancel();
+      const to = box.getBoundingClientRect().height;
+      if (Math.abs(to - from) < 1) return;
+      box.style.overflow = "clip";
+      const animation = box.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 220, easing: "cubic-bezier(.2,.7,.3,1)" });
+      morphAnimation = animation;
+      const release = (): void => { if (morphAnimation === animation) { box.style.removeProperty("overflow"); morphAnimation = null; } };
+      animation.onfinish = release;
+      animation.oncancel = release;
+    });
+  });
 
   // --- popovers --------------------------------------------------------------------------------
   /** Every popover the composer opens (add, catalog, model, delivery) opens from the box's top
@@ -1212,59 +1249,6 @@
         {/if}
       </article>
     {/each}
-    <!-- Waiting messages stand over the box as plain lines of their own words, each with its
-         small actions: no card, no header, nothing that moves the box when one comes or goes. -->
-    <HeldPromptStack
-      rows={heldPromptRows}
-      {conversationId}
-      supportsSteer={supportsSteer && askWaiting === null}
-      {running}
-      onDiscard={onDiscardHeldPrompt}
-      onPromote={onPromoteHeldPrompt}
-      onStopDrawing={onStopDrawingHeldPrompt}
-      onSendAgain={onSendHeldPromptAgain}
-    />
-
-    <!-- A waiting ask docks over the composer, where the person types; the composer stays
-         under it, one line high, so they can still say something instead of (or as well as)
-         answering. -->
-    {#if panelTakesTheBox}
-    <div class="chat-ask" data-conversation-ask-dock data-conversation-taken-over="true">
-        {#if userInput}
-          <UserInputQuestionPanel
-            bind:this={questionPanel}
-            bind:acceptsOwnAnswer={questionTakesOwnAnswer}
-            ownAnswer={attachments.length === 0 ? text : ""}
-            onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
-            onWriteOwnAnswer={() => inputElement?.focus()}
-            request={userInput}
-            busy={disabled}
-            answerAvailable={userInputAvailable}
-            note={userInputNote}
-            onSubmit={(answers) => onSubmitUserInput?.(answers)}
-            onCancelTurn={() => onCancelTurn?.()}
-          />
-        {:else if takenOver && ask}
-          <PermissionAskCard
-            ask={ask}
-            answerAvailable={permissionAvailable}
-            busy={disabled}
-            note={askNote}
-            onAnswer={(optionId) => onAnswer?.(optionId)}
-            onCancelTurn={() => onCancelTurn?.()}
-          />
-        {:else if credentialInTheBox && credentialRequest}
-          <!-- A turn still running while the key is asked for can be ended from here, as it can
-               from a question or a permission ask; a request left by a finished turn has no turn
-               to end, so the card offers only its own answers. -->
-          <ConversationCredentialRequestCard
-            request={credentialRequest}
-            onCancelTurn={running && onCancelTurn ? () => onCancelTurn?.() : undefined}
-          />
-        {/if}
-    </div>
-    {/if}
-
     <!-- The field takes the keyboard on its own; the box only widens where a press reaches it. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
     <div
@@ -1274,7 +1258,10 @@
       class:has-attachments={attachments.length > 0}
       class:keyboard-focus={keyboardFocus}
       class:is-voice={voiceState.phase !== "idle"}
+      class:is-compact={compact}
+      class:has-ask={panelTakesTheBox}
       data-conversation-box
+      data-conversation-box-shape={compact ? "line" : "grown"}
       role="group"
       aria-label="Conversation composer"
       ondragenter={onDragEnter}
@@ -1284,6 +1271,39 @@
       onmousedown={keepTheFieldFocused}
       onclick={focusTheFieldFromTheBox}
     >
+      <!-- A waiting ask is the composer while it waits: the same frame takes the ask's title,
+           body and answers, and the composer's own line stays under them, so the person can
+           still write (an own answer to a question, or a message that waits for the turn). -->
+      {#if panelTakesTheBox}
+      <div class="chat-ask" data-conversation-ask-dock data-conversation-taken-over="true">
+        {#if userInput}
+          <UserInputQuestionPanel
+            bind:this={questionPanel}
+            bind:acceptsOwnAnswer={questionTakesOwnAnswer}
+            framed={false}
+            ownAnswer={attachments.length === 0 ? text : ""}
+            onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
+            onWriteOwnAnswer={() => inputElement?.focus()}
+            request={userInput}
+            busy={disabled}
+            answerAvailable={userInputAvailable}
+            note={userInputNote}
+            onSubmit={(answers) => onSubmitUserInput?.(answers)}
+          />
+        {:else if takenOver && ask}
+          <PermissionAskCard
+            ask={ask}
+            framed={false}
+            answerAvailable={permissionAvailable}
+            busy={disabled}
+            note={askNote}
+            onAnswer={(optionId) => onAnswer?.(optionId)}
+          />
+        {:else if credentialInTheBox && credentialRequest}
+          <ConversationCredentialRequestCard request={credentialRequest} framed={false} />
+        {/if}
+      </div>
+      {/if}
       {#if attachments.length > 0}
         <div class="chat-attachments" data-conversation-attachments aria-label="Attached and waiting to send">
           {#each attachments as attachment (`${attachment.kind}-${attachment.value.id}`)}
@@ -1578,7 +1598,6 @@
               intents={runControlIntents}
               bind:snapshots={backends}
               beforeSubmit={microphone}
-              stopElsewhere={userInput !== null || ask !== null || (credentialInTheBox && running && onCancelTurn !== undefined)}
             />
           {:else}
             <span class="chat-submit">{@render microphone()}</span>
@@ -1807,17 +1826,36 @@
     .chat-add-menu { animation: none; }
   }
 
-  /* --- an ask in the composer's place ---------------------------------------------------------- */
-  /* An ask is a band on top of the box: the input keeps its resting height underneath, so the
-     composer stays the size it always was. When the ask draws its own shell (AskShell), the box
-     gives up its own fill, edge and inset so the two never nest. */
-  :global(.chat-box.has-ask) { padding-top: 0; }
-  :global(.chat-box.has-ask:has(> [data-ask-shell], > .key-request.is-ask)) {
-    padding: 0;
-    background: none;
-    border-color: transparent;
-    box-shadow: none;
+  /* --- one line, two rows, an ask: the box's three shapes ------------------------------------ */
+  /* At rest the composer is one line: add, the draft, the run chips, the microphone and
+     send/stop on a single row inside the one frame. Its foot gives its controls to that row
+     (display: contents), so nothing is drawn twice and nothing is re-made between shapes. */
+  .chat-box.is-compact {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--cv-s1);
+    padding: var(--cv-s2);
   }
+  .chat-box.is-compact > .chat-ta { flex: 1 1 0; order: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
+  .chat-box.is-compact > .chat-foot { display: contents; }
+  .chat-box.is-compact > .chat-foot > :global(*) { order: 2; }
+  .chat-box.is-compact > .chat-foot > .chat-add { order: 0; }
+  .chat-box.is-compact > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-start: 0; }
+  .chat-box.is-compact .chat-ta::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* An ask is the composer while it waits: the same frame, the same width, the same place.
+     The ask's eyebrow, title, content and answers stand in the frame on its own inset, and the
+     composer's line stays under them for an own answer or a message. The frame eases between
+     its heights (morph); the ask's words rise in with the shell's own entrance. Under an ask
+     the line keeps to what writing needs: the draft, the delivery chip, voice and send/stop. */
+  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s2); }
+  .chat-box.has-ask { padding-top: var(--cv-s1); }
+  .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s3) var(--cv-s3) 0; }
+  .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) 0 0 var(--cv-s3); }
+  .chat-box.has-ask.is-compact > .chat-foot > :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
+  .chat-box.has-ask.is-compact > .chat-ta { padding-inline-start: var(--cv-s3); }
+
   /* A message on its way out. The box is already empty and already typeable, so the arrow
      staying lit is the one thing on screen that says the send has not landed yet. */
   :global(.chat-send.is-sending:disabled) {
@@ -1841,20 +1879,18 @@
   }
 
   /* --- popovers -------------------------------------------------------------------------------- */
-  /* Every popover the composer opens stands on the floating plane and opens upward, 8px over the
-     shell's top edge, at its own trigger: the add menu from the shell's left, the catalog across
-     it, the model and delivery pickers from its right. They overlay what stands over the shell
-     (the status slot, the transcript's last lines) and never move it. Their height is capped by
-     the room over the composer (app.css, --conversation-popup-height). */
+  /* A menu opens from the control that opened it, as a native dropdown does: anchored on its
+     own button, 6px off it, its edge on the button's edge (the add menu from +'s left, the
+     model and delivery pickers from their chips' right). It overlays what is above and never
+     moves it. Their height is capped by the room over the composer (app.css). */
   .chat-box :global(:is(.listbox-picker-panel, .chat-menu)) { z-index: 40; }
-  .chat-add,
-  .chat-box .chat-foot > :global([data-conversation-model-picker]) { position: static; }
-  .chat-box .chat-foot > :global([data-conversation-model-picker] > .listbox-picker-panel) {
+  .chat-add { position: relative; }
+  .chat-box .chat-foot :global([data-conversation-model-picker] > .listbox-picker-panel) {
     left: auto;
     right: 0;
-    bottom: calc(100% + var(--cv-s2));
+    bottom: calc(100% + 6px);
   }
-  .chat-add-menu { inset-block-end: calc(100% + var(--cv-s2)); inset-inline-start: 0; }
+  .chat-add-menu { inset-block-end: calc(100% + 6px); inset-inline-start: 0; }
 
   /* --- pending attachments (§3.9) -------------------------------------------------------------- */
   /* A picture is a 56px square that its thumbnail fills; a file is a 56px tile up to 240px wide
@@ -1865,7 +1901,7 @@
     border-radius: var(--cv-r-md);
     background: var(--cv-control);
   }
-  .chat-att.img { width: 56px; overflow: hidden; }
+  .chat-att.img { width: 56px; }
   .chat-att.img img { border-radius: var(--cv-r-md); }
   /* A picture keeps a hairline frame, so a dark image still reads as a tile. */
   .chat-att.img::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--cv-line-strong); pointer-events: none; }
@@ -1928,11 +1964,14 @@
     background: var(--cv-t2);
     transition: width var(--cv-dur-base) linear;
   }
-  /* Remove: a 20px round on the floating plane inside the tile's corner, 4px in, with a 24px
-     target. It is always there: a control people rely on is never hidden until hover. */
+  /* Remove: one rule for every tile. A 20px round on the floating plane, centred over the
+     tile's top-right corner and ringed in the composer's own fill, so it reads as lifted off
+     the tile, picture or file alike. Its target is 24px. It is always there: a control people
+     rely on is never hidden until hover. */
+  .chat-attachments { padding-block-start: var(--cv-s2); padding-inline-end: var(--cv-s3); }
   .chat-att-x {
-    top: 2px;
-    right: 2px;
+    top: -8px;
+    right: -8px;
     width: 24px;
     height: 24px;
     padding: 2px;
@@ -1940,6 +1979,7 @@
     border-radius: 50%;
     background: none;
     color: var(--cv-t2);
+    z-index: 1;
     transition: color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .chat-att-x:hover:not(:disabled), .chat-att-x:focus-visible { color: var(--cv-t1); }
@@ -1947,18 +1987,16 @@
     display: block;
     width: 20px;
     height: 20px;
-    padding: 4px;
+    padding: 5px;
     border-radius: 50%;
-    background: var(--cv-float);
-    box-shadow: 0 1px 4px rgb(0 0 0 / 45%);
+    background: var(--cv-control-hover);
+    box-shadow: 0 0 0 2px var(--cv-raised);
     fill: none;
     stroke: currentColor;
-    stroke-width: 2;
+    stroke-width: 2.2;
     stroke-linecap: round;
   }
-  .chat-att-x:hover:not(:disabled) svg { background: var(--cv-control-hover); }
+  .chat-att-x:hover:not(:disabled) svg { background: rgb(255 255 255 / 24%); }
   .chat-att-x:disabled { color: var(--cv-t4); cursor: default; }
-  /* The same corner on every tile: the file tile keeps that corner clear of its words, so the
-     round never crowds the name. */
-  .chat-att.file { padding-inline-end: 36px; }
+  .chat-att.file { padding-inline-end: var(--cv-s4); }
 </style>

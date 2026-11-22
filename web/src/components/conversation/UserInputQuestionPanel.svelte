@@ -12,8 +12,6 @@
     withOwnAnswer,
     type UserInputDraft
   } from "../../lib/conversation/userInput";
-  // One name for ending the turn on every ask: the permission ask's own words.
-  import { CANCEL_TURN_ACTION } from "../../lib/conversation/composer";
   import type { Snippet } from "svelte";
   import { onMount, untrack } from "svelte";
   import AskShell from "./AskShell.svelte";
@@ -29,8 +27,7 @@
     acceptsOwnAnswer = $bindable(false),
     onOwnAnswerUsed,
     onWriteOwnAnswer,
-    onSubmit,
-    onCancelTurn
+    onSubmit
   }: {
     request: { requestId: string; questions: readonly UserInputQuestion[] };
     busy?: boolean;
@@ -50,7 +47,6 @@
     /** The person chose "Something else": the composer takes the cursor. */
     onWriteOwnAnswer?: () => void;
     onSubmit?: (answers: UserInputAnswers) => void;
-    onCancelTurn?: () => void;
   } = $props();
 
   let step = $state(0);
@@ -168,16 +164,6 @@
   {/if}
 {/snippet}
 
-{#snippet stopTurn()}
-  <button
-    type="button"
-    class="cv-button cv-button--ghost cancel"
-    data-user-input-cancel
-    disabled={busy}
-    onclick={() => onCancelTurn?.()}
-  ><svg class="cv-stop-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" /></svg><span>{CANCEL_TURN_ACTION.label}</span></button>
-{/snippet}
-
 {#snippet commit()}
   <!-- The one primary. Before there is an answer it waits as a quiet outline. -->
   <button
@@ -200,7 +186,6 @@
     description={question.multi_select ? "Choose all that apply." : null}
     {framed}
     {replyStrip}
-    footerStart={stopTurn}
     footerEnd={commit}
     data-user-input-panel
     data-user-input-request-id={request.requestId}
@@ -251,7 +236,7 @@
           </span>
           <span class="words">
             <span class="label">{ownWords !== "" ? ownWords : "Something else"}</span>
-            <small>{ownWords !== "" ? "Your own answer" : "Type your own answer in the message box"}</small>
+            <small>{ownWords !== "" ? "Your own answer" : "Type your own answer below"}</small>
           </span>
         </button>
       </div>
@@ -279,7 +264,6 @@
     title="This question request contained no questions."
     {framed}
     {replyStrip}
-    footerStart={stopTurn}
     data-user-input-panel
     data-user-input-request-id={request.requestId}
     aria-label="Questions from the agent"
@@ -325,12 +309,13 @@
     width: 24px;
     height: 24px;
     border-radius: var(--cv-r-sm);
-    background: var(--cv-control);
-    color: var(--cv-t3);
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--cv-line-strong);
+    color: var(--cv-t2);
     font: var(--cv-weight-label) var(--cv-type-caption)/1 var(--cv-font);
     font-variant-numeric: tabular-nums;
   }
-  .selected .key { background: var(--cv-primary-fill); color: var(--cv-primary-ink); }
+  .selected .key { background: var(--cv-primary-fill); box-shadow: none; color: var(--cv-primary-ink); }
   .key svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .words { display: grid; gap: 2px; min-width: 0; }
   .label { overflow-wrap: anywhere; font: var(--cv-weight-label) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font); }

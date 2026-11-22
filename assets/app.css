@@ -1295,6 +1295,9 @@ a.pv-name:focus-visible { outline:0; }
   font-weight: var(--cv-weight-body);
   line-height: 1;
   padding: 0.1em 0.3em;
+  /* The chip's own right pad is pulled back, so a full stop or comma after it sits against
+     the code as it would against a word. */
+  margin-inline-end: -0.12em;
   border-radius: var(--cv-r-sm);
   background: var(--cv-control);
   color: var(--cv-t1);
@@ -1948,8 +1951,8 @@ button.list-row:hover .list-row-title {
   overflow-wrap: anywhere;
 }
 
-/* --- The composer stack's status slot (h28, gone when empty): the task pill at the left,
- * the jump to the newest line in the middle. In flow between transcript and composer. */
+/* --- The composer stack's status slot: the jump to the newest line, centred, in flow between
+ * transcript and composer, drawn only while there is something below to go back to. */
 .cv-status-slot {
   position: relative;
   flex: none;
@@ -1959,9 +1962,6 @@ button.list-row:hover .list-row-title {
   min-height: 28px;
   margin-block-end: var(--cv-s2);
 }
-.cv-status-slot:not(:has(.cv-jump, .cv-status-start *)) { display: none; }
-.cv-status-start { grid-column: 1; min-width: 0; display: flex; justify-content: flex-start; }
-.cv-status-start:not(:has(*)) { display: none; }
 .cv-jump {
   grid-column: 2;
   display: inline-flex;
@@ -2020,13 +2020,15 @@ button.list-row:hover .list-row-title {
 .cv-button--outline:hover:not(:disabled) { background: var(--cv-control); }
 .cv-button--ghost:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
 .cv-button--danger { color: var(--cv-danger); }
+/* One rule for a control that cannot act yet, wherever it is: the control fill with its
+ * words in the meta tone. The composer's send round with nothing to send wears the same, so a
+ * question's Next before a choice and the empty composer's arrow read as one kind of thing:
+ * the step that is there, not yet available. */
 .cv-button:disabled { cursor: default; background: transparent; color: var(--cv-t4); }
-.cv-button--secondary:disabled { box-shadow: inset 0 0 0 1px var(--cv-line-strong); }
-/* A primary that cannot go yet keeps the primary's shape and fill, at half strength, so the
- * step it will take is recognisable before it is ready (dark ink on it stays 5:1). */
-.cv-button--primary:disabled {
-  background: color-mix(in srgb, var(--cv-primary-fill) 52%, var(--cv-raised));
-  color: var(--cv-primary-ink);
+.cv-button:is(.cv-button--primary, .cv-button--secondary):disabled {
+  background: var(--cv-disabled-fill, var(--cv-control));
+  box-shadow: none;
+  color: var(--cv-disabled-ink, var(--cv-t3));
 }
 .cv-button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
@@ -2119,6 +2121,13 @@ button.list-row:hover .list-row-title {
 }
 .chat-a--narration .markdown { color: inherit; }
 .chat-a--narration :is(strong, b) { color: var(--cv-t2); }
+/* Its code is set in the code face but not lifted on a chip: the reply's chips stay the
+   reply's, so working notes and the answer never wear the same weight. */
+.chat-thread .chat-a--narration .markdown :not(pre) > code {
+  padding: 0;
+  background: none;
+  color: var(--cv-t2);
+}
 
 /* THE COMPOSER (ConversationComposer.svelte), design direction v3 §3.12-3.13. One shell on the
  * raised plane, 16px round, two rows that never trade places: the draft (and, over it, waiting
@@ -2143,8 +2152,6 @@ button.list-row:hover .list-row-title {
   outline: none;
 }
 
-/* The task-progress popover shares the floating plane's shadow. */
-.task-pop { box-shadow: var(--cv-shadow-float); }
 
 /* The catalog of commands, skills and apps: the floating plane, opening upward across the box. */
 .chat-menu {
@@ -2308,9 +2315,8 @@ button.list-row:hover .list-row-title {
   font-family: var(--cv-font);
   font-size: var(--cv-type-meta);
 }
-/* Under a waiting ask the composer keeps its one shape: the same frame and the same two rows
- * of controls, so the box never changes form between states. */
-.chat-ask { display: flex; flex-direction: column; min-width: 0; margin-block-end: var(--cv-s2); }
+/* A waiting ask stands inside the composer's own frame (ConversationComposer). */
+.chat-ask { display: flex; flex-direction: column; min-width: 0; }
 .chat-foot > [data-conversation-model-picker] { flex: 0 1 auto; min-width: 0; margin-inline-start: auto; }
 /* Icon buttons: 32px, 8px round, the glyph in the quiet tone, lifting on a control fill. */
 .chat-image {

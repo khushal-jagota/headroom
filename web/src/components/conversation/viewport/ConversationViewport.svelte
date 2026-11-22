@@ -46,6 +46,8 @@
     activityUncertain = false,
     conversationState,
     emptyState,
+    afterTranscript,
+    anchorToEnd = false,
     reader = null,
     viewAnchor = $bindable(null),
     jump = $bindable(null)
@@ -70,6 +72,13 @@
     activityUncertain?: boolean;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
+    /** What stands at the very end of the thread after everything said: the person's
+     *  messages that are waiting to be sent. */
+    afterTranscript?: Snippet;
+    /** The thread reads from its end while something at the bottom needs the person (an ask
+     *  in the composer, a running turn, messages waiting): a short thread then sits on the
+     *  composer instead of leaving the space between them empty. */
+    anchorToEnd?: boolean;
     /** The way back to the newest line while the reader is away from it, for the pane to
      *  draw in the composer stack's status slot (never over the transcript), or null. */
     jump?: ConversationJump | null;
@@ -1208,6 +1217,7 @@
     onkeydown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stopAutomaticTravel(); }}
     data-at-top={atTheTop ? "true" : "false"}
     data-more-below={newestLineBelowTheView || newerHistory ? "true" : "false"}
+    data-anchor-end={anchorToEnd ? "true" : undefined}
   >
     <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
     {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
@@ -1231,7 +1241,7 @@
       {onSendAgain}
     />
     {/if}
-
+    {#if afterTranscript}{@render afterTranscript()}{/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -1247,42 +1257,28 @@
 </div>
 
 <style>
-  /* The thread's edges: a short canvas fade at an edge only while something is cut there,
-     so a line scrolled under the header or toward the composer softens out instead of being
-     sliced. With nothing beyond an edge, that edge stands sharp and at full tone. */
+  /* The thread's top edge: the header above is a solid canvas, and while anything is scrolled
+     up under it the thread fades in over a short distance from the header's bottom edge, so a
+     line passing under it is drawn out softly, never sliced and never ruled off. At the top
+     there is nothing beyond the edge and it stands sharp. The bottom edge is the composer's:
+     content is cut cleanly there, with no fade over the last lines. */
   .chat-thread {
     /* NEWEST_LINE_BOTTOM_GAP_PIXELS: the newest line's hover time and Copy hang in here. */
     padding-bottom: 32px;
     margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
     max-width: none;
-    /* Under the header the edge is the hairline: content passes under it cleanly, with no
-       half-faded line left in open space. Toward the composer a short fade softens the cut. */
-    --cv-fade-top: 0px;
-    --cv-fade-bottom: 16px;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-fade-top), #000 calc(100% - var(--cv-fade-bottom)), transparent 100%);
-            mask-image: linear-gradient(to bottom, transparent 0, #000 var(--cv-fade-top), #000 calc(100% - var(--cv-fade-bottom)), transparent 100%);
+    /* An eased ramp: the first lines under the edge stay nearly gone, so nothing half-cut
+       lingers as a ghost, then the thread comes in quickly to full tone. */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgb(0 0 0 / 4%) 10px, rgb(0 0 0 / 30%) 20px, rgb(0 0 0 / 80%) 30px, #000 36px);
+            mask-image: linear-gradient(to bottom, transparent 0, rgb(0 0 0 / 4%) 10px, rgb(0 0 0 / 30%) 20px, rgb(0 0 0 / 80%) 30px, #000 36px);
   }
-  .chat-thread[data-at-top="true"] { --cv-fade-top: 0px; }
-  /* The header's clean edge: while anything is scrolled up under it, one hairline across the
-     column marks where the header ends, and the text passes cleanly under that edge, so no
-     line is left half-drawn in open space. At the top the edge is not drawn. */
-  .chat-thread-shell::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 auto;
-    height: 1px;
-    background: var(--cv-line);
-    opacity: 0;
-    transition: opacity var(--cv-dur-fast) var(--cv-ease-out);
-    pointer-events: none;
-    z-index: 2;
-  }
-  .chat-thread-shell:has(> .chat-thread[data-at-top="false"])::before { opacity: 1; }
-  .chat-thread[data-more-below="false"] { --cv-fade-bottom: 0px; }
+  .chat-thread[data-at-top="true"] { -webkit-mask-image: none; mask-image: none; }
   /* A conversation shorter than the view reads from the top, under its header, as a page
-     does; the composer stays docked at the bottom. (Bottom-anchoring left the top half of a
-     short conversation empty.) */
+     does. While something at the bottom needs the person (an ask in the composer, a running
+     turn, messages waiting to be sent) it reads from its end instead, so what it is about sits
+     right on what needs them, with no empty band between. */
   .chat-thread-content { margin-block-start: 0; }
+  .chat-thread[data-anchor-end="true"] > .chat-thread-content { margin-block-start: auto; }
   /* An empty conversation takes the whole view, so its empty state can stand in the middle. */
   .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
   /* The browser keeps the reader's place when history arrives above them. Nothing

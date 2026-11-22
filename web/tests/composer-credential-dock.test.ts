@@ -22,26 +22,29 @@ const request: CredentialRequestRowBody = {
 const base = { draftKey: "composer-credential-dock", onSend: async () => true };
 
 describe("a key request is asked in the composer's place", () => {
-  it("docks the request over the composer, which stays usable under it", () => {
+  it("is the composer while it waits: the ask stands inside the composer's own frame", () => {
     const { body } = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request } });
     expect(body).toContain("Needs a key");
     expect(body).toMatch(/data-conversation-ask-dock[^>]*data-conversation-taken-over="true"/);
-    // The ask stands above the box, never inside it.
-    expect(body.indexOf("data-conversation-ask-dock")).toBeLessThan(body.indexOf("data-conversation-box"));
-    // The person can still write: the field is there, enabled, and the box keeps its one
-    // shape, with the same add button and model choice it has in every other state.
+    // One frame: the ask is inside the box, before the field, never a card above it.
+    const box = body.indexOf("data-conversation-box");
+    expect(box).toBeGreaterThan(-1);
+    expect(body.indexOf("data-conversation-ask-dock")).toBeGreaterThan(box);
+    expect(body.indexOf("data-conversation-ask-dock")).toBeLessThan(body.indexOf("data-conversation-input"));
+    expect(body).toMatch(/class="chat-box[^"]*has-ask/);
+    // The person can still write: the field is there, enabled, on the composer's one line.
     expect(body).not.toMatch(/<textarea[^>]*hidden/);
     expect(body).not.toMatch(/<textarea[^>]*disabled/);
-    expect(body).not.toContain("is-compact");
-    expect(body).toContain("data-conversation-add");
-    expect(body).toContain("data-conversation-model-picker");
+    expect(body).toMatch(/class="chat-box[^"]*is-compact/);
   });
 
-  it("ends the running turn from the request, and offers no such end with no turn running", () => {
+  it("is stopped from the composer's one stop button while a turn runs, never from the ask", () => {
     const running = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, running: true, onCancelTurn: () => {} } }).body;
-    expect(running).toMatch(/data-credential-cancel-turn[^>]*>(?:<svg[^]*?<\/svg>)?<span>Stop turn</);
-    const idle = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, onCancelTurn: () => {} } }).body;
-    expect(idle).not.toContain("data-credential-cancel-turn");
+    expect(running).not.toContain("data-credential-cancel-turn");
+    expect(running).not.toContain("Stop turn</span>");
+    expect(running).toMatch(/data-conversation-stop[^>]*aria-label="Stop turn"|aria-label="Stop turn"[^>]*data-conversation-stop/);
+    const idle = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request } }).body;
+    expect(idle).not.toContain("data-conversation-stop");
   });
 
   it("waits behind a permission ask, which is answered first", () => {

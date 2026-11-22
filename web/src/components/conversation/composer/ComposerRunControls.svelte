@@ -11,12 +11,8 @@
     intents,
     snapshots = $bindable(),
     beforeSubmit,
-    stopElsewhere = false,
     onRetry
   }: {
-    /** The turn's Stop is drawn by a waiting ask's own footer, just above; the row does not
-     *  draw a second one. */
-    stopElsewhere?: boolean;
     onRetry?: () => Promise<void>;
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
@@ -49,7 +45,8 @@
      a turn runs: with nothing running a message starts the next turn whatever it says. The
      row always ends in one 32px round: Send, quiet until there is something to send; while
      a turn runs, Stop, with Send beside it once there is a draft. Stop stays reachable while
-     writing, because a draft is no reason to lose the way to end the turn. -->
+     writing, because a draft is no reason to lose the way to end the turn. It is the one stop
+     there is: a turn that waits on an ask is stopped here too, never from the ask. -->
 <div class="chat-submit">
   {#if view.showDeliveryMode}
     <DeliveryModePicker
@@ -60,7 +57,7 @@
     />
   {/if}
   {#if beforeSubmit}{@render beforeSubmit()}{/if}
-  {#if view.showStop && !stopElsewhere}
+  {#if view.showStop}
     <button
       type="button"
       class="chat-send stop"
@@ -71,7 +68,7 @@
     ><span class="chat-send-fill" aria-hidden="true"></span></button>
   {/if}
   <!-- Sending leaves the cursor in the field, so a phone's keyboard stays up for the reply. -->
-  {#if view.submit.active || view.submit.sending || !view.showStop || stopElsewhere}
+  {#if view.submit.active || view.submit.sending || !view.showStop}
     <button
       type="button"
       class={`chat-send${view.submit.active ? " on" : ""}`}

@@ -117,8 +117,9 @@
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    /* The work's own sentence stands a tone under the agent's words: quiet, not bright. */
-    color: var(--cv-t3);
+    /* The verb leads the line a tone over its subject; the whole line stays under the
+       agent's words, which are t2 and larger. */
+    color: var(--cv-t2);
     font-weight: var(--cv-weight-label);
   }
   .c2-run-subject {
@@ -126,7 +127,7 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--cv-t4);
+    color: var(--cv-t3);
   }
   /* Code in the line is set at the line's own size, so it reads as one line, not a smaller one. */
   .c2-run-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-meta); }
@@ -134,7 +135,7 @@
     display: inline-flex;
     gap: 6px;
     min-width: max-content;
-    color: var(--cv-t4);
+    color: var(--cv-t3);
     font-size: var(--cv-type-caption);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;

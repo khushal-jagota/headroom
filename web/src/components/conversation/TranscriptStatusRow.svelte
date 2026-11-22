@@ -106,7 +106,7 @@
         <div class="c2-status-actions">
           {#if actions}{@render actions()}{/if}
           {#if status.action === "choose-model"}
-            <button type="button" class="cv-button cv-button--primary cv-button--small" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
+            <button type="button" class="cv-button cv-button--primary cv-button--small c2-status-choose" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
           {/if}
           {@render detailsToggle()}
         </div>
@@ -211,7 +211,17 @@
 
   /* Details is a quiet ghost beside the real next step, never above it. Its chevron sits
      right after its word. */
-  .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t3); }
+  .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t2); }
+  /* One primary on the screen: the newest failure holds it. A turn failure with a message
+     that was not delivered after it hands its button down to a secondary, so Resend, the step
+     for what is current, is the one bright action. */
+  :global([data-conversation-transcript] > :has(~ * [data-conversation-message-status="error"])) .c2-status-choose {
+    background: var(--cv-control);
+    color: var(--cv-t1);
+  }
+  :global([data-conversation-transcript] > :has(~ * [data-conversation-message-status="error"])) .c2-status-choose:hover {
+    background: var(--cv-control-hover);
+  }
   .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { color: var(--cv-t1); }
   .c2-status-actions > .c2-status-toggle:first-child { margin-inline-start: calc(var(--cv-s2) * -1); }
   .c2-status-chevron {

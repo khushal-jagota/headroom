@@ -108,6 +108,28 @@ export function askActions(
   return actions;
 }
 
+export type PermissionAnswerRow = Extract<AskAction, { act: "answer" }> & {
+  /** The number key that picks it, for the first nine. */
+  shortcutDigit: number | null;
+};
+
+/** A permission ask's answers as one list of rows to choose from, in the order they are
+ *  read: approve once first (the default, key 1), then the backend's standing answers, then
+ *  decline last. The same rows a question's choices are, so every ask reads one way. */
+export function permissionAnswerRows(
+  ask: { options?: readonly PermissionAskOption[] } | null
+): PermissionAnswerRow[] {
+  const answers = askActions(ask).filter(
+    (action): action is Extract<AskAction, { act: "answer" }> => action.act === "answer"
+  );
+  const ordered = [
+    ...answers.filter((action) => action.emphasis === "primary"),
+    ...answers.filter((action) => action.emphasis === "option"),
+    ...answers.filter((action) => action.emphasis === "decline")
+  ];
+  return ordered.map((action, index) => ({ ...action, shortcutDigit: index < 9 ? index + 1 : null }));
+}
+
 /** Whether Panels had to supply an anchor, which is what makes a card the generic one. */
 export function askIsGeneric(ask: { options?: readonly PermissionAskOption[] } | null): boolean {
   return askActions(ask).some((action) => !action.supplied);

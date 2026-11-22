@@ -152,13 +152,26 @@
   }
   .c2-system-body :global(.markdown strong) { color: var(--cv-t2); }
 
-  /* A message that never reached the agent is not drawn as one that did: the bubble gives up
-     its raised fill for an open outline and its words step down a tone, so it reads as still
-     in the person's hands. Its status note under it says why, and offers Resend. */
+  /* A message that never reached the agent is not drawn as one that did: its bubble steps
+     back (the well, the body tone) and a danger mark stands beside it on the left, as a
+     message app marks one that failed to send. The callout under it says why and offers
+     Resend. No edge or rule carries it. */
   .chat-u.undelivered :global(.c2-bubble) {
-    background: transparent;
-    box-shadow: inset 0 0 0 1px var(--cv-line-strong);
+    position: relative;
+    background: var(--cv-well);
     color: var(--cv-t2);
+  }
+  .chat-u.undelivered :global(.c2-bubble)::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: calc(100% + 10px);
+    width: 18px;
+    height: 18px;
+    margin-top: -9px;
+    background: var(--cv-danger);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 3.2a.9.9 0 0 0-.9.9v3.4a.9.9 0 0 0 1.8 0V5.1a.9.9 0 0 0-.9-.9Zm0 6.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
   }
 
   .message-status-window { align-self: stretch; margin-block-start: calc(var(--cv-gap-bubble-stack) * -1); }
