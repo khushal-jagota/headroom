@@ -28,7 +28,7 @@
   import { formatDuration } from "../../lib/conversation/transcript";
   import { fittedTitle } from "../../lib/conversation/titleFit";
   import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
-  import { restLineMarksFrom } from "../../lib/conversation/restLine";
+  import { lastTurnFailedFrom } from "../../lib/conversation/whatHappened";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
   import type {
@@ -287,7 +287,7 @@
   // person sends something after it: the same facts the dock's line and the error rows use.
   let headFailure = $derived(outgoingMessages.length > 0 ? null : paneFailureFrom(reader?.status
     ? { lastBoundaryFailed: reader.status.rest.last_boundary_failed, latestKind: reader.status.rest.latest_happened?.kind ?? null }
-    : { lastBoundaryFailed: restLineMarksFrom(rows, ownerReadThroughSequence, running).failed, latestKind: rows.at(-1)?.kind ?? null }));
+    : { lastBoundaryFailed: lastTurnFailedFrom(rows), latestKind: rows.at(-1)?.kind ?? null }));
   // The newest thing that happened is the turn being stopped: "Interrupted" until the next turn.
   let headInterrupted = $derived(outgoingMessages.length > 0 ? false : interruptedFrom(reader?.status
     ? reader.status.rest.latest_happened as { kind: string; ending?: string } | null

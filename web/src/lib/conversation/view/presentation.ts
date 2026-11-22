@@ -1,13 +1,10 @@
 /** Shape conversion only. The server projection owns visibility and turn membership. */
-import type { ConversationViewRow, ViewRowBody, ConversationViewTurn, ConversationViewStatus, ViewRestEvent } from './contracts';
+import type { ConversationViewRow, ViewRowBody, ViewRestEvent } from './contracts';
 import type { MessagePiece } from '../wire';
 import type { ViewMessagePiece } from './contracts';
 import type { TranscriptRow } from '../transcript';
 import { refusalSentence } from '../transcript';
-import type { ThreadItem } from '../threadLayout';
-import type { ConversationTaskProgress } from '../taskProgress';
-import { whatThisRowSays, toolCallSentence, restLineBodyFor, type RestLine } from '../restLine';
-import { presentToolCall } from '../toolCallPresentation';
+import { whatThisRowSays } from '../whatHappened';
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
 
 export function transcriptHistoryEdges(pages: readonly Pick<ConversationViewPage, 'scope' | 'items' | 'older' | 'newer'>[], items: readonly ConversationViewItem[]): {
@@ -65,15 +62,6 @@ export function rowForBody(item: Pick<ConversationViewRow, 'key' | 'source_seque
     rowsByBody.set(body, { key: item.key, row });
     return row;
 }
-export function turnFor(item: ConversationViewTurn): Extract<ThreadItem, {
-    kind: 'turn';
-}> {
-    return { kind: 'turn', key: item.key, turnKey: item.key, settled: item.settled, stopped: item.stopped, startedAtUnixMilliseconds: item.started_at_unix_milliseconds, ending: item.ending, isLatest: item.is_latest, durationSeconds: item.duration_seconds, toolCallCount: item.tool_call_count, foldedMessageCount: item.folded_message_count };
-}
-export function progressFor(status: ConversationViewStatus): ConversationTaskProgress {
-    const p = status.rest.plan_progress;
-    return { entries: [], totalCount: p.total_count, currentPosition: p.current_position, currentEntry: p.current_text_excerpt === null ? null : { text: p.current_text_excerpt, status: 'in_progress' }, completedCount: p.completed_count, hasUnfinishedEntry: p.has_unfinished_entry, turnRunning: status.turn_running === true };
-}
 export function happened(event: ViewRestEvent | null, sender: string): {
     who: string | null;
     text: string;
@@ -91,42 +79,4 @@ export function happened(event: ViewRestEvent | null, sender: string): {
     if (event.kind === 'turn_ended' || event.kind === 'context_compacted' || event.kind === 'turn_stopped')
         return whatThisRowSays(rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, event), sender);
     return null;
-}
-/** What a running turn is doing right now, in the sentence its tool row reads as.
- *
- * Only a tool call that is still running counts, and only for the turn the status is about:
- * a finished call under a counter that says the turn is working would be news from before.
- * The status names the newest call of the latest turn; nothing is guessed when it does not. */
-/** What a running turn is doing now, in the words its tool row uses: the whole sentence,
- *  and its two halves, so the subject can be set as code when (and only when) it is the
- *  literal thing the call acts on, as the row sets it. */
-export type RunningToolActivity = { sentence: string; title: string; summary: string | null; summaryIsLiteral: boolean };
-
-export function runningToolSentence(status: ConversationViewStatus | null | undefined, turnKey: string): RunningToolActivity | null {
-    if (!status || status.authority !== 'current' || status.turn_running !== true || status.turn_key !== turnKey) return null;
-    const tool = status.rest.latest_tool;
-    if (tool?.body.kind !== 'inline' || tool.body.value.kind !== 'tool_call' || tool.body.value.status !== 'running') return null;
-    const row = rowForBody({ key: 'live', source_sequence: 0, created_at: 0 }, tool.body.value);
-    if (row.kind !== 'tool_call') return null;
-    const sentence = toolCallSentence(row);
-    if (!sentence) return null;
-    const presented = presentToolCall(row);
-    return { sentence, title: presented.title, summary: presented.summary, summaryIsLiteral: presented.summaryIsLiteral };
-}
-export function restFor(status: ConversationViewStatus, sender: string, readThrough: number, progress = progressFor(status)): RestLine | null {
-    const facts = status.rest;
-    const last = happened(facts.latest_happened, sender);
-    const running = status.turn_running === true;
-    const tool = facts.latest_tool;
-    const row = tool?.body.kind === 'inline' ? rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, tool.body.value) : null;
-    const line = restLineBodyFor({
-        permissionTitle: status.pending_permission === null ? null : facts.permission_title_excerpt ?? 'waiting for you',
-        running,
-        startedAt: facts.latest_turn?.started_at_unix_milliseconds ?? null,
-        tool: row?.kind === 'tool_call' ? toolCallSentence(row) : tool?.title ?? null,
-        last,
-        progress
-    });
-    if (line === null) return null;
-    return { ...line, marks: { running, unreadReply: facts.latest_owner_message_sequence > readThrough, failed: facts.last_boundary_failed } };
 }

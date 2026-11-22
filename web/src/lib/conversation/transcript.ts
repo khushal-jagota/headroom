@@ -206,20 +206,6 @@ export function refusalSentence(reason: PromptDeliveryRefusalReason, detail?: st
 export const PROMPT_DISCARDED_SENTENCE = "discarded without being delivered";
 export const AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE = "context was not compacted";
 
-const TURN_ENDING_SENTENCES: Record<ConversationTurnEnding, string> = {
-  completed: "turn complete",
-  failed: "turn failed",
-  interrupted: "turn interrupted"
-};
-
-export function turnEndingSentence(
-  ending: ConversationTurnEnding,
-  errorSummary: string | null
-): string {
-  const base = TURN_ENDING_SENTENCES[ending] ?? "turn ended";
-  return ending === "failed" && errorSummary ? errorSummary : base;
-}
-
 /** A line in the thread that says what happened to a turn or a message, rather than
  *  anything anybody said. Every one of them is drawn the same way: a mark in its tone, a
  *  plain sentence a person can act on, and, when the backend said something more exact,
@@ -840,10 +826,6 @@ function believable(minted: number, writtenDown: number): boolean {
 
 export type ToolCallRow = Extract<TranscriptRow, { kind: "tool_call" }>;
 
-/** How many of a running turn's tool calls stay visible in each run. The newest one is
- *  what is happening; the ones before it are what happened, and they wait behind a count. */
-export const VISIBLE_RUNNING_WORK_ENTRIES = 1;
-
 /** A length of time, in the one format this pane says them in.
  *
  * Whole seconds throughout: the record keeps integer unix seconds, so a tenth of a second
@@ -889,12 +871,6 @@ export function hasBackgroundTaskAfterTheTurn(
   status: { turn_running: boolean | null; background_tasks: readonly unknown[] } | null | undefined
 ): boolean {
   return backgroundTasksAfterTheTurn(status).length > 0;
-}
-
-/** The live counter on a turn that is still going. */
-export function workingSentence(elapsedSeconds: number | null): string {
-  if (elapsedSeconds === null || elapsedSeconds < 0) return "Working";
-  return `Working for ${formatDuration(elapsedSeconds)}`;
 }
 
 /** How far past the second the counter's tick is aimed.
@@ -944,11 +920,6 @@ export function turnFoldLabel(item: {
   return item.isLatest && item.ending === "interrupted"
     ? stoppedSentence(item.durationSeconds)
     : workedSentence(item.durationSeconds);
-}
-
-/** What the affordance over a running turn's older tool calls says. */
-export function hiddenWorkSentence(hiddenCount: number): string {
-  return `+${hiddenCount} previous tool call${hiddenCount === 1 ? "" : "s"}`;
 }
 
 /** What is behind an opened turn's fold, counted by what it is.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { whatThisRowSays } from "../src/lib/conversation/restLine";
+import { whatThisRowSays } from "../src/lib/conversation/whatHappened";
 import type { TranscriptRow } from "../src/lib/conversation/transcript";
 
 function turnEnded(ending: "completed" | "failed" | "interrupted", errorSummary: string | null): TranscriptRow {

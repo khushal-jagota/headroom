@@ -10,7 +10,7 @@ import type {
 } from "../src/lib/conversation/view/contracts";
 import type { ConversationViewReader } from "../src/lib/conversation/view/reader.svelte";
 import { executorAnswerSentence } from "../src/lib/conversation/executorEvidence";
-import { presentTense, toolCallSentence } from "../src/lib/conversation/restLine";
+import { presentTense, toolCallSentence } from "../src/lib/conversation/whatHappened";
 
 const turn = (settled: boolean): ConversationViewItem => ({
   kind: "turn", key: "turn:e1", order: { sequence: 1, slot: 1 }, changed_through_sequence: 5,
