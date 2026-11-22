@@ -1,3 +1,5 @@
+import { ClaudeUsageAdapter } from './runtime/allowance_usage.ts';
+import { http_get_usage } from '../../conversation/backend_usage/http.ts';
 /** Claude on an executor machine: its Agent SDK launch and its model list probe. */
 import { with_machine_environment } from '../core/executor.ts';
 import type { ExecutorDriver } from '../core/executor.ts';
@@ -33,6 +35,14 @@ export const claude_executor: ExecutorDriver = {
   catalog(host, custody) {
     const auth_paths = host.home === null ? null : claude_auth_paths(host.home, host.environment);
     return {
+      allowance_usage:
+        auth_paths === null
+          ? undefined
+          : new ClaudeUsageAdapter({
+              credential_path: auth_paths.credentials_path,
+              http_get: http_get_usage,
+              now: () => new Date(),
+            }),
       status: create_claude_status({
         catalog: (executable) =>
           custody.probe(async (signal) => {

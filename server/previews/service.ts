@@ -1,5 +1,6 @@
 import { ShutdownDeadlineExceeded } from '../lifecycle/contracts.ts';
 /** Async inspection never holds a database transaction across an await. */
+import { RemotePreviews } from './remote.ts';
 import { randomBytes } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { realpath } from 'node:fs/promises';
@@ -18,6 +19,7 @@ export class PreviewService {
   readonly panels_port: number;
   readonly server_epoch = randomBytes(16).toString('hex');
   readonly inspector = process_inspector();
+  readonly remote: RemotePreviews;
   private outstanding = 0;
   private closed = false;
   private rechecks_sealed = false;
@@ -32,6 +34,7 @@ export class PreviewService {
   private lifecycle_waiters: Array<() => void> = [];
   constructor(database: Database, public_origin: string, panels_port = 8767) {
     this.database = database;
+    this.remote = new RemotePreviews(database, public_origin);
     this.public_origin = public_origin.replace(/\/+$/, '');
     this.panels_port = panels_port;
   }
@@ -220,6 +223,7 @@ export class PreviewService {
     );
   }
   async check(ticket_id: string, generation: string): Promise<PreviewRecord> {
+    if (this.remote.has(generation)) return this.remote.check(ticket_id, generation);
     return this.run(() => this.inspect(ticket_id, generation));
   }
   async before_connection(record: PreviewRecord): Promise<void> {
@@ -252,6 +256,7 @@ export class PreviewService {
     }, true);
     const current = new Set(records.map((r) => r.generation));
     const ended = [...this.known].filter((g) => !current.has(g));
+    ended.push(...this.remote.recheck());
     this.known = current;
     if (this.rechecks_sealed) return ended;
     for (const record of records) {
@@ -272,6 +277,7 @@ export class PreviewService {
   }
   seal(): void {
     this.closed = true;
+    this.remote.close();
     this.seal_rechecks();
   }
   async settled(): Promise<void> {

@@ -2,7 +2,7 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import net from 'node:net';
 import { once } from 'node:events';
-import type { Duplex } from 'node:stream';
+import { Duplex } from 'node:stream';
 import WebSocket, { WebSocketServer, type RawData } from 'ws';
 import * as config from './config.ts';
 import {
@@ -35,11 +35,11 @@ function headers_object(headers: Header[]): http.OutgoingHttpHeaders {
   return result;
 }
 /** Count raw bytes before Node can normalize whitespace or allocate header fields. */
-class HeaderBoundedSocket extends net.Socket {
+class HeaderAdmission {
   private header_pending = true;
   private header_bytes = Buffer.alloc(0);
   private header_admitted = 0;
-  private admit(data: Buffer): void {
+  admit(data: Buffer): void {
     let offset = 0;
     while (this.header_pending && offset < data.length) {
       const allowed = config.HEADER_BYTES - this.header_admitted;
@@ -64,16 +64,80 @@ class HeaderBoundedSocket extends net.Socket {
       offset += consumed;
     }
   }
+}
+class HeaderBoundedSocket extends net.Socket {
+  private readonly admission = new HeaderAdmission();
   override emit(event: string | symbol, ...args: unknown[]): boolean {
-    if (event === 'data' && this.header_pending && Buffer.isBuffer(args[0])) {
+    if (event === 'data' && Buffer.isBuffer(args[0])) {
       try {
-        this.admit(args[0]);
+        this.admission.admit(args[0]);
       } catch (error) {
         this.destroy(error as Error);
         return false;
       }
     }
     return super.emit(event, ...args);
+  }
+}
+class HeaderBoundedRelay extends Duplex {
+  private idle_timer: ReturnType<typeof setTimeout> | undefined;
+  private idle_ms = 0;
+  private readonly admission = new HeaderAdmission();
+  readonly source: Duplex;
+  constructor(source: Duplex) {
+    super();
+    this.source = source;
+    source.on('data', (data: Buffer) => {
+      this.touch();
+      try {
+        this.admission.admit(data);
+        if (!this.push(data)) source.pause();
+      } catch (error) {
+        this.destroy(error as Error);
+      }
+    });
+    source.once('end', () => this.push(null));
+    source.once('close', () => this.destroy());
+    source.once('error', (error) => this.destroy(error));
+    source.pause();
+  }
+  override _read(): void {
+    this.source.resume();
+  }
+  override _write(
+    data: Buffer,
+    encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.touch();
+    this.source.write(data, encoding, callback);
+  }
+  override _final(callback: (error?: Error | null) => void): void {
+    this.source.end(callback);
+  }
+  override _destroy(error: Error | null, callback: (error: Error | null) => void): void {
+    clearTimeout(this.idle_timer);
+    this.source.destroy();
+    callback(error);
+  }
+  private touch(): void {
+    clearTimeout(this.idle_timer);
+    if (this.idle_ms > 0 && !this.destroyed) {
+      this.idle_timer = setTimeout(() => this.emit('timeout'), this.idle_ms);
+      this.idle_timer.unref();
+    }
+  }
+  setTimeout(milliseconds: number, callback?: () => void): this {
+    this.idle_ms = milliseconds;
+    if (callback) this.once('timeout', callback);
+    this.touch();
+    return this;
+  }
+  setNoDelay(): this {
+    return this;
+  }
+  setKeepAlive(): this {
+    return this;
   }
 }
 class VerifiedAgent extends http.Agent {
@@ -101,6 +165,18 @@ class VerifiedAgent extends http.Agent {
     void this.lifetime
       .track(async () => {
         if (this.connection_closed()) throw new Error('Preview connection admission is closed');
+        if (this.record.machine_id !== undefined) {
+          const socket = new HeaderBoundedRelay(await this.service.remote.connect(this.record));
+          if (this.connection_closed()) {
+            socket.destroy();
+            throw new Error('Preview connection admission is closed');
+          }
+          void this.lifetime.track(
+            () => new Promise<void>((resolve) => socket.once('close', resolve)),
+          );
+          callback?.(null, socket);
+          return;
+        }
         await this.service.before_connection(this.record);
         if (this.connection_closed()) throw new Error('Preview connection admission is closed');
         const socket = new HeaderBoundedSocket();

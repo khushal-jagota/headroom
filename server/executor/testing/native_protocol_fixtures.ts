@@ -192,6 +192,7 @@ export function native_wire_fixtures(): WireTypes {
     ['counts', [1, 1, 1.5, 1234, '1', 0]],
   ]);
   return {
+    BackendRequest: { backend_key: 'codex', operation: 'capabilities' },
     ServerLocation: {
       server_id: 'test-server',
       move_number: 0,

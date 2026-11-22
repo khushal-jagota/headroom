@@ -27,6 +27,7 @@ import { MacInbox } from './vps_inbox.ts';
 import { InboxStore } from './data/inbox.ts';
 import { FileStaging, VpsFiles } from './vps_files.ts';
 import { VpsCatalogRelay } from './catalog_relay.ts';
+import { VpsBackendControlRelay } from './backend_control_relay.ts';
 import { observe_promise } from '../core/promise_observer.ts';
 import { as_object, decode_event_arguments } from './protocol.ts';
 import {
@@ -84,6 +85,7 @@ export class VpsExecutor {
   readonly runs: MacRuns;
   readonly inbox: MacInbox;
   readonly catalog: VpsCatalogRelay;
+  readonly backend_controls: VpsBackendControlRelay;
   readonly message_files: ConversationMessageFiles;
   readonly files: VpsFiles;
   app!: FastifyInstance;
@@ -114,6 +116,7 @@ export class VpsExecutor {
     const staging = new FileStaging(options.db_path, this.machine_id);
     this.inbox = new MacInbox(new InboxStore(database, staging), clock, this.runs);
     this.catalog = new VpsCatalogRelay(database, this.runs, this.presence, this.mailbox);
+    this.backend_controls = new VpsBackendControlRelay(this.mailbox, this.presence);
     this.message_files = new ConversationMessageFiles(options.db_path);
     this.files = new VpsFiles(options.db_path, this.inbox, this.mailbox, this.message_files, {
       signal: options.media_signal,
@@ -477,6 +480,30 @@ export class VpsExecutor {
     this.admit();
     return this.files.input_file(identity, command_id, stored_file_id);
   }
+  check_preview_current(identity: ExecutorIdentity): void {
+    this.database.read((sql) =>
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      ),
+    );
+  }
+  preview_ticket(identity: ExecutorIdentity, child: WireValue<'ChildReference'>): string {
+    this.admit();
+    this.database.read((sql) => {
+      require_current_incarnation_in_transaction(
+        sql,
+        identity.executor_incarnation,
+        this.machine_id,
+      );
+      require_incarnation_owner(sql, child.executor_incarnation, this.machine_id);
+    });
+    const principal = this.runs.authority(child);
+    if (principal.kind !== 'ticket')
+      throw new PlannerError('agent_forbidden', 'Previews require a Ticket');
+    return principal.id;
+  }
   async read(
     identity: ExecutorIdentity,
     read: WireValue<'LiveReadRequest'>,
@@ -592,25 +619,31 @@ export class VpsExecutor {
       const drain = (async () => {
         // Admitted saves can still enqueue run bookkeeping from their committed results.
         const retained = await Promise.allSettled(pending);
-        const services = [this.runs, this.catalog, this.inbox, this.files, this.presence];
+        const services = [
+          this.runs,
+          this.catalog,
+          this.backend_controls,
+          this.inbox,
+          this.files,
+          this.presence,
+        ];
         for (const service of services) void service.stop(options).catch(() => {});
-        // Catalog cancellation owns a final waiting-row withdrawal through the mailbox.
-        const mailbox_drain = this.catalog
-          .settled()
-          .catch(() => {})
-          .then(async () => {
-            const results = await Promise.allSettled([
-              Promise.resolve().then(() => this.mailbox.stop(options)),
-              this.mailbox.settled(),
-            ]);
-            const errors = results.flatMap((result) =>
-              result.status === 'rejected' && !(result.reason instanceof ShutdownDeadlineExceeded)
-                ? [result.reason]
-                : [],
-            );
-            if (errors.length)
-              throw new AggregateError(errors, 'Executor mailbox shutdown failed.');
-          });
+        // Catalog and backend cancellation own their final mailbox withdrawals.
+        const mailbox_drain = Promise.allSettled([
+          this.catalog.settled(),
+          this.backend_controls.settled(),
+        ]).then(async () => {
+          const results = await Promise.allSettled([
+            Promise.resolve().then(() => this.mailbox.stop(options)),
+            this.mailbox.settled(),
+          ]);
+          const errors = results.flatMap((result) =>
+            result.status === 'rejected' && !(result.reason instanceof ShutdownDeadlineExceeded)
+              ? [result.reason]
+              : [],
+          );
+          if (errors.length) throw new AggregateError(errors, 'Executor mailbox shutdown failed.');
+        });
         const results = [
           ...retained,
           ...(await Promise.allSettled([

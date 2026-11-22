@@ -479,6 +479,9 @@ export class MacPresenceService {
   is_present(): boolean {
     return this.judgement().presence === 'present';
   }
+  supports_backend_controls(): boolean {
+    return this.get_record()?.lease?.backend_controls === true;
+  }
   current_identity(): ExecutorIdentity | null {
     const record = this.get_record();
     return record?.executor_incarnation == null ? null : record.identity;

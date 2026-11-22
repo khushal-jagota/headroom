@@ -1,5 +1,6 @@
 /** One native agent per loop. Request ownership includes producer and response settlement. */
 import http from 'node:http';
+import WebSocket from 'ws';
 import {
   MOVE_NUMBER_HEADER,
   SERVER_ID_HEADER,
@@ -32,6 +33,7 @@ interface Session {
   readonly agent: http.Agent;
   readonly sockets: Map<Socket, Promise<void>>;
   readonly requests: Set<ClientRequest>;
+  readonly websockets: Set<WebSocket>;
   readonly actual: Set<Promise<unknown>>;
   readonly idle: Map<Socket, ReturnType<typeof setTimeout>>;
   readonly force_close: boolean;
@@ -82,6 +84,57 @@ export class HttpSessions {
     this.connectors = connectors;
     this.options = options;
   }
+  async websocket(path: string, headers: Readonly<Record<string, string>>): Promise<WebSocket> {
+    const session = this.session('reads');
+    const address = this.address;
+    const target = new URL(path, this.origin);
+    target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
+    const current = this.options.server_link?.current();
+    const socket = new WebSocket(target, {
+      agent: session.agent,
+      perMessageDeflate: false,
+      maxPayload: 65540,
+      handshakeTimeout: HTTP_CONNECT_TIMEOUT_SECONDS * 1000,
+      headers: {
+        ...headers,
+        ...(current
+          ? {
+              [SERVER_ID_HEADER]: current.server_id!,
+              [MOVE_NUMBER_HEADER]: String(current.highest_move_number),
+            }
+          : {}),
+      },
+    });
+    session.websockets.add(socket);
+    const actual = new Promise<void>((resolve) =>
+      socket.once('close', () => {
+        session.websockets.delete(socket);
+        resolve();
+      }),
+    );
+    session.actual.add(actual);
+    void actual.finally(() => session.actual.delete(actual));
+    socket.on('error', () => {});
+    socket.once('upgrade', (response) => {
+      try {
+        this.options.server_link?.verify(response.headers[SERVER_LOCATION_HEADER], address);
+      } catch {
+        socket.terminate();
+      }
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', resolve);
+        socket.once('error', reject);
+        socket.once('close', () => reject(new Error('Preview channel closed before acceptance')));
+      });
+      return socket;
+    } catch (error) {
+      socket.terminate();
+      await actual;
+      throw error;
+    }
+  }
   private session(loop: MacLoop): Session {
     if (this.closed) throw new ServerLifecycleError('Mac HTTP transport is stopped.');
     let session = this.sessions.get(loop);
@@ -106,6 +159,7 @@ export class HttpSessions {
           : new ExecutorLinkAgent(link_socket, agent_options),
       sockets: new Map(),
       requests: new Set(),
+      websockets: new Set(),
       actual: new Set(),
       idle: new Map(),
       force_close: settings.force_close,
@@ -389,6 +443,7 @@ export class HttpSessions {
         session.idle.clear();
         for (const request of session.requests)
           request.destroy(new DOMException('HTTP sessions reset', 'AbortError'));
+        for (const socket of session.websockets) socket.terminate();
         session.agent.destroy();
       }
       for (const session of sessions) {

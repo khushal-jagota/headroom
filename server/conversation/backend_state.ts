@@ -20,12 +20,72 @@ export class BackendStateStore {
   constructor(database: Database) {
     this.database = database;
   }
-  read_usage(backend_key: BackendInstanceId): CachedBackendUsage | null {
+  read_usage(
+    backend_key: BackendInstanceId,
+    machine_id = HOME_MACHINE_ID,
+  ): CachedBackendUsage | null {
+    if (machine_id !== HOME_MACHINE_ID) {
+      const row = this.database.read((sql) =>
+        sql.get<{ usage_json: string | null }>(
+          'SELECT usage_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
+          [machine_id, backend_key],
+        ),
+      );
+      if (!row?.usage_json) return null;
+      const value = JSON.parse(row.usage_json);
+      return {
+        observed_at: new Date(value.observed_at),
+        windows: value.windows.map((window: Record<string, unknown>) => ({
+          ...window,
+          resets_at: new Date(window.resets_at as string),
+        })),
+      };
+    }
     return this.database.read((sql) => read_cached_backend_usage(sql, backend_key));
   }
-  keep_successful_usage(result: BackendUsageResult): void {
+  read_machine_capabilities(
+    machine_id: string,
+    backend_key: BackendInstanceId,
+  ): { can_sign_in: boolean; reports_allowance_usage: boolean } {
+    const row = this.database.read((sql) =>
+      sql.get<{ capabilities_json: string | null }>(
+        'SELECT capabilities_json FROM machine_backend_state WHERE machine_id=? AND backend_key=?',
+        [machine_id, backend_key],
+      ),
+    );
+    return row?.capabilities_json
+      ? JSON.parse(row.capabilities_json)
+      : { can_sign_in: false, reports_allowance_usage: false };
+  }
+  keep_machine_capabilities(
+    machine_id: string,
+    backend_key: BackendInstanceId,
+    value: { can_sign_in: boolean; reports_allowance_usage: boolean },
+  ): void {
+    this.database.write((tx) => {
+      tx.run(
+        'INSERT INTO machine_backend_state(machine_id,backend_key,capabilities_json) VALUES (?,?,?) ON CONFLICT(machine_id,backend_key) DO UPDATE SET capabilities_json=excluded.capabilities_json',
+        [machine_id, backend_key, JSON.stringify(value)],
+      );
+    });
+  }
+  keep_successful_usage(result: BackendUsageResult, machine_id = HOME_MACHINE_ID): void {
     if (result.outcome !== 'succeeded' || result.observed_at === null)
       throw new Error('only a successful observed usage result can be kept');
+    if (machine_id !== HOME_MACHINE_ID) {
+      this.database.write((tx) => {
+        tx.run(
+          'INSERT INTO machine_backend_state(machine_id,backend_key,usage_json) VALUES (?,?,?) ON CONFLICT(machine_id,backend_key) DO UPDATE SET usage_json=excluded.usage_json',
+          [
+            machine_id,
+            result.backend_key,
+            JSON.stringify({ observed_at: result.observed_at, windows: result.windows }),
+          ],
+        );
+      });
+      return;
+    }
+
     this.database.write((tx) => {
       tx.run(
         'INSERT INTO backend_usage_snapshots(backend_key,observed_at) VALUES (?,?) ' +

@@ -165,7 +165,10 @@ export class MacCommandQueues {
     try {
       if (!runner.admission_stopped) {
         try {
-          snapshot = await catalog.read_result(command.command_id, command.model_list_request!);
+          snapshot =
+            command.backend_request != null
+              ? await catalog.backend_result?.(command.command_id, command.backend_request)
+              : await catalog.read_result(command.command_id, command.model_list_request!);
         } catch (error) {
           if (error instanceof ServerLifecycleError) throw error;
           console.warn('Model list read failed:', failure_name(error));

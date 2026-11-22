@@ -414,6 +414,7 @@ export class ServerServices {
       request_lifetime,
       database,
       changes,
+      previews: areas.previews,
       areas: [
         ...areas.areas,
         { prefix: '/api', routes: createCredentialRequestRoutes(credentials ?? null) },

@@ -93,6 +93,8 @@ reply can return the original receipt through `panels executor retry SUBMISSION_
 Mac and Linux receive this support through their versioned runtime update channel,
 which preserves their journals and outboxes.
 
+Machine code also owns provider sign-in, allowance reads, and application previews. Backend cards and actions select one machine. Provider credentials stay on that machine. Preview traffic reaches the reader through the server's existing HTTPS address and a restricted connection that machine code opens. HTTP streams and WebSockets use that connection. Native process checks stay with the application. See [Previews](previews.md) and [Usage](usage.md).
+
 ## Restarts and recovery
 
 A home restart preserves mailboxes, assignments, results, and receipts. The conversation system adopts accepted remote runs. Pending prompts remain busy until their existing native result arrives. Neither path sends the prompt again.

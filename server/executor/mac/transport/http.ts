@@ -14,6 +14,7 @@ import type {
   LeaseRequest,
   LiveEventBatch,
   LiveReadRequest,
+  JsonObject,
   WorkspaceIdentity,
   WorkspaceState,
   WorkspaceStatesReply,
@@ -254,6 +255,38 @@ export class MacHttpClient {
     );
     if (reply.status !== 200) throw http_error(reply.status, reply.body);
     return decode_bounded(reply.body, 'ItemBatchReply', { limit: settings.MAX_ITEM_BATCH_BYTES });
+  }
+  async preview(request: JsonObject, signal?: AbortSignal): Promise<JsonObject> {
+    const reply = await this.json({
+      loop: 'reads',
+      method: 'POST',
+      path: '/api/executor/previews',
+      body: Buffer.from(JSON.stringify(request)),
+      timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
+      signal,
+    });
+    if (reply.status !== 200) throw http_error(reply.status, reply.body);
+    return decode_bounded(reply.body, 'JsonObject');
+  }
+  preview_channel(generation: string, port: number) {
+    return this.sessions.websocket(
+      `/api/executor/previews/${generation}/connect?port=${port}`,
+      this.headers,
+    );
+  }
+  async backend_secret(id: string, signal?: AbortSignal): Promise<string> {
+    const reply = await this.json({
+      loop: 'reads',
+      method: 'GET',
+      path: `/api/executor/backend-secrets/${encodeURIComponent(id)}`,
+      timeout: settings.LIVE_READ_TIMEOUT_SECONDS,
+      signal,
+    });
+    if (reply.status !== 200) throw http_error(reply.status, reply.body);
+    const value = decode_bounded(reply.body, 'JsonObject');
+    if (typeof value.return_url !== 'string')
+      throw new ExecutorValidationError('The sign-in return address is unavailable.');
+    return value.return_url;
   }
   async read(request: LiveReadRequest, signal?: AbortSignal) {
     const reply = await this.json({

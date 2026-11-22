@@ -84,6 +84,19 @@ export type BackendPermissionAsk = {
   options: PermissionAskOption[];
   title: string;
 };
+export type BackendRequest = {
+  backend_key: string;
+  operation:
+    | 'capabilities'
+    | 'refresh_usage'
+    | 'sign_in_read'
+    | 'sign_in_start'
+    | 'sign_in_cancel'
+    | 'sign_in_return_url'
+    | 'sign_out';
+  secret_id?: string;
+  session_id?: string;
+};
 export type BackendSnapshot = {
   available_models: BackendModel[];
   backend_key: ConversationBackendKey;
@@ -164,6 +177,7 @@ export type CommandOutcomeReply = { recorded: string[]; rejected?: RejectedComma
 export type CommandOutcomeReport = { outcomes: CommandResult[] };
 export type CommandReplyReported = { reply_text: string };
 export type CommandResult = {
+  backend_result?: JsonObject | null;
   child_outcome?: CommandOutcome | null;
   command_id: string;
   model_list?: JsonObject | null;
@@ -228,7 +242,7 @@ export type FileManifest = {
 export type FileScope = 'ticket' | 'conversation';
 export type FileSnapshot = { local_path: string; manifest: FileManifest };
 export type FileUploadRequest = { child: ChildReference; manifest: FileManifest };
-export type IpcOperation = 'read' | 'write' | 'retry' | 'health' | 'quiesce';
+export type IpcOperation = 'read' | 'write' | 'retry' | 'health' | 'quiesce' | 'preview';
 export type IpcRequest = {
   capability: string | null;
   child_id: string | null;
@@ -270,6 +284,7 @@ export type LeaseReply = {
 };
 export type LeaseRequest = {
   admission_stopped: boolean;
+  backend_controls?: boolean;
   cleanup_uncertainties?: WorkerCleanupUncertainty[];
   driver_kinds?: ConversationBackendKey[];
   going_to_sleep?: boolean;
@@ -347,6 +362,7 @@ export type MacUpdateTarget = {
   request_id: string;
 };
 export type MailboxCommand = {
+  backend_request?: BackendRequest | null;
   child_command?: ChildCommand | null;
   command_id: string;
   command_sequence: number;
@@ -617,5 +633,6 @@ export interface WireTypes {
   WorkspaceStatesRequest: WorkspaceStatesRequest;
   WritePrompt: WritePrompt;
   ServerLocation: ServerLocation;
+  BackendRequest: BackendRequest;
 }
 export type WireRootName = keyof WireTypes;

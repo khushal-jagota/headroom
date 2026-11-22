@@ -25,6 +25,7 @@ import { cleanup_result } from '../worker_supervision/inspection.ts';
 import { worker_ticket_id } from '../worker_supervision/logic/worker_launch.ts';
 import type { MacRemoteChild } from './vps_remote_child.ts';
 import { VpsExecutor } from './vps_transport.ts';
+import type { MachineBackendControls } from './backend_control_relay.ts';
 import type { VpsExecutorOptions } from './vps_transport.ts';
 
 declare module 'fastify' {
@@ -211,6 +212,10 @@ export class VpsExecutorRegistry {
 
   catalog_for(machine_id: string): RemoteCatalogSource | null {
     return this.get(machine_id)?.catalog ?? null;
+  }
+
+  backend_controls_for(machine_id: string): MachineBackendControls | null {
+    return this.get(machine_id)?.backend_controls ?? null;
   }
 
   stall_sources(): readonly StallSource[] {

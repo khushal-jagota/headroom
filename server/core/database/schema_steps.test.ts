@@ -262,17 +262,18 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0005_server_link',
+      to_revision: 'ts_0006_machine_backend_state',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
         'ts_0003_ticket_worker_setups',
         'ts_0004_drop_ideas',
         'ts_0005_server_link',
+        'ts_0006_machine_backend_state',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0005_server_link'],
+      revision: ['ts_0006_machine_backend_state'],
       statements: application_schema_seed.statements,
     });
     assert.deepEqual(rows(path), before);
