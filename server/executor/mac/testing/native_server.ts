@@ -17,6 +17,7 @@ import { VpsExecutorRegistry } from '../../registry.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../../execution_identity.ts';
 import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 import { issue_original_credential } from '../../../machines/executor_credentials.ts';
+import { seed_original_mac_rows } from '../../../machines/testing/original_mac.ts';
 import { compose_production_backends } from '../../../lifecycle/production_bindings.ts';
 import {
   for_every_built_in_backend,
@@ -61,9 +62,10 @@ export async function start_native_server() {
       'utf8',
     ),
   ) as ApplicationSchemaSeed;
-  const initial = createDatabaseFromSeed(path, seed, (tx) =>
-    bootstrap_application(tx, Math.floor(Date.now() / 1000)),
-  );
+  const initial = createDatabaseFromSeed(path, seed, (tx) => {
+    bootstrap_application(tx, Math.floor(Date.now() / 1000));
+    seed_original_mac_rows(tx);
+  });
   initial.close();
   let context!: ConversationCompositionContext;
   let core!: SqliteProcessConversationSystem;

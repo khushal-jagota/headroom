@@ -25,6 +25,7 @@ import { install_home, check_home_port } from './home.ts';
 import { create_linux_home_service } from './linux.ts';
 import { create_darwin_home_service } from './darwin.ts';
 import { initialize_candidate_home_database } from './database.ts';
+import { HOME_COMMAND } from './configuration.ts';
 import type { HomeInstallDependencies, HomeServicePlan, HomeCommand } from './contracts.ts';
 import { ChildProcesses, OneShotChildren } from '../lifecycle/owned_processes.ts';
 import { observe_promise } from '../core/promise_observer.ts';
@@ -85,6 +86,7 @@ test.skipIf(!admitted)(
     if (!evidence) throw new Error('Native home proof requires an evidence directory');
     const base = await realpath(await mkdtemp(join(tmpdir(), 'p7home-')));
     const account = system === 'linux' ? userInfo().homedir : join(base, 'account');
+    const command_link = join(account, HOME_COMMAND);
     await mkdir(join(base, 'account'), { mode: 0o700 });
     const report: Record<string, unknown> = {
       system,
@@ -160,7 +162,11 @@ test.skipIf(!admitted)(
             current.ino !== root_identity.ino
           )
             throw new Error('Native fixture installation root changed');
-          for (const file of [...(plan?.files ?? []), ...(plan?.links ?? [])]) {
+          for (const file of [
+            ...(plan?.files ?? []),
+            ...(plan?.links ?? []),
+            { path: command_link },
+          ]) {
             if (retained.has(file.path)) continue;
             const stat = await lstat(file.path);
             retained.set(file.path, {
@@ -213,6 +219,7 @@ test.skipIf(!admitted)(
           archive: mini_builds?.a.archive ?? join(base, 'mini-app-fixture'),
           archive_sha256: mini_builds?.a.archive_sha256 ?? 'b'.repeat(64),
           revision: mini_builds?.a.manifest.app_sha ?? revision,
+          update_token: 'native-proof-update-token',
         };
         Object.assign(record, { root, service: service_name, port: request.port });
         const inspector = process_inspector();
@@ -458,6 +465,7 @@ test.skipIf(!admitted)(
                 : undefined,
             );
             await check_home_port(request.port);
+            await expect(lstat(command_link)).rejects.toMatchObject({ code: 'ENOENT' });
             expect(await readFile(sentinel, 'utf8')).toBe('unrelated sentinel');
             clean = true;
             record.cleanup_verified = true;

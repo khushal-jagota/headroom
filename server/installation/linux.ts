@@ -5,6 +5,7 @@ import { resolved_path } from '../environments/paths.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { home_service_environment } from './environment.ts';
 import {
+  HOME_SCHEDULE_SUFFIXES,
   HOME_SERVICE_COMMAND_TIMEOUT_SECONDS,
   HOME_SERVICE_OBSERVATION_TIMEOUT_SECONDS,
 } from './configuration.ts';
@@ -19,44 +20,88 @@ export function linux_home_units(
   request: HomeInstallRequest,
   environment: Readonly<Record<string, string>>,
 ): Record<string, string> {
-  const root = request.root;
+  const root = request.root,
+    panels = join(root, 'app/bin/panels');
   unit_argument(root);
   const shared =
     `WorkingDirectory=${root.replaceAll('%', '%%')}\n` +
     Object.entries(environment)
       .map(([key, value]) => `Environment=${unit_argument(key + '=' + value)}\n`)
       .join('');
-  const backup_command = [
-    join(root, 'app/bin/panels'),
-    'environment',
-    'backup-current',
-    '--source-db',
-    join(root, 'data/planner.db'),
-    '--backup-dir',
-    join(root, 'data/backups'),
-    '--current-app',
-    join(root, 'app'),
-  ];
-  return {
+  const oneshot = (description: string, command: readonly string[], extra = '') =>
+    `[Unit]\nDescription=${description}\n[Service]\nType=oneshot\n` +
+    shared +
+    'ExecStart=' +
+    command.map(unit_argument).join(' ') +
+    '\nKillMode=control-group\n' +
+    extra;
+  const timer = (description: string, service: string, schedule: string) =>
+    `[Unit]\nDescription=${description}\n[Timer]\n` +
+    schedule +
+    `Unit=${service}\n` +
+    '[Install]\nWantedBy=timers.target\n';
+  const scheduled: Record<
+    (typeof HOME_SCHEDULE_SUFFIXES)[number],
+    { service: string; timer: string; schedule: string }
+  > = {
+    '.maintenance': {
+      service: oneshot('Panels home maintenance', [panels, 'environment', 'cleanup', '--apply']),
+      timer: 'Daily Panels home maintenance',
+      schedule: 'OnCalendar=*-*-* 03:15:00\nPersistent=true\n',
+    },
+    '.stall-watchdog': {
+      service: oneshot(
+        'Panels home stall watchdog',
+        [
+          panels,
+          'stalls',
+          'watchdog',
+          '--db',
+          join(root, 'data/planner.db'),
+          '--state-dir',
+          join(root, 'data/stall-watchdog'),
+        ],
+        'TimeoutStartSec=300\n',
+      ),
+      timer: 'Run the Panels home stall watchdog every 30 seconds',
+      schedule: 'OnBootSec=60s\nOnUnitActiveSec=30s\nAccuracySec=5s\n',
+    },
+  };
+  const units: Record<string, string> = {
     [request.service + '.service']:
       '[Unit]\nDescription=Panels home\nAfter=network-online.target\n' +
       '[Service]\nType=simple\n' +
       shared +
       `ExecStart=${unit_argument(join(root, 'app/bin/panels-launcher'))} serve\n` +
-      'Restart=on-failure\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=30\n' +
+      'Restart=always\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=30\nDelegate=yes\n' +
       '[Install]\nWantedBy=default.target\n',
-    [request.service + '.backup.service']:
-      '[Unit]\nDescription=Panels home backup\n[Service]\nType=oneshot\n' +
-      shared +
-      'ExecStart=' +
-      backup_command.map(unit_argument).join(' ') +
-      '\nKillMode=control-group\n',
-    [request.service + '.backup.timer']:
-      '[Unit]\nDescription=Daily Panels home backup\n[Timer]\n' +
-      'OnCalendar=*-*-* 02:30:00\nPersistent=true\n' +
-      `Unit=${request.service}.backup.service\n` +
-      '[Install]\nWantedBy=timers.target\n',
+    [request.service + '.backup.service']: oneshot('Panels home backup', [
+      panels,
+      'environment',
+      'backup-current',
+      '--source-db',
+      join(root, 'data/planner.db'),
+      '--backup-dir',
+      join(root, 'data/backups'),
+      '--current-app',
+      join(root, 'app'),
+    ]),
+    [request.service + '.backup.timer']: timer(
+      'Daily Panels home backup',
+      request.service + '.backup.service',
+      'OnCalendar=*-*-* 02:30:00\nPersistent=true\n',
+    ),
   };
+  for (const suffix of HOME_SCHEDULE_SUFFIXES) {
+    const name = request.service + suffix;
+    units[name + '.service'] = scheduled[suffix].service;
+    units[name + '.timer'] = timer(
+      scheduled[suffix].timer,
+      name + '.service',
+      scheduled[suffix].schedule,
+    );
+  }
+  return units;
 }
 async function require_absent(path: string): Promise<void> {
   try {
@@ -144,9 +189,11 @@ export async function create_linux_home_service(
       await command(['enable', '--now', name], execution);
     },
     async start_auxiliaries(execution) {
-      const name = request.service + '.backup.timer';
-      attempted.push(name);
-      await command(['enable', '--now', name], execution);
+      for (const suffix of ['.backup', ...HOME_SCHEDULE_SUFFIXES]) {
+        const name = request.service + suffix + '.timer';
+        attempted.push(name);
+        await command(['enable', '--now', name], execution);
+      }
     },
     async finish_cleanup(execution) {
       await command(['daemon-reload'], execution);
