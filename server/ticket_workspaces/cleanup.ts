@@ -47,32 +47,22 @@ function custody_retired(
     ) === undefined
   );
 }
-function local_workspace_machine(db_path: string): string | null {
-  try {
-    return (
-      readFileSync(
-        join(dirname(filesRoot(db_path, 'ticket')), '.workspace-machine-id'),
-        'utf8',
-      ).trim() || null
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
+/** Machine code retires the workspaces that it registered, also in the server's own folder. */
+function machine_code_owns(sql: ReadSql, identity: WorkspaceIdentity): boolean {
+  return (
+    sql.get(
+      'SELECT 1 FROM ticket_workspace_conversations w JOIN executor_child_assignments a USING(conversation_id) WHERE w.machine_id=? AND w.workspace_id=? LIMIT 1',
+      [identity.machine_id, identity.workspace_id],
+    ) !== undefined
+  );
 }
-/** Machine code retires the workspaces that it registered in this folder. The server leaves them. */
-function without_machine_code_workspaces(
-  sql: ReadSql,
-  states: Map<string, WorkspaceState>,
-  local_machine: string | null,
-): Map<string, WorkspaceState> {
-  if (local_machine === null) return states;
-  for (const { ticket_id } of sql.all<{ ticket_id: string }>(
-    'SELECT DISTINCT w.ticket_id FROM ticket_workspace_conversations w JOIN executor_child_assignments a USING(conversation_id) WHERE w.machine_id=?',
-    [local_machine],
-  ))
-    states.delete(ticket_id);
-  return states;
+function owned_by_machine_code(db_path: string, identity: WorkspaceIdentity): boolean {
+  const reader = createReadAccess(db_path);
+  try {
+    return reader.read((sql) => machine_code_owns(sql, identity));
+  } finally {
+    reader.close();
+  }
 }
 export async function clean_for_database(
   db_path: string,
@@ -81,10 +71,9 @@ export async function clean_for_database(
 ): Promise<CleanupResult> {
   const reader = createReadAccess(db_path);
   let snapshot: { states: Map<string, WorkspaceState>; active: Set<string> };
-  const local_machine = local_workspace_machine(db_path);
   try {
     snapshot = reader.read((sql) => ({
-      states: without_machine_code_workspaces(sql, read_workspace_states(sql), local_machine),
+      states: read_workspace_states(sql),
       active: new Set(
         sql
           .all<{ id: string }>("SELECT id FROM tickets WHERE worker_step_claim='out'")
@@ -95,6 +84,8 @@ export async function clean_for_database(
     reader.close();
   }
   async function granted(expected: WorkspaceState, identity: WorkspaceIdentity): Promise<boolean> {
+    // The retry pass reads every record in the shared retired folder. Machine code finishes its own.
+    if (owned_by_machine_code(db_path, identity)) return false;
     function requires_registration(): boolean {
       const retired = join(dirname(filesRoot(db_path, 'ticket')), '.ticket-retired');
       try {
@@ -208,12 +199,15 @@ export async function clean_for_database(
     ...options,
     mirror_root: git_mirror_root(db_path),
     active_ticket_ids: snapshot.active,
+    // Checked before the server stops any conversation of the workspace.
     retire: (path, state, identity, checkout_only) =>
-      options.retire_local_children
-        ? options.retire_local_children(state.ticket_id, identity, () =>
-            detach(path, state, identity, checkout_only),
-          )
-        : detach(path, state, identity, checkout_only),
+      owned_by_machine_code(db_path, identity)
+        ? { reason: 'Machine code owns this workspace' }
+        : options.retire_local_children
+          ? options.retire_local_children(state.ticket_id, identity, () =>
+              detach(path, state, identity, checkout_only),
+            )
+          : detach(path, state, identity, checkout_only),
     retirement_is_committed: granted,
   });
 }

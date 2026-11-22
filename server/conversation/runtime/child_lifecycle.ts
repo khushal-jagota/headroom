@@ -136,14 +136,13 @@ export async function recheck_worker_cleanup(
         [ticket_id],
       );
       if (row === undefined) return null;
-      const local_ids = sql
-        .all<{ conversation_id: string }>(
-          // Machine code's conversations also get a custody row and a workspace registration.
-          // Only a conversation that machine code never ran can hold a local process.
-          'SELECT w.conversation_id FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.ticket_id=? AND NOT EXISTS (SELECT 1 FROM executor_child_assignments a WHERE a.conversation_id=w.conversation_id)',
-          [ticket_id],
-        )
-        .map((item) => item.conversation_id);
+      // Every conversation has a custody row; 'never-started' means no local launch. A
+      // conversation that the server ran before the switch keeps its record, also when
+      // machine code resumed it.
+      const local = sql.all<{ conversation_id: string; retired: number; resumed: number }>(
+        "SELECT c.conversation_id,c.state='retired' AS retired,EXISTS(SELECT 1 FROM executor_child_assignments a WHERE a.conversation_id=c.conversation_id) AS resumed FROM conversation_child_custody c WHERE c.generation<>'never-started' AND c.conversation_id IN (SELECT conversation_id FROM ticket_workspace_conversations WHERE ticket_id=? UNION SELECT conversation_id FROM tickets WHERE id=? AND conversation_id IS NOT NULL)",
+        [ticket_id, ticket_id],
+      );
       const presence = sql.get<{
         lease_json: string | null;
         last_lease_at_ms: number | null;
@@ -180,12 +179,12 @@ export async function recheck_worker_cleanup(
           [ticket_id],
         )
         .filter((item) => uncertain.has(item.conversation_id) || uncertain.has(''));
-      return { ...row, local_ids, historical, fresh: fresh && uncertain.size === 0 };
+      return { ...row, local, historical, fresh: fresh && uncertain.size === 0 };
     });
   const ticket = read();
   if (ticket === null) return cleanup_result(false, 'The Ticket is unavailable');
   // A process that the server started before the switch to machine code keeps its record.
-  const local = await recheck_local_custody(host, ticket.local_ids);
+  const local = await recheck_local_custody(host, ticket.local);
   if (local !== null) return local;
   const state =
     ticket.conversation_id === null ? null : host.conversation_state(ticket.conversation_id);
@@ -241,9 +240,11 @@ export async function recheck_worker_cleanup(
 
 async function recheck_local_custody(
   host: SqliteProcessConversationSystem,
-  ids: readonly string[],
+  records: readonly { conversation_id: string; retired: number; resumed: number }[],
 ): Promise<CleanupResult | null> {
-  for (const id of ids) {
+  for (const { conversation_id: id, retired, resumed } of records) {
+    // A resumed conversation's child and turn belong to machine code. Only its old record counts.
+    if (resumed && retired) continue;
     const state = host.conversation_state(id);
     if (state === null) return cleanup_result(false, 'The recorded conversation is unavailable');
     await host.ensure_local_custody(state);
@@ -257,6 +258,11 @@ async function recheck_local_custody(
         await take_recorded_settlement(host, state, settlement);
         return null;
       }
+      if (resumed)
+        return cleanup_result(
+          false,
+          'The server started a Worker here before the switch, and its end is not proven',
+        );
       if (state.running_turn !== null || state.reserved_turn !== null)
         return cleanup_result(false, 'The Worker still has an active turn');
       if (!(await host.options.store.has_recorded_source(id))) {

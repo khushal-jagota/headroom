@@ -106,6 +106,8 @@ export class MacWorkspaceCleanup {
       {
         git_execution: workspace_git,
         mirror_root: join(paths.root, 'cache', 'git-mirrors'),
+        // The server's own Ticket folder can be shared with the server, which writes its own report.
+        report_path: join(paths.root, 'ticket-workspaces-cleanup.json'),
         extra_roots: [join(workspace_home, 'panels-session-evidence')],
         active_ticket_ids: new Set(
           native_children

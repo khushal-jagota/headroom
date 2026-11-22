@@ -377,6 +377,16 @@ export class VpsExecutor {
           // The Ticket is this machine's. A workspace that the server registered before
           // the switch to machine code stays with the server's own cleanup.
           if (proof === undefined) return { authorized: false };
+          // An adopted workspace can still hold a process that the server started before the
+          // switch. Its record must be retired before the folder goes.
+          if (
+            !options.replay &&
+            tx.get(
+              "SELECT 1 FROM ticket_workspace_conversations w JOIN conversation_child_custody c USING(conversation_id) WHERE w.machine_id=? AND w.workspace_id=? AND c.state!='retired' LIMIT 1",
+              [workspace.machine_id, workspace.workspace_id],
+            ) !== undefined
+          )
+            return { authorized: false };
           return {
             authorized: options.replay
               ? has_committed_retirement(tx, state, workspace)

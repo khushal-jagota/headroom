@@ -1158,7 +1158,7 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       option('server_machine', '--server-machine', boolean, {
         default: false,
         description:
-          "Join the machine code on the server's own machine with the home identity. Use the local executor link socket as --home. Replaces any earlier home credential.",
+          "Join the machine code on the server's own machine with the home identity. Use the local executor link socket as --home. This replaces the earlier home credential, so machine code that holds it is cut off until it gets the new one.",
       }),
     ],
   );
