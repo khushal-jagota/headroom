@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import Panels
 
 /// No live writes. The real adapter runs against URLProtocol's in-memory transport.
@@ -41,7 +42,7 @@ import XCTest
         try assertSharedDecisionBody(legacyShape, named: name)
     }
     private func setupDecision() async throws -> (ReviewDecision, APIClient, ReviewItem) {
-        for kind in ["cache", "draft", "outbox"] {
+        for kind in ["cache", "draft", "attachments", "outbox"] {
             for entry in try LocalStore.shared.records(server: "https://review.invalid", kind: kind) {
                 try LocalStore.shared.remove(server: "https://review.invalid", kind: kind, id: entry.key.components(separatedBy: "\u{1f}").last!)
             }
@@ -139,7 +140,6 @@ import XCTest
         XCTAssertEqual(decision.revisionDraft, "Keep this proposal note")
         XCTAssertFalse(decision.resolved)
         XCTAssertTrue(decision.ready)
-        XCTAssertTrue(decision.scopeChange.holdingProposal, "Keep the card visible while the sheet is open, because a reviewer transfer removes the live queue card")
         XCTAssertEqual(ReviewStub.state.scopeTicketReads.count, readCount + 1)
         let readRequest = try XCTUnwrap(ReviewStub.state.scopeTicketReads.last)
         XCTAssertEqual(readRequest.cachePolicy, .reloadIgnoringLocalCacheData)
@@ -148,8 +148,6 @@ import XCTest
         XCTAssertEqual(scopeWrite.httpMethod, "PATCH")
         let scopeBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(scopeWrite.httpBody)) as? [String: Any])
         XCTAssertEqual(Set(scopeBody.keys), Set(["ceiling", "ceiling_holder"]))
-        decision.scopeChange.releasePresentation()
-        XCTAssertFalse(decision.scopeChange.holdingProposal)
         // Changing only the reviewer omits the ceiling.
         let reviewerOnly = try await decision.scopeChange.save(api: api, ticket: current, ceiling: nil, holder: Principal(kind: "owner", id: "owner"))
         XCTAssertEqual(reviewerOnly.ceiling, current.ceiling)
@@ -291,6 +289,32 @@ import XCTest
         XCTAssertNil(replacement.error, "A replacement proposal must not inherit an old decision error")
         XCTAssertEqual(replacement.revisionDraft, "")
 
+    }
+
+    /// Risk: a refused decision's card comes back without the note and pictures Khushal
+    /// wrote, as when its proposal no longer waits and the card is rebuilt from the refusal.
+    func testRefusedDecisionBringsBackItsNoteAndAttachments() async throws {
+        let (decision, api, item) = try await setupDecision()
+        let proposal = try XCTUnwrap(decision.proposal)
+        decision.revisionDraft = "Please split the screens"
+        let attached = await decision.noteAttachments.attach(Data("Notes for the worker".utf8), type: .plainText, fileName: "notes.txt")
+        XCTAssertTrue(attached)
+        ReviewStub.state.failWrites = true
+        let saved = await decision.sendBack(api: api, message: decision.revisionDraft)
+        XCTAssertTrue(saved)
+        await settle(api)
+        let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
+        XCTAssertEqual(work.state, .failed)
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
+        XCTAssertEqual(command.attachments?.map(\.fileName), ["notes.txt"], "The pictures and files travel in the frozen decision")
+        // The refused card, rebuilt from the refusal alone.
+        let refused = ReviewItem(reviewItemType: "proposal", ticketId: item.ticketId, field: item.field, title: item.title,
+                                 waitingSince: proposal.createdAt, proposalRevision: proposal.revision)
+        let restored = ReviewDecision()
+        restored.restoreRefusedNote(api: api, item: refused)
+        XCTAssertEqual(restored.revisionDraft, "Please split the screens")
+        XCTAssertEqual(restored.noteAttachments.attachments.map(\.fileName), ["notes.txt"])
+        XCTAssertEqual(restored.noteAttachments.attachments.first?.mediaType, "text/plain")
     }
 
     func testRestoredSendBackCarriesOriginalRevisionAndHoldsServerRefusal() async throws {
@@ -496,53 +520,6 @@ import XCTest
         XCTAssertEqual(LocalStore.shared.draft(server: "https://review.invalid", id: id), "Recovered recording")
         decision.refreshVoiceDraft()
         XCTAssertEqual(decision.revisionDraft, "Recovered recording")
-    }
-
-    func testSkipIsLocalAndNewProposalIdentityReturns() {
-        func card(_ parts: ReviewItem...) -> ReviewCard { ReviewCard(id: "ticket:a", ticketId: "a", parts: parts) }
-        let old = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 1)
-        let new = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "brief", title: "First", waitingSince: 2)
-        var queue = ReviewQueue()
-        queue.skip(card(old))
-        XCTAssertNil(queue.current(in: [card(old)]))
-        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 1)
-        XCTAssertEqual(queue.skippedCount(in: [card(new)]), 0, "A removed or replaced ask cannot be revisited")
-        XCTAssertEqual(queue.current(in: [card(new)])?.id, "ticket:a")
-        queue.revisit()
-        XCTAssertEqual(queue.current(in: [card(old)])?.id, "ticket:a")
-        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 0)
-        queue.skip(card(old))
-        queue.resolve(old)
-        XCTAssertEqual(queue.skippedCount(in: [card(old)]), 0, "An ask resolved during refresh cannot be revisited")
-    }
-
-    /// One Ticket card holds a proposal and a message. Skip takes the whole card and
-    /// counts once; deciding one part leaves the card current until the other is handled.
-    func testTicketCardSkipsAndResolvesAsOneEntry() {
-        let proposal = ReviewItem(reviewItemType: "proposal", ticketId: "a", field: "plan", title: "A", waitingSince: 2)
-        let message = ReviewItem(reviewItemType: "message", title: "A", waitingSince: 1, conversationId: "c", ownerKind: "ticket", ownerId: "a")
-        let ticket = ReviewCard(id: "ticket:a", ticketId: "a", parts: [proposal, message])
-        let chief = ReviewItem(reviewItemType: "message", title: "Chief", waitingSince: 3, conversationId: "chief", ownerKind: "chief")
-        let lone = ReviewCard(id: chief.id, parts: [chief])
-        var queue = ReviewQueue()
-        queue.skip(ticket)
-        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, lone.id)
-        XCTAssertEqual(queue.skippedCount(in: [ticket, lone]), 1)
-        XCTAssertEqual(queue.skippedCardCount, 1)
-        queue.revisit()
-        queue.resolve(proposal)
-        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, ticket.id)
-        XCTAssertEqual(queue.pending(ticket).map(\.id), [message.id])
-        queue.resolve(message)
-        XCTAssertEqual(queue.current(in: [ticket, lone])?.id, lone.id)
-        // A new part on a skipped card brings the card back with every waiting part.
-        let later = ReviewItem(reviewItemType: "message", title: "A", waitingSince: 4, conversationId: "d", ownerKind: "ticket", ownerId: "a")
-        let first = ReviewCard(id: "ticket:b", ticketId: "b", parts: [proposal])
-        var skipped = ReviewQueue()
-        skipped.skip(first)
-        let grown = ReviewCard(id: "ticket:b", ticketId: "b", parts: [proposal, later])
-        XCTAssertEqual(skipped.current(in: [grown])?.id, grown.id)
-        XCTAssertEqual(skipped.pending(grown).count, 2)
     }
 }
 

@@ -36,6 +36,12 @@ enum PanelsTheme {
         static let railRow = Color(hex: 0x949494)
         static let border = Color.white.opacity(0.08)
         static let code = Color.white.opacity(0.03)
+        /// A proposal or ask card: one step lighter than the page.
+        static let cardFill = Color.white.opacity(0.045)
+        static let errorSurface = Color(hex: 0x382226)
+        static let errorText = Color(hex: 0xf0c9c6)
+        /// The summary screen's second line.
+        static let heroMuted = Color(hex: 0x8a8a93)
         static let accent = PanelsTheme.accent
         static let success = PanelsTheme.success
         static let attention = PanelsTheme.Goal.attention
@@ -75,12 +81,9 @@ enum PanelsTheme {
         // Web role weights; keep the native sizes and Dynamic Type curves.
         // TicketRoute / ManagerHeader: 600. Review title and empty state: 500.
         static let detailTitle = Font.title.weight(.semibold)
-        static let reviewTitle = Font.title.weight(.medium)
-        static let reviewCompletion = Font.title.weight(.medium)
         static let captureTitle = Font.title3.weight(.medium)
         static let itemTitle = Font.body.weight(.medium)
         static let primaryAction = Font.body.weight(.semibold)
-        static let reviewAction = Font.body.weight(.medium)
         static let sectionLabel = Font.footnote.weight(.semibold)
         static let reviewEyebrow = Font.caption2.weight(.semibold)
         static let latestAction = Font.footnote.weight(.semibold)

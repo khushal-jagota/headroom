@@ -2,6 +2,22 @@ import Foundation
 
 /// Mounted screens name the windows they show, like the web owner's setDemand.
 /// The phone's request is their union, bounded the way the web bounds it.
+/// Review's history for one app run, as web/src/routes/ReviewRoute.svelte keeps it:
+/// the entries whose every card was skipped, and the ones "Back to review" sends last.
+struct ReviewHistory: Equatable, Sendable {
+    var skipped: [RecordKey] = []
+    var priority: [RecordKey] = []
+}
+
+extension ReviewItem {
+    /// The review-window entry this card belongs to, as the server keys Review history:
+    /// a Ticket, or a Manager's or the Chief's conversation.
+    var historyKey: RecordKey {
+        if let ticket = owningTicketID { return RecordKey(kind: "ticket", id: ticket) }
+        return RecordKey(kind: "conversation", id: conversationId ?? "")
+    }
+}
+
 enum NavigationScope {
     static let reviewWindowLimit = 30
     /// Review is always in scope: it drives the Sidebar badge and opens without a wait.
@@ -20,7 +36,8 @@ enum NavigationScope {
     /// Mirrors refreshDemand in web/src/lib/navigation/views/owner.ts. Parent lists and
     /// Review keep their pages; other windows share what remains one row per window per round.
     /// `selected` is the one owner whose record a detail screen keys its reloads on.
-    static func request(demands: [String: [ViewWindowRequest]], selected: ViewOwner? = nil, reviewConversationIDs: [String] = [], previous: ViewRequest) -> ViewRequest {
+    /// `reviewHistory` is Review's skipped and returned entries, as the web sends them.
+    static func request(demands: [String: [ViewWindowRequest]], selected: ViewOwner? = nil, reviewHistory: ReviewHistory = ReviewHistory(), previous: ViewRequest) -> ViewRequest {
         var windows: [ViewWindowRequest] = []
         var position: [String: Int] = [:]
         for window in baseWindows + demands.keys.sorted().flatMap({ demands[$0]! }) {
@@ -35,23 +52,22 @@ enum NavigationScope {
             window.section == "review" || window.section == "rail_parents" || window.section == "settled"
                 || (window.section == "children" && window.owner?.kind == "chief")
         }
-        let conversationIDs = Array(Set(reviewConversationIDs)).sorted()
-        let availableRows = max(0, rowBudget - conversationIDs.count)
         let desired = windows.map(\.limit)
         let stableIndexes = windows.indices.filter { stable(windows[$0]) }
         var fixed = stableIndexes.reduce(0) { $0 + windows[$1].limit }
-        if fixed > availableRows {
+        if fixed > rowBudget {
             for index in stableIndexes { windows[index].limit = 0 }
-            fill(&windows, stableIndexes, desired: desired, available: availableRows)
+            fill(&windows, stableIndexes, desired: desired, available: rowBudget)
             fixed = stableIndexes.reduce(0) { $0 + windows[$1].limit }
         }
         let elastic = windows.indices.filter { !stable(windows[$0]) && windows[$0].limit > 0 }
         for index in elastic { windows[index].limit = 0 }
-        fill(&windows, elastic, desired: desired, available: max(0, availableRows - fixed))
+        fill(&windows, elastic, desired: desired, available: max(0, rowBudget - fixed))
         var next = previous
         next.windows = windows
         next.selected = selected
-        next.reviewConversationIds = conversationIDs
+        next.reviewSkippedKeys = reviewHistory.skipped
+        next.reviewPriorityKeys = reviewHistory.priority
         guard next != previous else { return previous }
         next.scopeGeneration = previous.scopeGeneration + 1
         return next
@@ -146,25 +162,60 @@ extension NavigationPresentation {
             }
     }
 
-    /// The queue in review-window order. A Ticket card stays one entry with its parts.
+    /// The queue in review-window order, one card per purpose: each entry's proposal,
+    /// then its unread runs, then its ask. A saved view knows no runtime facts, so a
+    /// member with nothing else waiting is its owner's ask.
     func reviewQueue(in snapshot: ViewSnapshot) -> ReviewResponse {
-        let cards: [NavigationReviewCard]
+        let entries: [NavigationReviewEntry]
         let window = snapshot.window("review")
         if let window {
             let byMember = Dictionary(review.map { ($0.member, $0) }, uniquingKeysWith: { first, _ in first })
-            cards = window.members.compactMap { byMember[$0] }
-        } else { cards = review }
-        let queue = cards.map { card -> ReviewCard in
-            switch card {
-            case .message(let message): return ReviewCard(id: message.item.id, parts: [message.item])
-            case .ticket(let id, _, _, let proposal, let messages):
-                let parts = (proposal.map { [ReviewItem(reviewItemType: "proposal", ticketId: $0.ticketId, field: $0.field, title: $0.title, waitingSince: $0.waitingSince, proposalRevision: $0.proposalRevision)] } ?? [])
-                    + messages.map(\.item)
-                return ReviewCard(id: "ticket:\(id)", ticketId: id, parts: parts)
+            entries = window.members.compactMap { member in
+                byMember[member] ?? reviewAskCandidates[member].map { NavigationReviewEntry(member: member, waitingSince: $0.waitingSince, ask: $0) }
+            }
+        } else { entries = review }
+        let items = entries.flatMap { entry -> [ReviewItem] in
+            (entry.proposal.map { [ReviewItem(reviewItemType: "proposal", ticketId: $0.ticketId, field: $0.field, title: $0.title, waitingSince: $0.waitingSince, proposalRevision: $0.proposalRevision)] } ?? [])
+                + entry.messages.map(\.item) + (entry.ask.map { [$0.item] } ?? [])
+        }
+        return ReviewResponse(items: items, runningWorkerCount: snapshot.content.counts.runningConversations,
+                              unloadedCount: window.map { max(0, $0.total - $0.members.count) } ?? 0)
+    }
+}
+
+extension NavigationPresentation {
+    /// Who reviews a proposal now, when the view shows it still waiting on the same
+    /// revision but held by someone other than Khushal. Nil when it no longer waits.
+    func movedReviewer(for item: ReviewItem, in snapshot: ViewSnapshot) -> String? {
+        guard item.isProposal, proposalWaits(item, in: snapshot) == true else { return nil }
+        var row: ViewTicketValue?
+        var managerTitles: [String: String] = [:]
+        for record in snapshot.content.records {
+            switch record {
+            case .ticket(let id, let value) where id == item.ticketId: row = value
+            case .manager(let id, let value): managerTitles[id] = value.title
+            default: break
             }
         }
-        return ReviewResponse(cards: queue, runningWorkerCount: snapshot.content.counts.runningConversations,
-                              unloadedCount: window.map { max(0, $0.total - $0.members.count) } ?? 0)
+        guard let holder = row?.ceilingHolder, holder != ViewPrincipal(kind: "owner", id: "owner") else { return nil }
+        switch holder.kind {
+        case "chief": return chief?.label ?? "Chief of Staff"
+        case "manager": return managerTitles[holder.id] ?? "the Manager"
+        default: return "the Worker"
+        }
+    }
+}
+
+extension NavigationPresentation {
+    /// Whether this exact proposal still waits for a decision, from anyone. Nil when the
+    /// view does not carry its Ticket.
+    func proposalWaits(_ item: ReviewItem, in snapshot: ViewSnapshot) -> Bool? {
+        guard item.isProposal else { return nil }
+        for case .ticket(let id, let row) in snapshot.content.records where id == item.ticketId {
+            return row.integrityError == nil && !row.isBacklogged && row.ticketStatus == "awaiting_approval"
+                && row.proposalCreatedAt == item.waitingSince && (item.proposalRevision.map { $0 == row.proposalRevision } ?? true)
+        }
+        return nil
     }
 }
 
@@ -173,6 +224,15 @@ extension NavigationReviewMessage {
         var item = ReviewItem(reviewItemType: "message", title: title, waitingSince: waitingSince, conversationId: conversationId,
                               ownerKind: ownerKind, ownerId: ownerId, ownerReadThroughSequence: ownerReadThroughSequence, addressCurrent: addressCurrent)
         item.addressId = addressId
+        item.recap = recap
+        return item
+    }
+}
+
+extension NavigationReviewAsk {
+    var item: ReviewItem {
+        var item = ReviewItem(reviewItemType: "ask", title: title, waitingSince: waitingSince, conversationId: conversationId,
+                              ownerKind: ownerKind, ownerId: ownerId)
         item.recap = recap
         return item
     }

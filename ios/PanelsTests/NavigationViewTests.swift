@@ -144,65 +144,64 @@ final class NavigationViewTests: XCTestCase {
 
     func testReviewQueueUsesCanonicalAddressesOldestWaitAndWindowOrder() throws {
         let pending = ticket(["ticket_status": "awaiting_approval", "recap": "Worker recap", "proposal_field": "plan", "proposal_revision": 1, "proposal_created_at": 2])
-        let historical = conversation("historical", unreadAt: 2)
-        let current = conversation("a-conversation", unreadAt: 1)
+        let historical = conversation("historical", unreadAt: 2, awaiting: false)
+        let current = conversation("a-conversation", unreadAt: 1, awaiting: false)
         let addresses = [
             address("old-worker", owner: ("ticket", "a"), conversation: "historical", current: false, parent: ("manager", "parent")),
             address("current-manager", owner: ("manager", "parent"), conversation: "historical", current: true, parent: nil),
             address("current-worker", owner: ("ticket", "a"), conversation: "a-conversation", current: true, parent: ("manager", "parent")),
         ]
         let source = [pending, current, historical, parentManager(), project("p", "Project")] + addresses
-        let cards = NavigationPresentation(try snapshot(source).content.records).review
+        let entries = NavigationPresentation(try snapshot(source).content.records).review
         let nativeSnapshot = try snapshot(source)
-        let nativePart = try XCTUnwrap(NavigationPresentation(nativeSnapshot.content.records).reviewQueue(in: nativeSnapshot).cards.first?.parts.first)
+        let nativePart = try XCTUnwrap(NavigationPresentation(nativeSnapshot.content.records).reviewQueue(in: nativeSnapshot).items.first { $0.isProposal })
         XCTAssertEqual(nativePart.proposalRevision, 1)
         let newerSource = source.map { $0["kind"] as? String == "ticket" ? ticket(["ticket_status": "awaiting_approval", "proposal_field": "plan", "proposal_revision": 2, "proposal_created_at": 2]) : $0 }
         let newerSnapshot = try snapshot(newerSource)
-        let newerPart = try XCTUnwrap(NavigationPresentation(newerSnapshot.content.records).reviewQueue(in: newerSnapshot).cards.first?.parts.first)
+        let newerPart = try XCTUnwrap(NavigationPresentation(newerSnapshot.content.records).reviewQueue(in: newerSnapshot).items.first { $0.isProposal })
         XCTAssertEqual(newerPart.waitingSince, nativePart.waitingSince)
         XCTAssertEqual(newerPart.proposalRevision, 2)
         XCTAssertNotEqual(newerPart.id, nativePart.id)
         let message = NavigationReviewMessage(conversationId: "a-conversation", addressId: "current-worker", addressCurrent: true, ownerKind: "ticket", ownerId: "a", title: "A", waitingSince: 1, recap: "Worker recap", ownerReadThroughSequence: 0)
-        XCTAssertEqual(cards, [
-            .ticket(id: "a", title: "A", waitingSince: 1, proposal: NavigationReviewProposal(ticketId: "a", field: "plan", title: "A", waitingSince: 2, proposalField: "plan", proposalRevision: 1), messages: [message]),
-            .message(NavigationReviewMessage(conversationId: "historical", addressId: "current-manager", addressCurrent: true, ownerKind: "manager", ownerId: "parent", title: "Parent", waitingSince: 2, recap: "", ownerReadThroughSequence: 0)),
+        XCTAssertEqual(entries, [
+            NavigationReviewEntry(member: RecordKey(kind: "ticket", id: "a"), waitingSince: 1,
+                proposal: NavigationReviewProposal(ticketId: "a", field: "plan", title: "A", waitingSince: 2, proposalField: "plan", proposalRevision: 1), messages: [message]),
+            NavigationReviewEntry(member: RecordKey(kind: "address", id: "current-manager"), waitingSince: 2,
+                messages: [NavigationReviewMessage(conversationId: "historical", addressId: "current-manager", addressCurrent: true, ownerKind: "manager", ownerId: "parent", title: "Parent", waitingSince: 2, recap: "", ownerReadThroughSequence: 0)]),
         ])
         // Without the Manager's address, the historical Ticket address is canonical and read only.
         let replaced = NavigationPresentation(try snapshot(source.filter { $0["id"] as? String != "current-manager" }).content.records).review
-        guard case .ticket(_, _, _, _, let messages) = try XCTUnwrap(replaced.first) else { return XCTFail("Expected a Ticket card") }
         XCTAssertEqual(replaced.count, 1)
-        XCTAssertEqual(messages.map(\.conversationId), ["a-conversation", "historical"])
-        XCTAssertEqual(messages.last?.addressCurrent, false)
-        XCTAssertEqual(messages.last?.recap, "Worker recap")
+        XCTAssertEqual(replaced[0].messages.map(\.conversationId), ["a-conversation", "historical"])
+        XCTAssertEqual(replaced[0].messages.last?.addressCurrent, false)
+        XCTAssertEqual(replaced[0].messages.last?.recap, "Worker recap")
         // A settled canonical Manager excludes its message and never falls back to the former Ticket.
         let settled = source.map { $0["id"] as? String == "parent" ? parentManager(settled: true) : $0 }
         let liveChild = NavigationPresentation(try snapshot(settled).content.records).review
         XCTAssertEqual(liveChild.count, 1)
-        guard case .ticket(_, _, _, _, let childMessages) = liveChild[0] else { return XCTFail("Expected a Ticket card") }
-        XCTAssertEqual(childMessages.map(\.conversationId), ["a-conversation"])
-        func with(_ changes: [String: Any]) throws -> [NavigationReviewCard] {
+        XCTAssertEqual(liveChild[0].messages.map(\.conversationId), ["a-conversation"])
+        func with(_ changes: [String: Any]) throws -> [NavigationReviewEntry] {
             NavigationPresentation(try snapshot(settled.map { $0["kind"] as? String == "ticket" ? ticket(["ticket_status": "awaiting_approval", "recap": "Worker recap", "proposal_field": "plan", "proposal_revision": 1, "proposal_created_at": 2].merging(changes) { $1 }) : $0 }).content.records).review
         }
         XCTAssertEqual(try with(["is_backlogged": true]), [])
         XCTAssertEqual(try with(["stage": "done", "ticket_status": "empty"]), [])
         let messageOnly = try with(["ticket_status": "empty", "proposal_field": NSNull(), "proposal_created_at": NSNull()])
-        guard case .ticket(_, _, _, let proposal, let only) = try XCTUnwrap(messageOnly.first) else { return XCTFail("Expected a Ticket card") }
-        XCTAssertNil(proposal); XCTAssertEqual(only.map(\.conversationId), ["a-conversation"])
+        XCTAssertNil(messageOnly.first?.proposal); XCTAssertEqual(messageOnly.first?.messages.map(\.conversationId), ["a-conversation"])
 
-        // Server window order wins; a Ticket card stays one entry, proposal then messages,
-        // and each part keeps the native identity that resolve and saved decisions use.
+        // Server window order wins, and each entry splits into one card per purpose,
+        // proposal first, each keeping the native identity that saved decisions use.
         let window = viewWindow("review", members: [["kind": "address", "id": "current-manager"], ["kind": "ticket", "id": "a"]], total: 3)
         let queue = NavigationPresentation(try snapshot(source).content.records).reviewQueue(in: try snapshot(source, windows: [window]))
-        XCTAssertEqual(queue.cards.map(\.id), ["message:historical:2.0", "ticket:a"])
-        XCTAssertEqual(queue.cards.map { $0.parts.map(\.id) }, [["message:historical:2.0"], ["a:plan:2.0:revision:1", "message:a-conversation:1.0"]])
+        XCTAssertEqual(queue.items.map(\.id), ["message:historical:2.0", "a:plan:2.0:revision:1", "message:a-conversation:1.0"])
+        XCTAssertEqual(queue.items.map(\.historyKey), [RecordKey(kind: "conversation", id: "historical"), RecordKey(kind: "ticket", id: "a"), RecordKey(kind: "ticket", id: "a")])
         XCTAssertEqual(queue.items[0].owner, .manager("parent"))
         XCTAssertEqual(queue.unloadedCount, 1)
         XCTAssertEqual(queue.runningWorkerCount, 1)
 
-        // A decided proposal clears its card from the badge only when no message waits on it.
+        // A decided proposal clears its entry from the badge only when nothing else waits on it.
         let withMessage = NavigationPresentation(try snapshot(source).content.records)
-        XCTAssertEqual(withMessage.reviewBadge(count: 2, pendingDecisionTickets: ["a"]), 2, "The Ticket card still holds a message")
-        XCTAssertEqual(withMessage.reviewBadge(count: 2, pendingDecisionTickets: ["outside"]), 1, "A card outside the view clears")
+        XCTAssertEqual(withMessage.reviewBadge(count: 2, pendingDecisionTickets: ["a"]), 2, "The Ticket entry still holds a message")
+        XCTAssertEqual(withMessage.reviewBadge(count: 2, pendingDecisionTickets: ["outside"]), 1, "An entry outside the view clears")
         let proposalOnly = NavigationPresentation(try snapshot([pending, parentManager(), project("p", "Project")]).content.records)
         XCTAssertEqual(proposalOnly.reviewBadge(count: 1, pendingDecisionTickets: ["a"]), 0)
     }
@@ -217,56 +216,44 @@ final class NavigationViewTests: XCTestCase {
             ask("b", 2, ["is_backlogged": true, "blocked": true, "terminal": true, "worker_step_claim_out": true]),
             ask("c", 2), ask("a", 2), ask("earliest", 1), ask("manager", 0, ["ceiling_holder": ["kind": "chief", "id": "chief"]]),
             ask("claim-only", 0, ["ticket_status": "empty", "worker_step_claim_out": true, "conversation_id": NSNull()]),
-            conversation("conversation"), manager, project("project", "Project"), sourceAddress,
+            conversation("conversation", awaiting: false), manager, project("project", "Project"), sourceAddress,
             conversation("historical"), conversation("unlinked"), conversation("manager-current"), chiefRecord("conversation"),
             address("history", owner: ("ticket", "a"), conversation: "historical", current: false, parent: ("chief", "chief")),
         ]
         let cards = NavigationPresentation(try snapshot(records).content.records).review
         XCTAssertEqual(cards.map(\.member.id), ["a", "earliest", "c"])
-        guard case .ticket(_, _, _, let proposal, _) = cards[1] else { return XCTFail("Expected a Ticket card") }
-        XCTAssertEqual(proposal?.field, "implementation", "The Review field is the gating field")
-        XCTAssertEqual(proposal?.proposalField, "plan")
+        XCTAssertEqual(cards[1].proposal?.field, "implementation", "The Review field is the gating field")
+        XCTAssertEqual(cards[1].proposal?.proposalField, "plan")
     }
 
-    /// A fresh queue alone cannot remove a painted message. Its current owner must
-    /// invalidate it, including when a read elsewhere already emptied that queue.
-    func testExternalFinalApprovalRemovesHeldCardButReadElsewhereRetainsMessage() throws {
-        let context: [[String: Any]] = [["conversation_id": "a-conversation", "canonical_address_id": "worker"]]
+    /// Risk: an ask the server admits to the review window never reaches the phone, so the
+    /// badge counts work the queue cannot show. A Ticket's ask is its own card after its
+    /// proposal and messages; a Manager's or the Chief's joins its conversation's address.
+    /// A saved view keeps no runtime facts, so there a member with nothing else waiting
+    /// is shown as its owner's ask.
+    func testEveryEntrySplitsIntoOneCardPerPurposeIncludingAskOnlyMembers() throws {
         let worker = address("worker", owner: ("ticket", "a"), conversation: "a-conversation", current: true, parent: ("manager", "parent"))
-        let initial = try snapshot([ticket(["ticket_status": "awaiting_approval", "proposal_field": "plan", "proposal_revision": 1, "proposal_created_at": 2]),
-            conversation("a-conversation"), worker], windows: [viewWindow("review", members: [["kind": "ticket", "id": "a"]])], reviewContext: context)
-        let queue = ReviewQueue()
-        let held = try XCTUnwrap(NavigationPresentation(initial.content.records).reviewQueue(in: initial).cards.first)
-        XCTAssertEqual(held.parts.count, 2)
+        let chiefAddress = address("chief-address", owner: ("chief", "chief"), conversation: "chief-conversation", current: true, parent: nil)
+        let records = [ticket(["ticket_status": "awaiting_approval", "proposal_field": "plan", "proposal_revision": 1, "proposal_created_at": 2]),
+                       conversation("a-conversation", unreadAt: 1, askAt: 3), worker, parentManager(), project("p", "Project"),
+                       chiefRecord("chief-conversation"), conversation("chief-conversation", message: false, askAt: 4), chiefAddress]
+        let window = viewWindow("review", members: [["kind": "ticket", "id": "a"], ["kind": "address", "id": "chief-address"]])
+        let live = try snapshot(records, windows: [window])
+        let queue = NavigationPresentation(live.content.records).reviewQueue(in: live)
+        XCTAssertEqual(queue.items.map(\.reviewItemType), ["proposal", "message", "ask", "ask"])
+        XCTAssertEqual(queue.items.map(\.id), ["a:plan:2.0:revision:1", "message:a-conversation:1.0", "ask:a-conversation:3.0", "ask:chief-conversation:4.0"])
+        XCTAssertEqual(queue.items[2].owner, .ticket("a"))
+        XCTAssertEqual(queue.items[3].owner, .chief)
+        XCTAssertEqual(queue.items[3].historyKey, RecordKey(kind: "conversation", id: "chief-conversation"))
 
-        // A read elsewhere keeps the valid painted run, even after live membership clears.
-        let read = try snapshot([ticket(), conversation("a-conversation", read: 1, message: false), worker],
-            windows: [viewWindow("review", members: [])], reviewContext: context)
-        let before = NavigationPresentation(read.content.records).reviewQueue(in: read).cards
-        XCTAssertTrue(before.isEmpty)
-        XCTAssertEqual(queue.parts(of: held, in: before, view: read).map(\.id), held.parts.filter(\.isMessage).map(\.id))
+        // Answered: the live view knows no ask waits, and a member alone shows nothing.
+        let answered = try snapshot(records.map { $0["id"] as? String == "chief-conversation" ? conversation("chief-conversation", message: false, awaiting: false, askAt: 4) : $0 }, windows: [window])
+        XCTAssertEqual(NavigationPresentation(answered.content.records).reviewQueue(in: answered).items.map(\.reviewItemType), ["proposal", "message", "ask"])
 
-        // No local decision flags participate: the final approval arrives from elsewhere.
-        let patch = try frame(["event": "patch", "previous_coverage": coverage("0"), "coverage": coverage("1"),
-            "previous_content_version": "one", "content_version": "done", "upserts": [ticket(["stage": "done", "terminal": true])],
-            "evictions": [], "windows": [viewWindow("review", members: [])], "counts": counts(), "review_context": context,
-            "review_summary": ["skipped": 0, "new": 0]])
-        let done = try NavigationViewFrames.apply(read, patch).get()
-        let after = NavigationPresentation(done.content.records).reviewQueue(in: done).cards
-        XCTAssertEqual(before.map(\.id), after.map(\.id), "Owner eligibility changes even though queue identities remain empty")
-        XCTAssertTrue(queue.parts(of: held, in: after, view: done).isEmpty, "The externally completed Ticket must leave the painted Review card")
-
-        // An explicit null replaces the old context atomically when its address disappears.
-        let removed = try frame(["event": "patch", "previous_coverage": coverage("1"), "coverage": coverage("2"),
-            "previous_content_version": "done", "content_version": "deleted", "upserts": [],
-            "evictions": [["kind": "ticket", "id": "a"], ["kind": "address", "id": "worker"]],
-            "windows": [viewWindow("review", members: [])], "counts": counts(),
-            "review_context": [["conversation_id": "a-conversation", "canonical_address_id": NSNull()]],
-            "review_summary": ["skipped": 0, "new": 0]])
-        let deleted = try NavigationViewFrames.apply(done, removed).get()
-        XCTAssertEqual(deleted.content.reviewContext.count, 1)
-        XCTAssertNil(deleted.content.reviewContext.first?.canonicalAddressId)
-        XCTAssertTrue(queue.parts(of: held, in: [], view: deleted).isEmpty)
+        // The saved copy at launch: no runtime facts, so only the ask-only member shows its ask.
+        let saved = live.savedDisplay
+        let restored = NavigationPresentation(saved.content.records).reviewQueue(in: saved)
+        XCTAssertEqual(restored.items.map(\.id), ["a:plan:2.0:revision:1", "message:a-conversation:1.0", "ask:chief-conversation:4.0"])
     }
 
     // MARK: Request (owner.ts refreshDemand, read.py request)
@@ -278,20 +265,21 @@ final class NavigationViewTests: XCTestCase {
         let windows = [ViewWindowRequest(section: "settled", limit: 60)] + chiefChildren
             + (0..<8).map { ViewWindowRequest(section: "rail_tickets", owner: .manager("o\($0)"), limit: 60) }
         let initial = ViewRequest(windows: NavigationScope.baseWindows)
-        let heldConversations = ["held-b", "held-a", "held-a"]
-        let request = NavigationScope.request(demands: ["rail": windows], reviewConversationIDs: heldConversations, previous: initial)
-        XCTAssertLessThanOrEqual(request.windows.reduce(0) { $0 + $1.limit } + request.reviewConversationIds.count, 256)
-        XCTAssertEqual(request.reviewConversationIds, ["held-a", "held-b"])
+        let history = ReviewHistory(skipped: [RecordKey(kind: "ticket", id: "a"), RecordKey(kind: "conversation", id: "c")], priority: [RecordKey(kind: "ticket", id: "a")])
+        let request = NavigationScope.request(demands: ["rail": windows], reviewHistory: history, previous: initial)
+        XCTAssertLessThanOrEqual(request.windows.reduce(0) { $0 + $1.limit }, 256)
+        XCTAssertTrue(request.reviewConversationIds.isEmpty)
         XCTAssertEqual(request.windows.filter { $0.section == "children" }.map(\.limit), [30, 30, 30])
         XCTAssertEqual(request.windows.first { $0.section == "settled" }?.limit, 60)
         XCTAssertEqual(request.scopeGeneration, 1)
-        XCTAssertEqual(NavigationScope.request(demands: ["rail": windows], reviewConversationIDs: heldConversations.reversed(), previous: request).scopeGeneration, 1, "An unchanged scope keeps its generation")
+        XCTAssertEqual(NavigationScope.request(demands: ["rail": windows], reviewHistory: history, previous: request).scopeGeneration, 1, "An unchanged scope keeps its generation")
 
         let json = try JSONSerialization.jsonObject(with: Data(try request.encoded().utf8)) as! [String: Any]
         XCTAssertEqual(Set(json.keys), ["projection_version", "scope_generation", "locale", "selected", "selected_conversation_id", "review_conversation_ids", "review_skipped_keys", "review_priority_keys", "windows"])
-        XCTAssertEqual(json["review_conversation_ids"] as? [String], ["held-a", "held-b"])
+        XCTAssertEqual(json["review_skipped_keys"] as? [[String: String]], [["kind": "ticket", "id": "a"], ["kind": "conversation", "id": "c"]])
+        XCTAssertEqual(json["review_priority_keys"] as? [[String: String]], [["kind": "ticket", "id": "a"]])
         let released = NavigationScope.request(demands: ["rail": windows], previous: request)
-        XCTAssertTrue(released.reviewConversationIds.isEmpty)
+        XCTAssertTrue(released.reviewSkippedKeys.isEmpty && released.reviewPriorityKeys.isEmpty)
         XCTAssertEqual(released.scopeGeneration, 2)
         XCTAssertTrue(json["selected"] is NSNull)
         XCTAssertEqual(json["projection_version"] as? Int, 7)
@@ -331,9 +319,10 @@ final class NavigationViewTests: XCTestCase {
          "members": members, "total": total ?? members.count, "previous": NSNull(), "next": NSNull(), "forward_overlap": NSNull(), "backward_overlap": NSNull()]
     }
     /// fixtures.ts conversation(): working, awaiting an answer, unread and failed by default.
-    private func conversation(_ id: String, read: Int = 0, message: Bool = true, failure: Bool = true, unreadAt: Int = 1) -> [String: Any] {
+    private func conversation(_ id: String, read: Int = 0, message: Bool = true, failure: Bool = true, unreadAt: Int = 1, awaiting: Bool = true, askAt: Int? = nil) -> [String: Any] {
         ["kind": "conversation", "id": id, "value": ["first_unread_owner_message_at": message ? unreadAt as Any : NSNull(), "owner_read_through_sequence": read, "error_acknowledged_through_sequence": 0,
-            "attention": ["current": ["signal": ["working": true, "message_for_owner": message], "awaiting_answer": true, "last_turn_failed": failure],
+            "latest_ask_at": askAt as Any? ?? NSNull(),
+            "attention": ["current": ["signal": ["working": true, "message_for_owner": message], "awaiting_answer": awaiting, "last_turn_failed": failure],
                           "durable": ["message_for_owner": message, "last_turn_failed": failure]]]]
     }
     private func conversationValue(_ id: String) throws -> ViewConversationValue {

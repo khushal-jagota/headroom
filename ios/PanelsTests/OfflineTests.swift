@@ -491,6 +491,42 @@ import XCTest
         XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.1), [body, body])
         XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
     }
+    /// Risk: a decision's pictures and files are lost before the decision is sent, are sent
+    /// in bytes that differ between attempts, or make a decision land twice when its reply
+    /// is lost. They are saved first inside the frozen body, resent unchanged, and land once.
+    func testDecisionWithAttachmentIsFrozenFirstResentUnchangedAndLandsOnceAcrossLostReplies() async throws {
+        var outbox = Outbox(store: store)
+        var original = try decision("with-photo", guidance: "See the picture")
+        original.draftID = "photo-guidance"
+        original.decisionAttachments = [tinyPhoto]
+        store.saveDraft("See the picture", server: server, id: "photo-guidance")
+        try store.put(server: server, kind: "attachments", id: "photo-guidance", data: JSONEncoder().encode([tinyPhoto]))
+        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: "photo-guidance").text?.updated
+        OfflineProtocol.state.loseDecisionBeforeCommit = true
+        try outbox.enqueue(original, api: api)
+        let saved = try XCTUnwrap(outbox.work(server, id: original.id))
+        XCTAssertNil(saved.decisionAttachments, "The pictures live only in the frozen body")
+        let body = try XCTUnwrap(saved.protectedDecisionBody)
+        let posted = try XCTUnwrap(try json(body)["attachments"] as? [[String: String]])
+        XCTAssertEqual(posted, [["piece": "image", "data": tinyPhoto.data!, "media_type": "image/png", "file_name": "photo.png"]])
+        await outbox.drain(api: api)
+        // The next attempt commits, and its reply is lost too.
+        OfflineProtocol.state.loseDecisionAfterCommit = true
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting, "A lost response is not shown")
+        XCTAssertNotEqual(try store.record(server: server, kind: "attachments", id: "photo-guidance")?.payload, Data("[]".utf8),
+                          "A lost response cannot clear the note's pictures")
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.0), [original.id, original.id])
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.1), [body, body])
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
+        XCTAssertEqual(try store.record(server: server, kind: "attachments", id: "photo-guidance")?.payload, Data("[]".utf8),
+                       "The applied receipt clears the note's pictures with its words")
+        XCTAssertEqual(store.draft(server: server, id: "photo-guidance"), "")
+    }
     func testChangedProposalRefusesBothDecisionKindsOnTheirItemAndKeepsGuidance() async throws {
         let outbox = Outbox(store: store)
         try outbox.enqueue(try decision("approve"), api: api)

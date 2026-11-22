@@ -131,6 +131,9 @@ import SwiftData
         /// Failed without a settling answer from the server, which may already hold it.
         /// Try Again sends it again with the same identity.
         var gaveUp: Bool { refused && unsettledAttempts > 0 }
+        /// One refusal of this item. Try Again can keep the item's identity, so a later
+        /// refusal of the same item is told apart by when it failed.
+        var refusalAttempt: String { "\(id)@\(completed?.timeIntervalSince1970 ?? 0)" }
     }
     nonisolated static let finishedLifetime: TimeInterval = 24 * 60 * 60
     private let context: ModelContext
@@ -214,9 +217,9 @@ import SwiftData
         let kinds = ["approval", "sendBack"]
         return try sorted(#Predicate { $0.server == server && kinds.contains($0.kind) })
     }
-    /// What Review hides at once: decisions, mark reads and replies that carry a read boundary.
+    /// What Review hides at once: decisions, mark reads, ask answers and replies that carry a read boundary.
     func reviewSummaries(server: String) throws -> [Summary] {
-        let kinds = ["approval", "sendBack", "markRead"]
+        let kinds = ["approval", "sendBack", "markRead", "askAnswer"]
         return try sorted(#Predicate { $0.server == server && (kinds.contains($0.kind) || $0.ownerReadThroughSequence != nil) })
     }
     /// Each lane's first unfinished row, when it can be sent now. Metadata only.
@@ -371,7 +374,8 @@ import SwiftData
         }
     }
     func settle(server: String, id: String, state: PendingWork.State, note: String = "", conversationID: String? = nil, now: Date = .now,
-                decisionDraft: (id: String, text: String, updated: Date)? = nil, restoreRejectedPhotoDraft: Bool = false) throws {
+                decisionDraft: (id: String, text: String, updated: Date)? = nil,
+                decisionAttachments: (id: String, pieces: [ConversationSend.Piece])? = nil, restoreRejectedPhotoDraft: Bool = false) throws {
         try transaction(server) {
             guard let row = try metadata(server, id) else { throw StoreError.missingWork }
             if restoreRejectedPhotoDraft, let work = try work(server: server, id: id) {
@@ -380,6 +384,11 @@ import SwiftData
             if state == .sent, let decisionDraft,
                let draft = try raw(server, "draft", decisionDraft.id), draft.payload == Data(decisionDraft.text.utf8), draft.updatedAt == decisionDraft.updated {
                 draft.payload = Data(); draft.updatedAt = .now
+            }
+            // An applied decision's pictures and files leave the note, unless they changed since.
+            if state == .sent, let decisionAttachments, let saved = try raw(server, "attachments", decisionAttachments.id),
+               (try? JSONDecoder().decode([ConversationSend.Piece].self, from: saved.payload)) == decisionAttachments.pieces {
+                saved.payload = Data("[]".utf8); saved.updatedAt = .now
             }
             if row.state != state.rawValue { row.state = state.rawValue }
             if row.note != note { row.note = note }

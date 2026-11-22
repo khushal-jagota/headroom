@@ -23,6 +23,8 @@ struct PendingWork: Codable, Identifiable, Sendable {
     var audioFile: String?
     var draftID: String?
     var decisionDraftUpdatedAt: Date?
+    /// A decision's pictures and files until the decision is frozen; then they live in its body.
+    var decisionAttachments: [ConversationSend.Piece]?
     var completed: Date?
     var priorMessageIDs: [String]?
     var rejectedPhotoDraft: RejectedPhotoDraft?

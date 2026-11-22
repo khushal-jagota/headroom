@@ -33,6 +33,10 @@ final class ServerReachabilityTests: XCTestCase {
         app.launch()
         // Review is the root at launch.
         XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 15))
+        // Review opens on its summary; its return button leads to the cards.
+        let reviewReturn = app.buttons["review.return"]
+        XCTAssertTrue(reviewReturn.waitForExistence(timeout: 15))
+        reviewReturn.tap()
         let proposal = app.buttons["review.openTicket"]
         XCTAssertTrue(proposal.waitForExistence(timeout: 15))
         capture(app, "review-root")

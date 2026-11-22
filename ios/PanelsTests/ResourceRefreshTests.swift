@@ -249,11 +249,12 @@ import XCTest
         XCTAssertEqual(store.view?.contentVersion, "3")
         try await until { open() == 1 }
 
-        // More held conversations widen the scope at once; fewer wait for the next stream.
-        let review = [ViewWindowRequest(section: "review", limit: NavigationScope.reviewWindowLimit)]
-        store.setNavigationDemand("review", review, reviewConversationIDs: ["cA", "cB"])
+        // A new return order changes what the review window holds, so it opens a stream at
+        // once; a skipped key alone only feeds the server's summary and waits for the next.
+        let skipped = RecordKey(kind: "ticket", id: "a")
+        store.setReviewHistory(ReviewHistory(skipped: [skipped], priority: [skipped]))
         try await until { store.view?.contentVersion == "4" }
-        store.setNavigationDemand("review", review, reviewConversationIDs: ["cA"])
+        store.setReviewHistory(ReviewHistory(skipped: [skipped, RecordKey(kind: "conversation", id: "c")], priority: [skipped]))
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(opened(), 4)
         try await until { open() == 1 }

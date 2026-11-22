@@ -60,9 +60,11 @@ import Observation
                 guard approval.expectedProposalRevision == proposal.revision else { throw OutgoingStore.StoreError.invalidTransition }
                 command = DecisionCommand(decision: "approve", field: proposal.field, expectedProposalRevision: proposal.revision,
                     editedBody: approval.editedBody, nextCeiling: approval.nextCeiling,
-                    nextHolder: approval.nextHolder.map { DecisionHolder(kind: $0.kind, id: $0.id) }, message: work.guidance)
+                    nextHolder: approval.nextHolder.map { DecisionHolder(kind: $0.kind, id: $0.id) }, message: work.guidance,
+                    attachments: work.decisionAttachments)
             } else if work.kind == .sendBack {
-                command = DecisionCommand(decision: "send_back", field: proposal.field, expectedProposalRevision: proposal.revision, message: work.guidance)
+                command = DecisionCommand(decision: "send_back", field: proposal.field, expectedProposalRevision: proposal.revision,
+                    message: work.guidance, attachments: work.decisionAttachments)
             } else { throw OutgoingStore.StoreError.invalidTransition }
             frozen.protectedDecisionBody = try APIClient.encodeReviewDecision(command)
             if work.kind == .sendBack, let draftID = work.draftID, let note = command.message,
@@ -71,7 +73,7 @@ import Observation
                 frozen.decisionDraftUpdatedAt = captured.updated
             }
             frozen.protectedProposalCreatedAt = proposal.createdAt
-            frozen.proposal = nil; frozen.approval = nil; frozen.guidance = nil
+            frozen.proposal = nil; frozen.approval = nil; frozen.guidance = nil; frozen.decisionAttachments = nil
         }
         try store.outgoing.enqueue(frozen, server: LocalStore.server(api.baseURL))
         Task { await drain(api: api) }
@@ -478,11 +480,12 @@ import Observation
     private func settleDecision(_ receipt: DecisionReceipt, id: String, work: PendingWork, server: String) throws {
         if receipt.outcome == "applied" {
             var draft: (id: String, text: String, updated: Date)?
-            if let draftID = work.draftID, let updated = work.decisionDraftUpdatedAt, let body = work.protectedDecisionBody,
-               let text = try APIClient.decoder().decode(DecisionCommand.self, from: body).message {
+            let command = try work.protectedDecisionBody.map { try APIClient.decoder().decode(DecisionCommand.self, from: $0) }
+            if let draftID = work.draftID, let updated = work.decisionDraftUpdatedAt, let text = command?.message {
                 draft = (id: draftID, text: text, updated: updated)
             }
-            try store.outgoing.settle(server: server, id: id, state: .sent, decisionDraft: draft)
+            let attachments = work.draftID.flatMap { id in command?.attachments.map { (id: id, pieces: $0) } }
+            try store.outgoing.settle(server: server, id: id, state: .sent, decisionDraft: draft, decisionAttachments: attachments)
         } else {
             try store.outgoing.settle(server: server, id: id, state: .failed,
                 note: "Not sent · " + (receipt.error?.message ?? "This decision was refused. Review again."))

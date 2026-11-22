@@ -59,7 +59,7 @@ import SwiftUI
     private(set) var presentation: NavigationPresentation?
     private(set) var viewRequest = ViewRequest(windows: NavigationScope.baseWindows)
     private var demands: [String: [ViewWindowRequest]] = [:]
-    private var reviewConversationDemands: [String: [String]] = [:]
+    private var reviewHistory = ReviewHistory()
     /// Detail screens that named a selected owner, most recent last.
     private var selections: [(name: String, owner: ViewOwner)] = []
     private var running = false
@@ -118,6 +118,9 @@ import SwiftUI
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; workspaceSettled = []; workspaceView = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
         errors = [:]
+        // Review's history names one server's Tickets and conversations.
+        reviewHistory = ReviewHistory()
+        updateScope(opening: false)
         restore()
     }
 
@@ -194,16 +197,19 @@ import SwiftUI
     /// changed demand opens a stream for the new scope at once, and the current stream
     /// keeps the view live until the new snapshot arrives. A withdrawal only narrows the
     /// next stream, so leaving a screen puts no view read in front of the next screen's own.
-    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?, reviewConversationIDs: [String] = []) {
-        let conversations = Array(Set(reviewConversationIDs)).sorted()
-        let windowsChanged = demands[name] != windows
-        // Compared with what the followed stream carries, so a return to it opens nothing.
-        let widened = !Set(conversations).isSubset(of: streamRequest?.reviewConversationIds ?? [])
-        guard windowsChanged || reviewConversationDemands[name, default: []] != conversations else { return }
+    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?) {
+        guard demands[name] != windows else { return }
         demands[name] = windows
-        reviewConversationDemands[name] = windows == nil || conversations.isEmpty ? nil : conversations
-        // Fewer held conversations only narrow the next stream, as a withdrawal does.
-        updateScope(opening: windows != nil && (windowsChanged || widened))
+        updateScope(opening: windows != nil)
+    }
+
+    /// Review's skipped and returned entries. Only a new return order changes what the
+    /// window holds, so only it opens a stream; skipped keys ride the next one.
+    func setReviewHistory(_ history: ReviewHistory) {
+        guard history != reviewHistory else { return }
+        let reordered = history.priority != reviewHistory.priority
+        reviewHistory = history
+        updateScope(opening: reordered)
     }
 
     /// A detail screen names the one record it keys its reloads on, so the view carries
@@ -223,16 +229,15 @@ import SwiftUI
     }
 
     func withdrawNavigationDemand(_ name: String) {
-        guard demands[name] != nil || reviewConversationDemands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
+        guard demands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
         demands[name] = nil
-        reviewConversationDemands[name] = nil
         selections.removeAll { $0.name == name }
         updateScope(opening: false)
     }
 
     private func updateScope(opening: Bool) {
         let next = NavigationScope.request(demands: demands, selected: selections.last?.owner,
-            reviewConversationIDs: reviewConversationDemands.values.flatMap { $0 }, previous: viewRequest)
+            reviewHistory: reviewHistory, previous: viewRequest)
         guard next != viewRequest else { return }
         viewRequest = next
         guard running, opening else { return }

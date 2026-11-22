@@ -158,26 +158,29 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        // A normal launch opens Review as the root; its fixture cards follow.
+        // A normal launch opens Review on its summary; the fixture cards follow its return button.
         XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
+        let headline = app.staticTexts["review.summary.headline"]
+        let reviewReturn = app.buttons["review.return"]
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        reviewReturn.tap()
         try skipFixtureCards(app)
-        let caughtUp = app.staticTexts["You’re caught up."]
-        XCTAssertTrue(caughtUp.waitForExistence(timeout: 8))
-        let revisit = app.buttons["review.revisitSkipped"]
-        XCTAssertTrue(revisit.waitForExistence(timeout: 5))
-        capture(app, "review-final-page-with-revisit")
-        revisit.tap()
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        XCTAssertEqual(reviewReturn.label, "Review skipped")
+        capture(app, "review-final-page-with-return")
+        reviewReturn.tap()
         XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
         try skipFixtureCards(app)
-        XCTAssertTrue(caughtUp.waitForExistence(timeout: 8))
-        XCTAssertTrue(revisit.exists)
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        XCTAssertTrue(reviewReturn.exists)
         try await proof(base, "review-final")
-        XCTAssertTrue(revisit.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(reviewReturn.waitForNonExistence(timeout: 8))
+        XCTAssertEqual(headline.label, "All clear.")
 
         let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
         let attachment = app.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 8))
-        XCTAssertGreaterThan(input.frame.minY, caughtUp.frame.minY, "Message Chief must follow the final-page text")
+        XCTAssertGreaterThan(input.frame.minY, headline.frame.minY, "Message Chief must follow the summary text")
         input.tap(); input.typeText("Shared Chief draft")
         XCTAssertTrue(app.keyboards.firstMatch.exists)
         let send = app.buttons["Send message"]
@@ -221,7 +224,7 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertTrue(sent.waitForExistence(timeout: 8))
         capture(app, "review-final-chief-sent")
         let writes = try await recordedWrites(base)
-        XCTAssertEqual(writes.count, 1, "Revisit and draft edits must not send messages")
+        XCTAssertEqual(writes.count, 1, "The return and draft edits must not send messages")
         let message = try XCTUnwrap(writes.first as? [String: Any])
         XCTAssertEqual(message["conversation_id"] as? String, "stub")
         XCTAssertNil(message["owner_read_through_sequence"], "A final-page send must not acknowledge unread Review content")

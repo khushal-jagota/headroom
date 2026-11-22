@@ -27,6 +27,7 @@ final class OfflineOperationTests: XCTestCase {
         let chief = app.buttons["sidebar-chief"]
         XCTAssertTrue(chief.waitForExistence(timeout: 12))
         app.buttons["sidebar-review"].tap()
+        enterCards(app)
         XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 10))
         // Preload the three proposal cards and their manifests before losing connectivity.
         try await Task.sleep(for: .seconds(3))
@@ -54,6 +55,7 @@ final class OfflineOperationTests: XCTestCase {
         app.backButton.tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
         app.openDestination("sidebar-review")
+        enterCards(app)
         let approve = app.buttons["review.approve"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         approve.tap()
@@ -80,6 +82,7 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertTrue(found); app.openSidebar()
         XCTAssertTrue(chief.waitForExistence(timeout: 12), "The cached Sidebar did not restore offline")
         app.buttons["sidebar-review"].tap()
+        enterCards(app)
         XCTAssertTrue(element(app, containing: "Record offline").waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")
         // The old cover appeared on activation after a failed read. Stay offline a while.
         XCUIDevice.shared.press(.home)
@@ -128,6 +131,7 @@ final class OfflineOperationTests: XCTestCase {
         app.backButton.tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
         app.openDestination("sidebar-review")
+        enterCards(app)
         XCTAssertTrue(element(app, containing: "Record offline").waitForExistence(timeout: 10))
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         approve.tap()
@@ -247,6 +251,13 @@ final class OfflineOperationTests: XCTestCase {
             XCTAssertEqual(reads.count, 0, "A read note appeared (\(moment)): \(reads.allElementsBoundByIndex.map(\.label))")
         }
     }
+    /// Review opens on its summary at launch and after another destination.
+    @MainActor private func enterCards(_ app: XCUIApplication) {
+        let reviewReturn = app.buttons["review.return"]
+        XCTAssertTrue(reviewReturn.waitForExistence(timeout: 12), "Review did not show its summary")
+        reviewReturn.tap()
+    }
+
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

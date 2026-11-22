@@ -15,7 +15,7 @@ send one online-only PATCH, never an Outbox operation. The choice stays visible
 when offline. An unconfirmed answer triggers a fresh Ticket read, which compares
 the absolute ceiling and reviewer. It never triggers an automatic retry. The sheet
 states that nothing was approved. A further check reads settings without another
-PATCH. These changes have no durable operation receipt. Send it back requires a
+PATCH. These changes have no durable operation receipt. Return requires a
 nonempty note and an existing conversation, and does not appear for Brief.
 An empty note focuses the note field. The Ticket has no microphone in this area.
 

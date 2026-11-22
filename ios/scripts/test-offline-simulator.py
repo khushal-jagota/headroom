@@ -37,8 +37,11 @@ BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
 TABLE_SCROLL_SMOKE = os.environ.get("PANELS_TABLE_SCROLL_SMOKE") == "1"
 GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1" or TABLE_SCROLL_SMOKE
 REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
+# Review's other card kinds beside the message fixture: a worker question, a permission
+# ask, a refused decision and a reviewer move, for the one-off Review screen walk.
+REVIEW_QUEUE = os.environ.get("PANELS_REVIEW_QUEUE") == "1"
 REVIEW_MESSAGES = (
-    os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE
+    os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE or REVIEW_QUEUE
 )
 
 
@@ -391,11 +394,61 @@ def main() -> int:
         new_message=False,
         refused=False,
         review_owner="chief",
+        refuse_decisions=False,
+        # Conversations whose running turn waits on an ask, and the asks' own words.
+        asks={},
+        ask_answers=[],
     )
+    if REVIEW_QUEUE:
+        state["asks"] = {
+            "ask-question": dict(
+                owner=("manager", "review-asks"), at=6,
+                pending_user_input=dict(request_id="request-1", questions=[dict(
+                    question_id="release", header="Release",
+                    question="Which build should go to TestFlight first?",
+                    options=[
+                        dict(label="Build 15", description="Has the paywall fix and the new icon."),
+                        dict(label="Build 16", description="Adds the widget, still under test."),
+                    ],
+                    multi_select=False, allow_other=True,
+                )]),
+                pending_permission_ask=None,
+            ),
+            "ask-permission": dict(
+                owner=("ticket", "ask-ticket"), at=7,
+                pending_user_input=None,
+                pending_permission_ask=dict(
+                    ask_id="ask-1", title="Run the tests on the Mac simulator?",
+                    detail='xcodebuild test -scheme Wren -destination "platform=iOS Simulator,name=PanelsLaneB"',
+                    options=[
+                        dict(option_id="allow", label="Allow once", option_kind="allow_once"),
+                        dict(option_id="always", label="Always allow", option_kind="allow_always"),
+                        dict(option_id="reject", label="Decline", option_kind="reject_once"),
+                    ],
+                ),
+            ),
+        }
     if REVIEW_MESSAGES:
         state["slow"] = False
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
+    if REVIEW_QUEUE:
+        # The Ticket page shows the waiting proposal for its stage's gating field.
+        manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
+        tickets["offline-1"].update(
+            title="Rebuild the iPhone Review queue",
+            recap="Review shows one card per purpose and a summary at the end.",
+        )
+        tickets["offline-1"]["pending_proposal"]["body"] = (
+            "Split each Review entry into one card per purpose.\n\n"
+            "- A proposal card with its note, Return and Approve\n"
+            "- A message card with Reply and Mark read\n"
+            "- An ask card that answers the agent's question"
+        )
+        asker = copy.deepcopy(tickets["offline-1"])
+        asker.update(id="ask-ticket", title="Ship Wren build 15", conversation_id="ask-permission",
+                     recap="The release build is ready for its test run.", pending_proposal=None)
+        tickets["ask-ticket"] = asker
     if ARTIFACT_LINKS_PROOF:
         state["slow"] = False
         state["artifact_reads"] = {"text": 0, "photo": 0, "html": 0}
@@ -623,7 +676,8 @@ def main() -> int:
                 "is_backlogged": ticket.get("is_backlogged", False) if DESIGN_REVIEW else False,
                 "ceiling": ticket["ceiling"] if DESIGN_REVIEW else ticket["stage"],
                 "ceiling_holder": (
-                    ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"}
+                    ticket["ceiling_holder"] if DESIGN_REVIEW or REVIEW_QUEUE
+                    else {"kind": "owner", "id": "owner"}
                 ),
                 "gating_field": stage.get("gating_field") if DESIGN_REVIEW else "wireframe",
                 "proposal_field": proposal["field"] if proposal else None,
@@ -687,12 +741,14 @@ def main() -> int:
         for ticket in tickets.values():
             # A Ticket that owns the unread conversation is a message-only card here,
             # so its conversation link opens first, as the connected case expects.
-            # "ticket-stacked" keeps its proposal: one card with a proposal and a message.
+            # "ticket-split" keeps its proposal: one card with a proposal and a message.
             message_owner = owner == "ticket" and ticket["id"] == "offline-1"
             proposal = None if message_owner else ticket["pending_proposal"]
             records[("ticket", ticket["id"])] = ticket_record(ticket, proposal)
-            # The Goals smoke reaches Review for its message card only.
-            if proposal and (not GOALS_SMOKE or TABLE_SCROLL_SMOKE):
+            # The Goals smoke reaches Review for its message card only. A proposal that
+            # moved to another reviewer leaves the window.
+            if (proposal and (not GOALS_SMOKE or TABLE_SCROLL_SMOKE)
+                    and ticket.get("ceiling_holder", {}).get("kind", "owner") == "owner"):
                 cards[("ticket", ticket["id"])] = proposal["created_at"]
         conversations = [("stub", state["read_through"], None)]
         if REVIEW_MESSAGES:
@@ -700,13 +756,13 @@ def main() -> int:
             stub_owner = {
                 "chief": "chief",
                 "ticket": "offline-1",
-                "ticket-stacked": "offline-1",
+                "ticket-split": "offline-1",
                 "manager": "review-manager",
             }
             addresses = [
                 (
                     "chief",
-                    "ticket" if owner == "ticket-stacked" else owner,
+                    "ticket" if owner == "ticket-split" else owner,
                     stub_owner[owner],
                     "stub",
                     state["chief_conversation"] == "stub",
@@ -765,6 +821,27 @@ def main() -> int:
                 cards[key] = min(cards.get(key, waiting), waiting)
         for identity, read, unread_at in conversations:
             records[("conversation", identity)] = conversation_record(identity, read, unread_at)
+        for identity, ask in state["asks"].items():
+            conversation = conversation_record(identity, 0, None)
+            waiting = bool(ask["pending_user_input"] or ask["pending_permission_ask"])
+            conversation["value"]["latest_ask_at"] = ask["at"]
+            conversation["value"]["attention"]["current"]["awaiting_answer"] = waiting
+            conversation["value"]["attention"]["current"]["signal"]["working"] = True
+            records[("conversation", identity)] = conversation
+            kind, owner_id = ask["owner"]
+            if kind == "manager":
+                records[("project", "wren")] = dict(kind="project", id="wren", value=dict(name="Wren"))
+                records[("manager", owner_id)] = dict(kind="manager", id=owner_id, value=dict(
+                    title="Ship Wren to the App Store", recap="Build 15 is on TestFlight review.",
+                    recap_preview="", recap_reference=None, created_at=1, updated_at=1,
+                    project_id="wren", settled=False, conversation_id=identity))
+                records[("address", identity + "-address")] = dict(kind="address", id=identity + "-address", value=dict(
+                    owner_kind="manager", owner_id=owner_id, conversation_id=identity, current=True,
+                    parent_kind=None, parent_id=None))
+                if waiting:
+                    cards[("address", identity + "-address")] = ask["at"]
+            elif waiting:
+                cards[("ticket", owner_id)] = min(cards.get(("ticket", owner_id), ask["at"]), ask["at"])
         if state.get("workspace_fixture"):
             records = workspace_records()
             cards = {}
@@ -858,7 +935,7 @@ def main() -> int:
             "records": list(records.values()),
             "windows": windows,
             "counts": {
-                "running_conversations": 7 if REVIEW_COMPLETION else 0,
+                "running_conversations": 7 if REVIEW_COMPLETION else 4 if REVIEW_QUEUE else 0,
                 "out_claims": 0,
                 "review": len(order),
                 "unread": 0,
@@ -1181,6 +1258,29 @@ def main() -> int:
                         state["historical_read"] = True
                         for ticket in tickets.values():
                             ticket["pending_proposal"] = None
+                        for ask in state["asks"].values():
+                            ask.update(pending_user_input=None, pending_permission_ask=None)
+                elif REVIEW_QUEUE and name == "review-new-proposal":
+                    # Another proposal arrives while Review shows its summary.
+                    with lock:
+                        arrival = copy.deepcopy(tickets["offline-1"])
+                        arrival.update(id="offline-new", title="Add the summary screen",
+                                       recap="The final Review page in four states.")
+                        arrival["pending_proposal"].update(
+                            created_at=9, revision=1,
+                            body="Show what waits, in two tones, with one quiet return button.")
+                        tickets["offline-new"] = arrival
+                elif REVIEW_QUEUE and name.startswith("review-move/"):
+                    # The proposal now waits on Chief: it leaves Khushal's window.
+                    with lock:
+                        ticket = tickets[name.split("/", 1)[1]]
+                        ticket["ceiling_holder"] = {"kind": "chief", "id": "chief"}
+                        ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                elif REVIEW_QUEUE and name == "review-refuse-decisions":
+                    state["refuse_decisions"] = True
+                elif REVIEW_QUEUE and name == "ask-answers":
+                    self.respond(state["ask_answers"])
+                    return
                 elif name == "new-message":
                     state["new_message"] = True
                 elif name == "offline":
@@ -1235,6 +1335,14 @@ def main() -> int:
                             break
                 elif name == "stop":
                     stop_clip()
+                elif REVIEW_QUEUE and name.startswith("screenshot/"):
+                    # The one-off Review walk names each screen; simctl captures the device.
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
+                    subprocess.run(["xcrun", "simctl", "io", DEVICE, "screenshot",
+                                    str(output / (name.split("/", 1)[1] + ".png"))],
+                                   check=True, capture_output=True)
                 self.respond({})
                 return
             if self.disconnected():
@@ -1597,6 +1705,16 @@ def main() -> int:
                 }
             elif path.endswith("/view"):
                 value = conversation_view(path)
+            elif "/answer-receipts/" in path:
+                value = {"receipt": None}
+            elif path.split("/")[-1] in state["asks"] and path.startswith("/api/conversation/conversations/"):
+                ask = state["asks"][path.split("/")[-1]]
+                value = {
+                    "backend_key": "codex", "model": "sol", "held_prompts": [],
+                    "owner_read_through_sequence": 0, "latest_sequence": 3, "is_running": True,
+                    "pending_permission_ask": ask["pending_permission_ask"],
+                    "pending_user_input": ask["pending_user_input"],
+                }
             elif (
                 path.endswith("/conversations/stub")
                 or (REPLACEMENT_SMOKE and path.endswith("/conversations/replacement"))
@@ -1804,6 +1922,7 @@ def main() -> int:
                     proposal = ticket["pending_proposal"]
                     refused = (
                         not proposal
+                        or state["refuse_decisions"]
                         or body["expected_proposal_revision"] != proposal["revision"]
                         or body["field"] != proposal["field"]
                     )
@@ -1866,6 +1985,11 @@ def main() -> int:
                     tickets[path.split("/")[3]]["pending_proposal"] = None
                     state["writes"].append("sendBack")
                     value = {}
+                elif path.endswith(("/permission-answers", "/user-input-answers")):
+                    ask = state["asks"][path.split("/")[-2]]
+                    ask.update(pending_user_input=None, pending_permission_ask=None)
+                    state["ask_answers"].append(dict(path=path, body=body))
+                    value = {"fate": "applied"}
                 elif path.endswith("/voice-transcriptions"):
                     assert len(body["audio"]) > 50
                     state["writes"].append("voice")
@@ -1891,7 +2015,8 @@ def main() -> int:
     env = os.environ.copy()
     env["TEST_RUNNER_PANELS_OFFLINE_STUB_URL"] = url
     env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
-    env["TEST_RUNNER_PANELS_REVIEW_STACKED"] = os.environ.get("PANELS_REVIEW_STACKED", "0")
+    env["TEST_RUNNER_PANELS_REVIEW_SPLIT"] = os.environ.get("PANELS_REVIEW_SPLIT", "0")
+    env["TEST_RUNNER_PANELS_REVIEW_QUEUE"] = "1" if REVIEW_QUEUE else "0"
     control = None
     if REACHABILITY_SMOKE:
         port = server.server_port

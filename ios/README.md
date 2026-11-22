@@ -10,7 +10,7 @@ The app icon uses the Chief of Staff portrait from
 Its opaque 1024×1024 PNG lives in `Panels/Assets.xcassets/AppIcon.appiconset`;
 `project.yml` selects `AppIcon` for the Panels target.
 
-Review is the root at launch. There is no tab bar. The destinations are Review,
+Review is the root at launch and opens on its summary. There is no tab bar. The destinations are Review,
 Chief, each Manager and Settings. Only the current destination is on screen and
 mounted, in its own navigation stack. The shell keeps each destination's page path,
 so a return shows the page Khushal left, for example after a notification moved him
@@ -39,8 +39,8 @@ window). A new demand opens a stream for the new scope beside the current one, a
 the web does. The current stream keeps the view live until the new snapshot lands,
 and then it closes, so two streams are open only during that wait. A demand the
 running stream already carries, as for a Ticket opened from Review, waits for the
-next stream. Leaving a screen, or Review holding fewer conversations, only narrows
-the next stream. One coherent view replaces the
+next stream. Leaving a screen only narrows the next stream. Review's skipped
+entries ride the next stream; its return order opens one at once. One coherent view replaces the
 earlier Review, manager and ticket list reads; the phone no longer reads
 `/api/review`. A launch shows the last saved view at once, if it is less than seven
 days old. A pull on Review opens a fresh stream the same way, and the
@@ -154,9 +154,10 @@ the inline renderer accepts the shared font so its body default cannot mask it.
 
 ## Proposal decisions
 
-Review and Ticket share a recessed, read-only proposal card and a pinned note
-with Send it back and Approve. Review keeps dictation and adds Open ticket.
-An empty send-back note focuses the field. Approval captures the displayed note
+Review and Ticket share a read-only proposal card, with the stage on the left and
+the reviewer on the right, and a docked note with Return and Approve in one
+equal-width row. Review adds Skip to that row and keeps dictation; its Open ticket
+sits in Review's top bar. An empty Return note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
 Approve opens a standard grouped Form sheet. Approved until lists only the stages
 after the waiting one, and Then reviews is a segmented control. Done is listed
@@ -166,7 +167,7 @@ in the card opens a Reviewer sheet with one tap to choose. Both sheets are share
 Review and the Ticket page (`DecisionSheets.swift`) and wait for the server inside
 the sheet. A failure shows inline. A reviewer change uses the existing PATCH route.
 It never enters the Outbox and has no operation receipt. The approval limit of a
-Ticket with no proposal waiting changes in its own sheet. Approve and Send it back retain protected operations and
+Ticket with no proposal waiting changes in its own sheet. Approve and Return retain protected operations and
 saved-work recovery. Proposal text, approved steps, and Ticket titles have no phone
 edit controls.
 
@@ -259,7 +260,7 @@ Use one-off Simulator reviews for appearance and visual polish.
 | --- | --- |
 | `ConversationOperationTests/testOperationsAgainstLocalStub` | Open a conversation, read, reply, and paste and send one image. |
 | `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` | Reach Chief and Review through the Sidebar, reply, and follow the conversation route. |
-| `ReviewMessagesTests/testStackedTicketCard` | Act on a Review item and return to skipped work. |
+| `ReviewMessagesTests/testSplitCardsSkipAndReturn` | Act on a Review item and return to skipped work. |
 | `OfflineOperationTests/testEveryActionLandsOnceAcrossDroppedConnectionsAndLostResponses` | Send, approve, send back and mark read through dropped connections and lost replies; each lands once with no cover or status note. Try Again resends a refused message once. |
 | `ServerReachabilityTests/testUnreachableServerShowsNoCoverAndRecovers` | Lose the server: no cover appears, the app stays usable, and Review opens again without a relaunch. |
 
@@ -662,7 +663,7 @@ empty result, with no note. Retry buttons remain disabled until their request
 finishes. Artifact previews also retain their downloaded document after a failed reload.
 
 Ticket supports pull-to-refresh. Chief and Orchestrator use the system pull
-feedback without an extra haptic. Review retains its quiet empty state, running-agent count and revisit action.
+feedback without an extra haptic. Review's summary keeps its running-agent line and its return button.
 Artifact image, PDF, media and Quick Look viewers keep the existing Reload
 menu; text, markdown and HTML retain their existing refresh gestures.
 
@@ -778,9 +779,9 @@ A different server or a new installed build has a separate compatibility state.
 Connection failures do not set this state.
 
 The app reads each ticket’s saved workflow for its fields, stages, and approval
-choices. Review cards come from the view's review window, grouped by ticket as on
-desktop. Each card's proposal and messages stay separate native cards, each with
-its own identity and timestamp.
+choices. Review cards come from the view's review window. The phone splits each
+entry into one card per purpose, its proposal, each unread run and its ask, each
+with its own identity and timestamp.
 Goal-owned messages use the existing shared conversation view.
 
 The `Native iOS` workflow runs the existing Swift host suites and an unsigned iOS
@@ -904,7 +905,7 @@ receipt, including edits that restore the same text.
 ## Text entry and navigation
 
 Each visible screen owns focus for its conversation fields and decision notes.
-Review shares one owner across the note and reply fields on its current card.
+Review gives its current card's note, reply or answer field one owner.
 In chat and Review, inert background taps clear that screen's focus.
 The normal-priority tap gesture lets child text selection, controls, links, and inputs keep their interactions.
 Those scroll areas also support interactive keyboard dismissal.
