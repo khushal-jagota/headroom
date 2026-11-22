@@ -620,7 +620,7 @@ def main() -> int:
                 "manager_kind": "chief",
                 "manager_id": None,
                 "conversation_id": ticket["conversation_id"],
-                "is_backlogged": False,
+                "is_backlogged": ticket.get("is_backlogged", False) if DESIGN_REVIEW else False,
                 "ceiling": ticket["ceiling"] if DESIGN_REVIEW else ticket["stage"],
                 "ceiling_holder": (
                     ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"}
@@ -1072,6 +1072,9 @@ def main() -> int:
                 if DESIGN_REVIEW and name == "scopes":
                     self.respond(state.get("scope_writes", []))
                     return
+                if DESIGN_REVIEW and name == "settings-writes":
+                    self.respond(state.get("settings_writes", []))
+                    return
                 if REPLACEMENT_SMOKE and name.startswith("replacement/"):
                     action = name.split("/", 1)[1]
                     with lock:
@@ -1159,6 +1162,13 @@ def main() -> int:
                             ticket["pending_proposal"]["field"] = "what_changes"
                         if mode == "refused":
                             ticket["pending_proposal"]["revision"] += 1
+                        if mode == "settings":
+                            # Rare Ticket settings need a Ticket with no proposal waiting.
+                            ticket["pending_proposal"] = None
+                            ticket["ticket_status"] = "agent"
+                            ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                        if mode == "refuse-recap":
+                            state["refuse_recap"] = True
                     self.respond({})
                     return
                 if name.startswith("review-owner/"):
@@ -1671,6 +1681,26 @@ def main() -> int:
                 "read": lambda: str(body.get("through_sequence")),
             }
             committed = False
+            if DESIGN_REVIEW and (
+                path == "/api/recap-requests"
+                or (path.startswith("/api/tickets/") and path.endswith(("/backlog", "/resume")))
+            ):
+                # Rare Ticket settings wait in their sheet: answer slowly enough to see it.
+                time.sleep(1.5)
+                with lock:
+                    state.setdefault("settings_writes", []).append(dict(path=path, body=body))
+                    if path == "/api/recap-requests":
+                        refused = state.get("refuse_recap", False)
+                        self.respond(
+                            dict(fate="refused", refusal_reason="backend_did_not_start")
+                            if refused else dict(fate="queued", refusal_reason=None)
+                        )
+                        return
+                    ticket = tickets[path.split("/")[3]]
+                    ticket["is_backlogged"] = path.endswith("/backlog")
+                    ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                    self.respond({})
+                    return
             with lock:
                 if kind:
                     attempts = {

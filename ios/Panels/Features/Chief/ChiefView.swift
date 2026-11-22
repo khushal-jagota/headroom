@@ -6,13 +6,12 @@ struct ChiefView: View {
     private var resource: ResourceHandle<ChiefRoster> { store.resources.handle(ChiefResources.roster) }
     private var chief: ChiefRosterEntry? { resource.value?.chiefOfStaff }
     private var error: String? { resource.error }
-    @State private var actions = AgentPageActions()
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                     AgentPageTitle(title: chief?.label ?? store.chief?.label ?? "Chief of Staff", signal: store.chiefSignal ?? chief?.conversationSignal)
-                    AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "", actions: actions)
+                    AgentRecap(recap: chief?.recap ?? store.chief?.recap ?? "")
                 }
                 if chief != nil { HolderContent(holder: .chief, editOwner: editOwner) }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
@@ -20,7 +19,7 @@ struct ChiefView: View {
         .navigationTitle("").navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil, actions: actions) { await load(); await store.refresh() }
+                AgentPageMenu(target: Principal(kind: "chief", id: "chief"), settled: nil) { await load(); await store.refresh() }
             }
         }
         .panelsScreen()

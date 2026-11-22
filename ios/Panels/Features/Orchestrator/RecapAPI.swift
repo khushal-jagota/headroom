@@ -6,9 +6,8 @@ struct RecapDelivery: Decodable, Sendable {
     var accepted: Bool { ["started", "queued", "injected"].contains(fate) }
     var note: String? {
         switch fate {
-        case "started", "queued", "injected": nil
         case "refused": "Not delivered · \(refusalReason?.replacingOccurrences(of: "_", with: " ") ?? "request refused")"
-        default: "Delivery uncertain · do not resend"
+        default: nil
         }
     }
 }
