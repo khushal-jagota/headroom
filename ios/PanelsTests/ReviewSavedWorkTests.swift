@@ -130,5 +130,15 @@ import XCTest
         try store.outgoing.settle(server: "a", id: id, state: .failed, note: "Refused")
         snapshot.refresh("a")
         XCTAssertEqual(ReviewSavedWork.cards(card(readThrough: 4), decisions: snapshot.decisions("a")).count, 1, "A refusal brings it back")
+        // An answer saved offline keeps its ask hidden, even after a relaunch, until it is sent.
+        let ask = [ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")]
+        let answer = AskAnswer(conversationID: "c", request: .userInput(requestID: "r"), questions: [.init(id: "q", prompt: "Which?", answers: ["A"], labels: ["A"])])
+        try outbox.save(PendingWork(id: "answer", created: .now, kind: .askAnswer, owner: .chief, askAnswer: answer), server: "a")
+        let relaunched = ReviewSavedWork(outbox: outbox)
+        relaunched.refresh("a")
+        XCTAssertTrue(ReviewSavedWork.cards(ask, decisions: relaunched.decisions("a")).isEmpty)
+        try store.outgoing.settle(server: "a", id: "answer", state: .sent)
+        snapshot.refresh("a")
+        XCTAssertEqual(ReviewSavedWork.cards(ask, decisions: snapshot.decisions("a")).count, 1, "A sent answer leaves it to the window")
     }
 }

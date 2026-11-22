@@ -214,9 +214,9 @@ import SwiftData
         let kinds = ["approval", "sendBack"]
         return try sorted(#Predicate { $0.server == server && kinds.contains($0.kind) })
     }
-    /// What Review hides at once: decisions, mark reads and replies that carry a read boundary.
+    /// What Review hides at once: decisions, mark reads, ask answers and replies that carry a read boundary.
     func reviewSummaries(server: String) throws -> [Summary] {
-        let kinds = ["approval", "sendBack", "markRead"]
+        let kinds = ["approval", "sendBack", "markRead", "askAnswer"]
         return try sorted(#Predicate { $0.server == server && (kinds.contains($0.kind) || $0.ownerReadThroughSequence != nil) })
     }
     /// Each lane's first unfinished row, when it can be sent now. Metadata only.

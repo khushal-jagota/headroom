@@ -241,10 +241,15 @@ struct DecisionGuidance: Sendable, Equatable {
         ["markRead", "message"].contains(saved.kind) && saved.conversationID != nil && saved.conversationID == item.conversationId
             && (saved.ownerReadThroughSequence ?? 0) > item.ownerReadThroughSequence
     }
-    /// Decided proposals and handled messages leave Review at once. A refusal brings them back.
+    /// Decided proposals, handled messages and answered asks leave Review at once. A
+    /// refusal brings them back. An ask stays hidden while its saved answer waits to be
+    /// sent, including after a relaunch.
     static func cards(_ items: [ReviewItem], decisions: [OutgoingStore.Summary]) -> [ReviewItem] {
         items.filter { item in
-            item.isAsk || !decisions.contains { !$0.refused && (item.isMessage ? covers($0, item) : decides($0, item)) }
+            if item.isAsk {
+                return !decisions.contains { $0.kind == "askAnswer" && $0.state == "waiting" && $0.conversationID == item.conversationId }
+            }
+            return !decisions.contains { !$0.refused && (item.isMessage ? covers($0, item) : decides($0, item)) }
         }
     }
     /// Each proposal whose latest saved decision was refused, as a card. A card in the
