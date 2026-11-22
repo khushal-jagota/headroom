@@ -249,18 +249,18 @@
   :global([data-conversation-pane]) .cv-ask-context :global(.count) { margin-inline: 0 4px; }
   :global([data-conversation-pane]) .cv-ask-title { margin-block-start: 8px; color: #ececec; }
   :global([data-conversation-pane]) .cv-ask-description { margin-block-start: 8px; color: #b0b0b0; font: var(--cv-weight-body) 13px/20px var(--cv-font); }
-  /* Stop turn is a secondary Button: 32 tall pill, #2a2a2a with #ececec, 13/20 500, padding
-     0 14, a 16px stop icon 6px before its word. */
+  /* v8 (7): Stop turn is a quiet Button: 32 tall pill, no fill, #bdbdbd, hover #2a2a2a,
+     13/20 500, a 16px stop icon 6px before its word. */
   :global([data-conversation-pane]) .cv-ask-stop {
     height: 32px;
     padding: 0 14px 0 10px;
     margin-inline-end: 8px;
     border-radius: 999px;
-    background: #2a2a2a;
-    color: #ececec;
+    background: transparent;
+    color: #bdbdbd;
     font: var(--cv-weight-label) 13px/20px var(--cv-font);
   }
-  :global([data-conversation-pane]) .cv-ask-stop:hover:not(:disabled) { background: #3a3a3a; color: #ececec; }
+  :global([data-conversation-pane]) .cv-ask-stop:hover:not(:disabled) { background: #2a2a2a; color: #ececec; }
   :global([data-conversation-pane]) .cv-ask-stop-mark { width: 16px; height: 16px; }
   /* Option rows (part 5): min 48, #242424, radius 12, padding 12 16, 8px apart; a 24px #2e2e2e
      keycap (radius 6, 13 500); the title 15/22 #ececec and its description 13/20 #b0b0b0. The
@@ -269,7 +269,8 @@
   :global([data-conversation-pane] .cv-ask-rows) { gap: 8px; }
   :global([data-conversation-pane] .cv-ask-row) { min-height: 48px; padding: 12px 16px; border-radius: 12px; background: #242424; font: var(--cv-weight-body) 15px/22px var(--cv-font); }
   :global([data-conversation-pane] .cv-ask-row:hover:not(:disabled)) { background: #2a2a2a; }
-  :global([data-conversation-pane] .cv-ask-row.is-selected), :global([data-conversation-pane] .cv-ask-row.is-selected:hover:not(:disabled)) { background: #242424; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
+  /* v8 (7): the focused (or chosen) row is lighter: #2c2c2c with the accent edge. */
+  :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row.is-focused)), :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row.is-focused):hover:not(:disabled)) { background: #2c2c2c; box-shadow: inset 0 0 0 1px rgb(188 203 240 / 55%); }
   :global([data-conversation-pane] .cv-ask-key) { border-radius: 6px; background: #2e2e2e; color: #d9d9d9; font: var(--cv-weight-label) 13px/1 var(--cv-font); }
   :global([data-conversation-pane] :is(.cv-ask-row.is-selected, .cv-ask-row.is-focused) .cv-ask-key) { background: var(--cv-accent); color: #141414; }
   :global([data-conversation-pane] .cv-ask-label) { color: #ececec; }

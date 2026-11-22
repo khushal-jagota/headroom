@@ -57,14 +57,3 @@ Source: https://github.com/JetBrains/JetBrainsMono
 Copyright 2020 The JetBrains Mono Project Authors. Licensed under the SIL Open Font License, Version 1.1.
 The full licence text is retained in [third_party/jetbrains-mono/LICENSE.txt](third_party/jetbrains-mono/LICENSE.txt).
 
-## Newsreader
-
-The answer typeface in the conversation (the agent's final messages only) is Newsreader, self-hosted as
-`assets/fonts/Newsreader.woff2` (sha256 `6e4f2958c3a7c4a80acde4e5a679abe7e01bc1e30b92be3c7a8b696ef401d101`)
-and `assets/fonts/Newsreader-Italic.woff2` (sha256 `5dfcd10d24af8c82927ba57f7983dd997f7b200594c09c35a1b1ed9fc4597506`),
-variable webfont builds. They are declared and used only inside the conversation pane.
-
-Source: https://github.com/productiontype/Newsreader
-
-Copyright 2020 The Newsreader Project Authors. Licensed under the SIL Open Font License, Version 1.1.
-The full licence text is retained in [assets/fonts/Newsreader-OFL.txt](assets/fonts/Newsreader-OFL.txt).

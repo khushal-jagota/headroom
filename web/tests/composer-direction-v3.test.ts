@@ -98,7 +98,7 @@ describe("the queue is light, and stands in the thread", () => {
     // Each is a ghost bubble of the person's words, with one "Queued" chip under it that
     // opens its actions as a dropdown (v4), drawn closed.
     expect(body.match(/data-conversation-bubble/g)?.length).toBe(2);
-    expect(body.match(/<span>Queued<\/span>/g)?.length).toBe(2);
+    expect(body.match(/class="chat-qrow-word[^"]*">Queued<\/span>/g)?.length).toBe(2);
     expect(body.match(/data-conversation-held-chip/g)?.length).toBe(2);
     expect(body.match(/aria-haspopup="menu"/g)?.length).toBe(2);
     expect(body.match(/class="chat-qrow-menu[^"]*"[^>]*hidden/g)?.length).toBe(2);

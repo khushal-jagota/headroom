@@ -75,14 +75,14 @@ describe("delivery mode only matters while a turn runs", () => {
 
   it("says in the empty composer what a message written under an ask will do", () => {
     const base = "Message the Coding worker...";
-    // v4: "Message <role>", without the trailing ellipsis.
-    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base })).toBe("Message the Coding worker");
-    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base: "Message Wren…" })).toBe("Message Wren");
+    // v8 (8): one placeholder everywhere, whatever the caller's role-named base.
+    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base })).toBe("Write a message");
+    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base: "Message Wren…" })).toBe("Write a message");
     expect(composerPlaceholderFor({ askWaiting: "answers", mode: "queue", running: true, base })).toBe("Or write your own answer");
     expect(composerPlaceholderFor({ askWaiting: "holds", mode: "queue", running: true, base })).toBe("Or write a message");
     expect(composerPlaceholderFor({ askWaiting: "holds", mode: "send_now", running: true, base })).toBe("Or write a message. Sending it stops this turn");
     // A key request left by a finished turn holds nothing: the next message starts a turn.
-    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "steer", running: false, base })).toBe("Message the Coding worker");
+    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "steer", running: false, base })).toBe("Write a message");
   });
 
   it("sends words written under a question as its answer, with no delivery choice", () => {

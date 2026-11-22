@@ -204,6 +204,9 @@ export function applyComposerRunSelectionIntent(
   }
 }
 
+/** v8 (8): the empty composer's one placeholder. */
+export const COMPOSER_PLACEHOLDER = "Write a message";
+
 /** What the empty composer says it will do with a message. Under a waiting ask the turn
  *  reads nothing until the person decides, so the words say plainly where a message goes:
  *  an own answer to the question on screen, held until the turn ends, or sent now by
@@ -214,9 +217,10 @@ export function composerPlaceholderFor(input: {
   running: boolean;
   base: string;
 }): string {
-  // v4: "Message <role>", without a trailing ellipsis; under an ask, the composer line is
-  // the place for an own answer, or for a message the turn will read once it goes on.
-  const base = input.base.replace(/\s*(?:\.\.\.|…)$/, "");
+  // v8 (8): one placeholder everywhere, in the pane and the dock: "Write a message". Under an
+  // ask, the composer line is the place for an own answer, or for a message the turn will
+  // read once it goes on. (The caller's role-named base is no longer shown.)
+  const base = COMPOSER_PLACEHOLDER;
   if (input.askWaiting === "answers") return "Or write your own answer";
   if (input.askWaiting === "holds") {
     if (!input.running) return base;

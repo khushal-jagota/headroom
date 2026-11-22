@@ -65,6 +65,9 @@
       .replace(/^Not delivered:\s*/, "")
       .replace(/^The turn stopped because\s*/, "");
     const said = cause.charAt(0).toUpperCase() + cause.slice(1);
+    // v8 (9): a message that was not delivered says only its cause ("The backend did not
+    // start."); its buttons (Resend, Choose another model) say the rest.
+    if (align === "end" && (actions !== undefined || status.action === "choose-model")) return said;
     return [said, status.next].filter(Boolean).join(" ");
   });
   /** v6: an older error says its short cause on one inline row: the first sentence of it. */

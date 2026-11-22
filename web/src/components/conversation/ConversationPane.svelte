@@ -94,7 +94,6 @@
     conversationState = $bindable(null),
     waitingOnPage = null,
     emptyState,
-    lensHidden = false,
     reader = null,
     acknowledgedMessageIds = new Set<string>(),
     viewAnchor = $bindable(null),
@@ -209,8 +208,6 @@
      *  their approval). The dock's line then says the conversation waits on them. */
     waitingOnPage?: "approval" | null;
     emptyState?: Snippet;
-    /** v6: an empty conversation hides the Focus/Full toggle (nothing to switch between). */
-    lensHidden?: boolean;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -465,7 +462,6 @@
     </div>
     <!-- Two named choices rather than one control whose label is the state it is in:
          which lens you are in and which you can move to are both on the screen. -->
-    {#if !lensHidden}
     <div
       class="cv-segmented"
       role="group"
@@ -489,11 +485,10 @@
         onclick={() => (lens = "full")}
       >Full</button>
     </div>
-    {/if}
     <div class="chat-head-right">
       {#if stateControl !== null && conversationState !== "rest"}
-        <!-- v5.1: a text button "Dock" with a down chevron, the same style as the dock's
-             "Open conversation" with its up chevron. -->
+        <!-- v8 (14): a text button "Dock", the label alone (no chevron), the same style as
+             the dock's "Open conversation". -->
         <button
           type="button"
           class="chat-head-collapse"
@@ -505,9 +500,6 @@
           onclick={moveThroughTheStates}
         >
           <span class="chat-head-collapse-label">{stateControl.opensIt ? "Open conversation" : "Dock"}</span>
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            {#if stateControl.opensIt}<path d="m4 10 4-4 4 4" />{:else}<path d="m4 6 4 4 4-4" />{/if}
-          </svg>
         </button>
       {/if}
       {#if !readOnly || historyOwner || pastConversations.length > 0 || workspaceFolder}
@@ -807,7 +799,7 @@
     /* v7: a quiet Button: 32 tall pill, 13/20 500, #bdbdbd, its 16px chevron 6px after. */
     gap: 6px;
     height: 32px;
-    padding: 0 10px 0 14px;
+    padding: 0 14px;
     border: 0;
     border-radius: 999px;
     background: transparent;
@@ -818,7 +810,6 @@
   }
   .chat-head-collapse:hover, .chat-head-collapse:focus-visible { color: #ececec; background-color: #2a2a2a; }
   .chat-head-collapse:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
-  .chat-head-collapse svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
   /* --- Lens: a segmented control. The track is a well; the chosen segment is a control. */
   /* v7: Focus and Full are two Buttons: the shown lens a secondary (#2a2a2a with #ececec),

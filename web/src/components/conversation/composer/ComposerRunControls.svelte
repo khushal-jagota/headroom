@@ -31,7 +31,7 @@
 <UnifiedModelPicker
   readError={view.readError}
   {onRetry}
-  chevron="drawn"
+  chevron="none"
   view={view.picker}
   bind:snapshots
   models={view.pickerSource.models}

@@ -1953,23 +1953,31 @@
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-primary) { order: 3; margin-inline: var(--cv-s2); }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-quiet) { order: 3; margin-inline-start: var(--cv-s2); }
   .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-ask-quiet + .chat-ask-primary) { margin-inline-start: 4px; }
-  /* v7: Deny is a quiet Button: 32 tall pill, 13/20 500, #bdbdbd, hover #2a2a2a. */
+  /* v8 (7): Deny is a secondary Button: 32 tall pill, 13/20 500, #2a2a2a with #ececec,
+     hover #3a3a3a. */
   .chat-box :global(.chat-ask-quiet) {
     flex: none;
     height: 32px;
     padding: 0 14px;
     border: 0;
     border-radius: 999px;
-    background: transparent;
-    color: #bdbdbd;
+    background: #2a2a2a;
+    color: #ececec;
     font: var(--cv-weight-label) 13px/20px var(--cv-font);
     white-space: nowrap;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
-  .chat-box :global(.chat-ask-quiet:hover:not(:disabled)) { background: #2a2a2a; color: #ececec; }
+  .chat-box :global(.chat-ask-quiet:hover:not(:disabled)) { background: #3a3a3a; color: #ececec; }
   .chat-box :global(.chat-ask-quiet:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
   .chat-box :global(.chat-ask-quiet:disabled) { color: #8c8c8c; cursor: default; }
+  /* v8 (7): the free-text well wears a 1px #333 edge. It is three pieces (pen, draft, mic),
+     so each draws its share of the edge. */
+  .chat-box.has-ask.is-compact > .chat-foot > .chat-ask-pen { box-shadow: inset 1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
+  .chat-box.has-ask.is-compact > .chat-ta { box-shadow: inset 0 1px 0 #333, inset 0 -1px 0 #333; }
+  .chat-box.has-ask.is-compact:not(:has(.chat-voice-mic)) > .chat-ta { box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
+  .chat-box.has-ask.is-compact > .chat-foot :global(.chat-submit > .chat-voice-mic) { box-shadow: inset -1px 0 0 #333, inset 0 1px 0 #333, inset 0 -1px 0 #333; }
+  .chat-box.has-ask:not(.is-compact) > .chat-ta { box-shadow: inset 0 0 0 1px #333; }
   .chat-box.has-ask.is-compact > .chat-foot > .chat-ask-pen {
     align-self: stretch;
     width: 40px;

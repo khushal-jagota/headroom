@@ -84,7 +84,6 @@
     </span>
     <span class="c2-rest-control" aria-hidden="true">
       <span class="c2-rest-control-label">Open conversation</span>
-      <svg viewBox="0 0 16 16"><path d="m4 10 4-4 4 4" /></svg>
     </span>
   </span>
   {#if saysState && preview}<span class="c2-rest-preview" data-conversation-unread-preview>{preview}</span>{/if}
@@ -133,18 +132,13 @@
   .c2-rest-chip { flex:none; display:inline-flex; align-items:center; height:24px; padding:0 var(--cv-s2);
     border-radius:var(--cv-r-sm); background:color-mix(in srgb, var(--cv-caution) 12%, transparent); color:var(--cv-caution);
     font:var(--cv-weight-label) var(--cv-type-caption)/var(--cv-leading-caption) var(--cv-font); }
-  /* The way to open it: a ghost with its label on a wide screen, the chevron alone on a narrow one. */
-  /* v7: "Open conversation" is a quiet Button: 32 tall pill, #bdbdbd, its 16px chevron 6px after. */
-  .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px 0 14px;
+  /* v8 (14): "Open conversation" is a quiet Button, the label alone (no chevron): 32 tall
+     pill, #bdbdbd, hover #2a2a2a. */
+  .c2-rest-control { flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 14px;
     border-radius:999px; color:#bdbdbd; font-weight:var(--cv-weight-label);
     transition:color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out); }
   .c2-rest:hover .c2-rest-control, :global([data-conversation-dock-hover]) .c2-rest-control, .c2-rest:focus-visible .c2-rest-control {
     color:#ececec; background-color:#2a2a2a; }
-  .c2-rest-control svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
-  @media (max-width:1023px) {
-    .c2-rest-control { width:32px; padding:0; justify-content:center; }
-    .c2-rest-control-label { display:none; }
-  }
   .c2-rest:focus-visible { outline:var(--cv-focus-width) solid var(--cv-accent); outline-offset:var(--cv-focus-offset); border-radius:var(--cv-r-md); }
   /* The unread message keeps the prose measure, never the pane's width. */
   .c2-rest-preview { max-width:var(--page-prose-measure); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden;

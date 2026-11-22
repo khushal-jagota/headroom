@@ -28,19 +28,15 @@ const reader = (lens: "focus" | "full", items: ConversationViewItem[], status: C
   id: "c", lens, pages: [{ scope: { kind: "timeline", key: null }, items }], status, openTools: new SvelteSet<string>()
 } as unknown as ConversationViewReader);
 
-describe("v6 layout: bottom-anchored threads and the live edge (items 1-5)", () => {
-  it("1: a thread shorter than the view sits against the composer", () => {
-    expect(viewport).toContain(".chat-thread-content { margin-block-start: auto; }");
-  });
-
-  it("2: the running turn's head is the live edge, after everything in the thread, not its top", () => {
+describe("v6 layout: the live edge (items 2-5; v8 undoes item 1 and item 5)", () => {
+  it("2: the running turn's head is the live edge, not its top (v8: before the queued messages)", () => {
     expect(liveTurnOf([{ items: [turn(false)] }], statusWith())?.key).toBe("turn:e1");
     expect(liveTurnOf([{ items: [turn(true)] }], statusWith())).toBeNull();
     expect(liveTurnOf([{ items: [turn(false)] }], statusWith({ stopped_without_ending: true }))).toBeNull();
     expect(turnHeadAtTop(turn(false), statusWith())).toBe(false);
     expect(turnHeadAtTop(turn(true), statusWith())).toBe(true);
-    // The edge is drawn after the waiting messages (afterTranscript), inside the content box.
-    expect(viewport.indexOf("{@render afterTranscript()}")).toBeLessThan(viewport.indexOf("<LiveEdge {reader}"));
+    // v8 (3): the edge is drawn before the waiting messages (afterTranscript), inside the content box.
+    expect(viewport.indexOf("<LiveEdge {reader}")).toBeLessThan(viewport.indexOf("{@render afterTranscript()}"));
   });
 
   it("2/3: the live edge says Working with the clock, and in Focus the latest narration sentence under it", () => {
@@ -62,9 +58,10 @@ describe("v6 layout: bottom-anchored threads and the live edge (items 1-5)", () 
     expect(viewport).toContain("--c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;");
   });
 
-  it("5: with a 56px margin, Jump to latest stands in it, 12px right of the column, bottom on the composer's top edge", () => {
-    expect(app).toContain('[data-conversation-dock-state="opened"] > .conversation-layer { container: cv-layer / inline-size; }');
-    expect(app).toMatch(/@container cv-layer \(min-width: 792px\) \{\s*\.cv-jump \{ left: calc\(100% \+ 12px\); bottom: 0; transform: none; \}/);
+  it("5 (v8 13: removed): Jump to latest always straddles the composer's top edge", () => {
+    expect(app).not.toContain("container: cv-layer");
+    expect(app).not.toContain("@container cv-layer");
+    expect(app).toMatch(/\.cv-jump \{\s*position: absolute;\s*left: 50%;\s*bottom: -16px;\s*transform: translateX\(-50%\);/);
   });
 });
 
@@ -85,8 +82,8 @@ describe("v6 asks (items 6-8)", () => {
 });
 
 describe("v6 transcript (items 9-15)", () => {
-  it("9: narration (not the turn's final message, or any prose while live) is 15/24 #bdbdbd; the final message #ececec", () => {
-    expect(app).toMatch(/\.chat-a--narration \{\s*color: #bdbdbd;\s*font-size: var\(--cv-type-prose\);\s*line-height: var\(--cv-leading-prose\);/);
+  it("9 (v8 2): narration (not the turn's final message, or any prose while live) is 15/24 #b4b4b4; the final message #ececec", () => {
+    expect(app).toMatch(/\.chat-a--narration \{\s*color: #b4b4b4;\s*font-size: var\(--cv-type-prose\);\s*line-height: var\(--cv-leading-prose\);/);
     expect(app).toContain(".chat-a .markdown { color: #ececec; }");
     const row = source("../src/components/conversation/view/ProjectedRow.svelte");
     expect(row).toContain("return !each.settled || each.latest_message_key !== item.key;");
@@ -134,13 +131,7 @@ describe("v6 composer (items 16-21)", () => {
     expect(source("../src/components/conversation/ConversationPane.svelte")).toMatch(/\.cv-segment \{[^}]*color: #bdbdbd;/);
     expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).toMatch(/\.chat-qrow-chip \{[^}]*color: #d9d9d9;/);
   });
-  it("21: an empty conversation hides the Focus/Full toggle; its line sits at the bottom, centred", () => {
-    const pane = source("../src/components/conversation/ConversationPane.svelte");
-    expect(pane).toMatch(/\{#if !lensHidden\}\s*<div\s*class="cv-segmented"/);
-    const live = source("../src/components/conversation/LiveConversation.svelte");
-    expect(live).toContain("lensHidden={!emptyState && !readOnly && nothingSaidYet");
-    expect(live).toContain(".conversation-empty { display: flex; align-items: flex-end; justify-content: center; flex: none; align-self: stretch; }");
-  });
+
 });
 
 describe("v6.1 model picker (items 23-26)", () => {

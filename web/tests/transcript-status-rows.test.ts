@@ -73,12 +73,12 @@ describe("a message that was not delivered", () => {
   it("keeps the person's words in the bubble and the failure under it", () => {
     const sentence = "codex app-server exited with code 1 before it accepted the prompt";
     expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_did_not_start", sentence }))
-      .toEqual({ tone: "error", title: "Not delivered: the backend would not start.", detail: sentence,
+      .toEqual({ tone: "error", title: "Not delivered: the backend did not start.", detail: sentence,
         next: "Send it again to retry, or choose another model in the composer.", action: "choose-model" });
     expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_rejected_steer", sentence: "" }).next)
       .toBe("Send it again with Queue, so it goes in after this turn.");
     expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "no_such_conversation", sentence: "" }).next).toBeNull();
-    expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_did_not_start", sentence: "the backend would not start" }).detail).toBeNull();
+    expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_did_not_start", sentence: "the backend did not start" }).detail).toBeNull();
     const html = draw({ ...base, kind: "prompt_refused", reason: "backend_did_not_start", sentence });
     const bubble = html.slice(html.indexOf("data-conversation-bubble"), html.indexOf("data-conversation-message-status"));
     expect(bubble).toContain("markdown-host");
@@ -96,7 +96,9 @@ describe("a message that was not delivered", () => {
     expect(html).toMatch(/class="chat-u[^"]*has-callout/);
     expect(html).toContain("c2-status--callout");
     expect(status).toMatch(/c2-status-dot[\s\S]*This message was not delivered/);
-    expect(status).toContain("The backend would not start. Send it again to retry");
+    // v8 (9): the card says only the cause; Choose another model (a button) says the rest.
+    expect(status).toContain("The backend did not start.</p>");
+    expect(status).not.toContain("Send it again to retry");
     // Its offered next step is a real control. With no Resend before it, it is the callout's
     // first action, which CSS fills (.c2-status-actions > .c2-status-second:first-child).
     expect(status).toMatch(/class="cv-button c2-status-second c2-status-choose[^"]*"[^>]*data-conversation-status-choose-model/);
@@ -120,13 +122,14 @@ describe("a message that steered a running turn", () => {
 });
 
 describe("a message with attachments", () => {
-  it("puts only the words in the bubble and the file beside it", () => {
+  it("v8 (6): puts the file inside the bubble, above the words", () => {
     const html = draw({ ...base, kind: "prompt", mode: "queue", sentAtUnixMilliseconds: 1000, content: [
       ...words, { piece: "file", stored_file_id: "f1", file_name: "ci.txt", media_type: "text/plain", byte_count: 10 } as never
     ] });
-    const bubble = html.slice(html.indexOf("data-conversation-bubble"));
-    const bubbleEnd = bubble.indexOf("</div>");
-    expect(bubble.slice(0, bubbleEnd)).not.toContain("conversation-file-card");
+    expect(html.match(/data-conversation-bubble[ >=]/g)?.length).toBe(1);
+    const bubble = html.slice(html.indexOf("data-conversation-bubble-attached"));
+    expect(bubble).toContain("conversation-file-card");
+    expect(bubble.indexOf("conversation-file-card")).toBeLessThan(bubble.indexOf("c2-bubble-words"));
     expect(html).toContain("attaches-files");
   });
 });

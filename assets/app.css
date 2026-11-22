@@ -2012,14 +2012,7 @@ button.list-row:hover .list-row-title {
   animation: cv-fade-in var(--cv-dur-base) var(--cv-ease-out);
   transition: color var(--cv-dur-fast) var(--cv-ease-out), background-color var(--cv-dur-fast) var(--cv-ease-out);
 }
-/* v6: when the column has a 56px or wider margin on its right, the button stands in that
- * margin, 12px right of the column edge, its bottom on the composer's top edge. Without the
- * margin it keeps the v5.4 straddle above. (The opened layer is the query container; 792 is
- * the 680px column plus two 56px margins.) */
-[data-conversation-dock-state="opened"] > .conversation-layer { container: cv-layer / inline-size; }
-@container cv-layer (min-width: 792px) {
-  .cv-jump { left: calc(100% + 12px); bottom: 0; transform: none; }
-}
+/* v8 (13): no right-margin rule; the button always straddles the composer's top edge. */
 .cv-jump svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .cv-jump:hover { background: #2c2c2c; color: var(--cv-t1); }
 .cv-jump:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
@@ -2160,7 +2153,7 @@ button.list-row:hover .list-row-title {
 /* v6: narration is prose inside a turn that is not its final message (all prose while the
    turn is live): 15/24 #bdbdbd, the final message's size, one tone back. */
 .chat-a--narration {
-  color: #bdbdbd;
+  color: #b4b4b4;
   font-size: var(--cv-type-prose);
   line-height: var(--cv-leading-prose);
 }
@@ -2420,9 +2413,10 @@ button.list-row:hover .list-row-title {
 /* v4.1: the model chip wears the Steer chip's style: 28px, radius 8, the control fill, the
    words in 500 t1, "gpt-6.1-sol · High" and a drawn chevron in t3. */
 /* v6: no fill at rest, the words #d9d9d9 and the chevron; hover #2a2a2a; open #3a3a3a. */
+/* v8 (14): no chevron; the label alone is the control, with the hover and open fills. */
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger {
   gap: 6px;
-  padding-inline: 10px 6px;
+  padding-inline: 10px;
   background: transparent;
   color: #d9d9d9;
   font-weight: var(--cv-weight-label);
@@ -2431,15 +2425,7 @@ button.list-row:hover .list-row-title {
 /* p12c: an open chip is filled #3a3a3a, its words and chevron #f2f2f2, the chevron up. */
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open,
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open:hover:not(:disabled) { position: relative; z-index: 41; background: #3a3a3a; color: #f2f2f2; }
-[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open .listbox-picker-chevron-drawn { color: #f2f2f2; }
 [data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger:disabled { background: transparent; color: var(--cv-t3); }
-[data-conversation-composer] .chat-foot [data-conversation-model-picker] .listbox-picker-chevron-drawn {
-  display: block;
-  /* v7: the composer control's 12px chevron. */
-  width: 12px;
-  height: 12px;
-  color: var(--cv-t3);
-}
 [data-conversation-composer] .chat-foot .model-picker-face { color: inherit; font-weight: inherit; }
 [data-conversation-composer] .chat-foot .model-picker-effort { color: inherit; font-weight: inherit; text-transform: capitalize; }
 [data-conversation-composer] .chat-foot .model-picker-effort::before { content: "· "; }
@@ -5526,32 +5512,23 @@ details:not([open]) > summary > .manager-workspace-chevron {
 :is(.manager-page, .ticket-page):not([data-conversation-dock-state="opened"]) > .conversation-layer::after { opacity: 0; }
 
 /* ==========================================================================================
- * v7 — one system (design-v4.md "v7"). The agent's answers read like a set page (the answer
- * voice, Newsreader); everything around them is quiet UI in Inter built from five parts:
+ * v7 — one system (design-v4.md "v7"; v8: one agent face, Inter). Everything is quiet UI in
+ * Inter built from five parts:
  * Surface, Button, Composer control, Status line, Option row. One set of measures, 8px grid.
  * Scoped to the conversation pane; the page, the proposal card and the sidebar keep theirs.
  * ========================================================================================== */
 
-/* The answer voice: the agent's final messages only. 17/28 400 #ececec, bold 600, italic from
- * Newsreader-Italic. Narration (non-final prose in Full) stays in the UI voice. */
-[data-conversation-pane] .chat-a:not(.chat-a--narration):not(.c2-streaming) .markdown {
-  font-family: var(--cv-font-answer);
-  font-size: 17px;
-  line-height: 28px;
+/* v8: one agent face. All agent prose is Inter 15/24 (the v7 answer voice is gone). The final
+ * message is #ececec; headings keep the Inter scale (20/28, 18/26, 16/24 600), 24 above, 8 below. */
+[data-conversation-pane] .chat-a .markdown {
+  font-family: var(--cv-font);
+  font-size: 15px;
+  line-height: 24px;
   font-weight: 400;
   color: var(--cv-ink);
-  font-optical-sizing: auto;
 }
 [data-conversation-pane] .chat-a:not(.chat-a--narration):not(.c2-streaming) .markdown :is(strong, b) { color: var(--cv-ink); font-weight: 600; }
-[data-conversation-pane] .chat-a:not(.chat-a--narration):not(.c2-streaming) .markdown :is(h1, h2, h3, h4, h5, h6) {
-  margin: 24px 0 8px;
-  font-family: var(--cv-font-answer);
-  font-weight: 600;
-  color: var(--cv-ink);
-  letter-spacing: 0;
-}
-[data-conversation-pane] .chat-a:not(.chat-a--narration):not(.c2-streaming) .markdown :is(h1, h2) { font-size: 22px; line-height: 30px; }
-[data-conversation-pane] .chat-a:not(.chat-a--narration):not(.c2-streaming) .markdown :is(h3, h4, h5, h6) { font-size: 18px; line-height: 26px; }
+[data-conversation-pane] .chat-a .markdown :is(h1, h2, h3, h4, h5, h6) { margin: 24px 0 8px; font-family: var(--cv-font); font-weight: 600; letter-spacing: 0; }
 [data-conversation-pane] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 0; }
 /* v6 (14), on the 8px grid: a heading right after "Worked for" gets 16px more above it. */
 [data-conversation-pane] .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] .chat-a .markdown > :is(h1, h2, h3, h4, h5, h6):first-child { margin-block-start: 16px; }
@@ -5560,14 +5537,14 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote) { margin-block-end: 16px; }
 [data-conversation-pane] .chat-thread .markdown :is(p, ul, ol, blockquote):last-child { margin-block-end: 0; }
 
-/* Narration (non-final prose in Full): the UI voice, 14/22 #bdbdbd. */
+/* v8: narration (non-final prose in Full) is the same face and size, one tone back: #b4b4b4. */
 [data-conversation-pane] .chat-a--narration,
 [data-conversation-pane] .chat-a--narration .markdown,
 [data-conversation-pane] .c2-streaming .markdown {
   font-family: var(--cv-font);
-  font-size: 14px;
-  line-height: 22px;
-  color: var(--cv-quiet-ink);
+  font-size: 15px;
+  line-height: 24px;
+  color: #b4b4b4;
 }
 [data-conversation-pane] .chat-a--narration .markdown :is(strong, b) { color: #d9d9d9; }
 
@@ -5588,7 +5565,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 
 /* Tables in answers use the UI voice: head 13/20 600 #f2f2f2, body 14/20 #d9d9d9, 1px #2a2a2a
  * row rules, 40px rows. */
-[data-conversation-pane] .chat-thread .markdown table { font-family: var(--cv-font); font-size: 14px; line-height: 20px; }
+[data-conversation-pane] .chat-thread .markdown table { font-family: var(--cv-font); font-size: 14px; line-height: 20px; font-variant-numeric: normal; }
 [data-conversation-pane] .chat-thread .markdown :is(th, td) { height: 40px; padding: 10px 16px 10px 0; border: 0; border-block-end: 1px solid #2a2a2a; vertical-align: middle; }
 [data-conversation-pane] .chat-thread .markdown th { padding-block-start: 0; color: #f2f2f2; font-size: 13px; line-height: 20px; font-weight: 600; border-block-end-color: #2a2a2a; }
 [data-conversation-pane] .chat-thread .markdown td { color: #d9d9d9; font-size: 14px; line-height: 20px; font-weight: 400; }
@@ -5608,11 +5585,11 @@ details:not([open]) > summary > .manager-workspace-chevron {
 [data-conversation-pane] .cv-spinner { width: 12px; height: 12px; margin: 2px; border: 2px solid #4a4a4a; border-top-color: #d9d9d9; }
 
 /* v7: a chart in an answer stands in a Surface frame (#1c1c1c, a 1px #2a2a2a edge, radius 20,
- * padding 16); its title, key and axis labels are the UI voice (13/20); its series are drawn
- * in the neutral inks, because colour in the conversation means only "needs you" or failure. */
+ * padding 16); its title, key and axis labels are the UI voice (13/20). v8 (10): its two
+ * series are #bccbf0 and #e0b36b, so they are easy to tell apart. */
 [data-conversation-pane] .chat-thread .chat-chart .goal-chart-host {
-  --accent-bright: #ececec;
-  --chart-compare-second: #8f8f8f;
+  --accent-bright: #bccbf0;
+  --chart-compare-second: #e0b36b;
   --chart-axis: #b0b0b0;
   --chart-legend: #b0b0b0;
 }

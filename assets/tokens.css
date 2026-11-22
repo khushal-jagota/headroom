@@ -32,25 +32,6 @@
   src: url("/assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
 }
 
-/* v7: Newsreader (OFL; see THIRD_PARTY_NOTICES.md), the answer voice: the agent's final
- * messages, inside the conversation pane only. A face is fetched only where it is used, and
- * only the pane's answers use it. */
-@font-face {
-  font-family: "Newsreader";
-  font-style: normal;
-  font-weight: 200 800;
-  font-display: swap;
-  src: url("/assets/fonts/Newsreader.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Newsreader";
-  font-style: italic;
-  font-weight: 200 800;
-  font-display: swap;
-  src: url("/assets/fonts/Newsreader-Italic.woff2") format("woff2");
-}
-
 @font-face {
   font-family: "JetBrains Mono";
   font-style: normal;
@@ -725,8 +706,7 @@
   --cv-placeholder: #999999;
 
   /* v7, one system: two voices, five parts, one set of measures (8px grid). */
-  --cv-font-answer: "Newsreader", Georgia, "Times New Roman", serif;
-  --cv-ink: #ececec;          /* answer text, user words, status labels, secondary ink */
+  --cv-ink: #ececec;          /* agent final messages, user words, status labels, secondary ink */
   --cv-quiet-ink: #bdbdbd;    /* quiet buttons, icons, narration */
   --cv-detail-ink: #b0b0b0;   /* status details, descriptions */
   --cv-surface: #1c1c1c;      /* part 1: composer, ask, newest error, attachment cards, chart */

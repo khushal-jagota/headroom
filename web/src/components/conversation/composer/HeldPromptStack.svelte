@@ -151,8 +151,7 @@
               onclick={() => (menuOpenFor = menuOpenFor === row.key ? null : row.key)}
             >
               <svg class="chat-qrow-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 8v4.2l2.6 1.6" /></svg>
-              <span>{stateWord(row)}</span>
-              <svg class="chat-qrow-chevron" viewBox="0 0 16 16" aria-hidden="true">{#if menuOpenFor === row.key}<path d="m4 10 4-4 4 4" />{:else}<path d="m4 6 4 4 4-4" />{/if}</svg>
+              <span class="chat-qrow-word">{stateWord(row)}</span>{#if row.state === "held" && running}<span class="chat-qrow-sep" aria-hidden="true">·</span><span class="chat-qrow-detail" data-conversation-held-detail>sends after this turn</span>{/if}
             </button>
             <!-- Drawn closed as hidden, so its actions are always the same buttons. -->
               <div class="chat-qrow-menu" role="menu" aria-label="Queued message" hidden={menuOpenFor !== row.key} data-conversation-held-menu>
@@ -222,7 +221,9 @@
 <style>
   /* Each waiting message is the person's own message, not sent yet: on their side of the
    * thread, a ghost bubble, and under it one chip that opens its actions. */
-  .chat-queue-slot { flex: none; }
+  /* v8 (3): the stack's own 40px (a turn's gap) stands under the Working line; the content
+     box's 16px block gap does not add to it, nor stand alone when the stack is empty. */
+  .chat-queue-slot { flex: none; margin-block-start: 0; }
   .chat-queue-stack {
     display: grid;
     gap: var(--cv-gap-turn);
@@ -263,8 +264,9 @@
     /* v7: the Queued chip is a Composer control: 32 tall, text-only at rest (#d9d9d9, a 16px
        clock and a 12px chevron), hover #2a2a2a, open #3a3a3a. */
     height: 32px;
+    /* v8 (14): no chevron; the words are the control. */
     margin-inline-end: -10px;
-    padding: 0 8px 0 10px;
+    padding: 0 10px;
     border: 0;
     border-radius: 999px;
     background: none;
@@ -273,6 +275,11 @@
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
   }
+  /* v8 (3): "Queued · sends after this turn": a status line inside the chip, the label 500
+     #ececec, the detail 400 #b0b0b0. */
+  .chat-qrow-word { color: #ececec; }
+  .chat-qrow-sep { margin-inline: -2px; color: #b0b0b0; font-weight: var(--cv-weight-body); }
+  .chat-qrow-detail { color: #b0b0b0; font-weight: var(--cv-weight-body); }
   .chat-qrow-chip.is-static { cursor: default; }
   .chat-qrow-chip:not(.is-static):hover:not(:disabled) { background: #2a2a2a; color: #ececec; }
   /* p12c: an open chip is filled #3a3a3a, its words #f2f2f2, its chevron pointing up. */
@@ -280,7 +287,6 @@
   .chat-qrow-chip:disabled { cursor: default; }
   .chat-qrow-chip:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
   .chat-qrow-clock { width: 16px; height: 16px; fill: none; stroke: #bdbdbd; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .chat-qrow-chevron { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .chat-qrow-spin {
     width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%;
     border: 2px solid rgb(255 255 255 / 22%); border-top-color: var(--cv-t1);

@@ -225,8 +225,8 @@ describe("pass 11 strict review fixes", () => {
 
 describe("pass 11 manager review of p11b", () => {
   const viewport = source("../src/components/conversation/viewport/ConversationViewport.svelte");
-  it("v5: under the solid header a 24px fade starts right at its bottom edge", () => {
-    expect(viewport).toContain("--c2-top-fade: transparent 0, #000 24px;");
+  it("v8 (12): under the solid header a 16px fade starts right at its bottom edge", () => {
+    expect(viewport).toContain("--c2-top-fade: transparent 0, #000 16px;");
   });
   it("p13b: while newer content is below the view, the bottom edge dissolves over 16px above the composer", () => {
     expect(viewport).toContain("--c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;");

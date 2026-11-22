@@ -9,27 +9,23 @@ const app = source("../../assets/app.css");
 const tokens = source("../../assets/tokens.css");
 const composer = source("../src/components/conversation/ConversationComposer.svelte");
 
-describe("v7 type: two voices", () => {
-  it("Newsreader is bundled with its OFL licence and declared for the pane's answers", () => {
-    expect(existsSync(new URL("../../assets/fonts/Newsreader.woff2", import.meta.url))).toBe(true);
-    expect(existsSync(new URL("../../assets/fonts/Newsreader-Italic.woff2", import.meta.url))).toBe(true);
-    expect(source("../../assets/fonts/Newsreader-OFL.txt")).toContain("SIL OPEN FONT LICENSE Version 1.1");
-    expect(tokens).toMatch(/@font-face \{\s*font-family: "Newsreader";\s*font-style: italic;/);
-    const scoped = tokens.slice(tokens.indexOf("[data-conversation-pane] {"));
-    expect(scoped).toContain('--cv-font-answer: "Newsreader"');
-    // Only the conversation pane uses the face, so only the pane loads it.
-    expect(app.match(/var\(--cv-font-answer\)/g)?.length).toBeGreaterThan(0);
-    for (const rule of app.split("}").filter((block) => block.includes("var(--cv-font-answer)")))
-      expect(rule.trim().startsWith("[data-conversation-pane]") || rule.includes("\n[data-conversation-pane]")).toBe(true);
+describe("v8 type: one agent face (Inter), no serif", () => {
+  it("Newsreader and its notice are gone; nothing in the app names a serif face", () => {
+    expect(existsSync(new URL("../../assets/fonts/Newsreader.woff2", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../../assets/fonts/Newsreader-Italic.woff2", import.meta.url))).toBe(false);
+    expect(existsSync(new URL("../../assets/fonts/Newsreader-OFL.txt", import.meta.url))).toBe(false);
+    expect(tokens).not.toContain("Newsreader");
+    expect(app).not.toContain("--cv-font-answer");
+    expect(source("../../THIRD_PARTY_NOTICES.md")).not.toContain("Newsreader");
+    expect(`${app}\n${tokens}`.replace(/sans-serif/g, "")).not.toMatch(/(?:font-family|font|--[\w-]*font[\w-]*)\s*:[^;}]*\bserif\b/);
   });
-  it("final agent messages are 17/28 Newsreader #ececec; headings 22/30 and 18/26 600, 24 above and 8 below", () => {
-    expect(app).toMatch(/\.chat-a:not\(\.chat-a--narration\):not\(\.c2-streaming\) \.markdown \{\s*font-family: var\(--cv-font-answer\);\s*font-size: 17px;\s*line-height: 28px;\s*font-weight: 400;\s*color: var\(--cv-ink\);/);
-    expect(app).toMatch(/\.markdown :is\(h1, h2\) \{ font-size: 22px; line-height: 30px; \}/);
-    expect(app).toMatch(/\.markdown :is\(h3, h4, h5, h6\) \{ font-size: 18px; line-height: 26px; \}/);
+  it("all agent prose is Inter 15/24, the final message #ececec; headings in the Inter scale, 24 above and 8 below", () => {
+    expect(app).toMatch(/\[data-conversation-pane\] \.chat-a \.markdown \{\s*font-family: var\(--cv-font\);\s*font-size: 15px;\s*line-height: 24px;\s*font-weight: 400;\s*color: var\(--cv-ink\);/);
+    expect(app).toContain("[data-conversation-pane] .chat-a .markdown :is(h1, h2, h3, h4, h5, h6) { margin: 24px 0 8px; font-family: var(--cv-font); font-weight: 600; letter-spacing: 0; }");
     expect(app).toContain("[data-conversation-pane] .chat-thread .markdown li::marker { color: #8f8f8f; }");
   });
-  it("narration is the UI voice 14/22 #bdbdbd; inline code 0.85em on #262626; tables 13/20 head, 14/20 body, 40px rows", () => {
-    expect(app).toMatch(/\[data-conversation-pane\] \.chat-a--narration,[\s\S]{0,120}\{\s*font-family: var\(--cv-font\);\s*font-size: 14px;\s*line-height: 22px;\s*color: var\(--cv-quiet-ink\);/);
+  it("narration is the same face and size, #b4b4b4; inline code 0.85em on #262626; tables 13/20 head, 14/20 body, 40px rows", () => {
+    expect(app).toMatch(/\[data-conversation-pane\] \.chat-a--narration,[\s\S]{0,120}\{\s*font-family: var\(--cv-font\);\s*font-size: 15px;\s*line-height: 24px;\s*color: #b4b4b4;/);
     expect(app).toMatch(/\[data-conversation-pane\] \.cv-code \{\s*font-family: var\(--cv-mono\);\s*font-size: 0\.85em;[^}]*padding: 1px 5px;[^}]*border-radius: 5px;\s*background: #262626;/);
     expect(app).toContain("[data-conversation-pane] .chat-thread .markdown :is(th, td) { height: 40px;");
     expect(app).toContain("font-size: 13px; line-height: 20px; font-weight: 600; border-block-end-color: #2a2a2a; }");
@@ -51,19 +47,19 @@ describe("v7 the five parts", () => {
     expect(source("../src/lib/markdown/codeBlocks.css")).toMatch(/border-radius: 12px;\s*background: var\(--cv-code-surface, #1a1a1a\);/);
     expect(source("../src/components/conversation/MessagePieces.svelte")).toMatch(/background: #242424;\s*color: #ececec;\s*border-radius: 18px;\s*padding: 12px 16px;/);
   });
-  it("2 Button: the ask's primary 32 pill #f2f2f2/#141414; Deny is a quiet button beside it", () => {
+  it("2 Button: the ask's primary 32 pill #f2f2f2/#141414; v8 (7): Deny is a secondary button beside it", () => {
     expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-primary\) \{[^}]*height: 32px;\s*padding: 0 14px;[^}]*background: #f2f2f2;\s*color: #141414;/);
-    expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-quiet\) \{[^}]*height: 32px;[^}]*background: transparent;\s*color: #bdbdbd;/);
+    expect(composer).toMatch(/\.chat-box :global\(\.chat-ask-quiet\) \{[^}]*height: 32px;[^}]*background: #2a2a2a;\s*color: #ececec;/);
     const controls = source("../src/components/conversation/composer/ComposerRunControls.svelte");
     expect(controls.indexOf("data-conversation-ask-decline")).toBeLessThan(controls.indexOf("data-conversation-ask-primary"));
     const docked = render(PermissionAskCard, { props: { docked: true, onAnswer: () => {}, ask: { askId: "a", title: "Upload", detail: null, options: [
       { option_id: "allow", label: "Allow once", option_kind: "allow_once" }, { option_id: "deny", label: "Deny", option_kind: "reject_once" }] } } }).body;
     expect(docked).not.toContain('data-conversation-ask-action="deny"');
   });
-  it("3 Composer control: 32 tall, text-only #d9d9d9, a 12px chevron; Send/Stop a 32 round", () => {
+  it("3 Composer control: 32 tall, text-only #d9d9d9 (v8 14: no chevron); Send/Stop a 32 round", () => {
     expect(app).toMatch(/\[data-conversation-composer\] \.chat-foot \.listbox-picker-trigger \{[^}]*height: 32px;[^}]*background: transparent;[^}]*color: #d9d9d9;/);
     expect(app).toMatch(/\.chat-send \{[^}]*width: 32px; height: 32px;/);
-    expect(app).toMatch(/model-picker\] \.listbox-picker-chevron-drawn \{[^}]*width: 12px;\s*height: 12px;/);
+    expect(app).not.toMatch(/model-picker\] \.listbox-picker-chevron-drawn/);
   });
   it("4 Status line: 13/20, a 16px icon slot, label 500 #ececec, detail #b0b0b0", () => {
     const anchor = source("../src/components/conversation/TurnAnchor.svelte");
@@ -83,10 +79,10 @@ describe("v7 the five parts", () => {
 });
 
 describe("v7 colour and motion", () => {
-  it("failure is #f08a7e; the Queued menu's Remove is not red; the chart series are neutral", () => {
+  it("failure is #f08a7e; the Queued menu's Remove is not red; v8 (10): the chart series are #bccbf0 and #e0b36b", () => {
     expect(tokens.slice(tokens.indexOf("[data-conversation-pane] {"))).toContain("--cv-danger: #f08a7e;");
     expect(source("../src/components/conversation/composer/HeldPromptStack.svelte")).toContain(".chat-qrow-x { color: #ececec; }");
-    expect(app).toMatch(/--accent-bright: #ececec;\s*--chart-compare-second: #8f8f8f;/);
+    expect(app).toMatch(/--accent-bright: #bccbf0;\s*--chart-compare-second: #e0b36b;/);
   });
   it("the composer grows into an ask over 220 ms and its contents fade in over 120 ms; status icons fade 150 ms", () => {
     expect(composer).toContain('{ duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" }');

@@ -29,8 +29,8 @@
     bubble = false
   }: {
     presentationRowKey?: string | null;
-    /** The person's own message: its words sit in a bubble, and what they attached
-     *  stands beside the bubble in the order it was sent, never nested inside it. */
+    /** The person's own message: one bubble. v8 (6): what they attached sits inside it,
+     *  above the words, in the order it was sent. */
     bubble?: boolean;
     content: readonly (MessagePiece | SentMessagePiece)[];
     /** Which conversation's files these pieces name. A file is fetched under the
@@ -49,13 +49,17 @@
       else if (last && bubble && piece.piece === "text" && last.pieces[0].piece.piece === "text") last.pieces.push({ piece, at });
       else result.push({ at, pieces: [{ piece, at }] });
     });
-    // The person's message reads attachments first, then the words about them: pictures
-    // and files stand above the bubble on its right edge (design v3 §3.2). Each keeps the
-    // order it was sent in. An agent's message keeps its pieces where they were written.
+    // The person's message reads attachments first, then the words about them (v8: both in
+    // the one bubble). Each keeps the order it was sent in. An agent's message keeps its
+    // pieces where they were written.
     if (!bubble) return result;
     const isWords = (run: (typeof result)[number]) => run.pieces[0].piece.piece === "text";
     return [...result.filter(run => !isWords(run)), ...result.filter(isWords)];
   });
+  const isWordsRun = (run: (typeof runs)[number]) => run.pieces[0].piece.piece === "text";
+  /** v8 (6): a bubble with attachments holds them above its words. */
+  let attachedRuns = $derived(bubble ? runs.filter(run => !isWordsRun(run)) : []);
+  let wordRuns = $derived(bubble ? runs.filter(isWordsRun) : []);
   const presentations = getContext<TextPresentationRegistry | undefined>(conversationTextPresentations);
 </script>
 
@@ -82,6 +86,30 @@
   {/if}
 {/snippet}
 
+{#snippet attachment(run: (typeof runs)[number])}
+  {#if run.pieces.length > 1}
+    <div class="file-preview-grid">
+      {#each run.pieces as entry (entry.at)}{@render drawn(entry.piece, entry.at)}{/each}
+    </div>
+  {:else}
+    {@render drawn(run.pieces[0].piece, run.at)}
+  {/if}
+{/snippet}
+
+{#if bubble && attachedRuns.length > 0}
+  <!-- v8 (6): attachments belong to their message: inside the bubble, above its words, 8px
+       apart; the bubble is 8px around them and 12 16 around the words. -->
+  <div class="c2-bubble c2-bubble--attached" data-conversation-bubble data-conversation-bubble-attached>
+    <div class="c2-bubble-attachments">
+      {#each attachedRuns as run (run.at)}{@render attachment(run)}{/each}
+    </div>
+    {#each wordRuns as run (run.at)}
+      <div class="c2-bubble-words">
+        {#each run.pieces as entry (entry.at)}{@render drawn(entry.piece, entry.at)}{/each}
+      </div>
+    {/each}
+  </div>
+{:else}
 {#each runs as run (run.at)}
   {#if bubble && run.pieces[0].piece.piece === "text"}
     <div class="c2-bubble" data-conversation-bubble>
@@ -95,6 +123,7 @@
     {@render drawn(run.pieces[0].piece, run.at)}
   {/if}
 {/each}
+{/if}
 
 <style>
   /* The person's words, and only their words, in the thread's one bubble: the raised step,
@@ -113,4 +142,12 @@
     overflow-wrap: anywhere;
   }
   .c2-bubble :global(.markdown) { color: inherit; }
+  /* v8 (6): padding 8 around the attachments, 12 16 around the words (8 + 4 8). Inside, the
+     attachments' corners follow the bubble's (18 - 8 = 10). */
+  .c2-bubble--attached { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+  .c2-bubble-attachments { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+  .c2-bubble-words { padding: 4px 8px; min-width: 0; }
+  .c2-bubble.c2-bubble--attached :global(.c2-piece-image-slot) { display: flex; justify-content: flex-start; max-width: 100%; margin: 0; }
+  .c2-bubble.c2-bubble--attached :global(.file-preview-media) { border-radius: 10px; }
+  .c2-bubble.c2-bubble--attached :global(.conversation-file-card) { margin: 0; border-radius: 10px; }
 </style>

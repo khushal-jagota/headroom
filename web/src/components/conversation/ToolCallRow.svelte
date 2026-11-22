@@ -111,9 +111,14 @@
 </script>
 
 {#snippet body()}
+  {#if presentation.outcome === "running" && !activityUncertain}
+    <!-- v8 (4): a running call carries the one spinner in its icon's place. -->
+    <span class="c2-tool-slot" aria-hidden="true"><span class="c2-tool-spin" data-conversation-tool-spinner></span></span>
+  {:else}
   <svg class="c2-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
     {#each presentation.iconPaths as path (path)}<path d={path} />{/each}
   </svg>
+  {/if}
   <!-- v4.1: the chevron stands right after the label; the exact subject (a command, a path)
        follows the chevron and takes whatever width is left, ending in an ellipsis inside the
        row, with the whole of it in its tooltip. -->
@@ -134,7 +139,7 @@
     {:else if activityUncertain}
       <span class="c2-tool-state">Unknown</span>
     {:else}
-      <!-- p13b: no spinner on a running row; the Working line is the one live indicator. -->
+      <!-- The row's spinner (its icon slot) says it runs; the outcome column stays empty. -->
       <span class="c2-tool-state c2-tool-state--running" role="img" aria-label="Running"></span>
     {/if}
   </span>
@@ -223,6 +228,18 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
+  .c2-tool-slot { display: inline-grid; place-items: center; width: 16px; height: 16px; }
+  .c2-tool-spin {
+    box-sizing: border-box;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid #4a4a4a;
+    border-top-color: #d9d9d9;
+    animation: c2-tool-spin var(--cv-spin) linear infinite;
+  }
+  @keyframes c2-tool-spin { from { transform: rotate(35deg); } to { transform: rotate(395deg); } }
+  @media (prefers-reduced-motion: reduce) { .c2-tool-spin { animation: none; transform: rotate(35deg); } }
   .c2-tool-line {
     display: flex;
     align-items: baseline;

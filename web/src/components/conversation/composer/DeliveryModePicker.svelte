@@ -32,7 +32,7 @@
 
 <span class="delivery-mode-host">
 <ListboxPicker
-  chevron="drawn"
+  chevron="none"
   drawnTick
   items={choices}
   selectedValue={value}
@@ -69,8 +69,9 @@
   /* Closed, the mode is a 28px chip, 8px round, its name in 500 and a drawn chevron. */
   :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger) {
     gap: 4px;
-    padding-inline: 10px 6px;
-    /* v6: no fill at rest (the words #d9d9d9 and the chevron); hover #2a2a2a; open #3a3a3a. */
+    /* v8 (14): the label alone is the control (no chevron): no fill at rest (#d9d9d9);
+       hover #2a2a2a; open #3a3a3a. */
+    padding-inline: 10px;
     background: transparent;
     color: #d9d9d9;
     font-weight: var(--cv-weight-label);
@@ -87,14 +88,6 @@
     /* Above its own menu, so the menu's float shadow does not darken the open chip. */
     position: relative;
     z-index: 41;
-  }
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] > .listbox-picker-trigger.is-open .listbox-picker-chevron-drawn) { color: #f2f2f2; }
-  :global([data-conversation-composer] .chat-foot [data-conversation-send-mode] .listbox-picker-chevron-drawn) {
-    display: block;
-    /* v7: the composer control's 12px chevron. */
-    width: 12px;
-    height: 12px;
-    color: var(--cv-t3);
   }
   /* The menu is a native dropdown: anchored on its own chip, right edges aligned; v6: its
    * bottom 8px above the composer's top edge. Its width fits its longest label (min 160). */

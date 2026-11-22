@@ -19,7 +19,7 @@ const withFiles: MessagePiece[] = [
 ];
 const refused: PromptRow = {
   key: "e7", kind: "prompt_refused", sequence: 7, createdAt: 1, content: withFiles, senderLabel: "owner",
-  senderMessageId: "m1", reason: "backend_did_not_start", sentence: "the backend would not start"
+  senderMessageId: "m1", reason: "backend_did_not_start", sentence: "the backend did not start"
 };
 const drawWith = (row: PromptRow, context: ResendRecordedMessage | null) => render(UserMessage, {
   props: { row, conversationId: "c1", ownSenderLabel: "owner" },
@@ -64,7 +64,9 @@ describe("sending again a message that was not delivered", () => {
     const html = drawWith(refused, { available: () => true, resend });
     expect(html).toContain('data-conversation-resend-refused="e7"');
     expect(html).toContain(">Resend</button>");
-    expect(html).toContain("Resend it, or choose another model in the composer first.");
+    // v8 (9): the card says the cause; its buttons say the rest.
+    expect(html).toContain("The backend did not start.");
+    expect(html).not.toContain("Resend it, or choose another model in the composer first.");
   });
 
   it("does not show Resend in a read-only pane, nor for a message that cannot be sent again", () => {

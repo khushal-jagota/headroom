@@ -116,18 +116,22 @@ describe("design v5.1: turn timing at the top, Paused under a waiting ask", () =
     expect(source("../src/components/conversation/ConversationRestBar.svelte")).toContain(".c2-rest-working { display:inline-flex; align-items:center; gap:6px; }");
   });
 
-  it("p13b: the running row keeps the run's static icon (the Working line holds the one spinner); no time; one line, chevron after it", () => {
+  it("v8 (4): the running run carries the one spinner in its icon's place; no time; one line, chevron after it", () => {
     const running = { title: "Running", summary: "go test -race ./internal/push/...", summaryIsLiteral: true, sentence: "Running go test" } as unknown as ToolCallPresentation;
     const html = render(ToolRunSummary, { props: { summary: { sentence: "Ran 2 commands", failedCount: 0, running, iconPaths: [] }, callCount: 3, onToggle: () => {} } }).body;
-    expect(html).not.toContain("data-conversation-run-spinner");
+    expect(html).toContain("data-conversation-run-spinner");
     expect(html).toContain('data-conversation-run-icon="running"');
+    // Opened, the run's own running row carries the spinner instead.
+    const opened = render(ToolRunSummary, { props: { open: true, summary: { sentence: "Ran 2 commands", failedCount: 0, running, iconPaths: [] }, callCount: 3, onToggle: () => {} } }).body;
+    expect(opened).not.toContain("data-conversation-run-spinner");
     expect(html).toMatch(/c2-run-verb[^>]*>Running</);
     const summary = source("../src/components/conversation/ToolRunSummary.svelte");
     expect(summary).not.toContain("line-clamp");
-    expect(summary).not.toContain("c2-run-spin");
+    expect(summary).toMatch(/\.c2-run-spin \{[^}]*border: 2px solid #4a4a4a;\s*border-top-color: #d9d9d9;/);
     expect(summary).toContain(".c2-run-summary.is-live .c2-run-verb { margin-inline-end: 2px; color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }");
     const call = source("../src/components/conversation/ToolCallRow.svelte");
-    expect(call).not.toContain("acp-spin");
+    expect(call).toContain('{#if presentation.outcome === "running" && !activityUncertain}');
+    expect(call).toContain("data-conversation-tool-spinner");
     expect(call).toContain('.acp-step[data-conversation-tool-status="running"] .c2-tool-verb { color: var(--cv-ink, #ececec); font-weight: var(--cv-weight-label); }');
     expect(html.indexOf("c2-run-subject")).toBeLessThan(html.indexOf("c2-run-chevron"));
     expect(source("../src/components/conversation/ToolCallRow.svelte")).not.toContain("data-conversation-tool-elapsed");
@@ -174,16 +178,16 @@ describe("design v5: controls", () => {
     const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
     expect(held).toMatch(/bottom: calc\(100% \+ 8px\);\s*width: max-content;\s*min-width: 160px;/);
   });
-  it("p12c: an open chip (Steer/Queue, model, Queued) is #3a3a3a with #f2f2f2 words and an up chevron", () => {
+  it("p12c: an open chip (Steer/Queue, model, Queued) is #3a3a3a with #f2f2f2 words; v8 (14): no chevron", () => {
     expect(app).toContain("[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open:hover:not(:disabled) { position: relative; z-index: 41; background: #3a3a3a; color: #f2f2f2; }");
-    expect(app).toContain("[data-conversation-composer] .chat-foot [data-conversation-model-picker] > .listbox-picker-trigger.is-open .listbox-picker-chevron-drawn { color: #f2f2f2; }");
     const mode = source("../src/components/conversation/composer/DeliveryModePicker.svelte");
     expect(mode).toMatch(/trigger\.is-open:hover:not\(:disabled\)\) \{\s*background: #3a3a3a;\s*color: #f2f2f2;/);
     expect(mode).toMatch(/background: #3a3a3a;\s*color: #f2f2f2;\s*\/\*[^*]*\*\/\s*position: relative;\s*z-index: 41;/);
     const held = source("../src/components/conversation/composer/HeldPromptStack.svelte");
     expect(held).toContain('.chat-qrow-chip[aria-expanded="true"], .chat-qrow-chip[aria-expanded="true"]:hover:not(:disabled) { position: relative; z-index: 31; background: #3a3a3a; color: #f2f2f2; }');
-    expect(held).toContain('{#if menuOpenFor === row.key}<path d="m4 10 4-4 4 4" />');
-    expect(source("../src/components/conversation/ListboxPicker.svelte")).toContain('{#if open}<path d="M6 15l6-6 6 6" />');
+    expect(held).not.toContain("chat-qrow-chevron");
+    expect(mode).toContain('chevron="none"');
+    expect(source("../src/components/conversation/composer/ComposerRunControls.svelte")).toContain('chevron="none"');
   });
   it("Stop is #f2f2f2 with a #121212 square; v6: disabled send #2a2a2a with a #8c8c8c arrow", () => {
     expect(app).toContain(".chat-send.stop { background: #f2f2f2; color: #121212; }");

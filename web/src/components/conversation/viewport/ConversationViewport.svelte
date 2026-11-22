@@ -161,6 +161,8 @@
   let newestLineOutOfSight = $state(false);
   // Latest points down, so a newest line above the view does not call for it.
   let newestLineBelowTheView = $state(false);
+  /** v8 (11): how far the thread's end was below the view at the last scroll or resize. */
+  let endGapBeforeResize = 0;
   /** v5.4: more than one viewport of newer content below: the only time Jump to latest shows. */
   let newestLineFarBelow = $state(false);
   /** Whether the thread is scrolled to its very top, where there is nothing above to fade. */
@@ -1126,8 +1128,20 @@
       }
       repairLayout(thread);
     });
+    let observedHeight = thread.clientHeight;
     const observer = new ResizeObserver(() => {
       navigationPending = false;
+      // v8 (11): the composer grew (attachments, a longer draft, an ask) and the thread lost
+      // height. A transcript that was at its end stays at its end, so its last line keeps the
+      // thread's 24px bottom edge above the composer and no text stands behind its edge.
+      const height = thread.clientHeight;
+      if (height !== observedHeight) {
+        const shrank = height < observedHeight;
+        observedHeight = height;
+        if (shrank && endGapBeforeResize <= 1 && heldSent === null && !pendingOpen && placementReady)
+          moveTheThread(thread, thread.scrollHeight);
+      }
+      endGapBeforeResize = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
       // A height change no motion made (the Latest shelf coming or going) is not one the
       // next motion frame should compensate for, so it becomes the new baseline.
       if (!(thread.closest('[data-conversation-pane]') ?? thread).hasAttribute('data-conversation-motion')) previousThreadHeight = thread.clientHeight;
@@ -1210,7 +1224,7 @@
     tabindex="0"
     bind:this={threadElement}
     onloadcapture={() => { navigationPending = false; requestReconciliation(); }}
-    onscroll={(event) => { atTheTop = event.currentTarget.scrollTop <= 0.5; onThreadScroll(); }}
+    onscroll={(event) => { const t = event.currentTarget; atTheTop = t.scrollTop <= 0.5; endGapBeforeResize = t.scrollHeight - t.scrollTop - t.clientHeight; onThreadScroll(); }}
     onscrollend={() => { navigationPending = false; }}
     onwheel={stopAutomaticTravel}
     ontouchmove={stopAutomaticTravel}
@@ -1241,8 +1255,10 @@
       {onSendAgain}
     />
     {/if}
-    {#if afterTranscript}{@render afterTranscript()}{/if}
+    <!-- v8 (3): the Working line right after the running turn's content (its steered
+         messages are inside the turn), then the queued messages, which send after it. -->
     {#if reader!==null}<LiveEdge {reader} {activityUncertain} {livenessPulse}/>{/if}
+    {#if afterTranscript}{@render afterTranscript()}{/if}
     </div>
     {#if reservedSpacePixels > 0}
       <div
@@ -1272,7 +1288,7 @@
     /* v5: the header is solid; the thread fades in over 24px starting right at the header's
        bottom edge (no solid band, no hard cut). While newer content sits below the view, the
        bottom edge dissolves over 24px above the composer. */
-    --c2-top-fade: transparent 0, #000 24px;
+    --c2-top-fade: transparent 0, #000 16px;
     --c2-bottom-fade: #000 calc(100% - 16px), transparent 100%;
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-top-fade));
             mask-image: linear-gradient(to bottom, var(--c2-top-fade));
@@ -1286,12 +1302,11 @@
     -webkit-mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
             mask-image: linear-gradient(to bottom, var(--c2-bottom-fade));
   }
-  /* v6: one anchoring rule for every state: a thread shorter than the view sits against the
-     composer (the thread's 24px bottom edge), and the empty space is at the top, under the
-     header. A long thread scrolls as before. */
-  .chat-thread-content { margin-block-start: auto; }
-  /* v6: an empty conversation's one line sits 24px above the composer, centred. */
-  .chat-thread-content:has(> :global([data-conversation-empty])) { justify-content: flex-end; }
+  /* v8: one anchoring rule for every state: a conversation shorter than the view reads from
+     the top, under its header, as a page does. */
+  .chat-thread-content { margin-block-start: 0; }
+  /* v8: an empty conversation takes the whole view, so its one line stands in the middle. */
+  .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
   /* The browser keeps the reader's place when history arrives above them. Nothing
      here competes with it, so it is left on. */
   /* Answer room is not content and never shrinks to make room for content. */

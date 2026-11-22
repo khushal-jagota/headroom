@@ -184,7 +184,7 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   no_such_conversation: "there is no such conversation to send to",
   model_resolution_failed: "the selected model could not be resolved",
   backend_rejected_prompt: "the provider rejected this prompt",
-  backend_did_not_start: "the backend would not start",
+  backend_did_not_start: "the backend did not start",
   session_did_not_load: "the backend's session would not load",
   write_to_backend_failed: "the write to the backend did not succeed",
   no_running_turn_to_steer_into: "there was no running turn to steer into",
