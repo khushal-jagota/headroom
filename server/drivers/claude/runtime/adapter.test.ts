@@ -5,12 +5,14 @@ import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
 import { expect, it, vi } from 'vitest';
 import { ResolvedConversationStart } from '../../../conversation/contracts.ts';
 import {
+  AgentMessageCompleted,
   BackendStreamEnded,
   BackendSpawnFailed,
   BackendInitializationTimeout,
   NeedsRebind,
   PromptWriteFailed,
   SessionLoadFailed,
+  TokenUsageReported,
   TurnEnded,
 } from '../../../conversation/backends/contracts.ts';
 import { text_message_content } from '../../../conversation/message_content.ts';
@@ -228,6 +230,7 @@ async function live_child(
     access: 'full',
   });
   const turn_endings: TurnEnded[] = [];
+  const reported: unknown[] = [];
   const stream_ended = new Deferred<void>();
   const child_processes = new ChildProcesses();
   const one_shot_children = new OneShotChildren(child_processes);
@@ -240,6 +243,7 @@ async function live_child(
     client_factory: () => client,
     event_sink: {
       report: async (_turn, event) => {
+        reported.push(event);
         if (event instanceof TurnEnded) turn_endings.push(event);
         if (event instanceof BackendStreamEnded) stream_ended.resolve();
       },
@@ -264,7 +268,15 @@ async function live_child(
       reasoning_effort_change,
       reasoning_effort_is_set: true,
     });
-  return { child, content, prompt, deliver, turn_endings, stream_ended: stream_ended.promise };
+  return {
+    child,
+    content,
+    prompt,
+    deliver,
+    turn_endings,
+    reported,
+    stream_ended: stream_ended.promise,
+  };
 }
 
 // Risk: a caller that writes without the core's selection check (the Mac runner, a replayed
@@ -345,6 +357,100 @@ it('ends the turn broken after a cancel that Claude never settles, ignoring its 
   await stream_ended;
   expect(turn_endings).toHaveLength(1);
   expect(turn_endings[0]).toMatchObject({ ending: 'failed', child_disposition: 'broken' });
+  await child.stop();
+});
+
+/** A started child whose results name the prompts that the test says they name. */
+async function child_with_named_results(conversation_id: string) {
+  const prompt_uuids: string[] = [];
+  const named_by_result = new Map<string, ReadonlySet<string>>();
+  const live = await live_child(conversation_id, {
+    client: {
+      watch_user_message: (uuid) => void prompt_uuids.push(uuid),
+      user_message_uuids_for_result: (uuid) => named_by_result.get(uuid ?? '') ?? new Set(),
+    },
+  });
+  const result = (uuid: string, names: string[], fields: Record<string, unknown> = {}) => {
+    named_by_result.set(uuid, new Set(names));
+    live.deliver({
+      value: {
+        type: 'result',
+        subtype: 'success',
+        uuid,
+        duration_ms: 1,
+        duration_api_ms: 1,
+        num_turns: 1,
+        is_error: false,
+        session_id: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+        ...fields,
+      },
+      done: false,
+    });
+  };
+  return { ...live, prompt_uuids, result };
+}
+
+// Risk: after a restart killed background tasks, the resumed CLI answers its own task notice
+// with an empty result after the Panels prompt is queued. That result ended the Panels turn,
+// and the real answer then ran with no turn open, so Panels dropped it.
+it('ends a resumed turn on the result for its prompt, not on the CLI result before it', async () => {
+  const { child, prompt, deliver, turn_endings, reported, prompt_uuids, result } =
+    await child_with_named_results('resume-own-turn');
+  await prompt(1, 'low');
+  const [prompt_uuid] = prompt_uuids;
+  const frame = (value: ClaudeSdkMessage) => deliver({ value, done: false });
+  frame({
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: 'killed',
+    status: 'stopped',
+    output_file: '/synthetic/killed.output',
+    summary: 'Background command stopped',
+    uuid: 'notice',
+    session_id: null,
+  });
+  frame({ type: 'command_lifecycle', command_uuid: prompt_uuid, state: 'queued' });
+  result('own-result', [], { usage: { input_tokens: 0, output_tokens: 0 }, num_turns: 0 });
+  frame({ type: 'command_lifecycle', command_uuid: prompt_uuid, state: 'started' });
+  frame({
+    type: 'assistant',
+    uuid: 'answer',
+    session_id: null,
+    parent_tool_use_id: null,
+    message: { role: 'assistant', model: 'haiku', content: [{ type: 'text', text: 'Done.' }] },
+  });
+  result('prompt-result', [prompt_uuid!], { usage: { input_tokens: 7, output_tokens: 3 } });
+  await vi.waitFor(() => expect(turn_endings).toHaveLength(1));
+  expect(turn_endings[0]).toMatchObject({ ending: 'completed', error_summary: null });
+  const relevant = reported.filter(
+    (event) =>
+      event instanceof AgentMessageCompleted ||
+      event instanceof TokenUsageReported ||
+      event instanceof TurnEnded,
+  );
+  expect(relevant.map((event) => (event as object).constructor)).toEqual([
+    AgentMessageCompleted,
+    TokenUsageReported,
+    TurnEnded,
+  ]);
+  expect(relevant[1]).toMatchObject({ input_tokens: 7, output_tokens: 3 });
+  await child.stop();
+});
+
+// Risk: an error result that names no prompt fails the turn while its prompt still runs. A real
+// session failure must still fail the turn, through the end of the message stream.
+it('keeps a turn open across an error result for no prompt, and fails it when the stream ends', async () => {
+  const { child, prompt, deliver, turn_endings, reported, result, stream_ended } =
+    await child_with_named_results('error-own-turn');
+  await prompt(1, 'low');
+  result('own-error', [], { subtype: 'error_during_execution', is_error: true });
+  deliver({ value: undefined, done: true });
+  await stream_ended;
+  expect(turn_endings).toHaveLength(1);
+  expect(turn_endings[0]).toMatchObject({ ending: 'failed', child_disposition: 'broken' });
+  expect(turn_endings[0]!.error_summary).toContain("the backend's message stream ended");
+  expect(reported.some((event) => event instanceof TokenUsageReported)).toBe(false);
   await child.stop();
 });
 

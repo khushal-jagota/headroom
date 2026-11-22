@@ -928,7 +928,7 @@ test('Claude freshness_key invalidates on credentials metadata and oauthAccount 
     expect(vps_paths.claude_json_path).toBe(join(account_home, '.claude.json'));
     const vps_env = new RecordingBackendProbeEnvironment();
     vps_env.executables.set('claude', '/synthetic/claude');
-    vps_env.outcomes.set(JSON.stringify(['/synthetic/claude', '--version']), recorded('2.1.219'));
+    vps_env.outcomes.set(JSON.stringify(['/synthetic/claude', '--version']), recorded('2.1.259'));
     let vps_identity = recorded(JSON.stringify({ loggedIn: false }));
     let vps_probes = 0;
     const vps_service = new BackendSnapshotService({
