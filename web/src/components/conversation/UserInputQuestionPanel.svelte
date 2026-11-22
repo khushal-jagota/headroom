@@ -23,6 +23,9 @@
     note = null,
     framed = true,
     replyStrip,
+    onStop,
+    commitLabel = $bindable(""),
+    commitReady = $bindable(false),
     ownAnswer = null,
     acceptsOwnAnswer = $bindable(false),
     onOwnAnswerUsed,
@@ -37,6 +40,12 @@
     framed?: boolean;
     /** The composer's one-line reply, under the answers. */
     replyStrip?: Snippet;
+    /** Ends the turn that waits on these questions, from the header's "Stop turn". */
+    onStop?: () => void;
+    /** Docked in the composer (v4): what its primary pill says ("Next", "Send answers") and
+     *  whether it can go on now; the pill calls commit(). */
+    commitLabel?: string;
+    commitReady?: boolean;
     /** The words in the composer, when the composer is where an own answer is written (it is
      *  docked right under the question). Null: the panel draws its own field for them. */
     ownAnswer?: string | null;
@@ -114,10 +123,20 @@
     choose(option);
   }
 
+  /** A tile chooses (or, where several may be chosen, toggles); the one primary goes on. */
   function choose(option: string): void {
     if (question === undefined || busy || !answerAvailable) return;
     draft = toggleUserInputChoice(draft, question, option);
   }
+
+  let primaryLabel = $derived(busy && isLast ? "Sending…" : isLast ? (request.questions.length > 1 ? "Send answers" : "Send answer") : "Next");
+  $effect(() => {
+    commitLabel = primaryLabel;
+    commitReady = question !== undefined && canContinue && !busy && answerAvailable;
+  });
+
+  /** Goes on, as the primary does: the composer's pill calls this. */
+  export function commit(): void { continueOrSubmit(); }
 
   function writeOther(value: string): void {
     if (question === undefined || busy || !answerAvailable) return;
@@ -164,7 +183,7 @@
   {/if}
 {/snippet}
 
-{#snippet commit()}
+{#snippet primaryButton()}
   <!-- The one primary. Before there is an answer it waits as a quiet outline. -->
   <button
     type="button"
@@ -173,7 +192,7 @@
     title={!canContinue ? "Choose an answer, or write your own, to go on" : undefined}
     disabled={busy || !answerAvailable || !canContinue}
     onclick={continueOrSubmit}
-  >{busy && isLast ? "Sending…" : isLast ? (request.questions.length > 1 ? "Send answers" : "Send answer") : "Next"}</button>
+  >{primaryLabel}</button>
 {/snippet}
 
 {#if question}
@@ -186,13 +205,15 @@
     description={question.multi_select ? "Choose all that apply." : null}
     {framed}
     {replyStrip}
-    footerEnd={commit}
+    footerEnd={composerAnswers ? undefined : primaryButton}
+    {onStop}
+    stopDisabled={busy}
     data-user-input-panel
     data-user-input-request-id={request.requestId}
     aria-label="Questions from the agent"
   >
     <div
-      class="options"
+      class="cv-ask-rows options"
       role="group"
       aria-labelledby={`${uid}-question`}
       bind:this={optionsElement}
@@ -201,46 +222,26 @@
         {@const selected = (draft.selected[question.question_id] ?? []).includes(option.label)}
         <button
           type="button"
-          class:selected
+          class="cv-ask-row"
+          class:is-selected={selected}
           data-user-input-option={option.label}
           aria-pressed={selected}
           aria-keyshortcuts={index < 9 ? String(index + 1) : undefined}
           disabled={busy || !answerAvailable}
           onclick={() => choose(option.label)}
         >
-          <span class="key" aria-hidden="true">
+          <span class="cv-ask-key" aria-hidden="true">
             {#if selected}<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></svg>{:else if index < 9}{index + 1}{/if}
           </span>
-          <span class="words">
-            <span class="label">{option.label}</span>
-            {#if option.description}<small>{option.description}</small>{/if}
+          <span class="cv-ask-words">
+            <span class="cv-ask-label">{option.label}</span>
+            {#if option.description}<small class="cv-ask-sub">{option.description}</small>{/if}
           </span>
         </button>
       {/each}
     </div>
 
-    {#if question.allow_other && composerAnswers}
-      <!-- The own answer is written in the composer right below, the one place to type; this
-           row says so, and shows the words as the chosen answer once there are some. -->
-      <div class="options own" role="group" aria-label="Your own answer">
-        <button
-          type="button"
-          class:selected={ownWords !== ""}
-          data-user-input-own
-          aria-pressed={ownWords !== ""}
-          disabled={busy || !answerAvailable}
-          onclick={() => onWriteOwnAnswer?.()}
-        >
-          <span class="key" aria-hidden="true">
-            {#if ownWords !== ""}<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7" /></svg>{:else}<svg viewBox="0 0 16 16"><path d="M10.5 3.2a1.5 1.5 0 0 1 2.1 2.1L6 11.9l-2.8.7.7-2.8z" /></svg>{/if}
-          </span>
-          <span class="words">
-            <span class="label">{ownWords !== "" ? ownWords : "Something else"}</span>
-            <small>{ownWords !== "" ? "Your own answer" : "Type your own answer below"}</small>
-          </span>
-        </button>
-      </div>
-    {:else if question.allow_other}
+    {#if question.allow_other && !composerAnswers}
       <label class="other">
         <span class="visually-hidden">Other answer</span>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 3.2a1.5 1.5 0 0 1 2.1 2.1L6 11.9l-2.8.7.7-2.8z" /></svg>
@@ -274,52 +275,7 @@
   .topic { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sep { color: var(--cv-t4); }
   .count { flex: none; }
-  .options { display: grid; gap: var(--cv-s1); }
-  .options.own { margin-block-start: var(--cv-s1); }
-  .own .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
-  .own .words { min-width: 0; }
-  .own .key svg { stroke-width: 1.5; }
-  /* An option is a two-line row (label, then its description) with its number key on the
-     left. Hover is one step up; the chosen one takes the control fill and a check in place
-     of its key: tone and a mark, not a coloured edge. */
-  .options button {
-    display: flex;
-    align-items: center;
-    gap: var(--cv-s3);
-    width: 100%;
-    min-height: 48px;
-    padding: var(--cv-s2) var(--cv-s3) var(--cv-s2) var(--cv-s2);
-    border: 0;
-    border-radius: var(--cv-r-md);
-    background: transparent;
-    color: var(--cv-t1);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
-  }
-  .options button:hover:not(:disabled) { background: var(--cv-control); }
-  .options button.selected { background: var(--cv-control); }
-  .options button:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: -2px; }
-  .options button:disabled { cursor: default; color: var(--cv-t3); }
-  .key {
-    flex: none;
-    display: inline-grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: var(--cv-r-sm);
-    background: transparent;
-    box-shadow: inset 0 0 0 1px var(--cv-line-strong);
-    color: var(--cv-t2);
-    font: var(--cv-weight-label) var(--cv-type-caption)/1 var(--cv-font);
-    font-variant-numeric: tabular-nums;
-  }
-  .selected .key { background: var(--cv-primary-fill); box-shadow: none; color: var(--cv-primary-ink); }
-  .key svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .words { display: grid; gap: 2px; min-width: 0; }
-  .label { overflow-wrap: anywhere; font: var(--cv-weight-label) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font); }
-  .options small { color: var(--cv-t3); font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); overflow-wrap: anywhere; }
+  .options { max-height: 360px; overflow: auto; }
   /* The field: a canvas well inside the raised ask, with a pen where the key would be. */
   .other {
     position: relative;
@@ -339,7 +295,7 @@
     color: var(--cv-t1);
     font: var(--cv-weight-body) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font);
   }
-  .other input::placeholder { color: var(--cv-t4); }
+  .other input::placeholder { color: var(--cv-placeholder); }
   .other input:focus { outline: none; border-color: var(--cv-accent-line); }
   .other input:disabled { cursor: default; color: var(--cv-t4); }
   .note { margin: var(--cv-s3) 0 0; color: var(--cv-danger); font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font); }

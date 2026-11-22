@@ -61,14 +61,28 @@ describe("delivery mode only matters while a turn runs", () => {
     expect(resolveComposerRunControls(runInput({ running: true, deliveryMode: "steer", supportsSteer: true, askWaiting: null })).deliveryMode).toBe("steer");
   });
 
+  it("shows Stop only while the turn works: waiting on an ask is not working, so the round is Send", () => {
+    expect(resolveComposerRunControls(runInput({ running: true, askWaiting: null })).showStop).toBe(true);
+    for (const askWaiting of ["holds", "answers"] as const) {
+      const waiting = resolveComposerRunControls(runInput({ running: true, askWaiting, hasSendableContent: false }));
+      expect(waiting.showStop).toBe(false);
+      // Send stands in its place, unavailable until there is a draft, available once there is.
+      expect(waiting.submit.disabled).toBe(true);
+      expect(resolveComposerRunControls(runInput({ running: true, askWaiting, hasSendableContent: true })).submit.disabled).toBe(false);
+    }
+    expect(resolveComposerRunControls(runInput({ running: false })).showStop).toBe(false);
+  });
+
   it("says in the empty composer what a message written under an ask will do", () => {
     const base = "Message the Coding worker...";
-    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base })).toBe(base);
-    expect(composerPlaceholderFor({ askWaiting: "answers", mode: "queue", running: true, base })).toBe("Type your own answer…");
-    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "queue", running: true, base })).toBe("Or write a message. It is held until this turn ends");
+    // v4: "Message <role>", without the trailing ellipsis.
+    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base })).toBe("Message the Coding worker");
+    expect(composerPlaceholderFor({ askWaiting: null, mode: "steer", running: true, base: "Message Wren…" })).toBe("Message Wren");
+    expect(composerPlaceholderFor({ askWaiting: "answers", mode: "queue", running: true, base })).toBe("Or write your own answer");
+    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "queue", running: true, base })).toBe("Or write a message");
     expect(composerPlaceholderFor({ askWaiting: "holds", mode: "send_now", running: true, base })).toBe("Or write a message. Sending it stops this turn");
     // A key request left by a finished turn holds nothing: the next message starts a turn.
-    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "steer", running: false, base })).toBe(base);
+    expect(composerPlaceholderFor({ askWaiting: "holds", mode: "steer", running: false, base })).toBe("Message the Coding worker");
   });
 
   it("sends words written under a question as its answer, with no delivery choice", () => {

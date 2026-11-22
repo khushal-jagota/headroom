@@ -159,7 +159,9 @@ export function resolveComposerRunControls(
       backendEffortOptions: catalog.effortOptions
     },
     submit: submitProjection(input),
-    showStop: input.running,
+    // While an ask waits the turn is paused on the person, not working: the composer's last
+    // control is Send, and the way to end the turn is the ask's own last row.
+    showStop: input.running && input.askWaiting === null,
     deliveryMode: effectiveDeliveryMode(input),
     // A draft that answers the question on screen is not delivered into the turn at all.
     showDeliveryMode: input.running && input.askWaiting !== "answers",
@@ -212,12 +214,13 @@ export function composerPlaceholderFor(input: {
   running: boolean;
   base: string;
 }): string {
-  if (input.askWaiting === "answers") return "Type your own answer…";
+  // v4: "Message <role>", without a trailing ellipsis; under an ask, the composer line is
+  // the place for an own answer, or for a message the turn will read once it goes on.
+  const base = input.base.replace(/\s*(?:\.\.\.|…)$/, "");
+  if (input.askWaiting === "answers") return "Or write your own answer";
   if (input.askWaiting === "holds") {
-    if (!input.running) return input.base;
-    return input.mode === "send_now"
-      ? "Or write a message. Sending it stops this turn"
-      : "Or write a message. It is held until this turn ends";
+    if (!input.running) return base;
+    return input.mode === "send_now" ? "Or write a message. Sending it stops this turn" : "Or write a message";
   }
-  return input.base;
+  return base;
 }

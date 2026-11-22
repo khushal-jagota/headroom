@@ -351,7 +351,25 @@
   let panelTakesTheBox = $derived(userInput !== null || ask !== null || credentialInTheBox);
   /** The question on screen, when it takes an own answer: the composer is then the one place
    *  to write it, right under the question, and its send answers. */
-  let questionPanel = $state<{ answerWith: (words: string) => boolean } | null>(null);
+  let questionPanel = $state<{ answerWith: (words: string) => boolean; commit: () => void } | null>(null);
+  let permissionCard = $state<{ commit: () => void } | null>(null);
+  /** The ask's primary, which the composer's send slot holds while the ask is the composer
+   *  (v4): its label and whether it can commit, as the ask reports them. */
+  let questionCommitLabel = $state("");
+  let questionCommitReady = $state(false);
+  let permissionCommitLabel = $state("");
+  let permissionCommitReady = $state(false);
+  let permissionCommitSeen = $state(false);
+  $effect(() => { if (permissionCommitLabel !== "") permissionCommitSeen = true; });
+  // Until the ask reports (its first paint, or a server render), the pill says what the ask
+  // starts at: a question's first step, or a permission ask's default, allow once.
+  let askPrimary = $derived(
+    userInput !== null
+      ? { label: questionCommitLabel || (userInput.questions.length > 1 ? "Next" : "Send answer"), ready: questionCommitReady, onCommit: () => questionPanel?.commit() }
+      : ask !== null
+        ? { label: permissionCommitLabel || "Allow", ready: permissionCommitSeen ? permissionCommitReady : !disabled && permissionAvailable, onCommit: () => permissionCard?.commit() }
+        : null
+  );
   let questionTakesOwnAnswer = $state(false);
   /** What a waiting ask makes of the draft (runControls contracts). Words alone answer a
    *  question that takes an own answer; anything else waits for the blocked turn, or ends it. */
@@ -1280,11 +1298,14 @@
           <UserInputQuestionPanel
             bind:this={questionPanel}
             bind:acceptsOwnAnswer={questionTakesOwnAnswer}
+            bind:commitLabel={questionCommitLabel}
+            bind:commitReady={questionCommitReady}
             framed={false}
             ownAnswer={attachments.length === 0 ? text : ""}
             onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
             onWriteOwnAnswer={() => inputElement?.focus()}
             request={userInput}
+            onStop={running && onStop ? onStop : undefined}
             busy={disabled}
             answerAvailable={userInputAvailable}
             note={userInputNote}
@@ -1292,15 +1313,20 @@
           />
         {:else if takenOver && ask}
           <PermissionAskCard
+            bind:this={permissionCard}
+            bind:commitLabel={permissionCommitLabel}
+            bind:commitReady={permissionCommitReady}
+            docked
             ask={ask}
             framed={false}
             answerAvailable={permissionAvailable}
             busy={disabled}
             note={askNote}
+            onStop={running && onStop ? onStop : undefined}
             onAnswer={(optionId) => onAnswer?.(optionId)}
           />
         {:else if credentialInTheBox && credentialRequest}
-          <ConversationCredentialRequestCard request={credentialRequest} framed={false} />
+          <ConversationCredentialRequestCard request={credentialRequest} framed={false} onStop={running && onStop ? onStop : undefined} />
         {/if}
       </div>
       {/if}
@@ -1466,6 +1492,12 @@
           <!-- One place to add something, rather than a row of separate buttons. What it
                offers is still the same set of things, and each of them still does exactly
                what its own button did. -->
+          {#if panelTakesTheBox}
+            <!-- Under an ask the line is where an own answer is written: a pen marks it. -->
+            <span class="chat-ask-pen" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M15.2 5.3a2.1 2.1 0 0 1 3 3L8.6 17.9l-4.1 1.1 1.1-4.1z" /></svg>
+            </span>
+          {/if}
           <div class="chat-add" bind:this={addMenuElement}>
             <button
               type="button"
@@ -1598,6 +1630,7 @@
               intents={runControlIntents}
               bind:snapshots={backends}
               beforeSubmit={microphone}
+              {askPrimary}
             />
           {:else}
             <span class="chat-submit">{@render microphone()}</span>
@@ -1708,14 +1741,14 @@
     align-items: center;
     gap: 10px;
     width: 100%;
-    min-height: 32px;
+    min-height: 36px;
     padding: 6px var(--cv-s2);
     background: none;
     border: none;
     border-radius: var(--cv-r-md);
     color: var(--cv-t2);
     font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
+    font-size: var(--cv-type-ui);
     line-height: var(--cv-leading-meta);
     text-align: left;
     cursor: pointer;
@@ -1835,26 +1868,49 @@
     flex-wrap: wrap;
     align-items: center;
     column-gap: var(--cv-s1);
-    padding: var(--cv-s2);
+    /* v4: a 52px line: 7 + 36 + 7 inside the 1px edge, radius 26. */
+    min-height: 52px;
+    box-sizing: border-box;
+    padding: 7px;
+    border-radius: 26px;
   }
   .chat-box.is-compact > .chat-ta { flex: 1 1 0; order: 1; min-width: 0; padding-inline: var(--cv-s1) var(--cv-s2); }
   .chat-box.is-compact > .chat-foot { display: contents; }
   .chat-box.is-compact > .chat-foot > :global(*) { order: 2; }
-  .chat-box.is-compact > .chat-foot > .chat-add { order: 0; }
+  .chat-box.is-compact > .chat-foot > :is(.chat-add, .chat-ask-pen) { order: 0; }
   .chat-box.is-compact > .chat-foot > :global([data-conversation-model-picker]) { margin-inline-start: 0; }
   .chat-box.is-compact .chat-ta::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* An ask is the composer while it waits: the same frame, the same width, the same place.
-     The ask's eyebrow, title, content and answers stand in the frame on its own inset, and the
-     composer's line stays under them for an own answer or a message. The frame eases between
-     its heights (morph); the ask's words rise in with the shell's own entrance. Under an ask
-     the line keeps to what writing needs: the draft, the delivery chip, voice and send/stop. */
-  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s2); }
-  .chat-box.has-ask { padding-top: var(--cv-s1); }
-  .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s3) var(--cv-s3) 0; }
-  .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) 0 0 var(--cv-s3); }
-  .chat-box.has-ask.is-compact > .chat-foot > :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
-  .chat-box.has-ask.is-compact > .chat-ta { padding-inline-start: var(--cv-s3); }
+  /* An ask is the composer while it waits (v4): the same object, grown upward, radius 20.
+     The ask's header, question and tiles stand in the frame on a 16px inset, and the
+     composer's own line is its last row: a pen, the draft, the microphone and the ask's
+     primary pill in the send slot. No add, no model, no mode chip and no Stop under it. */
+  .chat-box.has-ask, .chat-box.has-ask.is-compact { border-radius: 20px; padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
+  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s3); }
+  .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
+  .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
+  .chat-box.has-ask > .chat-foot :is(.chat-add, :global([data-conversation-model-picker])) { display: none; }
+  .chat-box.has-ask.is-compact > .chat-ta { padding-inline-start: var(--cv-s1); }
+  .chat-ask-pen { flex: none; display: grid; place-items: center; width: 36px; height: 36px; color: var(--cv-t3); }
+  .chat-ask-pen svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  /* The ask's primary in the send slot: a 36px pill, #f2f2f2 with dark words; unavailable it
+     is #2a2a2a with #8c8c8c words. */
+  .chat-box :global(.chat-ask-primary) {
+    flex: none;
+    height: 36px;
+    padding: 0 var(--cv-s4);
+    border: 0;
+    border-radius: 18px;
+    background: var(--cv-t1);
+    color: #121212;
+    font: var(--cv-weight-label) var(--cv-type-ui)/1 var(--cv-font);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  .chat-box :global(.chat-ask-primary:hover:not(:disabled)) { background: #ffffff; }
+  .chat-box :global(.chat-ask-primary:disabled) { background: #2a2a2a; color: var(--cv-placeholder); cursor: default; }
+  .chat-box :global(.chat-ask-primary:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
 
   /* A message on its way out. The box is already empty and already typeable, so the arrow
      staying lit is the one thing on screen that says the send has not landed yet. */

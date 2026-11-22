@@ -273,6 +273,18 @@
   // The opened pane's top bar says who the conversation is with and what it is doing. At rest
   // the bar is not drawn: the dock's status line says the same there.
   let headTitle = $derived(paneTitleFor(title, roleLabel));
+  /** The role stands after the title only while the title needs no more than 70% of the
+   *  header row; past that the title keeps the room and ellipsizes alone (v4). */
+  let headRowWidth = $state(0);
+  let headTitleElement = $state<HTMLElement | null>(null);
+  let headTitleWidth = $state(0);
+  $effect(() => {
+    void headTitle; void headRowWidth;
+    const element = headTitleElement;
+    if (element === null) return;
+    headTitleWidth = element.scrollWidth;
+  });
+  let showsRole = $derived(headRowWidth === 0 || headTitleWidth <= headRowWidth * 0.7);
   let headSettingUp = $derived(!running && !backgroundWorking && workerSetup !== null);
   const headElapsed = elapsedTurnTime(() => running && !activityUncertain ? turnStartedAt : null);
   const headSetupElapsed = elapsedTurnTime(() => headSettingUp ? workerSetupStartedAtUnixMilliseconds(workerSetup) : null);
@@ -436,11 +448,11 @@
   data-conversation-lens={lens}
   bind:this={paneElement}
 >
-  <div class="chat-head">
+  <div class="chat-head" bind:clientWidth={headRowWidth}>
     <div class="chat-head-identity" data-conversation-head-identity>
       <span class="chat-head-name">
-        <span class="chat-head-title" data-conversation-title title={headTitle}>{headTitle}</span>
-        {#if subtitle && subtitle !== headTitle}<span class="chat-head-subtitle" data-conversation-subtitle>{subtitle}</span>{/if}
+        <span class="chat-head-title" data-conversation-title title={headTitle} bind:this={headTitleElement}>{headTitle}</span>
+        {#if subtitle && subtitle !== headTitle && showsRole}<span class="chat-head-subtitle" data-conversation-subtitle>{subtitle}</span>{/if}
       </span>
       {#if headStatus}
         <!-- One derived state (conversationState), the same the dock's line reads. -->
@@ -641,7 +653,6 @@
     {activityUncertain}
     {conversationState}
     {emptyState}
-    anchorToEnd={running || ask !== null || userInput !== null || credentialRequest !== null || heldPromptRows.length > 0}
     afterTranscript={readOnly ? undefined : waitingMessages}
     bind:jump
   />
@@ -728,6 +739,10 @@
 
 <style>
   .conversation-reader { display:flex; flex-direction:column; flex:1; min-height:0; }
+  /* v4: an empty conversation is the composer alone, at the top of the column under the
+     header: the composer comes first and the (empty) transcript after it. */
+  :global(.chat-panel:has([data-conversation-empty-bare]) > .c2-composer) { order: 1; margin-block-start: var(--cv-s2); }
+  :global(.chat-panel:has([data-conversation-empty-bare]) > .conversation-reader) { order: 2; }
   .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side
@@ -756,7 +771,8 @@
     overflow: hidden;
   }
   /* The ticket's title, the name the person knows it by, and after it in the meta voice who
-     is doing the work. The title gives way first: it ellipsizes before the role and the state. */
+     is doing the work, while the title leaves room for it (showsRole). The title is one line
+     and ellipsizes. */
   .chat-head-name { display: flex; align-items: baseline; gap: var(--cv-s2); min-width: 0; flex: 0 1 auto; }
   .chat-head-subtitle {
     flex: none;
@@ -765,7 +781,7 @@
     white-space: nowrap;
   }
   .chat-head-title {
-    flex: 0 100 auto;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;

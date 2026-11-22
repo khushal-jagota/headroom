@@ -33,13 +33,13 @@
   );
   /** The setup the machine cannot confirm keeps saying setup; one chip says why it is still. */
   let offlineChip = $derived(offline && state.state === "setting-up");
-  /** The page above draws the waiting ask (a proposal): the line does not say it a second
-   *  time. It says what the conversation itself is doing, which is nothing until the person
-   *  decides: the quiet idle line, with no mark. */
+  /** The page above draws the waiting ask (a proposal): v4 has the line say "Waiting for your
+   *  approval" with the accent dot, and not repeat the proposal's title. */
   let pageWaits = $derived(pageHoldsTheAsk && state.state === "waiting");
-  let saysState = $derived(!pageWaits);
+  let saysState = $derived(true);
   let label = $derived(
-    state.state === "idle" || pageWaits ? `${ROLE_NAMES[roleLabel]} idle`
+    pageWaits ? "Waiting for your approval"
+    : state.state === "idle" ? `${ROLE_NAMES[roleLabel]} idle`
     : state.state === "unknown" ? (feedback ?? state.text)
     : state.text
   );
@@ -100,7 +100,7 @@
   /* Tone follows the state, never a line: working is the brighter text and its motion,
      waiting is the accent with its title in t2, a failure is the danger colour. */
   [data-conversation-rest-state="working"] .c2-rest-label { color:var(--cv-t2); }
-  [data-conversation-rest-state="waiting"] .c2-rest-line:not([data-conversation-rest-page-waits]) .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
+  [data-conversation-rest-state="waiting"] .c2-rest-label { color:var(--cv-accent); font-weight:var(--cv-weight-label); }
   [data-conversation-rest-state="waiting"] .c2-rest-detail { color:var(--cv-t2); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .c2-rest-label { color:var(--cv-danger); font-weight:var(--cv-weight-label); }
   :is([data-conversation-rest-state="failed"], [data-conversation-rest-state="undelivered"]) .cv-glyph { color:var(--cv-danger); }

@@ -38,11 +38,12 @@ describe("a key request is asked in the composer's place", () => {
     expect(body).toMatch(/class="chat-box[^"]*is-compact/);
   });
 
-  it("is stopped from the composer's one stop button while a turn runs, never from the ask", () => {
-    const running = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, running: true, onCancelTurn: () => {} } }).body;
+  it("is stopped from the ask's own last row while the turn waits on it, never from a round Stop", () => {
+    const running = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request, running: true, onStop: () => {}, onCancelTurn: () => {} } }).body;
     expect(running).not.toContain("data-credential-cancel-turn");
-    expect(running).not.toContain("Stop turn</span>");
-    expect(running).toMatch(/data-conversation-stop[^>]*aria-label="Stop turn"|aria-label="Stop turn"[^>]*data-conversation-stop/);
+    expect(running).not.toContain("chat-send stop");
+    expect(running.match(/data-conversation-stop/g)?.length).toBe(1);
+    expect(running).toMatch(/data-conversation-stop[^>]*data-conversation-ask-stop/);
     const idle = render(ComposerWithQueryClient, { props: { ...base, credentialRequest: request } }).body;
     expect(idle).not.toContain("data-conversation-stop");
   });

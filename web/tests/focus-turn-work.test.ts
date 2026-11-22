@@ -108,7 +108,8 @@ describe("Full keeps each run of tool calls behind one summary", () => {
     const html = draw({ expanded: false, lens: "full", settled: false, running: true });
     expect(html).toContain("Running");
     expect(html).toContain("git status");
-    expect(html).toContain("2 steps");
+    // v4: no step counts on the running line.
+    expect(html).not.toContain("2 steps");
   });
 });
 

@@ -123,7 +123,7 @@ export function createManagedMarkdownSurface(
         if (group.mounted === visible || destroyed) return;
         group.mounted = visible;
         if (visible) {
-          const rendered = renderParsedMarkdown({ children: nodes, definitions: document.definitions }, options.presentation?.mapText, group.start);
+          const rendered = renderParsedMarkdown({ children: nodes, definitions: document.definitions }, options.presentation?.mapText, group.start, { fileReferences: presentsCodeBlocks(host) });
           mountRenderedPreviews(rendered, presentation.depth, presentation.visited);
           if (!element.hasAttribute("data-visible-content-restoring")) element.style.minHeight = "";
           element.replaceChildren(rendered);
@@ -388,7 +388,7 @@ export function createManagedMarkdownSurface(
       return;
     }
 
-    const rendered = renderMarkdownToElement(source, options.presentation?.mapText);
+    const rendered = renderMarkdownToElement(source, options.presentation?.mapText, { fileReferences: mode === "read-only" && presentsCodeBlocks(host) });
     rendered.classList.add("markdown-block");
     mountRenderedPreviews(
       rendered,

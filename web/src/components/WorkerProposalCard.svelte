@@ -301,6 +301,12 @@
   .worker-proposal:has(> .revision) > .actions { grid-column:2; margin-top:0; }
   /* Beside the note the decisions are the note's height at rest (44px), so their edges line up. */
   .worker-proposal:has(> .revision) > .actions .decision :global(.button) { height:var(--composer-rest-height, 44px); }
+  /* v4: Approve is the primary pill, as an ask's primary in the composer is: #f2f2f2 with dark
+     words, 36px, radius 18. Send it back stays the quiet secondary beside it, the same height. */
+  .decision :global(.button[data-accept]), .decision :global(.button[data-send-back]) { height:36px !important; border-radius:18px; padding-inline:16px; }
+  .decision :global(.button[data-accept]:not(:disabled)) { background:#f2f2f2; color:#121212; }
+  .decision :global(.button[data-accept]:hover:not(:disabled)) { background:#ffffff; }
+  .worker-proposal:has(> .revision) > .actions { align-self:end; margin-block-end:4px; }
   @media (max-width:720px) {
     .worker-proposal:has(> .revision) > .actions { grid-column:1 / -1; margin-top:var(--space-3); }
   }

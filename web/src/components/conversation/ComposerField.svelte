@@ -400,7 +400,7 @@
     font-size: max(var(--cv-type-ui), var(--type-input));
     line-height: 24px;
   }
-  .composer-field.is-reply-strip > :global(.composer-field-input::placeholder) { color: var(--cv-t4); }
+  .composer-field.is-reply-strip > :global(.composer-field-input::placeholder) { color: var(--cv-placeholder); }
   .composer-field.is-reply-strip :global(.composer-field-tool) { color: var(--cv-t3); border-radius: var(--cv-r-md); }
   .composer-field.is-reply-strip :global(.composer-field-tool:hover:not(:disabled)) { color: var(--cv-t1); background: var(--cv-control); background-image: none; }
   .composer-field.is-reply-strip :global(.composer-field-tool svg) { width: 18px; height: 18px; stroke-width: 1.6; }

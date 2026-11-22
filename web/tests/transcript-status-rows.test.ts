@@ -74,7 +74,7 @@ describe("a message that was not delivered", () => {
     const sentence = "codex app-server exited with code 1 before it accepted the prompt";
     expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_did_not_start", sentence }))
       .toEqual({ tone: "error", title: "Not delivered: the backend would not start.", detail: sentence,
-        next: "Send it again to retry, or choose another model in the composer." });
+        next: "Send it again to retry, or choose another model in the composer.", action: "choose-model" });
     expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "backend_rejected_steer", sentence: "" }).next)
       .toBe("Send it again with Queue, so it goes in after this turn.");
     expect(promptOutcomeStatus({ kind: "prompt_refused", reason: "no_such_conversation", sentence: "" }).next).toBeNull();
@@ -86,16 +86,17 @@ describe("a message that was not delivered", () => {
     expect(html).toContain('data-conversation-message-status="error"');
     expect(html).toContain('role="alert"');
   });
-  it("ends on the bubble's edge, with its mark on the sentence's line", () => {
+  it("ends on the bubble's edge, in the one error callout (v4): dot, what failed, the reason, the actions", () => {
     const sentence = "codex app-server exited with code 1 before it accepted the prompt";
     const html = draw({ ...base, kind: "prompt_refused", reason: "backend_did_not_start", sentence });
     const status = html.slice(html.indexOf("data-conversation-message-status"));
     // The same callout as a failed turn, standing on the bubble's right edge.
     expect(html).toContain("c2-status--end");
     expect(html).toContain("c2-status--callout");
-    expect(status.slice(status.indexOf("c2-status-icon"))).toContain("c2-status-mark");
-    expect(status).toContain("Not delivered");
-    expect(status).toContain("Send it again to retry");
+    expect(status).toMatch(/c2-status-dot[\s\S]*This message was not delivered/);
+    expect(status).toContain("The backend would not start. Send it again to retry");
+    // Its offered next step is a real control, in the callout's second button style.
+    expect(status).toMatch(/class="cv-button c2-status-second c2-status-choose[^"]*"[^>]*data-conversation-status-choose-model/);
   });
   it("marks an ordinary message with nothing", () => {
     const html = draw({ ...base, kind: "prompt", mode: "queue", sentAtUnixMilliseconds: 1000 });

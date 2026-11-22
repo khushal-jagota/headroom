@@ -663,15 +663,16 @@
   }
   :global([data-conversation-composer]) .listbox-picker-list { padding: 6px; }
   :global([data-conversation-composer]) .compact > .listbox-picker-list { padding: 0; }
+  /* v4: labels only, 14px on 36px rows, a check on the current one. */
   :global([data-conversation-composer]) .listbox-picker-option {
-    min-height: 32px;
+    min-height: 36px;
     gap: var(--cv-s3);
-    padding: 6px var(--cv-s2);
+    padding: 6px var(--cv-s3);
     border-radius: var(--cv-r-md);
     color: var(--cv-t2);
     font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
+    font-size: var(--cv-type-ui);
+    line-height: var(--cv-leading-ui);
   }
   :global([data-conversation-composer]) .listbox-picker-option:hover { background: var(--cv-control); background-image: none; color: var(--cv-t1); }
   :global([data-conversation-composer]) .listbox-picker-option.cursor { background: var(--cv-control); color: var(--cv-t1); }

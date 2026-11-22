@@ -78,7 +78,7 @@ export function Bars({ block, data, series, compact, activeKey, onActive, projec
         },
         scales: {
           x: { stacked: block.stacked, border: { display: false }, grid: { display: false }, ticks: { ...axis, maxRotation: 0, maxTicksLimit: dateAxis ? 4 : undefined } },
-          y: { stacked: block.stacked, position: 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { ...axis, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
+          y: { stacked: block.stacked, position: showLegend ? 'left' : 'right', beginAtZero: true, min: block.domain?.[0], max: block.domain?.[1], border: { display: false }, grid: { color: color('--chart-grid') }, ticks: { ...axis, maxTicksLimit: 5, precision: hasCountAxis(block, projection, range) ? 0 : undefined, callback: v => formatAxisTick(block, Number(v)) } },
         },
         onHover: (event, elements) => {
           const i = elements[0]?.index ?? null;

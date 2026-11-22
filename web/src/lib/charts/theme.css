@@ -178,13 +178,17 @@
   color: var(--cv-t1);
 }
 .chat-thread .chat-chart .goal-chart-host .snapshot-legend {
+  /* The key starts on the title's own left edge: no list indent, no marker. */
   gap: var(--cv-s1) var(--cv-s4);
   margin: var(--cv-s1) 0 var(--cv-s3);
+  padding: 0;
+  padding-inline-start: 0;
+  list-style: none;
   color: var(--cv-t3);
   font-size: var(--cv-type-caption);
   line-height: var(--cv-leading-caption);
 }
-.chat-thread .chat-chart .goal-chart-host .snapshot-legend li { gap: 6px; margin: 0; line-height: var(--cv-leading-caption); }
+.chat-thread .chat-chart .goal-chart-host .snapshot-legend li { gap: 6px; margin: 0; padding: 0; line-height: var(--cv-leading-caption); }
 .chat-thread .chat-chart .goal-chart-host .snapshot-legend-swatch {
   inline-size: 8px;
   block-size: 8px;

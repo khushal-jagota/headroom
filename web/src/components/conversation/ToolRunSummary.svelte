@@ -28,9 +28,8 @@
   } = $props();
 
   let live = $derived(summary.running !== null && !activityUncertain);
-  let label = $derived(
-    summary.failedCount > 0 ? `${summary.failedCount} failed` : live ? `${callCount} ${callCount === 1 ? "step" : "steps"}` : ""
-  );
+  // v4: no step counts. The line says only a failure, in words, beside its sentence.
+  let label = $derived(summary.failedCount > 0 ? `${summary.failedCount} failed` : "");
 </script>
 
 <button
@@ -81,13 +80,15 @@
     background: transparent;
     color: var(--cv-t3);
     font-family: var(--cv-font);
-    font-size: var(--cv-type-meta);
-    line-height: var(--cv-leading-meta);
+    font-size: var(--cv-type-ui);
+    line-height: var(--cv-leading-ui);
     text-align: start;
     cursor: pointer;
     transition: background-color var(--cv-dur-fast) var(--cv-ease-out);
   }
   .c2-run-summary:hover { background-color: var(--cv-raised); }
+  /* Running: the command runs on to the column's edge and ellipsizes there. */
+  .c2-run-summary.is-live { width: auto; justify-self: stretch; grid-template-columns: 14px minmax(0, 1fr) auto 14px; }
   .c2-run-summary:focus-visible {
     outline: var(--cv-focus-width) solid var(--cv-accent);
     outline-offset: calc(var(--cv-focus-width) * -1);
@@ -130,7 +131,7 @@
     color: var(--cv-t3);
   }
   /* Code in the line is set at the line's own size, so it reads as one line, not a smaller one. */
-  .c2-run-subject--literal { font-family: var(--cv-mono); font-size: var(--cv-type-meta); }
+  .c2-run-subject--literal { font-family: var(--cv-mono); font-size: 13px; }
   .c2-run-status {
     display: inline-flex;
     gap: 6px;

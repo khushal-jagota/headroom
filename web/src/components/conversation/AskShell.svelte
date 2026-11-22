@@ -5,7 +5,12 @@
    * commits. Meaning is carried by place, weight and tone, never by a coloured rule.
    *
    * It draws its own raised plane. Docked in the composer's place, the composer's box gives
-   * up its own fill and edge for it (data-ask-shell), so the two never nest. */
+   * up its own fill and edge for it (data-ask-shell), so the two never nest.
+   *
+   * Every ask answers with one kind of tile (.cv-ask-row, styled here for all of them): a
+   * number chip on the left, a label, an optional line under it. While the turn waits on the
+   * person, stopping it is the "Stop turn" text button in the header (onStop): the composer's
+   * send slot then holds the ask's primary pill, never a Stop. */
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
 
@@ -20,6 +25,8 @@
     footerStart,
     footerEnd,
     replyStrip,
+    onStop,
+    stopDisabled = false,
     framed = true,
     ...rest
   }: {
@@ -39,6 +46,9 @@
     footerEnd?: Snippet;
     /** The composer's one-line reply, under the ask, when it docks in the composer's place. */
     replyStrip?: Snippet;
+    /** Ends the turn that waits on this ask: drawn as the quiet last row of the answers. */
+    onStop?: () => void;
+    stopDisabled?: boolean;
     framed?: boolean;
   } & Omit<HTMLAttributes<HTMLElement>, "title"> = $props();
 </script>
@@ -48,7 +58,17 @@
     <div class="cv-ask-eyebrow">
       <span class="cv-ask-dot" aria-hidden="true"></span>
       <span class="cv-ask-need">{eyebrow}</span>
-      {#if context}<span class="cv-ask-context">{@render context()}</span>{/if}
+      {#if onStop || context}
+        <span class="cv-ask-context">
+          {#if onStop}
+            <!-- v4: while the turn waits on the person, stopping it is a quiet text button in
+                 the ask's own header, the one way to stop there is. -->
+            <button type="button" class="cv-ask-stop" data-conversation-stop={true} data-conversation-ask-stop
+              title="Stop turn" disabled={stopDisabled} onclick={() => onStop?.()}>Stop turn</button>
+          {/if}
+          {#if context}{@render context()}{/if}
+        </span>
+      {/if}
     </div>
     <h3 class="cv-ask-title" id={titleId}>{title}</h3>
     {#if description}<p class="cv-ask-description">{description}</p>{/if}
@@ -85,9 +105,9 @@
     gap: var(--cv-s2);
     min-width: 0;
     color: var(--cv-accent);
-    font: var(--cv-weight-label) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    font: var(--cv-weight-title) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
   }
-  .cv-ask-dot { flex: none; width: 6px; height: 6px; border-radius: var(--cv-r-pill); background: var(--cv-accent); }
+  .cv-ask-dot { flex: none; width: 7px; height: 7px; border-radius: var(--cv-r-pill); background: var(--cv-accent); }
   .cv-ask-need { flex: none; }
   .cv-ask-context {
     display: inline-flex;
@@ -129,6 +149,70 @@
     margin-inline-start: auto;
   }
   .cv-ask-reply { padding: 0 var(--cv-s2) var(--cv-s2); }
+  /* Stop turn: a text button, 13 in the meta tone, lifting on hover. */
+  .cv-ask-stop {
+    height: 24px;
+    padding: 0 6px;
+    margin-inline-end: var(--cv-s1);
+    border: 0;
+    border-radius: var(--cv-r-sm);
+    background: none;
+    color: var(--cv-t3);
+    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    cursor: pointer;
+  }
+  .cv-ask-stop:hover:not(:disabled) { color: var(--cv-t1); background: #2a2a2a; }
+  .cv-ask-stop:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 1px; }
+  .cv-ask-stop:disabled { cursor: default; }
+
+  /* --- the one answer tile every ask uses (v4) ------------------------------------------- */
+  /* Tiles 6px apart, radius 12, padding 12 16, on #222 (hover #262626). The chosen one is
+     #2a2a2a with a 1px accent edge, its number chip filled in the accent. A declining answer
+     reads a tone down (.is-quiet). */
+  :global(.cv-ask-rows) { display: grid; gap: 6px; }
+  :global(.cv-ask-row) {
+    display: flex;
+    align-items: center;
+    gap: var(--cv-s3);
+    width: 100%;
+    box-sizing: border-box;
+    padding: var(--cv-s3) var(--cv-s4);
+    border: 0;
+    border-radius: var(--cv-r-lg);
+    background: #222222;
+    color: var(--cv-t1);
+    cursor: pointer;
+    font: var(--cv-weight-body) var(--cv-type-prose)/var(--cv-leading-ui) var(--cv-font);
+    text-align: start;
+    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), box-shadow var(--cv-dur-fast) var(--cv-ease-out);
+  }
+  :global(.cv-ask-row:hover:not(:disabled)) { background: #262626; }
+  :global(.cv-ask-row.is-selected), :global(.cv-ask-row.is-selected:hover:not(:disabled)) { background: #2a2a2a; box-shadow: inset 0 0 0 1px rgb(169 187 227 / 55%); }
+  :global(.cv-ask-row:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: 2px; }
+  :global(.cv-ask-row:disabled) { cursor: default; }
+  :global(.cv-ask-row.is-quiet .cv-ask-label) { color: var(--cv-t3); }
+  :global(.cv-ask-key) {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    box-sizing: border-box;
+    border-radius: var(--cv-r-sm);
+    background: #2a2a2a;
+    color: var(--cv-t3);
+    font: var(--cv-weight-label) var(--cv-type-caption)/1 var(--cv-font);
+    font-variant-numeric: tabular-nums;
+  }
+  :global(.cv-ask-row.is-selected .cv-ask-key) { background: var(--cv-accent); color: #121212; }
+  :global(.cv-ask-key svg) { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  :global(.cv-ask-words) { display: grid; gap: 2px; flex: 1; min-width: 0; }
+  :global(.cv-ask-label) { overflow-wrap: anywhere; color: var(--cv-t1); }
+  :global(.cv-ask-sub) {
+    color: var(--cv-t3);
+    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
+    overflow-wrap: anywhere;
+  }
   @keyframes cv-ask-in { from { opacity: 0; transform: translateY(4px); } }
   @media (prefers-reduced-motion: reduce) { .cv-ask { animation: none; } }
   @media (max-width: 560px) {

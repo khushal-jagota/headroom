@@ -585,13 +585,14 @@
   --cv-float: #262626;   /* popovers, menus, tooltips: the only planes with a shadow */
   --cv-line: rgb(255 255 255 / 7%);
   --cv-line-strong: rgb(255 255 255 / 12%);
-  --cv-shadow-float: 0 0 0 1px rgb(255 255 255 / 9%), 0 12px 32px rgb(0 0 0 / 45%);
+  --cv-shadow-float: 0 12px 32px rgb(0 0 0 / 50%);
 
   /* Text: four tones (on canvas / well / raised / control / float). */
   --cv-t1: #f2f2f2; /* 16.7 15.7 14.4 12.8 13.5 titles, user text, bold, links, active */
   --cv-t2: #d9d9d9; /* 13.3 12.5 11.4 10.2 10.7 agent prose, verbs, ghost labels */
   --cv-t3: #a3a3a3; /*  7.4  7.0  6.4  5.7  6.0 meta, targets, descriptions, headers */
-  --cv-t4: #8c8c8c; /*  5.6  5.2  4.8  4.3  4.5 placeholders, separators, durations; never on control */
+  --cv-t4: #a3a3a3; /* v4: nothing in the conversation is dimmer than #a3a3a3 but a placeholder */
+  --cv-placeholder: #8c8c8c; /* placeholders only (v4) */
 
   /* One accent ("needs you"), two status colours. Working has no colour. */
   --cv-accent: #a9bbe3;
@@ -635,7 +636,7 @@
   --cv-type-h3: 16px;      --cv-leading-h3: 24px;
   --cv-type-title: 15px;   --cv-leading-title: 24px;
   --cv-type-ui: 14px;      --cv-leading-ui: 20px;
-  --cv-type-meta: 13px;    --cv-leading-meta: 20px;
+  --cv-type-meta: 13px;    --cv-leading-meta: 18px;
   --cv-type-caption: 12px; --cv-leading-caption: 16px;
   --cv-type-code: 12.5px;  --cv-leading-code: 20px;
   --cv-type-output: 12px;  --cv-leading-output: 18px;
@@ -653,7 +654,7 @@
   --cv-s6: 32px;
   --cv-s7: 48px;
   /* Rhythm (margins on the transcript's direct children). */
-  --cv-gap-turn: 32px;
+  --cv-gap-turn: 28px;
   --cv-gap-meta: 8px;
   --cv-gap-block: 16px;
   --cv-gap-paragraph: 12px;

@@ -51,6 +51,21 @@
     trigger.focus();
     trigger.click();
   }
+  /** v4: every error is one callout: a dot and what failed, then the reason in the prose
+   *  voice, then its actions. A failed turn says "This turn failed"; a message that did not
+   *  get through says so; the plain cause and the next step are the reason under it. */
+  let calloutHeading = $derived.by(() => {
+    if (status.tone !== "error") return status.title;
+    return align === "end" ? "This message was not delivered" : "This turn failed";
+  });
+  let calloutReason = $derived.by(() => {
+    if (status.tone !== "error") return status.next ?? null;
+    const cause = status.title
+      .replace(/^Not delivered:\s*/, "")
+      .replace(/^The turn stopped because\s*/, "");
+    const said = cause.charAt(0).toUpperCase() + cause.slice(1);
+    return [said, status.next].filter(Boolean).join(" ");
+  });
   const uid = $props.id();
   const detailsId = `c2-status-details-${uid}`;
 </script>
@@ -98,21 +113,18 @@
 
 {#if shownWeight === "callout"}
   <div bind:this={root} class="c2-status c2-status--callout c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
-    <span class="c2-status-icon">{@render glyph()}</span>
-    <div class="c2-status-body">
-      <span class="c2-status-line"><span class="c2-status-title">{status.title}</span></span>
-      {#if status.next}<span class="c2-status-next" data-conversation-status-next>{status.next}</span>{/if}
-      {#if actions || status.detail || status.action === "choose-model"}
-        <div class="c2-status-actions">
-          {#if actions}{@render actions()}{/if}
-          {#if status.action === "choose-model"}
-            <button type="button" class="cv-button cv-button--primary cv-button--small c2-status-choose" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
-          {/if}
-          {@render detailsToggle()}
-        </div>
-      {/if}
-      {@render details()}
-    </div>
+    <span class="c2-status-line"><span class="c2-status-dot" aria-hidden="true"></span><span class="c2-status-title">{calloutHeading}</span></span>
+    {#if calloutReason}<p class="c2-status-reason" data-conversation-status-next>{calloutReason}</p>{/if}
+    {#if actions || status.detail || status.action === "choose-model"}
+      <div class="c2-status-actions">
+        {#if actions}{@render actions()}{/if}
+        {#if status.action === "choose-model"}
+          <button type="button" class="cv-button c2-status-second c2-status-choose" data-conversation-status-choose-model onclick={chooseAnotherModel}>Choose another model</button>
+        {/if}
+        {@render detailsToggle()}
+      </div>
+    {/if}
+    {@render details()}
   </div>
 {:else}
   <div bind:this={root} class="c2-status c2-status--note c2-status--{status.tone}" class:c2-status--end={align === "end"} {...attributes}>
@@ -172,32 +184,33 @@
   .c2-status--note.c2-status--warning .c2-status-title { color: var(--cv-caution); }
   .c2-status--note .c2-status-next { color: var(--cv-t3); }
 
-  /* Callout: a block in the turn. The glyph column and a calm surface carry the weight;
-     a failure adds only a faint wash of its colour and the colour of its glyph. */
+  /* Callout (v4): one block for every error. #191919, radius 12, padding 16, no edge and no
+     wash. Row 1: the danger dot and what failed, 14 semibold in the first tone. Row 2: the
+     reason in the prose voice. Row 3: its actions, one size: the main one filled, the other
+     bare. */
   .c2-status--callout {
     align-self: stretch;
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr);
-    column-gap: 10px;
-    padding: 14px var(--cv-s4);
-    border: 1px solid var(--cv-line);
+    padding: var(--cv-s4);
     border-radius: var(--cv-r-lg);
-    background: var(--cv-well);
+    background: #191919;
   }
-  .c2-status--callout.c2-status--error {
-    background: linear-gradient(var(--cv-danger-wash), var(--cv-danger-wash)), var(--cv-well);
-  }
-  .c2-status-icon { display: flex; justify-content: center; color: var(--cv-t2); }
-  .c2-status-icon .c2-status-mark { width: 16px; height: 16px; margin-block-start: 2px; }
-  .c2-status--callout.c2-status--error .c2-status-icon { color: var(--cv-danger); }
-  .c2-status--callout.c2-status--warning .c2-status-icon { color: var(--cv-caution); }
+  .c2-status-dot { flex: none; width: 8px; height: 8px; margin-block-start: 6px; border-radius: 50%; background: var(--cv-t3); }
+  .c2-status--error .c2-status-dot { background: #e5848a; }
+  .c2-status--warning .c2-status-dot { background: var(--cv-caution); }
+  .c2-status--callout .c2-status-line { gap: 10px; }
   .c2-status--callout .c2-status-title {
     color: var(--cv-t1);
     font-size: var(--cv-type-ui);
     line-height: var(--cv-leading-ui);
     font-weight: var(--cv-weight-title);
   }
-  .c2-status--callout .c2-status-next { margin-block-start: 2px; color: var(--cv-t3); }
+  .c2-status-reason {
+    margin: var(--cv-s1) 0 0;
+    color: var(--cv-t2);
+    font-size: var(--cv-type-prose);
+    line-height: var(--cv-leading-prose);
+  }
   .c2-status--callout .c2-status-actions {
     display: flex;
     flex-wrap: wrap;
@@ -207,21 +220,23 @@
   }
   /* A message's callout stands under that message, on its right edge, as wide as it needs. */
   .c2-status--callout.c2-status--end { align-self: flex-end; width: fit-content; max-width: 100%; text-align: start; }
-  .c2-status--callout.c2-status--end .c2-status-body { justify-items: start; }
 
   /* Details is a quiet ghost beside the real next step, never above it. Its chevron sits
      right after its word. */
   .c2-status-toggle { gap: var(--cv-s1); padding-inline: var(--cv-s2) 6px; color: var(--cv-t2); }
-  /* One primary on the screen: the newest failure holds it. A turn failure with a message
-     that was not delivered after it hands its button down to a secondary, so Resend, the step
-     for what is current, is the one bright action. */
-  :global([data-conversation-transcript] > :has(~ * [data-conversation-message-status="error"])) .c2-status-choose {
-    background: var(--cv-control);
-    color: var(--cv-t1);
+  /* The callout's two buttons, one size (32 high, radius 8): the main one on #2a2a2a in the
+     first tone, the other bare in the second. The same in every callout. */
+  :global(.c2-status-main), :global(.c2-status-second) {
+    min-height: 32px;
+    padding: 0 var(--cv-s3);
+    border-radius: var(--cv-r-md);
+    font-size: var(--cv-type-meta);
   }
-  :global([data-conversation-transcript] > :has(~ * [data-conversation-message-status="error"])) .c2-status-choose:hover {
-    background: var(--cv-control-hover);
-  }
+  :global(.c2-status-main) { background: #2a2a2a; color: var(--cv-t1); }
+  :global(.c2-status-main:hover:not(:disabled)) { background: var(--cv-control-hover); color: var(--cv-t1); }
+  :global(.c2-status-main:disabled) { color: var(--cv-t3); }
+  :global(.c2-status-second) { background: transparent; color: var(--cv-t2); }
+  :global(.c2-status-second:hover:not(:disabled)) { background: #2a2a2a; color: var(--cv-t1); }
   .c2-status-toggle:hover, .c2-status-toggle[aria-expanded="true"] { color: var(--cv-t1); }
   .c2-status-actions > .c2-status-toggle:first-child { margin-inline-start: calc(var(--cv-s2) * -1); }
   .c2-status-chevron {

@@ -81,7 +81,7 @@
       <TranscriptStatusRow {status} align={label === null ? 'end' : 'start'} role={status.tone === 'error' ? 'alert' : 'status'}
         data-conversation-message-status={status.tone} data-conversation-outgoing-label={local && !row ? '' : undefined}>
         {#snippet actions()}
-          {#if offersResend && !resent}<button type="button" class="cv-button cv-button--primary cv-button--small" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
+          {#if offersResend && !resent}<button type="button" class="cv-button c2-status-main" data-conversation-resend-refused={row?.key} title={resendFailed ? "It did not go out. Resend it again." : "Send this message again, as a new message"} disabled={busy} onclick={()=>void resendRefused()}>{busy ? "Resending…" : resendFailed ? "Resend again" : "Resend"}</button>{/if}
           {#if heldActions.includes('send_again')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-send-again={local?.messageId} title="Send these words again. They may already have arrived once." disabled={busy} onclick={()=>void resend()}>Send again</button>{/if}
           {#if heldActions.includes('stop_drawing')}<button type="button" class="cv-button cv-button--ghost cv-button--small" data-conversation-held-stop-drawing={local?.messageId} title="Stop showing this message" disabled={busy} onclick={()=>void stop()}>Dismiss</button>{/if}
         {/snippet}

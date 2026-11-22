@@ -2,11 +2,12 @@
   /** What the agent has stopped for, in the ask shell (AskShell) every ask wears, inside the
    * composer's own frame while it waits.
    *
-   * The ask is read first: its title, then the command or request, then the answers as one
-   * list of numbered rows, the same rows a question's choices are. Approve once leads as the
-   * default (key 1); the standing permissions follow, and decline comes last. A row answers
-   * when it is chosen, by pointer or by its number. Stopping the turn is the composer's one
-   * stop button, never a button here.
+   * The ask is read first: its title, then the command in a well, then the answers as one
+   * list of numbered tiles, the same tiles a question's choices are. Allow once leads and is
+   * chosen by default (key 1); the standing permissions follow, and decline comes last, a
+   * tone down. Docked in the composer (v4), a tile only chooses; the composer's primary pill
+   * in the send slot ("Allow", or "Deny" when decline is chosen) commits it. Standing alone, a
+   * tile answers at once. The turn is stopped from the header's "Stop turn".
    */
   import type { Snippet } from "svelte";
   import AskShell from "./AskShell.svelte";
@@ -26,6 +27,10 @@
     note = null,
     framed = true,
     replyStrip,
+    onStop,
+    docked = false,
+    commitLabel = $bindable(""),
+    commitReady = $bindable(false),
     onAnswer
   }: {
     ask: {
@@ -41,6 +46,13 @@
     framed?: boolean;
     /** The composer's one-line reply, under the answers. */
     replyStrip?: Snippet;
+    /** Ends the waiting turn, from the header's "Stop turn". */
+    onStop?: () => void;
+    /** In the composer: tiles choose, and the composer's pill commits (commit()). */
+    docked?: boolean;
+    /** What the composer's pill says, and whether it can commit now. */
+    commitLabel?: string;
+    commitReady?: boolean;
     onAnswer: (optionId: string) => void;
   } = $props();
 
@@ -52,6 +64,28 @@
   // The rail names this state "Needs your approval"; the card says it in the same words.
   let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your approval");
   let rawOpen = $state(false);
+  /** The chosen answer while docked: the default (the first row, allow once) until another
+   *  is chosen. Reset when a new ask arrives. */
+  let chosenId = $state<string | null>(null);
+  let chosenFor = $state("");
+  $effect(() => { if (ask.askId !== chosenFor) { chosenFor = ask.askId; chosenId = null; } });
+  let chosen = $derived(rows.find((row) => row.optionId === chosenId) ?? (shape === "question" ? null : rows[0] ?? null));
+  $effect(() => {
+    commitLabel = shape === "question" ? "Send answer" : chosen?.emphasis === "decline" ? "Deny" : "Allow";
+    commitReady = chosen !== null && !busy && answerAvailable;
+  });
+
+  /** Commits the chosen answer, for the composer's pill. */
+  export function commit(): void {
+    if (chosen === null || busy || !answerAvailable) return;
+    onAnswer(chosen.optionId);
+  }
+
+  function pick(optionId: string): void {
+    if (busy || !answerAvailable) return;
+    if (docked) chosenId = optionId;
+    else onAnswer(optionId);
+  }
 
   function onWindowKeydown(event: KeyboardEvent): void {
     if (busy || !answerAvailable) return;
@@ -60,12 +94,12 @@
     // Somebody typing a number into a field means the number, not the answer.
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
     const digit = Number.parseInt(event.key, 10);
-    const chosen = shape === "question"
+    const byDigit = shape === "question"
       ? askChoiceForDigit(ask, digit)
       : rows.find((row) => row.shortcutDigit === digit) ?? null;
-    if (chosen === null) return;
+    if (byDigit === null) return;
     event.preventDefault();
-    onAnswer(chosen.optionId);
+    pick(byDigit.optionId);
   }
 </script>
 
@@ -77,6 +111,8 @@
   title={ask.title}
   {framed}
   {replyStrip}
+  {onStop}
+  stopDisabled={busy}
   aria-label={shape === "question" ? "Question" : "Permission ask"}
   data-conversation-ask={ask.askId}
   data-conversation-ask-shape={shape}
@@ -85,12 +121,14 @@
     <!-- The one place the command is shown while it waits: the answers sit right under it. -->
     <pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>
   {/if}
-  <div class="c2-ask-choices" class:after-detail={shape !== "question" && detail} role="group" aria-label="Answers">
+  <div class="cv-ask-rows c2-ask-choices" class:after-detail={shape !== "question" && detail} role="group" aria-label="Answers">
     {#each rows as row, index (row.optionId)}
       <button
         type="button"
-        class="c2-ask-choice"
-        class:is-default={shape !== "question" && index === 0}
+        class="cv-ask-row c2-ask-choice"
+        class:is-selected={docked && chosen?.optionId === row.optionId}
+        class:is-quiet={row.emphasis === "decline"}
+        aria-pressed={docked ? chosen?.optionId === row.optionId : undefined}
         data-conversation-ask-choice={row.optionId}
         data-conversation-ask-action={shape === "question" ? undefined : row.optionId}
         data-conversation-ask-emphasis={shape === "question" ? undefined : row.emphasis}
@@ -99,10 +137,10 @@
         aria-keyshortcuts={row.shortcutDigit === null ? undefined : String(row.shortcutDigit)}
         title={row.supplied ? undefined : "Panels supplied this answer; the backend may not take it"}
         disabled={busy || !answerAvailable}
-        onclick={() => answerAvailable && onAnswer(row.optionId)}
+        onclick={() => pick(row.optionId)}
       >
-        <kbd class="c2-ask-kbd" aria-hidden="true">{row.shortcutDigit ?? ""}</kbd>
-        <span class="c2-ask-choice-label">{row.label}</span>
+        <kbd class="cv-ask-key" aria-hidden="true">{row.shortcutDigit ?? ""}</kbd>
+        <span class="cv-ask-words"><span class="cv-ask-label">{row.label}</span></span>
       </button>
     {/each}
   </div>
@@ -141,58 +179,13 @@
     border-radius: var(--cv-r-md);
     background: var(--cv-canvas);
     color: var(--cv-t1);
-    font: var(--cv-weight-body) var(--cv-type-code)/var(--cv-leading-code) var(--cv-mono);
+    font: var(--cv-weight-body) 13px/var(--cv-leading-code) var(--cv-mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
   .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }
-  .c2-ask-choices {
-    display: grid;
-    gap: 2px;
-    max-height: 320px;
-    overflow: auto;
-    margin-inline: calc(var(--cv-s2) * -1);
-  }
   .c2-ask-choices.after-detail { margin-block-start: var(--cv-s3); }
-  /* An answer is a row the whole width, its number key on the left: the same row a question's
-     choice is. Hover is one step up. The default (approve once, key 1) wears the filled key,
-     so the eye finds it first without a button shouting it. */
-  .c2-ask-choice {
-    display: flex;
-    align-items: center;
-    gap: var(--cv-s3);
-    width: 100%;
-    min-height: 40px;
-    padding: 6px var(--cv-s3) 6px var(--cv-s2);
-    border: 0;
-    border-radius: var(--cv-r-md);
-    background: transparent;
-    color: var(--cv-t2);
-    cursor: pointer;
-    font: var(--cv-weight-label) var(--cv-type-ui)/var(--cv-leading-ui) var(--cv-font);
-    text-align: start;
-    transition: background-color var(--cv-dur-fast) var(--cv-ease-out), color var(--cv-dur-fast) var(--cv-ease-out);
-  }
-  .c2-ask-choice.is-default { color: var(--cv-t1); }
-  .c2-ask-choice:hover:not(:disabled) { background: var(--cv-control); color: var(--cv-t1); }
-  .c2-ask-choice:focus-visible { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: -2px; }
-  .c2-ask-choice:disabled { cursor: default; color: var(--cv-t3); }
-  .c2-ask-choice-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .c2-ask-kbd {
-    flex: none;
-    display: inline-grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: var(--cv-r-sm);
-    background: transparent;
-    box-shadow: inset 0 0 0 1px var(--cv-line-strong);
-    color: var(--cv-t2);
-    font: var(--cv-weight-label) var(--cv-type-caption)/1 var(--cv-font);
-    font-variant-numeric: tabular-nums;
-  }
-  .is-default .c2-ask-kbd { background: var(--cv-primary-fill); box-shadow: none; color: var(--cv-primary-ink); }
   .c2-ask-note {
     margin: var(--cv-s3) 0 0;
     color: var(--cv-t3);

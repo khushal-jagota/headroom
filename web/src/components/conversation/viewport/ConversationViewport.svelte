@@ -47,7 +47,6 @@
     conversationState,
     emptyState,
     afterTranscript,
-    anchorToEnd = false,
     reader = null,
     viewAnchor = $bindable(null),
     jump = $bindable(null)
@@ -75,10 +74,6 @@
     /** What stands at the very end of the thread after everything said: the person's
      *  messages that are waiting to be sent. */
     afterTranscript?: Snippet;
-    /** The thread reads from its end while something at the bottom needs the person (an ask
-     *  in the composer, a running turn, messages waiting): a short thread then sits on the
-     *  composer instead of leaving the space between them empty. */
-    anchorToEnd?: boolean;
     /** The way back to the newest line while the reader is away from it, for the pane to
      *  draw in the composer stack's status slot (never over the transcript), or null. */
     jump?: ConversationJump | null;
@@ -1217,7 +1212,6 @@
     onkeydown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stopAutomaticTravel(); }}
     data-at-top={atTheTop ? "true" : "false"}
     data-more-below={newestLineBelowTheView || newerHistory ? "true" : "false"}
-    data-anchor-end={anchorToEnd ? "true" : undefined}
   >
     <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
     {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
@@ -1267,18 +1261,16 @@
     padding-bottom: 32px;
     margin-inline-end: calc(-1 * var(--cv-scrollbar-gutter, 0px));
     max-width: none;
-    /* An eased ramp: the first lines under the edge stay nearly gone, so nothing half-cut
-       lingers as a ghost, then the thread comes in quickly to full tone. */
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgb(0 0 0 / 4%) 10px, rgb(0 0 0 / 30%) 20px, rgb(0 0 0 / 80%) 30px, #000 36px);
-            mask-image: linear-gradient(to bottom, transparent 0, rgb(0 0 0 / 4%) 10px, rgb(0 0 0 / 30%) 20px, rgb(0 0 0 / 80%) 30px, #000 36px);
+    /* v4: the header's solid #121212 backing, then a 32px fade under it, so scrolled content
+       never shows through the header and a line under its edge is drawn out, never sliced. */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 8px, rgb(0 0 0 / 25%) 16px, rgb(0 0 0 / 70%) 25px, #000 32px);
+            mask-image: linear-gradient(to bottom, transparent 0, transparent 8px, rgb(0 0 0 / 25%) 16px, rgb(0 0 0 / 70%) 25px, #000 32px);
   }
   .chat-thread[data-at-top="true"] { -webkit-mask-image: none; mask-image: none; }
-  /* A conversation shorter than the view reads from the top, under its header, as a page
-     does. While something at the bottom needs the person (an ask in the composer, a running
-     turn, messages waiting to be sent) it reads from its end instead, so what it is about sits
-     right on what needs them, with no empty band between. */
+  /* One anchoring rule for every state: a conversation shorter than the view reads from the
+     top, under its header, as a page does. Asks are the composer and waiting messages stand
+     in the thread, so nothing at the bottom needs the thread to sink down to it. */
   .chat-thread-content { margin-block-start: 0; }
-  .chat-thread[data-anchor-end="true"] > .chat-thread-content { margin-block-start: auto; }
   /* An empty conversation takes the whole view, so its empty state can stand in the middle. */
   .chat-thread-content:has(> :global([data-conversation-empty])) { flex: 1 0 auto; justify-content: center; }
   /* The browser keeps the reader's place when history arrives above them. Nothing

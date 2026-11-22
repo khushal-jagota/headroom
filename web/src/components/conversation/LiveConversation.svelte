@@ -1127,58 +1127,15 @@
   {#if !started && emptyState}
     {@render emptyState()}
   {:else if !emptyState && !readOnly && nothingSaidYet}
-    <!-- Orientation, not content: nothing here is invented, it says what will appear. It
-         stands in the middle of the empty transcript (the viewport gives it the whole view),
-         a mark, a title and one line, so the composer under it is the obvious next step. -->
-    <div class="conversation-empty" data-conversation-empty role="note">
-      <svg class="conversation-empty-mark" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5Z" />
-      </svg>
-      <p class="conversation-empty-title">No messages yet</p>
-      <p class="conversation-empty-body">Write below to start. Replies, and anything that needs you, will appear here.</p>
+    <!-- v4: an empty conversation is the composer alone, at the top of the column under the
+         header, and nothing else. This marker draws nothing; it tells the pane to put the
+         composer first, and tells a screen reader there is nothing here yet. -->
+    <div class="conversation-empty" data-conversation-empty data-conversation-empty-bare role="note">
+      <span class="conversation-empty-said">No messages yet</span>
     </div>
   {/if}
 {/snippet}
 
 <style>
-  .conversation-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    align-self: center;
-    max-width: 420px;
-    margin-block: auto;
-    padding-block: var(--cv-s7);
-    text-align: center;
-    font-family: var(--cv-font);
-    animation: conversation-empty-in var(--cv-dur-base) var(--cv-ease-out) both;
-  }
-  .conversation-empty p { margin: 0; }
-  /* A quiet mark, not a badge: the glyph alone in the placeholder tone. */
-  .conversation-empty-mark {
-    width: 24px;
-    height: 24px;
-    margin-block-end: var(--cv-s4);
-    fill: none;
-    stroke: var(--cv-t4);
-    stroke-width: 1.5;
-    stroke-linejoin: round;
-  }
-  .conversation-empty-title {
-    color: var(--cv-t1);
-    font-size: var(--cv-type-h2);
-    line-height: var(--cv-leading-h2);
-    font-weight: var(--cv-weight-title);
-    letter-spacing: -0.01em;
-  }
-  .conversation-empty-body {
-    margin-block-start: var(--cv-s1) !important;
-    /* Two even lines, never a word or two left alone on the second. */
-    text-wrap: balance;
-    color: var(--cv-t3);
-    font-size: var(--cv-type-ui);
-    line-height: 22px;
-  }
-  @keyframes conversation-empty-in { from { opacity: 0; transform: translateY(4px); } }
-  @media (prefers-reduced-motion: reduce) { .conversation-empty { animation: none; } }
+  .conversation-empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>

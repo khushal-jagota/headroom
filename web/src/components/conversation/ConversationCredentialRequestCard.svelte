@@ -6,12 +6,14 @@
   import type { Snippet } from 'svelte';
   import AskShell from './AskShell.svelte';
 
-  let { request, framed = true, replyStrip }: {
+  let { request, framed = true, replyStrip, onStop }: {
     request: CredentialRequestRowBody;
     /** Whether the ask draws its own raised plane (the composer gives up its own for it). */
     framed?: boolean;
     /** The composer's one-line reply, under the answers. */
     replyStrip?: Snippet;
+    /** Ends the turn that waits on this key, as the ask's last row. */
+    onStop?: () => void;
   } = $props();
   const paneReadOnly = getContext<(() => boolean) | undefined>(CREDENTIAL_REQUEST_READ_ONLY);
   const readOnly = $derived(paneReadOnly?.() ?? false);
@@ -151,6 +153,7 @@
       description={current.use}
       {framed}
       {replyStrip}
+      {onStop}
       footerEnd={answers}
     >
     <form autocomplete="off" aria-labelledby={`${uid}-title`} aria-describedby={draft.error && !draft.invalid ? `${uid}-error` : undefined}
@@ -197,7 +200,7 @@
   /* Fields are canvas wells inside the raised ask: the field spec (h40, r8, a hairline). */
   .key-name,.private-input{box-sizing:border-box;min-width:0;width:100%;min-height:40px;background:var(--cv-canvas);border:1px solid var(--cv-line-strong);border-radius:var(--cv-r-md)}
   .key-name{padding:0 var(--cv-s3);color:var(--cv-t1);font:var(--cv-weight-body) var(--cv-type-code)/var(--cv-leading-code) var(--cv-mono)}
-  .key-name::placeholder,.private-input input::placeholder{color:var(--cv-t4)}
+  .key-name::placeholder,.private-input input::placeholder{color:var(--cv-placeholder)}
   .key-name:focus,.private-input:focus-within{outline:none;border-color:var(--cv-accent-line)}
   /* A fixed name is a value, not a field: mono t1 on a control chip. */
   .fixed-name{justify-self:start;padding:2px var(--cv-s2);border-radius:var(--cv-r-sm);background:var(--cv-control);color:var(--cv-t1);font:var(--cv-weight-body) var(--cv-type-code)/var(--cv-leading-code) var(--cv-mono);overflow-wrap:anywhere}

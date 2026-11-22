@@ -358,7 +358,9 @@ export function promptOutcomeStatus(
     tone: "error",
     title: `Not delivered: ${plain}.`,
     detail: row.sentence.trim() !== "" && row.sentence !== plain ? row.sentence : null,
-    next: (resendable ? RESEND_NEXT_STEPS[row.reason] : undefined) ?? REFUSAL_NEXT_STEPS[row.reason] ?? null
+    next: (resendable ? RESEND_NEXT_STEPS[row.reason] : undefined) ?? REFUSAL_NEXT_STEPS[row.reason] ?? null,
+    // Where the next step names another model, the callout offers it as a control.
+    action: row.reason === "model_resolution_failed" || row.reason === "backend_did_not_start" ? "choose-model" : null
   };
 }
 

@@ -102,9 +102,9 @@
   .c2-bubble {
     min-width: 0;
     max-width: 100%;
-    background: var(--cv-raised);
+    background: #1f1f1f;
     color: var(--cv-t1);
-    border-radius: var(--cv-r-xl);
+    border-radius: 18px;
     padding: 10px var(--cv-s4);
     font-family: var(--cv-font);
     font-size: var(--cv-type-prose);

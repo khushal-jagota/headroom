@@ -92,6 +92,6 @@
     left: auto;
     right: 0;
     bottom: calc(100% + 6px);
-    width: 148px;
+    width: 160px;
   }
 </style>

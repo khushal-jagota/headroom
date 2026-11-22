@@ -185,10 +185,12 @@
   .c2-meta--fold:hover .c2-meta-chevron, .c2-meta--fold:focus-visible .c2-meta-chevron { stroke: var(--cv-t2); }
   .c2-meta-chevron.is-open { transform: rotate(90deg); }
   /* Working has no colour: it is said by motion and by a brighter tone. */
+  /* v4: a 12px spinner and "Working · 2m 14s" in the meta style, at the transcript's tail. */
   .c2-meta-spin {
     flex: none;
-    width: 14px;
-    height: 14px;
+    box-sizing: border-box;
+    width: 12px;
+    height: 12px;
     border-radius: var(--cv-r-pill);
     border: 2px solid rgb(255 255 255 / 22%);
     border-top-color: var(--cv-t1);
@@ -196,9 +198,9 @@
   }
   .c2-meta-spin.is-turning { animation: c2-meta-spin var(--cv-spin) linear infinite; }
   @keyframes c2-meta-spin { to { transform: rotate(395deg); } }
-  .c2-meta-working { color: var(--cv-t2); font-weight: var(--cv-weight-label); }
+  .c2-meta-working { color: var(--cv-t3); }
   .c2-meta-working.is-alive {
-    background: linear-gradient(90deg, var(--cv-t2) 0%, var(--cv-t2) 35%, #fafafa 50%, var(--cv-t2) 65%, var(--cv-t2) 100%);
+    background: linear-gradient(90deg, var(--cv-t3) 0%, var(--cv-t3) 35%, var(--cv-t1) 50%, var(--cv-t3) 65%, var(--cv-t3) 100%);
     background-size: 200% 100%;
     -webkit-background-clip: text;
             background-clip: text;
@@ -210,6 +212,6 @@
   @media (prefers-reduced-motion: reduce) {
     .c2-meta--fold, .c2-meta-chevron { transition: none; }
     .c2-meta-spin.is-turning { animation: none; }
-    .c2-meta-working.is-alive { animation: none; background: none; color: var(--cv-t1); }
+    .c2-meta-working.is-alive { animation: none; background: none; color: var(--cv-t3); }
   }
 </style>

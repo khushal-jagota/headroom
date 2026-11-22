@@ -30,25 +30,38 @@ describe("the permission ask", () => {
     expect(count(body, "xcrun altool")).toBe(1);
   });
 
-  it("answers with one list of numbered rows: approve once first as the default, decline last", () => {
-    const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } });
+  it("answers with one list of numbered tiles: allow once first and chosen, decline last", () => {
+    const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, docked: true } });
     const order = [...body.matchAll(/data-conversation-ask-action="([^"]+)"/g)].map((match) => match[1]);
     expect(order).toEqual(["allow", "always", "deny"]);
     // No row of big buttons on the composer: rows, each with its number key.
     expect(body).not.toContain("cv-button--primary");
     expect(body).not.toContain("cv-button--outline");
-    expect(body).toMatch(/class="c2-ask-choice[^"]*is-default[^"]*"[^>]*data-conversation-ask-action="allow"/);
-    expect(count(body, "is-default")).toBe(1);
+    // One tile style for every ask; allow once is chosen by default, decline a quieter tone.
+    expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*is-selected[^"]*"[^>]*data-conversation-ask-action="allow"/);
+    expect(count(body, "is-selected")).toBe(1);
+    expect(body).toMatch(/<button[^>]*(aria-pressed="true"[^>]*data-conversation-ask-action="allow"|data-conversation-ask-action="allow"[^>]*aria-pressed="true")/);
+    expect(body).toMatch(/class="cv-ask-row c2-ask-choice[^"]*is-quiet[^"]*"[^>]*data-conversation-ask-action="deny"/);
+    expect(count(body, "is-quiet")).toBe(1);
     expect(body).toMatch(/data-conversation-ask-action="allow"[^>]*aria-keyshortcuts="1"/);
     expect(body).toMatch(/data-conversation-ask-action="deny"[^>]*aria-keyshortcuts="3"/);
     // The command is read before the answers.
     expect(body.indexOf("xcrun altool")).toBeLessThan(body.indexOf('data-conversation-ask-action="allow"'));
   });
 
-  it("draws no way to stop the turn: that is the composer's one stop button", () => {
+  it("draws no way to stop the turn when it is not given one", () => {
     const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {} } });
     expect(body).not.toContain("cancel_turn");
-    expect(body).not.toContain("Stop turn");
+    expect(body).not.toContain("data-conversation-stop");
+  });
+
+  it("offers Stop turn as a quiet text button in its header when the waiting turn can be stopped", () => {
+    const { body } = render(PermissionAskCard, { props: { ask, onAnswer: () => {}, onStop: () => {} } });
+    expect(count(body, "data-conversation-stop")).toBe(1);
+    expect(body).toMatch(/class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*>Stop turn</);
+    // In the header row, before the question and the answers.
+    expect(body.indexOf("data-conversation-ask-stop")).toBeLessThan(body.indexOf(ask.title));
+    expect(body.indexOf("data-conversation-ask-stop")).toBeLessThan(body.indexOf('data-conversation-ask-action="allow"'));
   });
 
   it("still answers an ask that offered nothing, with the answers Panels supplies", () => {
@@ -60,7 +73,7 @@ describe("the permission ask", () => {
 });
 
 describe("the question panel", () => {
-  it("says how to answer and uses the shared primary for the next step", () => {
+  it("says where it is in the questions; standing alone it keeps its own primary, waiting for an answer", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: {
         request: {
@@ -89,20 +102,41 @@ describe("the question panel", () => {
     expect(body).toContain("1 of 2");
     expect(body).toContain("Needs your answer");
     expect(body).toContain("Which illustration direction?");
-    // The primary waits, disabled, until there is an answer.
+    // The step control is the header's count and arrows, the forward one unavailable until
+    // answered; standing alone (not in the composer) the panel draws its own Next.
     expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue[^>]*disabled/);
     expect(body).toContain("Next");
+    expect(body).toMatch(/data-user-input-forward[^>]*disabled/);
+    // The options are the one ask row, the same as a permission ask's answers.
+    expect(body).toMatch(/class="cv-ask-row[^"]*"[^>]*data-user-input-option="Soft shapes"/);
     // Every option carries its number key, and the field for something else is offered.
     expect(body).toMatch(/aria-keyshortcuts="1"/);
     expect(body).toContain("Something else…");
   });
 
-  it("draws no stop of its own: the turn is stopped from the composer", () => {
+  it("draws no stop of its own when it is not given one", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: { request: { requestId: "q-2", questions: [] } }
     });
     expect(body).not.toContain("data-user-input-cancel");
-    expect(body).not.toContain("Stop turn");
+    expect(body).not.toContain("data-conversation-stop");
+  });
+
+  it("keeps the shared primary for questions where several answers may be chosen", () => {
+    const { body } = render(UserInputQuestionPanel, {
+      props: {
+        onStop: () => {},
+        request: {
+          requestId: "q-multi",
+          questions: [{ question_id: "tone", header: "Tone", question: "Which tones?", multi_select: true, allow_other: false,
+            options: [{ label: "Warm", description: "" }, { label: "Plain", description: "" }] }]
+        }
+      }
+    });
+    expect(body).toMatch(/class="cv-button cv-button--primary[^"]*"[^>]*data-user-input-continue[^>]*disabled/);
+    expect(body).toContain("Send answer");
+    // Its stop row is the same one a permission ask ends in.
+    expect(count(body, "data-conversation-ask-stop")).toBe(1);
   });
 });
 
@@ -207,9 +241,11 @@ describe("an own answer written in the composer", () => {
     const { body } = render(UserInputQuestionPanel, {
       props: { request: { requestId: "q-own", questions: [single] }, ownAnswer: "", onSubmit: () => {} }
     });
+    // v4: the composer line itself is the place for an own answer: no field and no row here,
+    // and no primary of its own (the composer's pill is it).
     expect(body).not.toContain("data-user-input-other");
-    expect(body).toContain("data-user-input-own");
-    expect(body).toContain("Type your own answer below");
+    expect(body).not.toContain("data-user-input-own");
+    expect(body).not.toContain("data-user-input-continue");
     // Standing alone (no composer under it) it keeps its own field.
     const alone = render(UserInputQuestionPanel, { props: { request: { requestId: "q-own", questions: [single] }, onSubmit: () => {} } }).body;
     expect(alone).toContain("data-user-input-other");

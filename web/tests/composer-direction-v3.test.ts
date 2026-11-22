@@ -23,6 +23,24 @@ function held(key: string, text: string): HeldPromptRow {
 }
 
 describe("the composer's controls row", () => {
+  it("under a question, its pill says Next between questions and is unavailable until there is an answer", () => {
+    const userInput = { requestId: "q-1", questions: [
+      { question_id: "a", header: "Style", question: "Which style?", multi_select: false, allow_other: true, options: [{ label: "Soft", description: "" }] },
+      { question_id: "b", header: "Tone", question: "Which tone?", multi_select: false, allow_other: false, options: [{ label: "Warm", description: "" }] }
+    ] };
+    const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, userInput, onStop: () => {} } });
+    expect(body).toMatch(/data-conversation-ask-primary[^>]*disabled[^>]*>Next</);
+    expect(body).not.toContain("chat-send stop");
+    expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
+  });
+
+  it("keeps the round Stop while a turn works with nothing waiting on the person", () => {
+    const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, onStop: () => {} } });
+    expect(body).toContain("chat-send stop");
+    expect(body).not.toContain("data-conversation-ask-stop");
+    expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
+  });
+
   it("always ends in a send round, quiet and unavailable while there is nothing to send", () => {
     const { body } = render(ComposerWithQueryClient, { props: base });
     expect(body).toMatch(/<button[^>]*class="chat-send"[^>]*data-conversation-send/);
@@ -45,13 +63,21 @@ describe("the composer's controls row", () => {
     expect(body).toContain("data-conversation-model-picker");
   });
 
-  it("keeps the one stop button in the composer while an ask waits, and no stop on the ask", () => {
+  it("while an ask waits, the send slot holds the ask's primary pill, and Stop turn is in the ask's header", () => {
     const ask = { askId: "a-1", title: "Upload build 41", detail: "xcrun altool --upload-app", options: [{ option_id: "allow", label: "Allow once", option_kind: "allow_once" as const }, { option_id: "deny", label: "Deny", option_kind: "reject_once" as const }] };
-    const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, ask, onCancelTurn: () => {} } });
+    const { body } = render(ComposerWithQueryClient, { props: { ...base, running: true, ask, onStop: () => {}, onCancelTurn: () => {} } });
+    // Exactly one way to stop, and it is the ask header's text button, not the composer's round.
     expect(body.match(/data-conversation-stop/g)?.length).toBe(1);
+    expect(body).toMatch(/class="cv-ask-stop[^"]*"[^>]*data-conversation-stop[^>]*data-conversation-ask-stop[^>]*>Stop turn</);
+    expect(body).not.toContain("chat-send stop");
+    // No round Send and no mode chip: the send slot is the ask's primary, Allow (allow once is
+    // chosen by default), and the line starts with a pen.
+    expect(body).not.toContain("data-conversation-send=");
+    expect(body).not.toContain("data-conversation-send-mode");
+    expect(body).toMatch(/class="chat-ask-primary[^"]*"[^>]*data-conversation-ask-primary[^>]*>Allow</);
+    expect(body).toContain("chat-ask-pen");
     expect(body).not.toContain('data-conversation-ask-action="cancel_turn"');
-    // Waiting is said in the composer: a message written now is held, and says so.
-    expect(body).toContain('placeholder="Or write a message. It is held until this turn ends"');
+    expect(body).toContain('placeholder="Or write a message"');
   });
 
   it("says only Drop to attach while something is dragged over it", () => {
@@ -66,12 +92,16 @@ describe("the queue is light, and stands in the thread", () => {
       props: { rows: [held("a", "Log each 429"), held("b", "Match the dark style")], supportsSteer: true, running: true, conversationId: "c-1" }
     });
     expect(body).not.toContain("chat-queue-head");
-    expect(body).not.toMatch(/>Queued</);
     expect(body).toContain('aria-label="2 queued messages"');
     expect(body.match(/data-conversation-held-row=/g)?.length).toBe(2);
-    // Each is a bubble of the person's words, with one quiet line under it saying so.
+    // Each is a ghost bubble of the person's words, with one "Queued" chip under it that
+    // opens its actions as a dropdown (v4), drawn closed.
     expect(body.match(/data-conversation-bubble/g)?.length).toBe(2);
-    expect(body.match(/Queued · sends when this turn ends/g)?.length).toBe(2);
+    expect(body.match(/<span>Queued<\/span>/g)?.length).toBe(2);
+    expect(body.match(/data-conversation-held-chip/g)?.length).toBe(2);
+    expect(body.match(/aria-haspopup="menu"/g)?.length).toBe(2);
+    expect(body.match(/class="chat-qrow-menu[^"]*"[^>]*hidden/g)?.length).toBe(2);
+    expect(body).not.toContain("sends when this turn ends");
     expect(body.indexOf("Log each 429")).toBeLessThan(body.indexOf("Match the dark style"));
     expect(body.match(/data-conversation-held-promote="steer"[^>]*>Steer now</g)?.length).toBe(2);
     expect(body.match(/data-conversation-held-promote="send_now"/g)?.length).toBe(2);
@@ -98,7 +128,8 @@ describe("the queue is light, and stands in the thread", () => {
     expect(content).toBeGreaterThan(-1);
     expect(stack).toBeGreaterThan(content);
     expect(stack).toBeLessThan(body.indexOf("data-conversation-box"));
-    expect(body).toMatch(/data-conversation-thread[^>]*data-anchor-end="true"/);
+    // One anchoring rule for every state: a short thread reads from the top.
+    expect(body).not.toContain("data-anchor-end");
   });
 
   it("offers no Steer while the turn is blocked on an ask, since nothing is read until it is answered", () => {
