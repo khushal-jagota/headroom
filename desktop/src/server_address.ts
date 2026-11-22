@@ -21,7 +21,7 @@ export function loadStoredServerAddress(): string | null {
   return current;
 }
 
-function storeServerAddress(address: string): void {
+export function storeServerAddress(address: string): void {
   writeJson('server.json', { address } satisfies StoredServer);
   current = address;
 }
@@ -60,11 +60,9 @@ async function checkServer(address: string): Promise<ServerAddressResult> {
   }
 }
 
-/** Check a typed address and, if a Panels server answers, store it. */
-export async function useServerAddress(typed: string): Promise<ServerAddressResult> {
+/** Check that a Panels server answers at a typed address. The caller stores it. */
+export async function checkServerAddress(typed: string): Promise<ServerAddressResult> {
   const address = normalize(typed);
   if (!address) return { ok: false, problem: 'Enter an address such as https://panels.example.ts.net.' };
-  const result = await checkServer(address);
-  if (result.ok) storeServerAddress(address);
-  return result;
+  return checkServer(address);
 }

@@ -17,12 +17,12 @@ import {
   ADDRESS_PAGE_HOST,
   ADDRESS_PAGE_URL,
   SCREENS_HOST,
-  SCREENS_URL,
   handleAppScheme,
   registerAppScheme,
 } from './app_scheme';
-import { bridgeChannel } from './bridge';
-import { loadStoredServerAddress, localServerAddress, serverAddress, useServerAddress } from './server_address';
+import { bridgeChannel, type ServerAddressResult } from './bridge';
+import { keepLastSessionFor, lastScreenUrl, rememberLastScreen } from './last_session';
+import { checkServerAddress, loadStoredServerAddress, localServerAddress, serverAddress, storeServerAddress } from './server_address';
 import { rememberWindowPlace, savedWindowBounds } from './window_place';
 
 // Tests give each run its own data folder, so runs share no stored address or window place.
@@ -49,6 +49,7 @@ function createWindow(): BrowserWindow {
   if (maximized) window.maximize();
   window.once('ready-to-show', () => window.show());
   rememberWindowPlace(window);
+  rememberLastScreen(window);
   sendLinksToTheBrowser(window);
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
@@ -62,10 +63,28 @@ function openWindow(url: string): BrowserWindow {
   return mainWindow;
 }
 
-/** The screens if the app holds a server, or one answers on this Mac. Otherwise the address page. */
+/** The last screen if the app holds a server, or one answers on this Mac. Otherwise the address page. */
 async function firstPage(): Promise<string> {
-  if (loadStoredServerAddress()) return SCREENS_URL;
-  return (await useServerAddress(localServerAddress())).ok ? SCREENS_URL : ADDRESS_PAGE_URL;
+  const stored = loadStoredServerAddress();
+  if (stored) {
+    // A switch that stopped part way still leaves the old server's session to delete.
+    await keepLastSessionFor(stored).catch(() => undefined);
+    return lastScreenUrl();
+  }
+  return (await switchServer(localServerAddress())).ok ? lastScreenUrl() : ADDRESS_PAGE_URL;
+}
+
+/** Use a typed address. A different server's session is deleted before the address is stored. */
+async function switchServer(typed: string): Promise<ServerAddressResult> {
+  const result = await checkServerAddress(typed);
+  if (!result.ok) return result;
+  try {
+    await keepLastSessionFor(result.address);
+  } catch {
+    return { ok: false, problem: 'The app could not clear the data it kept for the last server.' };
+  }
+  storeServerAddress(result.address);
+  return result;
 }
 
 // A link or a new window that leaves the app opens in the default browser. A new window
@@ -110,8 +129,8 @@ function answerBridgeCalls(): void {
   ipcMain.handle(bridgeChannel('useServerAddress'), async (event, typed: unknown) => {
     if (!fromAddressPage(event)) throw new Error('Only the address page can change the server address.');
     if (typeof typed !== 'string') throw new Error('The address must be text.');
-    const result = await useServerAddress(typed);
-    if (result.ok) void event.sender.loadURL(SCREENS_URL);
+    const result = await switchServer(typed);
+    if (result.ok) void event.sender.loadURL(lastScreenUrl());
     return result;
   });
 }
@@ -161,7 +180,7 @@ void app.whenReady().then(async () => {
   openWindow(await firstPage());
   // A Mac app stays open with no window. A click on its Dock icon brings the window back.
   app.on('activate', () => {
-    if (!mainWindow) openWindow(serverAddress() ? SCREENS_URL : ADDRESS_PAGE_URL);
+    if (!mainWindow) openWindow(serverAddress() ? lastScreenUrl() : ADDRESS_PAGE_URL);
   });
 });
 
