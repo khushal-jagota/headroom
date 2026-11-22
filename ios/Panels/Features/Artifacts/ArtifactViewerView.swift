@@ -71,7 +71,7 @@ struct ArtifactViewerView: View {
             }
         }
         .panelsScreen()
-        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, textEntry: textEntry))
+        .modifier(ArtifactDockSurface(dock: dock, conversationID: conversationID, textEntry: textEntry))
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -240,12 +240,16 @@ struct ArtifactMediaView: View {
     var body: some View { VideoPlayer(player: player).background(.black).onDisappear { player.pause() } }
 }
 
-private struct ArtifactConversationSurface: ViewModifier {
-    let owner: ConversationOwner?
+/// The dock below the artifact: the conversation's composer, or the Review card's own controls.
+private struct ArtifactDockSurface: ViewModifier {
+    let dock: ArtifactDock
     let conversationID: String?
     let textEntry: ScreenTextEntryContext
     @ViewBuilder func body(content: Content) -> some View {
-        if let owner { content.conversationNavigation(owner: owner, conversationID: conversationID, textEntry: textEntry) }
-        else { content }
+        switch dock {
+        case .conversation(let owner): content.conversationNavigation(owner: owner, conversationID: conversationID, textEntry: textEntry)
+        case .reviewProposal(let itemID): content.modifier(ReviewArtifactDock(itemID: itemID, isMessage: false))
+        case .reviewMessage(let itemID): content.modifier(ReviewArtifactDock(itemID: itemID, isMessage: true))
+        }
     }
 }

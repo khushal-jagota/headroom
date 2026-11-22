@@ -100,7 +100,12 @@ a proposal with a note. Return is absent for briefs; with no existing worker
 conversation it is off and says why. An empty Return focuses the note. Links resolve
 against the server address; a managed file opens the in-app viewer and other links
 open in the system (`ReviewArtifacts.swift`). Only linked photos and videos also show
-inline. While a proposal loads, its card keeps the previous card's height.
+inline. The viewer docks the card's own controls below the file: a proposal's note
+and decision row, or a message's reply and Mark read, on the card's decision, so a
+note typed there is the card's draft. A decision, Return, Skip, reply or Mark read
+there follows the card's order: the card is held at the save, a sheet closes first,
+every stacked viewer closes, then the queue moves on. When the card stops being the
+shown one, as when another card's refusal comes to the front, the viewers close. While a proposal loads, its card keeps the previous card's height.
 
 Approve opens the shared approval sheet: a standard grouped Form with Cancel, a
 title and Approve. Approved until is a checkmark list and Then reviews is a native
@@ -211,8 +216,8 @@ an already booted lane under its lock; `PANELS_OFFLINE_DEVICE` names the lane's 
 The permanent `ReviewMessagesTests/testSplitCardsSkipAndReturn` proves what model
 tests cannot: on the real SwiftUI host the app opens on the summary, the proposal and
 its Ticket's message are separate cards, Skip is per card, an artifact opened from a
-card returns to it with the reply draft kept, and Review skipped brings every card
-back. Its writes change the fixture, so it runs alone on a fresh stub with
+card docks its reply with the card's draft and returns to it, and Review skipped
+brings every card back. Its writes change the fixture, so it runs alone on a fresh stub with
 `PANELS_REVIEW_MESSAGES=1`, `PANELS_REVIEW_SPLIT=1` and
 `PANELS_OFFLINE_TEST=ReviewMessagesTests/testSplitCardsSkipAndReturn`.
 `ReviewMessagesTests/testUnreadReplyRefusalQueueAndHistoricalNavigation` reaches

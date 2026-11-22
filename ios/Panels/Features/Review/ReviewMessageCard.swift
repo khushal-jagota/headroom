@@ -13,25 +13,11 @@ struct ReviewMessageCard: View {
     let onSkip: (CGFloat?) -> Void
     let onResolve: (_ afterExit: (() -> Void)?) -> Void
     @Environment(AppStore.self) private var store
-    @State private var capturing = false
-    @State private var sendingPresentation = false
-    @State private var outgoingAttempt: PendingWork?
-    @State private var finished = false
-    private var displayedAttempt: PendingWork? { sendingPresentation ? outgoingAttempt : decision.attempt }
-    /// The view's current facts for this card. The card reads its run again when shown,
-    /// keeping the read-ahead run on screen meanwhile.
-    private var live: ReviewItem {
-        var current = store.review?.items.first { $0.id == item.id } ?? item
-        // The owner reference distinguishes a replaced or cleared conversation from missing data.
-        if let owner = item.owner, let reference = store.currentConversationID(owner) {
-            current.addressCurrent = reference == item.conversationId
-        }
-        return current
-    }
-    private var locked: Bool { decision.busy || capturing || sendingPresentation || finished }
+    @State private var actions = ReviewMessageActions()
+    private var live: ReviewItem { store.reviewMessageFacts(item) }
 
     var body: some View {
-        ReviewCardFrame(title: item.title, recap: item.recap, motion: motion, locked: locked, onSkip: onSkip) {
+        ReviewCardFrame(title: item.title, recap: item.recap, motion: motion, locked: actions.locks(decision), onSkip: onSkip) {
             VStack(alignment: .leading, spacing: 14) {
                 // A refused reply shows its reason in its composer; a refused Mark read here.
                 if let refusal, decision.attempt?.state != .failed {
@@ -60,54 +46,55 @@ struct ReviewMessageCard: View {
                 }
             }
         } dock: {
-            ReviewDock {
-                if live.addressCurrent, let owner = item.owner {
-                    ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, placeholder: "Reply…", sendReply: send,
-                                         statusNote: displayedAttempt?.state == .failed ? displayedAttempt?.note : nil,
-                                         retryReply: displayedAttempt?.state == .failed, onCaptureChanged: { capturing = $0 })
-                        .disabled(!decision.loaded || decision.events.isEmpty || decision.busy || finished
-                                  || (decision.attempt != nil && decision.attempt?.state != .failed))
-                    ReviewButtonRow {
-                        skipButton
-                        Button("Mark read") { markRead() }
-                            .buttonStyle(ReviewButtonStyle()).accessibilityIdentifier("review.markRead")
-                            .disabled(decision.through == 0 || decision.busy || capturing || finished)
-                    }
-                } else {
-                    skipButton
-                }
-            }
+            ReviewMessageDock(item: item, isActive: isActive, decision: decision, actions: actions, onSkip: { onSkip(nil) }, onResolve: onResolve)
         }
         // Read again as the card is shown: a message arriving while it is on screen stays
-        // outside the displayed run and returns to Review after a reply.
+        // outside the displayed run and returns to Review after a reply. Only the card reads:
+        // Mark read acknowledges what the card displayed.
         .task(id: "\(isActive):\(store.connectionSession)") {
             guard isActive else { return }
-            if decision.attempt?.state == .failed { sendingPresentation = false }
+            if decision.attempt?.state == .failed { actions.sendingPresentation = false }
             await decision.load(item: live, api: store.client, shownAt: .now)
             guard !Task.isCancelled else { return }
-            if decision.accepted { finishReply() }
-            else if decision.loaded, decision.events.isEmpty, decision.composer.draft.isEmpty, decision.composer.attachments.isEmpty, decision.attempt == nil { finish() }
+            if decision.accepted { actions.finishReply(onResolve: onResolve) { decision.clearAcceptedDraft() } }
+            else if decision.loaded, decision.events.isEmpty, decision.composer.draft.isEmpty, decision.composer.attachments.isEmpty, decision.attempt == nil {
+                actions.finish(onResolve: onResolve)
+            }
         }
-        .onChange(of: live.addressCurrent, initial: true) { _, current in decision.updateAddressCurrent(current) }
-        .onChange(of: decision.attempt?.state) { _, state in
-            guard isActive else { return }
-            if state == .failed { ReviewStyle.error(); sendingPresentation = false }
-        }
-        .onChange(of: decision.accepted) { _, accepted in if isActive, accepted { finishReply() } }
     }
+}
 
-    private var skipButton: some View {
-        Button("Skip") { Haptics.selection(); onSkip(nil) }
-            .buttonStyle(ReviewButtonStyle()).accessibilityIdentifier("review.skip")
-            .disabled(locked)
+extension AppStore {
+    /// The view's current facts for a message card. The card reads its run again when
+    /// shown, keeping the read-ahead run on screen meanwhile.
+    func reviewMessageFacts(_ item: ReviewItem) -> ReviewItem {
+        var current = review?.items.first { $0.id == item.id } ?? item
+        // The owner reference distinguishes a replaced or cleared conversation from missing data.
+        if let owner = item.owner, let reference = currentConversationID(owner) {
+            current.addressCurrent = reference == item.conversationId
+        }
+        return current
     }
-    private func markRead() {
+}
+
+/// One screen's reply and Mark read on a message card. The card and an artifact opened from
+/// it each own one on the card's shared ReviewMessageDecision, so a covered card never
+/// finishes for the screen on top.
+@MainActor @Observable final class ReviewMessageActions {
+    var capturing = false
+    var sendingPresentation = false
+    private var outgoingAttempt: PendingWork?
+    private(set) var finished = false
+    func displayedAttempt(_ decision: ReviewMessageDecision) -> PendingWork? { sendingPresentation ? outgoingAttempt : decision.attempt }
+    func locks(_ decision: ReviewMessageDecision) -> Bool { decision.busy || capturing || sendingPresentation || finished }
+
+    func markRead(_ decision: ReviewMessageDecision, onResolve: @escaping (_ afterExit: (() -> Void)?) -> Void) {
         Haptics.light()
         Task {
-            if await decision.markRead() { Haptics.success(); finish() } else { ReviewStyle.error() }
+            if await decision.markRead() { Haptics.success(); finish(onResolve: onResolve) } else { ReviewStyle.error() }
         }
     }
-    private func send() async -> Bool {
+    func send(_ decision: ReviewMessageDecision, live: ReviewItem, onResolve: @escaping (_ afterExit: (() -> Void)?) -> Void) async -> Bool {
         guard !sendingPresentation, live.addressCurrent else { return false }
         decision.updateAddressCurrent(live.addressCurrent)
         outgoingAttempt = decision.attempt
@@ -115,19 +102,70 @@ struct ReviewMessageCard: View {
         let accepted = await decision.send()
         if !decision.accepted { sendingPresentation = false }
         // Leave in the same turn as the save, before the saved work hides the card.
-        else { finishReply() }
+        else { finishReply(onResolve: onResolve) { decision.clearAcceptedDraft() } }
         return accepted
     }
-    private func finishReply() {
+    /// A reply is saved. `clearDraft` runs once the exit completes, so the composer keeps
+    /// its geometry until then.
+    func finishReply(onResolve: (_ afterExit: (() -> Void)?) -> Void, clearDraft: @escaping () -> Void) {
         guard !finished else { return }
         Haptics.success()
-        // Keep the composer geometry until the exit completes.
-        finish { decision.clearAcceptedDraft() }
+        finish(onResolve: onResolve, afterExit: clearDraft)
     }
-    private func finish(afterExit: (() -> Void)? = nil) {
+    func finish(onResolve: (_ afterExit: (() -> Void)?) -> Void, afterExit: (() -> Void)? = nil) {
         guard !finished else { return }
         finished = true
         onResolve(afterExit)
+    }
+}
+
+/// The message's dock: the `Reply…` composer with its inline send, then Skip and Mark read.
+/// The card and an artifact opened from it each mount one on the card's shared
+/// ReviewMessageDecision, so a reply typed in either is the same draft.
+struct ReviewMessageDock: View {
+    let item: ReviewItem
+    let isActive: Bool
+    let decision: ReviewMessageDecision
+    let actions: ReviewMessageActions
+    let onSkip: () -> Void
+    let onResolve: (_ afterExit: (() -> Void)?) -> Void
+    @Environment(AppStore.self) private var store
+    private var live: ReviewItem { store.reviewMessageFacts(item) }
+
+    var body: some View {
+        ReviewDock {
+            if live.addressCurrent, let owner = item.owner {
+                let attempt = actions.displayedAttempt(decision)
+                ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, placeholder: "Reply…",
+                                     sendReply: { await actions.send(decision, live: live, onResolve: onResolve) },
+                                     statusNote: attempt?.state == .failed ? attempt?.note : nil,
+                                     retryReply: attempt?.state == .failed, onCaptureChanged: { actions.capturing = $0 })
+                    .disabled(!decision.loaded || decision.events.isEmpty || decision.busy || actions.finished
+                              || (decision.attempt != nil && decision.attempt?.state != .failed))
+                ReviewButtonRow {
+                    skipButton
+                    Button("Mark read") { actions.markRead(decision, onResolve: onResolve) }
+                        .buttonStyle(ReviewButtonStyle()).accessibilityIdentifier("review.markRead")
+                        .disabled(decision.through == 0 || decision.busy || actions.capturing || actions.finished)
+                }
+            } else {
+                skipButton
+            }
+        }
+        .onChange(of: live.addressCurrent, initial: true) { _, current in decision.updateAddressCurrent(current) }
+        .onChange(of: decision.attempt?.state) { _, state in
+            guard isActive else { return }
+            if state == .failed { ReviewStyle.error(); actions.sendingPresentation = false }
+        }
+        .onChange(of: decision.accepted) { _, accepted in
+            if isActive, accepted { actions.finishReply(onResolve: onResolve) { decision.clearAcceptedDraft() } }
+        }
+    }
+
+    private var skipButton: some View {
+        Button("Skip") { Haptics.selection(); onSkip() }
+            .buttonStyle(ReviewButtonStyle()).accessibilityIdentifier("review.skip")
+            .disabled(actions.locks(decision))
     }
 }
 

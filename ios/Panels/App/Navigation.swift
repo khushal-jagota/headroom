@@ -38,8 +38,16 @@ struct OpenRouteAction {
     func callAsFunction(_ route: AppRoute) { open(route) }
 }
 
+/// Removes every artifact viewer at the top of the page path in one step, back to the
+/// page they were opened from.
+struct CloseArtifactsAction {
+    let close: () -> Void
+    func callAsFunction() { close() }
+}
+
 extension EnvironmentValues {
     @Entry var openRoute = OpenRouteAction { _ in }
+    @Entry var closeArtifacts = CloseArtifactsAction {}
     /// Changes each time Review becomes the destination.
     @Entry var reviewVisit = 0
 }
@@ -56,6 +64,11 @@ struct RouteStack<Root: View>: View {
                 .navigationDestination(for: AppRoute.self) { RouteDestination(route: $0) }
         }
         .environment(\.openRoute, OpenRouteAction { path.append($0) })
+        .environment(\.closeArtifacts, CloseArtifactsAction {
+            var trimmed = path
+            while case .artifact = trimmed.last { trimmed.removeLast() }
+            if trimmed != path { path = trimmed }
+        })
         .environment(\.conversationModels, conversationModels)
     }
 }

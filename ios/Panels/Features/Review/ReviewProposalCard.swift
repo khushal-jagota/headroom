@@ -20,8 +20,6 @@ struct ReviewProposalCard: View {
     @Environment(AppStore.self) private var store
     @State private var sheet: DecisionSheet?
     @State private var busyAction: String?
-    @State private var exit = ReviewCardExit()
-    @State private var approvalGuidance: DecisionGuidance?
     @State private var appeared = false
     private var recap: String? { decision.ticket?.recap ?? store.presentation?.ticketsById[item.ticketId]?.recap }
     /// A notice or a refusal of a proposal that no longer waits turns the decision off.
@@ -60,14 +58,8 @@ struct ReviewProposalCard: View {
             }
             .opacity(busyAction != nil ? 0.4 : 1)
         } dock: {
-            ReviewProposalDock(isActive: isActive, savedWork: savedWork, decision: decision, ready: actionable && sheet == nil,
-                               busyAction: busyAction, error: decision.error == refusal || decision.changed ? nil : decision.error,
-                               skipEnabled: busyAction == nil && !decision.busy,
-                               onSkip: { onSkip(nil) }, onApprove: openApproval) {
-                busyAction = "back"
-                if await decision.sendBack(api: store.client, message: decision.revisionDraft) { complete() }
-                else { busyAction = nil; ReviewStyle.error() }
-            }
+            ReviewProposalDock(isActive: isActive, savedWork: savedWork, decision: decision, refusal: refusal, notice: notice,
+                               sheet: $sheet, busyAction: $busyAction, onSkip: { onSkip(nil) }, onHold: onHold, onResolve: onResolve)
         }
         // The Ticket's record stays in the view while this card is on screen, so a move
         // to another reviewer can say who reviews it now.
@@ -84,31 +76,6 @@ struct ReviewProposalCard: View {
             guard isActive, sheet == nil, busyAction == nil, notice == nil else { return }
             await load()
         }
-        // A move to another reviewer turns the decision off, an open sheet included.
-        .onChange(of: notice != nil) { _, moved in if moved { sheet = nil } }
-        .decisionSheets($sheet, ticket: decision.ticket, manifest: decision.manifest, note: approvalGuidance?.text,
-            onDismiss: {
-                if exit.dismissed() { leave() }
-            },
-            approve: { ceiling, holder in
-                guard notice == nil else { throw APIError(status: 0, message: "Someone else reviews this proposal now.") }
-                busyAction = "approve"
-                if await decision.approve(api: store.client, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
-                else {
-                    busyAction = nil
-                    throw APIError(status: 0, message: decision.error ?? "The decision could not be saved.")
-                }
-            },
-            setReviewer: { holder in
-                guard notice == nil, let ticket = decision.ticket else { return }
-                let current = try await decision.scopeChange.save(api: store.client, ticket: ticket, ceiling: nil, holder: holder)
-                decision.acceptScopeRead(current)
-                // Moved to someone else here: the card is held so the move reads as
-                // Khushal's, not as a notice, and leaves once the sheet closes. The stream
-                // can close the sheet first, so a save that finds it closed leaves now.
-                if holder.kind != "owner" { onHold(); if exit.saved(sheetOpen: sheet != nil) { leave() } }
-                await store.refresh()
-            })
     }
 
     private func load() async {
@@ -120,51 +87,45 @@ struct ReviewProposalCard: View {
         guard notice == nil else { return }
         await decision.load(item: item, api: store.client)
     }
-
-    private func openApproval() {
-        guard actionable else { return }
-        approvalGuidance = decision.approvalGuidance(api: store.client)
-        Haptics.light()
-        if decision.finalApproval {
-            busyAction = "approve"
-            Task {
-                if await decision.approve(api: store.client, guidance: approvalGuidance) { complete() }
-                else { busyAction = nil; ReviewStyle.error() }
-            }
-        } else { sheet = .approve }
-    }
-    /// The decision is saved: the card leaves now, or once its sheet has closed.
-    private func complete() {
-        Haptics.light()
-        // The decision is saved, so the saved work hides the card from now on.
-        onHold()
-        if exit.saved(sheetOpen: sheet != nil) { leave() } else { sheet = nil }
-    }
-    private func leave() { onResolve { busyAction = nil } }
 }
 
 private extension ReviewDecision {
     func fieldLabel(_ field: String) -> String { manifest?.fields.first(where: { $0.id == field })?.label ?? field.capitalized }
 }
 
-/// The proposal's dock: the note with its voice recording, and the decision row.
-private struct ReviewProposalDock: View {
+/// The proposal's dock: the note with its voice recording and attachments, Skip, Return
+/// and Approve, and the approval and reviewer sheets. The card and an artifact opened from
+/// it each mount one on the card's shared ReviewDecision, so a note typed in either is the
+/// same draft. The sheet, the busy action and the exit belong to the screen that mounts it,
+/// so a covered card never presents or leaves for the screen on top.
+struct ReviewProposalDock: View {
     let isActive: Bool
     let savedWork: ReviewSavedWork
     @Bindable var decision: ReviewDecision
-    let ready: Bool
-    let busyAction: String?
-    let error: String?
-    let skipEnabled: Bool
+    /// The server's reason for refusing a saved decision on this proposal.
+    let refusal: String?
+    /// Set when the proposal moved to another reviewer while on screen.
+    let notice: ReviewNotice?
+    @Binding var sheet: DecisionSheet?
+    @Binding var busyAction: String?
     let onSkip: () -> Void
-    let onApprove: () -> Void
-    let onReturn: () async -> Void
+    /// Holds the card from the moment its decision is saved, while a sheet still closes.
+    let onHold: () -> Void
+    /// Leaves once the decision is saved and any sheet has closed.
+    let onResolve: (_ afterExit: (() -> Void)?) -> Void
     @Environment(AppStore.self) private var store
+    @State private var exit = ReviewCardExit()
+    @State private var approvalGuidance: DecisionGuidance?
     @State private var voice = ReviewVoiceCapture()
     @State private var focusRequest = 0
     @State private var blurRequest = 0
     @ScaledMetric(relativeTo: .body) private var microphoneSize: CGFloat = 17
     private var api: APIClient { store.client }
+    /// A notice or a refusal of a proposal that no longer waits turns the decision off.
+    private var actionable: Bool { notice == nil && decision.ready }
+    private var ready: Bool { actionable && sheet == nil }
+    /// A refusal and a changed proposal say so where the dock's screen shows them.
+    private var error: String? { decision.error == refusal || decision.changed ? nil : decision.error }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -185,8 +146,8 @@ private struct ReviewProposalDock: View {
                                     .accessibilityLabel("Record a note").disabled(!ready || decision.busy || voice.phase != .idle)),
                                 attachments: decision.noteAttachments,
                                 focusRequest: focusRequest, blurRequest: blurRequest,
-                                onSkip: onSkip, skipEnabled: skipEnabled,
-                                onApprove: onApprove, onSendBack: { Task { await onReturn() } })
+                                onSkip: onSkip, skipEnabled: busyAction == nil && !decision.busy,
+                                onApprove: openApproval, onSendBack: { Task { await sendBack() } })
         }
         .onChange(of: isActive, initial: true) { _, active in
             guard active else { voice.preserve(); return }
@@ -201,7 +162,58 @@ private struct ReviewProposalDock: View {
             restoreVoice()
         }
         .onDisappear { voice.preserve() }
+        // A move to another reviewer turns the decision off, an open sheet included.
+        .onChange(of: notice != nil) { _, moved in if moved { sheet = nil } }
+        .decisionSheets($sheet, ticket: decision.ticket, manifest: decision.manifest, note: approvalGuidance?.text,
+            onDismiss: {
+                if exit.dismissed() { leave() }
+            },
+            approve: { ceiling, holder in
+                guard notice == nil else { throw APIError(status: 0, message: "Someone else reviews this proposal now.") }
+                busyAction = "approve"
+                if await decision.approve(api: api, ceiling: ceiling, holder: holder, guidance: approvalGuidance) { complete() }
+                else {
+                    busyAction = nil
+                    throw APIError(status: 0, message: decision.error ?? "The decision could not be saved.")
+                }
+            },
+            setReviewer: { holder in
+                guard notice == nil, let ticket = decision.ticket else { return }
+                let current = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: nil, holder: holder)
+                decision.acceptScopeRead(current)
+                // Moved to someone else here: the card is held so the move reads as
+                // Khushal's, not as a notice, and leaves once the sheet closes. The stream
+                // can close the sheet first, so a save that finds it closed leaves now.
+                if holder.kind != "owner" { onHold(); if exit.saved(sheetOpen: sheet != nil) { leave() } }
+                await store.refresh()
+            })
     }
+
+    private func openApproval() {
+        guard actionable else { return }
+        approvalGuidance = decision.approvalGuidance(api: api)
+        Haptics.light()
+        if decision.finalApproval {
+            busyAction = "approve"
+            Task {
+                if await decision.approve(api: api, guidance: approvalGuidance) { complete() }
+                else { busyAction = nil; ReviewStyle.error() }
+            }
+        } else { sheet = .approve }
+    }
+    private func sendBack() async {
+        busyAction = "back"
+        if await decision.sendBack(api: api, message: decision.revisionDraft) { complete() }
+        else { busyAction = nil; ReviewStyle.error() }
+    }
+    /// The decision is saved: the card leaves now, or once its sheet has closed.
+    private func complete() {
+        Haptics.light()
+        // The decision is saved, so the saved work hides the card from now on.
+        onHold()
+        if exit.saved(sheetOpen: sheet != nil) { leave() } else { sheet = nil }
+    }
+    private func leave() { onResolve { busyAction = nil } }
     private func restoreVoice() {
         voice.restore(api: api, draftID: decision.revisionDraftID,
                       savedWork: decision.revisionDraftID.map { savedWork.voice(LocalStore.server(api.baseURL), draftID: $0) } ?? [])

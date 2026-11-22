@@ -471,12 +471,19 @@ Sharing sends the downloaded file through the system share sheet. Temporary file
 are removed when their preview and share sheet release them. Files too large for the Markdown or original sandboxed HTML preview remain available to Quick Look or sharing. Copy link
 copies the web preview address. Artifact pushes and zooms are silent; Copy link
 uses success feedback and reload errors use error feedback. The shared shell
-retains ownership of global navigation feedback and deployment chrome. The
-viewer uses the same native conversation page as Ticket and Orchestrator,
-including image previews. Files opened from an inline catalog keep that catalog's
-conversation owner while managed links retain their actual file owner. Further
-artifact links preserve the conversation context. The viewer resolves the current
-conversation ID from the owner and uses the existing owner send door. Listing, opening, reloading and sharing
+retains ownership of global navigation feedback and deployment chrome. The route's
+`ArtifactDock` says what sits below the file, chosen by where it was opened, and
+further artifact links keep it. A Ticket, Orchestrator or conversation page docks
+its conversation's composer: the viewer resolves the current conversation ID from
+the owner and uses the owner send door. A full conversation page keeps the model it
+opened with, so the viewer's composer for the same owner leaves its draft, tail and
+read point one. A Review card docks its own controls on the card's decision, so the
+note or reply is the card's draft: the proposal's note, voice, attachments, Skip,
+Return and Approve with its sheet, or the message's `Reply…`, Skip and Mark read, with
+any refusal. Only the top viewer docks them. Acting there, or the card leaving the
+screen, closes every stacked viewer back to Review, and the queue moves on as if the
+card had acted. Catalog files keep the catalog's conversation owner while managed
+links retain their actual file owner. Listing, opening, reloading and sharing
 artifacts do not write to the server; sending a message requires an explicit tap.
 
 Artifact links in proposals, messages, Ticket fields and Goal prose stay inline

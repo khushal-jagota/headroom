@@ -84,10 +84,14 @@ struct ConversationScreen: View {
     let linked: Bool
     /// A linked conversation reads on its own; otherwise the page shares its owner's docked model.
     @State private var ownModel = ConversationModel()
+    /// The docked model this page first shared, kept for the page's life. An artifact opened
+    /// from the page docks its own composer, which registers a second model for the owner and
+    /// is gone once the artifact closes; the page stays on the model it opened with.
+    @State private var sharedModel: ConversationModel?
     @State private var speech = ConversationSpeech()
     @Environment(AppStore.self) private var store
     @Environment(\.conversationModels) private var conversationModels
-    private var model: ConversationModel { linked ? ownModel : conversationModels?.model(for: owner) ?? ownModel }
+    private var model: ConversationModel { linked ? ownModel : sharedModel ?? conversationModels?.model(for: owner) ?? ownModel }
 
     var body: some View {
         ScreenTextEntryScope { textEntry in
@@ -112,9 +116,13 @@ struct ConversationScreen: View {
                     }
                 }
         }
-        .onAppear { if !linked { conversationModels?.setPageOpen(true, for: owner) } }
+        .onAppear {
+            guard !linked else { return }
+            conversationModels?.setPageOpen(true, for: owner)
+            if sharedModel == nil { sharedModel = model }
+        }
         .onDisappear { speech.cancel(); if !linked { conversationModels?.setPageOpen(false, for: owner) } }
-        .onChange(of: store.baseURL) { _, _ in speech.cancel(); ownModel = ConversationModel() }
+        .onChange(of: store.baseURL) { _, _ in speech.cancel(); ownModel = ConversationModel(); sharedModel = nil }
     }
 }
 

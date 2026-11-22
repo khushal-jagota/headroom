@@ -4,7 +4,7 @@ import XCTest
 final class ReviewMessagesTests: XCTestCase {
     /// Act on a Review item and return to skipped work. One Ticket holds a proposal and an
     /// unread message: each is its own card, Skip is per card, an artifact opened from a
-    /// card returns to it, and the summary brings skipped cards back.
+    /// card docks the card's reply and returns to it, and the summary brings skipped cards back.
     @MainActor func testSplitCardsSkipAndReturn() async throws {
         guard ProcessInfo.processInfo.environment["PANELS_REVIEW_SPLIT"] == "1" else {
             throw XCTSkip("Run alone with the split fixture")
@@ -46,12 +46,16 @@ final class ReviewMessagesTests: XCTestCase {
         tapReviewGutter(app)
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         capture(app, "review-message-card")
-        // An artifact pushed from the card returns to the same card.
+        // An artifact pushed from the card docks the card's own reply and Mark read, with
+        // the card's draft, and Back returns to the same card.
         let artifact = app.links.matching(NSPredicate(format: "label CONTAINS %@", "proof.html")).firstMatch
         XCTAssertTrue(artifact.waitForExistence(timeout: 5))
         artifact.tap()
         XCTAssertTrue(app.buttons["Artifact actions"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.textFields["conversation-input"].exists, "Review artifacts must not gain a conversation composer")
+        let viewerReply = app.textFields["conversation-input"].firstMatch
+        XCTAssertTrue(viewerReply.waitForExistence(timeout: 5))
+        XCTAssertEqual(viewerReply.value as? String, "Keep this Review reply", "The viewer's reply is the card's draft")
+        XCTAssertTrue(app.buttons["review.markRead"].exists)
         app.backButton.tap()
         XCTAssertTrue(message.waitForExistence(timeout: 8))
         XCTAssertEqual(reply.value as? String, "Keep this Review reply")
