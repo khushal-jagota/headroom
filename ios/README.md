@@ -159,8 +159,9 @@ with Send it back and Approve. Review keeps dictation and adds Open ticket.
 An empty send-back note focuses the field. Approval captures the displayed note
 for that exact server and proposal. Notes retain the existing durable draft keys.
 Approve opens a standard grouped Form sheet. Approved until lists only the stages
-after the waiting one, and Then reviews is a segmented control. Done is not an
-approval ceiling. When the next stage is Done, Approve takes one tap. The approver
+after the waiting one, and Then reviews is a segmented control. Done is listed
+when the Worker type's ceiling range includes it, as on the web. When the next
+stage is Done, Approve takes one tap. The approver
 in the card opens a Reviewer sheet with one tap to choose. Both sheets are shared by
 Review and the Ticket page (`DecisionSheets.swift`) and wait for the server inside
 the sheet. A failure shows inline. A reviewer change uses the existing PATCH route.
