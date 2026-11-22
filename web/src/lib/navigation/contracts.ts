@@ -171,6 +171,8 @@ export type AttentionKnowledge = CurrentAttentionKnowledge;
 
 export interface ConversationValue {
   first_unread_owner_message_at: number | null;
+  /** When the newest ask was raised. A stored record from before the field has none. */
+  latest_ask_at?: number | null;
   latest_sequence: number;
   owner_read_through_sequence: number;
   latest_agent_activity_sequence: number;
@@ -464,6 +466,7 @@ export interface ViewSettledManagerValue {
 
 export interface ViewConversationValue {
   first_unread_owner_message_at: number | null;
+  latest_ask_at?: number | null;
   owner_read_through_sequence: number;
   error_acknowledged_through_sequence: number;
   attention: AttentionKnowledge;
@@ -635,6 +638,20 @@ export interface ReviewTicketItem {
   messages: Array<ReviewMessageItem>;
 }
 
+/** A running turn is stopped on a question or permission ask that only the owner can answer. */
+export interface ReviewAskItem {
+  review_item_type: "ask";
+  conversation_id: string;
+  /** The Manager's or Chief's canonical address, which is how the queue holds this card. A Ticket's ask is held by the Ticket. */
+  address_id: string | null;
+  owner_kind: "ticket" | "manager" | "chief";
+  owner_id: string;
+  title: string;
+  waiting_since: number;
+  recap: string;
+  recap_reference: ViewContentReference | null;
+}
+
 export interface NavigationReviewTicketItem {
   review_item_type: "ticket";
   ticket_id: string;
@@ -642,8 +659,9 @@ export interface NavigationReviewTicketItem {
   waiting_since: number;
   proposal: NavigationReviewProposalItem | null;
   messages: Array<ReviewMessageItem>;
+  ask: ReviewAskItem | null;
 }
 
 export type ReviewItem = ReviewTicketItem | ReviewMessageItem;
 
-export type NavigationReviewItem = NavigationReviewTicketItem | ReviewMessageItem;
+export type NavigationReviewItem = NavigationReviewTicketItem | ReviewMessageItem | ReviewAskItem;

@@ -27,6 +27,29 @@ const keyString = (key: Key): string => compact(key);
 function attention(sql: ReadSql, conversation: string | null | undefined): Fact | null {
   return conversation ? (record(sql, ['conversation', conversation])?.attention ?? null) : null;
 }
+/**
+ * When the owner's running turn began to wait on an ask, or null if it is not waiting. Only an
+ * owner's current conversation can be running, and the owners that hold messages hold asks.
+ */
+function askWaitingSince(
+  sql: ReadSql,
+  kind: string,
+  owner: Fact,
+  conversationId: string | null | undefined,
+): number | null {
+  if (
+    !conversationId ||
+    owner.conversation_id !== conversationId ||
+    !messageOwnerIsLive(kind, owner)
+  )
+    return null;
+  const conversation = record(sql, ['conversation', conversationId]);
+  if (!conversation?.attention?.current?.awaiting_answer) return null;
+  // An ask raised before the record held its time waits last, because nothing says how long it has.
+  return typeof conversation.latest_ask_at === 'number'
+    ? conversation.latest_ask_at
+    : Number.MAX_SAFE_INTEGER;
+}
 function metadata(sql: ReadSql, key: Key, value: Fact, content_hash: string): ProjectionMetadata {
   const [kind, id] = key;
   const conversation_id = value.conversation_id ?? null;
@@ -155,9 +178,11 @@ function members(sql: ReadSql, key: Key, value: Fact, metadata: ProjectionMetada
           );
         }
       }
-      if (metadata.review || messages.length) {
+      const askWaiting = askWaitingSince(sql, 'ticket', value, value.conversation_id);
+      if (metadata.review || messages.length || askWaiting !== null) {
         const waiting = messages.map((message) => Number(message.waiting_since));
         if (metadata.review) waiting.push(Number(value.proposal_created_at));
+        if (askWaiting !== null) waiting.push(askWaiting);
         add(
           'review',
           null,
@@ -168,7 +193,7 @@ function members(sql: ReadSql, key: Key, value: Fact, metadata: ProjectionMetada
           sortKey(id, 'binary'),
         );
       }
-    } else if (kind === 'address' && metadata.unread) {
+    } else if (kind === 'address' && (metadata.unread || value.owner_kind !== 'ticket')) {
       const conversationId = String(value.conversation_id);
       const ownerValue = record(sql, [value.owner_kind, value.owner_id]);
       if (
@@ -178,28 +203,36 @@ function members(sql: ReadSql, key: Key, value: Fact, metadata: ProjectionMetada
         canonicalReviewAddress(sql, conversationId) === id
       ) {
         const conversation = record(sql, ['conversation', conversationId]);
-        if (!conversation) throw new Error('unread navigation conversation is absent');
-        add(
-          'review',
-          null,
-          'all',
-          'all',
-          Number(conversation.first_unread_owner_message_at),
-          sortKey('message', 'binary'),
-          sortKey(conversationId, 'binary'),
-        );
+        if (!conversation) throw new Error('navigation conversation is absent');
+        // A Manager or Chief card holds its unread messages and its ask. Either one admits it.
+        const waiting = [
+          metadata.unread ? Number(conversation.first_unread_owner_message_at) : null,
+          askWaitingSince(sql, value.owner_kind, ownerValue, conversationId),
+        ].filter((time): time is number => time !== null);
+        if (waiting.length)
+          add(
+            'review',
+            null,
+            'all',
+            'all',
+            Math.min(...waiting),
+            sortKey('message', 'binary'),
+            sortKey(conversationId, 'binary'),
+          );
       }
-      add('unread', null, 'all', 'all', -Number(!!value.current), sortKey('', 'binary'));
-      const owner: Key = [value.owner_kind, value.owner_id];
-      if (owner[0] === 'ticket')
-        add('unread', owner, 'all', 'all', -Number(!!value.current), sortKey('', 'binary'));
-      const ownerRecord = record(sql, owner);
-      if (
-        value.parent_kind != null &&
-        keyString(parent) !== keyString(owner) &&
-        !ownerRecord?.is_backlogged
-      ) {
-        add('unread', parent, 'all', 'all', -Number(!!value.current), sortKey('', 'binary'));
+      if (metadata.unread) {
+        add('unread', null, 'all', 'all', -Number(!!value.current), sortKey('', 'binary'));
+        const owner: Key = [value.owner_kind, value.owner_id];
+        if (owner[0] === 'ticket')
+          add('unread', owner, 'all', 'all', -Number(!!value.current), sortKey('', 'binary'));
+        const ownerRecord = record(sql, owner);
+        if (
+          value.parent_kind != null &&
+          keyString(parent) !== keyString(owner) &&
+          !ownerRecord?.is_backlogged
+        ) {
+          add('unread', parent, 'all', 'all', -Number(!!value.current), sortKey('', 'binary'));
+        }
       }
     }
   }

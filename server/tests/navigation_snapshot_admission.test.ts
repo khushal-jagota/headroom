@@ -25,7 +25,7 @@ const view = encodeURIComponent(
 const snapshotPath = `/api/navigation/view/snapshot?view=${view}`;
 const streamPath = `/api/navigation/view/events?view=${view}`;
 
-async function setup() {
+async function setup(asking = false) {
   let producer: SignalPublicationCoordinator | undefined;
   let navigation: ReturnType<typeof createSignalNavigationRuntime> | undefined;
   let attached = false;
@@ -46,7 +46,11 @@ async function setup() {
     tx.run("INSERT INTO agents VALUES('chief_of_staff','actual')");
   });
   producer = new SignalPublicationCoordinator({ database, require_runtime_ownership: () => {} });
-  producer.bind_runtime(() => null);
+  producer.bind_runtime(() =>
+    asking
+      ? { pending_permission_ask_ids: new Set(['ask']), pending_user_input_questions: new Map() }
+      : null,
+  );
   producer.initialize();
   navigation = createSignalNavigationRuntime(producer);
   navigation.attach();
@@ -169,5 +173,53 @@ test('actual producer revocation closes an open HTTP stream and reattachment adm
     await reader?.cancel();
     await f.app.close();
     f.navigation.close();
+  }
+});
+
+// Distinct gap: nothing admitted an ask to the Review queue before. Only the real projection
+// can show that it holds the Chief's card, keeps the unread list as it was, and drops the card
+// when the ask is gone. Reuses this fixture: no Ticket, browser or second host.
+test('a Chief with an open ask joins Review and not the unread list', async () => {
+  const members = async (f: Awaited<ReturnType<typeof setup>>, section: 'review' | 'unread') => {
+    const request = encodeURIComponent(
+      JSON.stringify({
+        projection_version: 7,
+        scope_generation: 1,
+        locale: 'en-US',
+        selected: { kind: 'chief', id: 'chief' },
+        selected_conversation_id: null,
+        review_conversation_ids: [],
+        review_skipped_keys: [],
+        review_priority_keys: [],
+        windows: [
+          {
+            section,
+            owner: null,
+            group: 'all',
+            child_filter: 'all',
+            anchor: null,
+            direction: 'after',
+            limit: 30,
+          },
+        ],
+      }),
+    );
+    const response = await f.app.inject(`/api/navigation/view/snapshot?view=${request}`);
+    expect(response.statusCode).toBe(200);
+    const snapshot = response.json() as CurrentViewSnapshot;
+    return (snapshot.content.windows[0]?.members ?? []).map((key) => `${key.kind}:${key.id}`);
+  };
+  const asking = await setup(true);
+  const quiet = await setup(false);
+  try {
+    expect(await members(asking, 'review')).toHaveLength(1);
+    expect(await members(asking, 'review')).toEqual([expect.stringMatching(/^address:/)]);
+    expect(await members(asking, 'unread')).toEqual([]);
+    expect(await members(quiet, 'review')).toEqual([]);
+  } finally {
+    await asking.app.close();
+    asking.navigation.close();
+    await quiet.app.close();
+    quiet.navigation.close();
   }
 });

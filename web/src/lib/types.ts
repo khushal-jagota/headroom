@@ -315,7 +315,7 @@ export type ManagerArtifact = {
 };
 
 export type {
-  ReviewProposalItem, NavigationReviewProposalItem, ReviewMessageItem,
+  ReviewProposalItem, NavigationReviewProposalItem, ReviewMessageItem, ReviewAskItem,
   ReviewTicketItem, NavigationReviewTicketItem, NavigationReviewItem, ReviewItem,
 } from "./navigation/contracts";
 import type { ReviewItem } from "./navigation/contracts";

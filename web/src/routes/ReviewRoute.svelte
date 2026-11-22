@@ -8,16 +8,18 @@
   import { navigationWindow, reviewProposalIdentity } from "../lib/navigation/presentation";
 
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import type { NavigationReviewItem as ReviewItem } from "../lib/types";
+  import type { NavigationReviewItem as ReviewItem, NavigationReviewTicketItem, ReviewMessageItem } from "../lib/types";
   import { viewWindow } from "../lib/navigation/views/owner";
   import ResourceState from "../components/ResourceState.svelte";
   import ReviewTicketCard from "../components/ReviewTicketCard.svelte";
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
   import ReviewMessageCard from "../components/ReviewMessageCard.svelte";
+  import ReviewAskCard from "../components/ReviewAskCard.svelte";
   import ReviewFinalState from "../components/ReviewFinalState.svelte";
   import ReviewDeck from "../components/ReviewDeck.svelte";
   import { Deck, DECK_CONTEXT, FINAL_VIEW, deckLayerIn, deckLayerOut, deckPartOut } from "../lib/review/deckMotion";
   import { reviewMessageHref, unreadOwnerMessages } from "../lib/review/messages";
+  import { reviewAskHref } from "../lib/review/asks";
   import { readConversation, readEventsAfter } from "../lib/conversation/wire";
   import {reviewHistoryKey,reviewReturnLabel,sameReviewHistory} from "../lib/review/return";
   import {shownReviewItem} from "../lib/review/shown";
@@ -54,6 +56,8 @@
   // Proposals decided on this screen. The decided card leaves at once: the queue's own
   // refresh confirms it later, and nothing waits on that read.
   let decidedProposals=$state<Record<string,boolean>>({});
+  // Asks answered on this screen: their conversation is hidden until the queue no longer holds it.
+  let answeredAsks=$state<Record<string,boolean>>({});
   // Conversations answered or marked read on this screen. Like a decided proposal, the message
   // leaves at once. This holds only until the queue's refresh arrives: from then on the queue
   // is the truth, and a newer message in the same conversation is shown.
@@ -75,19 +79,31 @@
   let layerOpening = $state(0);
 
   function itemKey(item: ReviewItem): string {
-    return item.review_item_type === 'message' ? `message:${item.conversation_id}` : `ticket:${item.ticket_id}`;
+    return item.review_item_type === 'ticket' ? `ticket:${item.ticket_id}` : `${item.review_item_type}:${item.conversation_id}`;
+  }
+  /** The messages a card holds. A Manager's or the Chief's ask is a card of its own, with none. */
+  function messagesOf(item: ReviewItem): ReviewMessageItem[] {
+    return item.review_item_type === 'message' ? [item] : item.review_item_type === 'ticket' ? item.messages : [];
+  }
+  /** The conversations a card is waiting on, for its busy state. */
+  function conversationsOf(item: ReviewItem | null): string[] {
+    if (!item) return [];
+    return item.review_item_type === 'ask' ? [item.conversation_id]
+      : [...messagesOf(item).map(message=>message.conversation_id),...(item.review_item_type==='ticket' && item.ask ? [item.ask.conversation_id] : [])];
   }
   /** The item as this screen knows it: a proposal decided here is gone from its card, and a
    *  card with nothing left is gone from the queue. */
   function undecided(item: ReviewItem): ReviewItem | null {
     if (item.review_item_type === 'message') return readMessages[item.conversation_id] ? null : item;
+    if (item.review_item_type === 'ask') return answeredAsks[item.conversation_id] ? null : item;
     const messages=item.messages.filter(message=>!readMessages[message.conversation_id]);
     const proposal=item.proposal && !decidedProposals[reviewProposalIdentity(item.proposal)] ? item.proposal : null;
-    if(!proposal && !messages.length)return null;
-    return messages.length===item.messages.length && proposal===item.proposal ? item : {...item,proposal,messages};
+    const ask=item.ask && !answeredAsks[item.ask.conversation_id] ? item.ask : null;
+    if(!proposal && !messages.length && !ask)return null;
+    return messages.length===item.messages.length && proposal===item.proposal && ask===item.ask ? item : {...item,proposal,messages,ask};
   }
 
-  let items = $derived((queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'message' ? 'address' : 'ticket') && key.id===(item.review_item_type === 'message' ? item.address_id : item.ticket_id))) : review?.items ?? [])
+  let items = $derived((queueWindow ? queueWindow.members.flatMap(key=>(review?.items ?? []).filter(item=>key.kind===(item.review_item_type === 'ticket' ? 'ticket' : 'address') && key.id===(item.review_item_type === 'ticket' ? item.ticket_id : item.address_id))) : review?.items ?? [])
     .map(undecided).filter((item): item is ReviewItem => item !== null));
   let runningWorkerCount = $derived(displayed?.runtimeCurrent ? review?.runningConversationCount ?? null : null);
   let waitingCount = $derived(displayed?.runtimeCurrent ? navigation.presentationFor(displayed).globalCounts?.review ?? null : null);
@@ -97,7 +113,7 @@
   let busyConversations = $state<Record<string,boolean>>({});
   // Keep a painted conversation through delivery uncertainty and its exit. Owner
   // state and canonical address still govern admission, even for a retained draft.
-  let heldCard = $state<ReviewItem|null>(null);
+  let heldCard = $state<NavigationReviewTicketItem|ReviewMessageItem|null>(null);
   // The card on screen. Chosen when the previous card leaves, then kept by id.
   // A refresh that inserts older work leaves this card in place.
   let pinnedKey=$state<string|null>(null);
@@ -137,7 +153,7 @@
         const held=heldCard.messages.filter(messageEligible);
         if(held.length) {
           const fresh=current?.review_item_type==='ticket' ? current : null;
-          return {...(fresh ?? heldCard),proposal:fresh?.proposal ?? null,
+          return {...(fresh ?? heldCard),proposal:fresh?.proposal ?? null,ask:fresh?.ask ?? null,
             messages:[...(fresh?.messages ?? []),...held.filter(message=>!fresh?.messages.some(row=>row.conversation_id===message.conversation_id))]};
         }
       }
@@ -145,7 +161,7 @@
     const waiting=items.filter(item=>!skipped[itemKey(item)]);
     return shownReviewItem(waiting,pinnedKey,itemKey).item;
   });
-  let messageBusy = $derived(currentItem?.review_item_type==='message' ? Boolean(busyConversations[currentItem.conversation_id]) : Boolean(currentItem?.messages.some(message=>busyConversations[message.conversation_id])));
+  let messageBusy = $derived(conversationsOf(currentItem).some(id=>busyConversations[id]));
   // Only a completed last window is terminal. An exhausted intermediate window
   // keeps the existing pagination path, and loading never admits the final screen.
   let terminalWindow = $derived(Boolean(reviewReady && displayed?.runtimeCurrent && queueWindow
@@ -156,7 +172,7 @@
   });
   $effect(()=>{
     if (!reviewReady || finalLatched) return;
-    if(!heldCard && currentItem && (currentItem.review_item_type==='message' ? messageEligible(currentItem) : currentItem.messages.some(messageEligible)))heldCard=currentItem;
+    if(!heldCard && currentItem && currentItem.review_item_type!=='ask' && (currentItem.review_item_type==='message' ? messageEligible(currentItem) : currentItem.messages.some(messageEligible)))heldCard=currentItem;
     else if(heldCard?.review_item_type==='ticket' && currentItem?.review_item_type==='ticket' && heldCard.ticket_id===currentItem.ticket_id
       && currentItem.messages.some(message=>!heldCard || heldCard.review_item_type!=='ticket' || !heldCard.messages.some(held=>held.conversation_id===message.conversation_id && held.address_id===message.address_id)))heldCard=currentItem;
     if(heldCard && !(heldCard.review_item_type==='message' ? messageEligible(heldCard) : heldCard.messages.some(messageEligible)))heldCard=null;
@@ -211,7 +227,8 @@
 
   function openTicket(item: ReviewItem): void {
     if(messageBusy)return;
-    window.location.hash = item.review_item_type === "message" ? reviewMessageHref(item) : workspaceAddress({ kind: "ticket", id: item.ticket_id });
+    window.location.hash = item.review_item_type === "ticket" ? workspaceAddress({ kind: "ticket", id: item.ticket_id })
+      : item.review_item_type === "ask" ? reviewAskHref(item) : reviewMessageHref(item);
   }
 
   // The card says a decision has left the queue — approved, sent back, or already
@@ -219,7 +236,7 @@
   function messageResolved(conversationId:string):void {
     const item=currentItem;
     const leaves=item?.review_item_type==='message' ? item.conversation_id===conversationId
-      : item?.review_item_type==='ticket' && !item.proposal && item.messages.every(message=>message.conversation_id===conversationId);
+      : item?.review_item_type==='ticket' && !item.proposal && !item.ask && item.messages.every(message=>message.conversation_id===conversationId);
     // While an artifact is open only its bar can resolve a message. If that finishes the item,
     // the artifact leaves with it. If part of the card remains, the artifact drops onto it.
     if (heldFile) { deck.layerExit=leaves ? 'left' : 'drop'; artifact.close(); }
@@ -250,12 +267,31 @@
   }
   // An answered message is hidden until the queue itself no longer holds its conversation.
   $effect(()=>{
-    const held=new Set((review?.items ?? []).flatMap(item=>item.review_item_type==='message' ? [item.conversation_id] : item.messages.map(message=>message.conversation_id)));
+    const held=new Set((review?.items ?? []).flatMap(item=>messagesOf(item).map(message=>message.conversation_id)));
     untrack(()=>{
       const gone=Object.keys(readMessages).filter(id=>!held.has(id));
       if(gone.length)readMessages=Object.fromEntries(Object.entries(readMessages).filter(([id])=>held.has(id)));
     });
   });
+  // An answered ask is hidden until the queue no longer holds its conversation.
+  $effect(()=>{
+    const held=new Set((review?.items ?? []).flatMap(item=>item.review_item_type==='ask' ? [item.conversation_id] : item.review_item_type==='ticket' && item.ask ? [item.ask.conversation_id] : []));
+    untrack(()=>{
+      const gone=Object.keys(answeredAsks).filter(id=>!held.has(id));
+      if(gone.length)answeredAsks=Object.fromEntries(Object.entries(answeredAsks).filter(([id])=>held.has(id)));
+    });
+  });
+  /** Nothing waits in the conversation any more. The ask leaves its card, and the card leaves with it if it was all there was. */
+  function askResolved(conversationId:string):void {
+    const item=currentItem;
+    const leaves=item?.review_item_type==='ask' ? item.conversation_id===conversationId
+      : item?.review_item_type==='ticket' && !item.proposal && item.messages.length===0 && item.ask?.conversation_id===conversationId;
+    if (heldFile) { deck.layerExit=leaves ? 'left' : 'drop'; artifact.close(); }
+    if(item && leaves)advancePast(item);
+    answeredAsks={...answeredAsks,[conversationId]:true};
+    busyConversations={...busyConversations,[conversationId]:false};
+    void navigation.owner.recover().catch(()=>undefined);
+  }
   function messageBusyChanged(busy:boolean,conversationId:string):void {
     if(Boolean(busyConversations[conversationId])!==busy)busyConversations={...busyConversations,[conversationId]:busy};
   }
@@ -271,8 +307,8 @@
     const item=currentItem;
     // A decision made under the artifact ends it. If it finished the item, the artifact leaves
     // with it. If the card stays for its messages, the artifact drops onto what remains.
-    if (heldFile) { deck.layerExit=item?.review_item_type==='ticket' && item.messages.length===0 ? 'left' : 'drop'; artifact.close(); }
-    if(item?.review_item_type==='ticket' && item.proposal && reviewProposalIdentity(item.proposal)===identity && item.messages.length===0)advancePast(item);
+    if (heldFile) { deck.layerExit=item?.review_item_type==='ticket' && item.messages.length===0 && !item.ask ? 'left' : 'drop'; artifact.close(); }
+    if(item?.review_item_type==='ticket' && item.proposal && reviewProposalIdentity(item.proposal)===identity && item.messages.length===0 && !item.ask)advancePast(item);
     decidedProposals = { ...decidedProposals, [identity]: true };
     void navigation.owner.recover().catch(() => undefined);
   }
@@ -300,7 +336,7 @@
   // What is on screen, named by what moves it: an item, or the final screen. A change inside the
   // same view, such as a late refresh, is not a move.
   let viewKey = $derived(showFinal ? FINAL_VIEW : currentItem ? itemKey(currentItem) : 'none');
-  let partsKey = $derived(currentItem?.review_item_type==='ticket' ? JSON.stringify([Boolean(currentItem.proposal),currentItem.messages.map(message=>message.conversation_id)]) : '');
+  let partsKey = $derived(currentItem?.review_item_type==='ticket' ? JSON.stringify([Boolean(currentItem.proposal),currentItem.messages.map(message=>message.conversation_id),currentItem.ask?.conversation_id ?? null]) : '');
   // Runs before the screen is redrawn, while it still shows what is about to leave.
   $effect.pre(() => {
     const view=viewKey;
@@ -321,10 +357,11 @@
   let barMessage = $derived.by(() => {
     if (!artifact.shown || !currentItem) return null;
     if (currentItem.review_item_type === 'message') return currentItem;
+    if (currentItem.review_item_type === 'ask') return null;
     const origin = artifact.origin;
     const named = origin?.startsWith('message:') ? currentItem.messages.find(message => `message:${message.conversation_id}` === origin) : undefined;
     if (named) return named;
-    return currentItem.proposal ? null : currentItem.messages[0] ?? null;
+    return currentItem.proposal || currentItem.ask ? null : currentItem.messages[0] ?? null;
   });
 
   // Global review shortcuts (approved addition): s = skip, o = open ticket,
@@ -380,6 +417,10 @@
   <div class="review-keys"><kbd>⌘↩</kbd> send &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>O</kbd> open</div>
 {/snippet}
 
+{#snippet askKeys()}
+  <div class="review-keys"><kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>O</kbd> open</div>
+{/snippet}
+
 {#snippet proposalKeys()}
   <div class="review-keys">
     <kbd>⌘↩</kbd> approve &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>O</kbd> open ticket
@@ -431,10 +472,22 @@
                 <ReviewMessageCard item={message} onSkip={()=>skip(message)} onResolved={()=>messageResolved(message.conversation_id)}
                   onBusy={messageBusyChanged} footer={messageKeys}/>
               {/key}
+            {:else if currentItem.review_item_type === "ask"}
+              {@const ask = currentItem}
+              {#key itemKey(ask)}
+                <ReviewAskCard item={ask} onSkip={()=>skip(ask)} onResolved={()=>askResolved(ask.conversation_id)}
+                  onBusy={messageBusyChanged} footer={askKeys}/>
+              {/key}
             {:else}
               {@const ticket = currentItem}
               {#key ticket.ticket_id}
-                <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0}>
+                <ReviewTicketCard item={ticket} onSkip={()=>skip(ticket)} busy={messageBusy} inlineDecision={Boolean(ticket.proposal) || ticket.messages.length > 0 || Boolean(ticket.ask)}>
+                  {#if ticket.ask}
+                    {@const ask = ticket.ask}
+                    <div data-deck-part out:deckPartOut={{ deck }}>
+                      <ReviewAskCard item={ask} embedded onSkip={()=>skip(ticket)} onResolved={()=>askResolved(ask.conversation_id)} onBusy={messageBusyChanged}/>
+                    </div>
+                  {/if}
                   {#if ticket.proposal}
                     {@const proposal = ticket.proposal}
                     <div data-deck-part out:deckPartOut={{ deck }}>{@render proposalCard(proposal, false)}</div>
@@ -445,7 +498,7 @@
                         onResolved={()=>messageResolved(message.conversation_id)} onBusy={messageBusyChanged}/>
                     </div>
                   {/each}
-                  {#if ticket.proposal}{@render proposalKeys()}{:else}{@render messageKeys()}{/if}
+                  {#if ticket.proposal}{@render proposalKeys()}{:else if ticket.messages.length}{@render messageKeys()}{:else}{@render askKeys()}{/if}
                 </ReviewTicketCard>
               {/key}
             {/if}

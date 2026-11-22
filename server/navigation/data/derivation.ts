@@ -347,6 +347,12 @@ export function derive(
         "SELECT created_at FROM conversation_events WHERE conversation_id=? AND kind='message_to_owner' AND sequence>? ORDER BY sequence LIMIT 1",
         [id, c.owner_read_through_sequence],
       )?.created_at ?? null;
+    // The newest ask is the one a running turn is stopped on, so its time is when it began to wait.
+    value.latest_ask_at =
+      sql.get<{ created_at: number }>(
+        "SELECT created_at FROM conversation_events WHERE conversation_id=? AND kind IN ('permission_asked','user_input_requested') ORDER BY sequence DESC LIMIT 1",
+        [id],
+      )?.created_at ?? null;
     value.error_acknowledged_through_sequence =
       sql.get<{ through_sequence: number }>(
         'SELECT through_sequence FROM conversation_error_acknowledgements WHERE conversation_id=?',

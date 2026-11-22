@@ -598,7 +598,7 @@ describe('shared Review and runtime counts',()=>{
       {kind:'address',id:'history',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'historical',current:false,parent_kind:'chief',parent_id:'chief'}}];
     try {
       const initial=records.find(record=>record.kind==='conversation' && record.id==='conversation');
-      if (initial?.kind==='conversation') initial.value.attention.current!.signal.working=false;
+      if (initial?.kind==='conversation') {initial.value.attention.current!.signal.working=false;initial.value.attention.current!.awaiting_answer=false;}
       const manager=records.find(record=>record.kind==='conversation' && record.id==='manager-current');
       if (manager?.kind==='conversation') manager.value.attention.current!.signal.working=false;
       adapter.publishSnapshot(currentSnapshot({...continuity,records}),'counts');
@@ -606,7 +606,7 @@ describe('shared Review and runtime counts',()=>{
       expect(navigationWorkingAgentCount(view)).toBe(0);
       expect(navigationReviewPresentation(view)).toMatchObject({runningConversationCount:0,exactOutClaimCount:2,
         items:[{review_item_type:'ticket',ticket_id:'a',messages:[{conversation_id:'historical'}]},{ticket_id:'earliest',proposal:{field:'implementation',proposal_field:'plan'}},{ticket_id:'c'}]});
-      const active=conversation('conversation',0,false);active.value.attention.current!.signal.working=true;
+      const active=conversation('conversation',0,false);active.value.attention.current!.signal.working=true;active.value.attention.current!.awaiting_answer=false;
       const historical=conversation('historical');historical.value.attention.current!.signal.working=true;
       adapter.publishBatch(envelope({...continuity,base_revision:'0',revision:'1',upserts:[active,historical,conversation('manager-current')],deletes:[]}),encodeCursor({...continuity,revision:'1'}),'counts-batch');
       view=knowledge.accept(adapter.getPublication()!);
