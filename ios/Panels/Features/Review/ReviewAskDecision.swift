@@ -50,8 +50,9 @@ extension APIClient {
     var error: String?
     /// Chosen labels per question.
     var selected: [String: [String]] = [:]
-    /// Words per question.
-    var words: [String: String] = [:]
+    /// The answer in Khushal's own words, in the shared composer. It answers the first
+    /// question that takes words, and its draft is kept per conversation.
+    let composer = ConversationModel()
     private var loading = false
 
     var permission: ReviewAskState.Permission? { state?.pendingPermissionAsk }
@@ -67,8 +68,12 @@ extension APIClient {
         return options.first { $0.optionKind == prefix + "_once" } ?? options.first
     }
 
+    /// The question the composer's words answer.
+    var wordsQuestion: ReviewAskState.Question? { userInput?.questions.first { $0.takesWords } }
+
     func load(item: ReviewItem, api: APIClient) async {
         guard let id = item.conversationId, !loading else { return }
+        if let owner = item.owner { composer.restore(owner: owner, api: api, draftID: "review-ask:\(id)", recoverConversationID: false) }
         if state == nil, let saved = api.savedReviewAsk(id) { accept(saved) }
         loading = true; defer { loading = false }
         do {
@@ -84,8 +89,8 @@ extension APIClient {
         }
     }
     private func accept(_ read: ReviewAskState) {
-        // A new question starts with an empty draft.
-        if read.pendingUserInput?.requestId != state?.pendingUserInput?.requestId { selected = [:]; words = [:] }
+        // A new question starts with nothing chosen.
+        if read.pendingUserInput?.requestId != state?.pendingUserInput?.requestId { selected = [:] }
         state = read
         loaded = true
     }
@@ -96,17 +101,20 @@ extension APIClient {
             selected[question.questionId] = current.contains(label) ? current.filter { $0 != label } : current + [label]
         } else {
             selected[question.questionId] = [label]
-            words[question.questionId] = ""
+            // One answer: a choice replaces the words, as on the web.
+            if question.questionId == wordsQuestion?.questionId { composer.draft = "" }
         }
     }
-    func setWords(_ text: String, for question: ReviewAskState.Question) {
-        words[question.questionId] = text
-        if !question.multiSelect, !text.isEmpty { selected[question.questionId] = [] }
+    /// Words typed for a one-answer question replace its choice.
+    func wordsChanged() {
+        guard let question = wordsQuestion, !question.multiSelect,
+              !composer.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        selected[question.questionId] = []
     }
     /// What one question answers, as the web's userInputAnswerFor gives it.
     func answers(for question: ReviewAskState.Question) -> [String] {
         let chosen = selected[question.questionId] ?? []
-        let own = (words[question.questionId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let own = question.questionId == wordsQuestion?.questionId ? composer.draft.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         if own.isEmpty { return chosen }
         return question.multiSelect ? chosen + [own] : [own]
     }
@@ -122,7 +130,9 @@ extension APIClient {
         let questions = input.questions.map { question in
             AskAnswer.Question(id: question.questionId, prompt: question.question, answers: answers(for: question), labels: answers(for: question))
         }
-        return enqueue(AskAnswer(conversationID: id, request: .userInput(requestID: input.requestId), questions: questions), owner: owner, api: api)
+        guard enqueue(AskAnswer(conversationID: id, request: .userInput(requestID: input.requestId), questions: questions), owner: owner, api: api) else { return false }
+        composer.draft = ""
+        return true
     }
     /// Saves a permission answer with one of the ask's own options.
     func answerPermission(_ option: ReviewAskState.PermissionOption, item: ReviewItem, api: APIClient) -> Bool {

@@ -5,6 +5,7 @@ enum AttachChoice { case picture, camera, file, command }
 /// What the composer's plus button offers. The choice is handed back and the sheet closes.
 struct AttachSheet: View {
     let cameraAvailable: Bool
+    var commands = true
     let choose: (AttachChoice) -> Void
     @State private var action = SheetAction()
     @Environment(\.dismiss) private var dismiss
@@ -16,7 +17,7 @@ struct AttachSheet: View {
                 if cameraAvailable { row("Camera", systemImage: "camera", .camera) }
                 row("Choose File", systemImage: "doc", .file)
             }
-            Section { row("Command", systemImage: "slash.circle", .command) }
+            if commands { Section { row("Command", systemImage: "slash.circle", .command) } }
         }.presentationDetents([.medium])
     }
 

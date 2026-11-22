@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import Panels
 
 /// No live writes. The real adapter runs against URLProtocol's in-memory transport.
@@ -41,7 +42,7 @@ import XCTest
         try assertSharedDecisionBody(legacyShape, named: name)
     }
     private func setupDecision() async throws -> (ReviewDecision, APIClient, ReviewItem) {
-        for kind in ["cache", "draft", "outbox"] {
+        for kind in ["cache", "draft", "attachments", "outbox"] {
             for entry in try LocalStore.shared.records(server: "https://review.invalid", kind: kind) {
                 try LocalStore.shared.remove(server: "https://review.invalid", kind: kind, id: entry.key.components(separatedBy: "\u{1f}").last!)
             }
@@ -288,6 +289,32 @@ import XCTest
         XCTAssertNil(replacement.error, "A replacement proposal must not inherit an old decision error")
         XCTAssertEqual(replacement.revisionDraft, "")
 
+    }
+
+    /// Risk: a refused decision's card comes back without the note and pictures Khushal
+    /// wrote, as when its proposal no longer waits and the card is rebuilt from the refusal.
+    func testRefusedDecisionBringsBackItsNoteAndAttachments() async throws {
+        let (decision, api, item) = try await setupDecision()
+        let proposal = try XCTUnwrap(decision.proposal)
+        decision.revisionDraft = "Please split the screens"
+        let attached = await decision.noteAttachments.attach(Data("Notes for the worker".utf8), type: .plainText, fileName: "notes.txt")
+        XCTAssertTrue(attached)
+        ReviewStub.state.failWrites = true
+        let saved = await decision.sendBack(api: api, message: decision.revisionDraft)
+        XCTAssertTrue(saved)
+        await settle(api)
+        let work = try XCTUnwrap(Outbox.shared.entries("https://review.invalid").last)
+        XCTAssertEqual(work.state, .failed)
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
+        XCTAssertEqual(command.attachments?.map(\.fileName), ["notes.txt"], "The pictures and files travel in the frozen decision")
+        // The refused card, rebuilt from the refusal alone.
+        let refused = ReviewItem(reviewItemType: "proposal", ticketId: item.ticketId, field: item.field, title: item.title,
+                                 waitingSince: proposal.createdAt, proposalRevision: proposal.revision)
+        let restored = ReviewDecision()
+        restored.restoreRefusedNote(api: api, item: refused)
+        XCTAssertEqual(restored.revisionDraft, "Please split the screens")
+        XCTAssertEqual(restored.noteAttachments.attachments.map(\.fileName), ["notes.txt"])
+        XCTAssertEqual(restored.noteAttachments.attachments.first?.mediaType, "text/plain")
     }
 
     func testRestoredSendBackCarriesOriginalRevisionAndHoldsServerRefusal() async throws {

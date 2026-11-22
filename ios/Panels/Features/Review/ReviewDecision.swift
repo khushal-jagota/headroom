@@ -54,6 +54,9 @@ struct DecisionGuidance: Sendable, Equatable {
     private var draftServer: String?
     private var draftIdentity: String?
     var revisionDraftID: String? { draftIdentity.map { $0 + ":guidance" } }
+    /// The note's pictures and files. The shared composer model prepares and keeps them
+    /// beside the note's words, under the same draft identity.
+    let noteAttachments = ConversationModel()
     private var restoringDrafts = false
     private func persistDraft(_ text: String, old: String, suffix: String) {
         guard !restoringDrafts, text != old, let server = draftServer, let id = draftIdentity else { return }
@@ -65,16 +68,26 @@ struct DecisionGuidance: Sendable, Equatable {
         restoringDrafts = true
         draftServer = LocalStore.server(api.baseURL); draftIdentity = id
         revisionDraft = LocalStore.shared.draft(server: draftServer!, id: id + ":guidance") ?? ""
+        noteAttachments.restore(owner: .ticket(ticket.id), api: api, draftID: id + ":guidance", recoverConversationID: false)
         restoringDrafts = false
     }
-    /// A refused decision's card shows its saved note even when its proposal no longer waits.
-    func restoreRefusedNote(server: String, item: ReviewItem) {
+    /// A refused decision's card shows its saved note and attachments even when its
+    /// proposal no longer waits.
+    func restoreRefusedNote(api: APIClient, item: ReviewItem) {
         guard draftIdentity == nil, let revision = item.proposalRevision else { return }
         let id = "review:\(item.ticketId):\(item.field):\(item.waitingSince):\(revision)"
+        let server = LocalStore.server(api.baseURL)
         restoringDrafts = true
         draftServer = server; draftIdentity = id
         revisionDraft = LocalStore.shared.draft(server: server, id: id + ":guidance") ?? ""
+        noteAttachments.restore(owner: .ticket(item.ticketId), api: api, draftID: id + ":guidance", recoverConversationID: false)
         restoringDrafts = false
+    }
+    /// The note's prepared pictures and files, ready to freeze with a decision.
+    private func preparedAttachments() async -> [ConversationSend.Piece]? {
+        do { return try await noteAttachments.preparedContent().filter { $0.piece != "text" } }
+        catch is CancellationError { error = "A photo is still being prepared."; return nil }
+        catch { self.error = error.localizedDescription; return nil }
     }
     func refreshVoiceDraft() {
         guard let server = draftServer, let id = revisionDraftID else { return }
@@ -178,17 +191,23 @@ struct DecisionGuidance: Sendable, Equatable {
         let body = ReviewApproval(expectedProposalRevision: proposal.revision,
                                   editedBody: nil,
                                   nextCeiling: finalApproval ? nil : ceiling, nextHolder: finalApproval ? nil : holder)
-        return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
-            ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text, draftID: guidance?.draftID, decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
-            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
+        guard let attachments = await preparedAttachments(), ready else { return false }
+        var work = PendingWork(id: UUID().uuidString, created: .now, kind: .approval,
+            ticketID: ticket.id, proposal: proposal, approval: body, guidance: guidance?.text,
+            draftID: guidance?.draftID ?? (attachments.isEmpty ? nil : revisionDraftID), decisionDraftUpdatedAt: guidance?.draftUpdatedAt,
+            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized)
+        work.decisionAttachments = attachments.isEmpty ? nil : attachments
+        return enqueue(work, api: api)
     }
 
     func sendBack(api: APIClient, message: String) async -> Bool {
         guard ready, canReturn, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let ticket else { return false }
-        guard let proposal else { return false }
-        return enqueue(PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
+        guard let proposal, let attachments = await preparedAttachments(), ready else { return false }
+        var work = PendingWork(id: UUID().uuidString, created: .now, kind: .sendBack,
             ticketID: ticket.id, proposal: proposal, guidance: message, draftID: revisionDraftID,
-            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized), api: api)
+            ticketTitle: ticket.title, proposalFieldLabel: manifest?.fields.first { $0.id == proposal.field }?.label ?? proposal.field.capitalized)
+        work.decisionAttachments = attachments.isEmpty ? nil : attachments
+        return enqueue(work, api: api)
     }
 
     private func enqueue(_ work: PendingWork, api: APIClient) -> Bool {

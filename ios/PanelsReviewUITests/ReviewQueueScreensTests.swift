@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// One-off review walk, outside the permanent suite: every Review card kind and the four
 /// summary states on the real screen, each captured by the stub through simctl. Run with
@@ -46,6 +47,20 @@ final class ReviewQueueScreensTests: XCTestCase {
         let approve = app.buttons["review.approve"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["decision.reviewer"].waitForExistence(timeout: 8))
+        // A note with a pasted picture; both are kept with the proposal's draft.
+        let note = app.textFields["review.revision"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 8))
+        note.tap(); note.typeText("Keep the summary's four states exactly as approved.")
+        UIPasteboard.general.image = UIGraphicsImageRenderer(size: CGSize(width: 90, height: 60)).image { context in
+            UIColor.systemTeal.setFill(); context.fill(CGRect(x: 0, y: 0, width: 90, height: 60))
+        }
+        note.press(forDuration: 1.2)
+        XCTAssertTrue(app.menuItems["Paste"].waitForExistence(timeout: 5))
+        app.menuItems["Paste"].tap()
+        let chips = app.descendants(matching: .any)["conversation-attachments"]
+        XCTAssertTrue(chips.waitForExistence(timeout: 8))
+        app.scrollViews["review-content"].coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.2)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         try await shot("card-proposal")
         // The Ticket page shares the proposal control; Back returns to the same card.
         app.buttons["review.openTicket"].tap()
@@ -64,6 +79,14 @@ final class ReviewQueueScreensTests: XCTestCase {
         XCTAssertFalse(app.buttons["review.ask.send"].isEnabled, "Nothing chosen yet")
         app.buttons["review.ask.option.Build 15"].tap()
         XCTAssertTrue(app.buttons["review.ask.send"].isEnabled)
+        // Words go in the shared composer docked below; they replace the one choice.
+        let words = app.textFields["conversation-input"].firstMatch
+        XCTAssertTrue(words.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Add attachment or command"].exists, "An answer takes no pictures or files")
+        words.tap(); words.typeText("Build 15 today, 16 next week")
+        XCTAssertTrue(app.buttons["review.ask.send"].isEnabled)
+        app.scrollViews["review-content"].coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.2)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         try await shot("card-ask-question")
         skip.tap()
         let permission = app.staticTexts["Run the tests on the Mac simulator?"]
@@ -105,6 +128,9 @@ final class ReviewQueueScreensTests: XCTestCase {
         let refusal = app.descendants(matching: .any)["review.refusal"]
         XCTAssertTrue(refusal.waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["Rebuild the iPhone Review queue"].exists)
+        // The refused card brings back its note and its picture.
+        XCTAssertEqual(note.value as? String, "Keep the summary's four states exactly as approved.")
+        XCTAssertTrue(chips.waitForExistence(timeout: 8))
         try await shot("card-refused-decision")
         skip.tap()
 

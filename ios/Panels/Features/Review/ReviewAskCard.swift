@@ -49,6 +49,13 @@ struct ReviewAskCard: View {
             }
         } dock: {
             ReviewDock {
+                // Words go in the app's shared composer; its send answers, like Send answer.
+                if let question = decision.wordsQuestion, let owner = item.owner {
+                    ConversationComposer(model: decision.composer, owner: owner, reviewReply: true,
+                                         placeholder: question.options.isEmpty ? "Type your answer…" : "Or answer in your own words…",
+                                         sendReply: { sendAnswer() }, attaches: false)
+                        .disabled(finished || !decision.available)
+                }
                 ReviewButtonRow {
                     Button("Skip") { Haptics.selection(); onSkip(nil) }
                         .buttonStyle(ReviewButtonStyle()).disabled(finished).accessibilityIdentifier("review.skip")
@@ -73,6 +80,7 @@ struct ReviewAskCard: View {
             if decision.gone { finish() }
         }
         .onChange(of: decision.gone) { _, gone in if gone, isActive { finish() } }
+        .onChange(of: decision.composer.draft) { _, _ in decision.wordsChanged() }
     }
 
     private func askCard<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -123,22 +131,14 @@ struct ReviewAskCard: View {
                 .accessibilityAddTraits(chosen ? .isSelected : [])
                 .accessibilityIdentifier("review.ask.option.\(option.label)")
             }
-            if question.takesWords {
-                TextField(question.options.isEmpty ? "Type your answer…" : "Or answer in your own words…",
-                          text: Binding(get: { decision.words[question.questionId] ?? "" }, set: { decision.setWords($0, for: question) }),
-                          axis: .vertical)
-                    .lineLimit(1...5).panelsScaledFont(size: 15).foregroundStyle(PanelsTheme.Web.strong)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                    .background(PanelsTheme.Web.composer, in: RoundedRectangle(cornerRadius: 12))
-                    .disabled(finished || !decision.available)
-                    .accessibilityIdentifier("review.ask.words")
-            }
         }
     }
 
-    private func sendAnswer() {
+    @discardableResult private func sendAnswer() -> Bool {
         Haptics.light()
-        if decision.sendAnswer(item: item, api: store.client) { Haptics.success(); finish() } else { ReviewStyle.error() }
+        guard decision.sendAnswer(item: item, api: store.client) else { ReviewStyle.error(); return false }
+        Haptics.success(); finish()
+        return true
     }
     private func answer(_ option: ReviewAskState.PermissionOption?) {
         guard let option else { return }

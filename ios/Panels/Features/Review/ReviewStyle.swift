@@ -203,6 +203,8 @@ struct DecisionNoteActions: View {
     var error: String? = nil
     var noteEnabled = true
     var accessory: AnyView? = nil
+    /// The note's pictures and files, where the note takes them (Review).
+    var attachments: ConversationModel? = nil
     var focusRequest = 0
     var blurRequest = 0
     /// Review's Skip; the Ticket page has none.
@@ -212,19 +214,36 @@ struct DecisionNoteActions: View {
     let onSendBack: () -> Void
     @Environment(\.screenTextEntry) private var textEntry
     @State private var inputID = UUID()
+    @State private var attachOpen = false
     private var focused: Bool { textEntry?.focus.wrappedValue == inputID }
     var body: some View {
         ReviewDock {
-            HStack(alignment: .bottom, spacing: 4) {
-                TextField("Add a note for the worker…", text: $note, axis: .vertical)
-                    .lineLimit(1...5).panelsScaledFont(size: 15)
-                    .foregroundStyle(PanelsTheme.Web.strong)
-                    .frame(minHeight: 32).padding(.vertical, 5)
-                    .disabled(!noteEnabled || busyAction != nil)
-                    .accessibilityIdentifier("review.revision")
-                    .screenTextInput(inputID)
-                if let accessory { accessory }
-            }.padding(.leading, 12).padding(.trailing, 4).padding(.vertical, 1)
+            VStack(alignment: .leading, spacing: 6) {
+                if let attachments, !attachments.attachments.isEmpty || attachments.preparingPhoto {
+                    ConversationAttachmentTray(pieces: attachments.attachments, preparingPhotoNames: attachments.preparingPhotos.values.sorted(),
+                        preparing: attachments.preparingDraftPhotos, remove: noteEnabled && busyAction == nil ? { index in
+                            guard attachments.attachments.indices.contains(index) else { return }
+                            attachments.attachments.remove(at: index)
+                        } : nil)
+                        .padding(.top, 6)
+                }
+                if let error = attachments?.error {
+                    Text(error).panelsScaledFont(size: 12.5).foregroundStyle(PanelsTheme.Web.error)
+                }
+                HStack(alignment: .bottom, spacing: 4) {
+                    if attachments != nil {
+                        Button { textEntry?.endEditing(); attachOpen = true } label: {
+                            Image(systemName: "plus").font(.system(size: 16, weight: .medium)).frame(width: 40, height: 40).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.secondary)
+                        .disabled(!noteEnabled || busyAction != nil)
+                        .accessibilityLabel("Add a picture or file")
+                        .accessibilityIdentifier("review.attach")
+                    }
+                    noteField
+                    if let accessory { accessory }
+                }
+            }.padding(.leading, attachments == nil ? 12 : 2).padding(.trailing, 4).padding(.vertical, 1)
                 .background(PanelsTheme.Web.composer, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(focused ? PanelsTheme.Web.accent.opacity(0.6) : Color.clear, lineWidth: 1))
             ReviewButtonRow {
@@ -256,11 +275,39 @@ struct DecisionNoteActions: View {
             }
         }
         .foregroundStyle(PanelsTheme.Web.text)
+        .modifier(NoteAttachmentPickers(isPresented: $attachOpen, model: attachments))
         .onChange(of: noteEnabled) { _, enabled in if !enabled { textEntry?.endEditing() } }
         .onChange(of: focusRequest) { _, _ in textEntry?.requestFocus(inputID) }
         .onChange(of: blurRequest) { _, _ in textEntry?.endEditing() }
     }
+    private var noteField: some View {
+        TextField("Add a note for the worker…", text: $note, axis: .vertical)
+            .lineLimit(1...5).panelsScaledFont(size: 15)
+            .foregroundStyle(PanelsTheme.Web.strong)
+            .frame(minHeight: 32).padding(.vertical, 5)
+            .disabled(!noteEnabled || busyAction != nil)
+            .accessibilityIdentifier("review.revision")
+            .modifier(NotePaste(model: attachments))
+            .screenTextInput(inputID)
+    }
     private func actionLabel(_ title: String, active: Bool) -> some View {
         Text(title).opacity(active ? 0 : 1).overlay { if active { RingSpinner(size: .compact, color: PanelsTheme.Web.text) } }
+    }
+}
+
+/// The shared Attach sheet and pickers, where the note takes attachments.
+private struct NoteAttachmentPickers: ViewModifier {
+    @Binding var isPresented: Bool
+    let model: ConversationModel?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let model { content.attachmentPickers(isPresented: $isPresented, model: model) } else { content }
+    }
+}
+
+/// Pasted pictures join the note, as they join a message.
+private struct NotePaste: ViewModifier {
+    let model: ConversationModel?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let model { content.modifier(ImagePaste(model: model)) } else { content }
     }
 }

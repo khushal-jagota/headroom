@@ -23,7 +23,6 @@ struct ReviewProposalCard: View {
     @State private var resolvedAfterDismiss = false
     @State private var approvalGuidance: DecisionGuidance?
     @State private var appeared = false
-    private var server: String { LocalStore.server(store.baseURL) }
     private var recap: String? { decision.ticket?.recap ?? store.presentation?.ticketsById[item.ticketId]?.recap }
     /// A notice or a refusal of a proposal that no longer waits turns the decision off.
     private var actionable: Bool { notice == nil && decision.ready }
@@ -75,7 +74,7 @@ struct ReviewProposalCard: View {
         .navigationDemand("review.card:\(item.id)", selected: ViewOwner(kind: "ticket", id: item.ticketId))
         .task(id: "\(store.baseURL)|\(store.connectionSession)|\(isActive)") {
             guard isActive else { return }
-            if refusal != nil { decision.restoreRefusedNote(server: server, item: item) }
+            if refusal != nil { decision.restoreRefusedNote(api: store.client, item: item) }
             let firstAppearance = !appeared; appeared = true
             if firstAppearance, decision.proposal != nil, decision.loadedStamp == store.ticketStamp(item.ticketId) { return }
             guard sheet == nil, busyAction == nil, notice == nil else { return }
@@ -182,6 +181,7 @@ private struct ReviewProposalDock: View {
                                 }
                                     .buttonStyle(.plain).foregroundStyle(PanelsTheme.Web.secondary)
                                     .accessibilityLabel("Record a note").disabled(!ready || decision.busy || voice.phase != .idle)),
+                                attachments: decision.noteAttachments,
                                 focusRequest: focusRequest, blurRequest: blurRequest,
                                 onSkip: onSkip, skipEnabled: skipEnabled,
                                 onApprove: onApprove, onSendBack: { Task { await onReturn() } })

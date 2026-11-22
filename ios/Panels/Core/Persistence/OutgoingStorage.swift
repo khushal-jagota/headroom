@@ -371,7 +371,8 @@ import SwiftData
         }
     }
     func settle(server: String, id: String, state: PendingWork.State, note: String = "", conversationID: String? = nil, now: Date = .now,
-                decisionDraft: (id: String, text: String, updated: Date)? = nil, restoreRejectedPhotoDraft: Bool = false) throws {
+                decisionDraft: (id: String, text: String, updated: Date)? = nil,
+                decisionAttachments: (id: String, pieces: [ConversationSend.Piece])? = nil, restoreRejectedPhotoDraft: Bool = false) throws {
         try transaction(server) {
             guard let row = try metadata(server, id) else { throw StoreError.missingWork }
             if restoreRejectedPhotoDraft, let work = try work(server: server, id: id) {
@@ -380,6 +381,11 @@ import SwiftData
             if state == .sent, let decisionDraft,
                let draft = try raw(server, "draft", decisionDraft.id), draft.payload == Data(decisionDraft.text.utf8), draft.updatedAt == decisionDraft.updated {
                 draft.payload = Data(); draft.updatedAt = .now
+            }
+            // An applied decision's pictures and files leave the note, unless they changed since.
+            if state == .sent, let decisionAttachments, let saved = try raw(server, "attachments", decisionAttachments.id),
+               (try? JSONDecoder().decode([ConversationSend.Piece].self, from: saved.payload)) == decisionAttachments.pieces {
+                saved.payload = Data("[]".utf8); saved.updatedAt = .now
             }
             if row.state != state.rawValue { row.state = state.rawValue }
             if row.note != note { row.note = note }
