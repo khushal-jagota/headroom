@@ -1,16 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CLIENT_COMPATIBILITY } from './policy.ts';
+import type { ClientVersionMeta, ReleaseParts } from './contracts.ts';
 
 /** Describe the installed release, never the release available for download. */
 export function client_version_meta(
   root: string,
   expected_sha: string | null = null,
-): {
-  compatibility: typeof CLIENT_COMPATIBILITY;
-  release_number?: number;
-  parts?: Record<string, unknown>;
-} {
+): ClientVersionMeta {
   let manifest: Record<string, unknown>;
   try {
     manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
@@ -29,6 +26,6 @@ export function client_version_meta(
     typeof manifest.parts === 'object' &&
     !Array.isArray(manifest.parts)
   )
-    result.parts = manifest.parts as Record<string, unknown>;
+    result.parts = manifest.parts as unknown as ReleaseParts;
   return result;
 }

@@ -16,3 +16,14 @@ export interface ClientCompatibility {
   machine: { minimum_protocol_version: number; maximum_protocol_version: number };
   outbox_format: number;
 }
+/** Optional installed publication facts. Publication and installation own their source. */
+export interface ReleaseParts {
+  server: { app_sha: string; artifact_digest: string };
+  screens: { sha256: string };
+  machines: Record<string, { archive_sha256: string; build_id: string | null }>;
+}
+export interface ClientVersionMeta {
+  compatibility: ClientCompatibility;
+  release_number?: number;
+  parts?: ReleaseParts;
+}

@@ -164,14 +164,22 @@ test('metadata describes optional installed release facts and the actual compati
   const root = mkdtempSync(join(tmpdir(), 'panels-version-meta-'));
   try {
     expect(client_version_meta(root)).toEqual({ compatibility: CLIENT_COMPATIBILITY });
+    const parts = {
+      server: { app_sha: 'a', artifact_digest: 'b'.repeat(64) },
+      screens: { sha256: 'c'.repeat(64) },
+      machines: {
+        'linux-x86_64': { archive_sha256: 'd'.repeat(64), build_id: null },
+        'darwin-arm64': { archive_sha256: 'e'.repeat(64), build_id: 'machine-build' },
+      },
+    };
     writeFileSync(
       join(root, 'manifest.json'),
-      JSON.stringify({ app_sha: 'a', release_number: 123, parts: { server: { app_sha: 'a' } } }),
+      JSON.stringify({ app_sha: 'a', release_number: 123, parts }),
     );
     expect(client_version_meta(root, 'a')).toEqual({
       compatibility: CLIENT_COMPATIBILITY,
       release_number: 123,
-      parts: { server: { app_sha: 'a' } },
+      parts,
     });
     expect(client_version_meta(root, 'b')).toEqual({ compatibility: CLIENT_COMPATIBILITY });
     writeFileSync(join(root, 'manifest.json'), JSON.stringify({ app_sha: 'a' }));
