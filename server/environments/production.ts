@@ -1,4 +1,5 @@
 /** Bind real environment adapters to one server invocation. Default activation stays separate. */
+import { dirname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { update_repository_configuration } from '../core/config.ts';
 import { is_os_error } from '../core/system_errors.ts';
@@ -76,7 +77,7 @@ export const create_production_environment_operations: ProductionEnvironmentFact
         : null
       : await read_own_service_unit(environment, context.config.test_mode);
   signal.throwIfAborted();
-  const repository = update_repository_configuration(environment);
+  const repository = update_repository_configuration(environment, dirname(context.config.db_path));
 
   return {
     app_root: application_root,

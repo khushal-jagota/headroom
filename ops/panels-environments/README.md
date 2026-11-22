@@ -191,3 +191,36 @@ On a disposable Linux home, verify that the home retains its configured OOM scor
 that each Worker uses at least 0, and that its tools inherit the Worker score. Check
 home responsiveness under heavy builds and low memory. These checks must not run on
 the live home. Native Mac checks require an authorized test machine.
+
+## Server state and recovery
+
+For a new installation, keep durable server state inside one private folder, normally `data/`:
+
+```text
+data/
+  planning.db                 database (installed homes use planner.db)
+  credential-secrets/key      encryption key for stored credentials
+  files/                      served files, excluding private Ticket worktrees
+  skills/                     skill files and disk-only supporting files
+  secrets/
+    apns-key.p8                private push key
+    update-token               private update token
+```
+
+Keep `secrets/` at mode 0700 and its files at mode 0600. The native installer creates the directory privately. Put the push key and update token there before activation. Set the APNs key ID, team ID, bundle IDs, and update repository in the service environment. Without their metadata, those features stay disabled. Relative `PLAN_APNS_KEY_PATH` and `PLAN_UPDATE_TOKEN_FILE` overrides resolve from the server state folder. Absolute overrides still support existing installations. Before a full-state move, place those secrets inside `secrets/` and remove external overrides.
+
+Write `config.yaml` again on the destination. For a settings file beside the database, use:
+
+```yaml
+server_root: .
+db_path: planning.db
+logs_dir: logs
+backup_dir: backups
+dispatcher_lock_path: dispatcher.lock
+```
+
+For a settings file above `data/`, set `server_root: data`. The database must sit directly inside the root. An absolute `PLAN_DB_PATH` overrides that root with its parent unless `PLAN_SERVER_ROOT` also specifies one. Provider logins belong to each machine and never join this folder.
+
+Stop the server and checkpoint its database before a full-state checksum. Use the inventory and verifier in `server/environments/server_state/` with the configured database, credential key, and push/update paths. Retain the resulting relative path-to-SHA256 map with the move evidence. The verifier compares every included path and digest, so missing, changed, and extra state files fail the check. It refuses links, special files, uncheckpointed database changes, and configured secrets outside the state inventory.
+
+Copy only the inventory. Do not copy settings, locks, sockets, process records, update attempts, metrics, caches, abandoned uploads, or backup history. No database row refers to `executor-uploads/`. Startup clears it after exclusive ownership and before transfer services start. Normal nightly snapshots remain database plus Worker settings and skills. This change does not expand them or move any live files.

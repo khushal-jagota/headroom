@@ -53,7 +53,7 @@ import {
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { PromptDeliveryStarted } from '../conversation/contracts.ts';
 import { WorkerStepReadinessLoop } from '../runtime/worker_step_readiness_loop.ts';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import * as wakeData from '../manager_wakes/data.ts';
@@ -773,6 +773,9 @@ test('startServer reconciles before core construction and a route collision star
   expect(loadConfig(configPath, { PLAN_CONFIG_PATH: '/missing-ignored.yaml' }).tick_seconds).toBe(
     23,
   );
+  const uploads = join(dirname(path), 'executor-uploads');
+  mkdirSync(uploads);
+  writeFileSync(join(uploads, '.incoming-abandoned'), 'partial');
   const trace: string[] = [];
   const reconcile = vi.spyOn(notificationData, 'reconcile_attention').mockImplementation(() => {
     trace.push('reconcile');
@@ -805,6 +808,8 @@ test('startServer reconciles before core construction and a route collision star
       startServer({
         createConversationCore(context) {
           expect(trace).toEqual(['reconcile']);
+          expect(existsSync(uploads)).toBe(false);
+          expect(() => acquireRuntimeOwnership(path)).toThrow();
           trace.push('core');
           const noProvider = () => {
             throw new Error('this startup proof never starts a provider');
