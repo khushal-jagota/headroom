@@ -156,7 +156,8 @@ An ask card reads its wording from the conversation, as the web's ask card does
 options as choices, takes words when the question allows them, and docks Skip and
 Send answer. A permission ask shows its request and docks Skip, Decline and Approve,
 which answer with the ask's own reject and allow options. The answer is saved through
-`Outbox.enqueueAskAnswer` and the card leaves at once; the outbox checks the answer's
+`Outbox.enqueueAskAnswer` and the card leaves at once, and stays hidden while the
+answer waits to be sent, even after a relaunch; the outbox checks the answer's
 receipt and, if the ask is gone, sends it as an ordinary message. An ask answered
 elsewhere just leaves.
 
