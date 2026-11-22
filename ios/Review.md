@@ -137,7 +137,8 @@ counts as handled at once. It acknowledges only that sequence: a later message s
 unread and returns to Review. A lost connection or response resends it with the same
 identity, and the server drops the repeat. A refused reply returns to its card with
 its words and attachments, and Try Again sends the corrected words under a new
-identity with the original read boundary. A reply that gave up may already be on the
+identity with the original read boundary. A refused reply or Mark read brings its
+card to the front once, like a refused decision. A reply that gave up may already be on the
 server, so Try Again sends it again as it was, under its own identity.
 
 Mark read acknowledges only the displayed run, joins the outbox, and the card leaves
