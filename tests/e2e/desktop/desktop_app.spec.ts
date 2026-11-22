@@ -24,6 +24,10 @@ async function closedAddress(): Promise<string> {
   return `http://127.0.0.1:${port}`;
 }
 
+function newTicket(title: string) {
+  return { worker_type: 'coding', title, brief: 'Agreed brief.', manager: { kind: 'chief', id: 'chief' } };
+}
+
 async function pageUrl(page: Page): Promise<string> {
   return page.evaluate(() => location.href);
 }
@@ -64,16 +68,16 @@ test('the screens reach the server through the app, and links leave it', async (
     await expect(title).toHaveText('Desktop ticket after the change', { timeout: WAIT_MS });
 
     // Write: a write from the screens' own relative path passes the server's rules.
-    const write = await page.evaluate(async () => {
-      const response = await fetch('/api/ideas', {
+    const write = await page.evaluate(async (ticket) => {
+      const response = await fetch('/api/tickets', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: 'Idea from the desktop app' }),
+        body: JSON.stringify(ticket),
       });
       return { status: response.status, body: await response.text() };
-    });
+    }, newTicket('Ticket written by the desktop app'));
     expect(write.status, write.body).toBe(200);
-    expect(JSON.stringify(await api.get(server, '/api/ideas'))).toContain('Idea from the desktop app');
+    expect(JSON.stringify(await api.get(server, '/api/tickets?detail=summary'))).toContain('Ticket written by the desktop app');
 
     // A page from another site inside the app, such as one an artifact frame opened,
     // cannot write through the forward.
@@ -86,14 +90,16 @@ test('the screens reach the server through the app, and links leave it', async (
         }),
       `${server.base}/api/meta`,
     );
-    await page.frame({ name: 'foreign' })!.evaluate(() =>
-      fetch('panels://app/api/ideas', {
-        method: 'POST',
-        mode: 'no-cors',
-        body: new Blob([JSON.stringify({ title: 'Idea from a foreign page' })]),
-      }).catch(() => undefined),
+    await page.frame({ name: 'foreign' })!.evaluate(
+      (ticket) =>
+        fetch('panels://app/api/tickets', {
+          method: 'POST',
+          mode: 'no-cors',
+          body: new Blob([JSON.stringify(ticket)]),
+        }).catch(() => undefined),
+      newTicket('Ticket written by a foreign page'),
     );
-    expect(JSON.stringify(await api.get(server, '/api/ideas'))).not.toContain('Idea from a foreign page');
+    expect(JSON.stringify(await api.get(server, '/api/tickets?detail=summary'))).not.toContain('Ticket written by a foreign page');
 
     // Links that leave the app go to the browser, and the app stays on its screens.
     await page.evaluate(() => {
