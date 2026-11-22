@@ -15,7 +15,7 @@ import { registerArea } from '../core/authority/register.ts';
 import { conversation_routes } from '../tickets/conversation_routes.ts';
 import { decision_routes } from '../tickets/decision_routes.ts';
 import { installCompatibility } from '../core/http/compatibility.ts';
-import { installMiddleware } from '../core/http/middleware.ts';
+import { DESKTOP_APP_ORIGIN, installMiddleware } from '../core/http/middleware.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildClock } from '../core/clock.ts';
 import { send_message, sender_label } from '../message_delivery/service.ts';
@@ -315,5 +315,82 @@ test('registered area applies rank admission for owner, Worker, Manager, and Chi
     await app.close();
     db.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Distinct risk: the desktop app cannot write or stream, or another origin gains CORS access.
+// Existing cases send no Origin. Inject covers the real hook, including a hijacked stream.
+test('the desktop app origin may write and stream; other origins stay refused', async () => {
+  const app = Fastify();
+  const config = loadConfig(undefined, {
+    PLAN_DB_PATH: join(tmpdir(), 'panels-desktop-origin-unused.sqlite'),
+    PLAN_TEST_MODE: '1',
+  });
+  installMiddleware(app, config);
+  app.post('/api/write', async () => ({ ok: true }));
+  app.get('/api/stream', async (_request, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    reply.raw.end(': keep-alive\n\n');
+  });
+  const app_origin = { origin: DESKTOP_APP_ORIGIN };
+  const allowed = (response: { headers: Record<string, unknown> }) =>
+    response.headers['access-control-allow-origin'];
+  try {
+    for (const hosted of [false, true]) {
+      config.trusted_ingress_provider = hosted ? 'tailscale' : null;
+      config.trusted_ingress_allowed_login = hosted ? 'owner@example.test' : null;
+      config.trusted_ingress_canonical_origin = hosted ? 'https://panels.example' : null;
+      const write = await app.inject({
+        method: 'POST',
+        url: '/api/write',
+        headers: app_origin,
+        payload: {},
+      });
+      expect(write.statusCode).toBe(200);
+      expect(allowed(write)).toBe(DESKTOP_APP_ORIGIN);
+      const stream = await app.inject({ url: '/api/stream', headers: app_origin });
+      expect(allowed(stream)).toBe(DESKTOP_APP_ORIGIN);
+      const preflight = await app.inject({
+        method: 'OPTIONS',
+        url: '/api/write',
+        headers: {
+          ...app_origin,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type,x-panels-artifact-root',
+        },
+      });
+      expect(preflight.statusCode).toBe(204);
+      expect(preflight.headers).toMatchObject({
+        'access-control-allow-origin': DESKTOP_APP_ORIGIN,
+        'access-control-allow-methods': 'POST',
+        'access-control-allow-headers': 'content-type,x-panels-artifact-root',
+      });
+      const foreign_preflight = await app.inject({
+        method: 'OPTIONS',
+        url: '/api/write',
+        headers: { origin: 'https://other.example', 'access-control-request-method': 'POST' },
+      });
+      expect(foreign_preflight.statusCode).toBe(404);
+      expect(allowed(foreign_preflight)).toBeUndefined();
+    }
+    const foreign = await app.inject({
+      method: 'POST',
+      url: '/api/write',
+      headers: { origin: 'https://other.example' },
+      payload: {},
+    });
+    expect(foreign.statusCode).toBe(403);
+    expect(allowed(foreign)).toBeUndefined();
+    const browser = await app.inject({
+      method: 'POST',
+      url: '/api/write',
+      headers: { origin: 'https://panels.example' },
+      payload: {},
+    });
+    expect(browser.statusCode).toBe(200);
+    expect(allowed(browser)).toBeUndefined();
+  } finally {
+    await app.close();
   }
 });

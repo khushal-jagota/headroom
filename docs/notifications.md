@@ -8,7 +8,7 @@ A notification is a phone or desktop push for a kind of attention Khushal opted 
 - **Attention flags.** Each subject has separate flags for a message waiting for a reply, an ask waiting for an answer, and a failure. Tickets also have a proposal waiting for approval and a stage assigned to Khushal.
 - **Edges.** A flag flipping from false to true is an edge. Apart from the stall alarm below, an edge is the only thing that can notify.
 - **The policy.** One decision door that turns an edge into a push or drops it, according to Khushal's preferences.
-- **Devices.** Each browser or installed app that enabled notifications is a Web Push subscription. A service worker on the device shows the push and opens the link.
+- **Devices.** Each browser or installed app that enabled notifications is a Web Push subscription. A service worker on the device shows the push and opens the link. The iPhone app uses APNs. A running desktop app holds a live stream instead; see [Desktop app](#desktop-app).
 - **The stall alarm.** Panels itself is a subject with one switch, Stalled work. The stall watchdog unit sends it when work stops moving or the server's stall checker stops; it has no edge and does not pass the policy, but it reads that switch. See [Executor](executor.md) for the watchdog.
 - **The settings section.** Notifications is a section of Settings. It renders the server's catalogue of choices and does not keep its own list.
 
@@ -23,6 +23,8 @@ A notification is a phone or desktop push for a kind of attention Khushal opted 
                                 │
                                 ▼
                   one delivery per enabled device ──► Web Push ──► service worker
+                                │                  └──► APNs ──► iPhone app
+                                └──► each open desktop stream ──► Mac app
 ```
 
 ## How it works
@@ -48,12 +50,16 @@ Headroom can be installed from the browser. Pushes need HTTPS outside localhost,
 
 ## Code
 
-- `server/notifications/`: flags and edges (`attention.ts`), the policy (`logic/policy.ts`), deliveries, preferences, Web Push, and APNs.
+- `server/notifications/`: flags and edges (`attention.ts`), the policy (`logic/policy.ts`), deliveries, preferences, Web Push, APNs, and the desktop streams (`desktop_streams.ts`).
 - `static/service-worker.js`: the service worker.
 - `web/src/components/settings/NotificationSettings.svelte`: the settings section.
 
-_Last verified: 2026-11-15._
+_Last verified: 2026-11-22._
 
+
+## Desktop app
+
+The desktop app holds one live stream, `GET /api/notifications/desktop`, while it runs. Only the owner can open it. After the delivery pass decides an edge, every open stream gets the same title, preview, link and tag that the other paths get, if the attention is still current and fresh. The app's native side shows it through macOS, and a click opens the link in the app. Nothing is stored or retried for the desktop: a notification decided while no app is connected reaches the other devices only. See [The desktop app](desktop.md).
 
 ## Native iOS push
 

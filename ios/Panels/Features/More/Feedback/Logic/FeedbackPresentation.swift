@@ -24,7 +24,6 @@ enum FeedbackPageDestination: Hashable {
             else if parts.count == 3 && parts[0] == "workspace" && parts[1] == "utility" { utility = parts[2] }
             else { utility = nil }
             switch utility {
-            case "ideas": return .route(.ideas)
             case "feedback": return .route(.feedback)
             case "backends", "usage": return .route(.usage)
             case "vps": return .route(.vps)

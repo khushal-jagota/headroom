@@ -19,6 +19,7 @@
   import { updatePresentation } from "./lib/updates/logic/presentation";
   import { settleUpdateStarting, updateStarting } from "./lib/updates/api";
   import { mutateJson } from "./lib/mutate";
+  import { savedSessionOnScreen } from "./lib/savedSession";
 
   import { parseShellDestination, type ShellDestination } from "./lib/shellDestination";
   import { SHELL_DESTINATIONS } from "./lib/shellDestinations";
@@ -59,7 +60,6 @@
   const routeModule = $derived.by(() => {
     switch (route.name) {
       case "review": return cachedImport("./ReviewRoute.svelte", () => import("./routes/ReviewRoute.svelte"));
-      case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./routes/IdeasRoute.svelte"));
       case "goals": return cachedImport("./GoalsRoute.svelte", () => import("./routes/GoalsRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
       case "backends": return cachedImport("./BackendsRoute.svelte", () => import("./routes/BackendsRoute.svelte"));
@@ -68,7 +68,7 @@
     }
   });
   let routeShape = $derived(route.name === "review" ? "block" as const
-    : ["ideas", "goals", "backends"].includes(route.name) ? "rows" as const : "document" as const);
+    : ["goals", "backends"].includes(route.name) ? "rows" as const : "document" as const);
 
   let moreOpen = $state(false);
   let moreMenuElement = $state<HTMLDivElement | null>(null);
@@ -192,7 +192,7 @@
         {/each}
       </div>
     {/if}
-    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={update.state} now={updateClock} />
+    <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
     <div class="compact-bar-row">
       <a href="#/review" class="bar-item" data-screen="review" aria-current={selectedDestination === "review" ? "page" : undefined}>Review<span class="count-badge" data-review-badge class:hidden={reviewCount === 0}>{reviewCount > 0 ? reviewCount : ""}</span></a>
       <a href="#/workspace" class="bar-item" data-screen="workspace" aria-current={selectedDestination === "workspace" ? "page" : undefined}>Workspace</a>
@@ -227,7 +227,7 @@
 
 <!-- The desktop card sits between the active work and Settled. Phone has its own above the bar. -->
 {#snippet railStatus()}
-  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} status={updates.data} presentation={update.state} now={updateClock} />
+  <ShellStatus connectionState={$connectionStatus} navigationHealth={navigation.state.health} showsSavedSession={$savedSessionOnScreen} status={updates.data} presentation={update.state} now={updateClock} />
 {/snippet}
 
 {#snippet destinationPane()}
@@ -236,8 +236,6 @@
       {#snippet selectedRoute()}
         {#if route.name === "review"}
           {#await import("./routes/ReviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
-        {:else if route.name === "ideas"}
-          {#await import("./routes/IdeasRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "goals"}
           {#await import("./routes/GoalsRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "settings"}

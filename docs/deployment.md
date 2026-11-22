@@ -76,7 +76,7 @@ The publication carries a TypeScript Mac executor from the same source, with its
 
 ## The desktop app
 
-The macOS desktop app has its own workflow, separate from the home's publication. A GitHub-hosted Mac builds it, signs it with the Developer ID of the Blue Door Labs team and the hardened runtime, and sends it to Apple for notarization. Then it staples Apple's ticket to the app and checks the result with Apple's own tools, so that a Mac opens the download with no warning. The signing certificate and the notarization key are repository secrets that Khushal set once ([steps](../ops/desktop/signing.md)). Today the app is a minimal window that proves signing. Its releases and updates come later.
+The macOS desktop app has its own workflow, separate from the home's publication. On a push to staging or a manual run, a GitHub-hosted Mac builds it, signs it with the Developer ID of the Blue Door Labs team and the hardened runtime, and sends it to Apple for notarization. Then it staples Apple's ticket to the app and checks the result with Apple's own tools, so that a Mac opens the download with no warning. The signing certificate and the notarization key are repository secrets, set once ([steps](../ops/desktop/signing.md)). The run keeps the signed zip as the `panels-desktop-mac` artifact for 30 days. Its releases and updates come later.
 
 ## The private route
 
@@ -101,7 +101,7 @@ The archive digest detects damage after a write. If a write reaches the installe
 ## Code
 
 - `.github/workflows/publish-typescript-release.yml`: publication. `recover-private-route.yml`: route repair.
-- `.github/workflows/desktop.yml`, `desktop/`: the signed desktop app. `ops/desktop/signing.md`: its Apple secrets.
+- `.github/workflows/desktop.yml`, `desktop/`: the desktop app, its checks and its signed build. `ops/desktop/signing.md`: its Apple secrets.
 - `server/environments/release/`: building, sealing, runtime admission, the boot proof, and the receipt.
 - `server/environments/updates/provider.ts`: reading publications and streaming downloads. `service.ts`, `routes.ts`: getting ready, the press, and the card's state. `failure_notice.ts`: the owner push for a failed update.
 - `server/environments/updates/attempts.ts`: the attempt record. `installation.ts`: the installer's start. `server/environments/updates/installer/`: the standalone installer.

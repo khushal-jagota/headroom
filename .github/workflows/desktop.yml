@@ -1,17 +1,72 @@
 name: Desktop app
-# Builds the macOS desktop app on a GitHub-hosted Mac, signs it with the
-# Developer ID and the hardened runtime, notarizes and staples it, then checks
-# the result with Apple's tools. ops/desktop/signing.md lists the secrets.
-# Pull requests from forks never receive repository secrets.
+# Builds the desktop app from desktop/ with the web/ screens packed inside, and
+# drives it with Playwright under a virtual display against a test server. On a
+# push to staging or a manual run, a Mac also signs, notarizes and staples it.
 on:
+  pull_request:
+    branches: [staging]
+    paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   push:
-    paths: ['desktop/**', '.github/workflows/desktop.yml']
+    branches: [staging]
+    paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Pushes do not cancel each other, so that a slow notarization can finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
+  app-checks:
+    name: Desktop app checks (Linux, Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb libicu-dev pkg-config build-essential
+          npm ci --prefix server
+          npm ci --prefix web
+          npm ci --prefix tests/e2e
+          npm ci --prefix desktop
+          tests/e2e/node_modules/.bin/playwright install-deps chromium
+      - name: Typecheck
+        run: |
+          set -euo pipefail
+          npm --prefix desktop run check
+          npm --prefix tests/e2e run check
+      - name: Build the screens and the app
+        run: |
+          set -euo pipefail
+          (cd web && node node_modules/vite/bin/vite.js build)
+          npm --prefix desktop run build
+      - name: Drive the app against a test server
+        env:
+          PANELS_E2E_FAILURE_DIR: ${{ runner.temp }}/desktop-failure
+        run: |
+          cd tests/e2e
+          xvfb-run -a node_modules/.bin/playwright test --config desktop.config.ts
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-failure
+          path: ${{ runner.temp }}/desktop-failure
+          if-no-files-found: ignore
+          retention-days: 14
+
   signed-mac-app:
     name: Signed and notarized Mac app
+    # Pull requests skip it: notarization takes minutes, and the Linux job checks the app.
+    if: github.event_name != 'pull_request'
     runs-on: macos-15
     # Apple's notary service can take long for a team's first submissions.
     timeout-minutes: 120
@@ -23,7 +78,12 @@ jobs:
         with:
           node-version: '22'
       - name: Install dependencies
-        run: scripts/dev npm --prefix desktop ci
+        run: |
+          set -euo pipefail
+          npm ci --prefix web
+          npm ci --prefix desktop
+      - name: Build the screens
+        run: cd web && node node_modules/vite/bin/vite.js build
       - name: Build, sign, notarize and staple
         env:
           CSC_LINK: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
@@ -37,7 +97,7 @@ jobs:
           export APPLE_API_KEY="$RUNNER_TEMP/notary-key.p8"
           umask 077
           printf '%s\n' "$APPLE_NOTARY_API_KEY_P8" > "$APPLE_API_KEY"
-          scripts/dev npm --prefix desktop run build:mac
+          npm --prefix desktop run build:mac
           rm -f "$APPLE_API_KEY"
       - name: Check the signature, notarization and Gatekeeper
         run: |

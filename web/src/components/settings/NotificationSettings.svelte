@@ -14,7 +14,7 @@
   /* Notifications: this device's Web Push subscription, then one switch per notification
      type of each subject. The server's preferences are the saved values; a press saves at
      once and the page's read refreshes after it. */
-  type DeviceState = "checking" | "unsupported" | "install" | "ready" | "blocked" | "enabled" | "working";
+  type DeviceState = "checking" | "desktop" | "unsupported" | "install" | "ready" | "blocked" | "enabled" | "working";
 
   const settings = createQuery(() => queries.notificationSettings());
   let deviceState = $state<DeviceState>("checking");
@@ -23,6 +23,7 @@
   let subscriptionId = $state<string | null>(null);
 
   const deviceDescription: Record<Exclude<DeviceState, "checking">, string> = {
+    desktop: "This Mac gets the notifications chosen below while the Panels app runs, also with its window closed. macOS Settings control banners and sounds.",
     enabled: "Gets the notifications chosen below while Panels is closed.",
     working: "Asking this browser for permission…",
     blocked: "Notifications are blocked in this browser’s settings.",
@@ -55,6 +56,11 @@
   }
 
   async function reconcileDevice(): Promise<void> {
+    // The desktop app serves the screens from its own scheme. Its native side shows the notifications.
+    if (location.protocol === "panels:") {
+      deviceState = "desktop";
+      return;
+    }
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
       deviceState = isIosBrowserOutsideStandalone() ? "install" : "unsupported";
       return;

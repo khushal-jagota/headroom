@@ -380,10 +380,6 @@ export type BoardCard = WorkAttention & {
   manager_title: string | null;
 };
 
-export type IdeasResponse = {
-  ideas: AnyRecord[];
-};
-
 export type NotificationTypeSetting = {
   id: string;
   label: string;
