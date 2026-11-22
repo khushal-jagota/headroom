@@ -176,7 +176,8 @@ type RecordedNotification = { title: string; body: string; emit(event: 'click'):
 // Only the built app against a live server can prove the native path: Electron's network
 // stack holds the server's notification stream, the native side shows what the policy
 // allowed, and a click opens the right screen. macOS itself is replaced by a recorder.
-test('the native side shows a notification from the server, and a click opens its place', async ({ server }) => {
+test('the native side shows a notification from the server, and a click opens its place', async ({ railServer }) => {
+  const server = railServer;
   const ticketId = String((await api.post(server, '/api/tickets', newTicket('Ticket that waits on Khushal'))).id);
   await api.post(server, `/api/tickets/${ticketId}/accept/brief`, {
     next_ceiling: 'needs_what_changes',
