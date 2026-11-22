@@ -14,7 +14,10 @@ outbox IDs, and clears the old display before the next transcript arrives.
 Unsent drafts and attachments remain with their owner. Explicit history links
 retain their requested conversation and remain read only when it is no longer current.
 
-Saved responses can supply display while fresh reads run. New responses apply
+Saved responses can supply display while fresh reads run. Review builds its cards
+from the saved view, and a message or ask card whose read cannot reach the server
+uses the phone's saved copy of its last read, so Mark read and an answer still
+save. A card whose detail this phone never read shows its title and waits. New responses apply
 immediately, including changes that move rows. A failed refresh keeps the content
 on screen with no note; the next stream event or pull replaces it. A read that
 cannot reach the server (no network, a timeout, a dropped connection, a failed host
@@ -62,10 +65,12 @@ until they arrive. A failed item leaves its lane, and only it shows a mark:
 
 - A failed message gets a red mark in its conversation. Tapping it shows the
   reason and Try Again, which sends the same words in the same place: with a new ID
-  after a refusal, with its own ID otherwise. A refused photo message puts its draft
+  after a refusal, with its own ID otherwise. A Review reply's Try Again does the
+  same; after a refusal it sends the card's corrected words. A refused photo message puts its draft
   back in the composer.
-- A refused approval or send-back shows the server's note on its proposal card,
-  with the saved edits and guidance.
+- A refused approval or send-back brings its proposal card back to the front of
+  Review with the server's note and the saved note, even when the proposal no
+  longer waits for Khushal.
 - A recording that cannot be transcribed shows a red mark and offers Retry.
 
 Sent items expire after a day, and so do refused decisions, reads and ask answers,
@@ -109,8 +114,8 @@ clears only after an applied receipt, and only if the draft has not changed sinc
 
 ## Ask answers
 
-An answer to an agent's ask is an outbox kind with an entry point
-(`Outbox.enqueueAskAnswer`); no screen calls it yet. After a refusal (its fate or a
+An answer to an agent's ask is an outbox kind (`Outbox.enqueueAskAnswer`); Review's
+ask card saves its answers through it and leaves at once. After a refusal (its fate or a
 4xx) or a lost response, the phone looks up the answer's receipt first. A receipt
 means it landed. A lost response with no receipt sends the answer again with the
 same operation ID, and so does Try Again. A refusal with no receipt sends it again
