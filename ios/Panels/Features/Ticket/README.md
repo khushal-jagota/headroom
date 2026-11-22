@@ -3,9 +3,8 @@
 The Ticket page reads its full detail and saved workflow. Older records use the
 worker-type manifest. The workflow supplies stage names, completion counts,
 approval limits, and the next stage. The parent name precedes the read-only title.
-The recap shows three lines, with Show more and Show less. Its context menu keeps
-Copy, Edit, and Ask for a fresh recap. The action menu keeps recap, backlog/resume,
-and copy-link actions. Blocker links keep their existing removal action.
+The recap shows three lines, with Show more and Show less. The action menu keeps
+recap, backlog/resume, and copy-link actions.
 
 Pending proposals use the same recessed card and decision controls as Review.
 The note and actions stay above the conversation line. Approve opens How far,

@@ -3,7 +3,6 @@ import SwiftUI
 struct OrchestratorView: View {
     let managerID: String
     let editOwner: PageSessionRoute
-    var openConversationID: String?
     @Environment(AppStore.self) private var store
     private var resource: ResourceHandle<ManagerDetail> { store.resources.handle(ManagerResources.detail(managerID)) }
     private var detail: ManagerDetail? { resource.value }
@@ -17,13 +16,10 @@ struct OrchestratorView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                AgentPageControls {
-                    AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await load(); await store.refresh() }
-                }
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
                     AgentPageTitle(title: detail?.title ?? summary?.title ?? "Orchestrator", signal: liveSignal ?? detail?.conversationSignal ?? summary?.conversationSignal)
                     if let detail {
-                        AgentRecap(recap: contentResource.value?.recap ?? detail.recap, target: Principal(kind: "manager", id: managerID), refresh: { await load(); await store.refresh() }, actions: actions)
+                        AgentRecap(recap: contentResource.value?.recap ?? detail.recap, actions: actions)
                     }
                 }
                 if let detail {
@@ -35,9 +31,14 @@ struct OrchestratorView: View {
                 }
             }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.xl)
         }
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                AgentPageMenu(target: Principal(kind: "manager", id: managerID), settled: detail?.settled ?? false, actions: actions) { await load(); await store.refresh() }
+            }
+        }
         .panelsScreen()
-        .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, title: detail?.title ?? summary?.title ?? "Orchestrator", openConversationID: openConversationID, refreshError: error, retry: { await load() })
+        .conversationNavigation(owner: .manager(managerID), conversationID: detail?.manager.conversationId, refreshError: error, retry: { await load() })
         .resourceDemand(resource)
         .resourceDemand(contentResource)
         .task(id: store.baseURL.absoluteString + (store.managerStamp(managerID) ?? "")) { await resource.refresh() }
@@ -74,26 +75,3 @@ enum AgentPageLayout {
     static let rowInset: CGFloat = 14
 }
 
-/// Page controls belong to the scrolling content, with no bar or duplicate title.
-struct AgentPageControls<Actions: View>: View {
-    @Environment(\.dismiss) private var dismiss
-    var beforeBack: (() -> Void)? = nil
-    @ViewBuilder let actions: () -> Actions
-
-    var body: some View {
-        HStack {
-            Button { beforeBack?(); dismiss() } label: {
-                Image(systemName: "chevron.left")
-                    .frame(width: 44, height: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-            }.accessibilityLabel("Back").accessibilityIdentifier("detail-back")
-            Spacer(minLength: 0)
-            actions()
-        }
-        .font(.system(size: 16))
-        .foregroundStyle(PanelsTheme.faint)
-        .tint(PanelsTheme.faint)
-        .buttonStyle(.plain)
-        .background(AgentPageBackGesture())
-    }
-}

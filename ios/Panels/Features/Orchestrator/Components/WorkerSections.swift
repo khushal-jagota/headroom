@@ -64,10 +64,8 @@ struct WorkerRows<T: GroupedWorker>: View {
     let tickets: [T]
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(AppStore.self) private var store
-    @State private var actions = AgentPageActions()
     var body: some View {
         VStack(spacing: 0) {
-            if let note = actions.note { Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error) }
             if tickets.isEmpty {
                 Text("No workers").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(PanelsTheme.Space.md)
@@ -84,27 +82,6 @@ struct WorkerRows<T: GroupedWorker>: View {
                         .frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier("worker-\(ticket.id)")
                     .conversationAccessibility(label: TicketMachine.accessibilityLabel("\(ticket.title), \(WorkerGroup.classify(ticket).title)", locale: ticket.locale, health: store.executorHealth), signal: TicketMachine.signal(ticket.conversationSignal, locale: ticket.locale, health: store.executorHealth, completed: ticket.stage == "done" || ticket.stage == "cancelled"))
-                    .contextMenu {
-                        NavigationLink("Open", value: AppRoute.ticket(ticket.id))
-                        Button("Ask for a recap") {
-                            Task { await actions.requestRecap(client: store.client, target: Principal(kind: "ticket", id: ticket.id)) { await store.refresh() } }
-                        }.disabled(actions.isSending || ticket.integrityError != nil)
-                        if ticket.stage != "done" {
-                            Button(ticket.isBacklogged ? "Resume" : "Backlog") {
-                                Task { await actions.perform {
-                                    try await store.client.setWorkerBacklog(ticket.id, backlogged: !ticket.isBacklogged)
-                                    await store.refresh()
-                                } }
-                            }.disabled(actions.isSending || ticket.integrityError != nil)
-                        }
-                    } preview: {
-                        VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                            Text(WorkerGroup.classify(ticket).title).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
-                            HStack { TicketMachineLabel(locale: ticket.locale); Text(ticket.title).font(PanelsTheme.TypeScale.heading); TicketActivityMark(locale: ticket.locale, signal: ticket.conversationSignal, completed: ticket.stage == "done" || ticket.stage == "cancelled") }
-                            Text(ticket.recapPreview).font(PanelsTheme.TypeScale.body).lineLimit(5)
-                                .padding(PanelsTheme.Space.md).background(PanelsTheme.recessed)
-                        }.padding(PanelsTheme.Space.lg).frame(maxWidth: 330).panelsScreen()
-                    }
             }
         }
     }

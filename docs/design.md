@@ -29,12 +29,9 @@ Some screens add layout rules in `assets/app.css`, keyed by a `data-screen` name
 
 Goal pages use a separate page kit for checklists, charts, tables, layouts, and text. It is owned by [Goals](goals.md). This kit uses underline tabs with plain labels on Chief, Manager, and goal pages, below section headings or above standalone content.
 
-## The iPhone Workspace
+## The iPhone Sidebar
 
-Workspace copies the web sidebar's cards, status marks, goal tags, paging and update rules.
-Focus is always on. The native bottom bar stays unchanged. A long press replaces web
-hover with an interactive preview sheet. Settled occupies a bounded dock below the active
-cards. The [iPhone guide](../ios/README.md#workspace-home) describes the native behavior.
+The iPhone has no tab bar. A slide-over Sidebar copies the web sidebar's cards, status marks and goal tags: Chief, the active Managers, a collapsed Settled group, and Review and Settings at the bottom. Review is the root. The [iPhone guide](../ios/README.md#sidebar) describes the native behavior.
 
 ## The conversation is the strictest screen
 

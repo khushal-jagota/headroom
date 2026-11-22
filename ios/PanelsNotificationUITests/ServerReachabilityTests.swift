@@ -31,12 +31,11 @@ final class ServerReachabilityTests: XCTestCase {
         }
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
-        let review = app.tabBars.buttons["Review"]
-        XCTAssertTrue(review.waitForExistence(timeout: 15))
-        review.tap()
+        // Review is the root at launch.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 15))
         let proposal = app.buttons["review.openTicket"]
         XCTAssertTrue(proposal.waitForExistence(timeout: 15))
-        capture(app, "owned-host-tab-root")
+        capture(app, "review-root")
         // Stop the actual listener, then let the active scene observe its failed read.
         try await state("offline")
         XCUIDevice.shared.press(.home)
@@ -51,14 +50,14 @@ final class ServerReachabilityTests: XCTestCase {
             XCTAssertFalse(readNote.exists, "A read note appeared after \(second)s")
             try await Task.sleep(for: .seconds(1))
         }
-        XCTAssertTrue(review.exists)
-        capture(app, "owned-host-unreachable-no-cover")
+        XCTAssertTrue(app.sidebarButton.exists)
+        capture(app, "unreachable-no-cover")
         try await state("online")
         XCTAssertTrue(proposal.waitForExistence(timeout: 70))
         XCTAssertTrue(proposal.isHittable)
         XCTAssertFalse(retry.exists)
         proposal.tap()
-        XCTAssertTrue(app.buttons["detail-back"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.backButton.waitForExistence(timeout: 8))
     }
 
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {

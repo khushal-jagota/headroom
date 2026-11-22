@@ -14,9 +14,8 @@ final class ReviewMessagesTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        let review = app.tabBars.buttons["Review"]
-        XCTAssertTrue(review.waitForExistence(timeout: 10))
-        review.tap()
+        // Review is the root at launch.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
         let message = app.staticTexts["First unread message"]
         let approve = app.buttons["review.approve"]
         XCTAssertTrue(message.waitForExistence(timeout: 12))
@@ -44,15 +43,19 @@ final class ReviewMessagesTests: XCTestCase {
         capture(app, "review-note-and-reply-keyboard-dismissed")
         // A native artifact push must release the note before it leaves this screen.
         let artifact = app.links.matching(NSPredicate(format: "label CONTAINS %@", "proof.html")).firstMatch
-        if !artifact.isHittable { app.scrollViews["review-content"].swipeUp() }
         XCTAssertTrue(artifact.waitForExistence(timeout: 5))
         note.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        // The decision bar rises with the keyboard and covers the lower card; scroll the link clear of it.
+        let content = app.scrollViews["review-content"]
+        content.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.35))
+            .press(forDuration: 0.05, thenDragTo: content.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.12)))
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Scrolling the card must keep the note focused")
         artifact.tap()
         XCTAssertTrue(app.buttons["Artifact actions"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.textFields["conversation-input"].exists, "Review artifacts must not gain a conversation composer")
-        app.navigationBars.buttons.firstMatch.tap()
+        app.backButton.tap()
         XCTAssertTrue(note.waitForExistence(timeout: 8))
         XCTAssertTrue(note.isHittable)
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "Returning from an artifact must not restore the note keyboard")
@@ -90,13 +93,9 @@ final class ReviewMessagesTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        let workspace = app.tabBars.buttons["Workspace"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 8)); workspace.tap()
-        let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
-        XCTAssertTrue(chief.waitForExistence(timeout: 8))
-        chief.tap()
-        let back = app.buttons["detail-back"]
-        XCTAssertTrue(back.waitForExistence(timeout: 8))
+        app.openDestination("sidebar-chief", timeout: 8)
+        XCTAssertTrue(app.descendants(matching: .any)["chief-screen"].waitForExistence(timeout: 8))
+        let back = app.backButton
         let parentInput = app.textFields["conversation-input"].firstMatch
         XCTAssertTrue(parentInput.waitForExistence(timeout: 8))
         parentInput.tap(); parentInput.typeText("Retain Chief draft without focus")
@@ -115,10 +114,7 @@ final class ReviewMessagesTests: XCTestCase {
         XCTAssertTrue(line.isHittable)
         XCTAssertEqual(parentInput.value as? String, "Retain Chief draft without focus")
         capture(app, "chief-parent-return-without-keyboard")
-        back.tap()
-        let review = app.tabBars.buttons["Review"]
-        XCTAssertTrue(review.waitForExistence(timeout: 8))
-        review.tap()
+        app.openDestination("sidebar-review", timeout: 8)
         XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 12))
         let input = app.textFields["conversation-input"].firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 8))
@@ -140,8 +136,9 @@ final class ReviewMessagesTests: XCTestCase {
         openConversation.tap()
         XCTAssertTrue(app.staticTexts["Historical transcript"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Historical conversation · read only"].waitForExistence(timeout: 8))
+        // The conversation opens on top of Review, so Back returns to the card.
         back.tap()
-        XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 8))
         let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/writes")!)
         let writes = try JSONSerialization.jsonObject(with: data) as! [[String: Any]]
         let sends = writes.filter { $0["sender_message_id"] != nil }

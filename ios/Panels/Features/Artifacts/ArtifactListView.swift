@@ -15,16 +15,13 @@ struct ArtifactListView: View {
     @State private var isLoading = false
     @State private var error: String?
     @State private var hasLoaded = false
-    @State private var selectedArtifact: ArtifactTarget?
+    @Environment(\.openRoute) private var openRoute
     @State private var search = ""
     @State private var refreshVersion = 0
     private var fileCount: Int { entries.reduce(0) { $0 + ($1.directory == nil ? 1 : $1.childCount) } }
 
     var body: some View {
         searchContent
-            .navigationDestination(item: $selectedArtifact) { target in
-                ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, conversationOwner: owner.conversationOwner)
-            }
             .task(id: "\(store.baseURL)|\(count ?? -1)|\(store.connectionSession)") { await load(); refreshVersion += 1 }
 
     }
@@ -39,7 +36,7 @@ struct ArtifactListView: View {
     private var list: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             ForEach(entries.filter { $0.directory != nil }) { folder in
-                ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { selectedArtifact = $0 })
+                ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { openRoute(.artifact($0, conversationOwner: owner.conversationOwner)) })
             }
             fileSection(entries.filter { $0.directory == nil && !$0.key.hasPrefix("linked:") }, title: directory.isEmpty ? "Files" : (directory as NSString).lastPathComponent)
             fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From Fields")
@@ -58,7 +55,7 @@ struct ArtifactListView: View {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                 Text(title).font(.caption2).foregroundStyle(PanelsTheme.faint)
                 ForEach(files.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }) { entry in
-                ArtifactFileRow(owner: owner, entry: entry, open: { selectedArtifact = $0 })
+                ArtifactFileRow(owner: owner, entry: entry, open: { openRoute(.artifact($0, conversationOwner: owner.conversationOwner)) })
             } }
         }
     }

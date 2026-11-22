@@ -69,9 +69,6 @@ final class TicketTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let client = APIClient(baseURL: URL(string: "https://edit-stub.invalid")!, session: session)
         let ticket = try ticket()
-        try await client.editTicketRecap(ticket.id, recap: "Updated recap")
-        try await client.completeTicketField(ticket.id, field: "answer", body: "Owner answer")
-        try await client.removeTicketBlocker(ticket.id, blockerID: "t_blocker")
         try await client.setTicketWorkerConfiguration(ticket.id, backend: "codex", model: nil, effort: nil)
     }
 
@@ -144,15 +141,6 @@ private final class TicketStubProtocol: URLProtocol, @unchecked Sendable {
                 response = #"{"error":{"message":"Ticket changed. Refresh before trying again."}}"#
             } else if url.host == "edit-stub.invalid" {
                 switch url.path {
-                case "/api/tickets/t_02zd37tz":
-                    XCTAssertEqual(request.httpMethod, "PATCH")
-                    XCTAssertEqual(body.count, 1)
-                    XCTAssertEqual(body["recap"] as? String, "Updated recap")
-                case "/api/tickets/t_02zd37tz/complete/answer":
-                    XCTAssertEqual(request.httpMethod, "POST")
-                    XCTAssertEqual(body as? [String: String], ["body": "Owner answer"])
-                case "/api/collections/blockers/t_02zd37tz/t_blocker":
-                    XCTAssertEqual(request.httpMethod, "DELETE"); XCTAssertTrue(body.isEmpty)
                 case "/api/tickets/t_02zd37tz/employee-configuration":
                     XCTAssertEqual(request.httpMethod, "PUT")
                     XCTAssertEqual(body["employee_backend"] as? String, "codex")

@@ -140,7 +140,7 @@ import UserNotifications
         guard let open = pendingOpen else { return nil }
         pendingOpen = nil
         guard NotificationRouting.origin(serverURL.absoluteString) == open.serverURL else {
-            routingError = "This notification belongs to another Panels server. Select that server in Settings, then find the item in Review or Workspace."
+            routingError = "This notification belongs to another Panels server. Select that server in Settings, then find the item in Review or the Sidebar."
             return nil
         }
         return open.destination

@@ -15,15 +15,14 @@ enum ConversationLayout {
 struct ConversationNavigation: ViewModifier {
     let owner: ConversationOwner
     let conversationID: String?
-    var title = "Conversation"
-    var openConversationID: String?
     var refreshError: String?
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
+    @Environment(\.openRoute) private var openRoute
     var textEntry: ScreenTextEntryContext? = nil
-    @State private var opened = false
-    @State private var followedLink = false
-    @State private var linkedConversationID: String?
+    /// The docked composer exists only while its page is the top page, so a pushed
+    /// page, the full conversation included, never has a second composer under it.
+    @State private var pageVisible = false
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
@@ -34,39 +33,58 @@ struct ConversationNavigation: ViewModifier {
 
     private func navigation(content: Content, textEntry: ScreenTextEntryContext) -> some View {
         content
-            .toolbar(.hidden, for: .tabBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                surface(isPage: false, textEntry: textEntry)
-            }
-            .navigationDestination(isPresented: $opened) {
-                ScreenTextEntryScope { childEntry in
-                    surface(isPage: true, textEntry: childEntry)
-                        .toolbar(.hidden, for: .navigationBar)
-                        .toolbar(.hidden, for: .tabBar)
+                if pageVisible {
+                    ConversationSurface(owner: owner, conversationID: conversationID, isPage: false, active: true,
+                                        open: { textEntry.endEditingBeforeNavigation { open() } },
+                                        model: model, speech: speech, refreshError: refreshError, retry: retry)
                 }
             }
-            .task {
-                guard openConversationID != nil, !followedLink else { return }
-                followedLink = true
-                linkedConversationID = openConversationID
-                textEntry.endEditingBeforeNavigation { opened = true }
-            }
-            .onChange(of: opened) { _, isOpen in
-                Haptics.light()
-                if !isOpen, linkedConversationID != nil {
-                    linkedConversationID = nil
-                    model = ConversationModel()
-                }
-            }
+            .onAppear { pageVisible = true }
+            .onDisappear { pageVisible = false; speech.cancel() }
             .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 
-    private func surface(isPage: Bool, textEntry: ScreenTextEntryContext) -> some View {
-        ConversationSurface(owner: owner, conversationID: isPage ? linkedConversationID ?? conversationID : conversationID, title: title,
-                            isPage: isPage, active: isPage || !opened,
-                            open: { textEntry.endEditingBeforeNavigation { opened = true } },
-                            model: model, speech: speech, refreshError: refreshError, retry: retry,
-                            checksCurrentConversation: isPage && linkedConversationID != nil)
+    private func open() {
+        openRoute(.conversation(owner: owner, id: conversationID, linked: false))
+    }
+}
+
+/// The full conversation, a page of its own on the destination's path.
+struct ConversationScreen: View {
+    let owner: ConversationOwner
+    let conversationID: String?
+    /// A link to one exact conversation reads as history once another is current.
+    let linked: Bool
+    @State private var model = ConversationModel()
+    @State private var speech = ConversationSpeech()
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        ScreenTextEntryScope { textEntry in
+            ConversationSurface(owner: owner, conversationID: conversationID, isPage: true, active: true, open: {},
+                                model: model, speech: speech, checksCurrentConversation: linked && conversationID != nil)
+                .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Picker("Conversation lens", selection: $model.lens) {
+                                ForEach(ConversationLens.allCases, id: \.self) { lens in
+                                    Text(lens.rawValue.capitalized).tag(lens)
+                                }
+                            }
+                            .onChange(of: model.lens) { _, _ in Haptics.selection() }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .accessibilityLabel("Conversation actions")
+                        .accessibilityIdentifier("conversation-actions")
+                        .accessibilityValue(model.lens.rawValue.capitalized)
+                    }
+                }
+        }
+        .onDisappear { speech.cancel() }
+        .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 }
 
@@ -74,7 +92,6 @@ struct ConversationNavigation: ViewModifier {
 private struct ConversationSurface: View {
     let owner: ConversationOwner
     let conversationID: String?
-    let title: String
     let isPage: Bool
     let active: Bool
     let open: () -> Void
@@ -109,7 +126,7 @@ private struct ConversationSurface: View {
             if checksCurrentConversation { model.selectConversation(conversationID) }
             else if let current = currentReference { model.selectConversation(current) }
             model.restore(owner: owner, api: store.client, recoverConversationID: false)
-            if owner == .chief { model.reloadDraft() }
+            model.reloadDraft()
             if case .ticket(let id) = owner {
                 let api = store.client
                 let ticket = store.resources.handle(TicketResources.detail(id))
@@ -222,56 +239,38 @@ private struct ConversationSurface: View {
         .preferredColorScheme(.dark)
     }
 
-    private var header: some View {
-        HStack(spacing: 0) {
-            if isPage {
-                AgentPageControls(beforeBack: { textEntry?.endEditing() }) {
-                    Menu {
-                        Picker("Conversation lens", selection: $model.lens) {
-                            ForEach(ConversationLens.allCases, id: \.self) { lens in
-                                Text(lens.rawValue.capitalized).tag(lens)
-                            }
+    /// The docked line that opens the full conversation. The full page has no header row.
+    @ViewBuilder private var header: some View {
+        if !isPage {
+            Button(action: open) {
+                HStack(spacing: 8) {
+                    Group {
+                        if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth) {
+                            RingSpinner(size: .compact)
+                        } else {
+                            Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
                         }
-                        .onChange(of: model.lens) { _, _ in Haptics.selection() }
-                    } label: {
-                        Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
+                    }.frame(width: 12)
+                    let latest = model.latestMessage
+                    Text(.init(model.compactPreview))
+                        .font(PanelsTheme.TypeScale.small).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if latest?.own == true, latest?.note != nil {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not delivered")
                     }
-                    .accessibilityLabel("Conversation actions")
-                    .accessibilityIdentifier("conversation-actions")
-                    .accessibilityValue(model.lens.rawValue.capitalized)
+                    Image(systemName: "chevron.right").font(.system(size: 11))
                 }
-                .padding(.horizontal, AgentPageLayout.gutter)
-            } else {
-                Button(action: open) {
-                    HStack(spacing: 8) {
-                        Group {
-                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth) {
-                                RingSpinner(size: .compact)
-                            } else {
-                                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
-                            }
-                        }.frame(width: 12)
-                        let latest = model.latestMessage
-                        Text(.init(model.compactPreview))
-                            .font(PanelsTheme.TypeScale.small).lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if latest?.own == true, latest?.note != nil {
-                            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not delivered")
-                        }
-                        Image(systemName: "chevron.right").font(.system(size: 11))
-                    }
-                    .padding(.leading, 20).padding(.trailing, 14)
-                    .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(model.compactPreview)
-                .accessibilityIdentifier("conversation-line")
+                .padding(.leading, 20).padding(.trailing, 14)
+                .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.compactPreview)
+            .accessibilityIdentifier("conversation-line")
+            .frame(minHeight: ConversationLayout.lineHeight)
+            .foregroundStyle(PanelsTheme.faint)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("conversation-header")
         }
-        .frame(minHeight: ConversationLayout.lineHeight)
-        .foregroundStyle(PanelsTheme.faint)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("conversation-header")
     }
 
     private var bottom: some View {
@@ -617,8 +616,8 @@ struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil, textEntry: ScreenTextEntryContext? = nil) -> some View {
-        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry, textEntry: textEntry))
+    func conversationNavigation(owner: ConversationOwner, conversationID: String?, refreshError: String? = nil, retry: (() async -> Void)? = nil, textEntry: ScreenTextEntryContext? = nil) -> some View {
+        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, refreshError: refreshError, retry: retry, textEntry: textEntry))
     }
 }
 
@@ -627,12 +626,13 @@ extension View {
 struct ConversationDetailSmokeView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
+    @State private var path: [AppRoute] = []
     var body: some View {
-        NavigationStack {
+        RouteStack(path: $path) {
             List {
-                NavigationLink("Ticket fixture") { TicketView(ticketID: "t_02zd37tz") }
-                NavigationLink("Orchestrator fixture") { RouteDestination(route: .orchestrator("si_4chgag3w")) }
-                NavigationLink("Chief fixture") { RouteDestination(route: .chief) }
+                NavigationLink("Ticket fixture", value: AppRoute.ticket("t_02zd37tz"))
+                NavigationLink("Orchestrator fixture", value: AppRoute.orchestrator("si_4chgag3w"))
+                NavigationLink("Chief fixture", value: AppRoute.chief)
             }.panelsScreen()
         }
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
@@ -644,8 +644,9 @@ struct ConversationDetailSmokeView: View {
 struct ConversationSmokeView: View {
     @Environment(AppStore.self) private var store
     @State private var refreshError: String?
+    @State private var path: [AppRoute] = []
     var body: some View {
-        NavigationStack {
+        RouteStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Text("Chief of Staff").font(PanelsTheme.TypeScale.detailTitle)
@@ -656,7 +657,7 @@ struct ConversationSmokeView: View {
                             .panelsScreen().navigationTitle("Worker details")
                     }
                 }.padding(.horizontal, 20)
-            }.accessibilityIdentifier("conversation-page").panelsScreen().conversationNavigation(owner: .chief, conversationID: "stub", title: "Chief of Staff", refreshError: refreshError, retry: refresh)
+            }.accessibilityIdentifier("conversation-page").panelsScreen().conversationNavigation(owner: .chief, conversationID: "stub", refreshError: refreshError, retry: refresh)
                 .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, retry: refresh)
                 .task {
                     while !Task.isCancelled {

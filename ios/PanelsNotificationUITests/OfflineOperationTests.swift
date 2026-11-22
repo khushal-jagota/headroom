@@ -22,16 +22,15 @@ final class OfflineOperationTests: XCTestCase {
         try await proof(base, "fast")
         app.launch()
         defer { app.terminate() }
-        let workspace = app.tabBars.buttons["Workspace"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 12)); workspace.tap()
-        let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
+        app.openSidebar(timeout: 12)
+        // The Sidebar's Chief card; it exists while the Sidebar is open.
+        let chief = app.buttons["sidebar-chief"]
         XCTAssertTrue(chief.waitForExistence(timeout: 12))
-        app.tabBars.buttons["Review"].tap()
+        app.buttons["sidebar-review"].tap()
         XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 10))
         // Preload the three proposal cards and their manifests before losing connectivity.
         try await Task.sleep(for: .seconds(3))
-        workspace.tap()
-        chief.tap()
+        app.openDestination("sidebar-chief")
         let input = app.textFields["Message"]
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         try await Task.sleep(for: .seconds(2))
@@ -51,11 +50,10 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 8))
         capture(app, "owned-host-conversation-keyboard")
         assertQuiet(app, "offline message")
-        // The conversation page and the Chief page each have the shared Back control.
-        app.buttons["detail-back"].tap()
+        // The conversation page goes back to the Chief page; the Sidebar leads to Review.
+        app.backButton.tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
-        app.buttons["detail-back"].tap()
-        app.tabBars.buttons["Review"].tap()
+        app.openDestination("sidebar-review")
         let approve = app.buttons["review.approve"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         approve.tap()
@@ -71,17 +69,17 @@ final class OfflineOperationTests: XCTestCase {
         assertQuiet(app, "offline decisions")
         app.terminate(); app.launch()
         // After this relaunch the app draws at once, but XCTest's accessibility snapshot of
-        // the hosted tab content can stay empty until the scene is activated again. A trip
+        // the hosted content can stay empty until the scene is activated again. A trip
         // to the Home Screen refreshes it.
-        var found = workspace.waitForExistence(timeout: 8)
+        var found = app.sidebarButton.waitForExistence(timeout: 8)
         for _ in 0..<3 where !found {
             XCUIDevice.shared.press(.home)
             app.activate()
-            found = workspace.waitForExistence(timeout: 8)
+            found = app.sidebarButton.waitForExistence(timeout: 8)
         }
-        XCTAssertTrue(found); workspace.tap()
-        XCTAssertTrue(chief.waitForExistence(timeout: 12), "Cached Workspace did not restore offline")
-        app.tabBars.buttons["Review"].tap()
+        XCTAssertTrue(found); app.openSidebar()
+        XCTAssertTrue(chief.waitForExistence(timeout: 12), "The cached Sidebar did not restore offline")
+        app.buttons["sidebar-review"].tap()
         XCTAssertTrue(element(app, containing: "Record offline").waitForExistence(timeout: 5), "Cached Review did not restore the remaining ask offline")
         // The old cover appeared on activation after a failed read. Stay offline a while.
         XCUIDevice.shared.press(.home)
@@ -90,7 +88,7 @@ final class OfflineOperationTests: XCTestCase {
             assertQuiet(app, "offline after relaunch, \(second)s")
             try await Task.sleep(for: .seconds(1))
         }
-        workspace.tap()
+        app.openSidebar()
         try await proof(base, "online")
         var delivery = try await waitForDelivery(base) {
             $0.count("message") >= 1 && $0.count("approve") >= 1 && $0.count("sendBack") >= 1
@@ -113,9 +111,9 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertEqual(delivery.dropped, [Fault(kind: "read", id: "2")], "The dropped read did not happen")
         XCTAssertGreaterThanOrEqual(delivery.readAttempts["2"] ?? 0, 2)
         assertQuiet(app, "after dropped read")
-        app.buttons["detail-back"].tap()
+        app.backButton.tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
-        app.buttons["detail-back"].tap()
+        app.openSidebar()
 
         // 2. The server does each write, then drops the reply: message, approval, read.
         try await proof(base, "lose/message,decision,read")
@@ -127,10 +125,9 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertTrue(element(app, containing: "Sent through a lost reply").waitForExistence(timeout: 5))
         XCTAssertTrue(line.waitForExistence(timeout: 8)); line.tap()
         XCTAssertTrue(app.staticTexts["Agent update 2"].waitForExistence(timeout: 15))
-        app.buttons["detail-back"].tap()
+        app.backButton.tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
-        app.buttons["detail-back"].tap()
-        app.tabBars.buttons["Review"].tap()
+        app.openDestination("sidebar-review")
         XCTAssertTrue(element(app, containing: "Record offline").waitForExistence(timeout: 10))
         XCTAssertTrue(approve.waitForExistence(timeout: 10))
         approve.tap()
@@ -162,7 +159,7 @@ final class OfflineOperationTests: XCTestCase {
 
         // 3. A refused message shows a red mark; Try Again sends it once with a new ID.
         try await proof(base, "refuse/message")
-        workspace.tap()
+        app.openSidebar()
         XCTAssertTrue(chief.waitForExistence(timeout: 8)); chief.tap()
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         input.tap(); input.typeText("Please refuse this one")
@@ -191,7 +188,7 @@ final class OfflineOperationTests: XCTestCase {
         XCTAssertEqual(delivery.count("message"), 3)
         capture(app, "conversation-refused-retried")
         assertQuiet(app, "after Try Again")
-        app.buttons["detail-back"].tap()
+        app.backButton.tap()
         XCTAssertTrue(app.staticTexts["Chief of Staff"].waitForExistence(timeout: 8))
     }
 

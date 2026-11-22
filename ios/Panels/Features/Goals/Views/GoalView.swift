@@ -2,41 +2,40 @@ import SwiftUI
 
 struct GoalView: View {
     let goalID: String
-    var openConversationID: String? = nil
     @Environment(AppStore.self) private var store
     let editOwner: PageSessionRoute
     @State private var session: PageSession?
     var body: some View {
         Group {
             if let session {
-                GoalDetailContent(session: session, openConversationID: openConversationID)
+                GoalDetailContent(session: session)
             } else { ScreenLoadingView(title: "goal") }
         }.task(id: "\(store.baseURL):\(goalID)") { session = editOwner.goal(goalID, api: store.client, resources: store.resources) }
     }
 }
 private struct GoalDetailContent: View {
     let session: PageSession
-    var openConversationID: String?
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                AgentPageControls(beforeBack: {
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                }) {
+                GoalDocumentContent(session: session)
+            }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, 32)
+        }.panelsScreen()
+            .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Copy link", systemImage: "link") {
                             var link = URLComponents(url: store.baseURL, resolvingAgainstBaseURL: false)
                             link?.fragment = "/workspace/goal/\(session.id)"; UIPasteboard.general.url = link?.url
                         }
-                    } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("Goal actions")
+                    } label: { Image(systemName: "ellipsis") }.accessibilityLabel("Goal actions")
                 }
-                GoalDocumentContent(session: session)
-            }.padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, 32)
-        }.panelsScreen().toolbar(.hidden, for: .navigationBar)
+            }
             .modifier(PageArtifactNavigation(holder: session.goal?.holder))
-            .modifier(GoalHolderConversation(session: session, openConversationID: openConversationID))
+            .modifier(GoalHolderConversation(session: session))
             .screenLoadState("goal", hasContent: session.goal != nil, error: session.readError) { await session.refresh() }
             .panelsRefreshable { await session.refresh() }
             .task(id: "\(store.baseURL):\(scenePhase == .active)") { if scenePhase == .active { await session.follow() } }
@@ -80,10 +79,10 @@ struct GoalDocumentContent: View {
                 VStack(alignment: .leading, spacing: 8) { metadata(goal) }
             }.panelsScaledFont(size: 12, weight: .medium)
             if showsTitle {
-                GoalEditableText(value: goal.title, label: "Goal title", session: session, path: ["title"])
+                GoalReadText(value: goal.title)
                     .panelsScaledFont(size: 30, relativeTo: .title, weight: .semibold).foregroundStyle(PanelsTheme.strong)
             }
-            GoalEditableText(value: goal.why, label: "Why this goal matters", session: session, path: ["why"], multiline: true)
+            GoalReadText(value: goal.why)
                 .panelsScaledFont(size: 14, weight: .medium).foregroundStyle(PanelsTheme.Goal.faint)
         }
     }
@@ -110,7 +109,6 @@ struct GoalDocumentContent: View {
 
 private struct GoalHolderConversation: ViewModifier {
     let session: PageSession
-    var openConversationID: String?
     @Environment(AppStore.self) private var store
     @State private var conversationHandle: ResourceHandle<GoalJSON>?
     private var conversationID: String? {
@@ -126,7 +124,6 @@ private struct GoalHolderConversation: ViewModifier {
         Group {
             if let holder = session.goal?.holder {
                 content.conversationNavigation(owner: holder.conversationOwner, conversationID: conversationID,
-                    title: session.goal?.title ?? "Goal", openConversationID: openConversationID,
                     refreshError: conversationHandle?.error ?? session.readError, retry: { await session.refresh(); await conversationHandle?.refresh() })
                     .id(holder)
             } else { content }

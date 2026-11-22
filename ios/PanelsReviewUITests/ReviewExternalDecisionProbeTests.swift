@@ -11,16 +11,13 @@ final class ReviewExternalDecisionProbeTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        // One-off diagnosis: select the screenshot-visible tab positions before AX lookup.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.94)).tap()
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.94)).tap()
-        capture(app, "branch-review-after-initial-tab-selection")
+        // Review is the root at launch.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 12))
+        capture(app, "branch-review-initial")
         let initialHierarchy = XCTAttachment(string: app.debugDescription)
-        initialHierarchy.name = "branch-review-after-initial-tab-selection-hierarchy"
+        initialHierarchy.name = "branch-review-initial-hierarchy"
         initialHierarchy.lifetime = .keepAlways
         add(initialHierarchy)
-        let review = app.tabBars.buttons["Review"]
-        XCTAssertTrue(review.waitForExistence(timeout: 12))
         let proposal = app.staticTexts["External final approval proof"]
         let message = app.staticTexts["Retain this eligible unread message"]
         XCTAssertTrue(proposal.waitForExistence(timeout: 12))
@@ -32,9 +29,9 @@ final class ReviewExternalDecisionProbeTests: XCTestCase {
         try await post(base, "/api/conversation/conversations/native-review-diagnostic-conversation/owner-read", ["through_sequence": 1])
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(review.waitForExistence(timeout: 8))
-        app.tabBars.buttons["Workspace"].tap()
-        review.tap()
+        // Leave Review for another destination and return to it.
+        app.openDestination("sidebar-chief", timeout: 8)
+        app.openDestination("sidebar-review", timeout: 8)
         XCTAssertTrue(message.waitForExistence(timeout: 5))
         let stateAfterRead = try await state(base)
         XCTAssertEqual(stateAfterRead["read_through"] as? Int, 1)
@@ -51,9 +48,8 @@ final class ReviewExternalDecisionProbeTests: XCTestCase {
         XCTAssertEqual(accepted["stage"] as? String, "done")
         XCTAssertEqual(accepted["proposal_pending"] as? Bool, false)
         app.activate()
-        XCTAssertTrue(review.waitForExistence(timeout: 8))
-        app.tabBars.buttons["Workspace"].tap()
-        review.tap()
+        app.openDestination("sidebar-chief", timeout: 8)
+        app.openDestination("sidebar-review", timeout: 8)
         let caughtUp = app.staticTexts["You’re caught up."]
         let cleared = caughtUp.waitForExistence(timeout: 6)
         capture(app, "branch-review-after-external-final-approval")

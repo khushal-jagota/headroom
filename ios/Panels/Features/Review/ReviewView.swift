@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ReviewView: View {
     let savedWork: ReviewSavedWork
+    let session: ReviewSession
     var isActive = true
     @State private var appeared = false
     private var active: Bool { isActive && appeared && scenePhase == .active }
@@ -10,12 +11,12 @@ struct ReviewView: View {
     private static let readAhead = 3
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @State private var queue = ReviewQueue()
+    private var queue: ReviewQueue { get { session.queue } nonmutating set { session.queue = newValue } }
     /// The card on screen, held while its parts finish their exits.
-    @State private var displayedCard: ReviewCard?
-    @State private var decisions: [String: ReviewDecision] = [:]
-    @State private var messageDecisions = ReviewMessageDecisions()
-    @State private var reviewPage: String?
+    private var displayedCard: ReviewCard? { get { session.displayedCard } nonmutating set { session.displayedCard = newValue } }
+    private var decisions: [String: ReviewDecision] { get { session.decisions } nonmutating set { session.decisions = newValue } }
+    private var messageDecisions: ReviewMessageDecisions { session.messageDecisions }
+    private var reviewPage: String? { get { session.reviewPage } nonmutating set { session.reviewPage = newValue } }
     @State private var cardHeight: CGFloat = 180
     @State private var emptyVisible = false
     private var server: String { LocalStore.server(store.baseURL) }
@@ -94,9 +95,8 @@ struct ReviewView: View {
         .onChange(of: savedWork.key) { _, _ in restoreSavedWork() }
         .onChange(of: active) { _, active in if active { restoreSavedWork() } }
         .screenLoadState("review", hasContent: store.review != nil, error: store.errors["Navigation"]?.note) { await store.refresh() }
-        .navigationTitle("").navigationBarTitleDisplayMode(.inline).toolbar(.hidden, for: .navigationBar)
+        .navigationTitle("").navigationBarTitleDisplayMode(.inline)
         .background(PanelsTheme.Web.surface).panelsScreen()
-        .onChange(of: store.baseURL) { _, _ in queue = ReviewQueue(); displayedCard = nil; decisions = [:]; messageDecisions = ReviewMessageDecisions(); reviewPage = nil }
         // The review window holds 30 cards. Once every loaded one was skipped here,
         // the next page replaces it; Revisit returns to the first.
         .onChange(of: reviewPage, initial: true) { _, page in demandReview(page) }
@@ -197,6 +197,17 @@ struct ReviewView: View {
         }
         Task { await store.refresh() }
     }
+}
+
+/// Review's queue and loaded asks. The shell owns it, so skips and the asks loaded
+/// ahead (proposals with their manifests) survive a visit to another destination,
+/// and stay ready offline. A new server starts a new session.
+@MainActor @Observable final class ReviewSession {
+    var queue = ReviewQueue()
+    var displayedCard: ReviewCard?
+    var decisions: [String: ReviewDecision] = [:]
+    var reviewPage: String?
+    @ObservationIgnored fileprivate let messageDecisions = ReviewMessageDecisions()
 }
 
 /// Message decisions keyed by item, shared by the visible card and the read-ahead.

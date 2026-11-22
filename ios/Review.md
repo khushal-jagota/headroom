@@ -1,6 +1,6 @@
 # Review on iOS
 
-Review is the initial tab. Notification links keep their own destination. The final
+Review is the root at launch. The final
 page places Message Chief beneath the caught-up text, with Revisit below it. The
 composer shares Chief’s draft text and attachments. A message is saved in the outbox
 and clears only its unchanged draft in the same save, so newer edits survive. It is
@@ -23,7 +23,7 @@ leave. Their canonical addresses and owners decide whether a painted message rem
 eligible. A final approval elsewhere removes a Done Ticket's held card, including
 when an earlier read already emptied its live queue. A read elsewhere alone keeps
 an eligible painted message and its original read boundary. Foreground entry starts
-a fresh snapshot; tab return uses the same current stream. No polling is added.
+a fresh snapshot; returning to Review uses the same current stream. No polling is added.
 Old display snapshots without this context receive a one-time cache miss. Fresh
 server data replaces them; drafts and outgoing work keep their retention rules.
 Skip keeps a card out of this visit's queue without
@@ -41,15 +41,12 @@ Review uses the system font throughout. Skip stays in the top bar. Send back and
 Approve have equal weight at the end of the scrollable proposal, with Approve on
 the right. Both use rounded rectangles. Approve uses the filled accent background with dark
 ink text; Send back uses the raised surface, strong text and a hairline border.
-Both have 12pt corners. The title opens the
-ticket in Workspace; its long-press menu offers Rename. Recaps expand in place.
-Tapping the proposal edits it in place, with Done in the navigation bar. A tap on a
-link instead follows it. Proposal and message cards share one link route
+Both have 12pt corners. Open ticket, beside Skip,
+opens the Ticket on top of Review; Back returns. Recaps expand in place. A tap on a link follows it. Proposal and message cards share one link route
 (`ReviewArtifacts.swift`): links resolve against the server address, a managed file
-opens the in-app viewer, and other links open in the system. Each linked file also
-shows an inline preview with Open artifact, hidden while editing. Approval
-sends the edited text together with the exact revision that was read. If the
-proposal changes during editing, Review keeps the draft and requires a reload.
+opens the in-app viewer, and other links open in the system. Only linked photos and
+videos also show inline. Approval carries the exact proposal revision that was
+read. If the proposal changes, Review keeps the unsent note and requires a reload.
 
 The approval sheet shows How far as a list of gates and Who reviews as a native
 segmented picker. The suggested next gate and current holder are selected first.
@@ -86,7 +83,7 @@ A failed transcription keeps the audio and offers Retry. Closing the composer
 preserves the recording. Explicit discard removes it. Sending requires nonempty
 text. The outbox saves the words first; a refusal keeps them available.
 
-Review and its tab badge share a server-specific snapshot of saved decision, mark
+Review and its badge share a server-specific snapshot of saved decision, mark
 read and reply summaries. An outgoing fact change or removal refreshes that indexed query. Queue
 evaluation reads memory. A reply selects metadata for its conversation and read
 boundary, then decodes only the latest relevant and accepted work. Message-attempt
@@ -114,23 +111,21 @@ window; unknown or unloaded identities stay counted.
 
 The live Ticket proposal card uses this same durable decision path. Opening its
 Approve or Send back sheet captures the displayed proposal, revision, timestamp,
-server and chosen text; a later page update cannot change that command. Proposal
-edits are saved as exact-proposal drafts while typing, and guidance is saved before
+server and chosen text; a later page update cannot change that command. The
+note is saved as an exact-proposal draft while typing, and before
 enqueue. The sheet returns after durable enqueue; it does not wait behind other
 outgoing lanes. Exact pending decisions disable duplicate actions, and a refusal
 appears inside the existing proposal card. New native actions do not call the
 legacy Ticket decision adapters.
 
 A server refusal restores only its exact field, revision and proposal time. Its
-note uses the existing error surface, and saved edits and guidance remain. Before
+note uses the existing error surface, and the saved note remains. Before
 any possible POST, an unsupported server restores the card with a compatible
 server note. There is no legacy endpoint fallback.
 A newer proposal on the same Ticket does not inherit an older refusal note.
 
-A proposal title opens its ticket in Workspace. Cross-tab navigation sets the destination without an
-intermediate Workspace-root animation. Every pushed route hides the tab bar;
-returning to a tab root restores it. A message card shows markdown, attached images and files, and inline previews for
-linked artifacts. Reply uses the same composer, attachments and voice controls as
+A message card shows markdown, attached images and files, and linked photos and
+videos inline. Reply uses the same composer, attachments and voice controls as
 Conversation. Its draft is separate from the full conversation's draft and survives
 Skip and relaunch. A reply is saved in the outbox with its conversation ID, message
 identity and the last displayed message sequence, and counts as handled at once. It
@@ -143,9 +138,8 @@ boundary.
 Mark read acknowledges only the displayed run and does not send a reply. It joins
 the outbox, and the card leaves at once until the server's read point catches up. Both
 Mark read and Open conversation use the existing secondary action style. Open
-conversation follows a link through the owning Ticket, Orchestrator, Chief or Goal page
-and opens that page's normal conversation. Back or a left-edge swipe returns to
-that owner page. An older conversation whose owner has moved on remains read-only
+conversation pushes the conversation page on top of Review. Back or a left-edge swipe
+returns to Review. An older conversation whose owner has moved on remains read-only
 inside the same conversation page. Message cards retain their Review fade, swipe
 threshold and feedback.
 
@@ -156,9 +150,8 @@ notes appear inside the input's border, including their retry controls. Review's
 reply draft and send/read boundary remain separate from an ordinary conversation
 message.
 
-Deployment status lives in More's main list, in a Panels server row that opens
-VPS. There is no floating deployment capsule. A small dot on More appears while
-status is active, and is red for a problem. Healthy idle has no dot. Deployed
+Deployment status lives in the Panels server row at the top of Settings, which
+shows it without opening a page. There is no floating deployment capsule. Deployed
 expires at the server's valid-until time; expired progress becomes Reconnecting.
 A failed or rolled-back deployment stays Problem.
 
@@ -167,7 +160,7 @@ A failed or rolled-back deployment stays Problem.
 `ReviewDecisionTests` reuses the foundation ticket fixture and an in-memory
 URLProtocol transport. Five Review checks cover gaps in the foundation tests:
 
-- Edited approval includes the visible revision, edited text, next gate and holder,
+- Approval includes the visible revision, next gate and holder,
   and cannot be submitted twice after success.
 - A changed proposal preserves an unsaved draft and blocks either decision until
   reload, including a change discovered only during the submission's preflight.
@@ -186,21 +179,6 @@ the transcription wire contract was tested against the in-memory transport.
 A sixth focused check covers deployment expiry and failure precedence, which the
 foundation tests did not cover. It requires no server or simulator interaction.
 
-Round 5 verification used one locked PanelsLaneA fixture pass with bundle ID
-`app.panels.ios.pios-round5`: six Review tests, four Workspace tests, and a temporary
-37-second UI check of Settled open/close, Skip, Send back draft retention, approval
-dismissal, and More status. The UI check covers SwiftUI focus, sheet dismissal and
-scroll behavior that the model tests cannot prove; it reuses the existing UI test
-host and a loopback stub, with no live server writes. The driver and 29-second clip
-are task evidence outside the repository. Motion frames were compared with the
-selected A/C mockups. This does not verify device haptics, live transcription,
-Reduce Motion on a device, or pagination with hundreds of settled managers.
-
-After the one capture pass, source review removed a redundant prefetched read,
-pinned the current ask against a concurrent queue refresh during sheet dismissal,
-used sentence-case group labels, and hid Skip’s system toolbar capsule. Those
-small follow-ups received a fresh jobs-4 compile, without a second capture.
-
 See [saved data and interrupted connections](Offline.md) for the outbox and focused verification.
 
 Unread-message verification uses `ReviewMessageTests` with the existing URLProtocol
@@ -217,16 +195,14 @@ reply refusal and relaunch, queued acceptance, a message arriving after display,
 Mark read, shared historical conversation navigation, Skip and revisit. Run it on an already
 booted PanelsLaneA under its lock; `PANELS_OFFLINE_BUNDLE` selects the task bundle.
 This proof uses loopback writes. The optional live test requires
-`TEST_RUNNER_PANELS_LIVE_READ_ONLY=1` and only reads Workspace, Review and Conversation.
+`TEST_RUNNER_PANELS_LIVE_READ_ONLY=1` and makes only read requests.
 
 Finished-state verification extends the existing local-skip unit test to cover
 removed, replaced, and resolved asks in the revisit count. One connected case,
 `ReviewMessagesTests/testCompletionAndRevisit`, reuses the offline HTTP stub and
 UI test host to check the real bottom button, restore the skipped queue, and
 remove the button after fixture approvals. Model tests cannot prove that SwiftUI
-wires the button to the queue or keeps it above the tab bar. This case took 27.8
-seconds on PanelsLaneB; the stub recorded no writes for Skip and three approvals
-only after Revisit. The fixture supplies seven running agents to check that Review
+wires the button to the queue. The fixture supplies seven running agents to check that Review
 shows no agent status. No live server writes or physical-device checks were made.
 Run with `PANELS_REVIEW_COMPLETION=1`,
 `PANELS_OFFLINE_BUNDLE=app.panels.ios.pios-review-done`, and a task-owned
@@ -236,13 +212,12 @@ be already booted; it does not operate simulator lifecycle.
 
 Review conversation-link verification reuses that same stub and UI host in
 `ReviewMessagesTests/testReviewConversationLinkAndComposer`. It exercises Ticket
-and Orchestrator links, cancelled and completed left-edge swipes, chevron return,
+and Orchestrator links, cancelled and completed left-edge swipes, Back return,
 normal draft retention and separate Review drafts. It also measures the shared
 48-point resting height, expansion with text, collapse after clearing text without
 losing keyboard focus, keyboard dismissal on recording, and feedback containment
 in both Review and Conversation. These are SwiftUI layout and navigation risks
-that the model tests cannot prove. The one added connected case took 135.9 seconds
-on the temporary iPhone 17 Pro simulator; it reuses the existing server and test
+that the model tests cannot prove. The added connected case reuses the existing server and test
 host. Speech silence is a debug fixture, not microphone or provider evidence.
 Before and after captures remain outside the source worktree.
 
@@ -257,8 +232,7 @@ screen after approval, and Mark read takes the page away. Its writes change the 
 fixture, so it runs alone on a fresh stub with `PANELS_REVIEW_MESSAGES=1`,
 `PANELS_REVIEW_STACKED=1` and
 `PANELS_OFFLINE_TEST=ReviewMessagesTests/testStackedTicketCard`. It reuses the
-offline stub, whose `ticket-stacked` owner keeps the proposal on the message's Ticket,
-and it took 22.5 seconds on a task simulator.
+offline stub, whose `ticket-stacked` owner keeps the proposal on the message's Ticket.
 
 External-decision verification reuses the Foundation navigation fixtures. The added
 `NavigationViewTests/testExternalFinalApprovalRemovesHeldCardButReadElsewhereRetainsMessage`

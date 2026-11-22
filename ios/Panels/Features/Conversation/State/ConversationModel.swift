@@ -61,9 +61,13 @@ import UniformTypeIdentifiers
         restoring = true
         defer { restoring = false }
         let server = LocalStore.server(api.baseURL)
-        draft = LocalStore.shared.draft(server: server, id: draftKey) ?? ""
-        attachments = (try? LocalStore.shared.record(server: server, kind: "attachments", id: draftKey))
+        // Assign only what changed: each assignment counts as a composer edit, and a
+        // pending photo rejection restores its draft only while no edit happened.
+        let storedDraft = LocalStore.shared.draft(server: server, id: draftKey) ?? ""
+        let storedAttachments = (try? LocalStore.shared.record(server: server, kind: "attachments", id: draftKey))
             .flatMap { try? JSONDecoder().decode([ConversationSend.Piece].self, from: $0.payload) } ?? []
+        if draft != storedDraft { draft = storedDraft }
+        if attachments != storedAttachments { attachments = storedAttachments }
     }
 
     /// Change the displayed destination without changing the owner's unsent work

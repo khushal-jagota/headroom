@@ -1,27 +1,42 @@
 import SwiftUI
 import UIKit
 
+/// One destination is on screen and mounted at a time, in its own NavigationStack.
+/// The shell keeps every destination's page path, so a return shows the page left.
 struct AppShell: View {
     @Environment(AppStore.self) private var store
     @Environment(NotificationController.self) private var notifications
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var updateRequired = false
-    @State private var deploymentState: DeploymentStatusPresentation?
-    @State private var selectedTab: AppTab = .review
     @State private var savedReviewWork = ReviewSavedWork()
-    @State private var reviewPath: [AppRoute] = []
-    @State private var workspacePath: [AppRoute] = []
-    @State private var morePath: [AppRoute] = []
+    @State private var reviewSession = ReviewSession()
+    @State private var destination: AppDestination = .review
+    @State private var paths: [AppDestination: [AppRoute]] = [:]
+    @State private var reviewVisit = 0
+    /// Drag offsets live in this object, so a moving finger redraws the Sidebar, not the shell.
+    @State private var sidebar = SidebarPresentation()
+
+    private var currentPath: [AppRoute] { paths[destination] ?? [] }
 
     var body: some View {
-        // Keep the tab graph mounted inside an owned UIKit view.
-        MountedTabContent(content: tabs)
-        // The inner UIKit host owns physical and keyboard safe areas once.
-        .ignoresSafeArea(.all)
+        GeometryReader { geometry in
+            let width = min(geometry.size.width * 0.85, 400)
+            ZStack(alignment: .leading) {
+                stack
+                    .gesture(SidebarEdgePan(enabled: !sidebar.open && currentPath.isEmpty,
+                                            changed: { edgeDragChanged($0) },
+                                            ended: { edgeDragEnded($0, width: width) }))
+                if sidebar.shown {
+                    SidebarOverlay(presentation: sidebar, width: width, current: destination, reviewBadge: reviewBadge,
+                                   select: select, close: closeSidebar, reopen: { withAnimation(openMotion) { sidebar.settle(open: true) } })
+                        .transition(.identity)
+                }
+            }
+        }
         .task {
             while !Task.isCancelled {
                 updateRequired = NativeBuildGate.requiresUpdate(store.baseURL)
-                deploymentState = DeploymentStatusPresentation.resolve(store.deployment, connected: store.connection == "Following changes", readFailed: store.errors["Deployment"] != nil, now: .now)
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }
@@ -48,15 +63,16 @@ struct AppShell: View {
         .alert("Notification", isPresented: Binding(get: { notifications.routingError != nil }, set: { if !$0 { notifications.routingError = nil } })) {
             Button("OK") { notifications.routingError = nil }
         } message: { Text(notifications.routingError ?? "") }
-        // Owner override: tabs select; pushes and back navigation give a light impact.
         .onChange(of: ReviewSavedWork.Key(server: LocalStore.server(store.baseURL), revision: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))), initial: true) { _, key in
             savedReviewWork.refresh(key.server)
         }
-        .onChange(of: selectedTab) { _, _ in Haptics.selection() }
-        .onChange(of: reviewPath) { old, new in if old != new { Haptics.light() } }
-        .onChange(of: workspacePath) { old, new in if old != new { Haptics.light() } }
-        .onChange(of: morePath) { old, new in if old != new { Haptics.light() } }
-        .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
+        // Owner override: a destination change selects; pushes and back navigation give a light impact.
+        .onChange(of: destination) { _, _ in Haptics.selection() }
+        .onChange(of: paths) { old, new in if old[destination] != new[destination] { Haptics.light() } }
+        .onChange(of: store.baseURL) { _, _ in
+            paths = [:]; reviewSession = ReviewSession(); sidebar.settle(open: false)
+            if destination != .review { showDestination(.review) }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
         }
@@ -69,37 +85,70 @@ struct AppShell: View {
         .task(id: "outbox:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await Outbox.shared.run(api: store.client) }
         }
+        // The one foreground entry into the store. The Sidebar's cards join the scope
+        // first and stay in it, so opening the Sidebar never changes the stream.
         .task(id: "\(store.baseURL.absoluteString):\(AppStore.follows(scenePhase))") {
+            store.setNavigationDemand("sidebar", [ViewWindowRequest(section: "rail_parents", limit: NavigationScope.maximumWindowRows)])
             if AppStore.follows(scenePhase) { await store.run() }
         }
     }
 
-    private var tabs: some View {
-        TabView(selection: $selectedTab) {
-            NavigationStack(path: $reviewPath) {
-                ReviewView(savedWork: savedReviewWork, isActive: selectedTab == .review && reviewPath.isEmpty && scenePhase == .active, openTicket: { id in
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        workspacePath.append(.ticket(id))
-                        selectedTab = .workspace
-                    }
-                })
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }
-                .tabItem { Label("Review", systemImage: "checkmark.circle") }
-                .badge(reviewBadge).tag(AppTab.review)
-            NavigationStack(path: $workspacePath) {
-                WorkspaceView()
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }
-                .tabItem { Label("Workspace", systemImage: "rectangle.3.group") }.tag(AppTab.workspace)
-            NavigationStack(path: $morePath) {
-                MoreView()
-                    .navigationDestination(for: AppRoute.self) { detail($0) }
-            }
-                .tabItem { Label { Text("More") } icon: { Image(uiImage: moreTabImage) } }.tag(AppTab.more)
+    // MARK: Destinations
+
+    private var stack: some View {
+        let shown = destination
+        return RouteStack(path: Binding(get: { paths[shown] ?? [] }, set: { paths[shown] = $0 })) {
+            root(shown)
         }
+        .id(shown)
+    }
+
+    @ViewBuilder private func root(_ destination: AppDestination) -> some View {
+        switch destination {
+        case .review:
+            // Review keeps its own header row; the Sidebar button takes its empty leading corner.
+            ReviewView(savedWork: savedReviewWork, session: reviewSession, isActive: currentPath.isEmpty && scenePhase == .active, openTicket: { id in
+                paths[.review, default: []].append(.ticket(id))
+            })
+            .environment(\.reviewVisit, reviewVisit)
+            .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .topLeading) { reviewSidebarButton.padding(.leading, 16).padding(.top, 4) }
+        case .chief: RouteDestination(route: .chief).toolbar { sidebarToolbarItem }
+        case .manager(let id): RouteDestination(route: .orchestrator(id)).toolbar { sidebarToolbarItem }
+        case .settings: RouteDestination(route: .settings).toolbar { sidebarToolbarItem }
+        }
+    }
+
+    private var sidebarToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) { sidebarButton }
+    }
+
+    private var sidebarButton: some View {
+        Button { openSidebar() } label: { Image(systemName: "sidebar.left") }
+            .accessibilityLabel("Open sidebar")
+            .accessibilityIdentifier("sidebar-button")
+    }
+
+    /// Review has no bar, so its button carries the bar button's own look.
+    @ViewBuilder private var reviewSidebarButton: some View {
+        if #available(iOS 26.0, *) {
+            sidebarButton.buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.large)
+        } else {
+            sidebarButton.buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.large)
+        }
+    }
+
+    private func showDestination(_ next: AppDestination) {
+        guard next != destination else { return }
+        if next == .review { reviewVisit += 1 }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { destination = next }
+    }
+
+    private func select(_ next: AppDestination) {
+        showDestination(next)
+        closeSidebar()
     }
 
     private var reviewBadge: Int {
@@ -110,81 +159,97 @@ struct AppShell: View {
         return presentation.reviewBadge(count: count, pendingDecisionTickets: pending)
     }
 
-    private var moreTabImage: UIImage {
-        let symbol = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: 23))!
-        guard let deploymentState else { return symbol }
-        return UIGraphicsImageRenderer(size: CGSize(width: 32, height: 25)).image { _ in
-            symbol.withTintColor(UIColor(selectedTab == .more ? PanelsTheme.accent : PanelsTheme.faint)).draw(in: CGRect(x: 1, y: 9, width: 25, height: 6))
-            UIColor(deploymentState == .problem ? PanelsTheme.error : PanelsTheme.accent).setFill()
-            UIBezierPath(ovalIn: CGRect(x: 26, y: 0, width: 6, height: 6)).fill()
-        }.withRenderingMode(.alwaysOriginal)
+    // MARK: Sidebar
+
+    private var openMotion: Animation? { reduceMotion ? nil : .timingCurve(0.2, 0.7, 0.5, 1, duration: 0.22) }
+    private var closeMotion: Animation? { reduceMotion ? nil : .timingCurve(0.4, 0, 1, 1, duration: 0.15) }
+
+    private func openSidebar() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        Haptics.selection()
+        withAnimation(openMotion) { sidebar.settle(open: true) }
     }
 
+    private func closeSidebar() {
+        withAnimation(closeMotion) { sidebar.settle(open: false) }
+    }
+
+    /// A drag from the leading screen edge of a root page opens the Sidebar under the finger.
+    private func edgeDragChanged(_ translation: CGFloat) {
+        if !sidebar.dragging {
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+        sidebar.dragging = true
+        sidebar.drag = max(0, translation)
+    }
+
+    private func edgeDragEnded(_ predicted: CGFloat, width: CGFloat) {
+        let opens = predicted > width / 3
+        if opens { Haptics.selection() }
+        withAnimation(opens ? openMotion : closeMotion) { sidebar.settle(open: opens) }
+    }
+
+    // MARK: Notifications
+
+    /// A Ticket or Goal opens on top of Review; Chief and a Manager open their own destination.
     private func openNotification() {
         guard let destination = notifications.consumeOpen(for: store.baseURL) else { return }
+        sidebar.settle(open: false)
         switch destination {
         case .review(let ticketID):
-            if let ticketID {
-                workspacePath = [.ticket(ticketID)]
-                selectedTab = .workspace
-            } else {
-                reviewPath = []
-                selectedTab = .review
-            }
-        case .ticket(let id): selectedTab = .workspace; workspacePath = [.ticket(id)]
-        case .orchestrator(let id): selectedTab = .workspace; workspacePath = [.orchestrator(id)]
-        case .goal(let id): selectedTab = .workspace; workspacePath = [.goal(id)]
-        case .chief: selectedTab = .workspace; workspacePath = [.chief]
+            paths[.review] = ticketID.map { [.ticket($0)] } ?? []
+            showDestination(.review)
+        case .ticket(let id): paths[.review] = [.ticket(id)]; showDestination(.review)
+        case .goal(let id): paths[.review] = [.goal(id)]; showDestination(.review)
+        case .orchestrator(let id): paths[.manager(id)] = []; showDestination(.manager(id))
+        case .chief: paths[.chief] = []; showDestination(.chief)
         }
-    }
-
-    private func detail(_ route: AppRoute) -> some View {
-        RouteDestination(route: route)
     }
 }
 
-/// Own the content boundary rather than infer a UIKit ancestor from SwiftUI.
-private struct MountedTabContent<Content: View>: UIViewControllerRepresentable {
-    let content: Content
+/// The system screen-edge pan: it claims only drags that start at the leading edge,
+/// so taps there, tables, chart scrubbing and card swipes keep working. It is off on
+/// pushed pages, where the same edge belongs to the system Back swipe.
+private struct SidebarEdgePan: UIGestureRecognizerRepresentable {
+    let enabled: Bool
+    let changed: (CGFloat) -> Void
+    /// The translation projected a short way ahead by the release velocity.
+    let ended: (CGFloat) -> Void
 
-    func makeUIViewController(context: Context) -> Controller {
-        Controller(root: Root(content: content, environment: context.environment))
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIScreenEdgePanGestureRecognizer {
+        let recognizer = UIScreenEdgePanGestureRecognizer()
+        recognizer.edges = .left
+        recognizer.delegate = context.coordinator
+        return recognizer
     }
 
-    func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.host.rootView = Root(content: content, environment: context.environment)
+    func updateUIGestureRecognizer(_ recognizer: UIScreenEdgePanGestureRecognizer, context: Context) {
+        recognizer.isEnabled = enabled
     }
 
-    struct Root: View {
-        let content: Content
-        let environment: EnvironmentValues
-        var body: some View { content.environment(\.self, environment) }
-    }
-
-    final class Controller: UIViewController {
-        let host: UIHostingController<Root>
-
-        init(root: Root) {
-            host = UIHostingController(rootView: root)
-            super.init(nibName: nil, bundle: nil)
+    func handleUIGestureRecognizerAction(_ recognizer: UIScreenEdgePanGestureRecognizer, context: Context) {
+        let translation = recognizer.translation(in: recognizer.view).x
+        switch recognizer.state {
+        case .began, .changed: changed(translation)
+        case .ended: ended(translation + 0.15 * recognizer.velocity(in: recognizer.view).x)
+        case .cancelled, .failed: ended(0)
+        default: break
         }
+    }
 
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-        override func loadView() {
-            view = UIView()
-            view.backgroundColor = .clear
-            addChild(host)
-            host.view.backgroundColor = .clear
-            host.view.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(host.view)
-            NSLayoutConstraint.activate([
-                host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                host.view.topAnchor.constraint(equalTo: view.topAnchor),
-                host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            ])
-            host.didMove(toParent: self)
+    /// Some Settings pages push outside the shell's path. The edge under the finger
+    /// belongs to Back whenever its navigation stack holds more than its root.
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let view = recognizer.view else { return false }
+            var responder: UIResponder? = view.hitTest(recognizer.location(in: view), with: nil)
+            while let current = responder {
+                if let navigation = current as? UINavigationController { return navigation.viewControllers.count <= 1 }
+                responder = current.next
+            }
+            return true
         }
     }
 }

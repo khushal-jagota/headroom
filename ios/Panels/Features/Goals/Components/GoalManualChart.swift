@@ -4,7 +4,7 @@ private struct GoalManualCounter: View {
     let block: GoalJSON
     let value: Double?
     var size: CGFloat = 32
-    /// The folded summary keeps the unit in the counter; the inline value shows it beside the field.
+    /// The folded summary keeps the unit in the counter; the inline value shows it beside the number.
     var unit = false
     private var displayBlock: GoalJSON {
         // The web's inline counter carries no unit; a reading's unit sits beside it (`.unit`).
@@ -17,129 +17,24 @@ private struct GoalManualCounter: View {
     }
 }
 
-/// The web's inline value (manual-measurements.tsx): a native field over the shared
-/// rolling counter. Focus selects the accepted value; Done or focus loss commits a
-/// changed draft; Cancel restores the accepted value. No edit menu covers the number.
+/// The web's inline value (manual-measurements.tsx): the shared rolling counter,
+/// so an accepted increment rolls from the old reading to the new one.
 struct GoalManualValue: View {
-    @Bindable var editor: GoalManualEditor
+    let editor: GoalManualEditor
     let block: GoalJSON
-    var centered = false
     var size: CGFloat = 40
-    @State private var editing = false
-    @State private var submitting = false
     private var current: Double? { editor.state?.value(cumulative: editor.cumulative) }
     var body: some View {
-        // The counter stays mounted under the field, as on the web, so an accepted edit
-        // rolls from the old reading to the new one.
-        let editingValue = editing || editor.draft != nil
-        ZStack(alignment: centered ? .center : .leading) {
-            Button { guard !editor.busy, editor.pending == nil else { return }; editor.beginEditing(); editing = true } label: {
-                GoalManualCounter(block: block, value: current, size: size).frame(minHeight: size * 1.2)
-            }.buttonStyle(.plain).contentShape(Rectangle())
-                .opacity(editingValue ? 0 : 1).allowsHitTesting(!editingValue)
-                .accessibilityHidden(editingValue)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(GoalChartPresentation.manualLiteral(block, value: current) ?? GoalChartPresentation.format(GoalChartPresentation.manualDisplayBlock(block, value: current), current))
-                .accessibilityIdentifier("goal-manual-value-" + block.id).accessibilityHint("Edit reading")
-            // The field stays mounted too, so accepting an edit swaps opacity instead of
-            // tearing down a first responder in the frame the counter starts turning.
-            GoalNumberField(text: Binding(get: { editor.draft ?? current.map(GoalChartPresentation.plainNumber) ?? "" }, set: { editor.draft = $0 }),
-                            focused: $editing, size: size, centered: centered, label: block["title"].string ?? "Reading",
-                            commit: save, cancel: cancel)
-                .frame(height: size * 1.2).fixedSize(horizontal: true, vertical: false)
-                .opacity(editingValue ? 1 : 0).allowsHitTesting(editingValue).accessibilityHidden(!editingValue)
-        }
-        .overlay(alignment: .trailing) {
-            if block["manual"]["model"].text == "individual_readings", !GoalChartPresentation.suffix(block).isEmpty {
-                Text(GoalChartPresentation.suffix(block)).font(.system(size: 20)).foregroundStyle(PanelsTheme.Goal.faint).fixedSize()
-                    .alignmentGuide(.trailing) { $0[.leading] }.offset(y: size * 0.12)
+        GoalManualCounter(block: block, value: current, size: size).frame(minHeight: size * 1.2)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(GoalChartPresentation.manualLiteral(block, value: current) ?? GoalChartPresentation.format(GoalChartPresentation.manualDisplayBlock(block, value: current), current))
+            .accessibilityIdentifier("goal-manual-value-" + block.id)
+            .overlay(alignment: .trailing) {
+                if block["manual"]["model"].text == "individual_readings", !GoalChartPresentation.suffix(block).isEmpty {
+                    Text(GoalChartPresentation.suffix(block)).font(.system(size: 20)).foregroundStyle(PanelsTheme.Goal.faint).fixedSize()
+                        .alignmentGuide(.trailing) { $0[.leading] }.offset(y: size * 0.12)
+                }
             }
-        }
-        .onChange(of: editing) { old, focused in
-            if old && !focused && !submitting && editor.draft != nil && editor.pending == nil { Task { _ = await editor.prepare() } }
-        }.onDisappear {
-            if editor.draft != nil, !submitting { Task { _ = await editor.prepare() } }
-        }
-    }
-    /// Done writes only a changed number, as the web's commit does; an unreadable one keeps the keyboard up.
-    private func save() {
-        guard let value = Double(editor.draft?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""), value.isFinite else { editor.error = "Enter a number."; return }
-        submitting = true
-        editing = false
-        Task { _ = await editor.prepare(); submitting = false }
-    }
-    /// Cancel drops the draft at once, so nothing typed while the accepted reading reloads can be saved.
-    private func cancel() {
-        editor.draft = nil
-        editing = false
-        Task { await editor.discard() }
-    }
-}
-
-/// A plain UIKit number field: it selects its text on focus without showing the
-/// copy and paste menu, and carries Cancel and Done above the keyboard.
-private struct GoalNumberField: UIViewRepresentable {
-    @Binding var text: String
-    @Binding var focused: Bool
-    let size: CGFloat
-    let centered: Bool
-    let label: String
-    let commit: () -> Void
-    let cancel: () -> Void
-    final class Field: UITextField {
-        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool { false }
-        override func buildMenu(with builder: any UIMenuBuilder) { builder.remove(menu: .standardEdit); super.buildMenu(with: builder) }
-    }
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeUIView(context: Context) -> Field {
-        let field = Field()
-        field.font = UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: .monospacedDigitSystemFont(ofSize: size, weight: .medium))
-        field.adjustsFontForContentSizeCategory = true
-        field.textColor = UIColor(PanelsTheme.strong)
-        field.tintColor = UIColor(PanelsTheme.accent)
-        field.textAlignment = centered ? .center : .natural
-        field.keyboardType = .decimalPad
-        field.autocorrectionType = .no; field.spellCheckingType = .no
-        field.accessibilityLabel = label
-        field.delegate = context.coordinator
-        field.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
-        if #available(iOS 16.0, *) { field.interactions.removeAll { $0 is UIEditMenuInteraction } }
-        let bar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
-        bar.items = [UIBarButtonItem(title: "Cancel", style: .plain, target: context.coordinator, action: #selector(Coordinator.cancel)),
-                     UIBarButtonItem(systemItem: .flexibleSpace),
-                     UIBarButtonItem(title: "Done", style: .done, target: context.coordinator, action: #selector(Coordinator.done))]
-        bar.sizeToFit()
-        field.inputAccessoryView = bar
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return field
-    }
-    func updateUIView(_ field: Field, context: Context) {
-        context.coordinator.owner = self
-        if field.text != text { field.text = text }
-        if focused, !field.isFirstResponder { DispatchQueue.main.async { field.becomeFirstResponder() } }
-        else if !focused, field.isFirstResponder { DispatchQueue.main.async { field.resignFirstResponder() } }
-    }
-    final class Coordinator: NSObject, UITextFieldDelegate {
-        var owner: GoalNumberField
-        init(_ owner: GoalNumberField) { self.owner = owner }
-        @objc func changed(_ field: UITextField) {
-            // A comma-decimal keypad types ","; readings are parsed with ".".
-            let text = (field.text ?? "").replacingOccurrences(of: ",", with: ".")
-            if field.text != text { field.text = text }
-            owner.text = text
-        }
-        @objc func done() { owner.commit() }
-        @objc func cancel() { owner.cancel() }
-        func textFieldDidBeginEditing(_ field: UITextField) {
-            owner.focused = true
-            // The web selects the accepted value on focus so typing replaces it.
-            DispatchQueue.main.async { field.selectedTextRange = field.textRange(from: field.beginningOfDocument, to: field.endOfDocument) }
-        }
-        func textFieldDidEndEditing(_ field: UITextField) { if owner.focused { owner.focused = false } }
-        func textFieldShouldReturn(_ field: UITextField) -> Bool { owner.commit(); return false }
-        // A long press would otherwise still raise the system edit menu over the number.
-        func textField(_ field: UITextField, editMenuForCharactersIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu? { UIMenu(children: []) }
     }
 }
 
@@ -180,10 +75,7 @@ struct GoalManualChart: View {
         VStack(alignment: .leading, spacing: 20) {
             if supporting {
                 Button {
-                    Task {
-                        guard await editor.prepare() else { return }
-                        withAnimation(reduceMotion ? nil : PanelsTheme.Goal.disclosure) { var next = preference; next.expanded.toggle(); session.remember(block.id, next) }
-                    }
+                    withAnimation(reduceMotion ? nil : PanelsTheme.Goal.disclosure) { var next = preference; next.expanded.toggle(); session.remember(block.id, next) }
                 } label: {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { title; Spacer(); Image(systemName: "chevron.down").font(.system(size: 12)).rotationEffect(.degrees(preference.expanded ? 180 : 0)).animation(reduceMotion ? nil : PanelsTheme.Goal.standard, value: preference.expanded) }
@@ -207,7 +99,7 @@ struct GoalManualChart: View {
                             Spacer(minLength: 8)
                             if block["manual"]["model"].text == "daily_quota" { increments }
                         }.frame(minHeight: 48).padding(.bottom, 8)
-                        let pick: ((String) -> Void)? = preview ? nil : { date in Task { guard await editor.prepare() else { return }; await editor.refresh(date: date) } }
+                        let pick: ((String) -> Void)? = preview ? nil : { date in Task { await editor.refresh(date: date) } }
                         if block["manual"]["model"].text == "daily_quota" {
                             GoalManualBars(block: block, data: data, today: editor.state?.currentDate, selected: editor.state?.date, active: $active, select: pick)
                         } else {
@@ -216,11 +108,8 @@ struct GoalManualChart: View {
                     }
                     if !block["ranges"].array.isEmpty {
                         GoalRangeSwitch(choices: block["ranges"].array.map { ($0.id, $0["label"].text) }, selection: Binding(get: { preference.range }, set: { range in
-                            Task {
-                                guard await editor.prepare() else { return }
-                                var next = preference; next.range = range; session.remember(block.id, next)
-                                if !editor.cumulative, let date = GoalChartPresentation.data(block, values: history, range: range).last?.id { await editor.refresh(date: date) }
-                            }
+                            var next = preference; next.range = range; session.remember(block.id, next)
+                            if !editor.cumulative, let date = GoalChartPresentation.data(block, values: history, range: range).last?.id { Task { await editor.refresh(date: date) } }
                         }))
                     }
                 }.opacity(!supporting || bodyVisible || reduceMotion ? 1 : 0).transition(supporting && !reduceMotion ? .goalDisclosure : .opacity)
@@ -249,7 +138,7 @@ struct GoalManualChart: View {
                 ForEach(Array(block["manual"]["increments"].array.enumerated()), id: \.offset) { index, entry in
                     if let delta = entry.number {
                         Button((delta > 0 ? "+" : "") + GoalChartPresentation.number(delta, decimals: 6, trim: true)) {
-                            Task { guard await editor.prepare() else { return }; await editor.write(delta: delta); await session.refresh() }
+                            Task { await editor.write(delta: delta); await session.refresh() }
                         }.buttonStyle(GoalAddButtonStyle(primary: index == 0)).disabled(editor.state == nil)
                     }
                 }
@@ -442,7 +331,7 @@ private struct GoalManualGauge: View {
                 VStack(spacing: 4) {
                     Group {
                         if preview { GoalManualCounter(block: block, value: current, size: 40) }
-                        else { GoalManualValue(editor: editor, block: block, centered: true) }
+                        else { GoalManualValue(editor: editor, block: block) }
                     }.frame(maxWidth: geometry.size.width * 0.65)
                     if let target { Text("of " + GoalChartPresentation.number(target, decimals: 20, trim: true)).font(.system(size: 13)).foregroundStyle(PanelsTheme.faint) }
                 }.frame(width: geometry.size.width, height: geometry.size.width)
