@@ -2,7 +2,7 @@ import type {NavigationReviewItem,ReviewHistoryKey,ViewRequest} from '../navigat
 import type {EffectiveNavigationView} from '../navigation/knowledge';
 
 export function reviewHistoryKey(item:NavigationReviewItem):ReviewHistoryKey {
-  return item.review_item_type==='message' ? {kind:'conversation',id:item.conversation_id} : {kind:'ticket',id:item.ticket_id};
+  return item.review_item_type==='ticket' ? {kind:'ticket',id:item.ticket_id} : {kind:'conversation',id:item.conversation_id};
 }
 export function sameReviewHistory(left:readonly ReviewHistoryKey[],right:readonly ReviewHistoryKey[]):boolean {
   const keys=new Set(left.map(key=>JSON.stringify([key.kind,key.id])));
