@@ -33,6 +33,12 @@ The app's copy of the screens carries no server release tag, so the server's gua
 
 On its first start, the app asks for a Panels server on this Mac, at `http://127.0.0.1:8767`. If one answers, the app keeps that address. Otherwise it shows the address page, which takes an address, such as a Tailscale address, and checks that a Panels server answers there. "Change Server…" in the app menu opens the same page. This page is temporary: the setup interface replaces it.
 
+## The last session
+
+The app opens with its last state. The native side remembers the screen the window was on and reopens there. The screens keep their server reads and the last navigation view in their own IndexedDB, so the next launch shows them at once, before the server answers. Every restored read then refreshes from the server. Until fresh data replaces the saved copy on screen, the shell status says "Showing your last session", or that navigation is reconnecting. Writes still go to the server, so nothing changes while it cannot be reached.
+
+A saved copy from another build of the screens is not used, because response shapes can change. When the person changes the server, the native side deletes the screens' IndexedDB and forgets the last screen, so one server's Tickets never show under another. That also drops any queued outgoing messages, which belong to the old server. The browser version does none of this.
+
 ## Mac behavior
 
 The app has the standard Mac menus. The window opens where it was last left, at the same size. Closing the window does not quit the app; a click on its Dock icon brings the window back.
@@ -49,6 +55,6 @@ Artifact HTML runs at the screens' own origin, so a script in an artifact can re
 
 ## Where the code lives
 
-`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/bridge.ts` (the bridge type), and the address page. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
+`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/bridge.ts` (the bridge type), and the address page. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
 _Last verified: 2026-11-22._

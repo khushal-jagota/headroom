@@ -6,7 +6,8 @@
  * forward: reads, writes, the live change stream, and a network error, not an HTTP error,
  * when the server is gone. The same run proves the shell's own rules: links that leave the
  * app go to the browser, the bridge refuses the screens, and the address and the window
- * place survive a restart.
+ * place survive a restart. Only real restarts can prove the last session: the screens'
+ * storage on the app's own scheme survives them, and a server change drops it.
  */
 import { createServer } from 'node:net';
 import type { Page } from '@playwright/test';
@@ -30,6 +31,26 @@ function newTicket(title: string) {
 
 async function pageUrl(page: Page): Promise<string> {
   return page.evaluate(() => location.href);
+}
+
+/** The session the screens saved for the next launch, as text, or '' before the first save. */
+async function savedSession(page: Page): Promise<string> {
+  return page.evaluate(
+    () =>
+      new Promise<string>((resolve, reject) => {
+        const open = indexedDB.open('panels-saved-session', 1);
+        open.onupgradeneeded = () => open.result.createObjectStore('saved');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const read = open.result.transaction('saved').objectStore('saved').get('last');
+          read.onsuccess = () => {
+            open.result.close();
+            resolve(read.result ? JSON.stringify(read.result) : '');
+          };
+          read.onerror = () => reject(read.error);
+        };
+      }),
+  );
 }
 
 test('the screens reach the server through the app, and links leave it', async ({ server }) => {
@@ -221,5 +242,72 @@ test('the native side shows a notification from the server, and a click opens it
     await expect(page.locator('.ticket-title')).toHaveText('Ticket that waits on Khushal', { timeout: WAIT_MS });
   } finally {
     await desktop.app.close();
+  }
+});
+
+test('the app reopens with the last session, marks it until the server replaces it, and drops it for another server', async ({
+  server,
+  serverFactory,
+}) => {
+  const ticketId = (
+    await cli(server, ['ticket', 'create', '--input-json', '-'], {
+      stdin: JSON.stringify(newTicket('Saved ticket before the change')),
+      settleBrief: true,
+    })
+  ).id as string;
+  const nothing = await closedAddress();
+  const title = (page: Page) => page.locator('.ticket-title');
+  const railRow = (page: Page) => page.locator(`[data-ticket-id="${ticketId}"]`).first();
+  const savedMark = (page: Page) => page.locator('[data-navigation-health]:visible');
+
+  const first = await launchDesktopApp({ localServerAddress: server.base });
+  try {
+    await waitForScreens(first.window, WORKSPACE);
+    await first.window.evaluate((id) => (location.hash = `#/workspace/${id}`), ticketId);
+    await expect(title(first.window)).toHaveText('Saved ticket before the change', { timeout: WAIT_MS });
+    await expect.poll(() => savedSession(first.window), { timeout: WAIT_MS }).toContain('Saved ticket before the change');
+  } finally {
+    await first.app.close();
+  }
+
+  // With the server up, the app reopens on the same Ticket, the server's newer title
+  // replaces the saved one, and the mark for saved data clears.
+  await api.patch(server, `/api/tickets/${ticketId}`, { title: 'Saved ticket after the change' });
+  const second = await launchDesktopApp({ localServerAddress: nothing, userData: first.userData });
+  try {
+    const page = second.window;
+    await expect(title(page)).toHaveText('Saved ticket after the change', { timeout: WAIT_MS });
+    expect(await pageUrl(page)).toBe(`panels://app/#/workspace/${ticketId}`);
+    await expect(savedMark(page)).toHaveCount(0, { timeout: WAIT_MS });
+    await expect.poll(() => savedSession(page), { timeout: WAIT_MS }).toContain('Saved ticket after the change');
+  } finally {
+    await second.app.close();
+  }
+
+  // With the server gone, the last session still shows at once, with its mark.
+  const other = await serverFactory();
+  await stopServer(server);
+  const third = await launchDesktopApp({ localServerAddress: nothing, userData: first.userData });
+  try {
+    const page = third.window;
+    await expect(title(page)).toHaveText('Saved ticket after the change', { timeout: WAIT_MS });
+    await expect(railRow(page)).toBeVisible();
+    await expect(savedMark(page)).toBeVisible({ timeout: WAIT_MS });
+    // Once navigation gives up on the server, the line says so, and the status settles.
+    await expect(page.locator('[data-navigation-health="reconnecting"]:visible')).toBeVisible({ timeout: WAIT_MS });
+    await expect(page.locator('[data-shell-status]:visible [data-out]')).toHaveCount(0);
+    await captureSuccess(page, 'desktop-last-session-offline.png');
+
+    // Another server has other Tickets, so nothing of the last session shows under it.
+    await third.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.loadURL('panels://setup/'));
+    await page.waitForSelector('#address-form', { timeout: WAIT_MS });
+    await page.fill('#address', other.base);
+    await page.click('#connect');
+    await waitForScreens(page, WORKSPACE);
+    expect(await pageUrl(page)).not.toContain(ticketId);
+    await expect(railRow(page)).toHaveCount(0);
+    expect(await savedSession(page)).not.toContain('Saved ticket');
+  } finally {
+    await third.app.close();
   }
 });
