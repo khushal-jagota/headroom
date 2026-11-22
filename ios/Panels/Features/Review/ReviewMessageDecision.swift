@@ -30,10 +30,6 @@ extension APIClient {
         let response: Response = try await get("/api/conversation/conversations/\(id)/events", query: [.init(name: "after", value: String(after))])
         return ReviewMessageEvent.unread(response.events, after: after)
     }
-    func markReviewRead(_ id: String, through: Int) async throws {
-        struct Body: Encodable { let throughSequence: Int }
-        _ = try await reviewWrite("/api/conversation/conversations/\(id)/owner-read", body: Body(throughSequence: through))
-    }
     func currentConversation(_ owner: ConversationOwner) async throws -> String? {
         switch owner {
         case .chief: return try await chiefConversation().conversationId
@@ -61,8 +57,8 @@ extension APIClient {
         if let savedWork { return savedWork(server) }
         guard let id = item?.conversationId else { return [] }
         let summaries = (try? LocalStore.shared.outgoing.replySummaries(server: server, conversationID: id)) ?? []
-        let relevant = summaries.last { !["sent", "serverQueued", "changed"].contains($0.state) || ($0.ownerReadThroughSequence ?? 0) >= through }
-        let accepted = summaries.last { ["sent", "serverQueued"].contains($0.state) }
+        let relevant = summaries.last { $0.state != "sent" || ($0.ownerReadThroughSequence ?? 0) >= through }
+        let accepted = summaries.last { $0.state == "sent" }
         let ids = Set([relevant?.id, accepted?.id].compactMap { $0 })
         return summaries.filter { ids.contains($0.id) }.compactMap { Outbox.shared.work(server, id: $0.id) }
     }
@@ -100,8 +96,8 @@ extension APIClient {
         attempt = Outbox.shared.work(server, id: attemptID)
     }
 
-    var accepted: Bool { attempt.map { [.sent, .serverQueued].contains($0.state) } ?? false }
-    var pending: Bool { attempt.map { [.waiting, .sending, .uncertain].contains($0.state) } ?? false }
+    /// A saved reply counts at once. Only a refusal brings it back to the card.
+    var accepted: Bool { attempt.map { $0.state != .failed } ?? false }
 
     /// The view supplies the read boundary and whether the address is still the
     /// owner's current conversation, so the unread run is the only read. A read
@@ -133,11 +129,11 @@ extension APIClient {
             refreshSavedWork(LocalStore.server(api.baseURL))
             let saved = self.saved(LocalStore.server(api.baseURL)).last {
                 $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil &&
-                (![.sent, .serverQueued, .changed].contains($0.state) || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
+                ($0.state != .sent || ($0.message?.ownerReadThroughSequence ?? 0) >= (messages.last?.sequence ?? Int.max))
             }
             attemptID = saved?.id; refreshAttempt()
             if saved == nil, let delivered = self.saved(LocalStore.server(api.baseURL)).last(where: {
-                $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil && [.sent, .serverQueued].contains($0.state)
+                $0.message?.conversationId == id && $0.message?.ownerReadThroughSequence != nil && $0.state == .sent
             }), let message = delivered.message,
                composer.draft == message.content.compactMap(\.text).joined(separator: "\n"),
                (try? JSONEncoder().encode(composer.attachments)) == (try? JSONEncoder().encode(message.content.filter { $0.piece != "text" })) {
@@ -160,7 +156,7 @@ extension APIClient {
     func send() async -> Bool {
         await settled()
         guard let api, let item, let owner = item.owner, let id = item.conversationId,
-              loaded, through > 0, !historical, !busy, !pending else { return false }
+              loaded, through > 0, !historical, !busy, !accepted else { return false }
         guard !composer.preparingPhoto else { return false }
         busy = true; defer { busy = false }
         let text = composer.draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -177,9 +173,7 @@ extension APIClient {
                 return false
             }
             attemptID = replacement
-            await Outbox.shared.drain(api: api)
             refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
-            if self.attempt?.state == .failed { error = self.attempt?.note }
             return accepted
         }
         let messageID = UUID().uuidString
@@ -190,17 +184,15 @@ extension APIClient {
         do {
             try Outbox.shared.enqueue(work, api: api)
             attemptID = messageID
-            await Outbox.shared.drain(api: api)
             refreshSavedWork(LocalStore.server(api.baseURL)); refreshAttempt()
-            if attempt?.state == .failed { error = attempt?.note }
             return accepted
         } catch { self.error = error.localizedDescription; return false }
     }
+    /// Saved in the outbox; the card moves on at once.
     func markRead() async -> Bool {
         await settled()
-        guard let api, let id = item?.conversationId, loaded, through > 0, !busy, !pending else { return false }
-        busy = true; defer { busy = false }
-        do { try await api.markReviewRead(id, through: through); return true }
+        guard let api, let id = item?.conversationId, loaded, through > 0, !busy, !accepted else { return false }
+        do { try Outbox.shared.enqueueMarkRead(owner: item?.owner, conversationID: id, through: through, api: api); return true }
         catch { self.error = error.localizedDescription; return false }
     }
     func clearAcceptedDraft() { composer.draft = ""; composer.attachments = [] }

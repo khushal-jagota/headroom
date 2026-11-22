@@ -12,7 +12,7 @@ import XCTest
         let outbox = Outbox(store: LocalStore(url: directory.appendingPathComponent("review.store")))
         let server = LocalStore.server(api.baseURL)
         let message = ConversationSend(conversationId: "c", content: [.init(text: "Saved reply")], senderMessageId: "saved-reply", sentAtUnixMilliseconds: 1, ownerReadThroughSequence: 66)
-        var work = PendingWork(id: "saved-reply", created: .now, kind: .message, state: .uncertain, owner: .chief, message: message)
+        var work = PendingWork(id: "saved-reply", created: .now, kind: .message, state: .failed, owner: .chief, message: message)
         try outbox.save(work, server: server)
         var reads = 0
         var selected: [PendingWork] = []
@@ -31,8 +31,7 @@ import XCTest
         XCTAssertEqual(reads, 1)
         // These getters also run when SwiftUI retains the hidden Review subtree.
         for _ in 0..<100 {
-            XCTAssertEqual(decision.attempt?.state, .uncertain)
-            XCTAssertTrue(decision.pending)
+            XCTAssertEqual(decision.attempt?.state, .failed)
             XCTAssertFalse(decision.accepted)
         }
         XCTAssertEqual(reads, 1)
@@ -41,7 +40,6 @@ import XCTest
         refresh(server); decision.refreshAttempt()
         XCTAssertEqual(reads, 2)
         XCTAssertTrue(decision.accepted)
-        XCTAssertFalse(decision.pending)
     }
     func testAutomaticRecoveryRetainsSenderInsteadOfBecomingOwnerWords() throws {
         let body = try APIClient.decoder().decode(ConversationBody.self, from: Data(#"{"kind":"prompt","sender_label":"Panels deployment recovery","content":[{"piece":"text","text":"Inspect interrupted work"}]}"#.utf8))
@@ -63,7 +61,8 @@ import XCTest
         XCTAssertEqual(decision.through, 66)
         ReviewMessageProtocol.state.newMessage = true
         let marked = await decision.markRead()
-        XCTAssertTrue(marked)
+        XCTAssertTrue(marked, "Mark read is saved and counts at once")
+        await Outbox.shared.drain(api: api)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 66)
         // The view carries no sequence that moves when a message joins the run, so the
         // read-ahead looks current. The shown card reads again, so a reply or Mark read
@@ -77,6 +76,7 @@ import XCTest
         XCTAssertEqual(ReviewMessageProtocol.state.eventReads, reads + 1)
         let marked2 = await decision.markRead()
         XCTAssertTrue(marked2)
+        await Outbox.shared.drain(api: api)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 67)
     }
     func testRefusedReplyKeepsDraftAttachmentAndRetryBoundaryAcrossRecreation() async throws {
@@ -95,10 +95,12 @@ import XCTest
         #endif
         let heic = try Data(contentsOf: XCTUnwrap(fixture)).base64EncodedString()
         decision.composer.attachments = [.init(piece: "image", data: heic, mediaType: "image/heic", fileName: "note.heic")]
-        _ = await decision.send()
+        let saved = await decision.send()
+        XCTAssertTrue(saved, "The reply counts at once")
         await Outbox.shared.drain(api: api)
+        decision.refreshAttempt()
         XCTAssertEqual(decision.attempt?.state, .failed)
-        XCTAssertTrue(decision.error?.lowercased().contains("photo") == true)
+        XCTAssertTrue(decision.attempt?.note.lowercased().contains("photo") == true)
         XCTAssertEqual(decision.attempt?.message?.content.last?.mediaType, "image/jpeg")
         let preparedPhoto = decision.composer.attachments.first
         let originalID = try XCTUnwrap(decision.attemptID)
@@ -118,6 +120,7 @@ import XCTest
         ReviewMessageProtocol.state.newMessage = true
         _ = await restored.send()
         await Outbox.shared.drain(api: api)
+        restored.refreshAttempt()
         let retry = try XCTUnwrap(restored.attempt)
         XCTAssertNotEqual(retry.id, originalID)
         XCTAssertEqual(retry.message?.ownerReadThroughSequence, 66)
@@ -128,7 +131,7 @@ import XCTest
         await Outbox.shared.drain(api: api)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.filter { $0["sender_message_id"] != nil }.count, 2)
     }
-    func testLostQueuedReplyWithoutReceiptStaysUncertainWithoutAnotherSend() async throws {
+    func testLostReplyResendsWithItsOwnIdentityAndBoundary() async throws {
         let api = makeAPI()
         ReviewMessageProtocol.state.reset()
         ReviewMessageProtocol.state.loseResponse = true
@@ -137,17 +140,21 @@ import XCTest
         await decision.load(item: item(), api: api)
         decision.composer.draft = "Queued once"
         _ = await decision.send()
-        XCTAssertEqual(decision.attempt?.state, .uncertain)
+        await Outbox.shared.drain(api: api)
+        decision.refreshAttempt()
+        XCTAssertEqual(decision.attempt?.state, .waiting, "A lost response is not shown")
+        XCTAssertTrue(decision.accepted)
         let original = try XCTUnwrap(decision.attemptID)
-        ReviewMessageProtocol.state.newMessage = true
         let restored = ReviewMessageDecision()
         await restored.load(item: item(), api: api)
         XCTAssertEqual(restored.attemptID, original)
-        await Outbox.shared.drain(api: api)
+        // A relaunch has no foreground retry delay.
+        await Outbox(store: .shared).drain(api: api)
         restored.refreshAttempt()
-        XCTAssertEqual(restored.attempt?.state, .uncertain)
-        XCTAssertEqual(restored.attempt?.message?.ownerReadThroughSequence, 66)
-        XCTAssertEqual(ReviewMessageProtocol.state.bodies.count, 1)
+        XCTAssertEqual(restored.attempt?.state, .sent)
+        let posts = ReviewMessageProtocol.state.bodies.filter { $0["sender_message_id"] != nil }
+        XCTAssertEqual(posts.map { $0["sender_message_id"] as? String }, [original, original])
+        XCTAssertEqual(posts.last?["owner_read_through_sequence"] as? Int, 66)
     }
     func testHistoricalConversationCannotSendAndKeepsExactID() async throws {
         let api = makeAPI()
@@ -211,7 +218,8 @@ import XCTest
         XCTAssertFalse(sent)
         XCTAssertTrue(ReviewMessageProtocol.state.bodies.isEmpty)
         let marked = await decision.markRead()
-        XCTAssertTrue(marked)
+        XCTAssertTrue(marked, "Mark read is saved and counts at once")
+        await Outbox.shared.drain(api: api)
         XCTAssertEqual(ReviewMessageProtocol.state.bodies.last?["through_sequence"] as? Int, 66)
     }
     private func item(current: Bool = true) -> ReviewItem { .init(reviewItemType: "message", title: "Chief", waitingSince: 1, conversationId: "c", ownerKind: "chief", ownerId: "chief", ownerReadThroughSequence: 1, addressCurrent: current) }

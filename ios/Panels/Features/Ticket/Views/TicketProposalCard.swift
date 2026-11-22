@@ -32,7 +32,7 @@ import Observation
     }
 
     var pending: Bool {
-        savedDecision.map { ["waiting", "sending", "uncertain", "serverQueued", "sent"].contains($0.state) } ?? false
+        savedDecision.map { !$0.refused } ?? false
     }
 
     func load(presentation: TicketPresentation, proposal: TicketProposal, api: APIClient) {
@@ -60,7 +60,7 @@ import Observation
             $0.proposalField == proposal.field && $0.proposalRevision == proposal.revision && $0.proposalCreatedAt == proposal.createdAt
         }
         if !pending { busyAction = nil }
-        if savedDecision?.state == "changed" { error = savedDecision?.note }
+        if savedDecision?.refused == true { error = savedDecision?.note }
     }
 
     func capture(presentation: TicketPresentation, proposal: TicketProposal, api: APIClient) -> Snapshot {
@@ -99,7 +99,7 @@ import Observation
         guard !facts.contains(where: {
             $0.proposalField == snapshot.proposal.field && $0.proposalRevision == snapshot.proposal.revision
                 && $0.proposalCreatedAt == snapshot.proposal.createdAt
-                && ["waiting", "sending", "uncertain", "serverQueued", "sent"].contains($0.state)
+                && !$0.refused
         }) else { throw APIError(status: 0, message: "This proposal already has a saved decision.") }
         busyAction = action
         do {
@@ -131,7 +131,7 @@ struct TicketProposalCard: View {
             .task(id: identity) { decision.load(presentation: presentation, proposal: proposal, api: store.client) }
             .onChange(of: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))) { _, _ in
                 decision.refresh(presentation: presentation, proposal: proposal)
-                if ["sent", "changed"].contains(decision.savedDecision?.state ?? "") { Task { await refresh() } }
+                if ["sent", "failed"].contains(decision.savedDecision?.state ?? "") { Task { await refresh() } }
             }
             .sheet(isPresented: $decision.approvalOpen, onDismiss: { decision.scopeChange.releasePresentation() }) {
                 if let snapshot = decision.snapshot {

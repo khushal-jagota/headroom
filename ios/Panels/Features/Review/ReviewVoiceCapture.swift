@@ -18,14 +18,17 @@ import Observation
         guard recorder == nil, let draftID else { return }
         self.api = api
         work = savedWork.last { $0.kind == .voice && $0.draftID == draftID && $0.state != .sent }
-        guard var saved = work else { phase = .idle; return }
+        guard var saved = work else { phase = .idle; error = nil; return }
         if saved.state == .recording {
-            saved.state = .waiting; saved.note = "Recording recovered · waiting for connection"
+            // An interrupted recording is kept and transcribed like any other.
+            saved.state = .waiting
             do { try Outbox.shared.save(saved, server: LocalStore.server(api.baseURL)); work = saved }
             catch { self.error = error.localizedDescription }
+            Task { await Outbox.shared.drain(api: api) }
         }
-        phase = .failed
-        error = saved.note
+        // A saved recording waits for its words. Only a refusal offers Retry.
+        phase = saved.state == .failed ? .failed : .transcribing
+        error = saved.state == .failed ? saved.note : nil
     }
     func start(api: APIClient, draftID: String?) async {
         guard phase == .idle, let draftID else { return }
@@ -40,7 +43,7 @@ import Observation
             let url = LocalStore.directory.appendingPathComponent(file)
             try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
             var saved = PendingWork(id: id, created: .now, kind: .voice, audioFile: file, draftID: draftID)
-            saved.state = .recording; saved.note = "Recording saved on this phone"
+            saved.state = .recording
             try Outbox.shared.save(saved, server: LocalStore.server(api.baseURL))
             self.work = saved; self.api = api
             let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000])
@@ -56,10 +59,11 @@ import Observation
         recorder?.stop(); recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false)
         guard var work, let api else { return }
-        work.state = .waiting; work.note = "Recording saved · waiting for connection"
+        work.state = .waiting
         do { try Outbox.shared.save(work, server: LocalStore.server(api.baseURL)); self.work = work }
         catch { self.error = error.localizedDescription }
-        phase = .failed
+        phase = .transcribing
+        Task { await Outbox.shared.drain(api: api) }
     }
     func stop(api: APIClient) async -> String? {
         preserve()
@@ -67,12 +71,13 @@ import Observation
     }
     func transcribe(api: APIClient) async -> String? {
         guard let work else { return nil }
-        phase = .transcribing
-        if work.state == .failed || work.state == .waiting || work.state == .uncertain { await Outbox.shared.retry(work.id, api: api) }
+        phase = .transcribing; error = nil
+        if Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)?.state == .failed { await Outbox.shared.retry(work.id, api: api) }
         await Outbox.shared.drain(api: api)
         let current = Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)
-        if current?.state == .sent { phase = .idle; self.work = nil; error = nil; return "" }
-        phase = .failed; error = current?.note ?? "Recording saved on this phone"
+        if current == nil || current?.state == .sent { phase = .idle; self.work = nil; return "" }
+        // Still waiting: the outbox transcribes it when the server answers.
+        if current?.state == .failed { phase = .failed; error = current?.note }
         return nil
     }
     /// Only an explicit discard removes audio. Leaving the composer always preserves it.

@@ -14,20 +14,10 @@ struct AppShell: View {
     @State private var morePath: [AppRoute] = []
 
     var body: some View {
-        // Keep the tab graph mounted inside an owned UIKit view. Hide that exact
-        // view while the separate connection cover remains visible and accessible.
-        MountedTabContent(content: tabs, isCovered: store.serverUnreachable)
+        // Keep the tab graph mounted inside an owned UIKit view.
+        MountedTabContent(content: tabs)
         // The inner UIKit host owns physical and keyboard safe areas once.
         .ignoresSafeArea(.all)
-        .allowsHitTesting(!store.serverUnreachable)
-        .overlay {
-            if store.serverUnreachable {
-                ServerUnreachableView { await store.refresh() }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(PanelsTheme.surface)
-                    .ignoresSafeArea()
-            }
-        }
         .task {
             while !Task.isCancelled {
                 updateRequired = NativeBuildGate.requiresUpdate(store.baseURL)
@@ -68,10 +58,7 @@ struct AppShell: View {
         .onChange(of: morePath) { old, new in if old != new { Haptics.light() } }
         .onChange(of: store.baseURL) { _, _ in reviewPath = []; workspacePath = []; morePath = [] }
         .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
-                OutgoingStorageErrors(server: LocalStore.server(store.baseURL)).id(LocalStore.server(store.baseURL))
-            }
+            if let error = LocalStore.shared.outgoingError ?? LocalStore.shared.saveError { Text(error).font(.footnote).foregroundStyle(PanelsTheme.error).padding(8) }
         }
         .onChange(of: Outbox.shared.networkAvailable) { _, available in
             if available, scenePhase == .active {
@@ -90,7 +77,7 @@ struct AppShell: View {
     private var tabs: some View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $reviewPath) {
-                ReviewView(savedWork: savedReviewWork, isActive: selectedTab == .review && reviewPath.isEmpty && scenePhase == .active && !store.serverUnreachable, openTicket: { id in
+                ReviewView(savedWork: savedReviewWork, isActive: selectedTab == .review && reviewPath.isEmpty && scenePhase == .active, openTicket: { id in
                     var transaction = Transaction(animation: nil)
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
@@ -157,19 +144,15 @@ struct AppShell: View {
 }
 
 /// Own the content boundary rather than infer a UIKit ancestor from SwiftUI.
-/// Hiding the child view retains its controller, SwiftUI graph, and route state.
 private struct MountedTabContent<Content: View>: UIViewControllerRepresentable {
     let content: Content
-    let isCovered: Bool
 
     func makeUIViewController(context: Context) -> Controller {
-        Controller(root: Root(content: content, environment: context.environment), isCovered: isCovered)
+        Controller(root: Root(content: content, environment: context.environment))
     }
 
     func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.isCovered = isCovered
         controller.host.rootView = Root(content: content, environment: context.environment)
-        controller.host.view.isHidden = isCovered
     }
 
     struct Root: View {
@@ -180,11 +163,9 @@ private struct MountedTabContent<Content: View>: UIViewControllerRepresentable {
 
     final class Controller: UIViewController {
         let host: UIHostingController<Root>
-        var isCovered: Bool
 
-        init(root: Root, isCovered: Bool) {
+        init(root: Root) {
             host = UIHostingController(rootView: root)
-            self.isCovered = isCovered
             super.init(nibName: nil, bundle: nil)
         }
 
@@ -203,7 +184,6 @@ private struct MountedTabContent<Content: View>: UIViewControllerRepresentable {
                 host.view.topAnchor.constraint(equalTo: view.topAnchor),
                 host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             ])
-            host.view.isHidden = isCovered
             host.didMove(toParent: self)
         }
     }

@@ -4,7 +4,7 @@ struct ReviewView: View {
     let savedWork: ReviewSavedWork
     var isActive = true
     @State private var appeared = false
-    private var active: Bool { isActive && appeared && scenePhase == .active && !store.serverUnreachable }
+    private var active: Bool { isActive && appeared && scenePhase == .active }
     var openTicket: ((String) -> Void)? = nil
     /// How many pending asks are read before they reach the screen.
     private static let readAhead = 3
@@ -106,7 +106,7 @@ struct ReviewView: View {
             if snapshotCurrent { holdShownCard() }
         }
         .onChange(of: pageSkipped) { _, skipped in if skipped { advancePage() } }
-        .task(id: "\(store.baseURL):\(active):\(savedWork.key?.revision ?? -1):\(pending.prefix(Self.readAhead).map(\.id).joined(separator: ","))") {
+        .task(id: "\(store.baseURL):\(active):\(store.serverUnreachable):\(savedWork.key?.revision ?? -1):\(pending.prefix(Self.readAhead).map(\.id).joined(separator: ","))") {
             guard active, snapshotCurrent else { return }
             holdShownCard()
             await prefetch()
@@ -117,7 +117,7 @@ struct ReviewView: View {
         guard active, snapshotCurrent else { return }
         for decision in decisions.values { decision.refreshVoiceDraft() }
         messageDecisions.refreshAttempts()
-        for work in savedDecisions where work.state == "changed" {
+        for work in savedDecisions where work.refused && ["approval", "sendBack"].contains(work.kind) {
             if let card = queueCards.first(where: { $0.ticketId == work.ticketID }),
                let item = card.parts.first(where: { !$0.isMessage && $0.field == work.proposalField && $0.waitingSince == work.proposalCreatedAt && $0.proposalRevision != nil && $0.proposalRevision == work.proposalRevision }),
                let proposal = decisions[item.id]?.proposal,
@@ -544,7 +544,7 @@ private struct ReviewDecisionDock: View {
                 Button { Haptics.light(); Task { append(await voice.stop(api: api)) } } label: { Image(systemName: "stop.fill").frame(width: 44, height: 44) }.background(PanelsTheme.accent, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.lg)).foregroundStyle(PanelsTheme.ink).accessibilityLabel("Stop and transcribe")
             case .transcribing: Text("transcribing"); Spacer(); RingSpinner()
             case .failed:
-                Text("recording saved on this phone").font(.footnote)
+                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not transcribed")
                 Spacer()
                 Button("Retry") { Task { append(await voice.transcribe(api: api)) } }
             case .idle: EmptyView()

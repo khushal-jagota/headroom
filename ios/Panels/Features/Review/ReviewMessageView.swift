@@ -32,7 +32,7 @@ struct ReviewMessageSection: View {
         }
         return current
     }
-    private var activity: Activity { Activity(locked: decision.busy || decision.pending || capturing, sending: sendingPresentation) }
+    private var activity: Activity { Activity(locked: decision.busy || capturing, sending: sendingPresentation) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
@@ -50,7 +50,7 @@ struct ReviewMessageSection: View {
                         }
                     }.padding(ReviewStyle.gutter)
                     if live.addressCurrent, let owner = item.owner, !decision.events.isEmpty {
-                        ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: send, statusNote: displayedAttempt?.note, retryReply: displayedAttempt?.state == .failed, onCaptureChanged: { capturing = $0 })
+                        ConversationComposer(model: decision.composer, owner: owner, reviewReply: true, sendReply: send, statusNote: displayedAttempt?.state == .failed ? displayedAttempt?.note : nil, retryReply: displayedAttempt?.state == .failed, onCaptureChanged: { capturing = $0 })
                             .disabled(decision.busy || locked || (decision.attempt != nil && decision.attempt?.state != .failed))
                             .padding(.bottom, ReviewStyle.gutter)
                     }
@@ -61,7 +61,7 @@ struct ReviewMessageSection: View {
                 (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: PanelsTheme.Space.sm)) : AnyLayout(HStackLayout(spacing: PanelsTheme.Space.sm))) {
                     Button("Mark read") { Haptics.light(); Task { if await decision.markRead() { Haptics.success(); finish() } else { ReviewStyle.error() } } }
                         .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.markRead")
-                        .disabled(decision.through == 0 || decision.busy || decision.pending || capturing || locked)
+                        .disabled(decision.through == 0 || decision.busy || capturing || locked)
                     if let owner = item.owner, let id = item.conversationId {
                         ScreenTextEntryNavigationLink("Open conversation", value: AppRoute.conversation(owner: owner, id: id))
                             .buttonStyle(ReviewActionStyle(context: .message)).accessibilityIdentifier("review.openConversation")
@@ -77,7 +77,7 @@ struct ReviewMessageSection: View {
         // stays outside the displayed run and returns to Review after a reply.
         .task(id: isActive) {
             guard isActive else { return }
-            if let state = decision.attempt?.state, [.failed, .changed, .uncertain].contains(state) { sendingPresentation = false }
+            if decision.attempt?.state == .failed { sendingPresentation = false }
             await decision.load(item: live, api: store.client, shownAt: .now)
             guard !Task.isCancelled else { return }
             if decision.accepted { finishReply() }
@@ -89,8 +89,7 @@ struct ReviewMessageSection: View {
         .onChange(of: activity, initial: true) { _, activity in onActivity(activity) }
         .onChange(of: decision.attempt?.state) { _, state in
             guard isActive else { return }
-            if state == .failed || state == .changed { ReviewStyle.error() }
-            if state == .failed || state == .changed || state == .uncertain { sendingPresentation = false }
+            if state == .failed { ReviewStyle.error(); sendingPresentation = false }
         }
         .onChange(of: decision.accepted) { _, accepted in if isActive, accepted { finishReply() } }
     }
@@ -100,7 +99,7 @@ struct ReviewMessageSection: View {
         outgoingAttempt = decision.attempt
         sendingPresentation = true
         let accepted = await decision.send()
-        if !decision.pending && !decision.accepted { sendingPresentation = false }
+        if !decision.accepted { sendingPresentation = false }
         return accepted
     }
     private func finishReply() {

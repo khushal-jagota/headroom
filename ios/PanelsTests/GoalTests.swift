@@ -446,7 +446,7 @@ import UIKit
         let message = ConversationSend(conversationId: nil, content: [.init(text: "Saved words")], senderMessageId: "retired", sentAtUnixMilliseconds: 1)
         try outbox.save(PendingWork(id: "retired", created: .now, kind: .message, owner: legacyOwner, message: message), server: LocalStore.server(api.baseURL))
         await outbox.drain(api: api)
-        XCTAssertEqual(outbox.entries(LocalStore.server(api.baseURL)).first?.state, .changed)
+        XCTAssertEqual(outbox.entries(LocalStore.server(api.baseURL)).first?.state, .failed)
         do { _ = try await api.sendConversation(legacyOwner, message: message); XCTFail("Retired owner sent") }
         catch { XCTAssertEqual((error as? APIError)?.status, 410) }
         do { _ = try await api.conversationConfiguration(legacyOwner, id: "old"); XCTFail("Retired owner opened") }

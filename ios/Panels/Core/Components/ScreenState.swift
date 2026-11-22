@@ -36,22 +36,6 @@ private struct ScreenRetryButton: View {
     }
 }
 
-struct ServerUnreachableView: View {
-    let retry: () async -> Void
-
-    var body: some View {
-        ContentUnavailableView {
-            Label("Panels can’t reach the server.", systemImage: "network.slash")
-        } description: {
-            Text("Turn on Tailscale, then try again.")
-        } actions: {
-            ScreenRetryButton(retry: retry).buttonStyle(.bordered)
-                .accessibilityIdentifier("server-unreachable.retry")
-        }
-        .panelsScreen()
-    }
-}
-
 /// Still blocks follow the content layout; quick reads never flash a placeholder.
 struct ScreenLoadingView: View {
     let title: String
