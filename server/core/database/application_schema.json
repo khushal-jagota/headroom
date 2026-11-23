@@ -155,6 +155,7 @@
     "CREATE INDEX executor_incarnations_machine ON executor_incarnations(machine_id,executor_incarnation)",
     "CREATE INDEX goals_active ON goals(active,created_at,id)",
     "CREATE INDEX goals_holder ON goals(holder_kind,holder_id)",
+    "CREATE INDEX idx_conversation_events_answer_operation_id ON conversation_events(conversation_id,json_extract(payload,'$.operation_id'),sequence) WHERE kind IN ('permission_answered','user_input_answered')",
     "CREATE INDEX idx_conversation_events_kind_recipient ON conversation_events(kind, json_extract(payload,'$.recipient.kind'), json_extract(payload,'$.recipient.id'))",
     "CREATE UNIQUE INDEX idx_conversation_events_sender_message_id ON conversation_events(conversation_id,json_extract(payload,'$.sender_message_id')) WHERE kind IN ('prompt','prompt_delivery_refused','prompt_discarded') AND (json_extract(payload,'$.sender_message_id') LIKE 'supervisor_delivery_%' OR json_extract(payload,'$.sender_message_id') LIKE 'manager_delivery_%')",
     "CREATE INDEX idx_conversations_automatic_compaction_due ON conversations(latest_agent_activity_at, latest_agent_activity_sequence, automatic_compaction_attempted_through_sequence)",
@@ -369,5 +370,5 @@
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_legacy_machine AFTER INSERT ON tickets WHEN NEW.locale='macos' AND NEW.machine_id='75a49e78-97de-4e28-8dc5-79646761c46f' BEGIN UPDATE tickets SET machine_id='ee17b608-a449-4966-a808-a791ba7df1c7' WHERE id=NEW.id; END"
   ],
-  "alembicRevision": "ts_0005_client_versions"
+  "alembicRevision": "ts_0006_answer_receipt_index"
 }
