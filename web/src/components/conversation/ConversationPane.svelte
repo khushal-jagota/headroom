@@ -82,6 +82,7 @@
     supportsSteer = false,
     fateNote = null,
     errorNote = null,
+    undeliveredReason = null,
     connectionTrouble = false,
     composerPlaceholder = "Message the agent...",
     composerDisabled = false,
@@ -184,6 +185,8 @@
     supportsSteer?: boolean;
     fateNote?: string | null;
     errorNote?: string | null;
+    /** Why a send from the dock was not delivered, said under the composer. */
+    undeliveredReason?: string | null;
     connectionTrouble?: boolean;
     composerPlaceholder?: string;
     composerDisabled?: boolean;
@@ -735,6 +738,7 @@
       {supportsSteer}
       {fateNote}
       errorNote={composerErrorNote}
+      {undeliveredReason}
       placeholder={composerPlaceholder}
       disabled={composerDisabled}
       {showRunPicker}

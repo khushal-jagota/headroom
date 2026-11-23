@@ -181,8 +181,6 @@
         settled={item.settled}
         stopped={item.stopped}
         startedAtUnixMilliseconds={item.startedAtUnixMilliseconds}
-        ending={item.ending}
-        isLatest={item.isLatest}
         durationSeconds={item.durationSeconds}
         toolCallCount={item.toolCallCount}
         foldedMessageCount={item.foldedMessageCount}

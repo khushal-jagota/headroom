@@ -18,11 +18,10 @@
   import {
     earlierMessagesSentence,
     formatDuration,
-    turnFoldLabel
+    workedSentence
   } from "../../lib/conversation/transcript";
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import SystemLine from "./SystemLine.svelte";
-  import type { ConversationTurnEnding } from "../../lib/conversation/wire";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
    *  frames, short enough that a stalled backend stops claiming to be alive. */
@@ -33,8 +32,6 @@
     settled = false,
     stopped = false,
     startedAtUnixMilliseconds = null,
-    ending = null,
-    isLatest = false,
     durationSeconds = null,
     toolCallCount = 0,
     foldedMessageCount = 0,
@@ -48,8 +45,6 @@
     stopped?: boolean;
     /** When the turn began, in unix milliseconds, so a reload counts from the truth. */
     startedAtUnixMilliseconds?: number | null;
-    ending?: ConversationTurnEnding | null;
-    isLatest?: boolean;
     durationSeconds?: number | null;
     /** Whether the turn did any work. Never said: it only keeps the head of a turn that
      *  stopped without an ending, because its work is still there to be read in Full. */
@@ -70,7 +65,7 @@
   let fresh = $state(true);
   const elapsed = elapsedTurnTime(() => settled ? null : startedAtUnixMilliseconds);
 
-  let foldLabel = $derived(turnFoldLabel({ durationSeconds, ending, isLatest }));
+  let foldLabel = $derived(workedSentence(durationSeconds));
   let foldCount = $derived(onToggle === undefined ? "" : earlierMessagesSentence(foldedMessageCount));
   // A turn that stopped without an ending, with nothing it said or did, has nothing it can
   // honestly say: its own status line already says what happened.

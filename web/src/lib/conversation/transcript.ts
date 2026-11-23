@@ -852,12 +852,6 @@ export function workedSentence(durationSeconds: number | null): string {
   return `Worked for ${formatDuration(durationSeconds)}`;
 }
 
-/** The same, for the turn a person stopped themselves. It says who did it. */
-export function stoppedSentence(durationSeconds: number | null): string {
-  if (durationSeconds === null || durationSeconds <= 0) return "You stopped this response";
-  return `You stopped after ${formatDuration(durationSeconds)}`;
-}
-
 /** Background work the agent started that outlived its turn, named by its own description. */
 export function backgroundWorkSentence(taskDescriptions: readonly string[]): string {
   return `Background work running: ${taskDescriptions.join(", ")}`;
@@ -909,22 +903,6 @@ export function millisecondsUntilNextSecond(
   const since = now - startedAtUnixMilliseconds;
   const pastTheSecond = ((since % 1_000) + 1_000) % 1_000;
   return 1_000 - pastTheSecond + LIVE_COUNTER_TICK_MARGIN_MILLISECONDS;
-}
-
-/** The label over a settled turn's fold — which turn it is decides how it reads.
- *
- * Only the latest turn takes the stopped wording. Further back in a conversation "you
- * stopped this" is a strange thing to read next to five other turns; the interrupted
- * line on the turn itself already said it, and there it stays.
- */
-export function turnFoldLabel(item: {
-  durationSeconds: number | null;
-  ending: ConversationTurnEnding | null;
-  isLatest: boolean;
-}): string {
-  return item.isLatest && item.ending === "interrupted"
-    ? stoppedSentence(item.durationSeconds)
-    : workedSentence(item.durationSeconds);
 }
 
 /** What is behind an opened turn's fold, counted by what it is.
