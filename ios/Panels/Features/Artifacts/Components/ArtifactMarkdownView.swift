@@ -6,7 +6,7 @@ struct ArtifactMarkdownView: View {
     let baseURL: URL
     var body: some View {
         ScrollView {
-            PanelsMarkdown(source: source, baseURL: baseURL, showsInlineMedia: false, lazy: true)
+            PanelsMarkdown(source: source, baseURL: baseURL, textSize: .reading, showsInlineMedia: false, lazy: true)
                 .frame(maxWidth: 720, alignment: .leading)
                 .padding(PanelsTheme.Space.xl).frame(maxWidth: .infinity)
         }
@@ -16,9 +16,18 @@ struct ArtifactMarkdownView: View {
 /// The app's one Markdown display: artifacts, proposals, messages, Ticket fields, Goal prose and
 /// conversation rows. Code and tables scroll sideways without widening the page; text hugs its
 /// own width, so a short message keeps a short bubble.
+/// The size a caller reads Markdown at. Long documents read at the body size; Review cards,
+/// Ticket fields and conversation rows keep the compact size of the mockup.
+enum PanelsMarkdownTextSize {
+    case compact, reading
+    /// The paragraph size before Dynamic Type: `.reading` is the system body size.
+    var paragraph: CGFloat { self == .reading ? 17 : 14 }
+}
+
 struct PanelsMarkdown: View {
     let source: String
     let baseURL: URL
+    var textSize = PanelsMarkdownTextSize.compact
     /// A proposal leads with its first paragraph.
     var emphasizesFirstParagraph = false
     var showsInlineMedia = true
@@ -26,7 +35,9 @@ struct PanelsMarkdown: View {
     /// list keeps a plain stack, so its height stays stable for Latest and the read point.
     var lazy = false
     @State private var memo = PanelsMarkdownMemo()
-    @ScaledMetric(relativeTo: .body) private var codeSize: CGFloat = 12.5
+    @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
+    private var size: CGFloat { textSize.paragraph }
+    private var codeSize: CGFloat { (size - 1.5) * scale }
     @ScaledMetric(relativeTo: .body) private var bodyLineSpacing: CGFloat = 5
     @ScaledMetric(relativeTo: .body) private var firstParagraphLineSpacing: CGFloat = 4
 
@@ -52,20 +63,20 @@ struct PanelsMarkdown: View {
                     }.background(PanelsTheme.Web.code, in: RoundedRectangle(cornerRadius: PanelsTheme.Radius.md))
                 }
             case .heading(let level):
-                text(document.inline[block.id]).panelsScaledFont(size: 15, weight: PanelsTheme.TypeScale.markdownHeadingWeight(level))
+                text(document.inline[block.id]).panelsScaledFont(size: size + 1, weight: PanelsTheme.TypeScale.markdownHeadingWeight(level))
                     .foregroundStyle(PanelsTheme.Web.strong).accessibilityAddTraits(.isHeader)
                     .padding(.top, block.id == 0 ? 0 : PanelsTheme.Space.sm)
             case .quote:
                 HStack(alignment: .top, spacing: PanelsTheme.Space.md) {
                     Rectangle().fill(PanelsTheme.Web.tertiary).frame(width: 2)
-                    text(document.inline[block.id]).panelsScaledFont(size: 14).foregroundStyle(PanelsTheme.Web.secondary)
+                    text(document.inline[block.id]).panelsScaledFont(size: size).foregroundStyle(PanelsTheme.Web.secondary)
                         .lineSpacing(bodyLineSpacing)
                 }.fixedSize(horizontal: false, vertical: true)
             case .paragraph, .list:
                 if let rows = document.tables[block.id] { table(rows) }
                 else {
                     let lead = emphasizesFirstParagraph && block.id == 0 && block.kind == .paragraph
-                    text(document.inline[block.id]).panelsScaledFont(size: lead ? 15 : 14, weight: lead ? .medium : .regular)
+                    text(document.inline[block.id]).panelsScaledFont(size: lead ? size + 1 : size, weight: lead ? .medium : .regular)
                         .foregroundStyle(lead ? PanelsTheme.Web.strong : PanelsTheme.Web.text)
                         .lineSpacing(lead ? firstParagraphLineSpacing : bodyLineSpacing)
                 }
@@ -86,7 +97,7 @@ struct PanelsMarkdown: View {
                 ForEach(Array(rows.enumerated()), id: \.offset) { index, cells in
                     GridRow {
                         ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                            Text(cell).textSelection(.enabled).panelsScaledFont(size: 14, weight: index == 0 ? .semibold : .regular)
+                            Text(cell).textSelection(.enabled).panelsScaledFont(size: size, weight: index == 0 ? .semibold : .regular)
                                 .foregroundStyle(PanelsTheme.Web.text)
                                 .fixedSize().padding(PanelsTheme.Space.sm)
                                 .frame(maxWidth: .infinity, alignment: .leading)

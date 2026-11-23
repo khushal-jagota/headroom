@@ -496,7 +496,9 @@ against the configured server and uses the same managed-file route. Artifact
 catalogs and viewers keep their existing presentation.
 
 One renderer, `PanelsMarkdown`, shows Markdown on the artifact page, in proposals,
-messages, Ticket fields, Goal prose and conversation rows. Code and tables scroll
+messages, Ticket fields, Goal prose and conversation rows. The caller picks the text
+size: the artifact page and Goal prose read at the system body size, and Review cards,
+Ticket fields and conversation rows keep the compact size. Code and tables scroll
 sideways inside the page, and text hugs its width, so a short own message keeps a short
 bubble. Each view parses its source once. Only the artifact page lays blocks out lazily,
 so conversation rows keep stable heights. A closed `panels-chart` fence that passes the
