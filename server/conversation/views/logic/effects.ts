@@ -39,6 +39,9 @@ export function event_effect(payload: ConversationEventPayload): EventEffect {
     case 'prompt_delivery_uncertain':
       return effect('prompt_uncertain', visible, { sender_message_id: payload.sender_message_id });
     case 'prompt_discarded':
+      // A message taken back to be edited is not a discarded message: its words are in the
+      // composer, so it leaves the transcript with no row, in either lens.
+      if (payload.withdrawn_for_edit) return effect(null, false);
       return effect('prompt_discarded', visible, { sender_message_id: payload.sender_message_id });
     case 'agent_message':
     case 'message_to_owner':
@@ -91,7 +94,7 @@ export function event_effect(payload: ConversationEventPayload): EventEffect {
     case 'context_compacted':
       return effect('context_compacted', false);
     case 'command_reply':
-      return effect('command_reply', true);
+      return effect('command_reply');
     case 'turn_ended':
       return effect('turn_ended', visible, { closes_turn: true });
   }

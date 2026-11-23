@@ -3,7 +3,7 @@
    *  The strip the conversation composer draws, for the boxes that hold pictures and files. */
   import { releasePendingImages, type PendingConversationImage } from "../../lib/conversation/pendingImages";
   import type { PendingConversationFile } from "../../lib/conversation/pendingFiles";
-  import { attachmentByteLabel, attachmentExtension } from "./composer/attachments";
+  import { attachmentByteLabel, attachmentExtension, attachmentKindLabel } from "./composer/attachments";
   let { images = $bindable([]), files = $bindable([]), disabled = false }: {
     images?: PendingConversationImage[];
     files?: PendingConversationFile[];
@@ -28,9 +28,14 @@
       <span class="chat-att-kind" aria-hidden="true">{attachmentExtension(file.fileName)}</span>
       <span class="chat-att-words">
         <span class="chat-att-name">{file.fileName}</span>
-        <span class="chat-att-meta">{file.mediaType} · {attachmentByteLabel(file.byteCount)}</span>
+        <span class="chat-att-meta"><span class="chat-att-type">{attachmentKindLabel(file.fileName, file.mediaType)}</span><span class="chat-att-size">&nbsp;· {attachmentByteLabel(file.byteCount)}</span></span>
       </span>
       <button type="button" class="chat-att-x" aria-label={`Remove ${file.fileName}`} title="Remove" {disabled} onclick={() => (files = files.filter((entry) => entry.id !== file.id))}>×</button>
     </div>
   {/each}
 </div>
+
+<style>
+  /* The size and kind are words, in the interface face, as the sent file card writes them. */
+  .chat-att-meta { font-family: var(--font-ui); letter-spacing: normal; }
+</style>

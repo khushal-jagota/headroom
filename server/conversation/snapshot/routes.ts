@@ -152,8 +152,15 @@ export function createBackendRoutes(
         ticket.machine_id === HOME_MACHINE_ID
           ? runtime.backend_snapshots
           : runtime.machine_catalog(ticket.machine_id);
+      // A machine with no executor here (never paired, or its pairing withdrawn) is a state
+      // of that machine, not a malformed request. It answers in the transport's `detail`
+      // sentence, which the composer shows as written; the planner envelope it used to
+      // answer with reached the person as a bare "The server answered 400."
       if (source === null)
-        throw new PlannerError('validation', 'The selected machine is unavailable', {});
+        throw new HttpError(
+          409,
+          'This machine is not connected to Panels, so its models cannot be listed.',
+        );
       const snapshots = await Promise.all(
         runtime.backend_ids.map((key) =>
           source.snapshot(key, { refresh: refresh_requested, signal: signal_of(request) }),

@@ -52,6 +52,9 @@ export interface OwnerSendBody {
   mode: 'queue' | 'send_now' | 'steer';
   sender_message_id: string | null;
   sent_at_unix_milliseconds: number | null;
+  /** A resend of a message the conversation refused: the refused row's sequence. Once
+   *  this prompt is recorded, that row leaves the view. */
+  reconciles_sequence: number | null;
   provided_fields: Set<string>;
 }
 interface ValidationIssue {
@@ -253,6 +256,7 @@ export function parse_owner_send_body(
     });
   const sender_message_id = text(raw, 'sender_message_id', [], true);
   const sent_at_unix_milliseconds = integer('sent_at_unix_milliseconds');
+  const reconciles_sequence = integer('reconciles_sequence', 0);
   if (errors.length) {
     reply.code(422).send({ detail: errors });
     return null;
@@ -268,6 +272,7 @@ export function parse_owner_send_body(
     mode: mode as OwnerSendBody['mode'],
     sender_message_id,
     sent_at_unix_milliseconds,
+    reconciles_sequence,
     provided_fields: new Set(Object.keys(raw)),
   };
 }

@@ -235,20 +235,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Final answer",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -456,20 +443,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Final answer",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -705,6 +679,19 @@
         ],
         "items": [
           {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "completed",
+            "isLatest": false,
+            "durationSeconds": 4,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
             "kind": "row",
             "key": "e2",
             "row": {
@@ -813,20 +800,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Next reply",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -1108,20 +1082,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Next reply",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -1295,20 +1256,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "turn failed",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -1533,20 +1481,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": "you",
-          "text": "Explicit recipient is not legacy",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -1819,20 +1754,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": "you",
-          "text": "discarded without being delivered",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -1981,20 +1903,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": "you",
-          "text": "discarded without being delivered",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -2374,20 +2283,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "turn interrupted",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -2638,20 +2534,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "turn interrupted",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -2820,20 +2703,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Failed work",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": true
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -2941,20 +2811,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Failed work",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": false,
-            "failed": true
-          }
-        }
+        ]
       }
     }
   },
@@ -3192,20 +3049,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "turn stopped without an ending",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -3369,20 +3213,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "turn stopped without an ending",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -3650,20 +3481,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Answer",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -4019,20 +3837,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Answer",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": false,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -4199,20 +4004,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Continue?",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": true,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": true,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -4328,20 +4120,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": null,
-          "text": "Continue?",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": true,
-          "workingSinceUnixMilliseconds": null,
-          "marks": {
-            "running": true,
-            "unreadReply": false,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   },
@@ -4593,20 +4372,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": "you",
-          "text": "Steer",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": 100000,
-          "marks": {
-            "running": true,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       },
       "full": {
         "rows": [
@@ -4761,20 +4527,7 @@
             },
             "behindTheFoldOf": null
           }
-        ],
-        "rest": {
-          "who": "you",
-          "text": "Steer",
-          "aside": null,
-          "taskProgress": null,
-          "waiting": false,
-          "workingSinceUnixMilliseconds": 100000,
-          "marks": {
-            "running": true,
-            "unreadReply": true,
-            "failed": false
-          }
-        }
+        ]
       }
     }
   }

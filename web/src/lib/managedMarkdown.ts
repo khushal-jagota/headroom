@@ -10,6 +10,7 @@ import { MARKDOWN_GROUP_WEIGHT, MARKDOWN_WORKER_THRESHOLD } from "./markdown/con
 import type { MarkdownTreeNode, ParsedMarkdown } from "./markdown/contracts";
 import { observeVisibleContent, holdVisibleContentHeight, resetVisibleContentHeight } from "./visibleContent";
 import { registerMarkdownCopyRange } from "./markdown/copy";
+import { presentCodeBlock } from "./markdown/codeBlocks";
 
 export type ReadOnlyManagedMarkdownInput = Readonly<{
   source: unknown;
@@ -53,6 +54,13 @@ const EDITABLE_CARET_GUARD = "\u200b";
 const SOURCE_UNSET = Symbol("source-unset");
 let nextChartIdentity = 0;
 
+/** Whether Markdown drawn in `host` presents its code blocks (a header with the language and
+ *  Copy, and syntax colour). Only the conversation's transcript does: artifacts, file
+ *  previews and pages are out of the conversation's design and keep their own code. */
+export function presentsCodeBlocks(host: Pick<Element, "closest">): boolean {
+  return host.closest(".chat-thread") !== null;
+}
+
 export function createManagedMarkdownSurface(
   host: HTMLElement,
   options: { mode: "read-only"; onRendered?: () => void; presentation?: MarkdownPresentationController }
@@ -70,6 +78,8 @@ export function createManagedMarkdownSurface(
   const mode = options.mode;
   const previews = new Map<HTMLElement, MountedPreview>();
   const imageObservers = new Map<HTMLImageElement, () => void>();
+  /** Code blocks given a header and colour, and how to take each off again. */
+  const codeBlocks = new Map<HTMLElement, () => void>();
   let destroyed = false;
   let observer: MutationObserver | null = null;
   let observerConnected = false;
@@ -113,7 +123,7 @@ export function createManagedMarkdownSurface(
         if (group.mounted === visible || destroyed) return;
         group.mounted = visible;
         if (visible) {
-          const rendered = renderParsedMarkdown({ children: nodes, definitions: document.definitions }, options.presentation?.mapText, group.start);
+          const rendered = renderParsedMarkdown({ children: nodes, definitions: document.definitions }, options.presentation?.mapText, group.start, { fileReferences: presentsCodeBlocks(host) });
           mountRenderedPreviews(rendered, presentation.depth, presentation.visited);
           if (!element.hasAttribute("data-visible-content-restoring")) element.style.minHeight = "";
           element.replaceChildren(rendered);
@@ -124,6 +134,9 @@ export function createManagedMarkdownSurface(
           }
           for (const [image, stop] of imageObservers) {
             if (element.contains(image)) { stop(); imageObservers.delete(image); }
+          }
+          for (const [frame, stop] of codeBlocks) {
+            if (element.contains(frame)) { stop(); codeBlocks.delete(frame); }
           }
           element.replaceChildren();
           options.presentation?.prune();
@@ -173,7 +186,7 @@ export function createManagedMarkdownSurface(
         disconnectObserver(); host.replaceChildren();
         documentRegion = mount(ManagedMarkdownRegion, { target: host });
       }
-      documentRegion?.reveal(target => {
+      documentRegion?.reveal((target: HTMLElement) => {
         if (destroyed || generation !== renderGeneration) return;
         render(target);
         rendered();
@@ -232,6 +245,8 @@ export function createManagedMarkdownSurface(
     for (const preview of [...previews.values()]) unmountPreview(preview);
     for (const stop of imageObservers.values()) stop();
     imageObservers.clear();
+    for (const stop of codeBlocks.values()) stop();
+    codeBlocks.clear();
   }
 
   function reconcileRemovedPreviews(): void {
@@ -278,6 +293,12 @@ export function createManagedMarkdownSurface(
             props: { block: chart.block, identity: `chat-${++nextChartIdentity}` }
           })
         });
+      }
+      // What is left is code. In the conversation each block gets its language, a copy
+      // button and colour; an artifact or a page renders its code exactly as it always has.
+      if (presentsCodeBlocks(host)) for (const pre of Array.from(root.querySelectorAll<HTMLElement>("pre"))) {
+        const { frame, stop } = presentCodeBlock(pre);
+        codeBlocks.set(frame, stop);
       }
     }
     for (const renderedTarget of Array.from(root.querySelectorAll("a[href], img[src]"))) {
@@ -367,7 +388,7 @@ export function createManagedMarkdownSurface(
       return;
     }
 
-    const rendered = renderMarkdownToElement(source, options.presentation?.mapText);
+    const rendered = renderMarkdownToElement(source, options.presentation?.mapText, { fileReferences: mode === "read-only" && presentsCodeBlocks(host) });
     rendered.classList.add("markdown-block");
     mountRenderedPreviews(
       rendered,

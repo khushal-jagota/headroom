@@ -200,16 +200,40 @@ export function parseMarkdown(source: string): ParsedMarkdown {
 
 export type MarkdownTextMapper = (node: Text, blockIndex: number, path: readonly number[]) => void;
 
-export function renderParsedMarkdown(document: ParsedMarkdown, mapText?: MarkdownTextMapper, blockOffset = 0): HTMLElement {
+/** A file reference in plain words ("batcher.go:97", "web/src/app.ts") is code, as it would
+ *  be had the writer put it in backticks: a path with a source-file extension that also
+ *  names a line or a directory. A bare "Node.js" or "README.md" stays a word. */
+const FILE_REFERENCE = /(?<![\w./@-])(?:[\w.-]+\/)*[\w-]+\.(?:go|ts|tsx|js|jsx|mjs|cjs|svelte|vue|py|rs|swift|kt|java|rb|css|scss|html|json|ya?ml|toml|sql|sh|c|h|cc|cpp|hpp|m|mm|php|cs|lua|zig|ex|exs|txt|log|csv|md)(?::\d+(?::\d+)?)?(?![\w/])/g;
+
+/** The pieces of a text, with each file reference marked (only those naming a line or a
+ *  directory), for a read-only conversation surface. */
+export function fileReferencePieces(text: string): { text: string; reference: boolean }[] {
+  const pieces: { text: string; reference: boolean }[] = [];
+  let at = 0;
+  for (const match of text.matchAll(FILE_REFERENCE)) {
+    const found = match[0];
+    if (!/:\d+$/.test(found) && !found.includes("/")) continue;
+    const start = match.index ?? 0;
+    if (start > at) pieces.push({ text: text.slice(at, start), reference: false });
+    pieces.push({ text: found, reference: true });
+    at = start + found.length;
+  }
+  if (at < text.length) pieces.push({ text: text.slice(at), reference: false });
+  return pieces;
+}
+
+export type MarkdownRenderOptions = { fileReferences?: boolean };
+
+export function renderParsedMarkdown(document: ParsedMarkdown, mapText?: MarkdownTextMapper, blockOffset = 0, options: MarkdownRenderOptions = {}): HTMLElement {
   const root = globalThis.document.createElement("div");
   root.className = "markdown";
-  document.children.forEach((child, index) => appendHastNode(root, child, mapText, blockOffset + index, []));
+  document.children.forEach((child, index) => appendHastNode(root, child, mapText, blockOffset + index, [], options.fileReferences === true));
   referenceDefinitionsByRoot.set(root, document.definitions);
   return root;
 }
 
-export function renderMarkdownToElement(source: string, mapText?: MarkdownTextMapper): HTMLElement {
-  return renderParsedMarkdown(parseMarkdown(source), mapText);
+export function renderMarkdownToElement(source: string, mapText?: MarkdownTextMapper, options: MarkdownRenderOptions = {}): HTMLElement {
+  return renderParsedMarkdown(parseMarkdown(source), mapText, 0, options);
 }
 
 /** The link and image destinations that rendered Markdown exposes to a reader. */
@@ -259,9 +283,52 @@ export function serializeMarkdownDomToSource(root: Node): string {
   return markdown;
 }
 
-function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownTextMapper, blockIndex = 0, path: readonly number[] = []): void {
+const NO_FILE_REFERENCES_INSIDE = new Set(["CODE", "PRE", "A"]);
+
+/** Punctuation that sits against the word before it. */
+const CLOSING_PUNCTUATION = /^[.,;:!?)\]}'"’”…]/;
+
+/** v5.1: inline code spacing. A code span's chip has its own side padding; drawn as is, a
+ *  full stop or comma after it reads as spaced off ("batcher.go:97 ,"), and a list item that
+ *  opens with code reads as indented past the bullet's text edge. The rendering marks both
+ *  cases so the stylesheet can pull the chip's edge in: "cv-code-before-punctuation" when
+ *  the next text starts with closing punctuation, "cv-code-leads" when the code opens a list
+ *  item. `siblings` are the parent's children as text (null for an element). */
+export function inlineCodeSpacing(parentTag: string, siblings: readonly (string | null)[], index: number): string[] {
+  const classes: string[] = [];
+  const next = siblings[index + 1];
+  if (typeof next === "string" && CLOSING_PUNCTUATION.test(next)) classes.push("cv-code-before-punctuation");
+  const before = siblings.slice(0, index);
+  if ((parentTag || "").toUpperCase() === "LI" && before.every((text) => typeof text === "string" && text.trim() === "")) classes.push("cv-code-leads");
+  return classes;
+}
+
+function hastSiblingTexts(children: readonly HastNode[]): (string | null)[] {
+  return children.map((child) => child.type === "text" ? child.value || "" : null);
+}
+
+function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownTextMapper, blockIndex = 0, path: readonly number[] = [], fileReferences = false): void {
   if (node.type === "text") {
-    const text = document.createTextNode(node.value || "");
+    const value = node.value || "";
+    const pieces = fileReferences && !NO_FILE_REFERENCES_INSIDE.has(parent.tagName) && parent.closest("code, pre, a") === null
+      ? fileReferencePieces(value) : [];
+    if (pieces.some((piece) => piece.reference)) {
+      // Each piece is its own text leaf, at its own path under this one, so a text location
+      // taken from this render is found again in the next.
+      const pieceTexts = pieces.map((piece) => piece.reference ? null : piece.text);
+      pieces.forEach((piece, index) => {
+        const text = document.createTextNode(piece.text);
+        if (piece.reference) {
+          const code = document.createElement("code");
+          code.className = ["cv-file-ref", ...inlineCodeSpacing(parent.tagName, pieceTexts, index)].join(" ");
+          code.appendChild(text);
+          parent.appendChild(code);
+        } else parent.appendChild(text);
+        mapText?.(text, blockIndex, [...path, index]);
+      });
+      return;
+    }
+    const text = document.createTextNode(value);
     parent.appendChild(text);
     mapText?.(text, blockIndex, path);
     return;
@@ -274,8 +341,17 @@ function appendHastNode(parent: HTMLElement, node: HastNode, mapText?: MarkdownT
     element.decoding = "async";
   }
   applySanitizedProperties(element, node.properties || {});
-  (node.children || []).forEach((child, index) => appendHastNode(element, child, mapText, blockIndex, [...path, index]));
+  // Attached before its children, so a text inside code, pre or a link can see it is there.
   parent.appendChild(element);
+  const children = node.children || [];
+  const siblingTexts = children.some((child) => child.type === "element" && child.tagName === "code") ? hastSiblingTexts(children) : null;
+  children.forEach((child, index) => {
+    appendHastNode(element, child, mapText, blockIndex, [...path, index], fileReferences);
+    if (siblingTexts === null || child.type !== "element" || child.tagName !== "code" || element.tagName === "PRE") return;
+    const spacing = inlineCodeSpacing(element.tagName, siblingTexts, index);
+    const code = element.lastChild as HTMLElement | null;
+    if (spacing.length > 0 && code?.classList) code.classList.add(...spacing);
+  });
 }
 
 function collectReferenceDefinitions(tree: MarkdownNode): ReferenceDefinition[] {
@@ -381,6 +457,10 @@ function domNodeToHast(
   if (node.nodeType !== Node.ELEMENT_NODE) return { type: "text", value: "" };
   const element = node as HTMLElement;
   if (element.hasAttribute("data-markdown-caret-guard")) {
+    return { type: "text", value: editableText(element.textContent) };
+  }
+  // A file reference drawn as code was plain words in the source, and copies as them.
+  if (element.tagName === "CODE" && element.classList.contains("cv-file-ref")) {
     return { type: "text", value: editableText(element.textContent) };
   }
   const sourceToken = element.getAttribute("data-markdown-source-token");
