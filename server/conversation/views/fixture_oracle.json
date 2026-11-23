@@ -7,7 +7,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 7,
             "current_turn_key": null,
             "current_group_key": null,
@@ -156,7 +156,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -278,7 +278,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -430,7 +430,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 8,
             "current_turn_key": null,
             "current_group_key": null,
@@ -607,7 +607,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -807,7 +807,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -1093,7 +1093,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 6,
             "current_turn_key": null,
             "current_group_key": null,
@@ -1221,7 +1221,7 @@
             "source_sequence": 3,
             "created_at": 102,
             "started_at_milliseconds": 102000,
-            "focus_head": 0,
+            "focus_head": 1,
             "ending_sequence": 4,
             "ending": "failed",
             "ended_at": 103,
@@ -1257,7 +1257,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -1311,6 +1311,24 @@
               "tool_call_count": 0,
               "folded_message_count": 0,
               "latest_message_key": null,
+              "is_latest": false
+            },
+            {
+              "kind": "turn",
+              "key": "turn:e3",
+              "order": {
+                "sequence": 3,
+                "slot": 1
+              },
+              "changed_through_sequence": 4,
+              "settled": true,
+              "stopped": false,
+              "started_at_unix_milliseconds": 102000,
+              "ending": "failed",
+              "duration_seconds": 1,
+              "tool_call_count": 0,
+              "folded_message_count": 0,
+              "latest_message_key": null,
               "is_latest": true
             },
             {
@@ -1346,7 +1364,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -1588,7 +1606,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 7,
             "current_turn_key": null,
             "current_group_key": null,
@@ -1748,7 +1766,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -1872,7 +1890,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -2026,7 +2044,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 8,
             "current_turn_key": null,
             "current_group_key": null,
@@ -2156,7 +2174,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -2386,7 +2404,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -2621,7 +2639,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 4,
             "current_turn_key": null,
             "current_group_key": null,
@@ -2706,7 +2724,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -2823,7 +2841,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -2945,7 +2963,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 4,
             "current_turn_key": "turn:e1",
             "current_group_key": null,
@@ -3060,7 +3078,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -3210,7 +3228,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -3365,7 +3383,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 13,
             "current_turn_key": null,
             "current_group_key": null,
@@ -3623,7 +3641,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -3716,7 +3734,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -3953,7 +3971,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 3,
             "current_turn_key": "turn:e1",
             "current_group_key": null,
@@ -4053,7 +4071,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -4174,7 +4192,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",
@@ -4300,7 +4318,7 @@
         "state": [
           {
             "conversation_id": "fixture",
-            "projection_version": 4,
+            "projection_version": 5,
             "through_sequence": 4,
             "current_turn_key": "turn:e1",
             "current_group_key": null,
@@ -4400,7 +4418,7 @@
         "focus": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "focus",
           "scope": {
             "kind": "timeline",
@@ -4553,7 +4571,7 @@
         "full": {
           "conversation_id": "fixture",
           "protocol_version": 1,
-          "projection_version": 4,
+          "projection_version": 5,
           "lens": "full",
           "scope": {
             "kind": "timeline",

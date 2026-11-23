@@ -2,7 +2,10 @@ import { parse_backend_instance_id } from '../drivers/core/identity.ts';
 import { expect, test } from 'vitest';
 import type { ConversationEventKind } from '../conversation/events.ts';
 import { ConversationAccess, ResolvedConversationStart } from '../conversation/contracts.ts';
-import { conversation_event_payload_from_canonical_json } from '../conversation/record/codec.ts';
+import {
+  conversation_event_payload_from_canonical_json,
+  conversation_event_payload_to_canonical_json,
+} from '../conversation/record/codec.ts';
 import { ConversationStorePrimitives } from '../conversation/record/data/store.ts';
 import { append_projection } from '../conversation/views/data/writer.ts';
 import { read_page } from '../conversation/views/data/storage.ts';
@@ -44,7 +47,7 @@ const events: [ConversationEventKind, unknown][] = [
   ['turn_ended', { ending: 'completed', error_summary: null }],
 ];
 
-function projected() {
+function projected(recorded: [ConversationEventKind, unknown][] = events) {
   const database = database_fixture();
   const store = new ConversationStorePrimitives(database, { integer_now: () => 100 });
   store.create_conversation(
@@ -59,7 +62,7 @@ function projected() {
     }),
   );
   database.write((tx) => {
-    events.forEach(([kind, payload], index) => {
+    recorded.forEach(([kind, payload], index) => {
       const sequence = index + 1;
       const encoded = JSON.stringify(payload);
       tx.run(
@@ -77,7 +80,7 @@ function projected() {
       ]);
     });
     tx.run('UPDATE conversations SET latest_sequence=? WHERE conversation_id=?', [
-      events.length,
+      recorded.length,
       'c',
     ]);
   });
@@ -142,4 +145,58 @@ test('a command reply belongs in Focus by the one shared rule', () => {
   );
   expect(in_focus(payload)).toBe(true);
   expect(event_effect(payload).focus_visible).toBe(true);
+});
+
+test('a queued message taken back to edit leaves no row; a plain discard keeps its row', () => {
+  const discarded = (extra: object) =>
+    conversation_event_payload_from_canonical_json(
+      'prompt_discarded',
+      JSON.stringify({
+        sender_label: 'owner',
+        content: [{ piece: 'text', text: 'Queued' }],
+        sender: owner,
+        ...extra,
+      }),
+    );
+  const edited = discarded({ withdrawn_for_edit: true });
+  // The mark survives the record, so a reload draws no ghost either.
+  const stored = conversation_event_payload_to_canonical_json(edited);
+  expect(JSON.parse(stored).withdrawn_for_edit).toBe(true);
+  expect(
+    event_effect(conversation_event_payload_from_canonical_json('prompt_discarded', stored))
+      .row_kind,
+  ).toBeNull();
+  const removed = discarded({});
+  expect(JSON.parse(conversation_event_payload_to_canonical_json(removed))).not.toHaveProperty(
+    'withdrawn_for_edit',
+  );
+  expect(event_effect(removed).row_kind).toBe('prompt_discarded');
+});
+
+test('a resend folds the refused message it sends again away, in both lenses', () => {
+  const words = {
+    sender_label: 'owner',
+    content: [{ piece: 'text', text: 'Retry' }],
+    sender: owner,
+  };
+  const database = projected([
+    [
+      'prompt_delivery_refused',
+      {
+        ...words,
+        mode: 'send_now',
+        sender_message_id: 'a',
+        refusal_reason: 'write_to_backend_failed',
+      },
+    ],
+    ['prompt', { ...words, mode: 'queue', sender_message_id: 'b', reconciles_sequence: 1 }],
+  ]);
+  database.read((sql) => {
+    for (const lens of ['focus', 'full'] as const) {
+      const kinds = read_page(sql, 'c', lens).items.flatMap((item) =>
+        item.kind === 'row' ? [item.row_kind] : [],
+      );
+      expect(kinds).not.toContain('prompt_refused');
+    }
+  });
 });

@@ -228,7 +228,7 @@
         data-conversation-row="permission_ask"
         data-conversation-ask-state={item.row.state}
       >
-        <div class="c2-ask-label">Permission · {askStateLine(item.row)}</div>
+        <SystemLine data-conversation-ask-record="">Permission · {askStateLine(item.row)}</SystemLine>
         <div class="c2-ask-title">{item.row.title}</div>
         {#if detail}<pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>{/if}
       </div>
@@ -239,7 +239,7 @@
         data-conversation-row="user_input"
         data-conversation-user-input-state={item.row.state}
       >
-        <div class="c2-ask-label">Question · {userInputStateLine(item.row)}</div>
+        <SystemLine data-conversation-ask-record="">Question · {userInputStateLine(item.row)}</SystemLine>
         {#if item.row.questions.length > 0}<div class="c2-ask-title">
           {item.row.questions.length === 1
             ? item.row.questions[0]?.question
@@ -281,24 +281,24 @@
 <style>
   .c2-transcript { display: contents; }
   .chat-a { position: relative; }
-  /* An ask's record, once it has been answered or has expired: the turn head's own small
-     voice, flush with the thread, no box. Only the command it asked about stays in mono. */
+  /* An ask's record, once it has been answered or has expired: the shared system line
+     ("Permission · answered · Deny"), then what was asked, flush with the thread, no box.
+     8 px from the line to what it heads, as under every system line (B9). Only the command
+     it asked about stays in mono. */
   .c2-ask-row {
     align-self: stretch;
     display: grid;
-    gap: var(--cv-s1);
+    gap: var(--cv-s2);
     min-width: 0;
-    color: var(--cv-t3);
+    color: var(--cv-system-ink);
     font-family: var(--cv-font);
     font-size: var(--cv-type-meta);
     line-height: var(--cv-leading-meta);
     overflow-wrap: anywhere;
   }
-  .c2-ask-label { color: var(--cv-t3); }
   .c2-ask-title { color: var(--cv-t2); }
   .c2-ask-question { color: var(--cv-t2); }
-  .c2-ask-answers { color: var(--cv-t3); }
-  .c2-ask-row.is-dead .c2-ask-title { color: var(--cv-t3); }
+  .c2-ask-row.is-dead .c2-ask-title { color: var(--cv-system-ink); }
   /* Capped and scrolling: a transcript row never grows by the size of a payload. */
   .c2-ask-detail {
     margin: 0;

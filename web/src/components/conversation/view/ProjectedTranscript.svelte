@@ -95,11 +95,16 @@
       if (item.settled || reader.status?.turn_key !== item.key) return null;
       return reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null;
   }
+  /** A turn the person stopped is said once, by its ending line ("Stopped after 8m 45s"),
+   *  in both lenses: its head would say the same again above its work. */
+  function headDrawn(item: ConversationViewItem & { kind: 'turn' }): boolean {
+      return turnHeadAtTop(item, reader.status) && !(item.settled && item.ending === 'interrupted');
+  }
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
           // A turn held by the person has no head: the docked ask says so, once.
           // v6: a live turn's head is the live edge at the end of the transcript, not here.
-          return turnHeadAtTop(item, reader.status)
+          return headDrawn(item)
               && !(turnWaiting(item) !== null && !activityUncertain)
               && (!item.settled || !item.stopped || item.tool_call_count > 0 || item.folded_message_count > 0);
       // In Full a run of more than one call is drawn as its summary line.
@@ -241,7 +246,7 @@
     <ViewItem itemKey={item.key} rhythm={rhythm.get(slot.key) ?? 'block'}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
-          {#if turnHeadAtTop(item, reader.status)}
+          {#if headDrawn(item)}
           <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
           {/if}
         </div>

@@ -38,6 +38,8 @@ export interface Message {
   readonly delivery_uncertain: boolean;
   readonly system_generated: boolean;
   readonly dispatch_memory_note?: boolean;
+  /** The earlier row this message resends; carried onto its prompt row. */
+  readonly reconciles_sequence?: number | null;
 }
 export interface SenderAdmission {
   readonly message: Message;

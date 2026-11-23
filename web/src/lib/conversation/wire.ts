@@ -511,6 +511,9 @@ export type OwnerSendBody = {
   content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;
+  /** A resend of a refused message: that row's sequence, so the refused bubble folds away
+   *  once this prompt is recorded. */
+  reconciles_sequence?: number;
 } & SenderMintedPromptFields;
 
 /** What a conversation started for an owner right now would run on.
@@ -732,11 +735,14 @@ export function answerUserInput(
  */
 export function discardHeldPrompt(
   conversationId: string,
-  senderMessageId: string
+  senderMessageId: string,
+  /** The person took the message back into the composer to edit it: the record keeps no
+   *  "Discarded" row for it. */
+  forEdit = false
 ): Promise<{ discarded: boolean }> {
   return request<{ discarded: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}`
-      + `/held-prompts/${encodeURIComponent(senderMessageId)}`,
+      + `/held-prompts/${encodeURIComponent(senderMessageId)}${forEdit ? "?for=edit" : ""}`,
     { method: "DELETE" }
   );
 }

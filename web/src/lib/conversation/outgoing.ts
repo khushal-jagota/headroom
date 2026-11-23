@@ -33,7 +33,8 @@ export type OutgoingMessageKnownFate =
   | "nothing_yet"
   | "sent_before_this_page"
   | "waiting_for_the_agent"
-  | "answer_never_came_back";
+  | "answer_never_came_back"
+  | "machine_offline";
 
 export type OutgoingMessage = {
   /** Immutable displayed read boundary for an explicit review reply. */
@@ -58,6 +59,11 @@ export type OutgoingMessage = {
   /** When the person pressed send, in unix milliseconds. */
   sentAtUnixMilliseconds: number;
   knownFate: OutgoingMessageKnownFate;
+  /** ``machine_offline`` only: why it was not delivered, in plain words, and the server's
+   *  own words behind Details. */
+  refusal?: MachineOfflineRefusal;
+  /** A resend of a recorded refused message: that row's sequence (see OwnerSendBody). */
+  reconcilesSequence?: number;
   /** What the person picked in the composer for this message, when they picked anything.
    *
    *  Kept because a message can be sent again, and a send again that dropped these would
@@ -153,7 +159,8 @@ const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
   sent_before_this_page: null,
   waiting_for_the_agent: "waiting for the agent to be free",
-  answer_never_came_back: "no answer came"
+  answer_never_came_back: "no answer came",
+  machine_offline: null
 };
 
 /** What a message on its way says about itself, or nothing when there is nothing to say. */
@@ -174,6 +181,22 @@ export function theServerRefusedTheSend(error: unknown): boolean {
   if (!(error instanceof ConversationWireError) && !(error instanceof PlannerFetchError)) return false;
   const status = error.status;
   return status !== undefined && status >= 400 && status < 500;
+}
+
+/** Whether the server turned the send away because the machine the conversation runs on
+ *  is away (the Ticket's execution admission: its refusal names the Ticket's locale and
+ *  this machine's). Nothing reached the conversation, and nothing will until the machine
+ *  is back, so the message is shown as not delivered rather than as an error. */
+export type MachineOfflineRefusal = { reason: string; detail: string };
+export function theMachineIsOfflineRefusal(error: unknown): MachineOfflineRefusal | null {
+  if (!theServerRefusedTheSend(error)) return null;
+  const detail = (error as { detail?: unknown }).detail;
+  if (detail === null || typeof detail !== "object" || !("machine_locale" in detail)) return null;
+  const locale = (detail as { locale?: unknown }).locale;
+  return {
+    reason: locale === "macos" ? "The Mac is offline" : "The machine is offline",
+    detail: (error as Error).message
+  };
 }
 
 /** Give a message its identity and its instant, before anything is sent.
@@ -359,6 +382,7 @@ export function outgoingMessagesByPlace(
   return {
     thread: outgoing.filter(message => !aboveTheComposer(message) && (
       message.accepted || recorded(message) || message.knownFate === "answer_never_came_back"
+      || message.knownFate === "machine_offline"
     )),
     composerStack: outgoing.filter(aboveTheComposer)
   };
@@ -810,11 +834,21 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     mode: decodedMode as PromptDeliveryMode,
     sentAtUnixMilliseconds,
     knownFate: knownFate as OutgoingMessageKnownFate,
+    ...(knownFate === "machine_offline" ? { refusal: machineOfflineRefusalFrom(held.refusal) } : {}),
+    ...(typeof held.reconcilesSequence === "number" && Number.isSafeInteger(held.reconcilesSequence) && held.reconcilesSequence >= 0 ? { reconcilesSequence: held.reconcilesSequence } : {}),
     ...(pickedModel === null ? {} : { pickedModel }),
     ...(typeof held.effortIsSet === "boolean" ? {effortIsSet: held.effortIsSet} : {}),
     // Any backend the server runs may be held here; the server judges the key on send.
     ...(typeof held.pickedBackend === "string" && held.pickedBackend !== "" ? {pickedBackend: held.pickedBackend} : {}),
     ...(pickedReasoningEffort === null && held.effortIsSet !== true ? {} : { pickedReasoningEffort })
+  };
+}
+
+function machineOfflineRefusalFrom(value: unknown): MachineOfflineRefusal {
+  const held = (value ?? {}) as Record<string, unknown>;
+  return {
+    reason: typeof held.reason === "string" && held.reason !== "" ? held.reason : "The machine is offline",
+    detail: typeof held.detail === "string" ? held.detail : ""
   };
 }
 

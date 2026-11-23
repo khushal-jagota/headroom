@@ -249,6 +249,9 @@ export class PromptDiscardedEventPayload {
   readonly recipient: Principal | null;
   readonly recovery_references: readonly DeploymentRecoveryReference[];
   readonly suppression_reason: string | null;
+  /** The person took the queued message back into the composer to edit it. Its words
+   *  live on in the composer, so the transcript draws no "Discarded" for it. */
+  readonly withdrawn_for_edit: boolean;
   constructor(values: {
     content: MessageContent;
     sender_label: string;
@@ -258,6 +261,7 @@ export class PromptDiscardedEventPayload {
     recipient?: Principal | null;
     recovery_references?: readonly DeploymentRecoveryReference[];
     suppression_reason?: string | null;
+    withdrawn_for_edit?: boolean;
   }) {
     this.content = values.content;
     this.sender_label = values.sender_label;
@@ -271,6 +275,7 @@ export class PromptDiscardedEventPayload {
       values.recovery_references === undefined ? [] : values.recovery_references;
     this.suppression_reason =
       values.suppression_reason === undefined ? null : values.suppression_reason;
+    this.withdrawn_for_edit = values.withdrawn_for_edit === true;
   }
 }
 

@@ -3690,10 +3690,9 @@ details:not([open]) > summary > .manager-workspace-chevron {
   overflow-wrap: anywhere;
 }
 
-/* The way back to the newest line: a 32px round button centred on the column, straddling the
- * composer's top edge (the ask card's, when an ask is the composer): its centre is on that
- * line, so half of it sits on the composer and it never covers a readable line of the
- * transcript. The slot has no height and stands right on the composer's top edge. */
+/* The way back to the newest line: a 32px round button centred on the column, standing wholly
+ * above the composer's top edge (the ask card's, when an ask is the composer) with an 8px gap,
+ * so it never covers the composer. The slot has no height and stands right on that edge. */
 .cv-status-slot {
   position: relative;
   flex: none;
@@ -3703,7 +3702,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .cv-jump {
   position: absolute;
   left: 50%;
-  bottom: -16px;
+  bottom: var(--cv-s2);
   transform: translateX(-50%);
   display: inline-grid;
   place-items: center;

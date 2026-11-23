@@ -467,16 +467,21 @@ export function createConversationRoutes(
         reply.code(204).send();
       },
     );
-    app.delete<{ Params: { conversation_id: string; held_prompt_id: string } }>(
-      '/conversations/:conversation_id/held-prompts/:held_prompt_id',
-      async (request) => {
-        const { conversation_id, held_prompt_id } = request.params;
-        mutable_conversation(runtime, conversation_id);
-        return {
-          discarded: await runtime.core.discard_held_prompt(conversation_id, held_prompt_id),
-        };
-      },
-    );
+    app.delete<{
+      Params: { conversation_id: string; held_prompt_id: string };
+      Querystring: { for?: string };
+    }>('/conversations/:conversation_id/held-prompts/:held_prompt_id', async (request) => {
+      const { conversation_id, held_prompt_id } = request.params;
+      mutable_conversation(runtime, conversation_id);
+      // ?for=edit: the person took the message back into the composer to edit it.
+      return {
+        discarded: await runtime.core.discard_held_prompt(
+          conversation_id,
+          held_prompt_id,
+          request.query.for === 'edit',
+        ),
+      };
+    });
     app.post<{ Params: { conversation_id: string; held_prompt_id: string } }>(
       '/conversations/:conversation_id/held-prompts/:held_prompt_id/promote',
       async (request) => {

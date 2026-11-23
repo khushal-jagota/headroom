@@ -46,8 +46,8 @@ describe("a waiting ask in the docked conversation", () => {
 });
 
 describe("a waiting ask in the opened conversation", () => {
-  it("marks the transcript region open over the ask, for a question or a permission ask", () => {
-    for (const props of [{ ask }, { userInput }]) {
+  it("marks the transcript region open over the ask, for a question, a permission ask or a key request", () => {
+    for (const props of [{ ask }, { userInput }, { recordedCredentialRequest: keyRequest }]) {
       const body = render(PaneWithQueryClient, { props: { ...base, conversationState: "opened", running: true, ...props } }).body;
       expect(body).toMatch(/conversation-transcript-region[^>]*data-conversation-ask-open/);
     }
@@ -67,6 +67,20 @@ describe("the header", () => {
     const body = render(PaneWithQueryClient, { props: { ...base, conversationState: "opened", title: "Vylo pricing", subtitle: "Coding worker" } }).body;
     expect(body).toMatch(/data-conversation-title[^>]*>Vylo pricing</);
     expect(body).not.toContain("Coding worker");
+  });
+
+  it("says the dock's state while the Worker is set up: no setup step, Machine offline when the Mac is away", () => {
+    const workerSetup = { step: "preparing_workspace" as const, began_at: 1, machine_id: "mac" };
+    const setting = render(PaneWithQueryClient, { props: { ...base, conversationState: "opened", workerSetup } }).body.replace(/<!--[^]*?-->/g, "");
+    // The shared system line with its spinner; the clock joins once the page is live.
+    expect(setting).toMatch(/data-conversation-head-status="setting-up"[^>]*><div class="cv-system-line[^>]*><div[^>]*><span[^>]*data-conversation-system-mark="spinner"[^]*?<span class="cv-system-line-words[^>]*>Setting up</);
+    expect(setting).not.toContain("preparing workspace");
+    for (const conversationState of ["opened", "rest"] as const) {
+      const body = render(PaneWithQueryClient, { props: { ...base, conversationState, workerSetup, activityUncertain: true } }).body.replace(/<!--[^]*?-->/g, "");
+      expect(body).toContain(">Machine offline</span>");
+      expect(body).not.toContain("Setting up");
+      expect(body).not.toContain('data-conversation-system-mark="spinner"');
+    }
   });
 
   it("always shows the Focus/Full control", () => {
@@ -147,7 +161,7 @@ describe("queued messages in the pane", () => {
     // Edit is a click and the tests run without a DOM; the wiring is read from the source.
     const pane = source("../src/components/conversation/ConversationPane.svelte");
     const composer = source("../src/components/conversation/ConversationComposer.svelte");
-    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?await onDiscardHeldPrompt\(heldPromptId\);[\s\S]*?if \(heldPromptRows\.some\(\(row\) => row\.heldPromptId === heldPromptId\)\) return;\s*composerHandle\.takeBackQueuedWords\(words\);/);
+    expect(pane).toMatch(/async function editHeldPrompt\(heldPromptId: string, words: string\): Promise<void> \{[\s\S]*?await onDiscardHeldPrompt\(heldPromptId, true\);[\s\S]*?if \(heldPromptRows\.some\(\(row\) => row\.heldPromptId === heldPromptId\)\) return;\s*composerHandle\.takeBackQueuedWords\(words\);/);
     expect(pane).toContain("bind:this={composerHandle}");
     expect(composer).toMatch(/export function takeBackQueuedWords\(words: string\): void \{\s*const settled = text\.trimEnd\(\);\s*text = settled === "" \? words : `\$\{settled\}\\n\\n\$\{words\}`;/);
   });

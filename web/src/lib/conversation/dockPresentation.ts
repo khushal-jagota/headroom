@@ -67,7 +67,7 @@ export function interruptedFrom(latest: { kind: string; ending?: string } | null
  * tool or a command: Focus does not speak of the work, and these are read in both lenses. */
 export type ConversationActivity =
   | 'idle' | 'working' | 'waiting' | 'failed' | 'undelivered' | 'interrupted' | 'setting-up'
-  | 'unknown' | 'read-only';
+  | 'offline' | 'read-only';
 export type ConversationStateReading = {
   state: ConversationActivity;
   /** The words the header and the dock say. Empty for idle. */
@@ -84,7 +84,8 @@ export type ConversationStateFacts = {
   waitingFor?: 'approval' | 'answer' | 'key' | null;
   running: boolean;
   backgroundWorking: boolean;
-  /** The Worker-setup sentence ("Setting up · preparing workspace · 1m 35s"), or null. */
+  /** "Setting up · 1m 35s" while the Worker is prepared, or null. The dock's words: no
+   *  setup step ("preparing workspace") in either place (owner, A4). */
   settingUp: string | null;
   /** How long the running turn has taken, formatted, or null while that is not known. */
   elapsed: string | null;
@@ -95,12 +96,11 @@ export type ConversationStateFacts = {
 };
 
 /** Precedence: waiting > failed / not delivered > working > setting up > interrupted > idle.
- * A machine Panels cannot read, and a past conversation, say only that. */
+ * A machine Panels cannot read, and a past conversation, say only that: "Machine offline",
+ * the dock's words, with a still dot and no clock, also while its setup is recorded. */
 export function conversationState(facts: ConversationStateFacts): ConversationStateReading {
   if (facts.readOnly) return { state: 'read-only', text: 'Past conversation · read only', mark: null };
-  // Setup the machine cannot confirm is still setup: setting up is recorded, and normal.
-  if (facts.activityUncertain && facts.settingUp && !facts.waitingForYou) return { state: 'setting-up', text: facts.settingUp, mark: 'spinner' };
-  if (facts.activityUncertain) return { state: 'unknown', text: 'Activity on this machine unknown', mark: null };
+  if (facts.activityUncertain) return { state: 'offline', text: 'Machine offline', mark: 'dot' };
   if (facts.waitingForYou) return { state: 'waiting', text: waitingWords(facts.waitingFor ?? null), mark: 'dot' };
   if (facts.failure === 'turn_failed') return { state: 'failed', text: 'Turn failed', mark: 'alert' };
   if (facts.failure === 'not_delivered') return { state: 'undelivered', text: 'Message not delivered', mark: 'alert' };
@@ -124,7 +124,7 @@ export function waitingWords(kind: 'approval' | 'answer' | 'key' | null): string
  * callout or note in the thread, an interruption by its callout. The top bar says only what the
  * thread has no place for: a machine still being set up, or one Panels cannot read, and a past
  * conversation. */
-const HEAD_STATES: ReadonlySet<ConversationActivity> = new Set(['setting-up', 'unknown', 'read-only']);
+const HEAD_STATES: ReadonlySet<ConversationActivity> = new Set(['setting-up', 'offline', 'read-only']);
 export type PaneHeadStatus = ConversationStateReading;
 export function paneHeadStatus(facts: ConversationStateFacts): PaneHeadStatus | null {
   const reading = conversationState(facts);

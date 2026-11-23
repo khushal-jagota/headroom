@@ -54,8 +54,12 @@ export function uncertain_row(
 ): PromptDeliveryUncertainEventPayload {
   return new PromptDeliveryUncertainEventPayload({ ...message, mode, failure_detail });
 }
-export function discarded_row(message: Message, suppression_reason: string | null = null) {
-  return new PromptDiscardedEventPayload({ ...message, suppression_reason });
+export function discarded_row(
+  message: Message,
+  suppression_reason: string | null = null,
+  withdrawn_for_edit = false,
+) {
+  return new PromptDiscardedEventPayload({ ...message, suppression_reason, withdrawn_for_edit });
 }
 export function outcome_fate(payload: ConversationEventPayload): PromptDeliveryFate {
   if (payload instanceof PromptEventPayload) {

@@ -11,6 +11,7 @@
   import { AskEntranceTracker } from "../../lib/conversation/askEntrance";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
+  import SystemLine from "./SystemLine.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
   import { askShape, DOCKED_CREDENTIAL_REQUEST, pendingCredentialRequest, type RunValues } from "../../lib/conversation/composer";
@@ -27,7 +28,7 @@
   import { elapsedTurnTime } from "../../lib/conversation/elapsedTime.svelte";
   import { formatDuration } from "../../lib/conversation/transcript";
   import { fittedTitle } from "../../lib/conversation/titleFit";
-  import { workerSetupSentence, workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
+  import { workerSetupStartedAtUnixMilliseconds } from "../../lib/workerSetup";
   import { lastTurnFailedFrom } from "../../lib/conversation/whatHappened";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { hasBackgroundTaskAfterTheTurn } from "../../lib/conversation/transcript";
@@ -224,7 +225,8 @@
     onSubmitUserInput?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
-    onDiscardHeldPrompt?: (messageId: string) => Promise<void> | void;
+    /** ``forEdit``: Edit took the message back to the composer (no "Discarded" row). */
+    onDiscardHeldPrompt?: (messageId: string, forEdit?: boolean) => Promise<void> | void;
     onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
     onPromoteHeldPrompt?: (
@@ -303,7 +305,8 @@
       waitingFor: ask !== null ? "approval" as const : userInput !== null ? "answer" as const : credentialWaiting ? "key" as const : waitingOnPage,
       running,
       backgroundWorking,
-      settingUp: headSettingUp && workerSetup ? workerSetupSentence(workerSetup, headSetupElapsed.seconds) : null,
+      // The dock's words: "Setting up · 1m 35s", never the setup step (owner, A4).
+      settingUp: headSettingUp ? (headSetupElapsed.seconds === null ? "Setting up" : `Setting up · ${formatDuration(headSetupElapsed.seconds)}`) : null,
       elapsed: headElapsed.seconds === null ? null : formatDuration(headElapsed.seconds),
       failure: headFailure,
       interrupted: headInterrupted
@@ -337,7 +340,7 @@
   let composerHandle = $state<{ takeBackQueuedWords: (words: string) => void } | null>(null);
   async function editHeldPrompt(heldPromptId: string, words: string): Promise<void> {
     if (!onDiscardHeldPrompt || composerHandle === null) return;
-    await onDiscardHeldPrompt(heldPromptId);
+    await onDiscardHeldPrompt(heldPromptId, true);
     if (heldPromptRows.some((row) => row.heldPromptId === heldPromptId)) return;
     composerHandle.takeBackQueuedWords(words);
   }
@@ -461,13 +464,11 @@
       </span>
       {#if headStatus}
         <!-- One derived state (conversationState), the same the dock's line reads. -->
+        <!-- The shared system line, its mark inline beside the title: "Setting up · 1m 35s"
+             with a spinner, "Machine offline" with a still dot, the dock's words (A4). -->
         <span class="cv-state" data-conversation-head-status={headStatus.state}
-          role="status" aria-label={headStatus.text} title={headStatus.text}>
-          {#if headStatus.mark === "spinner"}<span class="cv-spinner" aria-hidden="true"></span>
-          {:else if headStatus.mark === "dot"}<span class="cv-dot" aria-hidden="true"></span>
-          {:else if headStatus.mark === "alert"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" /><path d="M8 4.9v3.6" /><path d="M8 11.1v.1" /></svg>
-          {:else if headStatus.mark === "stop"}<svg class="cv-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="2" /></svg>{/if}
-          <span class="cv-state-text" aria-hidden="true">{headStatus.text}</span>
+          role="status" title={headStatus.text}>
+          <SystemLine mark={headStatus.mark === "spinner" ? "spinner" : headStatus.mark === null ? null : "dot"} hangMark={false}>{headStatus.text}</SystemLine>
         </span>
       {/if}
       {#if connectionTrouble}
@@ -647,7 +648,7 @@
     </div>
   {/if}
   <div class="conversation-transcript-region" data-conversation-entry={reader?.entryPhase ?? 'idle'}
-    data-conversation-ask-open={!readOnly && (ask !== null || userInput !== null) ? true : undefined}
+    data-conversation-ask-open={!readOnly && (ask !== null || userInput !== null || credentialWaiting) ? true : undefined}
     style:visibility={!placementReady || reader && ['loading', 'placing', 'error'].includes(reader.entryPhase) ? 'hidden' : undefined}
     aria-busy={reader?.entryPhase !== 'error' && (!placementReady || entryPresentationPending || transcriptLoading || reader?.entryPhase === 'loading' || reader?.entryPhase === 'placing')}>
   <ConversationViewport
@@ -684,8 +685,8 @@
       askBelow={ask !== null || userInput !== null || credentialWaiting} onOpen={moveThroughTheStates} />
   {/if}
 
-  <!-- v5: the way back to the newest line is a 36px round icon button at the bottom-right of
-       the column, 12px above the composer. The slot takes no room in the flow. -->
+  <!-- The way back to the newest line is a 32px round icon button centred on the column,
+       8px above the composer. The slot takes no room in the flow. -->
   {#if jump && conversationState !== "rest"}
   <div class="cv-status-slot" data-conversation-status-slot>
       <button
@@ -758,8 +759,8 @@
      state, and an empty canvas above it. */
   .conversation-reader[hidden] { display:none; }
   .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
-  /* While a question or a permission ask is open, a transcript shorter than the room above the
-     card sits at the foot of that room, its last item a bottom pad over the card; the empty
+  /* While an ask is open (a question, a permission or a key request), a transcript shorter than
+     the room above the card sits at the foot of that room, its last item a bottom pad over the card; the empty
      space goes above the first message. A taller transcript fills the room and scrolls as
      before. In the dock the reader is hidden. */
   .conversation-transcript-region[data-conversation-ask-open] :global(.chat-thread-content) { margin-block-start: auto; }
@@ -811,11 +812,7 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .cv-state-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  /* Weight follows the state: the person's accent when it waits on them, the danger colour
-     when something failed, quiet meta for everything moving or past. */
-  .cv-state[data-conversation-head-status="waiting"] { color: var(--cv-accent); font-weight: var(--cv-weight-label); }
-  .cv-state:is([data-conversation-head-status="failed"], [data-conversation-head-status="undelivered"]) { color: var(--cv-danger); font-weight: var(--cv-weight-label); }
+  .cv-state :global(.cv-system-line-words) { overflow: hidden; text-overflow: ellipsis; }
 
   /* "Close" is the dock's "Open" without the arrow: a quiet text control, 32 high, no fill and
      no edge at rest, a fill on hover. */

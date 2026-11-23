@@ -41,9 +41,19 @@
                   return !each.settled || each.latest_message_key !== item.key;
       return null;
   });
+  /** How long this ending's turn ran, from its head in the pages held. */
+  const turnDuration = $derived.by(() => {
+      if (item.turn_key === null) return null;
+      for (const page of reader.pages)
+          for (const each of page.items)
+              if (each.kind === 'turn' && each.key === item.turn_key)
+                  return each.duration_seconds;
+      return null;
+  });
   // A turn's ending and a turn that stopped without one are status lines, drawn in the
-  // same family as a message that was not delivered.
-  const endingStatus = $derived(row?.kind === 'turn_ended' && row.automaticCompactionResult !== 'not_compacted' ? turnEndingStatus(row.ending, row.errorSummary) : row?.kind === 'turn_stopped' ? TURN_STOPPED_STATUS : null);
+  // same family as a message that was not delivered. A stopped turn's one line carries
+  // its length ("Stopped after 8m 45s"); its head is not drawn (ProjectedTranscript).
+  const endingStatus = $derived(row?.kind === 'turn_ended' && row.automaticCompactionResult !== 'not_compacted' ? turnEndingStatus(row.ending, row.errorSummary, turnDuration) : row?.kind === 'turn_stopped' ? TURN_STOPPED_STATUS : null);
   $effect(() => { if (body !== null) { reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); } });
   $effect(() => {
       if (item.body.kind === 'deferred' && body?.kind === 'turn_ended' && body.ending === 'completed' && body.automatic_compaction_result !== 'not_compacted')

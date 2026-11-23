@@ -1,12 +1,38 @@
+<script module lang="ts">
+  /** One watcher per thread. What follows a message can change without the message changing
+   *  size (a tool row arriving, the lens showing or hiding work), so when the thread changes
+   *  size, every row whose message is on screen is placed again once the thread is still. */
+  const rowsByThread = new Map<Element, Set<() => void>>();
+  const stillTimers = new Map<Element, ReturnType<typeof setTimeout>>();
+  const THREAD_STILL_MILLISECONDS = 150;
+  let threadResized: ResizeObserver | null = null;
+  function watchThread(thread: Element, replace: () => void): () => void {
+    threadResized ??= new ResizeObserver(entries => {
+      for (const { target } of entries) {
+        clearTimeout(stillTimers.get(target));
+        stillTimers.set(target, setTimeout(() => { stillTimers.delete(target); for (const row of rowsByThread.get(target) ?? []) row(); }, THREAD_STILL_MILLISECONDS));
+      }
+    });
+    let rows = rowsByThread.get(thread);
+    if (rows === undefined) { rows = new Set(); rowsByThread.set(thread, rows); threadResized.observe(thread); }
+    rows.add(replace);
+    return () => {
+      rows.delete(replace);
+      if (rows.size === 0) { rowsByThread.delete(thread); threadResized?.unobserve(thread); clearTimeout(stillTimers.get(thread)); stillTimers.delete(thread); }
+    };
+  }
+</script>
+
 <script lang="ts">
   /** What a message offers when the reader points at it: when it was said, and a copy of
-   *  its words. Its 24 px slot stands 4 px under the message, inside the gap that already
+   *  its words. Its 24 px row stands 4 px under the message, inside the gap that already
    *  follows, so showing it moves nothing and adds no space (B9). Where that gap is too
-   *  small, it stands beside or under the system line that follows instead, or it is not
-   *  drawn (hoverRowPlacement.ts). The pointer keeps it shown across the message, the gap, those
-   *  lines and the row itself; keyboard focus on the copy button keeps it shown too. */
+   *  small, it stands level with the message's last line at the column's right end, or just
+   *  left of the person's bubble (hoverRowPlacement.ts). The pointer shows it from the
+   *  message or from the row's own area; keyboard focus on the copy button shows it too. */
   import { messageCopyText, messageTimeLabel } from "../../lib/conversation/transcript";
-  import { placeHoverRow, type FollowingItem } from "../../lib/conversation/hoverRowPlacement";
+  import { tick, untrack } from "svelte";
+  import { placeHoverRow, type Box, type HoverRowPlace } from "../../lib/conversation/hoverRowPlacement";
   let { content, createdAt = null }: {
     content: readonly { piece: string; text?: string }[];
     /** Unix seconds, as the record keeps them. Null for a message not yet recorded. */
@@ -29,11 +55,14 @@
   $effect(() => () => { if (timer !== null) clearTimeout(timer); });
 
   let actions = $state<HTMLDivElement | null>(null);
-  let offset = $state(0);
-  let placed = $state(true);
+  let rowPlace = $state<HoverRowPlace | null>({ kind: "below" });
+  /** Beside: where the row's box stands inside the message, from its top and right edges. */
+  let besideTop = $state(0);
+  let besideEnd = $state(0);
   let pointed = $state(false);
-  /** The system lines the row stands under, besides the message: part of its hover area. */
-  let passed = $state.raw<Element[]>([]);
+  const placed = $derived(rowPlace !== null);
+  const beside = $derived(rowPlace?.kind === "beside");
+  const besideBubble = $derived(beside && actions?.parentElement?.matches(".chat-u") === true);
 
   /** The first element after `from` in the thread that draws a box, leaving display:contents
    *  wrappers and page edges aside. */
@@ -56,14 +85,16 @@
     }
     return node.getBoundingClientRect().height > 1 ? node : null;
   }
+  function paints(node: Element): boolean {
+    const style = getComputedStyle(node);
+    return style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.borderTopWidth !== "0px" || style.boxShadow !== "none"
+      || node.matches("img, svg, video, canvas, input, textarea, button");
+  }
   /** Where an item starts to draw: a wrapper's own padding (the queued stack's 32 px top
    *  padding, for one) is gap, not content. */
   function paintedTop(node: Element, depth = 0): number {
     const box = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    const paints = style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.borderTopWidth !== "0px" || style.boxShadow !== "none"
-      || node.matches("img, svg, video, canvas, input, textarea, button, [data-conversation-system-line]");
-    if (paints || depth > 6) return box.top;
+    if (paints(node) || node.matches("[data-conversation-system-line]") || depth > 6) return box.top;
     for (const child of node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
         const range = document.createRange();
@@ -74,90 +105,107 @@
     }
     return box.top;
   }
-  /** An item that is one system line (and what it opens onto), nothing else. */
-  function isSystemLine(item: Element): boolean {
-    const line = item.matches("[data-conversation-system-line]") ? item : item.querySelector("[data-conversation-system-line]");
-    if (line === null) return false;
-    const box = item.getBoundingClientRect(), lineBox = line.getBoundingClientRect();
-    return Math.abs(lineBox.top - box.top) < 1 && lineBox.bottom >= box.bottom - 1;
-  }
-  /** The left and right edges of what an item draws: its words and its painted boxes, not
-   *  the empty width of its blocks. */
-  function drawnSpan(item: Element): { left: number; right: number } {
-    let left = Infinity, right = -Infinity;
-    const take = (box: DOMRect): void => { if (box.width > 0) { left = Math.min(left, box.left); right = Math.max(right, box.right); } };
-    const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
-    for (let node: Node | null = walker.currentNode; node !== null; node = walker.nextNode()) {
+  /** What `within` draws, the row itself left out: each line of its words, and its painted
+   *  boxes (a bubble, a code block, a picture). */
+  function drawnIn(within: Element, row: Element): { lines: Box[]; boxes: Box[] } {
+    const lines: Box[] = [], boxes: Box[] = [];
+    const walker = document.createTreeWalker(within, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode: node => row.contains(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    for (let node: Node | null = walker.nextNode(); node !== null; node = walker.nextNode()) {
       if (node.nodeType === Node.TEXT_NODE) {
         if (!node.textContent?.trim()) continue;
         const range = document.createRange();
         range.selectNodeContents(node);
-        take(range.getBoundingClientRect());
-      } else if (node instanceof Element && node !== item) {
-        const style = getComputedStyle(node);
-        if (style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.borderTopWidth !== "0px" || node.matches("svg, img")) take(node.getBoundingClientRect());
+        for (const box of range.getClientRects()) if (box.width > 0) lines.push(box);
+      } else if (node instanceof Element && paints(node)) {
+        const box = node.getBoundingClientRect();
+        if (box.width > 0 && box.height > 0) boxes.push(box);
       }
     }
-    return { left, right };
+    return { lines, boxes };
   }
-  /** Room the row keeps on its open side for "Copied" and a gap. */
-  const ROW_SIDE_ROOM = 64;
+  /** Room the row keeps between the end of the words and its time. */
+  const WORDS_GAP = 12;
+  /** Room between the row and the person's bubble. */
+  const BUBBLE_GAP = 8;
   function place(): void {
     const message = actions?.parentElement;
     if (!message || !actions) return;
-    const row = actions.getBoundingClientRect();
-    const following: (FollowingItem & { element: Element })[] = [];
-    for (let item = drawnAfter(message); item !== null && following.length < 3; item = drawnAfter(item)) {
-      const box = item.getBoundingClientRect();
-      const span = drawnSpan(item);
-      const besideRow = span.right <= row.left - ROW_SIDE_ROOM || span.left >= row.right + ROW_SIDE_ROOM;
-      following.push({ element: item, top: paintedTop(item), bottom: box.bottom, isSystemLine: isSystemLine(item), besideRow });
-      if (!following.at(-1)!.isSystemLine) break;
+    const box = message.getBoundingClientRect();
+    const column = message.closest(".chat-thread-content")?.getBoundingClientRect() ?? box;
+    const width = actions.getBoundingClientRect().width;
+    const next = drawnAfter(message);
+    const drawn = drawnIn(message, actions);
+    // The person's words: the row stands just left of their last bubble. Everyone else's:
+    // at the column's right end.
+    const bubbles = message.matches(".chat-u") ? message.querySelectorAll("[data-conversation-bubble]") : [];
+    const bubble = bubbles.length > 0 ? bubbles[bubbles.length - 1] : null;
+    let slot: { left: number; right: number } | null;
+    let lines = drawn.lines;
+    if (bubble !== null) {
+      const right = bubble.getBoundingClientRect().left - BUBBLE_GAP;
+      slot = right - width >= column.left ? { left: right - width, right } : null;
+      lines = drawnIn(bubble, actions).lines;
+    } else {
+      slot = { left: column.right - width - WORDS_GAP, right: column.right };
     }
-    const where = placeHoverRow(message.getBoundingClientRect().bottom, following);
-    placed = where !== null;
-    offset = where?.offset ?? 0;
-    passed = following.slice(0, where?.passes ?? 0).map(item => item.element);
-  }
-  function inHoverArea(target: EventTarget | null): boolean {
-    const message = actions?.parentElement;
-    return target instanceof Node && (message?.contains(target) === true || passed.some(line => line.contains(target)));
-  }
-  function leave(event: PointerEvent): void {
-    if (!inHoverArea(event.relatedTarget)) pointed = false;
+    const where = placeHoverRow({ messageBottom: box.bottom, nextTop: next === null ? null : paintedTop(next), lines, drawn: [...drawn.lines, ...drawn.boxes], slot });
+    if (where?.kind === "beside" && slot !== null) {
+      besideTop = where.top - box.top;
+      besideEnd = box.right - slot.right;
+    }
+    rowPlace = where;
   }
   $effect(() => {
     const message = actions?.parentElement;
     const row = actions;
     if (!message || !row) return;
-    place();
-    const enter = (): void => { place(); pointed = true; };
+    // Placed when the message first draws and again whenever its size changes (the pane
+    // opening, a window resize, a picture loading).
+    const resized = new ResizeObserver(() => untrack(place));
+    resized.observe(message);
+    const thread = message.closest(".chat-thread-content");
+    const unwatch = thread === null ? () => {} : watchThread(thread, () => {
+      const box = message.getBoundingClientRect();
+      if (box.bottom > 0 && box.top < window.innerHeight) untrack(place);
+    });
+    // A message scrolled onto the screen is placed again, as the thread may have changed
+    // while it was away.
+    const onScreen = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) untrack(place); });
+    onScreen.observe(message);
+    // The row's own area answers the pointer too (it is inside the message), so the pointer
+    // finds it from below or the side. Its place is checked first: if what follows changed
+    // since it was last placed, the pointer may now be over that, and then the row stays hidden.
+    let crossings = 0;
+    const enter = async (event: PointerEvent): Promise<void> => {
+      const crossing = ++crossings;
+      place();
+      await tick();
+      if (crossing !== crossings) return;
+      const under = document.elementFromPoint(event.clientX, event.clientY);
+      pointed = under !== null && message.contains(under);
+    };
+    const leave = (): void => { crossings += 1; pointed = false; };
     message.addEventListener("pointerenter", enter);
     message.addEventListener("pointerleave", leave);
     row.addEventListener("focusin", place);
     return () => {
+      resized.disconnect();
+      unwatch();
+      onScreen.disconnect();
       message.removeEventListener("pointerenter", enter);
       message.removeEventListener("pointerleave", leave);
       row.removeEventListener("focusin", place);
     };
   });
-  // The lines it stands under keep it shown while the pointer crosses them.
-  $effect(() => {
-    const lines = passed;
-    for (const line of lines) line.addEventListener("pointerleave", leave as EventListener);
-    return () => { for (const line of lines) line.removeEventListener("pointerleave", leave as EventListener); };
-  });
-  // While shown, the message's hover area reaches down over the gap to the row's foot, so the
-  // pointer never leaves it on the way to the copy button.
+  // While shown below, the message's hover area reaches down over the 4 px gap to the row, so
+  // the pointer never leaves it on the way to the copy button.
   $effect(() => {
     const message = actions?.parentElement;
     if (!message) return;
-    if (pointed && placed) {
-      message.setAttribute("data-message-actions-reach", "");
-      message.style.setProperty("--message-actions-reach", `${offset + 28}px`);
-    } else {
-      message.removeAttribute("data-message-actions-reach");
-    }
+    if (pointed && rowPlace?.kind === "below") message.setAttribute("data-message-actions-reach", "");
+    else message.removeAttribute("data-message-actions-reach");
   });
 
   // A touch screen has no hover: a tap on the message shows its actions, and a tap
@@ -181,7 +229,9 @@
 </script>
 
 {#if time || copyText}
-  <div class="message-actions" class:is-shown={pointed && placed} class:is-tapped={tapped && placed} class:is-unplaced={!placed} style:--message-actions-offset="{offset}px" data-message-actions bind:this={actions}>
+  <div class="message-actions" class:is-shown={pointed && placed} class:is-tapped={tapped && placed} class:is-unplaced={!placed} class:is-beside={beside} class:is-beside-bubble={besideBubble}
+    style:--message-actions-beside-top={beside ? `${besideTop}px` : undefined} style:--message-actions-beside-end={beside ? `${besideEnd}px` : undefined}
+    data-message-actions data-message-actions-place={rowPlace?.kind ?? "none"} bind:this={actions}>
     {#if time}<time class="message-time" datetime={time.iso} title={time.full}>{time.short}</time>{/if}
     {#if copyText}
       {@const label = copied === "copied" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy"}
@@ -196,16 +246,15 @@
 {/if}
 
 <style>
-  /* The 24 px slot, 4 px under its message (or under the system line it passes). */
+  /* The 24 px row, 4 px under its message, inside the gap that follows it. */
   .message-actions {
     position: absolute;
-    inset-block-start: calc(100% + var(--message-actions-offset, 0px));
+    inset-block-start: calc(100% + var(--cv-hover-row-offset));
     inset-inline-start: 0;
     /* Above the message's reach (its ::after), so the pointer lands on the row's buttons. */
     z-index: 1;
     box-sizing: border-box;
-    block-size: calc(var(--cv-hover-row-offset) + var(--cv-hover-row-height));
-    padding-block-start: var(--cv-hover-row-offset);
+    block-size: var(--cv-hover-row-height);
     display: flex;
     align-items: center;
     gap: var(--cv-s1);
@@ -219,29 +268,50 @@
     pointer-events: none;
     transition: opacity var(--cv-dur-fast) var(--cv-ease-out);
   }
-  /* No room under the message: the pointer never shows the row, so it covers nothing. Copy
-     stays in the keyboard's order, and only while it has focus does the row stand on the
-     canvas over what follows. */
-  .message-actions.is-unplaced:focus-within { background: var(--cv-canvas); }
   /* Under the person's bubble the actions keep the bubble's right edge. */
   :global(.chat-u) > .message-actions {
     inset-inline-start: auto;
     inset-inline-end: 0;
   }
+  /* No room below: level with the message's last line, at the column's right end (or just
+     left of the person's bubble). It takes no vertical space. */
+  .message-actions.is-beside {
+    inset-block-start: var(--message-actions-beside-top);
+    inset-inline-start: auto;
+    inset-inline-end: var(--message-actions-beside-end);
+  }
+  /* The 8 px between the row and the bubble belongs to the row's area, so the pointer
+     crosses it without the row going away. */
+  .message-actions.is-beside-bubble::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 100%;
+    inline-size: 8px;
+  }
+  /* The row's place is empty canvas (or the empty end of a line), so where a pointer exists
+     the row's own area answers it even while hidden: the pointer finds the time and Copy from
+     below or the side. A touch screen keeps it inert until a tap shows it. */
+  @media (hover: hover) {
+    .message-actions:not(.is-unplaced) { pointer-events: auto; }
+  }
+  /* No room anywhere: the pointer never shows the row, so it covers nothing. Copy stays in
+     the keyboard's order, and only while it has focus does the row stand on the canvas over
+     what follows. */
+  .message-actions.is-unplaced:focus-within { background: var(--cv-canvas); }
   .message-actions.is-shown,
   .message-actions:focus-within,
   .message-actions.is-tapped {
     opacity: 1;
     pointer-events: auto;
   }
-  /* While shown, the message's hover area covers the gap down to the row's foot. System lines
-     it passes are positioned later in the thread, so they stay on top and keep their actions. */
+  /* While shown below, the message's hover area covers the gap down to the row's foot. */
   :global([data-message-actions-reach])::after {
     content: "";
     position: absolute;
     inset-inline: 0;
     inset-block-start: 100%;
-    block-size: var(--message-actions-reach);
+    block-size: calc(var(--cv-hover-row-offset) + var(--cv-hover-row-height));
   }
   /* A ghost icon button: the quiet glyph, the first tone on the control step when pointed at. */
   .message-action {

@@ -65,6 +65,7 @@
     reserveRecalledOutgoingMessages,
     tellWhenAWaitRunsOut,
     theServerRefusedTheSend,
+    theMachineIsOfflineRefusal,
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
@@ -180,9 +181,16 @@
   let view = $state<ConversationView | null>(null);
   // Ticket suggestions use the same resolved workspace as ordinary creation.
   let pickerTicketId = $derived(uploadOwner?.kind === "ticket" ? uploadOwner.id : null);
+  const machines = createQuery(() => ({...queries.machines(), enabled: !!machineId}), () => queryClient);
+  const destinationName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
+  let remote = $derived(locale === "macos");
+  const healthQuery = createQuery(() => ({...queries.executorHealth(machineId), enabled:remote}), () => queryClient);
+  let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
   const pickerQuery = createQuery(() => ({
     ...queries.ticketBackends(pickerTicketId ?? "", [locale, startValues?.workspace_folder, startValues?.workspace_path_policy]),
-    enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined
+    // A Mac Panels cannot reach cannot list its models: the read would only be refused (409)
+    // again on every change. It reads when the Mac is back.
+    enabled: pickerTicketId !== null && !readOnly && startValues?.workspace_folder !== undefined && !activityUncertain
   }), () => queryClient);
   let pickerReadError = $derived(pickerTicketId !== null && pickerQuery.error ? sentenceFor(pickerQuery.error) : null);
   async function retryScopedChoices(): Promise<void> {
@@ -191,11 +199,6 @@
       [locale, startValues?.workspace_folder, startValues?.workspace_path_policy], true), staleTime: 0});
   }
 
-  const machines = createQuery(() => ({...queries.machines(), enabled: !!machineId}), () => queryClient);
-  const destinationName = $derived(machines.data?.machines.find(item => item.machine_id === machineId)?.name ?? "the machine");
-  let remote = $derived(locale === "macos");
-  const healthQuery = createQuery(() => ({...queries.executorHealth(machineId), enabled:remote}), () => queryClient);
-  let activityUncertain = $derived(remote && (healthQuery.isError || !macActivityKnown(healthQuery.data)));
   $effect(() => {
     healthQuery.dataUpdatedAt;
     if (remote && openedId) untrack(() => void refreshView());
@@ -294,7 +297,7 @@
   // otherwise, as the composer would send it.
   setContext<ResendRecordedMessage>(RESEND_RECORDED_MESSAGE, {
     available: () => !readOnly,
-    resend: async (recordedIn, content) => {
+    resend: async (recordedIn, content, refusedSequence) => {
       if (readOnly || recordedIn !== openedId) return false;
       let pieces: SentMessagePiece[];
       try {
@@ -308,7 +311,7 @@
         reasoningEffort: composerSelection?.pickedReasoningEffort ?? null,
         backendKey: null,
         ...(composerSelection?.effortIsSet === undefined ? {} : { effortIsSet: composerSelection.effortIsSet })
-      });
+      }, undefined, undefined, refusedSequence);
     }
   });
   const navigation = navigationApplication();
@@ -682,7 +685,8 @@
     mode: PromptDeliveryMode,
     picked: RunValues,
     displayMessageId?: string,
-    sendContext?: ComposerSendContext
+    sendContext?: ComposerSendContext,
+    reconcilesSequence?: number
   ): Promise<boolean> {
     if (readOnly) return false;
     if (sendContext?.destination && (sendContext.destination.kind !== uploadOwner?.kind || sendContext.destination.id !== uploadOwner?.id)) {
@@ -700,7 +704,8 @@
       pickedReasoningEffort: picked.reasoningEffort,
       effortIsSet: picked.effortIsSet,
       pickedBackend: picked.backendKey
-    }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}) };
+    }), ...(sendContext ? {messageId: sendContext.messageId} : {}), ...(displayMessageId ? {displayMessageId} : {}),
+      ...(reconcilesSequence === undefined ? {} : {reconcilesSequence}) };
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
@@ -784,6 +789,14 @@
       // The correlated record already settled this send. A later transport failure
       // cannot return its words to the composer or undo that committed destination.
       if (committedMessageIds.has(message.messageId)) return true;
+      // The machine the conversation runs on is away: the message stays in the thread,
+      // not delivered, with its reason, rather than going back with the server's words.
+      const machineOffline = theMachineIsOfflineRefusal(error);
+      if (machineOffline !== null) {
+        await holdOnTo(sentMessages.map(candidate => candidate.messageId === message.messageId
+          ? {...candidate, knownFate: "machine_offline" as const, refusal: machineOffline} : candidate));
+        return true;
+      }
       errorNote = sentenceFor(error);
       if (theServerRefusedTheSend(error)) {
         await stopDrawing(message.messageId);
@@ -890,11 +903,15 @@
    * nothing to undo here if the answer is no — the message has already run, and its row
    * is on its way.
    */
-  async function discard(heldPromptId: string): Promise<void> {
+  async function discard(heldPromptId: string, forEdit = false): Promise<void> {
     if (readOnly || openedId === null) return;
     errorNote = null;
     try {
-      await discardHeldPrompt(openedId, heldPromptId);
+      const senderMessageId = view?.held_prompts.find((held) => held.held_prompt_id === heldPromptId)?.sender_message_id ?? null;
+      await discardHeldPrompt(openedId, heldPromptId, forEdit);
+      // Taken back to edit: the record keeps no row for it, so nothing else takes this
+      // tab's copy off the screen. Its words are in the composer now.
+      if (forEdit && senderMessageId !== null) await stopDrawing(senderMessageId);
       await refreshView();
     } catch (error) {
       errorNote = sentenceFor(error);
@@ -1121,7 +1138,7 @@
   onAnswer={(optionId) => void answer(optionId)}
   onSubmitUserInput={(answers) => void submitUserInput(answers)}
   onCancelTurn={() => void stop()}
-  onDiscardHeldPrompt={(heldPromptId) => discard(heldPromptId)}
+  onDiscardHeldPrompt={(heldPromptId, forEdit) => discard(heldPromptId, forEdit)}
   onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}
   onStopDrawingHeldPrompt={(senderMessageId) => void stopDrawing(senderMessageId)}
   onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}

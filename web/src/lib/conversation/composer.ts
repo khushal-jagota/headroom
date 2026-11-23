@@ -201,6 +201,7 @@ export function sendBodyFor(input: {
     mode: input.message.mode,
     sender_message_id: input.message.messageId,
     sent_at_unix_milliseconds: input.message.sentAtUnixMilliseconds,
+    ...(input.message.reconcilesSequence === undefined ? {} : { reconciles_sequence: input.message.reconcilesSequence }),
     ...(createdOn === null ? {} : { backend_key: createdOn }),
     ...whatThisMessageRunsUnder(input.current, input.picked, input.message.mode)
   };

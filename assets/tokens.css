@@ -658,9 +658,10 @@
    *    block    16  blocks inside one turn: paragraph groups, tables, code, tool rows, the
    *                 end-of-turn system line, two agent messages in a row
    *    row       0  tool rows stack with no gap; each is its own 32px line
-   *    hover   4 + 24  the hover row (time, copy) sits 4 under its message in a 24 slot inside
-   *                 the gap that already follows it. It adds no space; where the next item is
-   *                 closer, the row goes under that item's system line, or is not drawn.
+   *    hover   4 + 24  the hover row (time, copy) is 24 tall and sits 4 under its message,
+   *                 inside the gap that follows, when 4 still stay clear under it. It adds no
+   *                 space; where the gap is shorter it stands level with the message's last
+   *                 line, at the column's right end or just left of the person's bubble.
    *  The thread pads 28 over its first line (room for that line's hover row) and 32 under its
    *  newest (NEWEST_LINE_BOTTOM_GAP_PIXELS in viewport/viewportConfiguration.ts is that value). */
   --cv-gap-turn: 32px;

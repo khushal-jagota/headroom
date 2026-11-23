@@ -69,6 +69,8 @@ export async function sentPiecesFromRecorded(
  *  message's content again, as a new message, and resolves true once it got away. */
 export type ResendRecordedMessage = {
   available(): boolean;
-  resend(conversationId: string, content: readonly MessagePiece[]): Promise<boolean>;
+  /** ``refusedSequence`` is the refused row's sequence: the new prompt names it, and the
+   *  refused bubble folds away once that prompt is recorded. */
+  resend(conversationId: string, content: readonly MessagePiece[], refusedSequence?: number): Promise<boolean>;
 };
 export const RESEND_RECORDED_MESSAGE = Symbol("conversation-resend-recorded-message");

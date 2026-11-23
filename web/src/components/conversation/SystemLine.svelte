@@ -30,7 +30,7 @@
      *  empty conversation's one line. Everything else starts at the column's left edge. */
     align?: "start" | "end" | "center";
     /** Whether a left-aligned line's mark hangs outside the column. A host with no room on
-     *  its left (the dock) keeps the mark inline, in its 16 px slot, 8 px before the words. */
+     *  its left (the opened header, beside the title) keeps the mark inline, in its 16 px slot, 8 px before the words. */
     hangMark?: boolean;
     children: Snippet;
     /** Text actions on the line (Details, Resend, Choose another model): #d0d0d0, 16 apart. */

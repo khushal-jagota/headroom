@@ -4,6 +4,7 @@
   import { CREDENTIAL_REQUEST_READ_ONLY, CREDENTIAL_REQUEST_DRAFTS, CredentialRequestDraft, type CredentialRequestDrafts } from '../../lib/conversation/credentialRequest.svelte';
   import { CredentialRequestWireError, mutateCredentialRequest } from '../../lib/conversation/wire';
   import AskShell from './AskShell.svelte';
+  import SystemLine from './SystemLine.svelte';
 
   let { request, framed = true, onStop }: {
     request: CredentialRequestRowBody;
@@ -57,7 +58,8 @@
   const replacement = $derived(current.replacement !== null);
   /** Save goes once there is a key to save, as a question's Next goes once there is an answer. */
   const canSave = $derived(!!draft.secret.trim() && (replacement || !!draft.name.trim()));
-  const outcome = $derived(current.state === 'rejected' ? 'Rejected' : current.state === 'replaced' ? 'Replaced' : 'Saved');
+  /** The record says what the person did, in the button's word: Decline is "Declined". */
+  const outcome = $derived(current.state === 'rejected' ? 'Declined' : current.state === 'replaced' ? 'Replaced' : 'Saved');
   function ownsFocus(): boolean { return !!root?.contains(document.activeElement); }
   async function focusResult(): Promise<void> { await tick(); if (ownsFocus() || document.activeElement === document.body) result?.focus(); }
   function corrected(field: 'name' | 'secret', value: string): void {
@@ -124,10 +126,8 @@
 <section bind:this={root} class="key-request" class:is-ask={current.state === 'pending' && !readOnly} aria-label={`${current.provider} API key request`} data-conversation-row="credential_request" data-credential-request={current.request_id} data-credential-state={current.state}>
   {#if current.state !== 'pending'}
     <div bind:this={result} class="result-status" role="status" tabindex="-1">
-      <div class="saved-row">
-        <svg class="saved-mark" viewBox="0 0 16 16" aria-hidden="true">{#if current.state === 'rejected'}<path d="m5 5 6 6M11 5l-6 6" />{:else}<path d="m3.5 8.5 3 3 6-7" />{/if}</svg>
-        <span class="saved-provider">{current.provider} API key</span><span class="saved-name">{current.credential?.reference.name ?? current.name}</span><span class="saved-status">{outcome}</span>
-      </div>
+      <!-- The shared system line: its dot hangs outside the column, the words start at x = 0. -->
+      <SystemLine mark="dot" data-credential-record="">{current.provider} API key · <span class="saved-name">{current.credential?.reference.name ?? current.name}</span> · {outcome}</SystemLine>
       {#if current.delivery?.status === 'queued'}<p class="state-note">Result queued for the agent.</p>
       {:else if current.delivery?.status === 'refused'}
         <div class="delivery-state"><p class="state-note">Result did not reach the agent.</p>
@@ -138,7 +138,7 @@
       {#if draft.error}<p class="error-note" role="alert">{draft.error}</p>{/if}
     </div>
   {:else if readOnly}
-    <div class="saved-row"><span class="saved-provider">{current.provider} API key</span><span class="saved-name">{current.name}</span><span class="saved-status">Requested</span></div>
+    <SystemLine mark="dot" data-credential-record="">{current.provider} API key · <span class="saved-name">{current.name}</span> · Requested</SystemLine>
   {:else}
     <!-- The ask shell every blocking ask shares (AskShell): the accent eyebrow saying what it
          needs, the title, the fields, then the answers ending in the one primary. -->
@@ -218,12 +218,9 @@
   .replacement-note,.state-note,.error-note{margin:0;font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);color:var(--cv-t3)}
   .state-note.is-caution{color:var(--cv-caution)}
   .error-note{color:var(--cv-danger)}
-  /* Settled: one meta line, a check (or a cross) where the accent dot stood. */
-  .saved-row{display:flex;flex-wrap:wrap;align-items:center;column-gap:var(--cv-s2);row-gap:var(--cv-s1);min-width:0;color:var(--cv-t3);font:var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font)}
-  .saved-mark{flex:none;width:14px;height:14px;fill:none;stroke:var(--cv-t3);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-  .saved-provider{color:var(--cv-t2);flex:none}
-  .saved-name{min-width:0;overflow-wrap:anywhere;font:var(--cv-weight-body) var(--cv-type-code)/var(--cv-leading-code) var(--cv-mono)}
-  .saved-status{flex:none}
+  /* Settled: the one system line. The key's name keeps the mono of a variable, on the line's
+     20 px leading and in its ink. */
+  .saved-name{overflow-wrap:anywhere;font-family:var(--cv-mono);font-size:var(--cv-type-code);line-height:1}
   .result-status>.state-note,.delivery-state{margin-top:var(--cv-s2)}
   .delivery-state{display:flex;flex-wrap:wrap;align-items:center;gap:var(--cv-s2)}
   .result-status:focus{outline:none}

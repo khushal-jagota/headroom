@@ -14,6 +14,7 @@
   import { openComposerModelPicker } from "../../lib/conversation/modelPicker";
   import SystemLine from "./SystemLine.svelte";
   import BackendWords from "./BackendWords.svelte";
+  import DetailsChevron from "./DetailsChevron.svelte";
 
   let { status, align = "start", actions: messageActions, ...attributes }: {
     status: TranscriptStatus;
@@ -42,7 +43,7 @@
   {/if}
   {#if status.detail}
     <button type="button" aria-expanded={detailsOpen} aria-controls={detailsId} data-conversation-status-details onclick={() => (detailsOpen = !detailsOpen)}>
-      Details<svg class="c2-status-chevron" class:is-open={detailsOpen} viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+      Details<DetailsChevron open={detailsOpen} />
     </button>
   {/if}
 {/snippet}
@@ -65,17 +66,4 @@
 <style>
   .c2-status { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }
   .c2-status--end { align-self: flex-end; align-items: flex-end; }
-  .c2-status-chevron {
-    flex: none;
-    width: 16px;
-    height: 16px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    transition: transform var(--cv-dur-expand) var(--cv-ease-out);
-  }
-  .c2-status-chevron.is-open { transform: rotate(90deg); }
-  @media (prefers-reduced-motion: reduce) { .c2-status-chevron { transition: none; } }
 </style>

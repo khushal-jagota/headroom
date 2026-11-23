@@ -271,7 +271,10 @@ export function turnFailureSentence(errorSummary: string | null): string {
 /** How a turn's ending is drawn in the thread, or null when it draws nothing. */
 export function turnEndingStatus(
   ending: ConversationTurnEnding,
-  errorSummary: string | null
+  errorSummary: string | null,
+  /** How long the turn ran, when its head is known. A stopped turn then says it in its one
+   *  line ("Stopped after 8m 45s"), and no head says it again above. */
+  durationSeconds: number | null = null
 ): TranscriptStatus | null {
   if (ending === "failed") {
     const said = errorSummary?.trim() || null;
@@ -286,7 +289,9 @@ export function turnEndingStatus(
       detailOpen: cause === undefined
     };
   }
-  if (ending === "interrupted") return { tone: "stopped", title: "Stopped before it finished", detail: null };
+  if (ending === "interrupted") {
+    return { tone: "stopped", title: durationSeconds !== null && durationSeconds > 0 ? `Stopped after ${formatDuration(durationSeconds)}` : "Stopped before it finished", detail: null };
+  }
   return null;
 }
 
