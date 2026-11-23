@@ -25,8 +25,7 @@ final class GoalFlowTests: XCTestCase {
         func backFromArtifact() {
             app.navigationBars.buttons.element(boundBy: 0).tap()
         }
-        // Review is the root at launch.
-        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 15))
+        app.openReviewCards(timeout: 15)
         let evidence = app.links["Open table evidence"]
         XCTAssertTrue(evidence.waitForExistence(timeout: 10)); evidence.tap()
         XCTAssertTrue(app.staticTexts["Table artifact proof"].waitForExistence(timeout: 10))
@@ -112,6 +111,11 @@ final class GoalFlowTests: XCTestCase {
         func openGoal(_ title: String) {
             let card = goalCard(title)
             XCTAssertTrue(card.waitForExistence(timeout: 10), "Chief has no goal \(title)")
+            // The docked composer covers the bottom of the page: bring the card into the
+            // upper part of the screen first.
+            for _ in 0..<4 where card.frame.maxY > app.frame.height * 0.6 {
+                app.swipeUp(velocity: .slow)
+            }
             card.tap()
             XCTAssertTrue(goalScreen.waitForExistence(timeout: 10))
             XCTAssertTrue(app.backButton.waitForExistence(timeout: 5))
@@ -219,6 +223,7 @@ final class GoalFlowTests: XCTestCase {
         XCTAssertTrue(chiefScreen.waitForExistence(timeout: 10))
         // Review must load Goal messages and the shared composer natively.
         app.openDestination("sidebar-review")
+        app.openReviewCards()
         XCTAssertTrue(app.buttons["review.openConversation"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.links["Open on web"].exists)
         capture("goals-review-message")
