@@ -82,6 +82,10 @@ test('server screens swap fixed-name assets and recover from an unready copy', a
       expect(entry.origin).toBeUndefined();
     }
 
+    // The real screens route in the hash. A swap must still load a new document there.
+    await page.evaluate(() => { location.hash = '#/review'; });
+    await expect.poll(() => page.evaluate(() => location.href)).toBe('panels://app/#/review');
+
     current = 'B';
     waiting = null;
     await expect(page.locator('h1')).toHaveText('Screen B', { timeout: 35_000 });
