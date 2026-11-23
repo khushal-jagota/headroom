@@ -309,6 +309,9 @@ import XCTest
 
 private struct RefreshFixture {
     struct EventsRequest { let generation: Int; let selected: String? }
+    /// Each fixture marks the sessions made for it. A store from an earlier test that
+    /// still opens a stream is not this test's store, so its stream is not counted.
+    let token = UUID().uuidString
     var paths: [String] = []
     var events: [EventsRequest] = []
     var revision = "1"
@@ -447,6 +450,7 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
     static var session: URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [RefreshProtocol.self]
+        config.httpAdditionalHeaders = ["X-Refresh-Fixture": state.withLock { $0.token }]
         return URLSession(configuration: config)
     }
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "refresh.invalid" }
@@ -461,6 +465,11 @@ private final class RefreshProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         if url.path == "/api/navigation/view/events" {
+            // A stream from another test's store stays open, silent and uncounted.
+            guard request.value(forHTTPHeaderField: "X-Refresh-Fixture") == Self.state.withLock({ $0.token }) else {
+                client?.urlProtocol(self, didReceive: ok, cacheStoragePolicy: .notAllowed)
+                return
+            }
             do {
                 let (schedule, finish) = try Self.state.withLock {
                     $0.paths.append(url.path)
