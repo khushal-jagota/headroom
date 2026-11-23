@@ -23,8 +23,7 @@
   import { queries } from "../../lib/queryCatalogue";
   import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
   import { mintOutgoingMessage, reserveOutgoingMessageImages, reserveOutgoingMessageFiles, releaseOutgoingMessageImages, releaseOutgoingMessageFiles } from "../../lib/conversation/outgoing";
-  import { VideoTransfers } from "../../lib/conversation/videoUploads/uploads";
-  import { isVideoFile, VIDEO_ACCEPT } from "../../lib/conversation/videoUploads/config";
+  import { AttachmentTransfers, pendingUploadsAsPieces, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
   import type { PendingVideo, UploadDestination, ComposerSendContext } from "../../lib/conversation/videoUploads/contracts";
   import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
@@ -35,7 +34,7 @@
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
   import SystemLine from "./SystemLine.svelte";
   import {
-    orderedComposerAttachments, replaceQuestionAttachmentOrder, attachmentByteLabel,
+    orderedComposerAttachments, attachmentByteLabel,
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
@@ -65,7 +64,7 @@
   } from "../../lib/conversation/runControls/contracts";
   import type { RunValues } from "../../lib/conversation/composer";
   import { askShape } from "../../lib/conversation/composer";
-  import { pendingAnswerAttachments } from "../../lib/conversation/userInput";
+  import { pendingAnswerAttachments, userInputUploadDraftKey } from "../../lib/conversation/userInput";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import {
@@ -77,17 +76,12 @@
     type VoiceCaptureState
   } from "../../lib/conversation/voiceCapture";
   import {
-    createPendingConversationImages,
-    pendingConversationImageBytes,
     releasePendingImages,
     restoredPendingImages,
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
   import {
-    CONVERSATION_FILE_ACCEPT,
-    createPendingConversationFiles,
     restoredPendingFiles,
-    pendingConversationFileBytes,
     type PendingConversationFile
   } from "../../lib/conversation/pendingFiles";
   import type {
@@ -275,23 +269,27 @@
   let activeCatalogEntryIndex = $state(0);
   let pendingImages = $state<PendingConversationImage[]>([]);
   let pendingFiles = $state<PendingConversationFile[]>([]);
-  let pendingVideos = $state.raw<PendingVideo[]>([]);
+  let pendingVideos = $state.raw<PendingVideo[]>(untrack(() => recallDraftVideo(draftKey)));
   let localSends = $state.raw<PendingComposerSend[]>([]);
   let restoredSendContext: ComposerSendContext | null = null;
-  let nextVideoId = 1;
+  let nextVideoId = untrack(() => Math.max(1, ...pendingVideos.map((attachment) => attachment.id + 1)));
   let localStorageKey = untrack(() => draftKey);
-  const transfers = new VideoTransfers(videoUploadAdapter, videoChanged);
+  const transfers = new AttachmentTransfers(videoUploadAdapter, videoChanged);
   const makeSendQueue = () => new LocalComposerSends(async (entry, content) => {
     if (destroyed) return false;
     return onSend(content, entry.mode, entry.attempt.carriedRunValues, entry.context);
   }, videoChanged);
   let sendQueue = makeSendQueue();
+  function rememberCurrentUploadDraft(): void {
+    const key = userInput && activeQuestionId ? userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", userInput.requestId, activeQuestionId) : localStorageKey;
+    rememberDraftVideo(key, pendingVideos);
+  }
   function videoChanged(): void {
     if (destroyed) return;
     const previousEntries = localSends;
     pendingVideos = [...pendingVideos];
     localSends = [...sendQueue.entries];
-    rememberDraftVideo(localStorageKey, pendingVideos);
+    rememberCurrentUploadDraft();
     rememberLocalSends(localStorageKey, localSends);
     releaseRemovedLocalSends(previousEntries, localSends);
     void sendQueue.pump();
@@ -299,7 +297,7 @@
   async function restoreLocalState(): Promise<void> {
     const restoringKey = localStorageKey;
     const restoringQueue = sendQueue;
-    pendingVideos = recallDraftVideo(localStorageKey);
+    if (userInput === null) pendingVideos = recallDraftVideo(localStorageKey);
     nextVideoId = Math.max(1, ...pendingVideos.map(video => video.id + 1));
     attachmentOrder = [...attachmentOrder.filter(item => item.kind !== "video"), ...pendingVideos.map(video => ({kind: "video" as const, id: video.id}))];
     sendQueue.entries = recallLocalSends(localStorageKey);
@@ -325,7 +323,6 @@
 
   let attachmentOrder = $state<ComposerAttachmentReference[]>([]);
   let attachments = $derived(orderedComposerAttachments(attachmentOrder, pendingImages, pendingFiles, pendingVideos));
-  let imageInput = $state<HTMLInputElement | null>(null);
   let fileInput = $state<HTMLInputElement | null>(null);
   $effect(() => {
     const key = draftKey;
@@ -372,24 +369,38 @@
    *  send to go on once something is chosen (questionCommitReady). */
   let questionCommitReady = $state(false);
   let questionTakesOwnAnswer = $state(false);
-  let questionAttachments = $derived(pendingAnswerAttachments(pendingImages, pendingFiles));
+  let activeQuestionId = $state<string | null>(null);
+  $effect(() => { userInput?.requestId; activeQuestionId; pendingVideos; untrack(() => { if (userInput && activeQuestionId) rememberCurrentUploadDraft(); }); });
+  let questionAttachments = $derived(pendingAnswerAttachments(pendingImages, pendingFiles, pendingVideos));
+  let questionUploadBusy = $derived(userInput !== null && pendingVideos.some((attachment) => attachment.phase !== "ready"));
   let questionForbidsAttachments = $derived(userInput !== null && !questionTakesOwnAnswer);
 
-  function clearQuestionDraft(requestId: string): void {
+  function clearQuestionDraft(requestId: string, questionIds: string[]): void {
     if (userInput !== null && userInput.requestId !== requestId) return;
     releasePendingImages(pendingImages);
-    pendingImages = []; pendingFiles = []; attachmentOrder = replaceQuestionAttachmentOrder(attachmentOrder, [], []);
+    for (const attachment of pendingVideos) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    pendingImages = []; pendingFiles = []; pendingVideos = []; attachmentOrder = [];
+    rememberDraftVideo(localStorageKey, []);
+    for (const questionId of questionIds) rememberDraftVideo(userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", requestId, questionId), []);
     text = ""; cursorAt = 0;
     recordDraftChange();
   }
 
-  function restoreQuestionDraft(_questionId: string, words: string, attached: UserInputAttachment[]): void {
+  function restoreQuestionDraft(questionId: string, words: string, attached: UserInputAttachment[], preservePendingUploads = false): void {
+    activeQuestionId = questionId;
     releasePendingImages(pendingImages);
     const images = restoredPendingImages(attached, nextImageId);
     const files = restoredPendingFiles(attached, nextFileId);
     nextImageId = images.nextId; nextFileId = files.nextId;
     pendingImages = images.images; pendingFiles = files.files;
-    attachmentOrder = replaceQuestionAttachmentOrder(attachmentOrder, pendingImages, pendingFiles);
+    if (!preservePendingUploads) for (const attachment of pendingVideos) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    const destination = uploadDestination ?? { kind: "conversation" as const, id: conversationId ?? "", expected_conversation_id: conversationId };
+    const interrupted = preservePendingUploads && userInput ? recallDraftVideo(userInputUploadDraftKey(localStorageKey, conversationId ?? uploadDestination?.expected_conversation_id ?? "", userInput.requestId, questionId)).filter((attachment) => attachment.destination.kind === destination.kind && attachment.destination.id === destination.id && attachment.destination.expected_conversation_id === destination.expected_conversation_id) : [];
+    pendingVideos = restoredPendingUploads(attached, destination, interrupted);
+    nextVideoId = Math.max(1, ...pendingVideos.map((attachment) => attachment.id + 1));
+    attachmentOrder = [...pendingImages.map((image) => ({ kind: "image" as const, id: image.id })), ...pendingFiles.map((file) => ({ kind: "file" as const, id: file.id })), ...pendingVideos.map((attachment) => ({ kind: "video" as const, id: attachment.id }))];
+    for (const attachment of pendingVideos) if (attachment.phase === "validating") void transfers.validate(attachment);
+    videoChanged();
     text = words; cursorAt = words.length;
     recordDraftChange();
   }
@@ -418,7 +429,6 @@
   /** The Add menu, and the camera the design's third choice needs. */
   let addMenuOpen = $state(false);
   let addMenuElement = $state<HTMLDivElement | null>(null);
-  let cameraInput = $state<HTMLInputElement | null>(null);
 
   /** Escape shuts this menu before it means anything else.
    *
@@ -457,7 +467,7 @@
     effortOptions,
     startsOnModel,
     startsOnReasoningEffort,
-    inputDisabled,
+    inputDisabled: inputDisabled || questionUploadBusy,
     hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0 || pendingVideos.length > 0,
     sendsInFlight,
     deliveryMode,
@@ -604,6 +614,7 @@
 
   async function send(): Promise<void> {
     await intakeTail;
+    if (questionUploadBusy) return;
     if (userInput !== null && questionPanel !== null) {
       if (questionTakesOwnAnswer && (text.trim() || questionAttachments.length)) {
         questionPanel.answerWith(text, questionAttachments);
@@ -628,7 +639,6 @@
     applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;
     releasePendingImages(attempt.draftBeforeSend.pendingImages);
-    if (imageInput) imageInput.value = "";
     intakeError = null;
     if ((attempt.draftBeforeSend.pendingVideos?.length ?? 0) > 0 || sendQueue.entries.length > 0) {
       const messageId = capturedRetryContext?.messageId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
@@ -701,94 +711,21 @@
     files: Iterable<File> | ArrayLike<File> | null | undefined
   ): Promise<void> {
     if (disabled) return Promise.resolve();
-    const chosen: File[] = [];
+    intakeError = null;
+    const destination = uploadDestination ?? (conversationId ? { kind: "conversation" as const, id: conversationId, expected_conversation_id: conversationId } : null);
+    if (!destination) { intakeError = "File upload is unavailable until this conversation has a destination."; return Promise.resolve(); }
     for (const file of Array.from(files ?? [])) {
-      if (!isVideoFile(file.name)) { chosen.push(file); continue; }
-      if (userInput !== null) { intakeError = "Structured answers accept pictures and files. Attach videos in a message."; continue; }
-      if (!uploadDestination) { intakeError = "Video upload is unavailable for this conversation."; continue; }
-      if (pendingVideos[0]?.phase === "interrupted" || (pendingVideos[0]?.phase === "failed" && !pendingVideos[0]?.file)) removeVideo(pendingVideos[0]);
-      if (pendingVideos.length) { intakeError = "Attach one video per message."; continue; }
       try {
-        const video = transfers.create(file, nextVideoId++, uploadDestination);
-        pendingVideos = [video];
-        attachmentOrder = [...attachmentOrder, {kind: "video", id: video.id}];
+        for (const previous of pendingVideos.filter((entry) => entry.fileName === file.name && (entry.phase === "interrupted" || (entry.phase === "failed" && !entry.file)))) removeVideo(previous);
+        const attachment = transfers.create(file, nextVideoId++, destination);
+        pendingVideos = [...pendingVideos, attachment];
+        attachmentOrder = [...attachmentOrder, { kind: "video", id: attachment.id }];
         recordDraftChange();
-        void transfers.start(video);
-      } catch (error) { intakeError = error instanceof Error ? error.message : "The video could not be attached."; }
+        void transfers.start(attachment);
+      } catch (error) { intakeError = error instanceof Error ? error.message : "The file could not be attached."; }
     }
-    if (!chosen.length) {
-      if (fileInput) fileInput.value = "";
-      if (imageInput) imageInput.value = "";
-      return Promise.resolve();
-    }
-    intakeTail = intakeTail.then(() => intakeChosenFiles(chosen));
-    return intakeTail;
-  }
-
-  async function intakeChosenFiles(files: readonly File[]): Promise<void> {
-    // The box is disabled while files are read, and a disabled box drops focus to the page.
-    const focusWasInComposer = boxElement?.contains(document.activeElement) ?? false;
-    attachmentIntakesInFlight += 1;
-    try {
-      const acceptedImages: PendingConversationImage[] = [];
-      const acceptedFiles: PendingConversationFile[] = [];
-      const acceptedOrder: ComposerAttachmentReference[] = [];
-      let rejected = false;
-      let published = false;
-      // Intake follows the FileList, rather than grouping it by kind. Both adapters still
-      // own their validation and aggregate byte limits.
-      try {
-        for (const file of files) {
-          if (file.type.toLowerCase().startsWith("image/")) {
-            const intake = await createPendingConversationImages(
-              [file], nextImageId, pendingConversationImageBytes([...pendingImages, ...acceptedImages])
-            );
-            nextImageId = intake.nextId;
-            rejected ||= intake.rejected.length > 0;
-            acceptedImages.push(...intake.accepted);
-            acceptedOrder.push(...intake.accepted.map((image) => ({ kind: "image" as const, id: image.id })));
-          } else {
-            const intake = await createPendingConversationFiles(
-              [file], nextFileId, pendingConversationFileBytes([...pendingFiles, ...acceptedFiles])
-            );
-            nextFileId = intake.nextId;
-            rejected ||= intake.rejected.length > 0;
-            acceptedFiles.push(...intake.accepted);
-            acceptedOrder.push(...intake.accepted.map((document) => ({ kind: "file" as const, id: document.id })));
-          }
-        }
-        if (destroyed) return;
-        if (acceptedOrder.length > 0) {
-          recordDraftChange();
-          pendingImages = [...pendingImages, ...acceptedImages];
-          pendingFiles = [...pendingFiles, ...acceptedFiles];
-          attachmentOrder = [...attachmentOrder, ...acceptedOrder];
-        }
-        published = true;
-        intakeError = rejected
-          ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, log, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
-          : null;
-      } finally {
-        // Until published these URLs belong to this intake, including a later read failure.
-        if (!published) {
-          releasePendingImages(acceptedImages);
-        }
-      }
-    } catch (error) {
-      if (!destroyed) {
-        intakeError = error instanceof Error ? error.message : "The attachment could not be read.";
-      }
-    } finally {
-      if (!destroyed) {
-        attachmentIntakesInFlight -= 1;
-        if (imageInput) imageInput.value = "";
-        if (fileInput) fileInput.value = "";
-        // A camera hands back the same filename every time, so an unreset input is a
-        // second capture that changes nothing and never fires.
-        if (cameraInput) cameraInput.value = "";
-        if (focusWasInComposer) void tick().then(() => { if (!destroyed && !inputDisabled) returnFocusToTheField(); });
-      }
-    }
+    if (fileInput) fileInput.value = "";
+    return Promise.resolve();
   }
 
   function removeVideo(video: PendingVideo): void {
@@ -815,7 +752,7 @@
     if (removeVideo) {
       for (const video of entry.attempt.draftBeforeSend.pendingVideos ?? []) transfers.remove(video);
       entry.attempt = {...entry.attempt,
-        content: entry.attempt.content.filter(piece => piece.piece !== "video_upload"),
+        content: entry.attempt.content.filter(piece => piece.piece !== "video_upload" && piece.piece !== "attachment_upload"),
         draftBeforeSend: {...entry.attempt.draftBeforeSend, pendingVideos: [], attachmentOrder: entry.attempt.draftBeforeSend.attachmentOrder?.filter(item => item.kind !== "video")}};
     }
     const restoration = restoreRefusedComposerSend(currentComposerDraft(), entry.attempt, nextImageId, nextFileId, attachmentIntakesInFlight);
@@ -836,9 +773,9 @@
     videoChanged();
   }
   function videoProgress(video: PendingVideo): string {
-    return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / video.byteCount * 100)}%`
-      : video.phase === "validating" ? "Checking video…" : video.phase === "ready" ? attachmentByteLabel(video.byteCount)
-      : video.error || "Select the video again.";
+    return video.phase === "uploading" ? `Uploading ${Math.floor(video.receivedBytes / Math.max(1, video.byteCount) * 100)}%`
+      : video.phase === "validating" ? "Checking file…" : video.phase === "ready" ? attachmentByteLabel(video.byteCount)
+      : video.error || "Select the file again.";
   }
 
   function removeImage(image: PendingConversationImage): void {
@@ -1290,6 +1227,7 @@
           <UserInputQuestionPanel
             bind:this={questionPanel}
             bind:acceptsOwnAnswer={questionTakesOwnAnswer}
+            bind:activeQuestionId
             bind:commitReady={questionCommitReady}
             framed={false}
             ownAnswer={text}
@@ -1299,7 +1237,8 @@
             onWriteOwnAnswer={() => inputElement?.focus()}
             request={userInput}
             onStop={undefined}
-            busy={inputDisabled}
+            busy={inputDisabled || questionUploadBusy}
+            uploadDestination={uploadDestination ?? { kind: "conversation", id: conversationId ?? "", expected_conversation_id: conversationId }}
             answerAvailable={userInputAvailable}
             note={userInputNote}
             onSubmit={(answers) => onSubmitUserInput?.(answers)}
@@ -1424,37 +1363,10 @@
                draft, microphone, send); while a turn is open the header's "..." menu leads
                with "Stop the agent". -->
           <ComposerAddMenu bind:open={addMenuOpen} bind:root={addMenuElement}
-            disabled={inputDisabled || questionForbidsAttachments} imageCount={pendingImages.length} fileCount={pendingFiles.length}
-            onPicture={() => imageInput?.click()} onFile={() => fileInput?.click()} onCamera={() => cameraInput?.click()}
-            onCommand={() => void startWritingACommand()}
+            disabled={inputDisabled || questionForbidsAttachments} fileCount={pendingFiles.length + pendingVideos.length + pendingImages.length}
+            onFile={() => fileInput?.click()} onCommand={() => void startWritingACommand()}
           />
-          <input
-            bind:this={cameraInput}
-            class="chat-image-input"
-            data-conversation-camera-input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onchange={() => void intakeFiles(cameraInput?.files)}
-          />
-          <input
-            bind:this={imageInput}
-            class="chat-image-input"
-            data-conversation-image-input
-            type="file"
-            accept="image/*"
-            multiple
-            onchange={() => void intakeFiles(imageInput?.files)}
-          />
-          <input
-            bind:this={fileInput}
-            class="chat-image-input"
-            data-conversation-file-input
-            type="file"
-            accept={`${CONVERSATION_FILE_ACCEPT},${VIDEO_ACCEPT}`}
-            multiple
-            onchange={() => void intakeFiles(fileInput?.files)}
-          />
+          <input bind:this={fileInput} class="chat-image-input" data-conversation-file-input type="file" multiple onchange={() => void intakeFiles(fileInput?.files)} />
 
           {#snippet microphone()}
             {#if voiceAvailable}

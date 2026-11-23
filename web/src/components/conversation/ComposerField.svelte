@@ -9,7 +9,7 @@
    * a strip between the draft and the controls, so attaching never moves the words being
    * written. The field owns attachment intake and the caller owns the draft and its send. The look lives in app.css, under THE COMPOSER FIELD.
    */
-  import { onMount, onDestroy, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     controlsBelowTheDraft,
     createDraftLineMeasurement,
@@ -20,9 +20,13 @@
 
   import AttachmentChips from "./AttachmentChips.svelte";
   import { attachmentSurface } from "./composer/attachmentSurface";
-  import { takePendingAttachments, ATTACHMENT_REJECTED } from "../../lib/conversation/pendingAttachments";
-  import { CONVERSATION_FILE_ACCEPT, type PendingConversationFile } from "../../lib/conversation/pendingFiles";
-  import { releasePendingImages, type PendingConversationImage } from "../../lib/conversation/pendingImages";
+  import ComposerAttachments from "./composer/ComposerAttachments.svelte";
+  import { attachmentByteLabel } from "./composer/attachments";
+  import { videoUploadAdapter } from "../../lib/conversation/videoUploads/adapter";
+  import { attachmentTransfersFor, openAttachmentDraft, liveAttachmentDrafts, publishAttachmentDraft } from "../../lib/conversation/videoUploads/uploads";
+  import type { PendingAttachment, UploadDestination } from "../../lib/conversation/videoUploads/contracts";
+  import { type PendingConversationFile } from "../../lib/conversation/pendingFiles";
+  import { type PendingConversationImage } from "../../lib/conversation/pendingImages";
 
   type Attributes = Record<string, string | boolean | undefined>;
   type Control = { label: string; disabled?: boolean; onclick: () => void; attributes?: Attributes };
@@ -38,6 +42,9 @@
     inputAttributes = {},
     onkeydown,
     onsubmit,
+    draftKey,
+    uploadDestination,
+    uploads = $bindable([]),
     images = $bindable([]),
     files = $bindable([]),
     intakeBusy = $bindable(false),
@@ -66,6 +73,9 @@
     /** Opt in to "Enter sends": plain Enter and Cmd/Ctrl+Enter call this, Shift+Enter adds a
      *  line, and Enter while an input method is composing, or held down, does nothing. */
     onsubmit?: () => void;
+    draftKey?: string;
+    uploadDestination: UploadDestination;
+    uploads?: PendingAttachment[];
     images?: PendingConversationImage[];
     files?: PendingConversationFile[];
     /** A send or decision waits until the files are read. */
@@ -77,7 +87,7 @@
     record?: Control;
     /** The send arrow, last at the right: lit when there is something to send, a spinner
      *  while it goes. */
-    send?: Control & { ready: boolean; sending: boolean };
+    send?: Control & { ready: boolean; sending: boolean; checkingReceipt?: boolean };
     /** A voice take underway: its line stands where the words go, its cancel where the + is,
      *  and its stop or retry where send is. */
     voice?: {
@@ -95,7 +105,7 @@
   function keydown(event: KeyboardEvent & { currentTarget: HTMLTextAreaElement }): void {
     onkeydown?.(event);
     if (onsubmit === undefined || event.defaultPrevented || event.key !== "Enter") return;
-    if (intakeBusy) { event.preventDefault(); return; }
+    if (intakeBusy && !send?.checkingReceipt) { event.preventDefault(); return; }
     if (event.shiftKey || event.altKey) return;
     // Enter that confirms an input method's text (keyCode 229) is not a send.
     if (event.isComposing || event.keyCode === 229) return;
@@ -106,33 +116,52 @@
   let fileInput = $state<HTMLInputElement | null>(null);
   let dragging = $state(false);
   let intakeError = $state("");
-  let disposed = false;
-  onDestroy(() => { disposed = true; });
-  let hasAttachments = $derived(images.length > 0 || files.length > 0);
+  const localKey = $props.id();
+  let registryKey = $derived(draftKey ?? localKey);
+  let hasAttachments = $derived(images.length > 0 || files.length > 0 || uploads.length > 0);
+  let uploadTiles = $derived(uploads.map((value) => ({ kind: "video" as const, value })));
+  $effect(() => {
+    const key = registryKey;
+    const shared = liveAttachmentDrafts.get(key);
+    untrack(() => {
+      uploads = shared ?? openAttachmentDraft(key, uploads);
+      const transfers = attachmentTransfersFor(key, videoUploadAdapter);
+      for (const attachment of uploads) if (attachment.phase === "validating" && attachment.uploadId) void transfers.validate(attachment);
+    });
+  });
+  $effect(() => { intakeBusy = uploads.some((attachment) => attachment.phase !== "ready"); });
 
-  async function intake(chosen: readonly File[]): Promise<void> {
-    if (chosen.length === 0 || disabled || intakeBusy || attachmentUnavailable) return;
-    intakeBusy = true;
+  function intake(chosen: readonly File[]): void {
+    if (chosen.length === 0 || disabled || attachmentUnavailable) return;
     intakeError = "";
     onError?.(null);
-    try {
-      const previousImages = images;
-      const taken = await takePendingAttachments(chosen, { images, files });
-      if (disposed) { releasePendingImages(taken.images.filter((image) => !previousImages.includes(image))); return; }
-      images = taken.images;
-      files = taken.files;
-      if (taken.rejected) {
-        intakeError = ATTACHMENT_REJECTED;
-        onError?.(new Error(intakeError));
+    const key = registryKey;
+    const transfers = attachmentTransfersFor(key, videoUploadAdapter);
+    for (const file of chosen) {
+      try {
+        const current = liveAttachmentDrafts.get(key) ?? uploads;
+        let attachment = $state(transfers.create(file, Math.max(0, ...current.map((entry) => entry.id)) + 1, uploadDestination));
+        const replaced = current.filter((entry) => (entry.phase === "interrupted" || (entry.phase === "failed" && !entry.file)) && entry.fileName === file.name);
+        for (const previous of replaced) transfers.remove(previous);
+        const replacement = current.filter((entry) => !replaced.includes(entry));
+        publishAttachmentDraft(key, [...replacement, attachment]);
+        void transfers.start(attachment);
+      } catch (problem) {
+        intakeError = problem instanceof Error ? problem.message : "The attachment could not be read.";
+        onError?.(problem);
       }
-    } catch (problem) {
-      if (disposed) return;
-      intakeError = problem instanceof Error ? problem.message : "The attachment could not be read.";
-      onError?.(problem);
-    } finally {
-      if (!disposed) intakeBusy = false;
-      if (fileInput) fileInput.value = "";
     }
+    if (fileInput) fileInput.value = "";
+  }
+
+  function removeUpload(attachment: PendingAttachment): void {
+    attachmentTransfersFor(registryKey, videoUploadAdapter).remove(attachment);
+    publishAttachmentDraft(registryKey, uploads.filter((entry) => entry !== attachment));
+  }
+  function uploadProgress(attachment: PendingAttachment): string {
+    return attachment.phase === "uploading" ? `Uploading ${Math.floor(attachment.receivedBytes / Math.max(1, attachment.byteCount) * 100)}%`
+      : attachment.phase === "validating" ? "Checking file…" : attachment.phase === "ready" ? attachmentByteLabel(attachment.byteCount)
+      : attachment.error || "Select the file again.";
   }
 
   let box = $state<HTMLDivElement | null>(null);
@@ -297,7 +326,7 @@
 <div
   class="composer-field"
   class:drag={dragging}
-  use:attachmentSurface={{ disabled: disabled || intakeBusy || Boolean(attachmentUnavailable), onFiles: (chosen) => void intake(chosen), onDragChange: (active) => dragging = active }}
+  use:attachmentSurface={{ disabled: disabled || Boolean(attachmentUnavailable), onFiles: (chosen) => void intake(chosen), onDragChange: (active) => dragging = active }}
   class:has-leading={hasLeading}
   class:has-trailing={hasTrailing}
   class:has-attachments={hasAttachments}
@@ -310,7 +339,6 @@
   style:min-height={held !== null ? `${held.box}px` : undefined}
 >
   <input bind:this={fileInput} hidden type="file" multiple
-    accept={`image/png,image/jpeg,image/gif,image/webp,${CONVERSATION_FILE_ACCEPT}`}
     onchange={() => void intake(Array.from(fileInput?.files ?? []))} />
 
   {#if hasLeading}
@@ -336,7 +364,7 @@
           class="composer-field-tool"
           aria-label="Attach a file"
           data-review-attach
-          disabled={disabled || intakeBusy}
+          disabled={disabled}
           onclick={() => fileInput?.click()}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -375,7 +403,12 @@
   ></textarea>
 
   {#if hasAttachments}
-    <div class="composer-field-attachments"><AttachmentChips bind:images bind:files disabled={disabled || intakeBusy} /></div>
+    <div class="composer-field-attachments">
+      {#if images.length || files.length}<AttachmentChips bind:images bind:files disabled={disabled} />{/if}
+      <ComposerAttachments attachments={uploadTiles} inputDisabled={disabled}
+        onChooseAgain={() => fileInput?.click()} onRetry={(attachment) => void attachmentTransfersFor(registryKey, videoUploadAdapter).start(attachment)}
+        onRemove={(attachment) => { if (attachment.kind === "video") removeUpload(attachment.value); }} videoProgress={uploadProgress} />
+    </div>
   {/if}
 
   {#if hasTrailing}
@@ -415,7 +448,7 @@
             class:on={send.ready}
             aria-label={send.label}
             aria-busy={send.sending}
-            disabled={send.disabled || intakeBusy}
+            disabled={send.disabled || (intakeBusy && !send.checkingReceipt)}
             onclick={send.onclick}
             {...(send.attributes ?? {})}
           >

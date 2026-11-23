@@ -209,6 +209,23 @@ test('answer uploads retain readable files and their identity across retries and
     });
   };
   try {
+    // Missing streamed files keep their client error and do not consume the pending ask.
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/api/conversation/conversations/core/user-input-answers',
+      payload: {
+        request_id,
+        operation_id: 'missing-upload',
+        answers: {
+          scope: { answers: ['Composer'] },
+          proof: {
+            answers: [],
+            attachments: [{ piece: 'attachment_upload', upload_id: 'missing' }],
+          },
+        },
+      },
+    });
+    expect(missing.statusCode).toBe(404);
     expect((await send()).json()).toEqual({ fate: 'applied' });
     expect((await send('attachment evidence', true)).json()).toEqual({ fate: 'applied' });
     const rows = answer_rows();

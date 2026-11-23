@@ -1,5 +1,5 @@
 import { render } from "svelte/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error -- the tests' type check has no Node types; vitest runs in Node.
 import { readFileSync } from "node:fs";
 import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
@@ -97,7 +97,7 @@ describe("the permission ask", () => {
 describe("the question panel", () => {
   it("says where it is in the questions, with no confirm pill and no pre-highlighted row", () => {
     const { body } = render(UserInputQuestionPanel, {
-      props: {
+      props: { uploadDestination: { kind: "conversation", id: "question-conversation", expected_conversation_id: "question-conversation" },
         request: {
           requestId: "q-1",
           questions: [
@@ -144,7 +144,7 @@ describe("the question panel", () => {
 
   it("draws no stop of its own when it is not given one", () => {
     const { body } = render(UserInputQuestionPanel, {
-      props: { request: { requestId: "q-2", questions: [] } }
+      props: { uploadDestination: { kind: "conversation", id: "question-conversation", expected_conversation_id: "question-conversation" }, request: { requestId: "q-2", questions: [] } }
     });
     expect(body).not.toContain("data-user-input-cancel");
     expect(body).not.toContain("data-conversation-stop");
@@ -152,7 +152,7 @@ describe("the question panel", () => {
 
   it("draws no pill for a several-answer question: rows toggle and the composer sends", () => {
     const { body } = render(UserInputQuestionPanel, {
-      props: {
+      props: { uploadDestination: { kind: "conversation", id: "question-conversation", expected_conversation_id: "question-conversation" },
         onStop: () => {},
         request: {
           requestId: "q-multi",
@@ -289,7 +289,7 @@ describe("an own answer written in the composer", () => {
 
   it("is written in the composer when the panel is docked over it: no second field, a row that says where", () => {
     const { body } = render(UserInputQuestionPanel, {
-      props: { request: { requestId: "q-own", questions: [single] }, ownAnswer: "", onSubmit: () => {} }
+      props: { uploadDestination: { kind: "conversation", id: "question-conversation", expected_conversation_id: "question-conversation" }, request: { requestId: "q-own", questions: [single] }, ownAnswer: "", onSubmit: () => {} }
     });
     // The composer line itself is the place for an own answer: no field and no row here,
     // and no primary of its own (the composer's pill is it).
@@ -297,7 +297,47 @@ describe("an own answer written in the composer", () => {
     expect(body).not.toContain("data-user-input-own");
     expect(body).not.toContain("data-user-input-continue");
     // Standing alone (no composer under it) it keeps its own field.
-    const alone = render(UserInputQuestionPanel, { props: { request: { requestId: "q-own", questions: [single] }, onSubmit: () => {} } }).body;
+    const alone = render(UserInputQuestionPanel, { props: { uploadDestination: { kind: "conversation", id: "question-conversation", expected_conversation_id: "question-conversation" }, request: { requestId: "q-own", questions: [single] }, onSubmit: () => {} } }).body;
     expect(alone).toContain("data-user-input-other");
   });
+});
+
+// The outer conversation restores one active upload list. The saved pager position must
+// associate those refs with their original question, never the first question after reload.
+it("restores later-question file references to their own question and refuses a replaced request", async () => {
+  const { rememberUserInputDraft, recallUserInputDraft, clearUserInputDraft, initialUserInputDraft, userInputUploadDraftKey } = await import("../src/lib/conversation/userInput");
+  const stored = new Map<string, string>();
+  vi.stubGlobal("window", {sessionStorage: {getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key)}});
+  const question = { question_id: "first", header: "First", question: "Which?", options: [], multi_select: false, allow_other: true };
+  const request = { requestId: "request-one", questions: [question, { ...question, question_id: "later" }] };
+  rememberUserInputDraft("conversation-one", {requestId: request.requestId, step: 1,
+    draft: { selected: {}, other: { later: "Use this binary" } },
+    attachmentsByQuestion: { later: [{piece:"attachment_upload",upload_id:"later-file"},{piece:"image",data:"legacy-bytes-must-not-enter-text-store",media_type:"image/png"}] }});
+  const restored = recallUserInputDraft("conversation-one", request)!;
+  const initialized = initialUserInputDraft(request, restored, "outer active words", []);
+  expect(initialized.step).toBe(1);
+  const fresh = initialUserInputDraft({...request, requestId:"fresh"}, null, "Keep my current draft", [{piece:"attachment_upload",upload_id:"current-file"}]);
+  expect(fresh.draft.other.first).toBe("Keep my current draft");
+  expect(fresh.attachmentsByQuestion.first).toEqual([{piece:"attachment_upload",upload_id:"current-file"}]);
+  const { rememberDraftVideo, recallDraftVideo } = await import("../src/lib/conversation/videoUploads/localSends");
+  const { restoredPendingUploads } = await import("../src/lib/conversation/videoUploads/pieces");
+  const destination = {kind:"conversation" as const,id:"conversation-one",expected_conversation_id:"conversation-one"};
+  rememberDraftVideo(userInputUploadDraftKey("composer", "conversation-one", request.requestId, "later"), [{id:2,fileName:"interrupted-later.bin",byteCount:33,mediaType:"application/octet-stream",destination,phase:"uploading",receivedBytes:12,uploadId:"pending-later"}]);
+  const activeId = request.questions[initialized.step].question_id;
+  const recovered = restoredPendingUploads(initialized.attachmentsByQuestion[activeId], destination, recallDraftVideo(userInputUploadDraftKey("composer", "conversation-one", request.requestId, activeId)));
+  expect(activeId).toBe("later");
+  expect(recovered.find((file) => file.fileName === "interrupted-later.bin")).toMatchObject({phase:"interrupted",uploadId:"pending-later"});
+  expect(recallDraftVideo(userInputUploadDraftKey("composer", "conversation-one", "replacement", activeId))).toEqual([]);
+  expect(recallDraftVideo(userInputUploadDraftKey("composer", "conversation-one", request.requestId, "first"))).toEqual([]);
+  expect(restored.step).toBe(1);
+  expect(restored.attachmentsByQuestion.first).toEqual([]);
+  expect(restored.attachmentsByQuestion.later).toEqual([{piece:"attachment_upload",upload_id:"later-file"}]);
+  expect(restored.draft.other.later).toBe("Use this binary");
+  expect([...stored.values()].join("")).not.toContain("legacy-bytes");
+  expect(recallUserInputDraft("conversation-one", {...request, requestId:"replacement"})).toBeNull();
+  expect(recallUserInputDraft("replacement-conversation", request)).toBeNull();
+  expect(recallDraftVideo(userInputUploadDraftKey("composer", "replacement-conversation", request.requestId, activeId))).toEqual([]);
+  clearUserInputDraft("conversation-one", request.requestId);
+  expect(recallUserInputDraft("conversation-one", request)).toBeNull();
 });

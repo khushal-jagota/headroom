@@ -15,6 +15,8 @@
   import RequestRecapAction from "./RequestRecapAction.svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
   import { releasePendingImages, type PendingConversationImage } from "../lib/conversation/pendingImages";
+  import type { PendingAttachment } from "../lib/conversation/videoUploads/contracts";
+  import { clearAttachmentDraft } from "../lib/conversation/videoUploads/uploads";
   import type { PendingConversationFile } from "../lib/conversation/pendingFiles";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -58,11 +60,14 @@
   let busy = $state(false);
   let note = $state<string | null>(null);
   let draft = $state<UserInputDraft>(emptyUserInputDraft());
-  let draftRequestId = "";
-  let attachmentDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; busy: boolean }>>({});
+  let draftRequestId = $state("");
+  let attachmentDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; uploads: PendingAttachment[]; busy: boolean }>>({});
   let attachmentReadBusy = $derived(Object.values(attachmentDrafts).some((value) => value.busy));
   function releaseAttachments(): void {
-    for (const entry of Object.values(attachmentDrafts)) releasePendingImages(entry.images);
+    for (const [questionId, entry] of Object.entries(attachmentDrafts)) {
+      releasePendingImages(entry.images);
+      clearAttachmentDraft(`answer:${conversationId}:${draftRequestId}:${questionId}`);
+    }
     attachmentDrafts = {};
   }
   let destroyed = false;
@@ -81,17 +86,20 @@
         ? executorAnswerAvailable(view, "user_input", userInput.request_id)
         : false
   );
-  let answers = $derived(userInput ? completeUserInputAnswers(draft, userInput.questions, Object.fromEntries(Object.entries(attachmentDrafts).map(([id, entry]) => [id, pendingAnswerAttachments(entry.images, entry.files)]))) : null);
+  let answers = $derived(userInput ? completeUserInputAnswers(draft, userInput.questions, Object.fromEntries(Object.entries(attachmentDrafts).map(([id, entry]) => [id, pendingAnswerAttachments(entry.images, entry.files, entry.uploads)]))) : null);
   let detail = $derived(readableConversationDetail(permission?.detail));
-  $effect(() => { onBusy?.(busy || attachmentReadBusy, conversationId); });
+  $effect(() => {
+    const active = busy || attachmentReadBusy;
+    untrack(() => onBusy?.(active, conversationId));
+  });
   // A new question starts with an empty draft.
   $effect(() => {
     const id = userInput?.request_id ?? "";
     if (id !== draftRequestId) {
+      releaseAttachments();
       draftRequestId = id;
       draft = emptyUserInputDraft();
-      releaseAttachments();
-      attachmentDrafts = Object.fromEntries((userInput?.questions ?? []).map((question) => [question.question_id, { images: [], files: [], busy: false }]));
+      attachmentDrafts = Object.fromEntries((userInput?.questions ?? []).map((question) => [question.question_id, { images: [], files: [], uploads: [], busy: false }]));
     }
   });
 
@@ -110,7 +118,7 @@
   }
   onMount(() => {
     void load();
-    return () => { destroyed = true; releaseAttachments(); };
+    return () => { destroyed = true; for (const entry of Object.values(attachmentDrafts)) releasePendingImages(entry.images); };
   });
 
   function sentence(fate: "applied" | "saved" | "refused", refused: string): string | null {
@@ -194,6 +202,9 @@
               {#if question.allow_other || question.options.length === 0}
                 <div class="ask-own-words">
                   <ComposerField
+                    draftKey={`answer:${conversationId}:${draftRequestId}:${question.question_id}`}
+                    uploadDestination={{ kind: "conversation", id: conversationId, expected_conversation_id: conversationId }}
+                    bind:uploads={() => attachmentDrafts[question.question_id]?.uploads ?? [], (value) => { attachmentDrafts[question.question_id].uploads = value; }}
                     bind:images={() => attachmentDrafts[question.question_id]?.images ?? [], (value) => { attachmentDrafts[question.question_id].images = value; }}
                     bind:files={() => attachmentDrafts[question.question_id]?.files ?? [], (value) => { attachmentDrafts[question.question_id].files = value; }}
                     bind:intakeBusy={() => attachmentDrafts[question.question_id]?.busy ?? false, (value) => { attachmentDrafts[question.question_id].busy = value; }}

@@ -7,6 +7,7 @@
   import {
     completeUserInputAnswers,
     pendingAnswerAttachments,
+    rememberUserInputDraft, recallUserInputDraft, clearUserInputDraft, initialUserInputDraft,
     emptyUserInputDraft,
     toggleUserInputChoice,
     userInputOptionForKey,
@@ -15,15 +16,18 @@
     type UserInputDraft
   } from "../../lib/conversation/userInput";
   import type { Snippet } from "svelte";
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import ComposerField from "./ComposerField.svelte";
   import { releasePendingImages, type PendingConversationImage } from "../../lib/conversation/pendingImages";
+  import type { PendingAttachment, UploadDestination } from "../../lib/conversation/videoUploads/contracts";
+  import { clearAttachmentDraft, openAttachmentDraft, restoredPendingUploads } from "../../lib/conversation/videoUploads/uploads";
   import type { PendingConversationFile } from "../../lib/conversation/pendingFiles";
   import AskShell from "./AskShell.svelte";
   import AskOptionContent from "./AskOptionContent.svelte";
 
   let {
     request,
+    uploadDestination,
     busy = false,
     answerAvailable = true,
     note = null,
@@ -35,10 +39,12 @@
     ownAttachments = [],
     onQuestionDraftChange,
     acceptsOwnAnswer = $bindable(false),
+    activeQuestionId = $bindable(null),
     onOwnAnswerUsed,
     onWriteOwnAnswer,
     onSubmit
   }: {
+    uploadDestination: UploadDestination;
     request: { requestId: string; questions: readonly UserInputQuestion[] };
     busy?: boolean;
     answerAvailable?: boolean;
@@ -56,11 +62,12 @@
      *  docked right under the question). Null: the panel draws its own field for them. */
     ownAnswer?: string | null;
     ownAttachments?: UserInputAttachment[];
-    onQuestionDraftChange?: (questionId: string, text: string, attachments: UserInputAttachment[]) => void;
+    onQuestionDraftChange?: (questionId: string, text: string, attachments: UserInputAttachment[], preservePendingUploads?: boolean) => void;
     /** Whether the question on screen takes an own answer, for the composer to say so. */
     acceptsOwnAnswer?: boolean;
+    activeQuestionId?: string | null;
     /** The composer's words were taken as an answer, so the composer can let them go. */
-    onOwnAnswerUsed?: (requestId: string) => void;
+    onOwnAnswerUsed?: (requestId: string, questionIds: string[]) => void;
     /** The person chose "Something else": the composer takes the cursor. */
     onWriteOwnAnswer?: () => void;
     onSubmit?: (answers: UserInputAnswers) => Promise<boolean> | boolean | void;
@@ -69,9 +76,12 @@
   let step = $state(0);
   let draft = $state<UserInputDraft>(emptyUserInputDraft());
   let rememberedRequestId = $state("");
+  let rememberedConversationId = $state("");
+  let answerConversationId = $derived(uploadDestination.expected_conversation_id ?? uploadDestination.id);
   let attachmentDrafts = $state<Record<string, UserInputAttachment[]>>({});
-  let standaloneDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; busy: boolean }>>({});
+  let standaloneDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; uploads: PendingAttachment[]; busy: boolean }>>({});
   let submitting = $state(false);
+  let completedRequest = $state(false);
   function releaseStandalone(): void {
     for (const entry of Object.values(standaloneDrafts)) releasePendingImages(entry.images);
     standaloneDrafts = {};
@@ -80,13 +90,19 @@
   const uid = $props.id();
 
   $effect(() => {
-    if (request.requestId === rememberedRequestId) return;
+    if (request.requestId === rememberedRequestId && answerConversationId === rememberedConversationId) return;
     rememberedRequestId = request.requestId;
-    step = 0;
-    draft = emptyUserInputDraft();
-    attachmentDrafts = {};
+    rememberedConversationId = answerConversationId;
+    completedRequest = false;
+    const saved = untrack(() => recallUserInputDraft(answerConversationId, request));
+    const initial = untrack(() => initialUserInputDraft(request, saved, ownAnswer, ownAttachments));
+    step = initial.step;
+    draft = initial.draft;
+    attachmentDrafts = initial.attachmentsByQuestion;
     releaseStandalone();
-    standaloneDrafts = Object.fromEntries(request.questions.map((each) => [each.question_id, { images: [], files: [], busy: false }]));
+    standaloneDrafts = Object.fromEntries(request.questions.map((each) => [each.question_id, { images: [], files: [], uploads: ownAnswer === null ? openAttachmentDraft(`answer:${uploadDestination.id}:${request.requestId}:${each.question_id}`, restoredPendingUploads(attachmentDrafts[each.question_id] ?? [], uploadDestination)) : [], busy: false }]));
+    const selected = request.questions[step];
+    if (saved && selected && ownAnswer !== null) untrack(() => onQuestionDraftChange?.(selected.question_id, draft.other[selected.question_id] ?? "", attachmentDrafts[selected.question_id] ?? [], true));
   });
   /** Where the arrow keys are among the rows. v10 (4): nothing is pre-highlighted; a row
    *  lights only under the pointer or keyboard focus. */
@@ -98,9 +114,15 @@
   let currentAnswers = $derived(
     question === undefined ? [] : userInputAnswerFor(effectiveDraft, question)
   );
-  let allAttachments = $derived({ ...attachmentDrafts,
-    ...Object.fromEntries(Object.entries(standaloneDrafts).map(([id, entry]) => [id, pendingAnswerAttachments(entry.images, entry.files)])),
-    ...(question && ownAnswer !== null ? { [question.question_id]: ownAttachments } : {})
+  let allAttachments = $derived(ownAnswer !== null
+    ? { ...attachmentDrafts, ...(question ? { [question.question_id]: ownAttachments } : {}) }
+    : Object.fromEntries(Object.entries(standaloneDrafts).map(([id, entry]) => [id, pendingAnswerAttachments(entry.images, entry.files, entry.uploads)])));
+  $effect(() => {
+    const requestId = request.requestId;
+    const position = step;
+    const currentDraft = effectiveDraft;
+    const attached = allAttachments;
+    if (rememberedRequestId === requestId && rememberedConversationId === answerConversationId && !completedRequest) untrack(() => rememberUserInputDraft(answerConversationId, { requestId, step: position, draft: currentDraft, attachmentsByQuestion: attached }));
   });
   let currentAttachments = $derived(question ? allAttachments[question.question_id] ?? [] : []);
   let readingAttachments = $derived(Object.values(standaloneDrafts).some((entry) => entry.busy));
@@ -110,7 +132,7 @@
   let optionsElement = $state<HTMLDivElement | null>(null);
   let composerAnswers = $derived(ownAnswer !== null);
 
-  $effect(() => { acceptsOwnAnswer = question?.allow_other === true; });
+  $effect(() => { acceptsOwnAnswer = question?.allow_other === true; activeQuestionId = question?.question_id ?? null; });
 
   function captureCurrent(): void {
     if (!question) return;
@@ -204,11 +226,15 @@
     const answers = completeUserInputAnswers(draft, request.questions, attachments);
     if (answers !== null) {
       const submittedRequestId = request.requestId;
+      const submittedConversationId = answerConversationId;
       submitting = true;
       try {
         const accepted = await onSubmit?.(answers);
-        if (accepted === true && request.requestId === submittedRequestId) {
-          onOwnAnswerUsed?.(submittedRequestId);
+        if (accepted === true && request.requestId === submittedRequestId && answerConversationId === submittedConversationId) {
+          onOwnAnswerUsed?.(submittedRequestId, request.questions.map((each) => each.question_id));
+          completedRequest = true;
+          clearUserInputDraft(answerConversationId, submittedRequestId);
+          for (const each of request.questions) clearAttachmentDraft(`answer:${uploadDestination.id}:${submittedRequestId}:${each.question_id}`);
           releaseStandalone();
           attachmentDrafts = {};
         }
@@ -287,6 +313,8 @@
     {#if question.allow_other && !composerAnswers}
       <div class="other">
         <ComposerField
+          draftKey={`answer:${uploadDestination.id}:${request.requestId}:${question.question_id}`} {uploadDestination}
+          bind:uploads={() => standaloneDrafts[question.question_id]?.uploads ?? [], (value) => standaloneDrafts[question.question_id].uploads = value}
           bind:images={() => standaloneDrafts[question.question_id]?.images ?? [], (value) => standaloneDrafts[question.question_id].images = value}
           bind:files={() => standaloneDrafts[question.question_id]?.files ?? [], (value) => standaloneDrafts[question.question_id].files = value}
           bind:intakeBusy={() => standaloneDrafts[question.question_id]?.busy ?? false, (value) => standaloneDrafts[question.question_id].busy = value}

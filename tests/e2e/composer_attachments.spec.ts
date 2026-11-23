@@ -6,40 +6,81 @@
  * conversation placements, Review replies, and approval placements. Structured answers
  * use the existing question cases below, without a new server host or provider process.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Locator, Page, Response } from '@playwright/test';
 import {
-  api, captureSuccess, connectedMessage, expect, openPage, proposeAsWorker, test,
+  api, bindConversation, captureSuccess, connectedMessage, expect, openPage, proposeAsWorker, test,
   ticketPrincipal, WAIT_MS, withDatabase, type JsonObject, type ServerHandle,
 } from './support/fixtures.ts';
 import { createTicketConversation, getJson, openConversationLayer, post } from './support/conversation.ts';
+import { createVideoFixture } from './support/video.ts';
 
-type Attached = { name: string; text: string };
+type Attached = { name: string; bytes: Buffer; mediaType: string; uploadId?: string };
+const UPLOAD_ROOT = '/api/conversation/video-uploads';
+const BINARY_PATTERN = [0, 255, 128, 1, 13, 10, 65];
 
 /** Dispatch native browser file events on a control and the textarea, rather than a picker. */
-async function dropAndPaste(scope: Locator, input: Locator, label: string): Promise<Attached[]> {
-  const picked = [
-    { name: `${label}-drop.md`, text: `# Dropped bytes for ${label}\n` },
-    { name: `${label}-paste.txt`, text: `Pasted bytes for ${label}\n` },
+async function dropAndPaste(scope: Locator, input: Locator, label: string, video: Buffer, largeBinary = false): Promise<Attached[]> {
+  const picked: Attached[] = [
+    { name: `${label}-drop.mp4`, bytes: video, mediaType: 'video/mp4' },
+    { name: `${label}-paste.bin`, bytes: Buffer.alloc(largeBinary ? 20 * 1024 * 1024 + 1 : 257, Buffer.from(BINARY_PATTERN)), mediaType: 'application/octet-stream' },
   ];
+  const page = input.page();
+  const reserved: Response[] = [];
+  const transferred: Response[] = [];
+  const track = (response: Response) => {
+    if (response.request().method() === 'POST' && response.url().endsWith(UPLOAD_ROOT)) reserved.push(response);
+    if (response.request().method() === 'PUT' && response.url().includes(UPLOAD_ROOT) && response.url().endsWith('/bytes')) transferred.push(response);
+  };
+  page.on('response', track);
   const surface = input.locator('xpath=ancestor::*[@data-composer-attachment-surface][1]');
   await expect(surface).toHaveCount(1);
+  // All placements use the same unrestricted picker policy as drop and paste.
+  const picker = surface.locator('input[type=file]');
+  await expect(picker).toHaveCount(1);
+  expect([null, '']).toContain(await picker.getAttribute('accept'));
   // The control is inside the composer: its bubbled event must reach the shared surface once.
   const control = surface.locator('button').first();
   await control.evaluate((node, attachment) => {
     const transfer = new DataTransfer();
-    transfer.items.add(new File([attachment.text], attachment.name, { type: 'text/markdown' }));
+    const bytes = Uint8Array.from(atob(attachment.base64), (character) => character.charCodeAt(0));
+    transfer.items.add(new File([bytes], attachment.name, { type: 'video/mp4' }));
     for (const name of ['dragenter', 'dragover', 'drop'])
       node.dispatchEvent(new DragEvent(name, { dataTransfer: transfer, bubbles: true, cancelable: true }));
-  }, picked[0]);
-  await expect(scope.locator('.chat-att.file')).toContainText([picked[0].name]);
+  }, { name: picked[0].name, base64: video.toString('base64') });
+  await expect(scope.locator('.chat-att')).toHaveCount(1);
+  await expect.poll(() => transferred.length, { timeout: WAIT_MS }).toBe(1);
+  expect(transferred[0].ok(), await transferred[0].text()).toBe(true);
+  const first = await transferred[0].json();
+  expect(first.state).toBe('ready');
+  await expect(input).toBeEnabled();
   await input.evaluate((node, attachment) => {
     const transfer = new DataTransfer();
-    transfer.items.add(new File([attachment.text], attachment.name, { type: 'text/plain' }));
+    // Construct the large binary locally in Chromium, without a large test-protocol JSON body.
+    const bytes = new Uint8Array(attachment.size);
+    for (let index = 0; index < bytes.length; index++) bytes[index] = attachment.pattern[index % attachment.pattern.length];
+    transfer.items.add(new File([bytes], attachment.name, { type: 'application/octet-stream' }));
     node.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
-  }, picked[1]);
-  await expect(scope.locator('.chat-att.file')).toContainText(picked.map((file) => file.name));
+  }, { name: picked[1].name, size: picked[1].bytes.length, pattern: BINARY_PATTERN });
+  const previews = scope.locator('.chat-att');
+  await expect(previews).toHaveCount(2);
+  for (const [index, file] of picked.entries())
+    await expect.poll(async () => (await previews.nth(index).getAttribute('title'))?.split(' · ')[0]).toBe(file.name);
+  await expect.poll(() => transferred.length, { timeout: WAIT_MS }).toBe(2);
+  expect(reserved).toHaveLength(2);
+  for (const [index, file] of picked.entries()) {
+    const response = transferred[index];
+    expect(response.ok(), await response.text()).toBe(true);
+    const status = await response.json();
+    expect(status.state).toBe('ready');
+    expect(status.filename).toBe(file.name);
+    expect(status.media_type).toBe(file.mediaType);
+    expect(status.received_bytes).toBe(file.bytes.length);
+    expect((await reserved[index].json()).upload_id).toBe(status.upload_id);
+    file.uploadId = status.upload_id;
+  }
+  page.off('response', track);
   await expect(input).toBeEnabled();
   return picked;
 }
@@ -51,12 +92,10 @@ function artifact(server: ServerHandle, ticketId: string, label: string): string
   return `[${label}](/files/tickets/${ticketId}/artifacts/${label}.md)`;
 }
 
-/** Check uploaded bytes, and not just the preview labels. */
+/** The submit carries only immutable upload identities, never file bytes in JSON. */
 function expectUploadPieces(pieces: JsonObject[], attached: Attached[]): void {
-  const files = pieces.filter((piece) => piece.piece === 'file');
-  expect(files.map((file) => file.file_name)).toEqual(attached.map((file) => file.name));
-  for (let index = 0; index < attached.length; index++)
-    expect(Buffer.from(files[index].data, 'base64').toString('utf8')).toBe(attached[index].text);
+  const files = pieces.filter((piece) => piece.piece !== 'text');
+  expect(files).toEqual(attached.map((file) => ({ piece: 'attachment_upload', upload_id: file.uploadId })));
 }
 
 /** The real core must keep each file once and serve the exact accepted bytes. */
@@ -66,7 +105,7 @@ async function expectStoredPieces(server: ServerHandle, conversation: string, pi
   for (let index = 0; index < attached.length; index++) {
     const response = await fetch(`${server.base}/api/conversation/conversations/${conversation}/files/${files[index].stored_file_id}`);
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe(attached[index].text);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(attached[index].bytes);
   }
 }
 
@@ -76,6 +115,17 @@ async function expectPromptFiles(server: ServerHandle, conversation: string, att
     (event.payload.content ?? []).some((piece: JsonObject) => piece.file_name === attached[0].name));
   expect(matching).toHaveLength(1);
   await expectStoredPieces(server, conversation, matching[0].payload.content, attached);
+}
+
+/** A decision pins ready uploads until the next Worker receives their managed references. */
+async function expectPinnedDecisionFiles(server: ServerHandle, attachments: Attached[]): Promise<void> {
+  for (const file of attachments) {
+    const status = await getJson(server, `${UPLOAD_ROOT}/${file.uploadId}`);
+    expect(status.state).toBe('admitted');
+    expect(status.filename).toBe(file.name);
+    expect(status.media_type).toBe(file.mediaType);
+    expect(readFileSync(join(dirname(server.dbPath), 'files', 'video-uploads', file.uploadId!))).toEqual(file.bytes);
+  }
 }
 
 async function sent(page: Page, path: string, action: () => Promise<void>): Promise<Response> {
@@ -105,6 +155,7 @@ async function expectStructuredAnswer(server: ServerHandle, conversation: string
 test('drop and paste reach conversation sends in every placement and structured answers', async ({ signalServer, newContext }) => {
   const started = performance.now();
   const server = signalServer;
+  const video = readFileSync(createVideoFixture(join(server.root, 'composer-video')));
   const context = await newContext();
   for (const placement of ['dock', 'expanded', 'artifact', 'structured'] as const) {
     const conversation = `attachment-conversation-${placement}`;
@@ -115,6 +166,10 @@ test('drop and paste reach conversation sends in every placement and structured 
     if (link) await connectedMessage(server, conversation, ticketPrincipal(ticket), link);
     const page = await openPage(context, server, `#/workspace/${ticket}`, '[data-conversation-input]');
     page.setDefaultTimeout(WAIT_MS);
+    const ordinarySends: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().includes('/conversation/send')) ordinarySends.push(request.url());
+    });
     await page.setViewportSize({ width: 1440, height: 1000 });
     if (placement !== 'dock') await openConversationLayer(page);
     if (placement === 'structured') {
@@ -130,15 +185,26 @@ test('drop and paste reach conversation sends in every placement and structured 
     const composer = page.locator('[data-conversation-box]');
     const input = composer.locator('[data-conversation-input]');
     await input.fill(placement === 'structured' ? 'The files answer the question.' : `Files from ${placement}`);
-    const attachments = await dropAndPaste(composer, input, `conversation-${placement}`);
+    const attachments = await dropAndPaste(composer, input, `conversation-${placement}`, video);
     if (placement === 'dock') await expect(page.locator('[data-conversation-pane]')).toHaveAttribute('data-conversation-state', 'rest');
     if (placement === 'expanded') await expect(page.locator('[data-conversation-pane]')).toHaveAttribute('data-conversation-state', 'opened');
     if (placement === 'artifact') await expect(page.locator('[data-ticket-artifact]')).toBeVisible();
+    if (placement === 'structured') {
+      // The later question owns these ready upload identities across a new document.
+      const reloadStarted = performance.now();
+      await page.reload();
+      await page.waitForSelector('[data-conversation-rest-bar]', { timeout: WAIT_MS });
+      if (await page.locator('[data-conversation-pane]').getAttribute('data-conversation-state') !== 'opened')
+        await openConversationLayer(page);
+      await expect(page.locator('[data-user-input-panel]')).toContainText('What proof should be required?');
+      await expect(input).toHaveValue('The files answer the question.');
+      const restored = composer.locator('.chat-att');
+      await expect(restored).toHaveCount(2);
+      for (const [index, file] of attachments.entries())
+        await expect.poll(async () => (await restored.nth(index).getAttribute('title'))?.split(' · ')[0]).toBe(file.name);
+      console.log(`Structured answer reload boundary: ${((performance.now() - reloadStarted) / 1000).toFixed(2)}s`);
+    }
     await captureSuccess(page, `attachments-conversation-${placement}.png`);
-    const ordinarySends: string[] = [];
-    page.on('request', (request) => {
-      if (request.method() === 'POST' && request.url().includes('/conversation/send')) ordinarySends.push(request.url());
-    });
     const response = await sent(page, placement === 'structured' ? '/user-input-answers' : `/api/tickets/${ticket}/conversation/send`, () => composer.locator('[data-conversation-send]').click());
     if (placement === 'structured') {
       await expectStructuredAnswer(server, conversation, response, attachments, ordinarySends);
@@ -152,9 +218,10 @@ test('drop and paste reach conversation sends in every placement and structured 
   console.log(`Conversation attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing signal host`);
 });
 
-test('drop and paste reach Review replies, artifact bars, and structured answers', async ({ signalServer, newContext }) => {
+test('drop and paste reach Review replies, artifact bars, structured answers, and the final Chief composer', async ({ signalServer, newContext }) => {
   const started = performance.now();
   const server = signalServer;
+  const video = readFileSync(createVideoFixture(join(server.root, 'composer-video')));
   const context = await newContext();
   for (const placement of ['card', 'artifact', 'structured'] as const) {
     const conversation = `attachment-review-${placement}`;
@@ -177,7 +244,7 @@ test('drop and paste reach Review replies, artifact bars, and structured answers
       : placement === 'structured' ? page.locator('[data-review-ask="question"]') : page.locator('[data-review-item-type="message"]');
     const input = placement === 'structured' ? scope.locator('[data-review-ask-own-words]').last() : scope.locator('[data-review-reply]');
     await input.fill(placement === 'structured' ? 'The files answer the question.' : `Reply from ${placement}`);
-    const attachments = await dropAndPaste(scope, input, `review-${placement}`);
+    const attachments = await dropAndPaste(scope, input, `review-${placement}`, video, placement === 'artifact');
     await captureSuccess(page, `attachments-review-${placement}.png`);
     const ordinarySends: string[] = [];
     page.on('request', (request) => {
@@ -195,12 +262,41 @@ test('drop and paste reach Review replies, artifact bars, and structured answers
     }
     await page.close();
   }
+  // The queue's final form is another real placement of the shared reply composer.
+  const chiefConversation = 'attachment-review-final-chief';
+  await post(server, `/api/test/signals/${chiefConversation}/start`);
+  await bindConversation(server, 'agent', 'chief_of_staff', chiefConversation);
+  await post(server, `/api/test/signals/${chiefConversation}/finish`);
+  const page = await openPage(context, server, '#/review', '[data-review-chief-composer]');
+  page.setDefaultTimeout(WAIT_MS);
+  await expect(page.locator('[data-review-empty]')).toBeVisible();
+  const chief = page.locator('[data-review-chief-composer]');
+  const input = chief.locator('[data-review-reply]');
+  const chiefText = 'Chief, review the attached recording and binary file.';
+  await input.fill(chiefText);
+  const attachments = await dropAndPaste(chief, input, 'review-final-chief', video);
+  await captureSuccess(page, 'attachments-review-final-chief.png');
+  const chiefSends: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/api/chief/conversation/send')) chiefSends.push(request.url());
+  });
+  const response = await sent(page, '/api/chief/conversation/send', () => chief.locator('[data-review-send]').click());
+  expect((await response.json()).fate).toBe('started');
+  expectUploadPieces(response.request().postDataJSON().content, attachments);
+  await expectPromptFiles(server, chiefConversation, attachments);
+  const received: string[] = (await getJson(server, `/api/test/signals/${chiefConversation}/delivered`)).texts;
+  expect(received.filter((text) => text.includes(chiefText))).toHaveLength(1);
+  expect(chiefSends).toEqual([`${server.base}/api/chief/conversation/send`]);
+  await expect(chief.locator('.chat-att')).toHaveCount(0);
+  await expect(chief.locator('[role="status"]')).toContainText('Sent to Chief');
+  await page.close();
   console.log(`Review reply attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing signal host`);
 });
 
 test('drop and paste reach approval notes on Ticket and Review, including artifact bars', async ({ railServer, newContext }) => {
   const started = performance.now();
   const server = railServer;
+  const video = readFileSync(createVideoFixture(join(server.root, 'composer-video')));
   const context = await newContext();
   const project = await api.post(server, '/api/projects', { name: 'All approval attachment placements' });
   for (const placement of ['ticket', 'ticket-artifact', 'review', 'review-artifact'] as const) {
@@ -224,7 +320,7 @@ test('drop and paste reach approval notes on Ticket and Review, including artifa
     const scope = link ? page.locator('[data-artifact-bar]') : page.locator('[data-approval-block]');
     const input = scope.locator('[data-revision-note], [data-review-revision-input]');
     await input.fill(`Please use the files from ${placement}.`);
-    const attachments = await dropAndPaste(scope, input, `approval-${placement}`);
+    const attachments = await dropAndPaste(scope, input, `approval-${placement}`, video);
     await captureSuccess(page, `attachments-approval-${placement}.png`);
     const response = await sent(page, `/api/tickets/${id}/decision-operations/`, () => scope.locator('[data-send-back]').click());
     expect((await response.json()).receipt.outcome).toBe('applied');
@@ -233,6 +329,7 @@ test('drop and paste reach approval notes on Ticket and Review, including artifa
       'SELECT command_json FROM ticket_decision_operations WHERE ticket_id=?', [id],
     )));
     expectUploadPieces(JSON.parse(saved!.command_json).attachments, attachments);
+    await expectPinnedDecisionFiles(server, attachments);
     await page.close();
   }
   console.log(`Approval attachment placements: ${((performance.now() - started) / 1000).toFixed(2)}s, one existing rail host`);

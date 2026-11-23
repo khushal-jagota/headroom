@@ -161,7 +161,7 @@ export type UserInputQuestion = {
 };
 
 /** Upload pieces belong to the question whose free-text answer receives their file references. */
-export type UserInputAttachment = Extract<SentMessagePiece, { piece: "image" | "file" }>;
+export type UserInputAttachment = Extract<SentMessagePiece, { piece: "image" | "file" | "attachment_upload" | "video_upload" }>;
 export type UserInputAnswers = Record<string, { answers: string[]; attachments?: UserInputAttachment[] }>;
 /** Stored answers refer to managed files rather than browser upload bytes. */
 export type RecordedUserInputAnswers = Record<string, { answers: string[]; attachments?: MessagePiece[] }>;
@@ -488,7 +488,8 @@ export type SentMessagePiece =
   | { piece: "text"; text: string }
   | { piece: "image"; data: string; media_type: string; file_name?: string }
   | { piece: "file"; data: string; media_type: string; file_name: string }
-  | { piece: "video_upload"; upload_id: string };
+  | { piece: "video_upload"; upload_id: string }
+  | { piece: "attachment_upload"; upload_id: string };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];

@@ -27,6 +27,34 @@ type TestWindow = Window & {
   __artifactCompromised?: boolean;
 };
 
+/** A field edit can still resize the dock after its open/close transition finishes. */
+async function settleArtifactDock(page: Page): Promise<void> {
+  await page.locator('[data-conversation-box]').evaluate(async (box, timeout) => {
+    const deadline = performance.now() + timeout;
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    let previous = '';
+    let stableFrames = 0;
+    while (performance.now() < deadline) {
+      // Only the box's own finite height morphs: child status shimmers can run forever.
+      const animations = box.getAnimations().filter((animation) =>
+        Number.isFinite(animation.effect?.getComputedTiming().endTime) && animation.playState !== 'finished');
+      await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+      await frame();
+      const geometry = JSON.stringify([
+        box, box.closest('[data-conversation-dock-state]'), document.querySelector('[data-ticket-artifact]'),
+        document.querySelector('iframe[data-file-preview-html]'),
+      ].map((node) => {
+        const rect = node?.getBoundingClientRect();
+        return rect ? [rect.x, rect.y, rect.width, rect.height] : null;
+      }));
+      stableFrames = animations.length === 0 && geometry === previous ? stableFrames + 1 : 0;
+      previous = geometry;
+      if (stableFrames >= 2) return;
+    }
+    throw new Error('The composer and artifact dock did not settle before the retention check.');
+  }, WAIT_MS);
+}
+
 /** Production hosts retain page state while conversation covers it. */
 async function proveDockArtifactRetention(page: Page, label: string, evidence: string | undefined): Promise<void> {
   const artifact = page.locator('[data-ticket-artifact]');
@@ -47,6 +75,7 @@ async function proveDockArtifactRetention(page: Page, label: string, evidence: s
     await page.locator('[data-conversation-collapse]').click({ timeout: WAIT_MS });
   await expect(pane).toHaveAttribute('data-conversation-state', 'rest');
   await expect(settledDock).toHaveCount(1, { timeout: WAIT_MS });
+  await settleArtifactDock(page);
   await frame.locator('[data-retained-form]').fill('Keep this artifact value');
   await frame.locator('[data-bottom-control]').click({ timeout: WAIT_MS });
   await expect(frame.locator('[data-bottom-control]')).toHaveText('Bottom control works');
@@ -79,6 +108,7 @@ async function proveDockArtifactRetention(page: Page, label: string, evidence: s
   await page.locator('[data-conversation-collapse]').click({ timeout: WAIT_MS });
   await expect(pane).toHaveAttribute('data-conversation-state', 'rest', { timeout: WAIT_MS });
   await expect(settledDock).toHaveCount(1, { timeout: WAIT_MS });
+  await settleArtifactDock(page);
   await expect(draft).toHaveValue('Keep this draft through full conversation');
   expect(
     await iframe.evaluate((node) => node === (window as unknown as TestWindow).__retainedArtifactFrame),

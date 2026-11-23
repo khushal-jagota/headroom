@@ -455,7 +455,7 @@
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key pageProposalKey}
-                    <WorkerProposalCard ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
+                    <WorkerProposalCard conversationId={detail.conversation_id} ticketId={stableId} proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
                       ceiling={detail.ceiling} holder={detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(detail.conversation_id)}
                       onAccept={async () => {}}
                       onScope={updateScope}
@@ -524,7 +524,7 @@
       {#snippet proposalBar()}
         {#if section && pageProposal}
           {#key pageProposalKey}
-            <WorkerProposalCard composerOnly ticketId={stableId} proposal={pageProposal} lifecycle={section.lifecycle} stage={section.detail.stage}
+            <WorkerProposalCard conversationId={section.detail.conversation_id} composerOnly ticketId={stableId} proposal={pageProposal} lifecycle={section.lifecycle} stage={section.detail.stage}
               ceiling={section.detail.ceiling} holder={section.detail.ceiling_holder} manager={ticketManager} canReturn={Boolean(section.detail.conversation_id)}
               bind:revisionText={proposalNote} initialEditedBody={proposalEditedBody}
               onAccept={async () => { if (routeMounted) artifact.close(); }}

@@ -14,7 +14,7 @@ Items about one Ticket share a card. A Manager's or Chief's ask is a card of its
 
 Review reads other records. Membership and order come from the navigation index, which tracks attention without a read of every conversation. Actions use the ordinary writers: decisions use the proposal resolver, replies use Send Message, read marks update the conversation, and answers use the conversation's own answer routes. Each action clears only what that card showed. The card on screen stays that card until the person acts or it leaves. The next card is the oldest one still waiting at that moment, and that choice stays when the queue refreshes.
 
-The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either explicit decision. Every composer shares the same attachment behavior: the + button, file paste, and a drop onto the whole box. Replies and free-text question answers also take attachments, including beneath an open artifact. They go with the decision and reach the Worker with the note. Text entry never chooses a proposal decision. Both decisions use the displayed proposal revision, so a replacement proposal cannot receive the old decision. Skipping a card defers it for this visit only.
+The proposal on a card is the same approval surface as on the Ticket page. Both keep one note box beside Approve and Send it back. The note goes with either explicit decision. Every composer shares one picker, file paste, and a drop onto the whole box. Replies, approval notes, and free-text question answers accept the same file types and sizes, including videos and controls beneath an open artifact. They go with the decision and reach the Worker with the note. Text entry never chooses a proposal decision. Both decisions use the displayed proposal revision, so a replacement proposal cannot receive the old decision. Skipping a card defers it for this visit only.
 
 Approve and Send back submit the complete note with the exact visible proposal. The successful decision saves one attributed instruction for the Worker. A stale proposal fails without a success message. Retries keep the same decision identity and cannot duplicate the decision or its instruction.
 
@@ -55,4 +55,4 @@ The Ticket page follows the same rule. A file linked from its proposal opens wit
 - `web/src/lib/review/deckMotion.ts`: the moves, and `web/src/components/ReviewDeck.svelte`, which holds the one thing on screen.
 - `ios/Panels/Features/Review/`: the native pass and its saved-work snapshot.
 
-_Last verified: 2026-11-22._
+_Last verified: 2026-11-23._

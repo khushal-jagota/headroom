@@ -1,9 +1,8 @@
-import { orderedComposerAttachments, replaceQuestionAttachmentOrder } from "../src/components/conversation/composer/attachments";
 import { mintOutgoingMessage, reserveOutgoingMessageImages, resetOutgoingImageReservationsForTest } from "../src/lib/conversation/outgoing";
 import { describe, expect, it, vi } from "vitest";
 import { beginComposerSend, restoreRefusedComposerSend, type ComposerDraft } from "../src/components/conversation/composer/draftTransaction";
 import { LocalComposerSends, releaseRemovedLocalSends, pendingSendContent, recallLocalSends, rememberLocalSends, type PendingComposerSend } from "../src/lib/conversation/videoUploads/localSends";
-import { VideoTransfers } from "../src/lib/conversation/videoUploads/uploads";
+import { AttachmentTransfers, VideoTransfers, pendingUploadsAsPieces, restoredPendingUploads, openAttachmentDraft, attachmentTransfersFor, liveAttachmentDrafts, clearAttachmentDraft } from "../src/lib/conversation/videoUploads/uploads";
 import type { PendingVideo, UploadDestination, VideoUploadAdapter, VideoUploadStatus } from "../src/lib/conversation/videoUploads/contracts";
 
 const destination: UploadDestination = {kind: "ticket", id: "t_video", expected_conversation_id: null};
@@ -45,7 +44,7 @@ describe("video attachment send intent", () => {
     const laterDraft = {...draft(), text: "later words", pickedModel: "another-model"};
     expect(laterDraft.text).not.toBe(first.attempt.draftBeforeSend.text);
     attachment.phase = "ready";
-    expect(pendingSendContent(first).at(-1)).toEqual({piece: "video_upload", upload_id: "ready-token"});
+    expect(pendingSendContent(first).at(-1)).toEqual({piece: "attachment_upload", upload_id: "ready-token"});
     await queue.pump(); expect(sent).toEqual(["first", "second"]); expect(queue.entries).toEqual([]);
   });
 
@@ -67,7 +66,7 @@ describe("video attachment send intent", () => {
     // Retrying a draft still has no send intent.
     await uploads.start(attachment); expect(attachment.phase).toBe("ready");
     expect(dispatch).not.toHaveBeenCalled();
-    attachment.phase = "failed";
+    attachment.phase = "failed"; attachment.file = file;
     queue.enqueue(entry(attachment)); await uploads.start(attachment); await queue.pump();
     expect(adapter.transfer).toHaveBeenCalledTimes(3);
     expect(adapter.cancel).toHaveBeenCalledWith("upload-1");
@@ -147,15 +146,49 @@ describe("video attachment send intent", () => {
   });
 });
 
-// A video can already exist when a structured question arrives. Its tile must not disappear
-// when the answer pager replaces image/file drafts, because the later message still sends it.
-it("keeps an existing video visible through question draft replacement and answer completion", () => {
-  const pending = video(); pending.uploadId = "kept-video"; pending.phase = "ready";
-  const before = draft(pending);
-  const questionOrder = replaceQuestionAttachmentOrder(before.attachmentOrder!, [], [{ id: 9 }]);
-  const afterAnswer = replaceQuestionAttachmentOrder(questionOrder, [], []);
-  const visible = orderedComposerAttachments(afterAnswer, [], [], [pending]);
-  expect(visible.map((attachment) => attachment.kind)).toEqual(["video"]);
-  const sent = beginComposerSend({ ...before, attachmentOrder: afterAnswer }, { model: null, reasoningEffort: null });
-  expect(sent.content.filter((piece) => piece.piece === "video_upload")).toEqual([{ piece: "video_upload", upload_id: "kept-video" }]);
+// Generic tokens must survive the same ready-reference reload boundary as video did.
+it("accepts arbitrary and empty files under one cap, and restores ready refs without file bytes", async () => {
+  const transfers = new AttachmentTransfers({ reserve: vi.fn(), transfer: vi.fn(), status: vi.fn(async () => ({ ...status("binary-token"), filename: "archive.bin", byte_count: 24 * 1024 * 1024, received_bytes: 24 * 1024 * 1024, media_type: "application/octet-stream" })), cancel: vi.fn() }, () => {});
+  const empty = transfers.create({ name: "empty.unknown", size: 0, type: "" } as File, 1, destination);
+  expect(empty.byteCount).toBe(0);
+  const selected = transfers.create({ name: "archive.bin", size: 24 * 1024 * 1024, type: "application/octet-stream" } as File, 2, destination);
+  selected.phase = "ready"; selected.uploadId = "binary-token";
+  expect(() => transfers.create({ name: "too-large.bin", size: 250 * 1024 * 1024 + 1 } as File, 3, destination)).toThrow("250 MiB");
+  const pieces = pendingUploadsAsPieces([selected]);
+  expect(pieces).toEqual([{ piece: "attachment_upload", upload_id: "binary-token" }]);
+  const [restored] = restoredPendingUploads(pieces, destination);
+  expect(restored.phase).toBe("validating"); expect(restored.file).toBeUndefined();
+  await transfers.validate(restored);
+  expect(restored.fileName).toBe("archive.bin"); expect(restored.byteCount).toBe(24 * 1024 * 1024);
+  expect(pendingUploadsAsPieces([restored])).toEqual(pieces);
+});
+
+// An artifact mounts a second composer over the same draft while a transfer can still run.
+// Reuse the current adapter fixture to prove it keeps one owner and releases accepted refs.
+it("keeps a pending streamed file across composer remounts and clears its ready reference", async () => {
+  const store = new Map<string, string>();
+  vi.stubGlobal("window", {sessionStorage: {getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key)}});
+  const transfer = deferred<VideoUploadStatus>();
+  const adapter = { reserve: vi.fn(async () => status("shared-file")), transfer: vi.fn(async () => transfer.promise), status: vi.fn(async () => status("shared-file")), cancel: vi.fn(async () => {}) };
+  const firstOwner = attachmentTransfersFor("artifact-draft", adapter);
+  const pending = firstOwner.create(file, 1, destination);
+  const ready = { ...pending, id: 0, uploadId: "older-ready", phase: "ready" as const, file: undefined };
+  openAttachmentDraft("artifact-draft", [ready, pending]);
+  const completing = firstOwner.start(pending);
+  const secondOwner = attachmentTransfersFor("artifact-draft", adapter);
+  expect(secondOwner).toBe(firstOwner);
+  const reopened = openAttachmentDraft("artifact-draft", [{ ...ready }]);
+  expect(reopened).toEqual([ready, pending]);
+  expect(reopened[1]).toBe(pending);
+  await Promise.resolve();
+  transfer.resolve(status("shared-file"));
+  await completing;
+  expect(adapter.transfer).toHaveBeenCalledOnce();
+  expect(pending.file).toBeUndefined();
+  expect(pendingUploadsAsPieces(liveAttachmentDrafts.get("artifact-draft")!)).toEqual([{piece:"attachment_upload",upload_id:"older-ready"},{piece:"attachment_upload",upload_id:"shared-file"}]);
+  clearAttachmentDraft("artifact-draft");
+  expect(liveAttachmentDrafts.get("artifact-draft")).toEqual([]);
+  expect(openAttachmentDraft("artifact-draft", [{ ...ready }])).toEqual([]);
+  expect([...store.values()].join("")).not.toContain("shared-file");
 });

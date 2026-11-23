@@ -13,7 +13,7 @@ it("reopens an uncertain outgoing send with the same exact run intent and old ab
   }});
   resetOutgoingImageReservationsForTest();
   try {
-    const message = mintOutgoingMessage({content:[{piece:"text",text:"exact words"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, pickedBackend:"claude"});
+    const message = mintOutgoingMessage({content:[{piece:"text",text:"exact words"},{piece:"attachment_upload",upload_id:"binary-ready-reference"}], senderLabel:"owner", mode:"queue", pickedModel:"opus", pickedReasoningEffort:null, effortIsSet:true, pickedBackend:"claude"});
     const old = mintOutgoingMessage({content:[{piece:"text",text:"old words"}], senderLabel:"owner", mode:"queue"});
     // A backend the apps do not name keeps its key, so the held prompt does not restart elsewhere.
     const fourth = mintOutgoingMessage({content:[{piece:"text",text:"fourth driver"}], senderLabel:"owner", mode:"queue", pickedBackend:"scripted-agent"});
@@ -24,6 +24,7 @@ it("reopens an uncertain outgoing send with the same exact run intent and old ab
     const [reopened, historical, heldForFourth, reopenedResend] = await recallOutgoingMessages("canonical-retry");
     expect(sendBodyFor({message:reopenedResend!, current:{model:null,reasoningEffort:null}, picked:{model:null,reasoningEffort:null}, conversationId:"c"})).toMatchObject({reconciles_sequence:41});
     expect(heldForFourth).toMatchObject({pickedBackend:"scripted-agent"});
+    expect(reopened.content).toEqual(message.content);
     expect(reopened).toMatchObject({pickedModel:"opus",pickedReasoningEffort:null,effortIsSet:true,pickedBackend:"claude",knownFate:"sent_before_this_page"});
     const body = sendBodyFor({message:reopened, current:{model:"sonnet",reasoningEffort:"high"}, picked:{model:reopened.pickedModel ?? null, reasoningEffort:reopened.pickedReasoningEffort ?? null, effortIsSet:reopened.effortIsSet, backendKey:reopened.pickedBackend}, conversationId:null});
     expect(body).toMatchObject({model:"opus",reasoning_effort:null,backend_key:"claude",sender_message_id:message.messageId});

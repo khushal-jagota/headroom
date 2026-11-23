@@ -1,3 +1,4 @@
+import ReviewReplyInput from "../src/components/ReviewReplyInput.svelte";
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error -- the tests' type check has no Node types; vitest runs in Node.
@@ -118,4 +119,15 @@ describe("a send from the dock that was not delivered", () => {
     expect(body).toMatch(/data-conversation-system-mark="failure"[\s\S]*Not delivered<span aria-hidden="true"> · <\/span>The Mac is offline/);
     expect(body).toContain("data-conversation-undelivered-note");
   });
+});
+
+// A linked token can fail ready validation after a lost response. Receipt lookup needs no
+// new upload admission, so the existing attempt must remain checkable while a fresh send waits.
+it("keeps receipt lookup available while a fresh reply waits for attachment readiness", () => {
+  const props = { draftKey: "receipt-lookup", uploadDestination: { kind: "chief" as const, id: "chief", expected_conversation_id: "c" }, text: "kept words", intakeBusy: true, disabled: true, onSend: async () => {}, onError: () => {}, sendLabel: "Check delivery" };
+  const receipt = render(ReviewReplyInput, { props: { ...props, allowEmpty: true } }).body;
+  const fresh = render(ReviewReplyInput, { props }).body;
+  expect(receipt).toMatch(/<button[^>]*data-review-send[^>]*>/);
+  expect(receipt).not.toMatch(/<button[^>]*disabled[^>]*data-review-send/);
+  expect(fresh).toMatch(/<button[^>]*disabled[^>]*data-review-send/);
 });

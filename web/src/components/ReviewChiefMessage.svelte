@@ -1,5 +1,7 @@
 <script lang="ts">
   import {onMount,untrack} from 'svelte';
+  import {pendingUploadsAsPieces,restoredPendingUploads,openAttachmentDraft,clearAttachmentDraft} from '../lib/conversation/videoUploads/uploads';
+  import type {PendingAttachment,UploadDestination} from '../lib/conversation/videoUploads/contracts';
   import ReviewReplyInput from './ReviewReplyInput.svelte';
   import {PlannerFetchError} from '../lib/api';
   import {mutateJson} from '../lib/mutate';
@@ -18,6 +20,8 @@
   let {onBusy}:{onBusy?:(busy:boolean)=>void}=$props();
   const navigation=navigationApplication();
   let text=$state(untrack(()=>readComposerDraft(chiefDraftKey)));
+  let uploads=$state<PendingAttachment[]>([]);
+  let uploadDestination=$state<UploadDestination>({kind:'chief',id:'chief',expected_conversation_id:null});
   let files=$state.raw<PendingConversationFile[]>([]);
   let images=$state.raw<PendingConversationImage[]>([]);
   let attempt=$state.raw<ChiefMessageAttempt|null>(null);
@@ -28,21 +32,24 @@
   let note=$state('');
   let isError=$state(false);
   let destroyed=false;
-  let disabled=$derived(busy || intakeBusy || !ready || attempt!==null);
-  $effect(()=>onBusy?.(busy || intakeBusy || voiceActive));
+  let disabled=$derived(busy || !ready || attempt!==null);
+  $effect(()=>{const active=busy || intakeBusy || voiceActive;untrack(()=>onBusy?.(active));});
   $effect(()=>{
     if(ready){
-      const content=[...pendingImagesAsPieces(images),...pendingFilesAsPieces(files)];
+      const content=[...pendingImagesAsPieces(images),...pendingFilesAsPieces(files),...pendingUploadsAsPieces(uploads)];
       void saveReviewDraft(chiefAttachmentDraftId,content).then(saved=>{if(!saved)showError(new Error('The attachment could not be saved in this browser.'));}).catch(showError);
     }
   });
   function showError(problem:unknown){if(problem===null){note='';isError=false;return;}note=problem instanceof Error?problem.message:String(problem);isError=true;}
   onMount(()=>{
     void (async()=>{
-      const [content,saved]=await Promise.all([readReviewDraft(chiefAttachmentDraftId),readChiefAttempt()]);
+      const [content,saved,pointer]=await Promise.all([readReviewDraft(chiefAttachmentDraftId),readChiefAttempt(),readChiefPointer()]);
       if(destroyed)return;
       const pictures=restoredPendingImages(content,0);images=pictures.images;
       files=restoredPendingFiles(content,pictures.nextId).files;
+      uploadDestination={kind:'chief',id:'chief',expected_conversation_id:pointer.conversation_id};
+      const restored=restoredPendingUploads(content,uploadDestination);
+      uploads=openAttachmentDraft(chiefDraftKey,restored);
       attempt=saved;
       if(saved){note='Delivery is not confirmed. Check delivery before you send again.';isError=true;}
       ready=true;
@@ -60,8 +67,9 @@
     const localChanged=text.trim()!==attemptedText;
     text=storedChanged?storedText:localChanged?text:'';
     if(!storedChanged)writeComposerDraft(chiefDraftKey,text);
-    releasePendingImages(images);images=[];files=[];
+    releasePendingImages(images);images=[];files=[];uploads=[];clearAttachmentDraft(chiefDraftKey);
     await saveReviewDraft(chiefAttachmentDraftId,[]);
+    uploadDestination={kind:'chief',id:'chief',expected_conversation_id:(await readChiefPointer()).conversation_id};
     note=message;isError=false;
   }
   async function keepDraft(message:string):Promise<void>{
@@ -84,13 +92,13 @@
     note='Delivery is not confirmed. Your draft is kept. Check again or open Chief.';isError=true;
   }
   async function send():Promise<void>{
-    if(busy || intakeBusy || !ready || voiceActive)return;
+    if(busy || (intakeBusy && !attempt) || !ready || voiceActive)return;
     busy=true;note='';isError=false;
     let requestSent=false;
     try{
       if(attempt){await checkDelivery(attempt);return;}
       if(!navigation)throw new Error('Chief messaging requires the application navigation owner.');
-      const content=[...(text.trim()?[{piece:'text' as const,text:text.trim()}]:[]),...pendingImagesAsPieces(images),...pendingFilesAsPieces(files)];
+      const content=[...(text.trim()?[{piece:'text' as const,text:text.trim()}]:[]),...pendingImagesAsPieces(images),...pendingFilesAsPieces(files),...pendingUploadsAsPieces(uploads)];
       if(!content.length)return;
       const pointer=await readChiefPointer();
       const sending:ChiefMessageAttempt={expectedConversationId:pointer.conversation_id,message:mintOutgoingMessage({content,senderLabel:'owner',mode:'queue'})};
@@ -118,7 +126,7 @@
 </script>
 
 <div data-review-chief-composer>
-  <ReviewReplyInput bind:text bind:files bind:images bind:intakeBusy bind:voiceActive draftKey={chiefDraftKey}
+  <ReviewReplyInput bind:uploads {uploadDestination} bind:text bind:files bind:images bind:intakeBusy bind:voiceActive draftKey={chiefDraftKey}
     {disabled} sendDisabled={busy || !ready} sending={busy} preserveHeight allowEmpty={attempt!==null}
     placeholder="Message Chief…" label="Message Chief" sendLabel={attempt?'Check delivery':'Send message to Chief'} onSend={send} onError={showError}/>
   <div class="review-chief-receipt" class:error={isError} role={isError?'alert':'status'} aria-live="polite">

@@ -1,65 +1,107 @@
 import { isSafeConversationFileName } from "../pendingFiles";
-import { isVideoFile, MAX_VIDEO_BYTES } from "./config";
-import type { PendingVideo, UploadDestination, VideoUploadAdapter } from "./contracts";
+import { SvelteMap } from "svelte/reactivity";
+import { recallDraftVideo, rememberDraftVideo } from "./localSends";
+import { MAX_ATTACHMENT_BYTES } from "../attachmentPolicy";
+import type { PendingAttachment, UploadDestination, AttachmentUploadAdapter } from "./contracts";
 
-/** Owns live transfers only. Completion updates the attachment; it never submits text. */
-export class VideoTransfers {
-  private active = new Map<PendingVideo, AbortController>();
-  constructor(private adapter: VideoUploadAdapter, private changed: () => void) {}
-  create(file: File, id: number, destination: UploadDestination): PendingVideo {
-    if (!isVideoFile(file.name) || !isSafeConversationFileName(file.name) || file.size <= 0 || file.size > MAX_VIDEO_BYTES)
-      throw new Error("Choose one MP4, MOV or WebM video up to 250 MiB.");
-    return { id, fileName: file.name, byteCount: file.size, mediaType: file.type || "video/mp4", destination: {...destination}, phase: "uploading", receivedBytes: 0, file };
+/** Owns live transfers only. Completion updates the attachment; it never submits a draft. */
+export class AttachmentTransfers {
+  private active = new Map<PendingAttachment, AbortController>();
+  constructor(private adapter: AttachmentUploadAdapter, private changed: () => void) {}
+  create(file: File, id: number, destination: UploadDestination): PendingAttachment {
+    if (!isSafeConversationFileName(file.name) || file.size < 0 || file.size > MAX_ATTACHMENT_BYTES)
+      throw new Error("Choose a file up to 250 MiB.");
+    return { id, fileName: file.name, byteCount: file.size, mediaType: file.type || "application/octet-stream", destination: {...destination}, phase: "uploading", receivedBytes: 0, file,
+      ...(/^image\/(png|jpeg|gif|webp)$/.test(file.type) ? { previewUrl: URL.createObjectURL(file) } : {}) };
   }
-  async start(video: PendingVideo): Promise<void> {
-    if (!video.file) { video.phase = "interrupted"; video.error = "Select the video again, then press Send."; this.changed(); return; }
-    this.active.get(video)?.abort();
+  async start(attachment: PendingAttachment): Promise<void> {
+    if (!attachment.file) { attachment.phase = "interrupted"; attachment.error = "Select the file again, then press Send."; this.changed(); return; }
+    this.active.get(attachment)?.abort();
     const abort = new AbortController();
-    this.active.set(video, abort);
-    const previousId = video.uploadId;
-    video.uploadId = undefined;
-    video.phase = "uploading"; video.error = undefined; video.receivedBytes = 0; this.changed();
+    this.active.set(attachment, abort);
+    const previousId = attachment.uploadId;
+    attachment.uploadId = undefined;
+    attachment.phase = "uploading"; attachment.error = undefined; attachment.receivedBytes = 0; this.changed();
     if (previousId) void this.adapter.cancel(previousId).catch(() => undefined);
     try {
-      const reservation = await this.adapter.reserve(video.destination, video.file, abort.signal);
+      const reservation = await this.adapter.reserve(attachment.destination, attachment.file, abort.signal);
       if (abort.signal.aborted) { void this.adapter.cancel(reservation.upload_id).catch(() => undefined); return; }
-      video.uploadId = reservation.upload_id;
+      attachment.uploadId = reservation.upload_id;
       this.changed();
-      const ready = await this.adapter.transfer(reservation.upload_id, video.file, abort.signal, bytes => {
+      const ready = await this.adapter.transfer(reservation.upload_id, attachment.file, abort.signal, bytes => {
         if (abort.signal.aborted) return;
-        video.receivedBytes = bytes;
-        video.phase = bytes >= video.byteCount ? "validating" : "uploading";
+        attachment.receivedBytes = bytes;
+        attachment.phase = bytes >= attachment.byteCount ? "validating" : "uploading";
         this.changed();
       });
       if (abort.signal.aborted) return;
-      if (ready.state !== "ready") throw new Error(ready.error || "The video is not ready. Retry the upload.");
-      video.phase = "ready"; video.receivedBytes = ready.byte_count;
-      video.mediaType = ready.media_type || video.mediaType;
+      if (ready.state !== "ready") throw new Error(ready.error || "The file is not ready. Retry the upload.");
+      attachment.phase = "ready"; attachment.receivedBytes = ready.byte_count;
+      attachment.mediaType = ready.media_type || attachment.mediaType;
+      attachment.file = undefined;
     } catch (error) {
       if (abort.signal.aborted) return;
-      video.phase = "failed";
-      video.error = error instanceof Error ? error.message : "Video upload failed.";
+      attachment.phase = "failed";
+      attachment.error = error instanceof Error ? error.message : "File upload failed.";
     } finally {
-      if (this.active.get(video) === abort) this.active.delete(video);
+      if (this.active.get(attachment) === abort) this.active.delete(attachment);
       this.changed();
     }
   }
-  async validate(video: PendingVideo): Promise<void> {
-    if (!video.uploadId) { video.phase = "interrupted"; return; }
+  async validate(attachment: PendingAttachment): Promise<void> {
+    if (!attachment.uploadId) { attachment.phase = "interrupted"; this.changed(); return; }
     try {
-      const status = await this.adapter.status(video.uploadId);
-      if (status.state !== "ready" || status.destination.expected_conversation_id !== video.destination.expected_conversation_id
-        || status.destination.kind !== video.destination.kind || status.destination.id !== video.destination.id)
-        throw new Error(status.error || "This video is no longer ready. Select it again.");
-      video.phase = "ready";
+      const status = await this.adapter.status(attachment.uploadId);
+      if (status.state !== "ready" || status.destination.expected_conversation_id !== attachment.destination.expected_conversation_id
+        || status.destination.kind !== attachment.destination.kind || status.destination.id !== attachment.destination.id)
+        throw new Error(status.error || "This file is no longer ready. Select it again.");
+      attachment.fileName = status.filename;
+      attachment.byteCount = status.byte_count;
+      attachment.receivedBytes = status.received_bytes;
+      attachment.mediaType = status.media_type || attachment.mediaType;
+      attachment.phase = "ready";
+      attachment.error = undefined;
     } catch (error) {
-      video.phase = "failed"; video.error = error instanceof Error ? error.message : "Select the video again.";
+      attachment.phase = "failed"; attachment.error = error instanceof Error ? error.message : "Select the file again.";
     }
     this.changed();
   }
-  remove(video: PendingVideo): void {
-    this.active.get(video)?.abort(); this.active.delete(video);
-    if (video.uploadId) void this.adapter.cancel(video.uploadId).catch(() => undefined);
+  remove(attachment: PendingAttachment): void {
+    this.active.get(attachment)?.abort(); this.active.delete(attachment);
+    if (attachment.uploadId) void this.adapter.cancel(attachment.uploadId).catch(() => undefined);
+    if (attachment.previewUrl) { URL.revokeObjectURL(attachment.previewUrl); attachment.previewUrl = undefined; }
   }
   dispose(): void { for (const abort of this.active.values()) abort.abort(); this.active.clear(); }
+}
+
+/** Existing saved conversation drafts keep their shape while their transfer accepts every file. */
+export { AttachmentTransfers as VideoTransfers };
+
+export { pendingUploadsAsPieces, restoredPendingUploads } from "./pieces";
+
+/** A composer can move under an artifact without creating a second transfer owner. */
+export const liveAttachmentDrafts = new SvelteMap<string, PendingAttachment[]>();
+export function publishAttachmentDraft(key: string, uploads: PendingAttachment[]): void {
+  liveAttachmentDrafts.set(key, uploads);
+  rememberDraftVideo(key, uploads);
+}
+export function openAttachmentDraft(key: string, initial: PendingAttachment[] = []): PendingAttachment[] {
+  const existing = liveAttachmentDrafts.get(key);
+  if (existing) return existing;
+  const restored = initial.length ? initial : recallDraftVideo(key);
+  if (restored.length) publishAttachmentDraft(key, restored);
+  return restored;
+}
+export function clearAttachmentDraft(key: string): void {
+  for (const attachment of liveAttachmentDrafts.get(key) ?? []) if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+  publishAttachmentDraft(key, []);
+}
+const draftTransfers = new Map<string, AttachmentTransfers>();
+export function attachmentTransfersFor(key: string, adapter: AttachmentUploadAdapter): AttachmentTransfers {
+  let transfers = draftTransfers.get(key);
+  if (!transfers) {
+    transfers = new AttachmentTransfers(adapter, () => publishAttachmentDraft(key, [...(liveAttachmentDrafts.get(key) ?? [])]));
+    draftTransfers.set(key, transfers);
+  }
+  return transfers;
 }

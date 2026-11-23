@@ -24,9 +24,9 @@
       {@const videoFailed = attachment.kind === "video" && (attachment.value.phase === "failed" || attachment.value.phase === "interrupted")}
       <div
         class="chat-att"
-        class:img={attachment.kind === "image"}
-        class:file={attachment.kind === "file" || attachment.kind === "video"}
-        class:video={attachment.kind === "video"}
+        class:img={attachment.kind === "image" || (attachment.kind === "video" && Boolean(attachment.value.previewUrl))}
+        class:file={attachment.kind === "file" || (attachment.kind === "video" && !attachment.value.previewUrl)}
+        class:video={attachment.kind === "video" && attachment.value.mediaType.startsWith("video/")}
         class:failed={videoFailed}
         data-chat-image-preview={attachment.kind === "image" ? "" : undefined}
         data-chat-image-name={attachment.kind === "image" ? item.fileName : undefined}
@@ -37,11 +37,15 @@
         {#if attachment.kind === "image"}
           <img src={attachment.value.previewUrl} alt="" />
         {:else if attachment.kind === "video"}
-          <span class="chat-att-thumb" aria-hidden="true">
-            {#if attachment.value.file}<video use:localFrame={attachment.value.file} muted playsinline preload="metadata" tabindex="-1"></video>{/if}
-            <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg>
-          </span>
-          <span class="chat-att-words"><span class="chat-att-name">{attachmentDisplayName(item.fileName)}</span>
+          {#if attachment.value.previewUrl}
+            <img src={attachment.value.previewUrl} alt={item.fileName} />
+          {:else if attachment.value.mediaType.startsWith("video/")}
+            <span class="chat-att-thumb" aria-hidden="true">
+              {#if attachment.value.file}<video use:localFrame={attachment.value.file} muted playsinline preload="metadata" tabindex="-1"></video>{/if}
+              <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z" /></svg>
+            </span>
+          {:else}<span class="chat-att-kind" aria-hidden="true">{attachmentKindLabel(item.fileName, item.mediaType)}</span>{/if}
+          <span class="chat-att-words" class:preview-status={Boolean(attachment.value.previewUrl)}><span class="chat-att-name">{attachmentDisplayName(item.fileName)}</span>
             <span class="chat-att-meta" role="status"><span class="chat-att-type">{videoProgress(attachment.value)}</span></span>
           </span>
           {#if attachment.value.phase === "interrupted" || (attachment.value.phase === "failed" && !attachment.value.file)}
@@ -111,6 +115,8 @@
   .chat-att-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .chat-att-thumb svg { position: relative; width: 20px; height: 20px; padding: 4px; fill: var(--cv-primary-ink); border-radius: 50%; background: var(--cv-primary-fill); }
   .chat-att-words { gap: 0; }
+  .preview-status { position: absolute; inset: auto 4px 4px; padding: 2px; background: var(--cv-surface); }
+  .preview-status .chat-att-name { display: none; }
   .chat-att-name { color: var(--cv-ink); font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: var(--cv-leading-control); font-weight: var(--cv-weight-label); }
   .chat-att-meta { color: #b8b8b8; font-family: var(--cv-font); font-size: var(--cv-type-control); line-height: var(--cv-leading-control); font-variant-numeric: tabular-nums; }
   .chat-att.failed .chat-att-meta { color: var(--cv-danger); }

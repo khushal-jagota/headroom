@@ -25,6 +25,9 @@ const MEDIA_TYPES: Record<string, string> = {
   '.json': 'application/json',
   '.jsonl': 'application/x-ndjson',
 };
+export function known_safe_file_media_type(file_name: string): string {
+  return MEDIA_TYPES[posix.extname(file_name).toLowerCase()] ?? 'application/octet-stream';
+}
 export function validated_file_media_type(payload: Buffer, file_name: string): string {
   if (!payload.length) throw new Error('a conversation file must not be empty');
   if (

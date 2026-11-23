@@ -9,19 +9,6 @@ export type ComposerAttachment =
   | { kind: "file"; value: PendingConversationFile }
   | { kind: "video"; value: PendingVideo };
 
-/** Changing a question draft replaces its images/files while a video stays in the message draft. */
-export function replaceQuestionAttachmentOrder(
-  current: readonly ComposerAttachmentReference[],
-  images: readonly Pick<PendingConversationImage, "id">[],
-  files: readonly Pick<PendingConversationFile, "id">[]
-): ComposerAttachmentReference[] {
-  return [
-    ...current.filter((reference) => reference.kind === "video"),
-    ...images.map((image) => ({ kind: "image" as const, id: image.id })),
-    ...files.map((file) => ({ kind: "file" as const, id: file.id }))
-  ];
-}
-
 export function orderedComposerAttachments(
   order: readonly ComposerAttachmentReference[],
   images: readonly PendingConversationImage[],
