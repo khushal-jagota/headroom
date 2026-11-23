@@ -279,6 +279,16 @@ destinations), and a live read-only review. The live walk
 contains historical selectors; review its comments before use. A one-off walk is a
 review tool, not a permanent gate. Record its result and diagnose failures.
 
+Review opens on its summary, so a walk that needs a card calls `openReviewCards()`
+first. Each walk names the stub flag its proofs need in the stub
+(`ios/scripts/test-offline-simulator.py`). The bad-connection walks read each screen
+once online, then the stub drops every connection: `SidebarNavigationTests/testDestinationsOnABadConnection`
+(`PANELS_DESIGN_REVIEW=1`), `ReviewFinalPageTests/testCardsSheetsAndTicketOnABadConnection`
+(`PANELS_DESIGN_REVIEW=1`), `ReviewQueueScreensTests/testCardKindsOnABadConnection`
+(`PANELS_REVIEW_QUEUE=1`) and `ArtifactDockTests/testDocksOnABadConnection`
+(`PANELS_ARTIFACT_DOCK_SMOKE=1`). Each checks that no screen shows a cover, banner or
+status note.
+
 A route without a screen test still needs a one-off check when a change touches it.
 Keep physical-device gaps on the phone checklist, including server entry and Save,
 airplane-mode delivery, Goal edit and Save, and notification taps.
