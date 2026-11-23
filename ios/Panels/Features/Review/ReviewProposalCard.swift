@@ -179,12 +179,19 @@ struct ReviewProposalDock: View {
             },
             setReviewer: { holder in
                 guard notice == nil, let ticket = decision.ticket else { return }
-                let current = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: nil, holder: holder)
+                // The card is busy while the change saves, so a swiped-away sheet cannot
+                // open Approve on a proposal that is about to move.
+                busyAction = "reviewer"
+                let current: TicketDetail
+                do { current = try await decision.scopeChange.save(api: api, ticket: ticket, ceiling: nil, holder: holder) }
+                catch { busyAction = nil; throw error }
                 decision.acceptScopeRead(current)
                 // Moved to someone else here: the card is held so the move reads as
                 // Khushal's, not as a notice, and leaves once the sheet closes. The stream
                 // can close the sheet first, so a save that finds it closed leaves now.
+                // Leaving clears the busy state.
                 if holder.kind != "owner" { onHold(); if exit.saved(sheetOpen: sheet != nil) { leave() } }
+                else { busyAction = nil }
                 await store.refresh()
             })
     }
