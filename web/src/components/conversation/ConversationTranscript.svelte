@@ -12,8 +12,11 @@
   import UserMessage from "./UserMessage.svelte";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import MessagePieces from "./MessagePieces.svelte";
+  import MessageActions from "./MessageActions.svelte";
   import TurnAnchor from "./TurnAnchor.svelte";
   import WorkGroup from "./WorkGroup.svelte";
+  import TranscriptStatusRow from "./TranscriptStatusRow.svelte";
+  import SystemLine from "./SystemLine.svelte";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
   import {
@@ -28,11 +31,15 @@
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
     promptLabelFor,
-    turnEndingSentence,
+    turnEndingStatus,
     PROMPT_DISCARDED_SENTENCE,
-    TURN_STOPPED_SENTENCE
+    TURN_STOPPED_STATUS,
+    ASK_CARD_CONTEXT,
+    askShownByItsCard,
+    type AskCardReading
   } from "../../lib/conversation/transcript";
-  import { modelDisplayName } from "../../lib/conversation/composer";
+  import { getContext } from "svelte";
+  import { DOCKED_CREDENTIAL_REQUEST, modelDisplayName } from "../../lib/conversation/composer";
   import type { BackendModel } from "../../lib/conversation/wire";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
@@ -46,6 +53,7 @@
     ownSenderLabel = null,
     livenessPulse = 0,
     projectedItems = null,
+    narration = null,
     outgoingMessages = [], onStopDrawingMessage, onSendAgain, acknowledgedMessageIds = new Set<string>()
   }: {
     outgoingMessages?: readonly OutgoingMessage[];
@@ -53,6 +61,9 @@
     onSendAgain?: (id: string) => Promise<void> | void;
     acknowledgedMessageIds?: ReadonlySet<string>;
     projectedItems?: readonly ThreadItem[] | null;
+    /** v6: whether an agent message is the turn's narration (not its final message, or any
+     *  message while the turn is live), when the caller knows its turn. Null: told by toOwner. */
+    narration?: boolean | null;
     activityUncertain?: boolean;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
@@ -68,6 +79,9 @@
     ownSenderLabel?: string | null;
   } = $props();
 
+  const askCard = getContext<AskCardReading | undefined>(ASK_CARD_CONTEXT);
+  /** The key request the composer is asking in its own place; drawn there, not here. */
+  const dockedCredential = getContext<(() => string | null) | undefined>(DOCKED_CREDENTIAL_REQUEST);
   let items = $derived<readonly ThreadItem[]>(projectedItems ?? conversationThreadItemsForLens(rows, visibleRows, lens));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
@@ -131,7 +145,7 @@
   function runValuesLine(model: string | null, reasoningEffort: string | null): string {
     const parts = [modelDisplayName(models, model) ?? "the backend's own model"];
     if (reasoningEffort) parts.push(reasoningEffort);
-    return `now running on ${parts.join(" · ")}`;
+    return `Now running on ${parts.join(" · ")}`;
   }
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
@@ -158,7 +172,7 @@
   {#each display as slot (slot.key)}
     {@const item = slot.item}
     {#if slot.local !== null}
-      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register}>
+      <ViewItem itemKey={item?.key ?? slot.key} displayKey={slot.key} registerDisplayNode={exits.register} rhythm="turn">
       <UserMessage presentationRowKey={item?.key ?? null} row={item?.kind === 'row' && (item.row.kind === 'prompt' || item.row.kind === 'prompt_refused' || item.row.kind === 'prompt_uncertain' || item.row.kind === 'prompt_discarded') ? item.row : null} local={slot.local} {conversationId} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>
       </ViewItem>
     {:else if item !== null}
@@ -176,28 +190,36 @@
         {livenessPulse}
       />
     {:else if item.kind === "work_group"}
-      {#if lens === "full"}
+      <!-- Focus shows no tool calls at all; Full keeps each run behind its own summary. -->
       <WorkGroup {activityUncertain}
         openRows={openToolCallRows}
         wholeDetails={wholeToolCallDetails}
         entries={item.entries}
-        hidden={lens !== "full" && item.settled && expandedTurns[item.turnKey] !== true}
-        showAll={lens === "full"}
+        hidden={lens !== "full"}
         {conversationId}
       />
-      {/if}
     {:else if item.row.kind === "prompt" || item.row.kind === "prompt_refused" || item.row.kind === "prompt_uncertain" || item.row.kind === "prompt_discarded"}
       <UserMessage presentationRowKey={item.key} row={item.row} {conversationId} {ownSenderLabel}/>
     {:else if item.row.kind === "agent_message"}
-      <article class="chat-a" data-conversation-row="agent_message" data-conversation-source-key={item.row.key}>
+      {@const isNarration = lens === "full" && (narration ?? !item.row.toOwner)}
+      <!-- In Full the agent's own narration sits beside what it said to the person. The
+           narration steps back a tone and a size, so a message to the person reads as the
+           turn's voice by tone and weight alone, with no rule or label beside it. -->
+      <article class="chat-a" class:chat-a--narration={isNarration} data-conversation-row="agent_message" data-conversation-to-owner={item.row.toOwner ? "" : undefined} data-conversation-source-key={item.row.key}>
         <MessagePieces presentationRowKey={item.key} content={item.row.content} {conversationId} />
+        <MessageActions content={item.row.content} createdAt={item.row.createdAt} />
       </article>
     {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
         <MarkdownBlock text={item.row.text} />
       </article>
     {:else if item.row.kind === 'credential_request'}
-      <ConversationCredentialRequestCard request={item.row.request} />
+      {#if item.row.request.request_id !== (dockedCredential?.() ?? null)}
+        <ConversationCredentialRequestCard request={item.row.request} />
+      {/if}
+    {:else if (item.row.kind === "permission_ask" || item.row.kind === "user_input") && askShownByItsCard(item.row, activityUncertain,
+      askCard?.saysAvailabilityUnknown(item.row.kind === "permission_ask" ? "permission" : "user_input", item.row.kind === "permission_ask" ? item.row.askId : item.row.requestId) ?? false)}
+      <!-- Waiting: the card above the composer asks it, and the turn head says it waits. -->
     {:else if item.row.kind === "permission_ask"}
       {@const detail = readableConversationDetail(item.row.detail)}
       <div
@@ -206,7 +228,7 @@
         data-conversation-row="permission_ask"
         data-conversation-ask-state={item.row.state}
       >
-        <div class="c2-label">permission · {askStateLine(item.row)}</div>
+        <SystemLine data-conversation-ask-record="">Permission · {askStateLine(item.row)}</SystemLine>
         <div class="c2-ask-title">{item.row.title}</div>
         {#if detail}<pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>{/if}
       </div>
@@ -217,17 +239,17 @@
         data-conversation-row="user_input"
         data-conversation-user-input-state={item.row.state}
       >
-        <div class="c2-label">question · {userInputStateLine(item.row)}</div>
+        <SystemLine data-conversation-ask-record="">Question · {userInputStateLine(item.row)}</SystemLine>
         {#if item.row.questions.length > 0}<div class="c2-ask-title">
           {item.row.questions.length === 1
             ? item.row.questions[0]?.question
             : `${item.row.questions.length} questions`}
         </div>{/if}
         {#if item.row.state === "answered" && item.row.answers}
-          <div class="c2-ask-detail" data-conversation-user-input-answers>
+          <div class="c2-ask-answers" data-conversation-user-input-answers>
             {#each item.row.questions as question (question.question_id)}
               <div>
-                <strong>{question.header || question.question}</strong>
+                <span class="c2-ask-question">{question.header || question.question}</span>
                 <span> · {item.row.answers[question.question_id]?.answers.join(", ") ?? ""}</span>
               </div>
             {/each}
@@ -235,34 +257,22 @@
         {/if}
       </div>
     {:else if item.row.kind === "model_changed"}
-      <div class="acp-compaction" role="separator" data-conversation-row="model_changed">
-        <span>{runValuesLine(item.row.model, item.row.reasoningEffort)}</span>
-      </div>
+      <SystemLine role="separator" data-conversation-row="model_changed">{runValuesLine(item.row.model, item.row.reasoningEffort)}</SystemLine>
     {:else if item.row.kind === "context_compacted"}
       <!-- The seam the old pane drew for the same thing, in the same stylesheet. What was
            before it has gone from the agent's memory, and a thread that just stopped
            mentioning it would read as an agent that forgot. -->
-      <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
-        <span>{CONTEXT_COMPACTED_SENTENCE}</span>
-      </div>
+      <SystemLine role="separator" data-conversation-row="context_compacted">{CONTEXT_COMPACTED_SENTENCE}</SystemLine>
     {:else if item.row.kind === "command_reply"}
       <!-- The backend answered a slash command itself. Its words are kept whole, quiet and
            in the tool voice, because they are the backend's output rather than the agent's. -->
       <p class="acp-command-reply" data-conversation-row="command_reply">{item.row.replyText}</p>
     {:else if item.row.kind === "turn_ended" && item.row.automaticCompactionResult === "not_compacted"}
-      <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
-        {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}
-      </div>
-    {:else if item.row.kind === "turn_ended" && item.row.ending === "failed"}
-      <div class="acp-turn-end acp-turn-end--error" role="alert" data-conversation-row="turn_ended">
-        {turnEndingSentence(item.row.ending, item.row.errorSummary)}
-      </div>
-    {:else if item.row.kind === "turn_ended" && item.row.ending === "interrupted"}
-      <div class="acp-turn-end" data-conversation-row="turn_ended">
-        {turnEndingSentence(item.row.ending, item.row.errorSummary)}
-      </div>
+      <SystemLine role="status" data-conversation-row="turn_ended">{AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}</SystemLine>
+    {:else if item.row.kind === "turn_ended" && turnEndingStatus(item.row.ending, item.row.errorSummary) !== null}
+      <TranscriptStatusRow status={turnEndingStatus(item.row.ending, item.row.errorSummary)!} role={item.row.ending === "failed" ? "alert" : "status"} data-conversation-row="turn_ended"/>
     {:else if item.row.kind === "turn_stopped"}
-      <div class="acp-turn-end" data-conversation-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>
+      <TranscriptStatusRow status={TURN_STOPPED_STATUS} role="status" data-conversation-row="turn_stopped"/>
     {/if}
     {/if}
   {/each}
@@ -270,39 +280,38 @@
 
 <style>
   .c2-transcript { display: contents; }
-  .c2-label {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-    margin-block-end: var(--space-1);
-  }
-  .c2-streaming { color: var(--text-muted); }
+  .chat-a { position: relative; }
+  /* An ask's record, once it has been answered or has expired: the shared system line
+     ("Permission · answered · Deny"), then what was asked, flush with the thread, no box.
+     8 px from the line to what it heads, as under every system line (B9). Only the command
+     it asked about stays in mono. */
   .c2-ask-row {
     align-self: stretch;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-md);
-    background: var(--accent-surface);
-    color: var(--text-default);
-    font-family: var(--font-ui);
-    font-size: var(--type-sm);
+    display: grid;
+    gap: var(--cv-s2);
+    min-width: 0;
+    color: var(--cv-system-ink);
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-meta);
+    line-height: var(--cv-leading-meta);
     overflow-wrap: anywhere;
   }
-  .c2-ask-row.is-dead {
-    background: var(--surface-2);
-    color: var(--text-faintest);
-  }
-  .c2-ask-row.is-dead .c2-label { color: var(--text-faintest); }
-  .c2-ask-title { color: var(--text-strong); }
-  .c2-ask-row.is-dead .c2-ask-title { color: var(--text-faint); }
+  .c2-ask-title { color: var(--cv-t2); }
+  .c2-ask-question { color: var(--cv-t2); }
+  .c2-ask-row.is-dead .c2-ask-title { color: var(--cv-system-ink); }
   /* Capped and scrolling: a transcript row never grows by the size of a payload. */
   .c2-ask-detail {
-    margin: var(--space-1) 0 0;
-    max-height: calc(var(--type-xs) * 16);
+    margin: 0;
+    max-height: calc(var(--cv-leading-output) * 12);
     overflow: auto;
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    padding: 10px var(--cv-s3);
+    border: 1px solid var(--cv-line);
+    border-radius: var(--cv-r-md);
+    background: var(--cv-well);
+    color: var(--cv-t2);
+    font-family: var(--cv-mono);
+    font-size: var(--cv-type-output);
+    line-height: var(--cv-leading-output);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

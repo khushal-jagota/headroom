@@ -23,7 +23,11 @@ Screens are assembled from a small shared kit rather than a new layout per featu
 - chips and pills that name a Project, a count, or a state;
 - a stage mark that carries Ticket and conversation state.
 
-Settings, VPS, Ideas, All goals, and Usage share the core page measure and title band. Their controls use the shared button and segmented styles. Notifications keeps native checkbox behavior with custom visuals. VPS exists within Settings. The old `#/vps` address resolves to that same section. Its compact dashboard uses two equal columns on desktop and one on phones. Short plots retain labeled axes and explicit freshness states. Wide tables scroll within their column on phones; controls and details remain available.
+Settings, All goals, and Usage share the core page measure and title band. Their controls use the shared button and segmented styles.
+
+Settings follows the ordinary settings pattern of macOS, Linear and the Claude app. While it is open, it takes the workspace rail's place: Back to Panels, a search field, and seven sections in three groups (Panels: General, Notifications; Agents: Agents, Workers; System: Machines, Backends, Diagnostics). The rail keeps its width and its foot. Each page has the line "Settings" above its title, and the title row holds the page's action. Rows are flat with hairlines between them: the label and description on the left, the control on the right. Agents and Workers list rows open a detail page. A switch saves at once and moves back with an error under its row if the save fails. Its on state is the neutral primary fill, not the accent. The workflow editor keeps an explicit save in a sticky "Unsaved changes" bar. Search finds every setting row, Agent and Worker. On a phone the section list is the first screen. Old Settings, Config, VPS and Notifications addresses redirect to their sections.
+
+Diagnostics is the VPS dashboard. Its compact dashboard uses two equal columns on desktop and one on phones. Short plots retain labeled axes and explicit freshness states. Wide tables scroll within their column on phones; controls and details remain available.
 
 Some screens add layout rules in `assets/app.css`, keyed by a `data-screen` name. Most screens rely on the kit alone.
 
@@ -42,6 +46,8 @@ Focus mode hides tool noise and Full shows the notebook. The toggle is a lens on
 - Token edits retune the whole app, and kit edits retune every screen that uses them. A new screen that adds a second accent, a heavy border on every card, or a caption on an obvious control has left the system.
 
 ## Code
+
+`assets/tokens.css` holds shared values, including the conversation's `--cv-*` roles. Conversation rules sit in one section at the end of `assets/app.css`, one rule set per purpose; a conversation component's own markup is styled in its scoped `<style>` block. Their tests follow components and behaviors.
 
 `assets/tokens.css`, `assets/app.css`, and `web/src/components/` for the kit, including `ScreenHeader`, `ListRow`, `StageMark`, `Button`, `SkeletonRegion`, `Disclosure`, and `conversation/`. The goal page kit is in `web/src/components/pageKit/`.
 

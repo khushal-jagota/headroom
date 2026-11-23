@@ -55,6 +55,8 @@ export function conversationEventIsInFocus(
         );
     case "message_to_owner":
       return event.payload.recipient.kind === "owner";
+    // A command reply answers a command the person typed. The server's in_focus
+    // (server/conversation/views/logic/bodies.ts) keeps the same rule.
     case "credential_request":
     case "command_reply":
       return true;

@@ -36,6 +36,6 @@ Every Worker follows its own Ticket's workflow guide, which it receives at kicko
 - `server/skills/`: rows, published copies, and saved history (`data.ts`).
 - `server/worker_settings/`: the HTTP writers.
 - `server/skills/seeds/`: the seed, read by `server/skills/data.ts`.
-- `web/src/components/RoleSkillEditor.svelte`: the editor.
+- `web/src/components/settings/SettingsSkillSections.svelte`: the editor, on the Settings Agents pages.
 
 _Last verified: 2026-11-18._

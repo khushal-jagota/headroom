@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { mutateJson } from "../src/lib/mutate";
-import { theServerRefusedTheSend } from "../src/lib/conversation/outgoing";
+import { theMachineIsOfflineRefusal, theServerRefusedTheSend } from "../src/lib/conversation/outgoing";
 
 async function failedSend(): Promise<unknown> {
   try {
@@ -29,6 +29,16 @@ describe("an owner send the server refused", () => {
     const error = await failedSend();
     expect(theServerRefusedTheSend(error)).toBe(true);
     expect((error as Error).message).toBe(sentence);
+  });
+
+  it("names the offline Mac when the Ticket's machine cannot run it, and only then", async () => {
+    // The server's execution-admission envelope, as the rig's offline Mac Ticket answers it.
+    const message = "Mac Tickets cannot start: no compatible Mac executor has leased yet";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: { code: "validation", message,
+      detail: { ticket_id: "t_1", locale: "macos", machine_locale: "vps" } } }), { status: 400 }));
+    expect(theMachineIsOfflineRefusal(await failedSend())).toEqual({ reason: "The Mac is offline", detail: message });
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: { code: "validation", message: "unknown agent backend" } }), { status: 400 }));
+    expect(theMachineIsOfflineRefusal(await failedSend())).toBeNull();
   });
 
   it("is not a refusal when no answer came", async () => {

@@ -1,0 +1,18 @@
+appId: com.khushaljagota.panels.desktop
+productName: Panels
+files:
+  - build/**
+  - package.json
+publish:
+  - provider: github
+    owner: khushal-jagota
+    repo: headroom
+mac:
+  # Each desktop release carries this ZIP and its matching latest-mac.yml.
+  artifactName: Panels-mac-${arch}.${ext}
+  category: public.app-category.productivity
+  target:
+    - target: zip
+      arch: arm64
+  hardenedRuntime: true
+  notarize: true

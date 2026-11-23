@@ -12,13 +12,16 @@
   import type { SignInPageState } from "../../lib/conversation/backendSignInSession";
   import type { BackendSnapshot } from "../../lib/conversation/wire";
 
-  let { label, snapshot, state: signInState, onStart, onCancel, onSubmit }: {
+  /* `offerStart` false: the page's own row holds the Sign in button, so the block shows
+   * only what goes with it (the caveat before, the steps after). */
+  let { label, snapshot, state: signInState, onStart, onCancel, onSubmit, offerStart = true }: {
     label: string;
     snapshot: BackendSnapshot;
     state: SignInPageState;
     onStart: () => void;
     onCancel: () => void;
     onSubmit: (returnUrl: string) => void;
+    offerStart?: boolean;
   } = $props();
 
   let returnUrl = $state("");
@@ -89,12 +92,14 @@
       {#if caveat}
         <p class="sign-in-caveat" data-backend-sign-in-caveat>{caveat}</p>
       {/if}
-      <button
-        class="sign-in-action"
-        disabled={signInState.busy}
-        onclick={onStart}
-        data-backend-sign-in-start={snapshot.backend_key}
-      >{signInState.busy ? "Starting…" : "Sign in"}</button>
+      {#if offerStart}
+        <button
+          class="sign-in-action"
+          disabled={signInState.busy}
+          onclick={onStart}
+          data-backend-sign-in-start={snapshot.backend_key}
+        >{signInState.busy ? "Starting…" : "Sign in"}</button>
+      {/if}
     {/if}
     {#if outcome}
       <p class="sign-in-outcome" data-backend-sign-in-outcome>{outcome}</p>

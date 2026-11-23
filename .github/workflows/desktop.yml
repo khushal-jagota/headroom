@@ -1,0 +1,186 @@
+name: Desktop app
+# Builds the desktop app from desktop/ with the web/ screens packed inside, and
+# drives it with Playwright under a virtual display against a test server. On a
+# push or a manual run, a Mac also signs, notarizes and staples it. A push to main
+# publishes it as a GitHub Release. A manual run makes two private proof builds.
+on:
+  pull_request:
+    branches: [staging]
+    paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
+  push:
+    branches: [staging, main]
+    paths: ['desktop/**', 'web/**', 'server/**', 'assets/**', 'static/**', 'tests/e2e/**', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+    inputs:
+      private_feed_url:
+        description: Private generic feed for both signed proof builds (no release is published)
+        required: true
+        default: http://127.0.0.1:18769/
+        type: string
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Pushes do not cancel each other, so that a slow notarization can finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+jobs:
+  app-checks:
+    name: Desktop app checks (Linux, Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb libicu-dev pkg-config build-essential
+          npm ci --prefix server
+          npm ci --prefix web
+          npm ci --prefix tests/e2e
+          npm ci --prefix desktop
+          tests/e2e/node_modules/.bin/playwright install-deps chromium
+      - name: Typecheck
+        run: |
+          set -euo pipefail
+          npm --prefix desktop run check
+          npm --prefix desktop run test:updates
+          npm --prefix desktop run test:screens
+          npm --prefix tests/e2e run check
+      - name: Build the screens and the app
+        run: |
+          set -euo pipefail
+          (cd web && node node_modules/vite/bin/vite.js build)
+          npm --prefix desktop run build
+      - name: Drive the app against a test server
+        env:
+          PANELS_E2E_FAILURE_DIR: ${{ runner.temp }}/desktop-failure
+          PANELS_UI_PROOF_DIR: ${{ runner.temp }}/desktop-proof
+        run: |
+          cd tests/e2e
+          xvfb-run -a node_modules/.bin/playwright test --config desktop.config.ts
+      - name: Upload desktop review images
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-proof
+          path: ${{ runner.temp }}/desktop-proof
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-failure
+          path: ${{ runner.temp }}/desktop-failure
+          if-no-files-found: ignore
+          retention-days: 14
+
+  signed-mac-app:
+    name: Signed and notarized Mac app
+    # Pull requests skip it: notarization takes minutes, and the Linux job checks the app.
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15
+    # Apple's notary service can take long for a team's first submissions.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["proof-a", "proof-b"]' || '["release"]') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci --prefix web
+          npm ci --prefix desktop
+      - name: Build the screens
+        run: cd web && node node_modules/vite/bin/vite.js build
+      - name: Select the build version
+        env:
+          BUILD_KIND: ${{ matrix.build }}
+        run: |
+          set -euo pipefail
+          offset=0
+          if [ "$BUILD_KIND" = proof-b ]; then offset=1; fi
+          echo "DESKTOP_VERSION=0.0.$((GITHUB_RUN_NUMBER * 2 + offset))" >> "$GITHUB_ENV"
+      - name: Build, sign, notarize and staple
+        env:
+          CSC_LINK: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_API_KEY_P8: ${{ secrets.APPLE_NOTARY_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          DEBUG: electron-notarize*,electron-osx-sign*
+          PRIVATE_FEED_URL: ${{ inputs.private_feed_url }}
+        run: |
+          set -euo pipefail
+          export APPLE_API_KEY="$RUNNER_TEMP/notary-key.p8"
+          umask 077
+          printf '%s\n' "$APPLE_NOTARY_API_KEY_P8" > "$APPLE_API_KEY"
+          node desktop/scripts/build_signed.mjs "$DESKTOP_VERSION" "$RUNNER_TEMP/desktop" "$PRIVATE_FEED_URL"
+          rm -f "$APPLE_API_KEY"
+      - name: Check the signature, notarization and Gatekeeper
+        run: |
+          set -euo pipefail
+          zip=$(ls "$RUNNER_TEMP"/desktop/dist/*.zip)
+          check="$RUNNER_TEMP/check"
+          mkdir "$check"
+          ditto -x -k "$zip" "$check"
+          app="$check/Panels.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=2 "$app" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
+          grep -q '^Authority=Developer ID Application: ' "$RUNNER_TEMP/codesign.txt"
+          grep -q 'flags=.*runtime' "$RUNNER_TEMP/codesign.txt"
+          grep -q '^Identifier=com.khushaljagota.panels.desktop$' "$RUNNER_TEMP/codesign.txt"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app" 2>&1 | tee "$RUNNER_TEMP/spctl.txt"
+          grep -q 'source=Notarized Developer ID' "$RUNNER_TEMP/spctl.txt"
+          test "$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString)" = "$DESKTOP_VERSION"
+          shasum -a 256 "$zip"
+          test -s "$RUNNER_TEMP/desktop/dist/latest-mac.yml"
+          node desktop/scripts/check_update_artifacts.mjs "$RUNNER_TEMP/desktop/dist" "$DESKTOP_VERSION"
+      - name: Upload the signed app
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-desktop-mac-${{ matrix.build }}
+          path: |
+            ${{ runner.temp }}/desktop/dist/*.zip
+            ${{ runner.temp }}/desktop/dist/*.blockmap
+            ${{ runner.temp }}/desktop/dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+  publish:
+    name: Publish the Mac app as a GitHub Release
+    needs: [app-checks, signed-mac-app]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: panels-desktop-mac-release
+          path: ${{ runner.temp }}/desktop-release
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DESKTOP_VERSION="0.0.$((GITHUB_RUN_NUMBER * 2))"
+          gh release create "desktop-v$DESKTOP_VERSION" "$RUNNER_TEMP"/desktop-release/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Panels for Mac $DESKTOP_VERSION" \
+            --notes "The Panels desktop app for Apple silicon Macs, signed and notarized. Built from $GITHUB_SHA."

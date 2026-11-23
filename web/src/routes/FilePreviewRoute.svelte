@@ -92,7 +92,7 @@
           {#key identity}
             <LiveConversation bind:conversationState conversationId={sentConversationId ?? owner.conversationId}
               persistenceKey={`owner:${owner.kind}:${owner.id}`} uploadOwner={{kind: owner.kind, id: owner.id}}
-              label={owner.title} locale={"locale" in owner ? owner.locale : undefined}
+              label={owner.title} title={owner.title} locale={"locale" in owner ? owner.locale : undefined}
               composerPlaceholder={`Message ${owner.title}...`} {backends} startValues={startValues ?? null}
               senderLabel="owner" {sendMessage} />
           {/key}

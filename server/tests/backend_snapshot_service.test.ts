@@ -19,7 +19,8 @@ import {
 } from '../drivers/built_in_manifests.ts';
 import { Deferred } from '../core/deferred.ts';
 import { BackendStateStore } from '../conversation/backend_state.ts';
-import { fixture, fixture_path } from './ticket_fixture.ts';
+import { create, fixture, fixture_path } from './ticket_fixture.ts';
+import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
 import { createApp } from '../app.ts';
 import { loadConfig } from '../core/config.ts';
 import { BackendUsageService } from '../conversation/backend_usage/service.ts';
@@ -928,7 +929,7 @@ test('Claude freshness_key invalidates on credentials metadata and oauthAccount 
     expect(vps_paths.claude_json_path).toBe(join(account_home, '.claude.json'));
     const vps_env = new RecordingBackendProbeEnvironment();
     vps_env.executables.set('claude', '/synthetic/claude');
-    vps_env.outcomes.set(JSON.stringify(['/synthetic/claude', '--version']), recorded('2.1.219'));
+    vps_env.outcomes.set(JSON.stringify(['/synthetic/claude', '--version']), recorded('2.1.259'));
     let vps_identity = recorded(JSON.stringify({ loggedIn: false }));
     let vps_probes = 0;
     const vps_service = new BackendSnapshotService({
@@ -1165,4 +1166,59 @@ test('home BackendSnapshotService invalidates kept cards when executable real_pa
   expect((await service.snapshot(antigravity)).version).toBe('1.5.12');
   expect(probes).toBe(3);
   expect(environment.commands).toEqual([]);
+});
+
+// Ledger 10: a Ticket on a machine with no executor here answered a planner-envelope 400,
+// which the composer could only show as "The server answered 400.". It is the machine's
+// state, said in the transport's own `detail` sentence.
+test('a Ticket whose machine is not connected gets a sentence, not a bare 400', async () => {
+  const database = fixture();
+  const writes = new ConversationHttpWriteScope();
+  const ticket = create(database);
+  database.write((tx) =>
+    tx.run('UPDATE tickets SET machine_id=? WHERE id=?', [ORIGINAL_MAC_MACHINE_ID, ticket.id]),
+  );
+  const app = await createApp(
+    loadConfig(undefined, { PLAN_TEST_MODE: '1', PLAN_DB_PATH: fixture_path(database) }),
+    {
+      database,
+      areas: [
+        {
+          prefix: '/api/conversation',
+          routes: createBackendRoutes(
+            {
+              settled: () => writes.drain(),
+              database,
+              backend_snapshots: new BackendSnapshotService({
+                environment: machine(),
+                sources: sources_of(vi.fn(async () => card())),
+              }),
+              backend_usage: new BackendUsageService(new Map()),
+              backend_state: null,
+              backend_ids: KNOWN_BACKEND_INSTANCE_IDS,
+              sign_in: () => null,
+              machine_catalog: () => null,
+              drivers: BUILT_IN_MANIFESTS,
+              driver_of: () => null,
+              reports_allowance_usage: () => false,
+            },
+            { available: true, writes },
+          ),
+        },
+      ],
+    },
+  );
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/conversation/backends',
+      payload: { ticket_id: ticket.id },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      detail: 'This machine is not connected to Panels, so its models cannot be listed.',
+    });
+  } finally {
+    await app.close();
+  }
 });

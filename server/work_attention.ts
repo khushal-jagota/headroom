@@ -1,10 +1,12 @@
 import type { Database } from './core/database/contracts.ts';
 import type { ConversationSystem } from './conversation/contracts.ts';
 import { readDurableFactsFor } from './conversation/publication/durable.ts';
+import { pendingCredentialConversations } from './conversation/publication/coordinator.ts';
 async function signals(
   durableRows: ReturnType<typeof readDurableFactsFor>,
   system: ConversationSystem | undefined,
   ids: Set<string>,
+  pending_keys: ReadonlySet<string> = new Set(),
 ) {
   const durable = new Map(durableRows.map((r) => [r.conversation_id, r.durable]));
   const result = new Map<
@@ -23,6 +25,7 @@ async function signals(
         message_for_owner: !!d?.message_for_owner,
       },
       awaiting_answer:
+        pending_keys.has(id) ||
         !!(await system?.has_pending_permission_ask(id)) ||
         !!(await system?.has_pending_user_input(id)),
       last_turn_failed: !!d?.last_turn_failed,
@@ -88,52 +91,55 @@ export async function add_work_attention(
 ): Promise<void> {
   const manager_ids = new Set(managers.map((row) => String(row.id)));
   const ticket_ids = new Set(tickets.map((row) => String(row.id)));
-  const { records, children, links, conversation_ids, durable } = database.read((sql) => {
-    const children = new Map<string, string[]>([...manager_ids].map((id) => [id, []]));
-    const links = new Map<string, string>();
-    if (manager_ids.size) {
-      const ids = [...manager_ids].sort();
-      const placeholders = ids.map(() => '?').join(',');
-      for (const row of sql.all<{ id: string; manager_id: string }>(
-        `SELECT id, manager_id FROM tickets WHERE manager_id IN (${placeholders}) AND is_backlogged=0`,
-        ids,
-      )) {
-        children.get(row.manager_id)!.push(row.id);
-        ticket_ids.add(row.id);
+  const { records, children, links, conversation_ids, durable, pending_keys } = database.read(
+    (sql) => {
+      const children = new Map<string, string[]>([...manager_ids].map((id) => [id, []]));
+      const links = new Map<string, string>();
+      if (manager_ids.size) {
+        const ids = [...manager_ids].sort();
+        const placeholders = ids.map(() => '?').join(',');
+        for (const row of sql.all<{ id: string; manager_id: string }>(
+          `SELECT id, manager_id FROM tickets WHERE manager_id IN (${placeholders}) AND is_backlogged=0`,
+          ids,
+        )) {
+          children.get(row.manager_id)!.push(row.id);
+          ticket_ids.add(row.id);
+        }
+        for (const row of sql.all<{ id: string; conversation_id: string | null }>(
+          'SELECT m.id, a.conversation_id FROM managers m LEFT JOIN agents a ' +
+            "ON a.agent_key='manager_'||m.id " +
+            `WHERE m.id IN (${placeholders})`,
+          ids,
+        )) {
+          if (row.conversation_id !== null) links.set(row.id, row.conversation_id);
+        }
       }
-      for (const row of sql.all<{ id: string; conversation_id: string | null }>(
-        'SELECT m.id, a.conversation_id FROM managers m LEFT JOIN agents a ' +
-          "ON a.agent_key='manager_'||m.id " +
-          `WHERE m.id IN (${placeholders})`,
-        ids,
-      )) {
-        if (row.conversation_id !== null) links.set(row.id, row.conversation_id);
+      const records = new Map<string, Record<string, unknown>>();
+      if (ticket_ids.size) {
+        const ids = [...ticket_ids].sort();
+        for (const row of sql.all<{ id: string; value: string }>(
+          "SELECT id,value FROM navigation_records WHERE kind='ticket' AND id IN (" +
+            ids.map(() => '?').join(',') +
+            ')',
+          ids,
+        ))
+          records.set(row.id, JSON.parse(row.value) as Record<string, unknown>);
       }
-    }
-    const records = new Map<string, Record<string, unknown>>();
-    if (ticket_ids.size) {
-      const ids = [...ticket_ids].sort();
-      for (const row of sql.all<{ id: string; value: string }>(
-        "SELECT id,value FROM navigation_records WHERE kind='ticket' AND id IN (" +
-          ids.map(() => '?').join(',') +
-          ')',
-        ids,
-      ))
-        records.set(row.id, JSON.parse(row.value) as Record<string, unknown>);
-    }
-    const conversation_ids = new Set(links.values());
-    for (const row of records.values()) {
-      if (typeof row.conversation_id === 'string') conversation_ids.add(row.conversation_id);
-    }
-    return {
-      records,
-      children,
-      links,
-      conversation_ids,
-      durable: readDurableFactsFor(sql, conversation_ids),
-    };
-  });
-  const conversations = await signals(durable, system, conversation_ids);
+      const conversation_ids = new Set(links.values());
+      for (const row of records.values()) {
+        if (typeof row.conversation_id === 'string') conversation_ids.add(row.conversation_id);
+      }
+      return {
+        records,
+        children,
+        links,
+        conversation_ids,
+        durable: readDurableFactsFor(sql, conversation_ids),
+        pending_keys: pendingCredentialConversations(sql, conversation_ids),
+      };
+    },
+  );
+  const conversations = await signals(durable, system, conversation_ids, pending_keys);
   const attention = new Map<string, WorkAttention>();
   for (const [id, stored] of records) {
     const c = conversations.get(String(stored.conversation_id));

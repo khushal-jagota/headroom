@@ -84,7 +84,7 @@ final class SidebarNavigationTests: XCTestCase {
 
         // Settings holds the old More places; a pushed place keeps native Back.
         app.openDestination("sidebar-settings")
-        for place in ["Ideas", "All goals", "Usage", "VPS"] {
+        for place in ["All goals", "Usage", "VPS"] {
             XCTAssertTrue(app.buttons[place].waitForExistence(timeout: 8), "Settings has no \(place)")
         }
         XCTAssertFalse(app.buttons["Feedback"].exists)

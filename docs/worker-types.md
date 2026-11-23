@@ -53,6 +53,6 @@ The New worker and Amend worker types are how these changes are usually made. A 
 
 - `server/worker_types/`: workflow definitions, preset registry, guidance assembly, and storage.
 - `server/worker_types/shipped_worker_types.json`: the seed, read by `server/worker_types/shipped.ts`.
-- `web/src/routes/ConfigRoute.svelte`: the Settings screen for types and their defaults.
+- `web/src/components/settings/WorkerSettings.svelte`: Settings → Workers, the types and their defaults.
 
 _Last verified: 2026-11-15._

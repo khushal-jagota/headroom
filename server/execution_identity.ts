@@ -1,10 +1,6 @@
 /** Executor identity checks are shared by both peers, independently of the codec facade. */
-import {
-  MAX_SUPPORTED_PROTOCOL_VERSION,
-  MIN_SUPPORTED_PROTOCOL_VERSION,
-  PROTOCOL_VERSION,
-  SPOOL_FORMAT_VERSION,
-} from './execution_configuration.ts';
+import { PROTOCOL_VERSION, SPOOL_FORMAT_VERSION } from './execution_configuration.ts';
+import { supported_machine_versions } from './client_versions/policy.ts';
 import { ExecutorValidationError } from './executor/protocol_errors.ts';
 import { strip } from './core/whitespace.ts';
 import type { ExecutorIdentity as WireIdentity } from './executor/wire.generated.ts';
@@ -38,13 +34,7 @@ export function supports_executor_versions(
   protocol_version: unknown,
   spool_format_version: unknown,
 ): boolean {
-  return (
-    is_integer(protocol_version) &&
-    is_integer(spool_format_version) &&
-    MIN_SUPPORTED_PROTOCOL_VERSION <= protocol_version &&
-    protocol_version <= MAX_SUPPORTED_PROTOCOL_VERSION &&
-    spool_format_version === SPOOL_FORMAT_VERSION
-  );
+  return supported_machine_versions(protocol_version, spool_format_version);
 }
 export function refusal_reason_for_versions(
   protocol_version: number,

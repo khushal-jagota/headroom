@@ -3,7 +3,6 @@ export const ID_PREFIXES = {
   manager: 'si',
   ticket: 't',
   schedule: 'schedule',
-  idea: 'idea',
   run: 'run',
 } as const;
 export const SLUG_ALPHABET = '0123456789abcdefghjkmnpqrstuvwxyz';

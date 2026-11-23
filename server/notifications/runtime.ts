@@ -9,6 +9,7 @@ import { canonical_server_origin } from './apns.ts';
 import * as data from './data.ts';
 import * as apns_data from './apns_data.ts';
 import { task_alert_is_current } from './attention.ts';
+import { desktop_notification_streams } from './desktop_streams.ts';
 export interface NotificationLoopOptions {
   database: Database;
   clock: Clock;
@@ -51,7 +52,14 @@ export class NotificationLoop {
     try {
       const { database, clock, adapter, apns_adapter } = this.options;
       const now = clock.nowUnix();
-      database.write((sql) => data.queue_deliveries(sql, now));
+      const allowed: Parameters<typeof data.queue_deliveries>[2] = [];
+      database.write((sql) => data.queue_deliveries(sql, now, allowed));
+      // Desktop apps get each new notification once, after its decision commits.
+      const desktop = desktop_notification_streams(database);
+      if (desktop.listening)
+        for (const { edge, intent } of allowed)
+          if (database.read((sql) => data.delivery_is_current(sql, edge, now)))
+            desktop.send(intent);
       const identity = database.read((sql) => data.read_web_push_identity(sql));
       const deliveries = database.write((sql) => data.pending_deliveries(sql, now));
       let sent = 0;

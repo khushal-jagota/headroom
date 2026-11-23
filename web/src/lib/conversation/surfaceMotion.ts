@@ -50,22 +50,24 @@ export function conversationMotion(element: HTMLElement) {
   return motion;
 }
 
-/** A plain outer window can reach zero; its child owns all padding and borders. */
+/** A plain outer window can reach zero; its child owns all padding and borders. It clips
+ *  only while its height moves: at rest it holds its content exactly, and a menu inside it
+ *  (a queued message's, which opens upward over the thread) must reach out of it. */
 export function conversationHeight(windowElement: HTMLElement) {
   const content = windowElement.firstElementChild as HTMLElement | null;
   if (!content) return {};
   const motion = conversationMotion(windowElement);
   let height = content.getBoundingClientRect().height;
   windowElement.style.height = `${height}px`;
-  windowElement.style.overflow = 'clip';
   const observer = new ResizeObserver(() => {
     const wanted = content.getBoundingClientRect().height;
     const from = windowElement.getBoundingClientRect().height;
     if (Math.abs(wanted - height) < .1) return;
     height = wanted;
-    motion.move(windowElement, fraction => {
+    windowElement.style.overflow = 'clip';
+    void motion.move(windowElement, fraction => {
       windowElement.style.height = `${from + (wanted - from) * fraction}px`;
-    });
+    }, undefined, () => windowElement.style.removeProperty('overflow'));
   });
   observer.observe(content);
   return { destroy() { observer.disconnect(); motion.cancel(windowElement); } };

@@ -116,6 +116,7 @@ async function send_owned(
     queue_reason: PromptQueueReason.requested,
     delivery_uncertain: false,
     system_generated: options.sender == null,
+    reconciles_sequence: options.reconciles_sequence ?? null,
   };
   const duplicate = await admit_sender(host, state, message);
   if (duplicate) {

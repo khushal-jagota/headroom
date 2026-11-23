@@ -308,6 +308,9 @@ export interface SendOptions {
   reasoning_effort_is_set?: boolean;
   sender_message_id?: string | null;
   sent_at_unix_milliseconds?: number | null;
+  /** A resend of a refused (or unconfirmed) message names that row's sequence; the
+   *  recorded prompt carries it, and the view folds the earlier row away. */
+  reconciles_sequence?: number | null;
   sender?: Principal | null;
   recipient?: Principal | null;
   recovery_references?: readonly DeploymentRecoveryReference[];
@@ -364,7 +367,12 @@ export interface ConversationSystem {
     held_prompt_id: string,
     mode: HeldPromptPromotionMode,
   ): Promise<HeldPromptPromotionFate | null>;
-  discard_held_prompt(conversation_id: string, held_prompt_id: string): Promise<boolean>;
+  /** ``withdrawn_for_edit``: the person took the message back to edit it (no transcript row). */
+  discard_held_prompt(
+    conversation_id: string,
+    held_prompt_id: string,
+    withdrawn_for_edit?: boolean,
+  ): Promise<boolean>;
   kill(conversation_id: string): Promise<void>;
   kill_for_restart(
     conversation_id: string,

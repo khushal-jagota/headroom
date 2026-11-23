@@ -5,6 +5,7 @@ import type {
   AttentionEdge,
   NotificationMessage,
   EdgeKey,
+  NotificationIntent,
   PendingDelivery,
   PushSubscription,
   WebPushIdentity,
@@ -217,7 +218,12 @@ export function reconcile_attention(sql: TransactionSql): void {
   }
   reconcile_source_attention(sql, desired);
 }
-export function queue_deliveries(sql: TransactionSql, now: number): number {
+/** Decide each new edge once. Each notification the policy allows also lands in `allowed`. */
+export function queue_deliveries(
+  sql: TransactionSql,
+  now: number,
+  allowed: { edge: EdgeKey; intent: NotificationIntent }[] = [],
+): number {
   prune_missing_subjects(sql);
   const preferences = resolved_preferences(sql);
   const subscriptions = active_subscription_ids(sql);
@@ -280,6 +286,7 @@ export function queue_deliveries(sql: TransactionSql, now: number): number {
         (preferences.get(preference_key(key, edge.notification_type)) ?? false),
     });
     if (intent) {
+      allowed.push({ edge, intent });
       queue_intent(sql, edge, intent, now);
       for (const id of subscriptions)
         sql.run(

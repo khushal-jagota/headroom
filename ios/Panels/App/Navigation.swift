@@ -22,7 +22,7 @@ enum AppRoute: Hashable {
     case orchestrator(String)
     case ticket(String)
     case artifact(owner: ArtifactOwner, path: String, title: String, dock: ArtifactDock)
-    case ideas, usage, vps, settings
+    case usage, vps, settings
 }
 
 extension AppRoute {
@@ -98,7 +98,6 @@ struct RouteDestination: View {
         case .ticket(let id): TicketView(ticketID: id)
         case .artifact(let owner, let path, let title, let dock):
             ArtifactViewerView(owner: owner, path: path, title: title, dock: dock)
-        case .ideas: IdeasView()
         case .usage: UsageView()
         case .vps: VPSView()
         case .settings: SettingsView()

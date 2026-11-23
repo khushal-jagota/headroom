@@ -1,3 +1,4 @@
+import { clientFetch } from "./clientIdentity";
 import { mutationHeaders } from "./releaseMonitor";
 
 export type JsonValue =
@@ -61,7 +62,7 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
 
   let response: Response;
   try {
-    response = await fetch(path, init);
+    response = await clientFetch(path, init);
   } catch {
     throw new PlannerFetchError("network error", "network");
   }
@@ -106,7 +107,7 @@ export async function fetchJson<T = unknown>(path: string, options: FetchOptions
 }
 
 export async function fetchText(path: string): Promise<string> {
-  const response = await fetch(path);
+  const response = await clientFetch(path);
   if (!response.ok) {
     throw new PlannerFetchError(`HTTP ${response.status}`, "http_error", {
       status: response.status

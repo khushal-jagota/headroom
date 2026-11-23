@@ -2,7 +2,7 @@
  * Reuse the synthetic native options; no provider, command journal, or listener starts.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -14,6 +14,7 @@ import {
 import { git } from '../../../ticket_workspaces/filesystem/shared.ts';
 import { Deferred } from '../../../core/deferred.ts';
 import { ChildProcesses } from '../../../lifecycle/owned_processes.ts';
+import { WorkerScratch } from '../../../conversation/worker_scratch.ts';
 import { ExecutorPaths } from '../configuration.ts';
 import { native_fixture_options } from '../testing/runner_fixture.ts';
 import { MacNativeChildren } from './start_stop.ts';
@@ -136,6 +137,86 @@ test('initialization retries wait for exact cleanup, stay bounded and exclude ot
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// Gap: on 22 Nov a scratch folder that another process kept writing failed a Worker stop, and
+// the runner faulted and stopped every Mac Worker. Reuse the synthetic native options; the
+// fixture backend stops through a real WorkerScratch whose folder cannot be deleted.
+test('a Worker stop whose scratch folder cannot be deleted does not fault the Mac runner', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mac-busy-scratch-'));
+  const processes = new ChildProcesses();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const failures: Error[] = [];
+  const reference = { executor_incarnation: 'inc', child_id: 'child', conversation_id: 'c' };
+  const scratch = await WorkerScratch.create(
+    { PLAN_TICKET_ID: 't_one' },
+    { home: root, processes },
+  );
+  const locked = join(scratch.directory, 'build');
+  await mkdir(locked);
+  await writeFile(join(locked, 'output.log'), 'busy');
+  await chmod(locked, 0o500);
+  const unexpected = async (): Promise<never> => {
+    throw new Error('No prompt belongs to this stop');
+  };
+  try {
+    const owner = new MacNativeChildren({
+      ...native_fixture_options({
+        paths: new ExecutorPaths(join(root, 'executor')),
+        workspace_home: root,
+        native_skill_home: () => ({ path: root, skills_directory: 'skills' }),
+        snapshot_directory: root,
+        on_failure: (error) => failures.push(error),
+        factory: () => () => ({
+          stop_outside_lock: false,
+          withdraw_delivery: unexpected,
+          detach: unexpected,
+          write_prompt: unexpected,
+          steer: unexpected,
+          cancel_running_turn: unexpected,
+          answer_permission_ask: unexpected,
+          answer_user_input: unexpected,
+          async start() {},
+          stop: () => scratch.close(),
+        }),
+      }),
+      event_sink: () => ({ async report() {} }),
+      async report_worker_setup() {},
+    });
+    await owner.start(
+      reference,
+      {
+        canonical_skill_snapshot: { required_skill_names: [], sources: [] },
+        resolved_start: {
+          conversation_id: reference.conversation_id,
+          backend_key: 'claude',
+          model: 'haiku',
+          reasoning_effort: null,
+          access: 'full',
+          workspace_folder: root,
+          workspace_path_policy: 'absolute',
+          role_materials: {
+            role_text: '',
+            identity_environment_variables: [['PLAN_TICKET_ID', 't_one']],
+          },
+        },
+      },
+      () => {},
+    );
+    await owner.stop_child(reference, () => {});
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Worker scratch folder stays in place'),
+    );
+    await owner.stop({ deadline: performance.now() / 1000 + 2 });
+    await owner.settled();
+    expect(failures).toEqual([]);
+  } finally {
+    await chmod(locked, 0o700);
+    warn.mockRestore();
+    processes.seal();
+    await processes.settled();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15_000);
 
 // Gap: native retry coverage uses an unmanaged folder and does not prove managed launch localization.
 // Reuse the synthetic native options without a provider, listener, or Git child.

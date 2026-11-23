@@ -1,8 +1,9 @@
 import { canonicalShellHash } from "./shellRouting";
 import { impliedWorkspaceView, parseWorkspaceAddress, workspaceAddress, type WorkspaceAddress } from "./workspaceAddress";
 import { parseUtilityPath } from "./utilityAddress";
+import { parseSettingsPath } from "./settings/address";
 
-type DestinationName = "workspace" | "review" | "ideas" | "goals" | "settings" | "backends" | "preview" | "unknown";
+type DestinationName = "workspace" | "review" | "goals" | "settings" | "backends" | "preview" | "unknown";
 /** One parsed address for the persistent shell. Pane keys never key the shell itself. */
 export type ShellDestination = {
   [Name in DestinationName]: { name: Name; params: Record<string, string>; key: string; hash: string; workspace?: WorkspaceAddress }
@@ -36,16 +37,17 @@ export function parseShellDestination(incoming: string): ShellDestination {
     if (!address) return unknown();
     return workspace(address);
   }
-  if (name === "settings" || name === "backends") {
-    const placement = parseUtilityPath(name === "settings" ? "settings" : "usage", segments.slice(1));
-    if (!placement) return unknown();
-    const detail = placement.utility === "settings" ? placement.settings : placement.utility === "usage" ? placement.usage : null;
-    if (!detail) return unknown();
-    if ("section" in detail) params.section = detail.section;
-    if ("tab" in detail) params.tab = detail.tab;
-    params.roleKind = detail.roleKind;
-    if (detail.roleId) params.id = detail.roleId;
-  } else if (!["review", "ideas", "goals", "preview"].includes(name) || segments.length > 1) return unknown();
+  if (name === "settings") {
+    const place = parseSettingsPath(segments.slice(1));
+    if (!place) return unknown();
+    params.section = place.section;
+    if (place.detail !== null) params.detail = place.detail;
+    if (place.chosen) params.chosen = "true";
+  } else if (name === "backends") {
+    const placement = parseUtilityPath("usage", segments.slice(1));
+    if (!placement || placement.utility !== "usage") return unknown();
+    params.tab = placement.usage.tab;
+  } else if (!["review", "goals", "preview"].includes(name) || segments.length > 1) return unknown();
   const key = name === "backends" ? "backends" : `${segments.join("/")}${query}`;
   return { name: name as Exclude<DestinationName, "workspace">, params, key, hash };
 }

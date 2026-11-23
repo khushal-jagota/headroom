@@ -89,7 +89,7 @@ test.skipIf(process.platform !== 'linux')(
         'const marker=process.env.P21_PROBE_MARKER;',
         "fs.writeFileSync(marker+'.tmp',JSON.stringify({parent:process.pid,descendant:process.pid}));",
         "fs.renameSync(marker+'.tmp',marker);",
-        "process.stdout.write('2.1.219 (Claude Code)\\n');setInterval(()=>{},1000);",
+        "process.stdout.write('2.1.259 (Claude Code)\\n');setInterval(()=>{},1000);",
       ].join('\n');
     writeFileSync(probe, probe_source, { mode: 0o700 });
     writeFileSync(join(bin, 'ps'), probe_source, { mode: 0o700 });

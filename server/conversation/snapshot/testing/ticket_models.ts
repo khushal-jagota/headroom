@@ -35,6 +35,8 @@ export class TicketModelSnapshots implements BackendSnapshotServiceContract {
   calls = 0;
   model = 'gpt-scripted';
   models: readonly string[] = [];
+  /** Optional per-backend model lists (first entry is the default); other backends use `models`. */
+  backend_models: Readonly<Record<string, readonly string[]>> = {};
   efforts: readonly string[] = ['medium'];
   retained(): BackendSnapshot | null {
     return null;
@@ -44,6 +46,8 @@ export class TicketModelSnapshots implements BackendSnapshotServiceContract {
   }
   async snapshot(backend_key: BackendInstanceId): Promise<BackendSnapshot> {
     this.calls++;
+    const own = this.backend_models[backend_key];
+    const models = own?.length ? own : this.models.length ? this.models : [this.model];
     return {
       backend_key,
       installed: true,
@@ -55,7 +59,7 @@ export class TicketModelSnapshots implements BackendSnapshotServiceContract {
         detail: null,
         login_command: null,
       },
-      available_models: (this.models.length ? this.models : [this.model]).map((model_id) => ({
+      available_models: models.map((model_id) => ({
         model_id,
         display_name: null,
         detail: null,
@@ -65,7 +69,7 @@ export class TicketModelSnapshots implements BackendSnapshotServiceContract {
         resolved_model_id: null,
       })),
       reasoning_effort_options: this.efforts,
-      default_model_id: this.model,
+      default_model_id: own?.length ? own[0] : this.model,
       default_reasoning_effort: 'medium',
       update_advisory: null,
       diagnoses: [],
