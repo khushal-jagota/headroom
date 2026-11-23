@@ -823,7 +823,7 @@ the same Ticket and conversation identities on either machine. Permission and in
 requests still direct the reader to the web to answer. The transcript distinguishes
 an answer saved on VPS, applied on Mac, and application left unconfirmed. Creating
 Tickets or selecting/moving their machine has no native flow yet. Machine installation and executor administration remain on the web.
-The shared update card in More offers server updates and targeted machine retries. Existing scheduled-task detail
+The shared update card behind Settings' Updates row offers server updates and targeted machine retries. Existing scheduled-task detail
 shows the schedule's machine when one is saved.
 
 Usage reads the current date-range summary and refreshes pricing through the rates
@@ -903,6 +903,22 @@ motion, a fixed page, edge Back at two table offsets, and Back from an artifact
 Review opens directly. It never sends a message and stays outside the permanent
 screen suite. This native touch and navigation boundary requires the real app
 host; Foundation tests cannot prove gesture priority or Back.
+
+The one-off update review uses the same loopback fixture and `PanelsReview` scheme.
+Run it with the assigned device, separate bundle, lane lock, and worktree output directory:
+
+```sh
+PANELS_UPDATES_SMOKE=1 \
+PANELS_OFFLINE_TEST=UpdateFlowTests/testUpdateCardAndTargetedRetry \
+PANELS_OFFLINE_DEVICE=<booted simulator UDID> PANELS_OFFLINE_BUNDLE=<task bundle ID> \
+PANELS_OFFLINE_LANE=<lane lock name> PANELS_OFFLINE_OUTPUT=<worktree output directory> \
+ios/scripts/test-offline-simulator.py --review
+```
+
+`PANELS_UPDATES_SMOKE=1` serves the update fixture and also starts the connection
+control that the expected-restart part needs. No other setting is necessary. The review
+captures Settings' Updates row and the Updates screen with an offer and with none. Its
+update writes go only to the loopback fixture.
 
 ## Decision notes
 
