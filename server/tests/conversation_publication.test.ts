@@ -2,7 +2,10 @@
 import { expect, test } from 'vitest';
 import { fixture } from './ticket_fixture.ts';
 import type { TransactionSql } from '../core/database/contracts.ts';
-import { SignalPublicationCoordinator } from '../conversation/publication/coordinator.ts';
+import {
+  pendingCredentialRequestBody,
+  SignalPublicationCoordinator,
+} from '../conversation/publication/coordinator.ts';
 import * as persistence from '../conversation/publication/persistence.ts';
 import { field_mutation } from '../conversation/runtime/save_attempt.ts';
 import { SignalBatch, SignalSnapshot } from '../conversation/contracts.ts';
@@ -144,6 +147,47 @@ test('runtime, asks, background work, unread, and failed acknowledgement share c
     ),
   )!;
   expect(JSON.parse(accepted.attention)).toEqual(f.attention());
+});
+
+// A key request stops on the owner as an ask or a question does, and outlives the turn that
+// made it. Creating and settling one appends its card event, which is what republishes it.
+test('a pending key request reads as awaiting your answer until it is settled', () => {
+  const f = setup();
+  const card = (state: string) =>
+    JSON.stringify({ kind: 'credential_request', request_id: 'r-1', state });
+  f.saved((tx) => {
+    tx.run("INSERT INTO credential_requests VALUES('r-1','c','ticket','t','{}',?,0,0)", [
+      card('pending'),
+    ]);
+    tx.run("INSERT INTO conversation_events VALUES('c',1,'credential_request',?,0)", [
+      JSON.stringify({ request: JSON.parse(card('pending')) }),
+    ]);
+  });
+  expect(f.attention()).toEqual({
+    signal: { working: false, message_for_owner: false },
+    awaiting_answer: true,
+    last_turn_failed: false,
+  });
+  // The docked conversation reads no transcript; the record hands it the waiting request.
+  const pending = () => f.database.read((sql) => pendingCredentialRequestBody(sql, 'c'));
+  expect(pending()).toEqual(JSON.parse(card('pending')));
+  // A turn starting and ending around it does not answer it.
+  const turn = {
+    pending_permission_ask_ids: new Set<string>(),
+    pending_user_input_questions: new Map<string, unknown>(),
+  };
+  f.producer.save_attempt('c', () => f.saved(() => {}), [field_mutation(f.runtime, 'turn', turn)]);
+  expect(f.attention()).toMatchObject({ signal: { working: true }, awaiting_answer: true });
+  f.producer.save_attempt('c', () => f.saved(() => {}), [field_mutation(f.runtime, 'turn', null)]);
+  expect(f.attention().awaiting_answer).toBe(true);
+  f.saved((tx) => {
+    tx.run("UPDATE credential_requests SET body=? WHERE request_id='r-1'", [card('saved')]);
+    tx.run("INSERT INTO conversation_events VALUES('c',2,'credential_request',?,0)", [
+      JSON.stringify({ request: JSON.parse(card('saved')) }),
+    ]);
+  });
+  expect(f.attention().awaiting_answer).toBe(false);
+  expect(pending()).toBeNull();
 });
 
 // Empty replacements still carry source boundaries. This closes a synthetic-idle-cursor gap.

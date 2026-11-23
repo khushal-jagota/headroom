@@ -51,6 +51,9 @@ await startServer({
     const snapshots = new TicketModelSnapshots();
     snapshots.model = 'gpt-6.1-sol';
     snapshots.models = ['gpt-6.1-sol'];
+    // A capture rig can list realistic models per backend; e2e keeps the single scripted model.
+    const backend_models = process.env.PANELS_TEST_BACKEND_MODELS;
+    if (backend_models) snapshots.backend_models = JSON.parse(backend_models);
     runtime.backend_snapshots = snapshots;
     return runtime;
   },

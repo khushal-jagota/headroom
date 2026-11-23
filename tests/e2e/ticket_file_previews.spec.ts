@@ -434,12 +434,12 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
     timeout: WAIT_MS,
   });
   await expect(page.locator('[data-conversation-rest-line]')).toHaveText(
-    /^Working(?: · [0-9]+(?:s|m(?: [0-9]+s)?))?$/,
+    /^Working(?: · (?:[0-9]+h [0-9]+m|[0-9]+(?:s|m(?: [0-9]+s)?)))?$/,
     { timeout: WAIT_MS },
   );
   if (evidence) await page.screenshot({ path: join(evidence, 'chief-working-unread.png'), fullPage: true });
   await api.post(server, `/api/test/signals/${chiefConversation}/finish`, {});
-  await expect(page.locator('[data-conversation-rest-line]')).toHaveText('Chief idle', { timeout: WAIT_MS });
+  await expect(page.locator('[data-conversation-rest-line]')).toHaveText('Idle', { timeout: WAIT_MS });
   await expect(page.locator('[data-conversation-unread-preview]')).toContainText('Dock artifact');
   await page.locator('[data-conversation-expand]').click({ timeout: WAIT_MS });
   await page.locator('a.file-preview-artifact-link:visible[href*="index.html"]').first().click();

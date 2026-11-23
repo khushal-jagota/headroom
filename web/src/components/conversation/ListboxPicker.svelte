@@ -33,6 +33,7 @@
     listLabel = label,
     kind = "compact",
     chevron = "typed",
+    drawnTick = false,
     scrollPanel = false,
     hideTrigger = false,
     below = false,
@@ -68,6 +69,8 @@
      *  than by its box, so it reads small beside stroked icons. The conversation's
      *  composer asks for the drawn one; every other caller keeps what it had. */
     chevron?: "typed" | "drawn" | "none";
+    /** The composer's own menus (Steer) draw their check; every other picker keeps its ✓. */
+    drawnTick?: boolean;
     scrollPanel?: boolean;
     hideTrigger?: boolean;
     below?: boolean;
@@ -569,7 +572,7 @@
             {...optionAttributes?.(item, index+itemOffset === active, item.value === selectedValue)}
           >
             {@render optionContent(item, item.value === selectedValue)}
-            <span class="listbox-picker-tick" aria-hidden="true">{item.value === selectedValue ? "✓" : ""}</span>
+            <span class="listbox-picker-tick" aria-hidden="true">{#if drawnTick}{#if item.value === selectedValue}<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>{/if}{:else}{item.value === selectedValue ? "✓" : ""}{/if}</span>
           </button>
         {/each}
         {#if pageWindow}<div aria-hidden="true" style:height={`${Math.max(0,totalItems-itemOffset-items.length)*pageWindow.rowHeight}px`}></div>{/if}
@@ -639,6 +642,49 @@
   .listbox-picker-option.cursor { background: var(--surface-recessed); color: var(--text-strong); }
   .listbox-picker-option.on { color: var(--text-strong); }
   .listbox-picker-tick { flex: none; font-family: var(--font-mono); font-size: var(--type-xs); }
+  .listbox-picker-tick:has(svg) { display: grid; place-items: center; width: 14px; min-height: 1em; }
+  .listbox-picker-tick svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* In the conversation composer the delivery menu (the one compact list there) is a Surface
+     floating with the float shadow; its rows are quiet buttons, 32 tall pills, labels only,
+     the chosen row marked by a drawn check at its right. */
+  :global([data-conversation-composer]) .listbox-picker-panel.compact {
+    padding: 6px;
+    background: var(--cv-surface);
+    border: 1px solid var(--cv-surface-edge);
+    border-radius: var(--cv-surface-radius);
+    box-shadow: var(--cv-shadow-float);
+    animation: listbox-picker-in var(--cv-dur-base) var(--cv-ease-out);
+  }
+  @keyframes listbox-picker-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  :global([data-conversation-composer]) .compact .listbox-picker-option {
+    min-height: 32px;
+    gap: var(--cv-s4);
+    padding: 6px var(--cv-s3);
+    border-radius: var(--cv-r-pill);
+    color: #e0e0e0;
+    font-family: var(--cv-font);
+    font-size: var(--cv-type-control);
+    font-weight: var(--cv-weight-label);
+    line-height: var(--cv-leading-control);
+  }
+  :global([data-conversation-composer]) .compact .listbox-picker-option:hover { background: #2a2a2a; background-image: none; color: var(--cv-ink); }
+  :global([data-conversation-composer]) .compact .listbox-picker-option.cursor { background: #2a2a2a; color: var(--cv-ink); }
+  :global([data-conversation-composer]) .compact .listbox-picker-option.on { color: var(--cv-ink); }
+  :global([data-conversation-composer]) .compact .listbox-picker-list:focus-visible .listbox-picker-option.cursor {
+    box-shadow: inset 0 0 0 var(--cv-focus-width) var(--cv-accent);
+  }
+  :global([data-conversation-composer]) .compact .listbox-picker-tick { color: var(--cv-ink); width: 16px; }
+  :global([data-conversation-composer]) .compact .listbox-picker-tick svg { width: 16px; height: 16px; stroke-width: 1.5; }
+  /* The composer's model picker is only as wide as its content: the rail fits the longest
+     backend name, the list the longest model or effort name, plus row padding. */
+  :global([data-conversation-composer]) .listbox-picker-panel.rail {
+    grid-template-columns: max-content max-content;
+    width: max-content;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global([data-conversation-composer]) .listbox-picker-panel.compact { animation: none; }
+  }
   .listbox-picker-panel[aria-busy="true"] .listbox-picker-option { cursor: progress; opacity: .55; }
   @media (max-width: 620px) {
     .listbox-picker-panel.rail { width: min(274px, calc(100vw - var(--space-4) * 2)); }

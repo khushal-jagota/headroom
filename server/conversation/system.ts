@@ -585,10 +585,17 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
       ? own_settlement(state, controls.promote_held_prompt(this, state, held_prompt_id, mode))
       : null;
   }
-  async discard_held_prompt(conversation_id: string, held_prompt_id: string): Promise<boolean> {
+  async discard_held_prompt(
+    conversation_id: string,
+    held_prompt_id: string,
+    withdrawn_for_edit = false,
+  ): Promise<boolean> {
     const state = this.conversation_state(conversation_id);
     return state
-      ? own_settlement(state, controls.discard_held_prompt(this, state, held_prompt_id))
+      ? own_settlement(
+          state,
+          controls.discard_held_prompt(this, state, held_prompt_id, withdrawn_for_edit),
+        )
       : false;
   }
   async answer_permission_ask(

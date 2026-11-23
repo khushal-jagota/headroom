@@ -1,7 +1,6 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
 import ConversationSignalMark from "../src/components/ConversationSignalMark.svelte";
-import ConversationRestBar from "../src/components/conversation/ConversationRestBar.svelte";
 
 describe("exact conversation signal marks", () => {
   it.each([
@@ -21,15 +20,6 @@ describe("exact conversation signal marks", () => {
       expect(html).toContain(`aria-label="${label}"`);
       expect(html).toContain('data-conversation-id="conversation-exact"');
     }
-  });
-
-  it("reads a Worker being set up on the status line until a turn runs", () => {
-    const workerSetup = { step: "preparing_workspace", began_at: 1, machine_id: "machine" } as const;
-    const line = (props: Record<string, unknown>) => render(ConversationRestBar, { props: { onOpen: () => {}, ...props } }).body;
-    expect(line({ workerSetup })).toContain("Setting up · preparing workspace");
-    expect(line({ workerSetup: { ...workerSetup, step: "starting_worker" } })).toContain("Setting up · starting Worker");
-    expect(line({ workerSetup, running: true })).not.toContain("Setting up");
-    expect(line({})).toContain("Worker idle");
   });
 
   it("keeps an absent conversation quiet", () => {

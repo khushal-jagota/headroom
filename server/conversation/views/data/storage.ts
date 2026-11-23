@@ -301,7 +301,9 @@ export function read_turn(
     started_at_unix_milliseconds: row.started_at_milliseconds,
     ending: row.ending,
     duration_seconds: ended ? Math.max(0, row.ended_at! - row.created_at) : null,
-    tool_call_count: focus ? 0 : row.tool_call_count,
+    // Tool activity stays visible in both lenses. Focus does not draw it inline, but its
+    // turn head counts it and opens onto it.
+    tool_call_count: row.tool_call_count,
     folded_message_count:
       !focus && (ended || is_stopped) ? Math.max(0, ordinary_count - Number(retained_ordinary)) : 0,
     latest_message_key: last === null ? null : `e${last}`,
@@ -358,11 +360,12 @@ function candidate_members(
   const join =
     'LEFT JOIN conversation_view_turns t ON r.conversation_id=t.conversation_id AND r.turn_key=t.turn_key ';
   if (scope.kind === 'work_group') {
+    // A run holds only tool calls. Asking for it is asking for them, in either lens.
     return [
       [
         "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,1 AS slot " +
           'FROM conversation_view_rows r WHERE r.conversation_id=? AND r.removed=0 ' +
-          `AND ${visible}r.work_group_key=?`,
+          'AND r.work_group_key=?',
         [scope.key],
       ],
     ];
@@ -382,13 +385,13 @@ function candidate_members(
         [scope.key],
       ],
     ];
-    if (!focus) {
-      members.push([
-        "SELECT 'work_group' AS kind,group_key AS key,source_sequence AS sequence,0 AS slot " +
-          'FROM conversation_view_groups WHERE conversation_id=? AND turn_key=?',
-        [scope.key],
-      ]);
-    }
+    // An opened turn holds its tool activity in both lenses: Focus keeps it behind the
+    // turn head rather than out of reach.
+    members.push([
+      "SELECT 'work_group' AS kind,group_key AS key,source_sequence AS sequence,0 AS slot " +
+        'FROM conversation_view_groups WHERE conversation_id=? AND turn_key=?',
+      [scope.key],
+    ]);
     return members;
   }
   const members: Member[] = [
@@ -720,11 +723,14 @@ export function scope_contains_item(
       'SELECT turn_key,ending_sequence FROM conversation_view_groups WHERE conversation_id=? AND group_key=?',
       [conversation_id, key],
     );
-    if (row === undefined || lens === 'focus') {
+    if (row === undefined) {
       return false;
     }
     if (scope.kind === 'turn') {
       return row.turn_key === scope.key;
+    }
+    if (lens === 'focus') {
+      return false;
     }
     return (
       scope.kind === 'timeline' &&
@@ -747,6 +753,10 @@ export function scope_contains_item(
     );
   }
   if (row.row_kind === 'tool_call') {
+    // Focus reaches tool calls only through an opened turn, never on the timeline.
+    if (lens === 'focus') {
+      return false;
+    }
     const group = sql.get<{
       latest_entry_sequence: number;
       ending_sequence: number | null;

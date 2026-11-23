@@ -5,6 +5,7 @@ export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from 
 
 import { mutationHeaders } from "../releaseMonitor";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
+import type { CredentialRequestRowBody } from "./view/contracts";
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
  * Every shape here is exactly what `/api/conversation` serializes, and every call is a
@@ -203,6 +204,8 @@ export type ConversationView = {
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
+  /** The newest key request still waiting on the owner. */
+  pending_credential_request?: CredentialRequestRowBody | null;
 };
 
 /** One earlier conversation of the same owner, as the record lists it.
@@ -508,6 +511,9 @@ export type OwnerSendBody = {
   content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;
+  /** A resend of a refused message: that row's sequence, so the refused bubble folds away
+   *  once this prompt is recorded. */
+  reconciles_sequence?: number;
 } & SenderMintedPromptFields;
 
 /** What a conversation started for an owner right now would run on.
@@ -613,6 +619,13 @@ function detailSentence(raw: string, status: number): string {
     if (parsed && typeof parsed === "object" && "detail" in parsed) {
       const detail = (parsed as { detail: unknown }).detail;
       if (typeof detail === "string" && detail !== "") return detail;
+    }
+    // Routes that raise a planner error answer in its envelope, `{error: {message}}`. Its
+    // message is the sentence the server meant to send, so it is read the same way.
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      const error = (parsed as { error: unknown }).error;
+      const message = error && typeof error === "object" && "message" in error ? (error as { message: unknown }).message : null;
+      if (typeof message === "string" && message !== "") return message;
     }
   } catch {
     // Not JSON. The status is all the server said.
@@ -723,11 +736,14 @@ export function answerUserInput(
  */
 export function discardHeldPrompt(
   conversationId: string,
-  senderMessageId: string
+  senderMessageId: string,
+  /** The person took the message back into the composer to edit it: the record keeps no
+   *  "Discarded" row for it. */
+  forEdit = false
 ): Promise<{ discarded: boolean }> {
   return request<{ discarded: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}`
-      + `/held-prompts/${encodeURIComponent(senderMessageId)}`,
+      + `/held-prompts/${encodeURIComponent(senderMessageId)}${forEdit ? "?for=edit" : ""}`,
     { method: "DELETE" }
   );
 }

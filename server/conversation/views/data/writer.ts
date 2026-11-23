@@ -152,11 +152,12 @@ function append(
     }
     lookup(tx, conversation_id, 'sender_message', effect.sender_message_id, sequence, turn_key);
   }
+  // A resend folds away the refused or unconfirmed message it sends again.
   if (effect.reconciles_sequence !== null && effect.reconciles_sequence < sequence) {
     const previous = tx.get<{
       sequence: number;
     }>(
-      "SELECT sequence FROM conversation_view_rows WHERE conversation_id=? AND sequence=? AND row_kind='prompt_uncertain'",
+      "SELECT sequence FROM conversation_view_rows WHERE conversation_id=? AND sequence=? AND row_kind IN ('prompt_uncertain','prompt_refused')",
       [conversation_id, effect.reconciles_sequence],
     );
     if (previous !== undefined) {
@@ -447,11 +448,22 @@ function layout_row(
       conversation_id,
     ]);
     if (turn_key !== null) {
+      // Focus heads a turn that said something to the person, that the person opened, or
+      // that did not complete: a failed or stopped turn's ending is in Focus, and it stands
+      // under its own turn's head, in its own place, never under an earlier turn's answer.
       tx.run(
-        'UPDATE conversation_view_turns SET ending_sequence=?,ending=?,ended_at=?,focus_head=(focus_message_count>0 OR EXISTS(SELECT 1 FROM conversation_view_rows r ' +
+        "UPDATE conversation_view_turns SET ending_sequence=?,ending=?,ended_at=?,focus_head=(focus_message_count>0 OR ?<>'completed' OR EXISTS(SELECT 1 FROM conversation_view_rows r " +
           'WHERE r.conversation_id=conversation_view_turns.conversation_id AND r.sequence=conversation_view_turns.source_sequence AND r.focus_visible=1 AND r.removed=0)),' +
           'changed_sequence=? WHERE conversation_id=? AND turn_key=?',
-        [sequence, payload.ending, created_at, changed_sequence, conversation_id, turn_key],
+        [
+          sequence,
+          payload.ending,
+          created_at,
+          payload.ending,
+          changed_sequence,
+          conversation_id,
+          turn_key,
+        ],
       );
     }
     tx.run(

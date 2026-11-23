@@ -53,3 +53,30 @@ export function completeUserInputAnswers(
   }
   return answers;
 }
+
+/** The option a number key picks in a question (1–9), or null. */
+export function userInputOptionForKey(
+  question: Pick<UserInputQuestion, "options"> | undefined,
+  key: string
+): string | null {
+  if (!/^[1-9]$/.test(key) || question === undefined) return null;
+  return question.options[Number(key) - 1]?.label ?? null;
+}
+
+/** The person's own answer, written in the composer while a question waits. The composer is
+ *  the one place to type: its words are the "something else" answer to the question on
+ *  screen. On a single-answer question they replace a chosen option; on a multi-answer one
+ *  they join the chosen ones. Clearing the words takes the own answer back. */
+export function withOwnAnswer(
+  draft: UserInputDraft,
+  question: UserInputQuestion,
+  words: string
+): UserInputDraft {
+  const written = words.trim() !== "";
+  return {
+    selected: written && !question.multi_select
+      ? { ...draft.selected, [question.question_id]: [] }
+      : draft.selected,
+    other: { ...draft.other, [question.question_id]: words }
+  };
+}
