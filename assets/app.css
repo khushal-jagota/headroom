@@ -3840,11 +3840,13 @@ details:not([open]) > summary > .manager-workspace-chevron {
 :where(.chat-thread-content, .chat-thread-content > [data-conversation-transcript]) > :where(:not([data-conversation-transcript], [data-conversation-history-edge])) + :where(:not([data-conversation-history-edge])) { margin-block-start: var(--cv-gap-block); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="turn"] { margin-block-start: var(--cv-gap-turn); }
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="meta"] { margin-block-start: var(--cv-gap-meta); }
-.chat-thread-content > [data-conversation-transcript] > :is([data-rhythm="block"], [data-rhythm="section"]) { margin-block-start: var(--cv-gap-block); }
+.chat-thread-content > [data-conversation-transcript] > [data-rhythm="block"] { margin-block-start: var(--cv-gap-block); }
 .chat-thread-content > [data-conversation-transcript] > :is([data-rhythm="row"], [data-rhythm="first"]) { margin-block-start: 0; }
 .chat-thread-content > [data-conversation-transcript] > :is(.chat-u, .chat-system, [data-conversation-turn]):not(:first-child, [data-rhythm]) { margin-block-start: var(--cv-gap-turn); }
 .chat-thread-content > [data-conversation-transcript] > [data-conversation-turn] + :not([data-rhythm]) { margin-block-start: var(--cv-gap-meta); }
 .chat-thread-content > [data-conversation-transcript] > .chat-a + .chat-a { margin-block-start: var(--cv-gap-block); }
+/* The live edge under a message keeps the message's hover row clear: a turn's gap. */
+.chat-thread-content > [data-conversation-transcript][data-conversation-ends-with-message] ~ [data-conversation-live-edge] { margin-block-start: var(--cv-gap-turn); }
 /* An item that draws nothing gives nothing, and the item after it keeps its own gap. */
 .chat-thread-content > [data-conversation-transcript] > [data-rhythm="none"] { margin-block: 0; }
 

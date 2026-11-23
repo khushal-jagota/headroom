@@ -95,10 +95,10 @@
       if (item.settled || reader.status?.turn_key !== item.key) return null;
       return reader.status?.pending_permission ? 'permission' : reader.status?.pending_user_input ? 'question' : null;
   }
-  /** A turn the person stopped is said once, by its ending line ("Stopped after 8m 45s"),
-   *  in both lenses: its head would say the same again above its work. */
+  /** A turn the person stopped ends with its one line ("Stopped after 8m 45s"). Focus shows
+   *  only that line; Full also heads the turn with "Worked for …", as it does every turn. */
   function headDrawn(item: ConversationViewItem & { kind: 'turn' }): boolean {
-      return turnHeadAtTop(item, reader.status) && !(item.settled && item.ending === 'interrupted');
+      return turnHeadAtTop(item, reader.status) && (reader.lens === 'full' || !(item.settled && item.ending === 'interrupted'));
   }
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
@@ -130,7 +130,7 @@
   }
   /** Where each drawn item stands in the thread's rhythm (design direction 2.5), from what
    *  it is and what was drawn before it. Items that draw nothing take no space. */
-  type Rhythm = 'first' | 'turn' | 'meta' | 'block' | 'section' | 'row' | 'none';
+  type Rhythm = 'first' | 'turn' | 'meta' | 'block' | 'row' | 'none';
   type Beat = 'prompt' | 'head' | 'work' | 'prose' | 'other';
   const presentation = $derived.by(() => {
       const result = new Set<string>();
@@ -139,7 +139,7 @@
               result.add(item.key);
       return result;
   });
-  const rhythm = $derived.by(() => {
+  const layout = $derived.by(() => {
       const result = new Map<string, Rhythm>();
       const before = new Set<string>();
       for (const boundary of historyEdges)
@@ -165,15 +165,29 @@
           const opens = turnOpens; turnOpens = false;
           result.set(slot.key,
               previous === null ? 'first'
-              : beat === 'prompt' || beat === 'head' || opens ? 'turn'
+              // A message keeps its hover row's room under it (4 + 24, and 4 clear): what
+              // follows it stands a turn's gap below, whatever it is.
+              : beat === 'prompt' || beat === 'head' || opens || messageBeat(previous) ? 'turn'
               : previous === 'head' ? 'meta'
               : beat === 'work' && previous === 'work' ? 'row'
-              : beat === 'prose' && previous === 'prose' ? 'section'
               : 'block');
           previous = beat;
       }
-      return result;
+      return { rhythm: result, endsWithMessage: messageBeat(previous) };
   });
+  const rhythm = $derived(layout.rhythm);
+  /** A message (the person's or the agent's) carries the time-and-Copy row under it. */
+  function messageBeat(beat: Beat | null): boolean {
+      return beat === 'prompt' || beat === 'prose';
+  }
+  /** A line drawn after the last item (live output, the stopped line, the live edge) keeps
+   *  the turn gap under a message too. */
+  const endsWithMessage = $derived(layout.endsWithMessage);
+  const liveOutputDrawn = $derived(reader.lens === 'full' && (reader.status?.live_output?.byte_count ?? 0) > 0);
+  const stoppedLineDrawn = $derived(reader.status?.stopped_without_ending === true);
+  const backgroundTasks = $derived(activityUncertain ? [] : backgroundTasksAfterTheTurn(reader.status));
+  /** The first line drawn after the items, if any, takes the turn gap under a message. */
+  const trailing = $derived(liveOutputDrawn ? 'live-output' : stoppedLineDrawn ? 'stopped' : backgroundTasks.length > 0 ? 'background' : null);
   // Bodies that stopped being true are dropped where they are held, so the rows that
   // read them read again. Nothing is unmounted to achieve it.
   $effect(() => { reader.discardedBodies; untrack(() => { wholeDetails.clear(); emptyEndings.clear(); }); });
@@ -227,7 +241,8 @@
       return { destroy: () => observer.disconnect() };
   }
 </script>
-<div class="c2-transcript" data-conversation-transcript>
+<!-- The live edge after the transcript reads data-conversation-ends-with-message (app.css). -->
+<div class="c2-transcript" data-conversation-transcript data-conversation-ends-with-message={endsWithMessage && trailing === null ? '' : undefined}>
   {#if reader.status?.diagnostics_expired}<p class="diagnostic-expiry-notice" data-conversation-diagnostics-expired>Some diagnostic history expired.</p>{/if}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
@@ -247,7 +262,7 @@
       {#if item.kind==='turn'}
         <div use:demand={item}>
           {#if headDrawn(item)}
-          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
+          <TurnAnchor {activityUncertain} settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} waiting={turnWaiting(item)} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
           {/if}
         </div>
       {:else if item.kind==='work_group'}
@@ -271,18 +286,16 @@
     <div use:edge={boundary} data-conversation-history-edge={boundary.direction} aria-hidden="true"></div>
   {/each}
   {#if reader.lens==='full'&&reader.status?.live_output}
-    <ViewItem itemKey="live-output" rhythm={reader.status.live_output.byte_count===0 ? 'none' : 'block'}><LiveOutput {reader}/></ViewItem>
+    <ViewItem itemKey="live-output" rhythm={reader.status.live_output.byte_count===0 ? 'none' : endsWithMessage ? 'turn' : 'block'}><LiveOutput {reader}/></ViewItem>
   {/if}
-  {#if reader.status?.stopped_without_ending}<TranscriptStatusRow status={TURN_STOPPED_STATUS} role="status" data-conversation-row="turn_stopped"/>{/if}
+  {#if stoppedLineDrawn}<TranscriptStatusRow status={TURN_STOPPED_STATUS} role="status" data-conversation-row="turn_stopped" data-rhythm={endsWithMessage && trailing === 'stopped' ? 'turn' : undefined}/>{/if}
   <!-- The turn has ended but work it started is still live: say so, one line per task,
        from the record the sidebar spinner reads, until that task ends. -->
-  {#if !activityUncertain}
-    {#each backgroundTasksAfterTheTurn(reader.status) as task (task.task_id)}
-      <div class="c2-background-work" role="status" data-conversation-background-task>
+  {#each backgroundTasks as task, index (task.task_id)}
+      <div class="c2-background-work" role="status" data-conversation-background-task data-rhythm={index === 0 && endsWithMessage && trailing === 'background' ? 'turn' : undefined}>
         <span class="live-text-shimmer">{backgroundWorkSentence([task.task_description])}</span>
       </div>
-    {/each}
-  {/if}
+  {/each}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.newer}<div use:edge={{scope:page.scope,cursor:page.newer,direction:'newer'}} data-conversation-history-edge="newer" aria-hidden="true"></div>{/if}
   {/each}

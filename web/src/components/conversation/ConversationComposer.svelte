@@ -32,6 +32,7 @@
   import ComposerAttachments from "./composer/ComposerAttachments.svelte";
   import ComposerAddMenu from "./composer/ComposerAddMenu.svelte";
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
+  import SystemLine from "./SystemLine.svelte";
   import {
     orderedComposerAttachments, attachmentByteLabel,
     type ComposerAttachmentReference
@@ -127,6 +128,7 @@
     supportsSteer = false,
     fateNote = null,
     errorNote = null,
+    undeliveredReason = null,
     placeholder = "Message the agent...",
     disabled = false,
     showRunPicker = true,
@@ -197,6 +199,8 @@
     supportsSteer?: boolean;
     fateNote?: string | null;
     errorNote?: string | null;
+    /** Why the words in the field were not delivered: one system line under the box. */
+    undeliveredReason?: string | null;
     placeholder?: string;
     disabled?: boolean;
     /** False when an empty-state form owns the same start values on this screen. */
@@ -1102,8 +1106,10 @@
     });
   });
   /** v11 (4): a queued message taken back to edit: its words come into the field, after
-   *  anything already written there, and the cursor waits at their end. */
+   *  anything already written there, and the cursor waits at their end. They were queued,
+   *  so the composer sends them with Queue again unless the person picks another mode. */
   export function takeBackQueuedWords(words: string): void {
+    deliveryMode = "queue";
     const settled = text.trimEnd();
     text = settled === "" ? words : `${settled}\n\n${words}`;
     recordDraftChange();
@@ -1528,6 +1534,8 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 16.5h.01M10.3 4.2 2.8 17.5A2 2 0 0 0 4.5 20.5h15a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z" /></svg>
       <span>{intakeError ?? errorNote}</span>
     </div>
+  {:else if undeliveredReason}
+    <SystemLine mark="failure" role="alert" data-conversation-undelivered-note="">Not delivered<span aria-hidden="true">{" · "}</span>{undeliveredReason}</SystemLine>
   {:else if fateNote}
     <div class="c2-fate" data-conversation-fate>{fateNote}</div>
   {/if}

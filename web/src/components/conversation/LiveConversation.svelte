@@ -222,6 +222,11 @@
   let fateNoteMessageId = $state<string | null>(null);
   let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
+  /** A send from the dock that the machine turned away: its words stay in the composer, and
+   *  this reason stands under it, because the bubble that says so is in the closed
+   *  transcript. Cleared by the next send and by opening the conversation. */
+  let dockedUndeliveredReason = $state<string | null>(null);
+  $effect(() => { if (conversationState !== "rest") dockedUndeliveredReason = null; });
   let askNote = $state<string | null>(null);
   let askNoteKey = $state<string | null>(null);
   let busy = $state(false);
@@ -695,6 +700,7 @@
     }
     errorNote = null;
     fateNote = null;
+    dockedUndeliveredReason = null;
     // Save the words before transport, but draw them only after their destination is known.
     const message = { ...mintOutgoingMessage({
       content,
@@ -795,7 +801,9 @@
       if (machineOffline !== null) {
         await holdOnTo(sentMessages.map(candidate => candidate.messageId === message.messageId
           ? {...candidate, knownFate: "machine_offline" as const, refusal: machineOffline} : candidate));
-        return true;
+        if (conversationState !== "rest") return true;
+        dockedUndeliveredReason = machineOffline.reason;
+        return false;
       }
       errorNote = sentenceFor(error);
       if (theServerRefusedTheSend(error)) {
@@ -1121,6 +1129,7 @@
   recordedCredentialRequest={view?.pending_credential_request ?? null}
   fateNote={visibleFateNote}
   errorNote={errorNote ?? pickerReadError}
+  undeliveredReason={dockedUndeliveredReason}
   {connectionTrouble}
   {readOnly}
   {historyOwner}
