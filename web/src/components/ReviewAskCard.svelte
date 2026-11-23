@@ -92,21 +92,21 @@
     const active = busy || attachmentReadBusy;
     untrack(() => onBusy?.(active, conversationId));
   });
-  // A new question starts with an empty draft.
-  $effect(() => {
-    const id = userInput?.request_id ?? "";
-    if (id !== draftRequestId) {
-      releaseAttachments();
-      draftRequestId = id;
-      draft = emptyUserInputDraft();
-      attachmentDrafts = Object.fromEntries((userInput?.questions ?? []).map((question) => [question.question_id, { images: [], files: [], uploads: [], busy: false }]));
-    }
-  });
+  function prepareQuestionDraft(next: ConversationView): void {
+    const id = next.pending_user_input?.request_id ?? "";
+    if (id === draftRequestId) return;
+    releaseAttachments();
+    draftRequestId = id;
+    draft = emptyUserInputDraft();
+    attachmentDrafts = Object.fromEntries((next.pending_user_input?.questions ?? []).map((question) => [question.question_id, { images: [], files: [], uploads: [], busy: false }]));
+  }
 
   async function load(): Promise<void> {
     try {
       const read = await readConversation(conversationId);
       if (destroyed) return;
+      // Install each entry before its field can publish default upload/read state.
+      prepareQuestionDraft(read);
       view = read;
       error = null;
       loaded = true;
@@ -200,14 +200,16 @@
                 </div>
               {/if}
               {#if question.allow_other || question.options.length === 0}
+                {@const attachmentDraft = attachmentDrafts[question.question_id]}
+                {#if attachmentDraft}
                 <div class="ask-own-words">
                   <ComposerField
                     draftKey={`answer:${conversationId}:${draftRequestId}:${question.question_id}`}
                     uploadDestination={{ kind: "conversation", id: conversationId, expected_conversation_id: conversationId }}
-                    bind:uploads={() => attachmentDrafts[question.question_id]?.uploads ?? [], (value) => { attachmentDrafts[question.question_id].uploads = value; }}
-                    bind:images={() => attachmentDrafts[question.question_id]?.images ?? [], (value) => { attachmentDrafts[question.question_id].images = value; }}
-                    bind:files={() => attachmentDrafts[question.question_id]?.files ?? [], (value) => { attachmentDrafts[question.question_id].files = value; }}
-                    bind:intakeBusy={() => attachmentDrafts[question.question_id]?.busy ?? false, (value) => { attachmentDrafts[question.question_id].busy = value; }}
+                    bind:uploads={attachmentDraft.uploads}
+                    bind:images={attachmentDraft.images}
+                    bind:files={attachmentDraft.files}
+                    bind:intakeBusy={attachmentDraft.busy}
                     onError={(problem) => { error = problem; }}
                     bind:value={
                       () => draft.other[question.question_id] ?? "",
@@ -223,6 +225,7 @@
                     disabled={busy || !available}
                     inputAttributes={{ "data-review-ask-own-words": question.question_id }} />
                 </div>
+                {/if}
               {:else}
                 <p class="ask-note" data-composer-attachment-unavailable>This question only accepts the listed choices. Answer with a listed choice, then attach files in a message.</p>
               {/if}

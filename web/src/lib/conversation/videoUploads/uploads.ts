@@ -7,6 +7,7 @@ import type { PendingAttachment, UploadDestination, AttachmentUploadAdapter } fr
 /** Owns live transfers only. Completion updates the attachment; it never submits a draft. */
 export class AttachmentTransfers {
   private active = new Map<PendingAttachment, AbortController>();
+  private validating = new Set<PendingAttachment>();
   constructor(private adapter: AttachmentUploadAdapter, private changed: () => void) {}
   create(file: File, id: number, destination: UploadDestination): PendingAttachment {
     if (!isSafeConversationFileName(file.name) || file.size < 0 || file.size > MAX_ATTACHMENT_BYTES)
@@ -49,7 +50,11 @@ export class AttachmentTransfers {
     }
   }
   async validate(attachment: PendingAttachment): Promise<void> {
+    // A live PUT owns its validating phase. A GET during that phase can still report
+    // transferring and must not overwrite the PUT's eventual ready result.
+    if (this.active.has(attachment) || this.validating.has(attachment)) return;
     if (!attachment.uploadId) { attachment.phase = "interrupted"; this.changed(); return; }
+    this.validating.add(attachment);
     try {
       const status = await this.adapter.status(attachment.uploadId);
       if (status.state !== "ready" || status.destination.expected_conversation_id !== attachment.destination.expected_conversation_id
@@ -63,7 +68,7 @@ export class AttachmentTransfers {
       attachment.error = undefined;
     } catch (error) {
       attachment.phase = "failed"; attachment.error = error instanceof Error ? error.message : "Select the file again.";
-    }
+    } finally { this.validating.delete(attachment); }
     this.changed();
   }
   remove(attachment: PendingAttachment): void {

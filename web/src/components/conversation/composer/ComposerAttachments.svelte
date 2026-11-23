@@ -79,7 +79,7 @@
           class="chat-att-x"
           data-chat-image-remove={attachment.kind === "image" ? "" : undefined}
           data-chat-file-remove={attachment.kind === "file" ? "" : undefined}
-          aria-label={`Remove ${attachment.kind} ${item.fileName || "pasted image"}`}
+          aria-label={`Remove ${attachment.kind === "video" ? "attachment" : attachment.kind} ${item.fileName || "pasted image"}`}
           title="Remove"
           disabled={inputDisabled}
           onclick={() => onRemove(attachment)}

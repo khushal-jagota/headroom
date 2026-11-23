@@ -79,7 +79,7 @@
   let rememberedConversationId = $state("");
   let answerConversationId = $derived(uploadDestination.expected_conversation_id ?? uploadDestination.id);
   let attachmentDrafts = $state<Record<string, UserInputAttachment[]>>({});
-  let standaloneDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; uploads: PendingAttachment[]; busy: boolean }>>({});
+  let standaloneDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; uploads: PendingAttachment[]; busy: boolean }>>(untrack(() => Object.fromEntries(request.questions.map((each) => [each.question_id, { images: [], files: [], uploads: [], busy: false }]))));
   let submitting = $state(false);
   let completedRequest = $state(false);
   function releaseStandalone(): void {
@@ -227,14 +227,17 @@
     if (answers !== null) {
       const submittedRequestId = request.requestId;
       const submittedConversationId = answerConversationId;
+      const submittedQuestionIds = request.questions.map((each) => each.question_id);
+      const submittedDestinationId = uploadDestination.id;
+      const releaseSubmittedDraft = onOwnAnswerUsed;
       submitting = true;
       try {
         const accepted = await onSubmit?.(answers);
-        if (accepted === true && request.requestId === submittedRequestId && answerConversationId === submittedConversationId) {
-          onOwnAnswerUsed?.(submittedRequestId, request.questions.map((each) => each.question_id));
+        if (accepted === true && (request == null || request.requestId === submittedRequestId) && answerConversationId === submittedConversationId) {
+          releaseSubmittedDraft?.(submittedRequestId, submittedQuestionIds);
           completedRequest = true;
-          clearUserInputDraft(answerConversationId, submittedRequestId);
-          for (const each of request.questions) clearAttachmentDraft(`answer:${uploadDestination.id}:${submittedRequestId}:${each.question_id}`);
+          clearUserInputDraft(submittedConversationId, submittedRequestId);
+          for (const questionId of submittedQuestionIds) clearAttachmentDraft(`answer:${submittedDestinationId}:${submittedRequestId}:${questionId}`);
           releaseStandalone();
           attachmentDrafts = {};
         }
@@ -311,19 +314,22 @@
     </div>
 
     {#if question.allow_other && !composerAnswers}
+      {@const attachmentDraft = standaloneDrafts[question.question_id]}
+      {#if attachmentDraft}
       <div class="other">
         <ComposerField
           draftKey={`answer:${uploadDestination.id}:${request.requestId}:${question.question_id}`} {uploadDestination}
-          bind:uploads={() => standaloneDrafts[question.question_id]?.uploads ?? [], (value) => standaloneDrafts[question.question_id].uploads = value}
-          bind:images={() => standaloneDrafts[question.question_id]?.images ?? [], (value) => standaloneDrafts[question.question_id].images = value}
-          bind:files={() => standaloneDrafts[question.question_id]?.files ?? [], (value) => standaloneDrafts[question.question_id].files = value}
-          bind:intakeBusy={() => standaloneDrafts[question.question_id]?.busy ?? false, (value) => standaloneDrafts[question.question_id].busy = value}
+          bind:uploads={attachmentDraft.uploads}
+          bind:images={attachmentDraft.images}
+          bind:files={attachmentDraft.files}
+          bind:intakeBusy={attachmentDraft.busy}
           bind:value={() => draft.other[question.question_id] ?? "", writeOther}
           placeholder="Something else…" label="Other answer" inputAttributes={{ "data-user-input-other": "" }}
           disabled={busy || submitting || !answerAvailable}
           onsubmit={() => { captureCurrent(); void continueOrSubmit(); }}
           send={{ label: "Send answer", ready: canContinue, sending: submitting, disabled: !canContinue || busy || !answerAvailable, onclick: () => { captureCurrent(); void continueOrSubmit(); } }} />
       </div>
+      {/if}
     {:else if !question.allow_other}
       <p class="note" data-composer-attachment-unavailable>This question only accepts the listed choices. Answer with a listed choice, then attach files in a message.</p>
     {/if}

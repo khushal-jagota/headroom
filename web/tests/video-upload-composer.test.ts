@@ -192,3 +192,30 @@ it("keeps a pending streamed file across composer remounts and clears its ready 
   expect(openAttachmentDraft("artifact-draft", [{ ...ready }])).toEqual([]);
   expect([...store.values()].join("")).not.toContain("shared-file");
 });
+
+// Upload progress reaches 100% before the PUT returns its terminal status. The component
+// observes validating then, but only the live transfer can decide its ready/failed outcome.
+it("does not race a live validating PUT with a status GET, and deduplicates resumed validation", async () => {
+  const uploading = deferred<VideoUploadStatus>();
+  const resumed = deferred<VideoUploadStatus>();
+  const adapter = { reserve: vi.fn(async () => status("live-file")),
+    transfer: vi.fn(async (_id: string, selected: File, _signal: AbortSignal, progress: (bytes: number) => void) => {progress(selected.size); return uploading.promise;}),
+    status: vi.fn(async () => resumed.promise), cancel: vi.fn(async () => {}) };
+  const transfers = new AttachmentTransfers(adapter, () => {});
+  const pending = transfers.create(file, 1, destination);
+  const completing = transfers.start(pending);
+  await Promise.resolve();
+  expect(pending.phase).toBe("validating");
+  await transfers.validate(pending);
+  expect(adapter.status).not.toHaveBeenCalled();
+  uploading.resolve(status("live-file"));
+  await completing;
+  expect(pending.phase).toBe("ready");
+  const restored = {...pending, phase:"validating" as const};
+  const first = transfers.validate(restored);
+  const second = transfers.validate(restored);
+  expect(adapter.status).toHaveBeenCalledOnce();
+  resumed.resolve(status("live-file"));
+  await Promise.all([first, second]);
+  expect(restored.phase).toBe("ready");
+});
