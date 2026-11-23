@@ -45,6 +45,8 @@ test('only an explicit credentialed close commits the original executor handover
     throw new Error('No archive or preparation belongs to this proof');
   };
   const service: MacUpdateServiceContract = {
+    machine_states: () => [],
+    retry_machine: unexpected,
     for_machine: () => service,
     prepare: async () => unexpected(),
     settled: () => Promise.resolve(),

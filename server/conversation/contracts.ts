@@ -343,7 +343,7 @@ export interface ConversationSystem {
   readonly workspace_admission: WorkspaceAdmission;
   workspace_activity(): 'idle' | 'busy' | 'unknown';
   /** Work that an owner update interrupts. Information only. */
-  update_interrupted_work(): readonly string[];
+  update_interrupted_work(machine_ids?: readonly string[]): readonly string[];
   /** A trial app starts with admission closed. This opens it when the installer ends. */
   reopen_after_update(): void;
   run_with_workspace_admission(

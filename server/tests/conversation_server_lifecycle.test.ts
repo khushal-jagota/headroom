@@ -474,6 +474,8 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
           create_mac: (mac_context) => ({
             service: create_mac_update_composition(mac_context, null).service,
             operations: {
+              machine_states: () => [],
+              retry_machine: unavailable,
               prepare: async () => unavailable(),
               phase: () => null,
               reported_at: () => null,

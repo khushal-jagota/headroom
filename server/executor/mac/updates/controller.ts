@@ -306,7 +306,9 @@ export class MacUpdateController {
   private async start_prefetch(value: MacUpdatePrefetch | null): Promise<void> {
     if (
       !value ||
-      same_machine_build(value, this.options.presence.identity) ||
+      (value.build_id !== undefined
+        ? value.build_id === this.options.presence.identity.build_id
+        : same_machine_build(value, this.options.presence.identity)) ||
       this.prefetch?.sha === value.archive_sha256 ||
       !this.valid_reference(value, `/api/executor/update/prefetch/${value.archive_sha256}`)
     )
@@ -357,7 +359,11 @@ export class MacUpdateController {
       return;
     }
     const identity = this.options.presence.identity;
-    if (same_machine_build(target, identity)) {
+    if (
+      target.build_id !== undefined
+        ? target.build_id === identity.build_id
+        : same_machine_build(target, identity)
+    ) {
       if (
         this.options.presence.leased() &&
         this.confirmed !== target.request_id &&
