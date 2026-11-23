@@ -1,5 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -133,11 +133,23 @@ test.runIf(globalThis.process.platform === 'linux')(
       ).run({ ...live, conversation_id: 'supervised-old', supervision_record: journal_path });
       const inventory = async () => {
         const files = (await readdir(root)).sort();
+        // Bytes, size and mtime of the database, its -wal and its -shm.
         return Promise.all(
-          files.map(async (file) => [file, (await readFile(join(root, file))).toString('base64')]),
+          files.map(async (file) => {
+            const info = await stat(join(root, file));
+            return [
+              file,
+              info.size,
+              info.mtimeMs,
+              (await readFile(join(root, file))).toString('base64'),
+            ];
+          }),
         );
       };
       const before = await inventory();
+      expect(before.map(([file]) => file)).toEqual(
+        expect.arrayContaining(['database.sqlite', 'database.sqlite-shm', 'database.sqlite-wal']),
+      );
       const result = await run(['legacy-agents', 'dry-run', '--database-path', path], {});
       expect(result.exit_code).toBe(0);
       const report = JSON.parse(result.stdout);
@@ -149,7 +161,31 @@ test.runIf(globalThis.process.platform === 'linux')(
       expect(report.would_stop[0].command).toBeTruthy();
       expect(report.would_stop[0].owner).toMatch(/^uid:\d+$/);
       expect(report.would_stop[0].age_seconds).toBeGreaterThanOrEqual(0);
-      expect(await inventory()).toEqual(before);
+      // The database and its WAL are unchanged in bytes, size and mtime. The -shm keeps its
+      // size. As any WAL reader, the read-only backup may set a read mark, which can also move
+      // the -shm mtime: only the aReadMark slots of the checkpoint header (bytes 100 to 119)
+      // may differ.
+      const after = await inventory();
+      expect(after.map(([file]) => file)).toEqual(before.map(([file]) => file));
+      for (const [index, entry] of after.entries()) {
+        const [file, size, mtime, bytes] = entry as [string, number, number, string];
+        const [, size_before, mtime_before, bytes_before] = before[index] as [
+          string,
+          number,
+          number,
+          string,
+        ];
+        expect(size).toBe(size_before);
+        if (!file.endsWith('-shm')) {
+          expect(mtime).toBe(mtime_before);
+          expect(bytes).toBe(bytes_before);
+          continue;
+        }
+        const now = Buffer.from(bytes, 'base64');
+        const then = Buffer.from(bytes_before, 'base64');
+        const changed = [...now.keys()].filter((offset) => now[offset] !== then[offset]);
+        expect(changed.every((offset) => offset >= 100 && offset < 120)).toBe(true);
+      }
       expect((await native.snapshot(Infinity)).get(current.pid)?.birth).toBe(current.birth);
     } finally {
       db.close();
