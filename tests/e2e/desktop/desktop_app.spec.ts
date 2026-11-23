@@ -221,7 +221,7 @@ test('the screens reach the server through the app, and links leave it', async (
   }
 });
 
-test('the app takes an address when no local server answers, and keeps it and its window place', async ({
+test('the offline baseline opens, and Change Server keeps an address and window place', async ({
   server,
 }) => {
   const nothing = await closedAddress();
@@ -229,6 +229,17 @@ test('the app takes an address when no local server answers, and keeps it and it
   const place = { x: 120, y: 80, width: 1000, height: 700 };
   try {
     const page = first.window;
+    // First setup without a network still opens the signed bundle's baseline screens.
+    await page.waitForFunction(() => document.documentElement.dataset.panelsReady === 'true', undefined, { timeout: WAIT_MS * 2 });
+    expect(await pageUrl(page)).toMatch(/^panels:\/\/app\/(?:#.*)?$/);
+    await first.app.evaluate(({ Menu }) => {
+      const menu = Menu.getApplicationMenu() as { items: { submenu?: { items: { label: string; click(): void }[] } }[] } | null;
+      const item = menu?.items
+        .flatMap((entry) => entry.submenu?.items ?? [])
+        .find((entry) => entry.label === 'Change Server…');
+      if (!item) throw new Error('Change Server menu item is missing.');
+      item.click();
+    });
     await page.waitForSelector('#address-form', { timeout: WAIT_MS * 2 });
     expect(await pageUrl(page)).toBe('panels://setup/');
 

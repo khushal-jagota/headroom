@@ -82,6 +82,8 @@ test('declared versions gate writes and accepted device versions survive a datab
       test_mode: true,
       app_sha: 'a'.repeat(40),
       compatibility: CLIENT_COMPATIBILITY,
+      screens: null,
+      waiting_screens: null,
     });
     expect(
       (await app.inject({ method: 'POST', url: '/api/write', headers: headers(identity) }))

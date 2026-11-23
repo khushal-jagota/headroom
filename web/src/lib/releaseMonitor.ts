@@ -44,6 +44,8 @@ export function createReleaseMonitor(options: ReleaseMonitorOptions) {
   }
 
   function reloadIfReady(): void {
+    // The native process verifies and selects desktop screens before their reload.
+    if (typeof location !== "undefined" && location.protocol === "panels:") return;
     if (
       !reloadStarted &&
       snapshot.reloadRequested &&

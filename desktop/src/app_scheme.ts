@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { serverAddress } from './server_address';
 import { desktopIdentityHeaders } from './client_identity';
+import type { ScreenPresentation } from './screens/controller';
 
 // Node gives a URL of a custom scheme the origin "null", so pages are told apart by host.
 export const SCREENS_HOST = 'app';
@@ -17,7 +18,9 @@ export const SCREENS_URL = `panels://${SCREENS_HOST}/`;
 export const ADDRESS_PAGE_URL = `panels://${ADDRESS_PAGE_HOST}/`;
 
 /** The packed bundle: `web/dist`, `assets` and `static`, and the address page. */
-const PACKED = join(__dirname, 'packed');
+export const PACKED = join(__dirname, 'packed');
+let presentation: ScreenPresentation = { root: PACKED, appSha: null, serverUpdate: false };
+export function selectScreenPresentation(value: ScreenPresentation): void { presentation = value; }
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -56,7 +59,8 @@ export function handleAppScheme(): void {
     const url = new URL(request.url);
     if (url.host === SCREENS_HOST) {
       if (isForwarded(url)) return forward(request, url);
-      return packedFile(url.pathname, screensFile);
+      if (presentation.serverUpdate) return packedFile(url.pathname, serverUpdateFile);
+      return packedFile(url.pathname, screensFile, presentation.root, presentation.appSha);
     }
     if (url.host === ADDRESS_PAGE_HOST) return packedFile(url.pathname, addressPageFile);
     return notFound();
@@ -91,12 +95,18 @@ function screensFile(pathname: string): string | null {
   return null;
 }
 
+function serverUpdateFile(pathname: string): string | null {
+  if (pathname === '/' || pathname === '/index.html') return 'server_update_page/index.html';
+  if (pathname === '/server-update.js') return 'server_update_page/server-update.js';
+  return null;
+}
+
 function addressPageFile(pathname: string): string | null {
   return `address_page/${pathname === '/' ? 'index.html' : pathname.slice(1)}`;
 }
 
 /** Serve one file of the packed bundle. A path that climbs, even encoded, is refused. */
-async function packedFile(pathname: string, choose: (decoded: string) => string | null): Promise<Response> {
+async function packedFile(pathname: string, choose: (decoded: string) => string | null, root = PACKED, appSha: string | null = null): Promise<Response> {
   let decoded: string;
   try {
     decoded = decodeURIComponent(pathname);
@@ -106,12 +116,16 @@ async function packedFile(pathname: string, choose: (decoded: string) => string 
   if (decoded.includes('\\') || decoded.split('/').includes('..')) return notFound();
   const relative = choose(decoded);
   if (relative === null) return notFound();
-  const file = normalize(join(PACKED, relative));
-  if (!file.startsWith(PACKED + sep)) return notFound();
+  const file = normalize(join(root, relative));
+  if (!file.startsWith(root + sep)) return notFound();
   try {
-    const body = await readFile(file);
+    let body = await readFile(file);
+    if (relative === 'web/dist/index.html' && appSha) {
+      const escaped = appSha.replace(/[&<>"']/g, value => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[value]!);
+      body = Buffer.from(body.toString('utf8').replace('</head>', `<meta name="panels-app-sha" content="${escaped}"></head>`));
+    }
     return new Response(body, {
-      headers: { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' },
+      headers: { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' },
     });
   } catch {
     return notFound();
@@ -125,7 +139,7 @@ async function packedFile(pathname: string, choose: (decoded: string) => string 
  * stream (`EventSource`) closes for good on an HTTP error, but on a network error it
  * reconnects by itself when the server is back.
  */
-async function forward(request: Request, url: URL): Promise<Response> {
+export async function forward(request: Request, url: URL): Promise<Response> {
   const address = serverAddress();
   if (address === null) return Response.error();
   const headers = new Headers(request.headers);
@@ -133,7 +147,7 @@ async function forward(request: Request, url: URL): Promise<Response> {
   for (const [name, value] of Object.entries(desktopIdentityHeaders())) headers.set(name, value);
   // `net.fetch` follows redirects itself. The server's only redirects under `/api` add or
   // drop a trailing slash on the same server.
-  const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers };
+  const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers, signal: request.signal, cache: 'no-store' };
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     init.body = request.body;
     init.duplex = 'half';
@@ -150,5 +164,5 @@ async function forward(request: Request, url: URL): Promise<Response> {
 }
 
 function notFound(): Response {
-  return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } });
+  return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });
 }

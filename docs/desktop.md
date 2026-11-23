@@ -1,12 +1,12 @@
 # The desktop app
 
-The desktop app is Panels as a Mac app. It is an Electron app that carries the same Svelte screens as the browser version, and it is a window on one Panels server. It does not run a server.
+The desktop app is Panels as a Mac app. It is an Electron app that shows the Svelte screens of its server’s release, and it is a window on one Panels server. It does not run a server.
 
 ## What it is made of
 
 The app has two sides and a bridge between them.
 
-- **The screens** are the `web/` build output, packed inside the app with the `assets/` and `static/` files they load. They run in the sandbox, with context isolation and no Node.
+- **The screens** come from the selected server and stay in the app’s data folder. The app also carries a baseline copy. They run in the sandbox, with context isolation and no Node.
 - **The native side** (the Electron main process) holds the one server address, serves the screens, and does the jobs that need the operating system: menus, the window, notifications, and opening links in the browser.
 - **The bridge** is one typed object that the preload script gives each page as `window.panels`. One type file defines it, and each call is answered by the native side.
 
@@ -17,7 +17,7 @@ The app has two sides and a bridge between them.
  │   relative /api, /files ──┐          │ bridge         │
  │                           ▼          ▼                │
  │ native side:  panels://app scheme, bridge answers     │
- │   serves the bundle, forwards /api and /files ────────┼──▶ server
+ │   serves verified screens, forwards /api and /files ──┼──▶ server
  └───────────────────────────────────────────────────────┘
 ```
 
@@ -29,9 +29,15 @@ Requests reach the server from the native side with no Origin header. The forwar
 
 The native probe and notification stream send the same installation identity. `desktop/src/bridge_version.ts` defines the bridge version separately from the app version. The updater reads the server's minimum bridge version through `fetchDesktopCompatibility` in `desktop/src/server_meta.ts`. This helper rejects an unavailable or invalid metadata answer. The service worker, which only serves web push, does not run in the app.
 
+The server names the digest of its installed screens and serves that exact copy. The app checks the digest and every file before use. It also prefetches the admitted waiting release, but activates it only after the server runs that release and the installed bridge meets its requirement. The window reloads without an app restart. The app scheme uses `cache-control: no-store` so Chromium cannot mix files from different copies.
+
+The app keeps the current and previous copies, plus the bundled baseline. A failed start or a crash returns to the previous copy or baseline. The native menu can retry a rejected copy through the same verification and bridge gate. The baseline also supports first setup without a network connection. Old copies are removed after they are no longer needed. An older server gets a shell-owned “This server needs an update” page. Its update press uses the server API.
+
+Screen trust stays with the selected server and its connection, as for the owner’s record and API access. A signed manifest is a later step if the native bridge gains more power. No release on GitHub is needed for screen delivery.
+
 ## The server address
 
-On its first start, the app asks for a Panels server on this Mac, at `http://127.0.0.1:8767`. If one answers, the app keeps that address. Otherwise it shows the address page, which takes an address, such as a Tailscale address, and checks that a Panels server answers there. "Change Server…" in the app menu opens the same page. This page is temporary: the setup interface replaces it.
+On its first start, the app asks for a Panels server on this Mac, at `http://127.0.0.1:8767`. If one answers, the app keeps that address. Otherwise it opens the bundled baseline screens. "Change Server…" in the app menu opens the address page. It takes an address, such as a Tailscale address, and checks that a Panels server answers there. This page is temporary: the setup interface replaces it.
 
 ## The last session
 
@@ -47,7 +53,7 @@ The app has the standard Mac menus. The window opens where it was last left, at 
 
 The native side uses electron-updater to download the newest stable desktop release quietly. It selects desktop release tags explicitly, so a server release cannot become an app update. A ready update installs when the app quits, or after the app remains without a window. A reopened window cancels that delay. A failed check or download leaves the installed app usable.
 
-The main process owns the restart dialog when new screens require a newer shell. The dialog offers a restart after the update is ready. It adds no bridge action for artifact pages.
+The main process owns the restart dialog when new screens require a newer shell. New screens wait until the installed bridge meets their requirement. The dialog offers a restart only after a verified update meets that requirement. It adds no bridge action for artifact pages.
 
 The desktop workflow signs and notarizes the app independently of server publication. A release to main publishes its ZIP and matching updater metadata on GitHub Releases. Manual runs produce two signed builds for a private feed and publish no release. See the [private update proof](../ops/desktop/private-update-proof.md).
 
@@ -63,6 +69,6 @@ Artifact HTML runs at the screens' own origin, so a script in an artifact can re
 
 ## Where the code lives
 
-`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native update checks and installation), `src/bridge.ts` (the bridge type), and the address page. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
+`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native update checks and installation), `src/screens/` (verified copies and activation), `src/bridge.ts` (the bridge type), and the address page. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
-_Last verified: 2026-11-22._
+_Last verified: 2026-11-23._
