@@ -359,10 +359,13 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
         // Recreate the application and queries for each process. Retained query snapshots
         // in the failed review trace referred to the terminated accessibility-size process.
+        // Review opens on its summary, so each launch goes back to the cards first.
         @MainActor func launch(_ arguments: [String]) -> XCUIApplication {
             let application = XCUIApplication()
             application.launchArguments = arguments
             application.launch()
+            let back = application.buttons["review.return"]
+            if back.waitForExistence(timeout: 12) { back.tap() }
             return application
         }
         var app = launch(["--conversation-stub", base])
