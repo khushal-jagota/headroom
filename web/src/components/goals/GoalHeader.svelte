@@ -8,6 +8,7 @@
  import InlineEdit from '../InlineEdit.svelte';
  import ErrorLine from '../ErrorLine.svelte';
  import GoalDeleteAction from './GoalDeleteAction.svelte';
+ import WindowPageRow from '../desktopWindow/WindowPageRow.svelte';
 
  let {goal,mark,title,textEditable=true}:{goal:GoalResponse;mark?:import('svelte').Snippet;title?:import('svelte').Snippet;textEditable?:boolean}=$props();
  const projects=createQuery(()=>queries.projects());
@@ -90,6 +91,8 @@
  {/snippet}
  <!-- One line above the title, as staging: the project, the deadline (the date control's
       own date) and the state, each its own quiet control, then the page's own action. -->
+ <!-- In the desktop window this line is pinned on the window's top row. -->
+ <WindowPageRow>
  <div class="goal-context page-eyebrow">
   <span class="metadata">
    <span class="control-size" aria-hidden="true">{projectName}</span>
@@ -110,9 +113,10 @@
    <span class="control-size" aria-hidden="true">{(editFields.active.value??String(goal.active))==='true'?'Active':'Inactive'}</span>
    <select aria-label="State" value={editFields.active.value??String(goal.active)} disabled={editFields.active.saving} onfocus={()=>start(editFields.active,true)} onchange={e=>{input(editFields.active,e.currentTarget);void commit(editFields.active,'active',e.currentTarget);}} onkeydown={e=>keydown(e,editFields.active,'active')}><option value="true">Active</option><option value="false">Inactive</option></select>
   </span>
-  <span class="signal">{@render mark?.()}</span>
+  <span class="signal" data-window-row-actions>{@render mark?.()}</span>
   <GoalDeleteAction {goal}/>
  </div>
+ </WindowPageRow>
  {#each ['project_id','deadline','active'] as field}{@render failure(field as Field)}{/each}
  <h1 oninput={()=>{if(!title)editFields.title.dirty=true;}}>{#if title}{@render title()}{:else if !textEditable}{goal.title}{:else}<InlineEdit value={goal.title} draft={editFields.title} placeholder="Goal title…" ariaLabel="Goal title" onStart={()=>start(editFields.title,true)} onCancel={()=>discard(editFields.title,'title')} onSave={raw=>saveText(editFields.title,'title',raw)}/>{/if}</h1>
  <div class="why" oninput={()=>editFields.why.dirty=true}>{#if textEditable}<InlineEdit value={goal.why} draft={editFields.why} multiline placeholder="Why this goal matters…" ariaLabel="Why this goal matters" onStart={()=>start(editFields.why,true)} onCancel={()=>discard(editFields.why,'why')} onSave={raw=>saveText(editFields.why,'why',raw)}/>{:else}<span class="why-text">{goal.why}</span>{/if}</div>

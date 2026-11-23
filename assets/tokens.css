@@ -478,6 +478,22 @@
   /* The page's top band: the one line above the title (where it lives) on the left and the
    * page's own utilities on the right. One height on every page. */
   --page-band-height: 48px;
+  /* The desktop window's top row: no fill, no divider, a drag region. The traffic lights sit
+   * centred on it, the app name starts after them, and each page's top row is pinned on it. */
+  --window-top-row: 52px;
+  /* Where the sidebar button starts: where a native toolbar's first control starts. Measured on
+   * macOS 27 (Finder, Safari, System Settings): the lights are 14px with 9px between them and
+   * run from x 19 to 79, and the first control starts at x 96, a clear gap after them. */
+  --window-controls-left: 96px;
+  /* A native toolbar button: a 36px round control with an 18x14 glyph. */
+  --window-control-size: 36px;
+  --window-control-glyph-width: 18px;
+  --window-control-glyph-height: 14px;
+  /* The fade under the top row, always on, in the page colour: the rail's bottom fade's depth. */
+  --window-scroll-fade: var(--rail-list-fade);
+  /* The first card and the page title start this far under the top row (y 68), so nothing
+   * sits under the fade at rest. */
+  --window-content-top: var(--window-scroll-fade);
   /* The space before a section head (from the header, or the section above), and from a head
    * to its content. A page of blocks without heads (the goal page) keeps 32px between them. */
   --page-section-gap: 40px;

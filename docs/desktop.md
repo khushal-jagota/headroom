@@ -53,6 +53,8 @@ A saved copy from another build of the screens is not used, because response sha
 
 The app has the standard Mac menus. The window opens where it was last left, at the same size. Closing the window does not quit the app; a click on its Dock icon brings the window back.
 
+The window is never narrower than 900px, so the phone layout never appears in it. On macOS it has no system title bar. Its one top row, 52px tall with no fill, is where it is dragged: macOS draws the traffic lights there, then comes a button that hides and shows the sidebar (also ⌃⌘S; it is not kept across a restart). While the sidebar is hidden, the button shows the Review count. Each page's own top row (where it lives, and its actions) is pinned on the same line and stays while the page scrolls. A row too narrow for its actions shortens its context line first, then folds its last actions into a "•••" menu. The sidebar and the pages scroll under the row, behind a short fade. The preload marks the page `data-desktop-window`, and marks whether the window is inactive or in full screen; the screens draw all of this only when that mark is there, so a browser shows them as before. Other systems keep their own title bar, and the preload does not mark the page there.
+
 ## App updates
 
 The native side uses electron-updater to download the newest stable desktop release quietly. It selects desktop release tags explicitly, so a server release cannot become an app update. A ready update installs when the app quits, or after the app remains without a window. A reopened window cancels that delay. A failed check or download leaves the installed app usable.
@@ -73,6 +75,6 @@ Artifact HTML runs at the screens' own origin, so a script in an artifact can re
 
 ## Where the code lives
 
-`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native updates), `src/screens/` (verified copies and activation), `src/bridge.ts` (the bridge type), and `web/src/desktop/` for the setup and connection screens. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
+`desktop/` holds the app: `src/main.ts` (lifecycle, window, menus, links), `src/app_scheme.ts` (the scheme and the forward), `src/server_address.ts`, `src/last_session.ts`, `src/notifications.ts` (the stream and macOS notifications), `src/updates/` (native updates), `src/screens/` (verified copies and activation), `src/bridge.ts` (the bridge type), `web/src/desktop/` for the setup and connection screens, and `web/src/components/desktopWindow/` with `web/src/lib/desktopWindow/` for the window's top row. The screens' side of the last session is `web/src/lib/savedSession.ts`. Its build packs the `web/` build. The checks in `tests/e2e/desktop/` drive the built app with Playwright under a virtual display against a test server, through `tests/e2e/desktop.config.ts`. The "Desktop app" workflow runs them.
 
 _Last verified: 2026-11-23._

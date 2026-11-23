@@ -9,6 +9,7 @@
    */
   import { onMount, untrack, type Snippet } from "svelte";
   import Button from "./Button.svelte";
+  import WindowPageRow from "./desktopWindow/WindowPageRow.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import ClampedText from "./ClampedText.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -139,12 +140,15 @@
 
 <div data-review-ask-card data-review-item-type="ask" data-conversation-id={conversationId}>
   {#if !embedded}
+    <!-- In the desktop window the front card's row is pinned on the window's top row. -->
+    <WindowPageRow>
     <div class="review-eyebrow review-eyebrow--decisions">
-      <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions>
+      <div class="review-ticket-decision-line review-ticket-decision-line--top" data-review-top-decisions data-window-row-actions>
         <Button variant="ghost" data-open-conversation href={reviewAskHref(item)}>Open conversation</Button>
         <Button variant="ghost" data-skip disabled={busy} onclick={onSkip}>Skip</Button>
       </div>
     </div>
+    </WindowPageRow>
     <h1 class="review-ticket-title">{item.title}</h1>
     {#if recap}<ClampedText class="review-recap" contentKey={recap}><MarkdownBlock text={recap} /></ClampedText>{/if}
     <div class="review-recap-request"><RequestRecapAction kind={item.owner_kind} id={item.owner_id} /></div>

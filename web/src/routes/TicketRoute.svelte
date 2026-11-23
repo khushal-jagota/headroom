@@ -53,6 +53,7 @@
   import { artifactForPressOnThePage } from "../lib/managedArtifactPress";
   import { proposalContentIdentity } from "../lib/review/proposalState";
   import { type ManagedFileTarget } from "../lib/filePreview";
+  import WindowPageRow from "../components/desktopWindow/WindowPageRow.svelte";
 
   let {
     id,
@@ -361,8 +362,10 @@
         <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id} data-ticket-locale={masthead.locale}>
           <!-- Every page has one line above its title: where it lives, then its own facts.
                Under the title there is only the recap. -->
+          <!-- In the desktop window the band is pinned on the window's top row. -->
+          <WindowPageRow>
           <div class="page-band">
-          <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity>
+          <div class="worker-eyebrow page-eyebrow page-band-place" data-ticket-identity data-window-row-context>
             <!-- Where the Ticket runs leads the line, as its icon alone; the machine's name is
                  the mark's accessible name and tooltip. -->
             <span class="worker-machine"><MachineIdentity machineId={masthead.machine_id} locale={masthead.locale} showName /></span>
@@ -376,6 +379,7 @@
             {#snippet leading()}{#if !section.record.value.terminal}<WorkMoveDialog owner={{kind:"ticket",id:stableId}} label={masthead.title} currentMachineId={masthead.machine_id} />{/if}<RequestRecapAction kind="ticket" id={stableId} variant="ghost" bind:note={recapNote} noteInline={false} />{/snippet}
           </TicketLifecycleControls>{/if}
           </div>
+          </WindowPageRow>
           <div class="ticket-title-row">
             <!-- The title, then its marks beside its words as staging drew them: working, and
                  the unread dot. -->
