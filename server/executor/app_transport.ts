@@ -112,7 +112,7 @@ export function require_executor_ingress(
 function authenticated_machine(
   raw: IncomingMessage,
   trusted_login: string | null,
-  services: ExecutorHttpServices,
+  services: Pick<ExecutorHttpServices, 'config' | 'database'>,
 ): string {
   let claimed_id: string;
   try {
@@ -132,6 +132,22 @@ function authenticated_machine(
       { authenticated_platform: headers.get(PLATFORM)?.[0] ?? null },
     ),
   );
+}
+/** The update routes' admission: the machine credential, without a work incarnation. */
+export function authenticate_machine_request(
+  request: FastifyRequest,
+  services: Pick<ExecutorHttpServices, 'config' | 'database'>,
+): string {
+  try {
+    return authenticated_machine(
+      request.raw,
+      (request as FastifyRequest & { trustedLogin?: string }).trustedLogin ?? null,
+      services,
+    );
+  } catch (error) {
+    if (!(error instanceof PlannerError)) throw error;
+    throw new HttpError(403, error.message);
+  }
 }
 class BodyTooLarge extends PlannerError {
   constructor() {

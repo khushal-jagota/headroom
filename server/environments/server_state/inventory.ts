@@ -1,10 +1,17 @@
-/** Read a stopped, checkpointed server folder. This module never copies or changes it. */
+/**
+ * Read a stopped, checkpointed server folder, or a running one with a database copy. This
+ * module never copies or changes it.
+ */
 import { lstat } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { is_private_ticket_name } from '../../files/logic/paths.ts';
 import { manifests_equal, relative_manifest, sha256_file } from './checksums.ts';
-import type { ChecksumManifest, ServerStatePaths } from './contracts.ts';
+import type {
+  ChecksumManifest,
+  ServerStateManifestOptions,
+  ServerStatePaths,
+} from './contracts.ts';
 
 async function info(path: string) {
   try {
@@ -24,7 +31,10 @@ export function excluded_served_path(path: string): boolean {
   );
 }
 
-export async function server_state_manifest(paths: ServerStatePaths): Promise<ChecksumManifest> {
+export async function server_state_manifest(
+  paths: ServerStatePaths,
+  options: ServerStateManifestOptions = {},
+): Promise<ChecksumManifest> {
   const root = resolve(paths.server_root);
   const database = resolve(paths.database_path);
   const key = resolve(paths.credential_key_path);
@@ -41,17 +51,20 @@ export async function server_state_manifest(paths: ServerStatePaths): Promise<Ch
     throw new Error('The credential key must be within the server folder');
   if (!(await info(root))?.isDirectory())
     throw new Error('The server folder must be a real directory');
+  const running = options.database_copy !== undefined;
   const wal = await info(database + '-wal');
-  if (wal && (!wal.isFile() || wal.size !== 0))
+  if (!running && wal && (!wal.isFile() || wal.size !== 0))
     throw new Error('Stop the server and checkpoint its database before the full checksum');
   const manifest: ChecksumManifest = Object.create(null);
-  async function file(path: string, required = false): Promise<void> {
+  async function file(path: string, required = false, name = path): Promise<void> {
     const present = await info(path);
     if (!present && !required) return;
     if (!present?.isFile()) throw new Error(`Server state is not a regular file: ${path}`);
-    manifest[relative(root, path).split(sep).join('/')] = await sha256_file(path);
+    manifest[relative(root, name).split(sep).join('/')] = await sha256_file(path);
   }
-  await file(database, true);
+  if (!running) await file(database, true);
+  else if (options.database_copy !== null)
+    await file(resolve(options.database_copy), true, database);
   // Check each ancestor, so a configured key cannot escape through a directory link.
   let ancestor = dirname(key);
   while (ancestor !== root) {

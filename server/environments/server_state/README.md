@@ -23,6 +23,12 @@ nonempty WAL but does not acquire server ownership or stop a server. Keep the so
 unchanged throughout inventory and transfer. This module reads only and transfers
 nothing. The move owner must preserve private directory and secret-file permissions.
 
+A running server passes `{ database_copy }` as the second argument instead. With a path
+to a checked copy of the database, the database entry keeps the database's relative
+name and takes the copy's digest, and the live WAL is allowed. With `null`, the list has
+no database entry. The server move uses `null` for its first copy while the server runs,
+and the copy it makes in its pause for the complete list.
+
 Only the explicit state paths enter the full inventory. Logs, locks, sockets, process
 records, update attempts, metrics, caches, backups, provider logins, and transfer staging
 are excluded. The served tree omits Ticket worktrees and their ownership markers through

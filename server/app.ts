@@ -4,7 +4,7 @@ import { install_slow_task_logging } from './core/slow_tasks.ts';
 import Fastify from 'fastify';
 import type { PreparedPreviewRoutes } from './previews/routes.ts';
 import type { UpdateBarrier } from './environments/update_barrier.ts';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -40,6 +40,8 @@ export interface AppServices {
   workspaceAdmission?: WorkspaceAdmission;
   updateBarrier?: UpdateBarrier;
   executor?: VpsExecutorRegistry | null;
+  /** More executor routes that authenticate machines themselves, such as the server move. */
+  executorRoutes?: readonly FastifyPluginAsync[];
   previews?: PreparedPreviewRoutes;
 }
 export async function createApp(config: Config, services: AppServices): Promise<FastifyInstance> {
@@ -84,6 +86,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
       previews: services.previews,
     }),
   );
+  for (const routes of services.executorRoutes ?? []) app.register(routes);
   app.get('/api/executor/health', async (request, reply) => {
     const machine_id =
       new URL(request.url, 'http://executor').searchParams.getAll('machine_id').at(-1) ||

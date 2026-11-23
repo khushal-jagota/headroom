@@ -15,3 +15,12 @@ export interface ManifestOptions {
   /** Relative paths that do not belong to this inventory. Directories prune their subtree. */
   readonly exclude?: (relative: string) => boolean;
 }
+
+export interface ServerStateManifestOptions {
+  /**
+   * For a running server. Absent: the database itself, which must be checkpointed. A path: the
+   * database entry digests this checked copy under the database's name, and the live WAL is
+   * allowed. Null: no database entry, and the live WAL is allowed.
+   */
+  readonly database_copy?: string | null;
+}

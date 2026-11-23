@@ -29,7 +29,7 @@ The server has no native launch fallback. It passes execution paths as values, a
 
 Each machine saves the server address, its durable identity, and the highest move number that it accepts. The first contact checks the server. Normal requests use the saved address and identity without a separate check. After a failed request, the next request checks the server again. The server refuses a different identity or move number before work. The machine refuses work from a different identity or an older move number. A normal answer can supply another HTTPS address, which the machine checks before use. The saved address survives service and runtime restarts on Linux and Apple Silicon.
 
-A moved server opens only an address responder. It does not initialize the conversation record, recover updates, or start work services. The separate move coordinator owns the stop and record transition. This link supplies no operation that changes the move number or the moved state. Panels accepts and checks an HTTPS address. The owner supplies the network route and certificate.
+A moved server opens only an address responder, and every machine follows its new address. [Moving the server](#moving-the-server) describes the move.
 
 The extra machine opens every request. A lost connection does not lose ownership or decide whether work ran. Catalogs, update progress, files, and workspace access follow the authenticated destination too. Display names, icons, and colors do not grant authority.
 
@@ -111,6 +111,28 @@ An executor restart preserves its journal and outbox. The home separates command
 
 Each executor uses the shared Worker supervisor. It records exact process ownership and retains cleanup fences when termination remains unknown. Cleanup for one machine does not target another machine's processes. Native platform limits remain separate from protocol correctness.
 
+## Moving the server
+
+The owner can move the server to another attached machine: Settings → Machines → "Move the server here", with the new server's HTTPS address and its port on that machine. The owner supplies the network route and certificate. Panels checks the address before the switch.
+
+```
+ Old server                               New machine (its machine code)
+ refuses while an update runs
+ package for the new machine ───────────▶ copies the state files (old server still runs)
+ PAUSE: writes held, machines keep output
+ database copy, changed files ──────────▶ checks every file against the checksum list
+                                          installs the server around the copy, held
+                                          checks database, health, and a test job
+ SWITCH ◀──── checked ────────────────── new server takes move number + 1
+ answers with the new address only        machine code changes to its local link
+```
+
+The old server leads the run and keeps it in `move-attempt.json`, outside the database. It gets the sealed server package for the new machine's system at its own revision: first from its package cache in `server-move/packages/`, otherwise from the release. A move starts only when no update runs, and no update starts during a move. The pause reuses the update barrier and ends within five minutes, the time that machine code holds agent commands and output.
+
+The new server starts held: it answers its health check, the server link and the local executor link, and does no other work. It switches only after four checks pass: every file matches the list, the database is whole at the same schema revision, the server is healthy at the revision, and the machine code on that machine got and answered a test job over the new server's local link. The old server then checks that the address answers for the same server, writes its point of no return, and lets the new server take the next move number and the Home mark. Until that point, any failure removes the new copy and lifts the pause, and a restart of the old server ends the run the same way. After it, a restart of either server finishes the switch.
+
+A moved server opens only an address responder. It does not initialize the conversation record, recover updates, or start work services. Every machine follows the new address. The old server folder stays on disk. Machine code on the old machine keeps its home identity and its work folders in that folder, so its Tickets, the Chief and the Managers continue there with their sessions. It saves that folder choice, and from then on sends Ticket and Manager files as every other machine does. Database writes that the old server makes after its copy, such as leases, stay with the old copy.
+
 ## Updates and health
 
 Extra machines never hold the home update. The home asks them nothing before it installs, and their Workers keep running.
@@ -146,10 +168,11 @@ Leases carry one machine's bounded state and update offer. Command polls carry a
 - `server/executor/mac/`: the TypeScript Mac executor and its packaging.
 - `server/machines/`: destinations and credentials.
 - `server/server_link/`: server identity, address checks, and the machine’s durable move floor.
+- `server/server_move/`: the move run on both servers. `server/executor/mac/server_move/`: its steps on the new machine. `server/installation/move.ts`: the installer's move mode.
 - `server/conversation/start_admission/`: automatic-start capacity and pacing.
 - `server/conversation/deploy_interruptions/`: retained adoption and interrupted-turn recovery.
 - `server/stalls/`: wait checks and watchdog.
 - `server/environments/linux_executor/`: Linux executor archive, installation, systemd user service, and private enrollment entry.
 - `server/environments/updates/mac/`: shared destination-specific executor offers and archive cache.
 
-_Last verified: 2026-11-22._
+_Last verified: 2026-11-23._

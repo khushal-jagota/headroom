@@ -1,6 +1,7 @@
 import type { ExecutorHealth } from "./ticketMachines";
 import { ORIGINAL_MAC_MACHINE_ID } from "./machines/contracts";
-import { MACHINE_HEALTH_POLL_MS } from "./machines/config";
+import { MACHINE_HEALTH_POLL_MS, SERVER_MOVE_POLL_MS } from "./machines/config";
+import { serverMoveActive } from "./machines/logic/serverMove";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
@@ -53,6 +54,14 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 
 export const queries = {
   machines: () => ({...jsonQuery<import("./machines/contracts").MachinesResponse>(["machines"], "/api/machines"), refetchInterval: MACHINE_HEALTH_POLL_MS, retry: false}),
+  // The latest move of the server. The change signal can be held during the pause, so an
+  // active run also polls; a settled one follows the change stream alone.
+  serverMove: () => {
+    const query = jsonQuery<import("./machines/contracts").ServerMoveResponse>(["server-move"], "/api/server-move");
+    return {...query, retry: false,
+      refetchInterval: (state: {state: {data?: {body: import("./machines/contracts").ServerMoveResponse}}}) =>
+        serverMoveActive(state.state.data?.body.move) ? SERVER_MOVE_POLL_MS : false};
+  },
   // The driver list changes only with a release, so it does not follow the change stream.
   drivers: () => queryOptions<DriversResponse>({
     queryKey: ["drivers"], queryFn: readDrivers, staleTime: Infinity, retry: false,

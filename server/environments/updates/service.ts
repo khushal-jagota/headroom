@@ -53,6 +53,8 @@ export interface UpdateServiceOptions {
   installer: InstallerOperations;
   mac: MacUpdateOperations;
   update_barrier?: UpdateBarrier;
+  /** A reason no update may start now, such as a running server move, or null. */
+  install_refusal?: () => string | null;
   /** Tells the owner about a failed update. It must not throw. */
   notify_failure?: (attempt: UpdateAttempt) => void;
   can_refresh?: () => boolean;
@@ -566,5 +568,7 @@ export class UpdateService {
   private require_running(): void {
     if (!this.running)
       throw new UpdateConflict('Panels is shutting down. Retry after it restarts.');
+    const refusal = this.options.install_refusal?.() ?? null;
+    if (refusal !== null) throw new UpdateConflict(refusal);
   }
 }

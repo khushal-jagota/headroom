@@ -126,6 +126,19 @@ jobs:
           fi
           BUILD
           printf 'seconds=%s\n' "$((SECONDS-build_started))" > "$FIRST_INSTALL_ROOT/evidence/build-time.txt"
+      # A run by hand keeps the built packages for a few days, so an operator can install a
+      # branch revision with --archive and --receipt. Only the packages and receipts.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: first-install-packages-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/first-install-proof/build/server/*.tar.gz
+            ${{ runner.temp }}/first-install-proof/build/server/*.json
+            ${{ runner.temp }}/first-install-proof/build/machine/*.tar.gz
+            ${{ runner.temp }}/first-install-proof/build/machine/*.json
+          if-no-files-found: error
+          retention-days: 3
       - name: Run the full install command and join a second machine instance
         run: node server/installation/testing/first_install_proof.ts
       - name: Preserve only proof evidence and build receipts

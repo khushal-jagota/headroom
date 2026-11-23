@@ -91,6 +91,32 @@ export interface HomeInstallDependencies extends HomeInstallHost {
     host: HomeInstallHost,
   ) => Promise<HomeServicePlan>;
 }
+/** Stop and remove the home services of `root`, refusing any service that names another root. */
+export type HomeServiceRemoval = (
+  root: string,
+  service: string,
+  host: HomeInstallHost,
+  execution: ReleaseExecution,
+) => Promise<void>;
+/**
+ * The move mode installs a held server around copied state. It has no database creation, no
+ * credential and no machine code, because the target machine already runs machine code.
+ */
+export interface HomeMoveDependencies extends HomeInstallHost {
+  readonly execution: ReleaseExecution;
+  readonly extract: HomeInstallDependencies['extract'];
+  readonly admit: HomeInstallDependencies['admit'];
+  readonly healthy: HomeInstallDependencies['healthy'];
+  /** The home's service plan without its machine code service. */
+  readonly service: HomeInstallDependencies['service'];
+  /** Integrity test and schema admission, run by the installed app. */
+  readonly check_database: (
+    app: string,
+    path: string,
+    execution: ReleaseExecution,
+  ) => Promise<void>;
+  readonly remove_service: HomeServiceRemoval;
+}
 /** A bounded observer cannot release descriptors still used by a native cleanup. */
 export class HomeCleanupUnsettled extends Error {
   readonly settled: Promise<void>;

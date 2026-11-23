@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { install_request_lifetime } from './http/lifetime.ts';
 import { initialize_server_location, read_persisted_server_location } from '../server_link/data.ts';
 import { install_server_link } from '../server_link/http.ts';
+import { startup_move_hold } from '../server_move/hold.ts';
 import { dirname, join } from 'node:path';
 import { begin_startup_phase } from './startup_diagnostics.ts';
 import { UpdateBarrier } from '../environments/update_barrier.ts';
@@ -345,6 +346,8 @@ export class ServerServices {
       if (!environments?.mac_updates)
         throw new Error('Configured executor requires the invocation Mac update service.');
       executor.bind_updates(environments.mac_updates);
+      if (environments.server_move_notice)
+        executor.bind_server_move(environments.server_move_notice);
     }
     return environments;
   }
@@ -459,6 +462,7 @@ export class ServerServices {
       workspaceAdmission: conversationSystem?.workspace_admission,
       updateBarrier: this.update_barrier,
       executor,
+      executorRoutes: environments?.executor_routes,
     });
     application_ready();
     this.app.own(app);
@@ -544,6 +548,12 @@ export class ServerServices {
       install_request_lifetime(app, this.lifetime.request_lifetime);
       install_server_link(app, () => location);
       return this.listen(app);
+    }
+    // A server inside a move starts with its barrier closed, and only the move reopens it.
+    const move_hold = startup_move_hold(dirname(this.config.db_path));
+    if (move_hold !== null) {
+      this.update_barrier.move_hold = move_hold;
+      this.update_barrier.close();
     }
     const record_ready = begin_startup_phase('record');
     const { context, integrity_issues } = await this.create_record();
