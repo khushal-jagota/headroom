@@ -48,7 +48,6 @@ jobs:
           echo "FIRST_INSTALL_ROOT=$FIRST_INSTALL_ROOT" >> "$GITHUB_ENV"
           mkdir -p "$FIRST_INSTALL_ROOT"/{build,evidence,tmp,inputs,build-home}
           echo "TMPDIR=$FIRST_INSTALL_ROOT/tmp/" >> "$GITHUB_ENV"
-          selected_node=$(node -p 'require("node:fs").realpathSync(process.execPath)')
           if [ "$RUNNER_OS" = Linux ]; then
             sudo apt-get update
             sudo apt-get install -y patchelf binutils libicu-dev pkg-config
@@ -139,6 +138,20 @@ jobs:
           retention-days: 3
       - name: Run the full install command and join a second machine instance
         run: node server/installation/testing/first_install_proof.ts
+      - name: Prove cross-release update and rollback without a compatible host Node
+        if: runner.os == 'macOS'
+        env:
+          PANELS_NATIVE_HOME_TEST: "1"
+          NATIVE_EVIDENCE: ${{ runner.temp }}/first-install-proof/evidence/native-update
+          MAC_HOME_BUILD_METADATA: ${{ runner.temp }}/first-install-proof/build/server/mac-home-build.json
+          MAC_HOME_PRODUCTION_INPUTS: ${{ runner.temp }}/first-install-proof/inputs
+        run: |
+          mkdir -p "$NATIVE_EVIDENCE"
+          # Reuse this runner and its prepared production inputs for the existing
+          # sealed A-to-B update and failed-candidate rollback proof. Each phase
+          # records elapsed time. No extra browser, machine or native host is added.
+          scripts/dev npm --prefix server run test -- installation/home.native.test.ts \
+            --reporter=junit --outputFile "$NATIVE_EVIDENCE/update.xml"
       - name: Preserve only proof evidence and build receipts
         if: always()
         run: |

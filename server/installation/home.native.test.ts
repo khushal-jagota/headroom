@@ -1,6 +1,8 @@
 /** Hosted service-manager proof. The mini app is not a sealed release/admission proof. */
-import { test, expect } from 'vitest';
+import { test, expect, vi } from 'vitest';
+import * as service_environment from './environment.ts';
 import { randomUUID } from 'node:crypto';
+import { shell_quote } from '../conversation/worker_unit/logic.ts';
 import { realpathSync } from 'node:fs';
 import {
   chmod,
@@ -88,6 +90,20 @@ test.skipIf(!admitted)(
     const account = system === 'linux' ? userInfo().homedir : join(base, 'account');
     const command_link = join(account, HOME_COMMAND);
     await mkdir(join(base, 'account'), { mode: 0o700 });
+    const incompatible_node_log = join(base, 'unexpected-host-node');
+    if (system === 'darwin') {
+      // The same native host proves update and rollback without a compatible account Node.
+      // Service PATH must continue to prefer the release's runtime after each app swap.
+      await mkdir(join(account, '.local/bin'), { recursive: true });
+      await writeFile(
+        join(account, '.local/bin/node'),
+        '#!/bin/sh\necho incompatible-host-node >> ' +
+          shell_quote(incompatible_node_log) +
+          '\nexit 91\n',
+        { mode: 0o700 },
+      );
+    }
+
     const report: Record<string, unknown> = {
       system,
       architecture: process.arch,
@@ -96,6 +112,19 @@ test.skipIf(!admitted)(
       cases: [],
     };
     const cases = report.cases as Record<string, unknown>[];
+    const original_environment = service_environment.home_service_environment;
+    const hostile_path =
+      system === 'darwin'
+        ? vi
+            .spyOn(service_environment, 'home_service_environment')
+            .mockImplementation(async (...args) => {
+              const environment = await original_environment(...args);
+              return {
+                ...environment,
+                PATH: join(account, '.local/bin') + ':' + environment.PATH,
+              };
+            })
+        : undefined;
     const build_processes = new ChildProcesses();
     let mini_builds: Awaited<ReturnType<typeof build_native_mini_homes>> | undefined;
     let case_children_settled = true;
@@ -246,6 +275,10 @@ test.skipIf(!admitted)(
             plan = await (system === 'darwin'
               ? create_darwin_home_service(value, host)
               : create_linux_home_service(value, host));
+            if (system === 'darwin') {
+              const job = JSON.parse(plan.files[0]!.content);
+              expect(job.EnvironmentVariables.PATH.split(':')[0]).toBe(join(account, '.local/bin'));
+            }
             return plan;
           },
           extract: async (_archive, destination, digest, sha, scope) => {
@@ -348,7 +381,7 @@ test.skipIf(!admitted)(
                 root,
                 uid: deps.uid,
                 label: service_name,
-                installer_node: await realpath(process.execPath),
+                installer_node: join(root, 'app/node/bin/node'),
               });
               const old = await observe(),
                 began = performance.now(),
@@ -406,6 +439,11 @@ test.skipIf(!admitted)(
                   births,
                   record,
                 });
+                await expect(lstat(incompatible_node_log)).rejects.toMatchObject({
+                  code: 'ENOENT',
+                });
+                record.host_node =
+                  'incompatible account Node never executed during install, update, or rollback';
               } catch (error) {
                 retain_resources = true;
                 throw error;
@@ -526,6 +564,7 @@ test.skipIf(!admitted)(
         report.build_cleanup_error = String(error);
         throw error;
       } finally {
+        hostile_path?.mockRestore();
         report.fixture_root = base;
         await mkdir(evidence, { recursive: true });
         await writeFile(

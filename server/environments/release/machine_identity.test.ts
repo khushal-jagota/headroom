@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -46,6 +56,9 @@ test('release provenance changes preserve identity while runtime bytes, modes an
     await write_app_entrypoints(root, sha, { public_cli_entrypoint: 'entry.sh' }, execution);
   };
   try {
+    await mkdir(join(root, 'node/bin'), { recursive: true });
+    await copyFile(process.execPath, join(root, 'node/bin/node'));
+    await chmod(join(root, 'node/bin/node'), 0o755);
     await file('entry.sh', '#!/bin/sh\nprintf "%s" "$PLAN_APP_SHA"\n');
     await chmod(join(root, 'entry.sh'), 0o755);
     await provenance('a'.repeat(40));

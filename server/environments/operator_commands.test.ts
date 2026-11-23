@@ -303,6 +303,8 @@ test('installed launcher runs nightly backup and applied maintenance on private 
       await mkdir(join(path, '..'), { recursive: true });
       await writeFile(path, text, { mode });
     };
+    await mkdir(join(app, 'node/bin'), { recursive: true });
+    await copyFile(process.execPath, join(app, 'node/bin/node'));
     await file('package.json', '{"type":"module"}');
     await file(
       'server/environments/release/entrypoints.ts',
