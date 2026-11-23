@@ -36,20 +36,25 @@ struct TicketPresentation {
     var ceilingLabel: String {
         ticket.ceiling == "none" ? "No further" : manifest.stages.first { $0.id == ticket.ceiling }?.label ?? ticket.ceiling
     }
+    func holderLabel(_ holder: Principal) -> String { ticket.holderLabel(holder) }
+    var holders: [Principal] { ticket.holders }
+}
+
+extension TicketDetail {
     func holderLabel(_ holder: Principal) -> String {
         switch holder.kind {
         case "owner": return "User"
         case "chief": return "Chief"
         case "goal": return "Goal · \(holder.id)"
-        case "manager": return holder.id == ticket.managerId ? "Manager" : "Manager · \(holder.id)"
+        case "manager": return holder.id == managerId ? "Manager" : "Manager · \(holder.id)"
         default: return "Worker · \(holder.id)"
         }
     }
     var holders: [Principal] {
         var result = [Principal(kind: "owner", id: "owner")]
-        if let id = ticket.managerId { result.append(Principal(kind: "manager", id: id)) }
+        if let managerId { result.append(Principal(kind: "manager", id: managerId)) }
         result.append(Principal(kind: "chief", id: "chief"))
-        if !result.contains(ticket.ceilingHolder) { result.append(ticket.ceilingHolder) }
+        if !result.contains(ceilingHolder) { result.append(ceilingHolder) }
         return result
     }
 }
@@ -57,8 +62,6 @@ struct TicketPresentation {
 extension TicketRecapDelivery {
     var note: String? {
         switch fate {
-        case "started", "queued", "injected": return nil
-        case "uncertain": return "Delivery uncertain · do not resend"
         case "refused":
             let reasons = [
                 "no_such_conversation": "there is no such conversation to send to",
@@ -75,7 +78,7 @@ extension TicketRecapDelivery {
                 "command_cannot_join_running_turn": "a command cannot join a turn that is already running"
             ]
             return "Not delivered · \(reasons[refusalReason ?? ""] ?? "the delivery was impossible")"
-        default: return "Delivery uncertain · do not resend"
+        default: return nil  // The recap request reached the server. Nothing more is worth saying.
         }
     }
 }

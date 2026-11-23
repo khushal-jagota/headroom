@@ -38,8 +38,25 @@ BUNDLE = os.environ.get("PANELS_OFFLINE_BUNDLE", "app.panels.ios.pios-offline")
 TABLE_SCROLL_SMOKE = os.environ.get("PANELS_TABLE_SCROLL_SMOKE") == "1"
 GOALS_SMOKE = os.environ.get("PANELS_GOALS_SMOKE") == "1" or TABLE_SCROLL_SMOKE
 REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
+# Review's other card kinds beside the message fixture: a worker question, a permission
+# ask, a refused decision and a reviewer move, for the one-off Review screen walk.
+REVIEW_QUEUE = os.environ.get("PANELS_REVIEW_QUEUE") == "1"
+# The docks under an opened artifact, and the one Markdown display, for the one-off walk:
+# a proposal and a message that link artifacts, and a long conversation with block Markdown.
+ARTIFACT_DOCK_SMOKE = os.environ.get("PANELS_ARTIFACT_DOCK_SMOKE") == "1"
 REVIEW_MESSAGES = (
-    os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE
+    os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE or REVIEW_QUEUE
+    or ARTIFACT_DOCK_SMOKE
+)
+DOCK_MARKDOWN = (
+    "## Evidence table\n\n"
+    "| Check | Result |\n| --- | --- |\n| Host tests | Passed |\n| Simulator walk | Passed |\n\n"
+    "```swift\nlet dock = ArtifactDock.reviewProposal(itemID: id)\n```\n\n"
+    "```panels-chart\n"
+    '{"kind":"bar","title":"Merged PRs per week","series":[{"name":"Panels","points":'
+    '[{"label":"Week 1","value":4},{"label":"Week 2","value":7}]},{"name":"Website","points":'
+    '[{"label":"Week 1","value":2},{"label":"Week 2","value":3}]}]}\n'
+    "```\n"
 )
 
 
@@ -368,9 +385,23 @@ def main() -> int:
         "writes": [],
         "messages": [],
         "recording": None,
-        "goal_patch_attempts": 0,
         "chief_conversation": "stub",
         "tail_requests": [],
+        # Delivery faults for OfflineOperationTests, armed per kind (message, decision,
+        # read) by /proof/drop/<kinds> and /proof/lose/<kinds>. A drop closes the
+        # connection before the write; a lost response closes it after a first commit.
+        "drop": set(),
+        "lose": set(),
+        "dropped": [],
+        "lost": [],
+        "refuse_messages": 0,
+        "refused_messages": [],
+        "message_attempts": {},
+        "decision_posts": {},
+        "decision_receipt_reads": {},
+        "reads": [],
+        "read_attempts": {},
+        "agent_messages": 0,
     }
     state.update(
         read_through=3 if TABLE_SCROLL_SMOKE else 1,
@@ -378,6 +409,10 @@ def main() -> int:
         new_message=False,
         refused=False,
         review_owner="chief",
+        refuse_decisions=False,
+        # Conversations whose running turn waits on an ask, and the asks' own words.
+        asks={},
+        ask_answers=[],
     )
     if UPDATES_SMOKE:
         state.update(slow=False, update_phase="offer", update_retry_count=0, update_reads=0)
@@ -404,6 +439,11 @@ def main() -> int:
             machine("machine-current", "Home", "current"),
             machine("machine-unavailable", "Workshop", "unavailable"),
         ]
+        if phase == "complete":
+            # Nothing offered and every machine current: the review's "no offer" screenshot.
+            for row in machines:
+                row.update(present=True, changed=False, state="current", attempt_id=None,
+                           request_id=None, detail=None, can_retry=False)
         available = copy.deepcopy(machines)
         for row in available:
             row.update(attempt_id=None, request_id=None, can_retry=False)
@@ -430,10 +470,62 @@ def main() -> int:
                 dict(kind="machine", device_id="machine-unavailable", version="1", protocol_version=2, outbox_format=1)]
         )
 
+    if REVIEW_QUEUE:
+        state["asks"] = {
+            "ask-question": dict(
+                owner=("manager", "review-asks"), at=6,
+                pending_user_input=dict(request_id="request-1", questions=[dict(
+                    question_id="release", header="Release",
+                    question="Which build should go to TestFlight first?",
+                    options=[
+                        dict(label="Build 15", description="Has the paywall fix and the new icon."),
+                        dict(label="Build 16", description="Adds the widget, still under test."),
+                    ],
+                    multi_select=False, allow_other=True,
+                )]),
+                pending_permission_ask=None,
+            ),
+            "ask-permission": dict(
+                owner=("ticket", "ask-ticket"), at=7,
+                pending_user_input=None,
+                pending_permission_ask=dict(
+                    ask_id="ask-1", title="Run the tests on the Mac simulator?",
+                    detail='xcodebuild test -scheme Wren -destination "platform=iOS Simulator,name=PanelsLaneB"',
+                    options=[
+                        dict(option_id="allow", label="Allow once", option_kind="allow_once"),
+                        dict(option_id="always", label="Always allow", option_kind="allow_always"),
+                        dict(option_id="reject", label="Decline", option_kind="reject_once"),
+                    ],
+                ),
+            ),
+        }
     if REVIEW_MESSAGES:
         state["slow"] = False
         tickets = {"offline-1": tickets["offline-1"]}
         tickets["offline-1"]["pending_proposal"]["created_at"] = 2
+    if REVIEW_QUEUE:
+        # The Ticket page shows the waiting proposal for its stage's gating field.
+        manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
+        tickets["offline-1"].update(
+            title="Rebuild the iPhone Review queue",
+            recap="Review shows one card per purpose and a summary at the end.",
+        )
+        tickets["offline-1"]["pending_proposal"]["body"] = (
+            "Split each Review entry into one card per purpose.\n\n"
+            "- A proposal card with its note, Return and Approve\n"
+            "- A message card with Reply and Mark read\n"
+            "- An ask card that answers the agent's question"
+        )
+        asker = copy.deepcopy(tickets["offline-1"])
+        asker.update(id="ask-ticket", title="Ship Wren build 15", conversation_id="ask-permission",
+                     recap="The release build is ready for its test run.", pending_proposal=None)
+        tickets["ask-ticket"] = asker
+    if ARTIFACT_DOCK_SMOKE:
+        # The Ticket page shows the waiting proposal and its note, as in the queue walk.
+        manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
+        tickets["offline-1"]["pending_proposal"]["body"] = (
+            "The proof is in the [dock evidence](/files/tickets/offline-1/dock-proof.md)."
+        )
     if ARTIFACT_LINKS_PROOF:
         state["slow"] = False
         state["artifact_reads"] = {"text": 0, "photo": 0, "html": 0}
@@ -475,7 +567,7 @@ def main() -> int:
         ]
         if len(matches) != 1:
             raise ValueError("The owned replacement app has no unique data container")
-        store = matches[0] / "Library/Application Support/PanelsPhone/phone.store"
+        store = matches[0] / "Library/Application Support/PanelsPhoneStore/phone.store"
         with sqlite3.connect("file:" + str(store) + "?mode=ro", uri=True) as connection:
             rows = connection.execute(
                 "SELECT ZKEY, ZPAYLOAD FROM ZLOCALRECORD WHERE ZKIND = 'cache' AND ZSERVER = ?",
@@ -658,10 +750,11 @@ def main() -> int:
                 "manager_kind": "chief",
                 "manager_id": None,
                 "conversation_id": ticket["conversation_id"],
-                "is_backlogged": False,
+                "is_backlogged": ticket.get("is_backlogged", False) if DESIGN_REVIEW else False,
                 "ceiling": ticket["ceiling"] if DESIGN_REVIEW else ticket["stage"],
                 "ceiling_holder": (
-                    ticket["ceiling_holder"] if DESIGN_REVIEW else {"kind": "owner", "id": "owner"}
+                    ticket["ceiling_holder"] if DESIGN_REVIEW or REVIEW_QUEUE
+                    else {"kind": "owner", "id": "owner"}
                 ),
                 "gating_field": stage.get("gating_field") if DESIGN_REVIEW else "wireframe",
                 "proposal_field": proposal["field"] if proposal else None,
@@ -725,12 +818,14 @@ def main() -> int:
         for ticket in tickets.values():
             # A Ticket that owns the unread conversation is a message-only card here,
             # so its conversation link opens first, as the connected case expects.
-            # "ticket-stacked" keeps its proposal: one card with a proposal and a message.
+            # "ticket-split" keeps its proposal: one card with a proposal and a message.
             message_owner = owner == "ticket" and ticket["id"] == "offline-1"
             proposal = None if message_owner else ticket["pending_proposal"]
             records[("ticket", ticket["id"])] = ticket_record(ticket, proposal)
-            # The Goals smoke reaches Review for its message card only.
-            if proposal and (not GOALS_SMOKE or TABLE_SCROLL_SMOKE):
+            # The Goals smoke reaches Review for its message card only. A proposal that
+            # moved to another reviewer leaves the window.
+            if (proposal and (not GOALS_SMOKE or TABLE_SCROLL_SMOKE)
+                    and ticket.get("ceiling_holder", {}).get("kind", "owner") == "owner"):
                 cards[("ticket", ticket["id"])] = proposal["created_at"]
         conversations = [("stub", state["read_through"], None)]
         if REVIEW_MESSAGES:
@@ -738,13 +833,13 @@ def main() -> int:
             stub_owner = {
                 "chief": "chief",
                 "ticket": "offline-1",
-                "ticket-stacked": "offline-1",
+                "ticket-split": "offline-1",
                 "manager": "review-manager",
             }
             addresses = [
                 (
                     "chief",
-                    "ticket" if owner == "ticket-stacked" else owner,
+                    "ticket" if owner == "ticket-split" else owner,
                     stub_owner[owner],
                     "stub",
                     state["chief_conversation"] == "stub",
@@ -803,6 +898,27 @@ def main() -> int:
                 cards[key] = min(cards.get(key, waiting), waiting)
         for identity, read, unread_at in conversations:
             records[("conversation", identity)] = conversation_record(identity, read, unread_at)
+        for identity, ask in state["asks"].items():
+            conversation = conversation_record(identity, 0, None)
+            waiting = bool(ask["pending_user_input"] or ask["pending_permission_ask"])
+            conversation["value"]["latest_ask_at"] = ask["at"]
+            conversation["value"]["attention"]["current"]["awaiting_answer"] = waiting
+            conversation["value"]["attention"]["current"]["signal"]["working"] = True
+            records[("conversation", identity)] = conversation
+            kind, owner_id = ask["owner"]
+            if kind == "manager":
+                records[("project", "wren")] = dict(kind="project", id="wren", value=dict(name="Wren"))
+                records[("manager", owner_id)] = dict(kind="manager", id=owner_id, value=dict(
+                    title="Ship Wren to the App Store", recap="Build 15 is on TestFlight review.",
+                    recap_preview="", recap_reference=None, created_at=1, updated_at=1,
+                    project_id="wren", settled=False, conversation_id=identity))
+                records[("address", identity + "-address")] = dict(kind="address", id=identity + "-address", value=dict(
+                    owner_kind="manager", owner_id=owner_id, conversation_id=identity, current=True,
+                    parent_kind=None, parent_id=None))
+                if waiting:
+                    cards[("address", identity + "-address")] = ask["at"]
+            elif waiting:
+                cards[("ticket", owner_id)] = min(cards.get(("ticket", owner_id), ask["at"]), ask["at"])
         if state.get("workspace_fixture"):
             records = workspace_records()
             cards = {}
@@ -896,7 +1012,7 @@ def main() -> int:
             "records": list(records.values()),
             "windows": windows,
             "counts": {
-                "running_conversations": 7 if REVIEW_COMPLETION else 0,
+                "running_conversations": 7 if REVIEW_COMPLETION else 4 if REVIEW_QUEUE else 0,
                 "out_claims": 0,
                 "review": len(order),
                 "unread": 0,
@@ -973,6 +1089,42 @@ def main() -> int:
             ]
             value["coverage"]["through_sequence"] = 8
             value["status"]["rest"]["latest_happened"] = {"kind": "agent_message", "excerpt": text}
+        if not REVIEW_MESSAGES and not REPLACEMENT_SMOKE:
+            # Agent messages the owner has not read: an open conversation marks them read.
+            for index in range(1, state["agent_messages"] + 1):
+                value["page"]["items"].append(
+                    {
+                        "kind": "row",
+                        "key": f"agent-{index}",
+                        "source_sequence": 1 + index,
+                        "body": {
+                            "kind": "inline",
+                            "value": {
+                                "kind": "agent_message",
+                                "content": [{"piece": "text", "text": f"Agent update {index}"}],
+                            },
+                        },
+                    }
+                )
+            if state["agent_messages"]:
+                value["coverage"]["through_sequence"] = max(
+                    len(state["messages"]), 1 + state["agent_messages"]
+                )
+        if ARTIFACT_DOCK_SMOKE and "/conversations/history/" not in path:
+            # A long transcript whose rows carry block Markdown, for the scroll check.
+            for index in range(1, 61):
+                text = (
+                    f"Rich update {index}\n\n" + DOCK_MARKDOWN
+                    + "\n[Conversation evidence](/files/tickets/offline-1/dock-proof.md)"
+                    if index % 10 == 0 else f"Plain update {index}\n\n- one\n- two"
+                )
+                value["page"]["items"].append({
+                    "kind": "row", "key": f"dock-{index}", "source_sequence": 100 + index,
+                    "body": {"kind": "inline", "value": {
+                        "kind": "agent_message", "content": [{"piece": "text", "text": text}],
+                    }},
+                })
+            value["coverage"]["through_sequence"] = 160
         if REVIEW_MESSAGES and "/conversations/history/" in path:
             value["page"]["items"] = [
                 {
@@ -1007,13 +1159,42 @@ def main() -> int:
 
         def disconnected(self) -> bool:
             if state["offline"]:
-                try:
-                    self.connection.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-                self.connection.close()
+                self.drop_connection()
                 return True
             return False
+
+        def drop_connection(self) -> None:
+            self.close_connection = True
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self.connection.close()
+
+        def delivery(self) -> dict[str, Any]:
+            """Exactly-once evidence: effects, attempts and the faults that fired."""
+            def text(message: dict[str, Any]) -> str:
+                return "\n".join(
+                    piece.get("text", "")
+                    for piece in message.get("content", [])
+                    if piece.get("piece") == "text"
+                )
+            return {
+                "writes": [write for write in state["writes"] if isinstance(write, str)],
+                "messages": [
+                    {"id": message["sender_message_id"], "text": text(message)}
+                    for message in state["messages"]
+                ],
+                "message_attempts": state["message_attempts"],
+                "refused_messages": state["refused_messages"],
+                "decision_posts": state["decision_posts"],
+                "decision_receipt_reads": state["decision_receipt_reads"],
+                "reads": state["reads"],
+                "read_attempts": state["read_attempts"],
+                "armed": sorted(state["drop"]) + sorted(state["lose"]),
+                "dropped": state["dropped"],
+                "lost": state["lost"],
+            }
 
         def do_GET(self) -> None:
             value: dict[str, Any]
@@ -1077,6 +1258,9 @@ def main() -> int:
                 if DESIGN_REVIEW and name == "scopes":
                     self.respond(state.get("scope_writes", []))
                     return
+                if DESIGN_REVIEW and name == "settings-writes":
+                    self.respond(state.get("settings_writes", []))
+                    return
                 if REPLACEMENT_SMOKE and name.startswith("replacement/"):
                     action = name.split("/", 1)[1]
                     with lock:
@@ -1086,6 +1270,13 @@ def main() -> int:
                             state["chief_conversation"] = None
                         elif action == "new":
                             state["chief_conversation"] = "replacement"
+                        elif action == "saved":
+                            # Read only: the walk waits for the app's own save before it ends the app.
+                            try:
+                                saved_replacement_reference()
+                            except (ValueError, OSError, sqlite3.Error) as error:
+                                self.respond({"error": str(error)}, 409)
+                                return
                         elif action == "relaunch-new":
                             try:
                                 saved_replacement_reference()
@@ -1164,6 +1355,13 @@ def main() -> int:
                             ticket["pending_proposal"]["field"] = "what_changes"
                         if mode == "refused":
                             ticket["pending_proposal"]["revision"] += 1
+                        if mode == "settings":
+                            # Rare Ticket settings need a Ticket with no proposal waiting.
+                            ticket["pending_proposal"] = None
+                            ticket["ticket_status"] = "agent"
+                            ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                        if mode == "refuse-recap":
+                            state["refuse_recap"] = True
                     self.respond({})
                     return
                 if name.startswith("review-owner/"):
@@ -1176,8 +1374,35 @@ def main() -> int:
                         state["historical_read"] = True
                         for ticket in tickets.values():
                             ticket["pending_proposal"] = None
+                        for ask in state["asks"].values():
+                            ask.update(pending_user_input=None, pending_permission_ask=None)
+                elif REVIEW_QUEUE and name == "review-new-proposal":
+                    # Another proposal arrives while Review shows its summary.
+                    with lock:
+                        arrival = copy.deepcopy(tickets["offline-1"])
+                        arrival.update(id="offline-new", title="Add the summary screen",
+                                       recap="The final Review page in four states.")
+                        arrival["pending_proposal"].update(
+                            created_at=9, revision=1,
+                            body="Show what waits, in two tones, with one quiet return button.")
+                        tickets["offline-new"] = arrival
+                elif REVIEW_QUEUE and name.startswith("review-move/"):
+                    # The proposal now waits on Chief: it leaves Khushal's window.
+                    with lock:
+                        ticket = tickets[name.split("/", 1)[1]]
+                        ticket["ceiling_holder"] = {"kind": "chief", "id": "chief"}
+                        ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                elif REVIEW_QUEUE and name == "review-refuse-decisions":
+                    state["refuse_decisions"] = True
+                elif REVIEW_QUEUE and name == "ask-answers":
+                    self.respond(state["ask_answers"])
+                    return
                 elif name == "new-message":
                     state["new_message"] = True
+                elif DESIGN_REVIEW and name == "stall-refresh":
+                    state["stall_refresh"] = True
+                elif DESIGN_REVIEW and name == "unstall-refresh":
+                    state["stall_refresh"] = False
                 elif name == "offline":
                     state["offline"] = True
                 elif name == "online":
@@ -1185,15 +1410,22 @@ def main() -> int:
                     state["slow"] = False
                 elif name == "fast":
                     state["slow"] = False
-                elif name == "goal-conflict" and GOALS_SMOKE:
-                    with lock:
-                        goals["words"]["revision"] += 1
-                        goals["words"]["why"] = "Newer server explanation."
-                elif name == "goal-state" and GOALS_SMOKE:
-                    self.respond(dict(goal=goals["words"], attempts=state["goal_patch_attempts"]))
-                    return
                 elif name == "writes":
                     self.respond(state["writes"])
+                    return
+                elif name.startswith(("drop/", "lose/")):
+                    fault, kinds = name.split("/", 1)
+                    with lock:
+                        state[fault].update(kinds.split(","))
+                elif name == "refuse/message":
+                    with lock:
+                        state["refuse_messages"] += 1
+                elif name == "agent-message":
+                    with lock:
+                        state["agent_messages"] += 1
+                elif name == "delivery":
+                    with lock:
+                        self.respond(self.delivery())
                     return
                 elif name.startswith("start/") and (
                     os.environ.get("PANELS_OFFLINE_RECORD_CLIPS", "0" if server_only else "1")
@@ -1223,10 +1455,22 @@ def main() -> int:
                             break
                 elif name == "stop":
                     stop_clip()
+                elif REVIEW_QUEUE and name.startswith("screenshot/"):
+                    # The one-off Review walk names each screen; simctl captures the device.
+                    if not native_control_allowed():
+                        self.respond({"error": "An owned device and active turn are required"}, 409)
+                        return
+                    subprocess.run(["xcrun", "simctl", "io", DEVICE, "screenshot",
+                                    str(output / (name.split("/", 1)[1] + ".png"))],
+                                   check=True, capture_output=True)
                 self.respond({})
                 return
             if self.disconnected():
                 return
+            # The store's refresh reads the deployment status. Held here, the refresh after a
+            # reviewer change stalls as on a slow connection, until the proof releases it.
+            while path == "/api/deployment-status" and state.get("stall_refresh"):
+                time.sleep(0.1)
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
                 return
@@ -1318,6 +1562,29 @@ def main() -> int:
                 content = (
                     b"# Table artifact proof\n\n[Next artifact](nested-proof.md)"
                     if path.endswith("/table-proof.md") else b"# Nested artifact proof"
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            if ARTIFACT_DOCK_SMOKE and path == "/api/artifact-catalog/ticket/offline-1":
+                # The Ticket page keeps its two files behind the collapsed Artifacts row.
+                self.respond(dict(revision="dock", directory="", offset=0, total=2, entries=[
+                    dict(key=f"managed:{name}", path=name, label=name, kind="2",
+                         href=f"/files/tickets/offline-1/{name}", directory=None, child_count=0)
+                    for name in ("dock-proof.md", "nested-dock.md")
+                ]))
+                return
+            if ARTIFACT_DOCK_SMOKE and path in (
+                "/files/tickets/offline-1/dock-proof.md",
+                "/files/tickets/offline-1/nested-dock.md",
+            ):
+                content = (
+                    ("# Dock artifact proof\n\n" + DOCK_MARKDOWN
+                     + "\n[Nested dock artifact](nested-dock.md)\n").encode()
+                    if path.endswith("/dock-proof.md") else b"# Nested dock proof"
                 )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/markdown")
@@ -1465,7 +1732,7 @@ def main() -> int:
                     state["artifact_reads"]["photo" if photo else "text"] += 1
                 content = (
                     (
-                        ROOT / "ios/Panels/Features/Workspace/Resources/workspace-chief.png"
+                        ROOT / "ios/Panels/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
                     ).read_bytes()
                     if photo
                     else b"Migration verification body must appear only after a tap."
@@ -1552,6 +1819,15 @@ def main() -> int:
                         "conversation_signal": {"working": False, "message_for_owner": False},
                     }
                 }
+            elif path == "/api/skills":
+                # Settings' Config section reads the managed skills, as the server's
+                # read_skills_home returns them.
+                value = {
+                    "skills": [
+                        {"name": "panels-manager", "description": "Supervise one Manager.", "markdown_body": ""},
+                        {"name": "panels-worker", "description": "Working a Panels ticket.", "markdown_body": ""},
+                    ]
+                }
             elif path == "/api/managers/review-manager/workspace-content":
                 manager = json.loads((ROOT / "ios/PanelsTests/Fixtures/manager.json").read_text())
                 value = {"goal": manager["goal"], "recap": manager["recap"]}
@@ -1572,6 +1848,10 @@ def main() -> int:
             elif path.endswith("/manifest"):
                 value = manifest
             elif "/decision-operations/" in path:
+                with lock:
+                    operation = path.rsplit("/", 1)[-1]
+                    reads = state["decision_receipt_reads"]
+                    reads[operation] = reads.get(operation, 0) + 1
                 self.respond({"receipt_contract": 1, "receipt": decision_receipts.get(path)})
                 return
             elif path.endswith("/view/receipts"):
@@ -1585,6 +1865,16 @@ def main() -> int:
                 }
             elif path.endswith("/view"):
                 value = conversation_view(path)
+            elif "/answer-receipts/" in path:
+                value = {"receipt": None}
+            elif path.split("/")[-1] in state["asks"] and path.startswith("/api/conversation/conversations/"):
+                ask = state["asks"][path.split("/")[-1]]
+                value = {
+                    "backend_key": "codex", "model": "sol", "held_prompts": [],
+                    "owner_read_through_sequence": 0, "latest_sequence": 3, "is_running": True,
+                    "pending_permission_ask": ask["pending_permission_ask"],
+                    "pending_user_input": ask["pending_user_input"],
+                }
             elif (
                 path.endswith("/conversations/stub")
                 or (REPLACEMENT_SMOKE and path.endswith("/conversations/replacement"))
@@ -1634,7 +1924,6 @@ def main() -> int:
                 return
             with lock:
                 goal = goals[path.split("/")[3]]
-                state["goal_patch_attempts"] += 1
                 wire_body = copy.deepcopy(body)
                 if body.pop("expected_revision") != goal["revision"]:
                     self.respond(dict(error=dict(message="This goal changed.")), 409)
@@ -1658,7 +1947,52 @@ def main() -> int:
                 return
             path = urlparse(self.path).path
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
+            kind = (
+                "message" if path.endswith("/send")
+                else "decision" if "/decision-operations/" in path
+                else "read" if path.endswith("/owner-read")
+                else None
+            )
+            identity_of = {
+                "message": lambda: body.get("sender_message_id"),
+                "decision": lambda: path.rsplit("/", 1)[-1],
+                "read": lambda: str(body.get("through_sequence")),
+            }
+            committed = False
+            if DESIGN_REVIEW and (
+                path == "/api/recap-requests"
+                or (path.startswith("/api/tickets/") and path.endswith(("/backlog", "/resume")))
+            ):
+                # Rare Ticket settings wait in their sheet: answer slowly enough to see it.
+                time.sleep(3)
+                with lock:
+                    state.setdefault("settings_writes", []).append(dict(path=path, body=body))
+                    if path == "/api/recap-requests":
+                        refused = state.get("refuse_recap", False)
+                        self.respond(
+                            dict(fate="refused", refusal_reason="backend_did_not_start")
+                            if refused else dict(fate="queued", refusal_reason=None)
+                        )
+                        return
+                    ticket = tickets[path.split("/")[3]]
+                    ticket["is_backlogged"] = path.endswith("/backlog")
+                    ticket["proof_revision"] = ticket.get("proof_revision", 1) + 1
+                    self.respond({})
+                    return
             with lock:
+                if kind:
+                    attempts = {
+                        "message": state["message_attempts"],
+                        "decision": state["decision_posts"],
+                        "read": state["read_attempts"],
+                    }[kind]
+                    attempt = identity_of[kind]()
+                    attempts[attempt] = attempts.get(attempt, 0) + 1
+                    if kind in state["drop"]:
+                        state["drop"].discard(kind)
+                        state["dropped"].append({"kind": kind, "id": attempt})
+                        self.drop_connection()
+                        return
                 if UPDATES_SMOKE and path.startswith("/api/updates/"):
                     state["writes"].append(dict(path=path, body=body,
                         app_sha=self.headers.get("X-Panels-App-SHA"),
@@ -1742,10 +2076,25 @@ def main() -> int:
                         value = {"conversation_id": "stub", "fate": "queued"}
                 elif path.endswith("/send"):
                     identity = body["sender_message_id"]
-                    if not any(m["sender_message_id"] == identity for m in state["messages"]):
-                        state["messages"].append(body)
-                        state["writes"].append("message")
-                    value = {"conversation_id": "stub", "fate": "started"}
+                    landed = any(m["sender_message_id"] == identity for m in state["messages"])
+                    if not landed and state["refuse_messages"]:
+                        state["refuse_messages"] -= 1
+                        state["refused_messages"].append(identity)
+                        value = {"conversation_id": "stub", "fate": "refused"}
+                    else:
+                        if not landed:
+                            state["messages"].append(body)
+                            state["writes"].append("message")
+                            committed = True
+                        value = {"conversation_id": "stub", "fate": "started"}
+                elif path.endswith("/owner-read"):
+                    # A read only moves forward; a repeat at the same point has no effect.
+                    if body["through_sequence"] > state["read_through"]:
+                        state["read_through"] = body["through_sequence"]
+                        state["reads"].append(body["through_sequence"])
+                        state["writes"].append("read")
+                        committed = True
+                    value = {"owner_read_through_sequence": state["read_through"]}
                 elif "/decision-operations/" in path:
                     if path in decision_receipts:
                         self.respond({"receipt_contract": 1, "receipt": decision_receipts[path]})
@@ -1754,6 +2103,7 @@ def main() -> int:
                     proposal = ticket["pending_proposal"]
                     refused = (
                         not proposal
+                        or state["refuse_decisions"]
                         or body["expected_proposal_revision"] != proposal["revision"]
                         or body["field"] != proposal["field"]
                     )
@@ -1788,6 +2138,7 @@ def main() -> int:
                         ),
                     )
                     decision_receipts[path] = receipt
+                    committed = True
                     if not refused:
                         if DESIGN_REVIEW:
                             ticket.update(receipt["transition"])
@@ -1815,6 +2166,11 @@ def main() -> int:
                     tickets[path.split("/")[3]]["pending_proposal"] = None
                     state["writes"].append("sendBack")
                     value = {}
+                elif path.endswith(("/permission-answers", "/user-input-answers")):
+                    ask = state["asks"][path.split("/")[-2]]
+                    ask.update(pending_user_input=None, pending_permission_ask=None)
+                    state["ask_answers"].append(dict(path=path, body=body))
+                    value = {"fate": "applied"}
                 elif path.endswith("/voice-transcriptions"):
                     assert len(body["audio"]) > 50
                     state["writes"].append("voice")
@@ -1823,6 +2179,14 @@ def main() -> int:
                     self.respond({}, 404)
                     return
                 (output / "operations.json").write_text(json.dumps(state["writes"]))
+                if committed and kind in state["lose"]:
+                    # The write is done; the reply never reaches the phone.
+                    state["lose"].discard(kind)
+                    state["lost"].append({"kind": kind, "id": identity_of[kind]()})
+                    (output / "delivery.json").write_text(json.dumps(self.delivery()))
+                    self.drop_connection()
+                    return
+                (output / "delivery.json").write_text(json.dumps(self.delivery()))
             self.respond(value)
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -1832,7 +2196,8 @@ def main() -> int:
     env = os.environ.copy()
     env["TEST_RUNNER_PANELS_OFFLINE_STUB_URL"] = url
     env["TEST_RUNNER_PANELS_REVIEW_COMPLETION"] = "1" if REVIEW_COMPLETION else "0"
-    env["TEST_RUNNER_PANELS_REVIEW_STACKED"] = os.environ.get("PANELS_REVIEW_STACKED", "0")
+    env["TEST_RUNNER_PANELS_REVIEW_SPLIT"] = os.environ.get("PANELS_REVIEW_SPLIT", "0")
+    env["TEST_RUNNER_PANELS_REVIEW_QUEUE"] = "1" if REVIEW_QUEUE else "0"
     control = None
     if REACHABILITY_SMOKE:
         port = server.server_port

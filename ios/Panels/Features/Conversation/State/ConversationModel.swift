@@ -61,9 +61,13 @@ import UniformTypeIdentifiers
         restoring = true
         defer { restoring = false }
         let server = LocalStore.server(api.baseURL)
-        draft = LocalStore.shared.draft(server: server, id: draftKey) ?? ""
-        attachments = (try? LocalStore.shared.record(server: server, kind: "attachments", id: draftKey))
+        // Assign only what changed: each assignment counts as a composer edit, and a
+        // pending photo rejection restores its draft only while no edit happened.
+        let storedDraft = LocalStore.shared.draft(server: server, id: draftKey) ?? ""
+        let storedAttachments = (try? LocalStore.shared.record(server: server, kind: "attachments", id: draftKey))
             .flatMap { try? JSONDecoder().decode([ConversationSend.Piece].self, from: $0.payload) } ?? []
+        if draft != storedDraft { draft = storedDraft }
+        if attachments != storedAttachments { attachments = storedAttachments }
     }
 
     /// Change the displayed destination without changing the owner's unsent work
@@ -80,7 +84,7 @@ import UniformTypeIdentifiers
         replaceHistoryOnSnapshot = false; hasNewerHistory = false
         readThroughSequence = 0; readPositionConversationID = nil; hasUnread = false
         heldPrompts = []; error = nil; loadingOlder = false
-        outgoing = []; recoveries = [:]; retryAliases = [:]; supersededIDs = []
+        outgoing = []; retryAliases = [:]; supersededIDs = []
         pinnedMessageIDs = []; outgoingText = [:]; outgoingAttachments = [:]
         backendKey = nil; selectedModel = nil; reasoningEffort = nil
         runningModel = nil; runningEffort = nil
@@ -225,12 +229,12 @@ import UniformTypeIdentifiers
                     error = fact.note
                 }
                 clearedPhotoDrafts.removeValue(forKey: id)
-            } else if ["sent", "serverQueued", "changed"].contains(fact.state) {
+            } else if fact.state == "sent" {
                 clearedPhotoDrafts.removeValue(forKey: id)
             }
         }
     }
-    private func retrySaved(_ id: String, api: APIClient, destination: OutgoingStore.Destination? = nil) async {
+    private func retrySaved(_ id: String, api: APIClient) async {
         guard !sending, !preparingPhoto else { return }
         let revision = composerRevision
         let generation = composerConfigurationGeneration
@@ -239,7 +243,7 @@ import UniformTypeIdentifiers
         defer {
             if outgoingPreparationID == identity { outgoingPreparationID = nil; preparingOutgoingID = nil }
         }
-        guard let next = await Outbox.shared.retry(id, api: api, destination: destination, imageWorkStarted: imageWorkStarted),
+        guard let next = await Outbox.shared.retry(id, api: api, imageWorkStarted: imageWorkStarted),
               generation == composerConfigurationGeneration,
               let work = Outbox.shared.work(LocalStore.server(api.baseURL), id: next),
               work.rejectedPhotoDraft?.id == draftKey else { return }
@@ -250,27 +254,29 @@ import UniformTypeIdentifiers
     func syncOutbox(savedWork: [PendingWork]? = nil) {
         guard let api = persistenceAPI, let owner = persistenceOwner else { return }
         refreshRejectedPhotoDrafts(api: api)
+        let previous = Dictionary(outgoing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let received = Set(items.compactMap(\.senderMessageId))
+        func rendered(_ work: PendingWork) -> Outgoing {
+            if let prior = work.priorMessageIDs, let first = prior.first {
+                supersededIDs.formUnion(prior); retryAliases[work.id] = first
+            }
+            return Outgoing(id: work.id, text: work.message?.content.compactMap(\.text).joined(separator: "\n") ?? work.displayText,
+                attachments: work.message?.content.filter { $0.piece != "text" } ?? [])
+        }
+        // Only a refusal shows on the row: a red mark that retries on tap.
+        func marked(_ row: Outgoing, state: String, note: String) -> Outgoing {
+            var row = row
+            row.note = state == PendingWork.State.failed.rawValue ? note : nil
+            row.retryable = state == PendingWork.State.failed.rawValue
+            return row
+        }
         if let savedWork {
             // Review supplies an already-selected snapshot, which can belong to
             // another store. Its membership and outcomes are authoritative here.
-            let previous = Dictionary(outgoing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            let received = Set(items.compactMap(\.senderMessageId))
-            recoveries = [:]
             outgoing = savedWork.compactMap { work -> Outgoing? in
                 guard work.kind == .message, work.owner == owner, !supersededIDs.contains(work.id),
                     !received.contains(work.id) || work.state != .sent else { return nil }
-                if let prior = work.priorMessageIDs, let first = prior.first {
-                    supersededIDs.formUnion(prior); retryAliases[work.id] = first
-                }
-                if work.state == .failed { recoveries[work.id] = .retry }
-                else if work.state == .uncertain { recoveries[work.id] = .resend(unknownDestination: work.message?.conversationId == nil) }
-                if var rendered = previous[work.id] {
-                    rendered.note = work.note; rendered.retryable = recoveries[work.id] != nil
-                    return rendered
-                }
-                return Outgoing(id: work.id, text: work.message?.content.compactMap(\.text).joined(separator: "\n") ?? work.displayText,
-                    note: work.note, retryable: recoveries[work.id] != nil,
-                    attachments: work.message?.content.filter { $0.piece != "text" } ?? [])
+                return marked(previous[work.id] ?? rendered(work), state: work.state.rawValue, note: work.note)
             }.filter { !supersededIDs.contains($0.id) }
             rememberRows(outgoing.map { retryAliases[$0.id] ?? $0.id })
             return
@@ -278,31 +284,13 @@ import UniformTypeIdentifiers
         let server = LocalStore.server(api.baseURL)
         if recoversConversationIDFromOutbox, conversationID == nil { conversationID = try? outgoingStore.outgoing.latestConversationID(server: server, owner: owner) }
         let selected = (try? outgoingStore.outgoing.conversationSummaries(server: server, owner: owner, conversationID: conversationID)) ?? []
-        let previous = Dictionary(outgoing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        recoveries = [:]
-        for fact in selected where fact.scheduled {
-            if fact.holdReason != nil { recoveries[fact.id] = .held(unknownDestination: fact.conversationID == nil) }
-            else if fact.state == "uncertain" || (fact.state == "waiting" && fact.provenance == "unknown") {
-                recoveries[fact.id] = .resend(unknownDestination: fact.conversationID == nil)
-            } else if fact.state == "failed" { recoveries[fact.id] = .retry }
-        }
-        let received = Set(items.compactMap(\.senderMessageId))
         outgoing = selected.compactMap { fact -> Outgoing? in
-            guard fact.kind == "message", !supersededIDs.contains(fact.id), !received.contains(fact.id) || fact.state != "sent" else { return nil }
+            guard !supersededIDs.contains(fact.id), !received.contains(fact.id) || fact.state != "sent" else { return nil }
             // Intent bytes are immutable. Keep only the already-rendered content;
-            // scheduling/receipt updates replace metadata without decoding it again.
-            if var rendered = previous[fact.id] {
-                rendered.note = fact.note; rendered.retryable = recoveries[fact.id] != nil
-                return rendered
-            }
+            // delivery updates replace metadata without decoding it again.
+            if let row = previous[fact.id] { return marked(row, state: fact.state, note: fact.note) }
             guard let work = try? outgoingStore.outgoing.work(server: server, id: fact.id), work.owner == owner else { return nil }
-            if let previous = work.priorMessageIDs, let first = previous.first {
-                supersededIDs.formUnion(previous)
-                retryAliases[work.id] = first
-            }
-            return Outgoing(id: work.id, text: work.message?.content.compactMap(\.text).joined(separator: "\n") ?? work.displayText,
-                note: fact.note, retryable: recoveries[work.id] != nil,
-                attachments: work.message?.content.filter { $0.piece != "text" } ?? [])
+            return marked(rendered(work), state: fact.state, note: fact.note)
         }.filter { !supersededIDs.contains($0.id) }
         rememberRows(outgoing.map { retryAliases[$0.id] ?? $0.id })
     }
@@ -326,30 +314,6 @@ import UniformTypeIdentifiers
         var note: String?
         var retryable = false
         var attachments: [ConversationSend.Piece] = []
-    }
-    enum Recovery: Equatable {
-        case retry, resend(unknownDestination: Bool), held(unknownDestination: Bool)
-        var unknownDestination: Bool {
-            switch self { case .retry: false; case .resend(let value), .held(let value): value }
-        }
-    }
-    private(set) var recoveries: [String: Recovery] = [:]
-    func recoveryLabel(_ id: String) -> String {
-        switch recoveries[id] { case .held: "Send this message"; case .resend: "Send again"; default: "Retry" }
-    }
-    func recover(_ id: String, using api: APIClient, startNew: Bool = false) async {
-        let server = LocalStore.server(api.baseURL)
-        guard let recovery = recoveries[id] else { return }
-        switch recovery {
-        case .held(let unknown):
-            if unknown { guard startNew else { return }; Outbox.shared.sendHeld(id, api: api, destination: .newConversation) }
-            else if let target = Outbox.shared.work(server, id: id)?.message?.conversationId { Outbox.shared.sendHeld(id, api: api, destination: .conversation(target)) }
-        case .resend(let unknown):
-            guard !unknown || startNew else { return }
-            await retrySaved(id, api: api, destination: unknown ? .newConversation : nil)
-        case .retry: await retrySaved(id, api: api)
-        }
-        syncOutbox()
     }
     private(set) var preparingPhotos: [UUID: String] = [:]
     private var draftPreparationID: UUID?
@@ -495,9 +459,7 @@ import UniformTypeIdentifiers
             let local = outgoing.first { $0.id == item.senderMessageId }
             let note: String?
             switch body.kind {
-            case "prompt": note = body.isOwnerPrompt ? "Sent" : nil
             case "prompt_refused": note = "Not delivered · " + (body.refusalDetail ?? ConversationDelivery.refusalText(body.reason))
-            case "prompt_uncertain": note = "Delivery uncertain · do not resend"
             case "prompt_discarded": note = "Not delivered · no longer applicable"
             case "permission_ask", "user_input": note = body.answerSentence ?? (body.state == "live" ? "Respond on the web" : body.state?.capitalized)
             default: note = nil
@@ -507,7 +469,7 @@ import UniformTypeIdentifiers
                                    retryID: local?.retryable == true ? local?.id : nil, item: item)
         }
         var combined = remote + outgoing.filter { !received.contains($0.id) }.map {
-            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: heldNote($0.id) ?? $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
+            ConversationRow(id: retryAliases[$0.id] ?? $0.id, text: $0.text, own: true, note: $0.note, retryID: $0.retryable ? $0.id : nil, attachments: $0.attachments)
         }
         if let liveRow, !liveRow.text.isEmpty { combined.append(liveRow) }
         let positions = Dictionary(uniqueKeysWithValues: rowOrder.enumerated().map { ($0.element, $0.offset) })
@@ -518,12 +480,11 @@ import UniformTypeIdentifiers
     }
     var latestLine: String {
         guard let row = latestMessage else { return "Conversation" }
-        let delivery = row.own && row.note != "Sent" ? row.note.map { " · " + $0 } ?? "" : ""
-        return row.previewText + delivery
+        return row.previewText
     }
     /// The closed dock follows compact status facts without admitting transcript rows.
     var compactPreview: String {
-        if let latest = latestMessage, latest.item == nil, latest.own, latest.note != "Sent" { return latest.previewText }
+        if let latest = latestMessage, latest.item == nil, latest.own { return latest.previewText }
         guard let status, status.authority == "current" else { return latestMessage?.previewText ?? "Conversation" }
         if let happened = status.rest.latestHappened,
            ["prompt", "agent_message", "streaming_agent_message"].contains(happened.kind),
@@ -535,9 +496,6 @@ import UniformTypeIdentifiers
         return status.rest.latestOwnerMessagePreview ?? latestMessage?.previewText ?? "Conversation"
     }
 
-    private func heldNote(_ id: String) -> String? {
-        heldPrompts.first { ($0.senderMessageId ?? $0.heldPromptId) == id }?.note
-    }
     /// Held prompts whose rows have arrived: the server's queue has moved on.
     var deliveredHeldPromptCount: Int {
         let received = Set(items.compactMap(\.senderMessageId))
@@ -566,7 +524,7 @@ import UniformTypeIdentifiers
         for held in configuration.heldPrompts {
             let id = held.senderMessageId ?? held.heldPromptId
             if !received.contains(id), !outgoing.contains(where: { $0.id == id }) {
-                outgoing.append(.init(id: id, text: held.text, note: "Queued"))
+                outgoing.append(.init(id: id, text: held.text))
                 pinnedMessageIDs.insert(id)
                 rememberRows([id])
             }
@@ -588,20 +546,31 @@ import UniformTypeIdentifiers
 
     func acknowledgeVisibleRows(_ rowIDs: Set<String>, active: Bool, using service: any ConversationServing) async {
         guard !Task.isCancelled, let boundary = visibleReadBoundary(rowIDs: rowIDs, active: active) else { return }
+        if let api = persistenceAPI {
+            // The read point moves on screen at once. The outbox carries it to the server.
+            do {
+                try Outbox.shared.enqueueMarkRead(owner: persistenceOwner, conversationID: boundary.conversationID, through: boundary.throughSequence, api: api)
+                advanceReadPoint(boundary.throughSequence)
+            } catch { self.error = error.localizedDescription }
+            return
+        }
         let generation = readerGeneration
         do {
             let confirmed = try await service.markConversationRead(boundary.conversationID, through: boundary.throughSequence)
             guard !Task.isCancelled, generation == readerGeneration, conversationID == boundary.conversationID else { return }
-            if readPositionConversationID != conversationID {
-                readPositionConversationID = conversationID
-                readThroughSequence = 0
-            }
-            readThroughSequence = max(readThroughSequence, confirmed)
-            hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
+            advanceReadPoint(confirmed)
         } catch {
             // A read acknowledgment is idempotent; keep unread state on failure.
             // The next actual visibility change can try again, never a poll alone.
         }
+    }
+    private func advanceReadPoint(_ through: Int) {
+        if readPositionConversationID != conversationID {
+            readPositionConversationID = conversationID
+            readThroughSequence = 0
+        }
+        readThroughSequence = max(readThroughSequence, through)
+        hasUnread = (status?.rest.latestOwnerMessageSequence ?? 0) > readThroughSequence
     }
 
     var firstUnreadID: String? {
@@ -653,7 +622,14 @@ import UniformTypeIdentifiers
             guard generation == readerGeneration else { return }
             try await admit(snapshot, id: id, lens: requestedLens, transcript: transcript, generation: generation, streamGeneration: streamGeneration, using: service)
             error = nil
-        } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readerGeneration { reportReadFailure(error) } }
+    }
+    /// A read that could not reach the server says nothing: the screen keeps what it has
+    /// and reads again when the connection returns. With the conversation on screen, no
+    /// connection error shows. Other failures still show.
+    func reportReadFailure(_ error: Error) {
+        guard let note = ServerReadFailure.note(error), items.isEmpty || (error as NSError).domain != NSURLErrorDomain else { return }
+        self.error = note
     }
 
     // MARK: Open tail
@@ -695,7 +671,7 @@ import UniformTypeIdentifiers
                 tailFirstOrder = snapshot.page.items.first?.order
                 error = nil
                 return true
-            } catch { if !Task.isCancelled, generation == tailGeneration { self.error = error.localizedDescription }; return false }
+            } catch { if !Task.isCancelled, generation == tailGeneration { reportReadFailure(error) }; return false }
         case .changes(let changes):
             guard let coverage = tailCoverage, changes.fromSequence == coverage, changes.lens == requestedLens.rawValue,
                   changes.removedKeys.count > 0 || !changes.invalidatedScopes.contains(where: { $0.kind == "timeline" }),
@@ -745,7 +721,7 @@ import UniformTypeIdentifiers
                 saveDisplay()
                 error = nil
                 return true
-            } catch { if !Task.isCancelled, generation == tailGeneration { self.error = error.localizedDescription }; return false }
+            } catch { if !Task.isCancelled, generation == tailGeneration { reportReadFailure(error) }; return false }
         }
     }
 
@@ -822,7 +798,6 @@ import UniformTypeIdentifiers
             switch item.body?.value?.kind {
             case "prompt_refused": setNote(senderID, "Not delivered", retryable: true)
             case "prompt_discarded": setNote(senderID, "Not delivered · no longer applicable")
-            case "prompt_uncertain": setNote(senderID, "Delivery uncertain · do not resend")
             default: break
             }
         }
@@ -843,9 +818,8 @@ import UniformTypeIdentifiers
     private func applyReceipts(_ receipts: [ConversationReceipt]) {
         for receipt in receipts {
             switch receipt.fate {
-            case "prompt": setNote(receipt.senderMessageId, "Sent")
+            case "prompt", "prompt_uncertain": setNote(receipt.senderMessageId, nil)
             case "prompt_refused": setNote(receipt.senderMessageId, "Not delivered", retryable: true)
-            case "prompt_uncertain": setNote(receipt.senderMessageId, "Delivery uncertain · do not resend")
             case "prompt_discarded": setNote(receipt.senderMessageId, "Not delivered · no longer applicable")
             default: break
             }
@@ -874,7 +848,7 @@ import UniformTypeIdentifiers
             admitHistoryScope(page.scope ?? cursor.scope, keys: Set(page.items.map(\.key)))
             retainDisplay(preferOlder: true)
             saveDisplay()
-        } catch { if !Task.isCancelled, generation == readerGeneration, history == historyGeneration { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readerGeneration, history == historyGeneration { reportReadFailure(error) } }
     }
     func loadBody(_ item: ConversationItem, using service: any ConversationServing) async {
         guard let id = conversationID, let reference = item.body?.reference else { return }
@@ -904,7 +878,7 @@ import UniformTypeIdentifiers
             displayByteSizes["expanded:" + item.key] = (body, bytes)
             expandedBodies[item.key] = body
             retainDisplay()
-        } catch { if !Task.isCancelled, generation == readerGeneration { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled, generation == readerGeneration { reportReadFailure(error) } }
     }
     @discardableResult func send(to owner: ConversationOwner, using service: any ConversationServing) async -> Bool {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -933,7 +907,7 @@ import UniformTypeIdentifiers
             } catch { self.error = "Message is still in the composer: \(error.localizedDescription)"; return false }
         }
         let id = UUID().uuidString
-        outgoing.append(Outgoing(id: id, text: text, note: "Sending…", attachments: attachments))
+        outgoing.append(Outgoing(id: id, text: text, attachments: attachments))
         pinnedMessageIDs.insert(id)
         rememberRows([id])
         outgoingText[id] = text
@@ -960,7 +934,7 @@ import UniformTypeIdentifiers
         outgoingAttachments.removeValue(forKey: id)
         outgoingAttachments[next] = prepared
         items.removeAll { $0.senderMessageId == id }
-        outgoing[at] = Outgoing(id: next, text: old.text, note: "Sending…", attachments: prepared)
+        outgoing[at] = Outgoing(id: next, text: old.text, attachments: prepared)
         _ = await deliver(id: next, text: outgoingText[next] ?? old.text, to: owner, using: service)
     }
 
@@ -986,21 +960,20 @@ import UniformTypeIdentifiers
             self.error = error.message
         } catch let error as URLError where [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost].contains(error.code) {
             guard generation == readerGeneration else { return false }
-            setNote(id, "Offline · waiting to retry", retryable: true)
+            setNote(id, "Not sent", retryable: true)
         } catch {
             guard generation == readerGeneration else { return false }
             // Timeout or a lost response does not prove the server rejected it.
-            setNote(id, "Delivery uncertain · do not resend")
+            setNote(id, nil)
         }
         return false
     }
     private func applyDelivery(_ result: ConversationDelivery, id: String) -> Bool {
             switch result.fate {
-            case "started", "injected": setNote(id, "Sent"); return true
-            case "queued": setNote(id, "Queued"); return true
+            case "started", "injected", "queued": setNote(id, nil); return true
             case "suppressed": setNote(id, "Not delivered · \(result.reason ?? "no longer applicable")")
             case "refused": setNote(id, "Not delivered · \(ConversationDelivery.refusalText(result.refusalReason))", retryable: true)
-            default: setNote(id, "Delivery uncertain · do not resend")
+            default: setNote(id, nil)
             }
         return false
     }
@@ -1017,7 +990,7 @@ import UniformTypeIdentifiers
         let added = ids.filter { known.insert($0).inserted }
         if !added.isEmpty { rowOrder.append(contentsOf: added) }
     }
-    private func setNote(_ id: String, _ note: String, retryable: Bool = false) {
+    private func setNote(_ id: String, _ note: String?, retryable: Bool = false) {
         if let at = outgoing.firstIndex(where: { $0.id == id }) {
             outgoing[at].note = note
             outgoing[at].retryable = retryable

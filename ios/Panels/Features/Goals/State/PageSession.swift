@@ -1,19 +1,6 @@
 import Foundation
 import Observation
 
-@MainActor @Observable final class GoalTextDraft {
-    var text: String
-    let revision: Int
-    init(text: String, revision: Int) { self.text = text; self.revision = revision }
-}
-
-
-struct GoalTextSubmission: Sendable {
-    let key: String
-    let text: String
-    let revision: Int
-}
-
 /// The app session owns unfinished edits and reads shared accepted Goal or holder-page data.
 /// Goal writes stay outside the message outbox: no automatic replay.
 @MainActor @Observable final class PageSession {
@@ -44,7 +31,7 @@ struct GoalTextSubmission: Sendable {
     private var preparePatch: (() async throws -> GoalJSON)?
     var hasPendingEdit: Bool { pendingPatch != nil || preparePatch != nil }
     var hasUnfinishedEdits: Bool {
-        busy || hasPendingEdit || !textDrafts.isEmpty || manualEditors.values.contains { $0.draft != nil || $0.pending != nil || $0.busy }
+        busy || hasPendingEdit || manualEditors.values.contains { $0.pending != nil || $0.busy }
     }
     private var api: APIClient
     let resources: ResourceOwner
@@ -53,8 +40,6 @@ struct GoalTextSubmission: Sendable {
     private let readingsHandle: ResourceHandle<GoalReadings>
     private var mounted = 0
     var preferences: [String: GoalChartPreference] = [:]
-    var textDrafts: [String: GoalTextDraft] = [:]
-    private var textSubmission: GoalTextSubmission?
     private var manualEditors: [String: GoalManualEditor] = [:]
     init(id: String, api: APIClient, goal: GoalRecord? = nil, holder: GoalHolder? = nil, resources: ResourceOwner? = nil) {
         self.id = id; self.api = api; self.holder = holder
@@ -98,9 +83,8 @@ struct GoalTextSubmission: Sendable {
         if let goalHandle { await goalHandle.refresh() }
         else { await holderHandle?.refresh() }
     }
-    func save(_ fields: [String: GoalJSON], revision: Int? = nil, textSubmission: GoalTextSubmission? = nil) async {
+    func save(_ fields: [String: GoalJSON], revision: Int? = nil) async {
         guard holder == nil, !busy, !hasPendingEdit else { return }
-        self.textSubmission = textSubmission
         preparePatch = { [self] in
             let accepted = try await api.goal(id)
             guard accepted.id == id else { throw APIError(status: 0, message: "The accepted goal does not match this edit.") }
@@ -109,9 +93,8 @@ struct GoalTextSubmission: Sendable {
         }
         await retry()
     }
-    func updateBlock(_ id: String, revision: Int? = nil, textSubmission: GoalTextSubmission? = nil, update: @escaping (GoalJSON) -> GoalJSON) async {
+    func updateBlock(_ id: String, revision: Int? = nil, update: @escaping (GoalJSON) -> GoalJSON) async {
         guard !busy, !hasPendingEdit else { return }
-        self.textSubmission = textSubmission
         preparePatch = { [self] in
             let page: GoalJSON
             let acceptedRevision: Int
@@ -134,22 +117,14 @@ struct GoalTextSubmission: Sendable {
     private func submitPending() async throws {
         if pendingPatch == nil, let preparePatch { pendingPatch = try await preparePatch(); self.preparePatch = nil }
         guard let patch = pendingPatch else { return }
-        let acceptedRevision: Int
         if let holder {
             let next = try await api.saveHolderPage(holder, patch: patch)
-            acceptedRevision = next.pageRevision
             if next.pageRevision >= revision { holderHandle?.accept(next) }
         } else {
             let next = try await api.saveGoal(id, patch: patch)
             guard next.id == id else { throw APIError(status: 0, message: "The accepted goal does not match this edit.") }
-            acceptedRevision = next.revision
             if next.revision >= (goal?.revision ?? -1) { goalHandle?.accept(next) }
         }
-        if let submission = textSubmission, let draft = textDrafts[submission.key], draft.revision == submission.revision {
-            if draft.text == submission.text { textDrafts[submission.key] = nil }
-            else { textDrafts[submission.key] = GoalTextDraft(text: draft.text, revision: acceptedRevision) }
-        }
-        textSubmission = nil
         pendingPatch = nil; saveError = nil
         resources.invalidate([GoalResources.list.key, goalHandle?.key, holderHandle?.key, readingsHandle.key].compactMap { $0 })
         // Read failure after acceptance must never become Retry save.
@@ -159,7 +134,7 @@ struct GoalTextSubmission: Sendable {
         guard !busy else { return }; busy = true; defer { busy = false }
         do { try await submitPending() } catch { saveError = error.localizedDescription }
     }
-    func discard() async { guard !busy else { return }; pendingPatch = nil; preparePatch = nil; saveError = nil; if let submission = textSubmission { textDrafts[submission.key] = nil }; textSubmission = nil; await refresh() }
+    func discard() async { guard !busy else { return }; pendingPatch = nil; preparePatch = nil; saveError = nil; await refresh() }
 }
 
 /// A mounted route retains dirty edit owners after a Goal leaves its visible membership.
@@ -220,20 +195,6 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
     private(set) var conflicted = false
     private var preflightPrepared = false
     var error: String?
-    var draft: String? = nil
-    private var draftBasis: GoalManualState?
-    func beginEditing() {
-        guard !busy, pending == nil else { return }
-        draftBasis = state; draft = state?.value(cumulative: cumulative).map(GoalChartPresentation.plainNumber) ?? ""
-    }
-    func prepare() async -> Bool {
-        guard !busy, pending == nil else { return false }
-        guard let draft else { return true }
-        guard let value = Double(draft.trimmingCharacters(in: .whitespacesAndNewlines)), value.isFinite else { error = "Enter a number."; return false }
-        if value == state?.value(cumulative: cumulative) { self.draft = nil; draftBasis = nil; error = nil; return true }
-        await write(value: value)
-        return pending == nil && error == nil
-    }
     private var selectedDate: String?
     private var readGeneration = 0
     private(set) var history: [String: GoalJSON] = [:]
@@ -255,14 +216,14 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
             accept(next, date: requested)
             if let date { selectedDate = date }
             error = nil
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self.error = ServerReadFailure.note(error) } }
     }
-    func write(value: Double? = nil, delta: Double? = nil) async {
-        guard !busy, pending == nil, let state = value != nil ? draftBasis ?? state : state else { return }
+    func write(delta: Double) async {
+        guard !busy, pending == nil, let state else { return }
         busy = true; defer { busy = false }
         readGeneration += 1
         // Own the command before the cumulative current-date read suspends.
-        pending = GoalManualCommand(requestId: UUID().uuidString, date: state.date, expectedDefinitionRevision: state.definitionRevision, basis: cumulative ? "latest" : "date", operation: delta == nil ? "replace" : "increment", value: value, delta: delta, expectedWriteRevision: delta == nil ? state.writeRevision : nil)
+        pending = GoalManualCommand(requestId: UUID().uuidString, date: state.date, expectedDefinitionRevision: state.definitionRevision, basis: cumulative ? "latest" : "date", operation: "increment", delta: delta)
         do {
             preflightPrepared = !cumulative
             try await submit()
@@ -277,7 +238,7 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
         let result = try await api.writeManual(measureID, command: pending)
         accept(result.state, date: result.receipt["date"].string)
         onWrite()
-        self.pending = nil; draft = nil; draftBasis = nil; conflicted = false; error = nil
+        self.pending = nil; conflicted = false; error = nil
     }
     private func failed(_ failure: Error) async {
         conflicted = (failure as? APIError)?.status == 409
@@ -288,5 +249,5 @@ struct GoalChartPreference: Equatable { var range = "month"; var expanded = fals
         guard !busy, !conflicted else { return }; busy = true; defer { busy = false }
         do { try await submit() } catch { await failed(error) }
     }
-    func discard() async { guard !busy else { return }; pending = nil; draft = nil; draftBasis = nil; conflicted = false; await refresh() }
+    func discard() async { guard !busy else { return }; pending = nil; conflicted = false; await refresh() }
 }

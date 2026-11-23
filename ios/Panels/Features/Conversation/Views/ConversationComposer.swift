@@ -12,6 +12,8 @@ struct ConversationComposer: View {
     var statusNote: String?
     var retryReply = false
     var onCaptureChanged: ((Bool) -> Void)? = nil
+    /// Off where the words go somewhere that takes no pictures or files, such as an ask's answer.
+    var attaches = true
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -21,10 +23,7 @@ struct ConversationComposer: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .body) private var iconSize = 18.0
     @State private var modelSheet = false
-    @State private var importFile = false
-    @State private var pickPicture = false
-    @State private var picture: PhotosPickerItem?
-    @State private var camera = false
+    @State private var attachOpen = false
     @State private var dropTargeted = false
     @Environment(\.screenTextEntry) private var textEntry
     @State private var inputID = UUID()
@@ -36,34 +35,8 @@ struct ConversationComposer: View {
     var body: some View {
         composer
         .sheet(isPresented: $modelSheet) { ConversationModelSheet(model: model, owner: owner) }
-        .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
-        .onChange(of: picture) { _, selected in
-            guard let selected else { return }
-            Task {
-                do {
-                    guard let bytes = try await selected.loadTransferable(type: Data.self) else { return }
-                    let type = selected.supportedContentTypes.first ?? .jpeg
-                    await model.attach(bytes, type: type, fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg"))
-                    picture = nil
-                } catch { model.error = error.localizedDescription }
-            }
-        }
-        .sheet(isPresented: $camera) {
-            ConversationCamera { image in
-                camera = false
-                if let image {
-                    Task { await model.attachPhoto(fileName: "Photo.jpg") { image.jpegData(compressionQuality: 0.85) } }
-                }
-            }.ignoresSafeArea()
-        }
-        .fileImporter(isPresented: $importFile, allowedContentTypes: [.data]) { result in
-            do {
-                let url = try result.get()
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                let data = try Data(contentsOf: url)
-                Task { await model.attach(data, type: UTType(filenameExtension: url.pathExtension), fileName: url.lastPathComponent) }
-            } catch { model.error = error.localizedDescription }
+        .attachmentPickers(isPresented: $attachOpen, model: model) {
+            model.draft = "/"; textEntry?.requestFocus(inputID)
         }
         .onChange(of: capturingSpeech) { _, capturing in
             if capturing { textEntry?.endEditing() }
@@ -72,6 +45,7 @@ struct ConversationComposer: View {
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel() } }
         .onDisappear { speech.cancel() }
     }
+
     @ViewBuilder private var feedback: some View {
         if let error = speech.error ?? model.error ?? refreshError {
             HStack(alignment: .center) {
@@ -143,7 +117,8 @@ struct ConversationComposer: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-input-box")
-        .padding(.horizontal, card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
+        // In Review's dock the composer spans the row of buttons below it.
+        .padding(.horizontal, reviewReply ? 0 : card ? ConversationLayout.cardInset : ConversationLayout.restingInset)
         .animation(reduceMotion ? nil : ConversationLayout.shapeMotion, value: card)
         .foregroundStyle(PanelsTheme.text)
     }
@@ -166,12 +141,9 @@ struct ConversationComposer: View {
                     }
                     Spacer(minLength: 0)
                 } else {
-                    Menu {
-                        Button("File", systemImage: "paperclip") { importFile = true }
-                        Button("Picture", systemImage: "photo") { pickPicture = true }
-                        Button("Photo", systemImage: "camera") { camera = true }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
-                        Button("Command", systemImage: "slash.circle") { model.draft = "/"; textEntry?.requestFocus(inputID) }
-                    } label: { Image(systemName: "plus").font(.system(size: min(iconSize, 28))).frame(width: 36, height: 36).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
+                    if attaches {
+                        Button { textEntry?.endEditing(); attachOpen = true } label: { Image(systemName: "plus").font(.system(size: min(iconSize, 28))).frame(width: 36, height: 36).background(PanelsTheme.raised, in: Circle()).frame(width: 44, height: 44) }.accessibilityLabel("Add attachment or command")
+                    }
                     if card && !reviewReply && !typeSize.isAccessibilitySize { configurationControls }
                     Spacer(minLength: 0)
                 }
@@ -196,14 +168,6 @@ struct ConversationComposer: View {
             }.font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).padding(.vertical, 4)
                 .frame(minHeight: 30).overlay(Capsule().stroke(PanelsTheme.border))
         }.accessibilityLabel("Choose model")
-        Menu {
-            if model.supportsSteer { Button("Steer") { model.deliveryMode = "steer"; Haptics.selection() } }
-            Button("Queue") { model.deliveryMode = "queue"; Haptics.selection() }
-            Button("Send now") { model.deliveryMode = "send_now"; Haptics.selection() }
-        } label: {
-            Text(model.deliveryMode == "send_now" ? "Send now" : model.deliveryMode.capitalized)
-                .font(PanelsTheme.TypeScale.small).padding(.horizontal, 8).frame(minHeight: 44)
-        }
     }
 
     private var field: some View {
@@ -212,7 +176,7 @@ struct ConversationComposer: View {
             .disabled(capturingSpeech).allowsHitTesting(!capturingSpeech)
             .accessibilityHidden(capturingSpeech)
             .textFieldStyle(.plain).accessibilityIdentifier("conversation-input")
-            .modifier(ImagePaste(model: model))
+            .modifier(ImagePaste(model: model, enabled: attaches))
             .screenTextInput(inputID)
     }
     private func primaryAction() {
@@ -354,11 +318,13 @@ struct ConversationAttachmentTile: View {
 /// Pastes images from the edit menu. Text paste stays with the text field.
 /// The SwiftUI paste hook exists from iOS 27 and the Xcode 27 SDK (Swift 6.4). Earlier
 /// systems and older SDKs, such as CI's Xcode 26, keep picker and drag only.
-private struct ImagePaste: ViewModifier {
+/// Pasted pictures join the model's attachments.
+struct ImagePaste: ViewModifier {
     let model: ConversationModel
+    var enabled = true
     func body(content: Content) -> some View {
         #if compiler(>=6.4)
-        if #available(iOS 27.0, *) {
+        if #available(iOS 27.0, *), enabled {
             content.pasteDestination(for: Data.self) { items in
                 for data in items {
                     Task {
@@ -373,5 +339,71 @@ private struct ImagePaste: ViewModifier {
         #else
         content
         #endif
+    }
+}
+
+/// The Attach sheet and the pickers it opens, adding to one composer model. The Command
+/// row shows only where `command` is given.
+private struct AttachmentPickers: ViewModifier {
+    @Binding var isPresented: Bool
+    let model: ConversationModel
+    let command: (() -> Void)?
+    /// The picker the Attach sheet chose. It opens once the sheet has closed.
+    @State private var choice: AttachChoice?
+    @State private var importFile = false
+    @State private var pickPicture = false
+    @State private var picture: PhotosPickerItem?
+    @State private var camera = false
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $isPresented, onDismiss: open) {
+                AttachSheet(cameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera), commands: command != nil) { choice = $0 }
+            }
+            .photosPicker(isPresented: $pickPicture, selection: $picture, matching: .images)
+            .onChange(of: picture) { _, selected in
+                guard let selected else { return }
+                Task {
+                    do {
+                        guard let bytes = try await selected.loadTransferable(type: Data.self) else { return }
+                        let type = selected.supportedContentTypes.first ?? .jpeg
+                        await model.attach(bytes, type: type, fileName: "Picture." + (type.preferredFilenameExtension ?? "jpg"))
+                        picture = nil
+                    } catch { model.error = error.localizedDescription }
+                }
+            }
+            .sheet(isPresented: $camera) {
+                ConversationCamera { image in
+                    camera = false
+                    if let image {
+                        Task { await model.attachPhoto(fileName: "Photo.jpg") { image.jpegData(compressionQuality: 0.85) } }
+                    }
+                }.ignoresSafeArea()
+            }
+            .fileImporter(isPresented: $importFile, allowedContentTypes: [.data]) { result in
+                do {
+                    let url = try result.get()
+                    let access = url.startAccessingSecurityScopedResource()
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    let data = try Data(contentsOf: url)
+                    Task { await model.attach(data, type: UTType(filenameExtension: url.pathExtension), fileName: url.lastPathComponent) }
+                } catch { model.error = error.localizedDescription }
+            }
+    }
+    private func open() {
+        defer { choice = nil }
+        switch choice {
+        case .picture: pickPicture = true
+        case .camera: camera = true
+        case .file: importFile = true
+        case .command: command?()
+        case nil: break
+        }
+    }
+}
+
+extension View {
+    func attachmentPickers(isPresented: Binding<Bool>, model: ConversationModel, command: (() -> Void)? = nil) -> some View {
+        modifier(AttachmentPickers(isPresented: isPresented, model: model, command: command))
     }
 }

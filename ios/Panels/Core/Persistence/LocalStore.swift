@@ -7,9 +7,8 @@ import SwiftData
     var server: String
     var kind: String
     var payload: Data
-    // `updated` collides with Core Data's isUpdated KVC getter. Keep rename
-    // metadata so the existing store migrates without discarding user work.
-    @Attribute(originalName: "updated") var updatedAt: Date
+    // `updated` collides with Core Data's isUpdated KVC getter.
+    var updatedAt: Date
     var updated: Date { updatedAt }
     init(key: String, server: String, kind: String, payload: Data, updated: Date) {
         self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updatedAt = updated
@@ -42,20 +41,25 @@ import SwiftData
         self.beforeSave = beforeSave
         self.onPayloadDecode = onPayloadDecode
         do {
+            if url == nil { Self.removeRetiredStore() }
             let location = url ?? Self.directory.appendingPathComponent("phone.store")
             try FileManager.default.createDirectory(at: location.deletingLastPathComponent(), withIntermediateDirectories: true)
-            container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), migrationPlan: PhoneStoreMigration.self, configurations: [ModelConfiguration(url: location)])
+            container = try ModelContainer(for: Schema([LocalRecord.self, OutgoingMetadata.self]), configurations: [ModelConfiguration(url: location)])
             container?.mainContext.autosaveEnabled = false
-            if let container {
-                saveError = try OutgoingStoreMigration.backfill(container.mainContext, beforeSave: beforeSave)
-                outgoingError = saveError
-                cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite)
-            }
+            if let container { cacheWriter = ResponseCacheWriter(container: container, beforeWrite: cacheWrite) }
         } catch { container = nil; startupError = error; saveError = "Couldn’t open saved work: \(error.localizedDescription)" }
     }
     static var directory: URL {
         if let path = ProcessInfo.processInfo.environment["PANELS_STORE_DIRECTORY"] { return URL(fileURLWithPath: path) }
-        return URL.applicationSupportDirectory.appendingPathComponent("PanelsPhone", isDirectory: true)
+        return URL.applicationSupportDirectory.appendingPathComponent("PanelsPhoneStore", isDirectory: true)
+    }
+    /// Earlier builds kept a migrated store and its recordings here. This build starts
+    /// fresh: their drafts, unsent work and recordings are dropped once.
+    nonisolated static let retiredDirectory = URL.applicationSupportDirectory.appendingPathComponent("PanelsPhone", isDirectory: true)
+    private static func removeRetiredStore() {
+        guard ProcessInfo.processInfo.environment["PANELS_STORE_DIRECTORY"] == nil,
+              FileManager.default.fileExists(atPath: retiredDirectory.path) else { return }
+        try? FileManager.default.removeItem(at: retiredDirectory)
     }
     nonisolated static func server(_ url: URL) -> String {
         var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)!
@@ -77,11 +81,9 @@ import SwiftData
                 self?.outgoingRevisions[server, default: 0] += 1
                 self?.workRevision += 1
                 guard let self else { return }
-                let previous = self.outgoingError
-                // Successful durable work clears a transient outgoing fault, but retains corrupt rows.
-                do { self.outgoingError = try self.outgoingStorage?.storageFailure() }
-                catch { self.outgoingError = "Couldn’t read outgoing work: \(error.localizedDescription)" }
-                if self.saveError == previous { self.saveError = self.outgoingError }
+                // Successful durable work clears a transient outgoing fault.
+                if self.saveError == self.outgoingError { self.saveError = nil }
+                self.outgoingError = nil
             } failed: { [weak self] error in
                 self?.outgoingError = "Couldn’t save outgoing work: \(error.localizedDescription)"
                 self?.saveError = self?.outgoingError
@@ -139,13 +141,12 @@ import SwiftData
     func flushCache() async { await cacheWriter?.flush() }
 
     func put(server: String, kind: String, id: String, data: Data, draft: (String, String)? = nil) throws {
-        if kind == "outbox" { try outgoing.saveEncoded(data, server: server, id: id, draft: draft); return }
+        precondition(kind != "outbox", "Outgoing work is saved through LocalStore.outgoing.")
         guard kind != "cache" || data.count <= Self.cacheByteLimit else { return }
         let context = try context
         do {
             let key = Self.key(server, kind, id)
             let existing = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { $0.key == key })).first
-            let outgoingChanged = kind == "outbox" && existing?.payload != data
             if let record = existing { record.payload = data; record.updatedAt = .now }
             else { context.insert(LocalRecord(key: Self.key(server, kind, id), server: server, kind: kind, payload: data, updated: .now)) }
             if let (id, text) = draft {
@@ -163,7 +164,6 @@ import SwiftData
             try context.save()
             // A plain draft save is read back only by its own composer. Waking every
             // saved-work observer on each key press made typing lag.
-            if outgoingChanged { outgoingRevisions[server, default: 0] += 1 }
             if (kind != "cache" && kind != "draft") || draft != nil { workRevision += 1 }
             saveError = nil
         } catch { context.rollback(); saveError = "Couldn’t save on this phone: \(error.localizedDescription)"; throw error }
@@ -181,7 +181,6 @@ import SwiftData
             let rows = try context.fetch(FetchDescriptor<LocalRecord>(predicate: #Predicate { keys.contains($0.key) }))
             for row in rows { context.delete(row) }
             try context.save()
-            if kind == "outbox", !rows.isEmpty { outgoingRevisions[server, default: 0] += 1 }
             if kind != "cache" { workRevision += 1 }
         } catch { context.rollback(); throw error }
     }

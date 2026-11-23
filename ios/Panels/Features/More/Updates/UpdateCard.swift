@@ -49,33 +49,15 @@ struct UpdateCard: View {
             .padding(.vertical, PanelsTheme.Space.xs)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("updates.card")
-            .buttonStyle(.borderless)
+            // The rebuilt app's in-list action buttons, as ScreenRetryButton. Each stays its own target in the row.
+            .buttonStyle(.bordered)
         }
         .sheet(item: $offer) { captured in
-            NavigationStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: PanelsTheme.Space.md) {
-                        impact(captured.status.interruption)
-                        machineRows(captured.status.availableMachines, status: captured.status, actionable: false)
-                        warnings(captured.status.warnings)
-                        Button("Update") {
-                            offer = nil
-                            guard captured.server == store.baseURL, store.connection == "Following changes", store.updateFailure == nil else { return }
-                            perform(.install, status: captured.status)
-                        }
-                        .accessibilityIdentifier("updates.confirm")
-                        .disabled(store.updateActions.busy(captured.status) || store.connection != "Following changes" || store.updateFailure != nil)
-                    }.padding()
-                }
-                .navigationTitle("Update Panels")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Not now") { offer = nil }.accessibilityIdentifier("updates.cancel")
-                    }
-                }
-                .panelsScreen()
-            }
+            UpdateOfferSheet(captured: captured,
+                             interruption: { impact(captured.status.interruption) },
+                             machines: { machineRows(captured.status.availableMachines, status: captured.status, actionable: false) },
+                             warnings: { warnings(captured.status.warnings) },
+                             close: { offer = nil })
         }
         .onChange(of: store.baseURL) { _, _ in offer = nil }
     }
@@ -123,6 +105,60 @@ struct UpdateCard: View {
             await store.updateActions.perform(action, status: status, api: api) { await resource.refresh() }
         }
     }
+}
+
+/// The Updates screen behind Settings' Updates row: the shared update card.
+struct UpdatesView: View {
+    var body: some View {
+        List {
+            Section { UpdateCard() }.listRowBackground(PanelsTheme.raised)
+        }
+        .panelsNavigationTitle("Updates").panelsScreen()
+    }
+}
+
+/// The confirmation, in the shared sheet: it waits on the install and shows a refusal inside.
+private struct UpdateOfferSheet<Interruption: View, Machines: View, Warnings: View>: View {
+    @Environment(AppStore.self) private var store
+    @State private var action = SheetAction()
+    let captured: CapturedUpdateOffer
+    @ViewBuilder let interruption: () -> Interruption
+    @ViewBuilder let machines: () -> Machines
+    @ViewBuilder let warnings: () -> Warnings
+    let close: () -> Void
+
+    private var connected: Bool { store.connection == "Following changes" && store.updateFailure == nil }
+
+    var body: some View {
+        SheetForm(title: "Update Panels", confirmTitle: "Update",
+                  canConfirm: connected && !store.updateActions.busy(captured.status), action: action,
+                  confirm: confirm) {
+            Section { interruption() }
+            Section { machines() }
+            Section { warnings() }
+        }
+    }
+
+    private func confirm() {
+        let api = store.client
+        let resource = store.updateResource
+        let actions = store.updateActions
+        Task {
+            let done = await action.run {
+                guard captured.server == store.baseURL, api.baseURL == store.baseURL, connected else {
+                    throw UpdateOfferRefusal(message: "Panels can't be reached. Try again when it is back.")
+                }
+                await actions.perform(.install, status: captured.status, api: api) { await resource.refresh() }
+                if let error = actions.error { throw UpdateOfferRefusal(message: error) }
+            }
+            if done { close() }
+        }
+    }
+}
+
+private struct UpdateOfferRefusal: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 private struct CapturedUpdateOffer: Identifiable {

@@ -63,13 +63,11 @@ The app saves the reply through the ordinary durable outbox before it sends or
 completes the action. The notification identity, original message, recipient,
 server, and reply text determine one outgoing identity. A repeated callback reuses
 that identity. Replies preserve the original conversation and never create or select
-a replacement conversation. The same transport, receipts, compatibility gate,
-and offline or uncertain-delivery rules apply to replies from a notification.
-The delegate allows at most 15 seconds for its delivery attempt. Remaining work
-resumes through the existing foreground drainer. It does not promise another
-background retry. Known limit: if the 15-second window cancels a POST before dispatch,
-the reply becomes uncertain. The user must retry it by hand. Finished work expires after 24 hours, uncertain work after seven
-days, and pending or failed work has no age limit.
+a replacement conversation. The same outbox, transport and compatibility gate apply
+to replies from a notification. The delegate allows at most 15 seconds for its
+delivery attempt. An unfinished reply is sent again with the same identity the next
+time the app is in the foreground; there is no other background retry. Finished
+work expires after a day; a refused reply stays until the user acts on it.
 
 Settings → Notifications exposes switches for the same event preferences as the
 web. A successful save uses the server response. A failed save retains the last
@@ -163,11 +161,11 @@ Keep the whole APNs payload under 4 KB. No badge is sent until the server owns a
 correct authoritative count. `server_url` must be the canonical HTTPS origin the
 app uses, without credentials, query or fragment. Supported routes:
 
-- `/#/review` opens Review; `/#/review?ticket=t_42` opens that ticket in Workspace,
-  matching Review’s ticket-opening behavior; its current proposal is shown there. There is one pending proposal per ticket.
-- `/#/workspace/t_42` opens a ticket.
-- `/#/workspace/item/m_9` opens an orchestrator.
-- `/#/agents/chief-of-staff` opens Chief.
+- `/#/review` opens Review at its root; `/#/review?ticket=t_42` opens that ticket on top of Review,
+  matching Review’s Open ticket; its current proposal is shown there. There is one pending proposal per ticket.
+- `/#/workspace/t_42` opens a ticket on top of Review.
+- `/#/workspace/item/m_9` opens an orchestrator at its root.
+- `/#/agents/chief-of-staff` opens Chief at its root.
 
 The last three are the existing backend policy routes. Approval senders can use
 the Review route. Identifiers must be single alphanumeric/underscore/hyphen
@@ -291,7 +289,7 @@ No `.p8` key belongs in the archive, project, or build inputs.
 
 1. Check that the server release with the launcher fix is live after Chief coordinates the restart.
 2. Open the signed app against the canonical server through Tailscale.
-3. Allow notifications under More → Settings → Notifications.
+3. Allow notifications under Settings (the gear in the Sidebar) → Notifications.
 4. Check that the app reports **This device is registered for notifications**.
 5. Check the server's device count, bundle ID, and environment without printing its token.
 6. Enable the notification preference for the chosen attention event.
@@ -319,8 +317,8 @@ untrusted notification metadata to a fixed recipient and conversation. A failed
 local commit leaves no dispatchable reply and preserves an unrelated composer.
 These tests reuse XCTest, SwiftData scratch stores, and the existing URLProtocol.
 The existing lost-response test now starts through the notification outbox entry
-point. It covers offline persistence, repeated callbacks after relaunch, and receipt
-reconciliation without a second send. This replaces the generic initiation of the
+point. It covers offline persistence, repeated callbacks after relaunch, and a lost
+response resent with the same identity. This replaces the generic initiation of the
 same recovery case rather than adding a duplicate transport matrix.
 
 `PanelsReviewUITests` holds the opt-in notification review. Its distinct boundary
@@ -329,7 +327,8 @@ outbox, including background and terminated app launches. Pure parser and outbox
 tests cannot prove that the system exposes the Reply action or launches its callback.
 The same one-off loopback host also checks the visible approval text and preference
 switches. Its operation ledger records local preference writes and replies. It can
-lose a reply response and expose a receipt to check recovery without another send.
+lose a reply response; after relaunch the phone sends it again with the same identity,
+and the ledger shows one accepted reply.
 No real backend messages or APNs registrations are enabled.
 
 The DEBUG `--conversation-stub` launch option selects and saves the loopback server
@@ -344,39 +343,9 @@ PANELS_PUSH_TEST_OUTPUT=/tmp/panels-notification-proof \
   python3 ios/scripts/test-notifications-simulator.py --review
 ```
 
-The helper requires the owned PanelsLaneB already booted. It holds the lane lock
+The helper requires the owned PanelsLaneB already booted. Another task sets
+`PANELS_PUSH_LANE` to its own booted lane and `PANELS_PUSH_BUNDLE` to its own
+task bundle. It holds the lane lock
 and does not boot, erase, or shut down a Simulator. It surveys its loopback port
 and stops its own host when the review exits. The current Ticket records measured
 execution cost and evidence. Keep result bundles and build output outside artifacts.
-
-
-## Delivery evidence (22 October 2026)
-
-The focused run passed on PanelsLaneB with bundle ID
-`app.panels.ios.pios-notify`: three unit tests (0.033 seconds) and one UI test
-(39.033 seconds) covering four injected alerts. It proved foreground banner and
-tap, background Review tap, terminated-app orchestrator tap, and Chief tap. Eight
-screenshots are attached to the result bundle. Ticket/orchestrator payloads use
-synthetic IDs: the destination screens display their missing-record state. This
-proves routing, not live proposal contents or successful APNs provider delivery.
-The first permission request was accepted in the first run; subsequent runs
-retained that permission without resetting the Simulator.
-
-An initial run found an iOS 27 banner accessibility-type mismatch in the test.
-The next run exposed a real background-resume crash: the async notification
-response bridge invoked UIKit completion off-main. The final implementation uses
-explicit completion callbacks and completes both presentation and tap callbacks
-on the main actor. The same background/terminated flow then passed.
-
-The generic Simulator SDK build and harness Ruff check passed. The final build
-also checks the last permission-error copy change. No backend files changed; no
-backend pytest suite or physical-device delivery is claimed. No independent
-agent was delegated: this worker's brief explicitly requires doing the work alone.
-
-
-The branch was subsequently rebased onto `ios-app` at `4317aef4`. Integration
-preserves the newer full More tab, deployment capsule, conversation smoke entry,
-and title-case Settings heading. Review notification taps with a ticket now open
-Workspace, matching the updated Review screen. The corresponding UI expectation
-was updated; the rebase was verified by a compile-only build, without repeating Simulator interaction tests. The earlier Simulator
-evidence above belongs to the pre-rebase navigation shell.

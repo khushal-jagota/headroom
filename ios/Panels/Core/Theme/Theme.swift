@@ -36,6 +36,12 @@ enum PanelsTheme {
         static let railRow = Color(hex: 0x949494)
         static let border = Color.white.opacity(0.08)
         static let code = Color.white.opacity(0.03)
+        /// A proposal or ask card: one step lighter than the page.
+        static let cardFill = Color.white.opacity(0.045)
+        static let errorSurface = Color(hex: 0x382226)
+        static let errorText = Color(hex: 0xf0c9c6)
+        /// The summary screen's second line.
+        static let heroMuted = Color(hex: 0x8a8a93)
         static let accent = PanelsTheme.accent
         static let success = PanelsTheme.success
         static let attention = PanelsTheme.Goal.attention
@@ -49,52 +55,17 @@ enum PanelsTheme {
         static func goalTone(_ status: String) -> Color {
             switch status { case "bad": error; case "attention": attention; case "good": success; default: tertiary }
         }
-        enum Machine {
-            static let jade = Color(hex: 0x83b7a7)
-            static let orchid = Color(hex: 0xbd99bf)
-            static let sand = Color(hex: 0xb8ad97)
-            static let cyan = Color(hex: 0x6fc9d0)
-            static let rose = Color(hex: 0xd393aa)
-            static let plum = Color(hex: 0xa784d4)
-            static let lime = Color(hex: 0xb9c77c)
-            static let stone = Color(hex: 0xc6c6c6)
-        }
         enum Rail {
             enum Motion {
-                static let moveMin = 0.36
-                static let moveMax = 0.56
                 static let space = 0.34
-                static let fadeIn = 0.32
-                static let fadeDelay = 0.14
-                static let exit = 0.16
-                static func moveDuration(distance: CGFloat) -> Double {
-                    (max(moveMin * 1000, min(moveMax * 1000, (300 + Double(abs(distance)) * 0.7))).rounded()) / 1000
-                }
-                static func glide(duration: Double) -> Animation { .timingCurve(0.4, 0.02, 0.2, 1, duration: duration) }
-                static let enter = Animation.timingCurve(0.05, 0.7, 0.1, 1, duration: fadeIn)
-                static let leave = Animation.timingCurve(0.3, 0, 0.8, 0.15, duration: exit)
             }
-            static let machineRefreshInterval: Double = 5
-            static let goalRowHeight: CGFloat = 28
-            static let goalSize: CGFloat = 14
-            static let previewPadding: CGFloat = 16
-            static let previewRecapSize: CGFloat = 13
             static let inset: CGFloat = 8
             static let gap: CGFloat = 8
             static let padding: CGFloat = 4
             static let textInset: CGFloat = 10
             static let titleSize: CGFloat = 18
             static let titleLine: CGFloat = 24
-            static let headingSize: CGFloat = 11
-            static let headingLine: CGFloat = 16
-            static let groupGap: CGFloat = 12
-            static let headingGap: CGFloat = 2
-            static let rowHeight: CGFloat = 24
-            static let rowLine: CGFloat = 20
-            static let markColumn: CGFloat = 16
             static let hazeHeight: CGFloat = 70
-            static let settledHeight: CGFloat = 32
-            static let settledRowHeight: CGFloat = 28
         }
     }
     static let inlineArtifactMediaHeight: CGFloat = 320
@@ -110,26 +81,20 @@ enum PanelsTheme {
         // Web role weights; keep the native sizes and Dynamic Type curves.
         // TicketRoute / ManagerHeader: 600. Review title and empty state: 500.
         static let detailTitle = Font.title.weight(.semibold)
-        static let reviewTitle = Font.title.weight(.medium)
-        static let reviewCompletion = Font.title.weight(.medium)
         static let captureTitle = Font.title3.weight(.medium)
         static let itemTitle = Font.body.weight(.medium)
         static let primaryAction = Font.body.weight(.semibold)
-        static let reviewAction = Font.body.weight(.medium)
         static let sectionLabel = Font.footnote.weight(.semibold)
         static let reviewEyebrow = Font.caption2.weight(.semibold)
         static let latestAction = Font.footnote.weight(.semibold)
         static let artifactTitle = Font.subheadline
         static let artifactLink = Font.subheadline.weight(.semibold)
-        static let feedbackText = Font.body.weight(.medium)
-        static let feedbackGroupTitle = Font.title3.weight(.medium)
         static let configurationHeading = Font.title3.weight(.medium)
         static let allowanceLabel = Font.body.weight(.medium)
         static let allowanceValue = Font.body.weight(.semibold)
-        // The renderer's inline body font has always determined heading size.
-        // Preserve that size while matching the web's h2/h3 600 and other headings 700.
-        static func markdownHeading(_ level: Int) -> Font {
-            Font.body.weight(level == 2 || level == 3 ? .semibold : .bold)
+        // Markdown headings share one size; the level sets the weight: h2/h3 600, others 700.
+        static func markdownHeadingWeight(_ level: Int) -> Font.Weight {
+            level == 2 || level == 3 ? .semibold : .bold
         }
 
         enum SectionRole {
@@ -146,7 +111,7 @@ enum PanelsTheme {
             case page, usage
             var weight: UIFont.Weight {
                 switch self {
-                case .page: .medium // Feedback, VPS and configuration headings: 500.
+                case .page: .medium // VPS and configuration headings: 500.
                 case .usage: .semibold // UsageHeader h1: 600.
                 }
             }

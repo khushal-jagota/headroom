@@ -2,26 +2,16 @@ import Foundation
 
 /// The Review queue, derived from the navigation view's review window.
 struct ReviewResponse: Sendable {
-    let cards: [ReviewCard]
+    /// One card per purpose, in review-window order.
+    let items: [ReviewItem]
     let runningWorkerCount: Int
-    /// Cards beyond the loaded review window still count toward the badge.
+    /// Entries beyond the loaded review window still count toward the badge and the summary.
     var unloadedCount = 0
-    var items: [ReviewItem] { cards.flatMap(\.parts) }
 }
 
-/// One queue entry, shown as one page, as desktop shows one card. A Ticket card holds
-/// its proposal first, then each unread conversation; other owners' messages stand alone.
-struct ReviewCard: Identifiable, Sendable {
-    let id: String
-    /// Empty for a message that is not tied to a Ticket.
-    var ticketId = ""
-    let parts: [ReviewItem]
-    var title: String { parts.first?.title ?? "" }
-}
-
-/// One native card: a proposal, or one conversation's unread run. A Ticket card's
-/// proposal and messages keep their own identities and timestamps.
-struct ReviewItem: Identifiable, Sendable {
+/// One native card with one purpose: a proposal, one conversation's unread run, or an ask.
+/// The cards of one window entry keep their own identities and timestamps.
+struct ReviewItem: Identifiable, Equatable, Sendable {
     let reviewItemType: String
     var ticketId: String = ""
     var field: String = ""
@@ -37,8 +27,24 @@ struct ReviewItem: Identifiable, Sendable {
     var ownerReadThroughSequence = 0
     /// False when the owner has moved on to another conversation: read only.
     var addressCurrent = true
+    var isProposal: Bool { reviewItemType == "proposal" }
     var isMessage: Bool { reviewItemType == "message" }
-    var id: String { isMessage ? "message:\(conversationId ?? ""):\(waitingSince)" : "\(ticketId):\(field):\(waitingSince)" + (proposalRevision.map { ":revision:\($0)" } ?? "") }
+    var isAsk: Bool { reviewItemType == "ask" }
+    /// An ask whose record holds no time waits last, under this time. Every such ask in a
+    /// conversation shares one identity, so a new one cannot be told from an answered one.
+    static let unknownAskTime: Double = 9_007_199_254_740_991
+    var id: String {
+        switch reviewItemType {
+        case "message": "message:\(conversationId ?? ""):\(waitingSince)"
+        case "ask": "ask:\(conversationId ?? ""):\(waitingSince)"
+        default: "\(ticketId):\(field):\(waitingSince)" + (proposalRevision.map { ":revision:\($0)" } ?? "")
+        }
+    }
+    /// The Ticket this card belongs to, if any; it names the card's Open ticket link.
+    var owningTicketID: String? {
+        if isProposal { return ticketId }
+        return ownerKind == "ticket" ? ownerId : nil
+    }
     var owner: ConversationOwner? {
         switch ownerKind {
         case "chief": return .chief

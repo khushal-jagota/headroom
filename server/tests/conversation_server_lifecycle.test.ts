@@ -738,7 +738,25 @@ test('ordinary sends publish real core status and shutdown fences a blocked nati
     const turn = context.core!.runtime_turn(id)!;
     const [permission] = turn.pending_permission_ask_ids;
     const [question] = turn.pending_user_input_questions.keys();
-    expect(await context.core!.answer_permission_ask(id, permission, 'allow')).toBe('applied');
+    // The routes carry the operation ID: a repeat gets the saved fate, and the lookup finds it.
+    const answers = `${server.address}/api/conversation/conversations/${id}`;
+    const answer = (body: object) =>
+      fetch(`${answers}/permission-answers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const phone_answer = { ask_id: permission, option_id: 'allow', operation_id: 'phone-op-1' };
+    expect(await (await answer(phone_answer)).json()).toEqual({ fate: 'applied' });
+    expect(await (await answer(phone_answer)).json()).toEqual({ fate: 'applied' });
+    expect((await answer({ ...phone_answer, option_id: 'deny' })).status).toBe(422);
+    expect((await answer({ ...phone_answer, operation_id: '' })).status).toBe(422);
+    expect(await (await fetch(`${answers}/answer-receipts/phone-op-1`)).json()).toEqual({
+      receipt: { operation_id: 'phone-op-1', fate: 'applied' },
+    });
+    expect(await (await fetch(`${answers}/answer-receipts/phone-op-2`)).json()).toEqual({
+      receipt: null,
+    });
     expect((await attention()).awaiting_answer).toBe(true);
     expect(
       await context.core!.answer_user_input(id, question, [

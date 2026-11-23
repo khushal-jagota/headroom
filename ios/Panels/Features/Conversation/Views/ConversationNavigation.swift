@@ -12,18 +12,44 @@ enum ConversationLayout {
     static let surfaceTopPadding: CGFloat = 8
 }
 
+/// Each page's docked conversation model, by owner. The full conversation opened from
+/// that page uses the same model, so the draft, the outbox state, the transcript and
+/// the read point stay one. Held weakly: the page owns its model. While the full page
+/// is open, the page's own docked surface rests, so one model follows one tail.
+@MainActor @Observable final class ConversationModelShelf {
+    private final class Entry { weak var model: ConversationModel?; init(_ model: ConversationModel) { self.model = model } }
+    @ObservationIgnored private var entries: [ConversationOwner: Entry] = [:]
+    private(set) var openPages: Set<ConversationOwner> = []
+    func setPageOpen(_ open: Bool, for owner: ConversationOwner) {
+        if open { openPages.insert(owner) } else { openPages.remove(owner) }
+    }
+    func register(_ model: ConversationModel, for owner: ConversationOwner) {
+        entries = entries.filter { $0.value.model != nil }
+        entries[owner] = Entry(model)
+    }
+    func model(for owner: ConversationOwner) -> ConversationModel? { entries[owner]?.model }
+}
+
+extension EnvironmentValues {
+    @Entry var conversationModels: ConversationModelShelf? = nil
+}
+
 struct ConversationNavigation: ViewModifier {
     let owner: ConversationOwner
     let conversationID: String?
-    var title = "Conversation"
-    var openConversationID: String?
     var refreshError: String?
     var retry: (() async -> Void)?
     @Environment(AppStore.self) private var store
+    @Environment(\.openRoute) private var openRoute
+    @Environment(\.conversationModels) private var conversationModels
     var textEntry: ScreenTextEntryContext? = nil
-    @State private var opened = false
-    @State private var followedLink = false
-    @State private var linkedConversationID: String?
+    /// The docked composer exists only while its page is the top page, so a pushed
+    /// page, the full conversation included, never has a second composer under it.
+    @State private var pageVisible = false
+    /// The docked surface's last height. While a pushed page covers this one, the same
+    /// room stays at the bottom, so the page's scroll position is not clamped to a shorter
+    /// inset and Back returns to where Khushal left it.
+    @State private var surfaceHeight: CGFloat = 0
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
@@ -34,39 +60,76 @@ struct ConversationNavigation: ViewModifier {
 
     private func navigation(content: Content, textEntry: ScreenTextEntryContext) -> some View {
         content
-            .toolbar(.hidden, for: .tabBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                surface(isPage: false, textEntry: textEntry)
-            }
-            .navigationDestination(isPresented: $opened) {
-                ScreenTextEntryScope { childEntry in
-                    surface(isPage: true, textEntry: childEntry)
-                        .toolbar(.hidden, for: .navigationBar)
-                        .toolbar(.hidden, for: .tabBar)
+                if pageVisible {
+                    ConversationSurface(owner: owner, conversationID: conversationID, isPage: false,
+                                        active: !(conversationModels?.openPages.contains(owner) ?? false),
+                                        open: { textEntry.endEditingBeforeNavigation { open() } },
+                                        model: model, speech: speech, refreshError: refreshError, retry: retry)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { surfaceHeight = $0 }
+                } else {
+                    Color.clear.frame(height: surfaceHeight).accessibilityHidden(true)
                 }
             }
-            .task {
-                guard openConversationID != nil, !followedLink else { return }
-                followedLink = true
-                linkedConversationID = openConversationID
-                textEntry.endEditingBeforeNavigation { opened = true }
+            .onAppear { pageVisible = true; conversationModels?.register(model, for: owner) }
+            .onDisappear { pageVisible = false; speech.cancel() }
+            .onChange(of: store.baseURL) { _, _ in
+                speech.cancel(); model = ConversationModel(); conversationModels?.register(model, for: owner)
             }
-            .onChange(of: opened) { _, isOpen in
-                Haptics.light()
-                if !isOpen, linkedConversationID != nil {
-                    linkedConversationID = nil
-                    model = ConversationModel()
-                }
-            }
-            .onChange(of: store.baseURL) { _, _ in speech.cancel(); model = ConversationModel() }
     }
 
-    private func surface(isPage: Bool, textEntry: ScreenTextEntryContext) -> some View {
-        ConversationSurface(owner: owner, conversationID: isPage ? linkedConversationID ?? conversationID : conversationID, title: title,
-                            isPage: isPage, active: isPage || !opened,
-                            open: { textEntry.endEditingBeforeNavigation { opened = true } },
-                            model: model, speech: speech, refreshError: refreshError, retry: retry,
-                            checksCurrentConversation: isPage && linkedConversationID != nil)
+    private func open() {
+        openRoute(.conversation(owner: owner, id: conversationID, linked: false))
+    }
+}
+
+/// The full conversation, a page of its own on the destination's path.
+struct ConversationScreen: View {
+    let owner: ConversationOwner
+    let conversationID: String?
+    /// A link to one exact conversation reads as history once another is current.
+    let linked: Bool
+    /// A linked conversation reads on its own; otherwise the page shares its owner's docked model.
+    @State private var ownModel = ConversationModel()
+    /// The docked model this page first shared, kept for the page's life. An artifact opened
+    /// from the page docks its own composer, which registers a second model for the owner and
+    /// is gone once the artifact closes; the page stays on the model it opened with.
+    @State private var sharedModel: ConversationModel?
+    @State private var speech = ConversationSpeech()
+    @Environment(AppStore.self) private var store
+    @Environment(\.conversationModels) private var conversationModels
+    private var model: ConversationModel { linked ? ownModel : sharedModel ?? conversationModels?.model(for: owner) ?? ownModel }
+
+    var body: some View {
+        ScreenTextEntryScope { textEntry in
+            ConversationSurface(owner: owner, conversationID: conversationID, isPage: true, active: true, open: {},
+                                model: model, speech: speech, checksCurrentConversation: linked && conversationID != nil)
+                .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Picker("Conversation lens", selection: Binding(get: { model.lens }, set: { model.lens = $0 })) {
+                                ForEach(ConversationLens.allCases, id: \.self) { lens in
+                                    Text(lens.rawValue.capitalized).tag(lens)
+                                }
+                            }
+                            .onChange(of: model.lens) { _, _ in Haptics.selection() }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .accessibilityLabel("Conversation actions")
+                        .accessibilityIdentifier("conversation-actions")
+                        .accessibilityValue(model.lens.rawValue.capitalized)
+                    }
+                }
+        }
+        .onAppear {
+            guard !linked else { return }
+            conversationModels?.setPageOpen(true, for: owner)
+            if sharedModel == nil { sharedModel = model }
+        }
+        .onDisappear { speech.cancel(); if !linked { conversationModels?.setPageOpen(false, for: owner) } }
+        .onChange(of: store.baseURL) { _, _ in speech.cancel(); ownModel = ConversationModel(); sharedModel = nil }
     }
 }
 
@@ -74,7 +137,6 @@ struct ConversationNavigation: ViewModifier {
 private struct ConversationSurface: View {
     let owner: ConversationOwner
     let conversationID: String?
-    let title: String
     let isPage: Bool
     let active: Bool
     let open: () -> Void
@@ -105,11 +167,11 @@ private struct ConversationSurface: View {
     var body: some View {
         conversation
         .task(id: "\(store.baseURL)|\(conversationID ?? "new")|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)|\(currentReferenceKey)") {
-            guard active, !store.serverUnreachable, scenePhase == .active else { return }
+            guard active, scenePhase == .active else { return }
             if checksCurrentConversation { model.selectConversation(conversationID) }
             else if let current = currentReference { model.selectConversation(current) }
             model.restore(owner: owner, api: store.client, recoverConversationID: false)
-            if owner == .chief { model.reloadDraft() }
+            model.reloadDraft()
             if case .ticket(let id) = owner {
                 let api = store.client
                 let ticket = store.resources.handle(TicketResources.detail(id))
@@ -128,7 +190,7 @@ private struct ConversationSurface: View {
                     currentConversationConfirmed = current == conversationID
                 } catch {
                     guard !Task.isCancelled, generation == model.readerGeneration else { return }
-                    model.error = error.localizedDescription
+                    model.reportReadFailure(error)
                 }
             }
             // The open tail below delivers the transcript and status. A conversation that
@@ -136,7 +198,7 @@ private struct ConversationSurface: View {
             if model.conversationID == nil { await readConfiguration() }
         }
         .task(id: "tail|\(store.baseURL)|\(model.conversationID ?? "")|\(model.lens)|\(scenePhase == .active)|\(active)|\(store.serverUnreachable)") {
-            guard active, !store.serverUnreachable, scenePhase == .active, let id = model.conversationID else { return }
+            guard active, scenePhase == .active, let id = model.conversationID else { return }
             var misses = 0
             while !Task.isCancelled {
                 let generation = model.beginTail()
@@ -154,7 +216,7 @@ private struct ConversationSurface: View {
                     }
                 } catch {
                     if Task.isCancelled || model.conversationID != id { return }
-                    model.error = error.localizedDescription
+                    model.reportReadFailure(error)
                     applied = false
                     failed = true
                 }
@@ -172,10 +234,9 @@ private struct ConversationSurface: View {
             let before = model.outgoing
             model.syncOutbox()
             // A saved message can be held by the server; its queue lives in the configuration.
-            if active, !store.serverUnreachable, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
+            if active, scenePhase == .active, model.outgoing != before { Task { await readConfiguration() } }
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { speech.cancel(); model.saveDisplay(force: true) } }
-        .onChange(of: store.serverUnreachable) { _, covered in if covered { speech.cancel() } }
         .onDisappear { speech.cancel() }
         .onChange(of: store.baseURL) { _, _ in speech.cancel() }
     }
@@ -207,7 +268,7 @@ private struct ConversationSurface: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, AgentPageLayout.gutter)
             }
             if isPage {
-                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && !store.serverUnreachable && scenePhase == .active)
+                ConversationThread(model: model, owner: owner, readOnly: readOnly, active: active && scenePhase == .active)
             }
             if readOnly {
                 Text("Historical conversation · read only").font(PanelsTheme.TypeScale.small)
@@ -223,56 +284,38 @@ private struct ConversationSurface: View {
         .preferredColorScheme(.dark)
     }
 
-    private var header: some View {
-        HStack(spacing: 0) {
-            if isPage {
-                AgentPageControls(beforeBack: { textEntry?.endEditing() }) {
-                    Menu {
-                        Picker("Conversation lens", selection: $model.lens) {
-                            ForEach(ConversationLens.allCases, id: \.self) { lens in
-                                Text(lens.rawValue.capitalized).tag(lens)
-                            }
+    /// The docked line that opens the full conversation. The full page has no header row.
+    @ViewBuilder private var header: some View {
+        if !isPage {
+            Button(action: open) {
+                HStack(spacing: 8) {
+                    Group {
+                        if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth) {
+                            RingSpinner(size: .compact)
+                        } else {
+                            Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
                         }
-                        .onChange(of: model.lens) { _, _ in Haptics.selection() }
-                    } label: {
-                        Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
+                    }.frame(width: 12)
+                    let latest = model.latestMessage
+                    Text(.init(model.compactPreview))
+                        .font(PanelsTheme.TypeScale.small).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if latest?.own == true, latest?.note != nil {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Not delivered")
                     }
-                    .accessibilityLabel("Conversation actions")
-                    .accessibilityIdentifier("conversation-actions")
-                    .accessibilityValue(model.lens.rawValue.capitalized)
+                    Image(systemName: "chevron.right").font(.system(size: 11))
                 }
-                .padding(.horizontal, AgentPageLayout.gutter)
-            } else {
-                Button(action: open) {
-                    HStack(spacing: 8) {
-                        Group {
-                            if model.status?.turnRunning == true && model.status?.authority == "current" && model.error == nil && !TicketMachine.conversationActivityUnknown(model.machineLocale, owner: owner, health: store.executorHealth) {
-                                RingSpinner(size: .compact)
-                            } else {
-                                Circle().fill(PanelsTheme.accent).frame(width: 8, height: 8).opacity(model.hasUnread ? 1 : 0)
-                            }
-                        }.frame(width: 12)
-                        let latest = model.latestMessage
-                        Text(.init(model.compactPreview))
-                            .font(PanelsTheme.TypeScale.small).lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if latest?.own == true, let note = latest?.note, note != "Sent" {
-                            Text(note).font(PanelsTheme.TypeScale.caption).lineLimit(1).layoutPriority(1)
-                        }
-                        Image(systemName: "chevron.right").font(.system(size: 11))
-                    }
-                    .padding(.leading, 20).padding(.trailing, 14)
-                    .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(model.compactPreview)
-                .accessibilityIdentifier("conversation-line")
+                .padding(.leading, 20).padding(.trailing, 14)
+                .frame(minHeight: ConversationLayout.lineHeight).contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.compactPreview)
+            .accessibilityIdentifier("conversation-line")
+            .frame(minHeight: ConversationLayout.lineHeight)
+            .foregroundStyle(PanelsTheme.faint)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("conversation-header")
         }
-        .frame(minHeight: ConversationLayout.lineHeight)
-        .foregroundStyle(PanelsTheme.faint)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("conversation-header")
     }
 
     private var bottom: some View {
@@ -324,7 +367,7 @@ private struct ConversationSurface: View {
 }
 
 struct ConversationThread: View {
-    @State private var recoveryID: String?
+    @State private var refusedNote: (note: String, retryID: String?)?
     @Bindable var model: ConversationModel
     let owner: ConversationOwner
     var readOnly = false
@@ -339,6 +382,18 @@ struct ConversationThread: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPolicy = ConversationScrollPolicy()
     @State private var position = ScrollPosition(edge: .bottom)
+    /// The server refused this message. Like Messages: a red mark that offers Try Again.
+    private func refusedMark(note: String, retryID: String?) -> some View {
+        Button { refusedNote = (note, retryID) } label: {
+            Image(systemName: "exclamationmark.circle.fill").font(.title3).foregroundStyle(.red)
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.sending || model.preparingPhoto)
+        .accessibilityLabel("Not delivered")
+        .accessibilityHint(note)
+        .accessibilityIdentifier("conversation.refused")
+    }
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -351,6 +406,7 @@ struct ConversationThread: View {
                     ForEach(model.rows) { row in
                         HStack {
                             if row.own { Spacer(minLength: 28) }
+                            if row.own, let note = row.note { refusedMark(note: note, retryID: readOnly ? nil : row.retryID) }
                             VStack(alignment: .leading, spacing: 6) {
                                 if let sender = row.senderLabel {
                                     Text(sender).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
@@ -361,37 +417,17 @@ struct ConversationThread: View {
                                         Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
                                     }
                                 } else if !row.text.isEmpty {
-                                    Text((try? AttributedString(markdown: row.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace), baseURL: store.baseURL)) ?? AttributedString(row.text))
-                                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                    ArtifactInlineMediaPreviews(source: row.text, baseURL: store.baseURL)
+                                    PanelsMarkdown(source: row.text, baseURL: store.baseURL)
                                 }
                                 if !row.attachments.isEmpty {
                                     ConversationAttachmentTray(pieces: row.attachments, preparing: row.retryID == model.preparingOutgoingID && model.preparingOutgoingID != nil)
                                 }
-                                if let note = row.note, note != "Sent" {
-                                    HStack {
-                                        if note == "Waiting for connection" { Image(systemName: "clock").foregroundStyle(PanelsTheme.faint) }
-                                        Text(note).foregroundStyle(note.hasPrefix("Not sent") ? PanelsTheme.error : PanelsTheme.faint)
-                                        if let id = row.retryID, !readOnly {
-                                            Button {
-                                                if model.recoveries[id] == nil || model.recoveries[id] == .retry { Task { await model.retry(id, to: owner, using: store.client) } }
-                                                else { recoveryID = id }
-                                            } label: {
-                                                Text(model.recoveryLabel(id)).padding(.horizontal, 8).padding(.vertical, 4)
-                                                    .background(PanelsTheme.accentSurface, in: Capsule())
-                                                    .contentShape(Rectangle().inset(by: -8))
-                                            }.disabled(model.sending || model.preparingPhoto)
-                                            .confirmationDialog("The earlier result is unknown. Another attempt can send this message twice.", isPresented: Binding(get: { recoveryID == id }, set: { if !$0 { recoveryID = nil } }), titleVisibility: .visible) {
-                                                Button(model.recoveries[id]?.unknownDestination == true ? "Start a new conversation with this message" : model.recoveryLabel(id)) {
-                                                    Task { await model.recover(id, using: store.client, startNew: model.recoveries[id]?.unknownDestination == true) }
-                                                    recoveryID = nil
-                                                }
-                                                Button("Keep waiting", role: .cancel) { recoveryID = nil }
-                                            }
-                                        }
-                                    }.font(PanelsTheme.TypeScale.small).frame(minHeight: 28)
+                                if !row.own, let note = row.note {
+                                    Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint).frame(minHeight: 28)
                                 }
                             }.padding(row.own ? 12 : 0).background(row.own ? PanelsTheme.raised : .clear, in: RoundedRectangle(cornerRadius: 12))
+                                // Code, tables and charts take what they are offered; the spacer keeps only its minimum.
+                                .layoutPriority(1)
                             if !row.own { Spacer(minLength: 0) }
                         }.id(row.id)
                             .onScrollVisibilityChange(threshold: 0.01) { visible in
@@ -403,6 +439,13 @@ struct ConversationThread: View {
                 }.padding(.horizontal, 20).padding(.bottom, 12)
             }
             .accessibilityIdentifier("conversation-thread")
+            .confirmationDialog(refusedNote?.note ?? "", isPresented: Binding(get: { refusedNote != nil }, set: { if !$0 { refusedNote = nil } }), titleVisibility: .visible) {
+                if let id = refusedNote?.retryID {
+                    Button("Try Again") { Task { await model.retry(id, to: owner, using: store.client) } }
+                        .accessibilityIdentifier("conversation.retry")
+                }
+                Button("Cancel", role: .cancel) { refusedNote = nil }
+            }
             .onAppear { appeared = true }
             .onDisappear { appeared = false; visibleRowIDs = []; model.setVisibleRows([]) }
             .onChange(of: visibleRowIDs) { _, ids in model.setVisibleRows(ids) }
@@ -490,7 +533,7 @@ struct ConversationThread: View {
                 .animation(reduceMotion ? nil : PanelsTheme.Motion.fade, value: scrollPolicy.showLatest)
             }
         }
-        .reviewArtifactLinks()
+        .reviewArtifactLinks(dock: .conversation(owner))
     }
 
     private func distanceFromLatest(_ geometry: ScrollGeometry) -> Double {
@@ -618,8 +661,8 @@ struct ConversationModelSheet: View {
 }
 
 extension View {
-    func conversationNavigation(owner: ConversationOwner, conversationID: String?, title: String = "Conversation", openConversationID: String? = nil, refreshError: String? = nil, retry: (() async -> Void)? = nil, textEntry: ScreenTextEntryContext? = nil) -> some View {
-        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, title: title, openConversationID: openConversationID, refreshError: refreshError, retry: retry, textEntry: textEntry))
+    func conversationNavigation(owner: ConversationOwner, conversationID: String?, refreshError: String? = nil, retry: (() async -> Void)? = nil, textEntry: ScreenTextEntryContext? = nil) -> some View {
+        modifier(ConversationNavigation(owner: owner, conversationID: conversationID, refreshError: refreshError, retry: retry, textEntry: textEntry))
     }
 }
 
@@ -628,12 +671,13 @@ extension View {
 struct ConversationDetailSmokeView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
+    @State private var path: [AppRoute] = []
     var body: some View {
-        NavigationStack {
+        RouteStack(path: $path) {
             List {
-                NavigationLink("Ticket fixture") { TicketView(ticketID: "t_02zd37tz") }
-                NavigationLink("Orchestrator fixture") { RouteDestination(route: .orchestrator("si_4chgag3w")) }
-                NavigationLink("Chief fixture") { RouteDestination(route: .chief) }
+                NavigationLink("Ticket fixture", value: AppRoute.ticket("t_02zd37tz"))
+                NavigationLink("Orchestrator fixture", value: AppRoute.orchestrator("si_4chgag3w"))
+                NavigationLink("Chief fixture", value: AppRoute.chief)
             }.panelsScreen()
         }
         .task(id: "\(store.baseURL.absoluteString):\(scenePhase == .active)") {
@@ -645,8 +689,9 @@ struct ConversationDetailSmokeView: View {
 struct ConversationSmokeView: View {
     @Environment(AppStore.self) private var store
     @State private var refreshError: String?
+    @State private var path: [AppRoute] = []
     var body: some View {
-        NavigationStack {
+        RouteStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Text("Chief of Staff").font(PanelsTheme.TypeScale.detailTitle)
@@ -657,8 +702,8 @@ struct ConversationSmokeView: View {
                             .panelsScreen().navigationTitle("Worker details")
                     }
                 }.padding(.horizontal, 20)
-            }.accessibilityIdentifier("conversation-page").panelsScreen().conversationNavigation(owner: .chief, conversationID: "stub", title: "Chief of Staff", refreshError: refreshError, retry: refresh)
-                .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, showsRefreshError: false, retry: refresh)
+            }.accessibilityIdentifier("conversation-page").panelsScreen().conversationNavigation(owner: .chief, conversationID: "stub", refreshError: refreshError, retry: refresh)
+                .screenLoadState("Chief of Staff", hasContent: true, error: refreshError, retry: refresh)
                 .task {
                     while !Task.isCancelled {
                         await refresh()
@@ -669,7 +714,7 @@ struct ConversationSmokeView: View {
     }
     private func refresh() async {
         do { _ = try await store.client.chiefConversation(); refreshError = nil }
-        catch { if !Task.isCancelled { refreshError = error.localizedDescription } }
+        catch { if !Task.isCancelled { refreshError = ServerReadFailure.note(error) } }
     }
 }
 #endif

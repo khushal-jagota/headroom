@@ -13,16 +13,6 @@ struct ReviewChiefMessage: View {
             if let error = message.storageError ?? message.error {
                 Text(error).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
             }
-            HStack {
-                if message.canCheckDelivery {
-                    Button("Check delivery") { Task { await message.checkDelivery() } }
-                        .disabled(message.busy).accessibilityIdentifier("review.chief.checkDelivery")
-                }
-                Spacer()
-                ScreenTextEntryNavigationLink("Open Chief", value: AppRoute.chief)
-            }
-            .font(PanelsTheme.TypeScale.small)
-            .frame(minHeight: 44)
         }
         .accessibilityIdentifier("review.chief")
         .task(id: "\(store.baseURL)|\(isActive)") {

@@ -394,6 +394,21 @@ export class ConversationStorePrimitives {
       return row === undefined ? null : stored_event(row);
     });
   }
+  /** The saved answer row that carries this operation ID, if any. */
+  answer_operation_outcome(
+    conversation_id: string,
+    operation_id: string,
+  ): StoredConversationEvent | null {
+    return this.database.read((sql) => {
+      const row = sql.get<EventRow>(
+        `SELECT ${EVENT_COLUMNS} FROM conversation_events ` +
+          "WHERE conversation_id=? AND json_extract(payload,'$.operation_id')=? " +
+          "AND kind IN ('permission_answered','user_input_answered') ORDER BY sequence DESC LIMIT 1",
+        [conversation_id, operation_id],
+      );
+      return row === undefined ? null : stored_event(row);
+    });
+  }
   latest_turn_ended_sequences(conversation_ids: readonly string[]): ReadonlyMap<string, number> {
     const ids = [...new Set(conversation_ids)];
     if (!ids.length) {
