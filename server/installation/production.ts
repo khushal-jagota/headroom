@@ -1,13 +1,12 @@
 /** Native effects share the install invocation's canonical child owner. */
 import { homedir } from 'node:os';
 import { realpath } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { extract_app_archive } from '../environments/release/archive.ts';
 import { admit_runtime } from '../environments/release/admission.ts';
 import { run_release_command, assert_release_execution } from '../environments/release/process.ts';
 import { MAC_HOME } from '../environments/release/contracts.ts';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
-import { require_host_node } from '../environments/release/logic/host.ts';
 import { healthy } from '../environments/updates/installer/health.ts';
 import { installer_test_mode } from '../environments/updates/installer/configuration.ts';
 import { HOME_HEALTH_TIMEOUT_SECONDS } from './configuration.ts';
@@ -75,11 +74,16 @@ export async function production_home_dependencies(
       if (manifest.runtime_contract?.version !== 2)
         throw new Error('First home installation requires a sealed Node version-2 release');
       await admit_runtime(app, manifest, scope.child_processes);
-      require_host_node(process.version, manifest.runtime_contract);
       assert_release_execution(scope);
     },
     initialize_database: (app, path, scope, machine_root) =>
-      initialize_candidate_home_database(app, path, scope, node_executable, machine_root),
+      initialize_candidate_home_database(
+        app,
+        path,
+        scope,
+        join(app, 'node/bin/node'),
+        machine_root,
+      ),
     prepare_machine: prepare_first_machine,
     machine_healthy: (request, scope, started_ms) =>
       wait_for_first_machine(
@@ -127,7 +131,7 @@ export async function production_move_dependencies(
         ? create_darwin_home_service(request, host, false)
         : create_linux_home_service(request, host, false),
     check_database: (app, path, scope) =>
-      check_moved_home_database(app, path, scope, node_executable),
+      check_moved_home_database(app, path, scope, join(app, 'node/bin/node')),
     remove_service: system === 'darwin' ? remove_darwin_home_service : remove_linux_home_service,
   };
 }

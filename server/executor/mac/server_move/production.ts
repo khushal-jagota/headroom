@@ -12,7 +12,6 @@ import type { MacHttpOptions } from '../transport/contracts.ts';
 import { HttpSessions } from '../transport/sessions.ts';
 import { create_update_session } from '../updates/controller.ts';
 import { run_move_installer } from './installer.ts';
-import { host_node } from './logic.ts';
 import { ServerMoveRequests } from './requests.ts';
 import { MacServerMove } from './runner.ts';
 
@@ -68,12 +67,7 @@ export function production_server_move(options: ProductionServerMoveOptions): Ma
       );
     },
     installer: (payload, request, signal) =>
-      run_move_installer(
-        { child_processes, node: host_node(platform, process.execPath), environment: process.env },
-        payload,
-        request,
-        signal,
-      ),
+      run_move_installer({ child_processes, environment: process.env }, payload, request, signal),
     log: (message) => console.warn(message),
   });
 }

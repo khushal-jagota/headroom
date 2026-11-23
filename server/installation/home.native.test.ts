@@ -297,6 +297,8 @@ test.skipIf(!admitted)(
           // full-command hosted proof covers actual machine enrollment and protocol traffic.
           prepare_machine: async (_candidate, runtime) => {
             await mkdir(join(runtime, 'server/installation'), { recursive: true });
+            await mkdir(join(runtime, 'node/bin'), { recursive: true });
+            await cp(process.execPath, join(runtime, 'node/bin/node'));
             await writeFile(
               join(runtime, 'server/installation/machine_main.ts'),
               "process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);\n",

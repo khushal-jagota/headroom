@@ -13,13 +13,13 @@ Use a separate OS account for another instance, including an executor with a dif
 
 ## Install with one command
 
-Install Node.js 22 or newer first. The download script needs Python 3.11.8 or newer. The Mac requires macOS 15 or newer.
-Use `/opt/homebrew/bin/node` on the Mac. Linux requires x86_64, an active systemd user manager, and user lingering.
+The server release carries its own Node. No separate Node installation is required. The download script needs Python 3.11.8 or newer. The Mac requires macOS 15 or newer.
+Linux requires x86_64, an active systemd user manager, and user lingering.
 If lingering is absent, setup refuses before installation. Run `loginctl enable-linger "$USER"`, then repeat the command.
 The sealed release also checks its native runtime requirements before the service starts.
 
 Mac release jobs use bundled tools, resolved provider CLI directories, common user bins, and standard system directories.
-The Homebrew directory precedes provider directories so that provider installs do not replace the required Node runtime.
+The bundled Node directory precedes provider directories.
 Jobs do not inherit the entire installation shell PATH. Direct use of the packaged installer preserves an explicit `PLAN_CLAUDE_EXECUTABLE`.
 
 Authenticate the GitHub CLI for the release repository, then run this command:
@@ -48,7 +48,7 @@ The machine state stays under `machine/data` in the installation root.
 Its runtime snapshot stays under `machine/runtime`, separate from the server app and data.
 The home binds to loopback port 8767. Select another port with `--port`.
 Use `--root` and `--service` for a separate installation.
-On the Mac, the command records the external Node at `/opt/homebrew/bin/node` for updates. It must stay outside the home and remain available.
+Updates copy their installer and bundled Node outside the app that they replace. No manual Node step is required.
 
 For an already downloaded, trusted publication, use the same command with local files:
 

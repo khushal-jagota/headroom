@@ -60,15 +60,16 @@ export async function write_app_entrypoints(
   await writeFile(
     join(root, 'bin/panels'),
     prefix +
-      'export PLAN_APP_ROOT="$root"\n' +
-      `PLAN_APP_SHA=$(node -e 'const m=require(process.argv[1]);if(!/^[0-9a-f]{40}$/.test(m.app_sha))throw Error("Invalid application revision");process.stdout.write(m.app_sha)' "$root/manifest.json")\n` +
+      'export PLAN_APP_ROOT="$root"\nexport PATH="$root/node/bin:$PATH"\n' +
+      `PLAN_APP_SHA=$("$root/node/bin/node" -e 'const m=require(process.argv[1]);if(!/^[0-9a-f]{40}$/.test(m.app_sha))throw Error("Invalid application revision");process.stdout.write(m.app_sha)' "$root/manifest.json")\n` +
       'export PLAN_APP_SHA\n' +
       `exec "$root"/${shell_quote(input)} "$@"\n`,
   );
   assert_release_execution(execution);
   await writeFile(
     join(root, 'bin/panels-launcher'),
-    prefix + 'exec node "$root/server/environments/release/launcher_main.ts" "$@"\n',
+    prefix +
+      'exec "$root/node/bin/node" "$root/server/environments/release/launcher_main.ts" "$@"\n',
   );
   assert_release_execution(execution);
   await chmod(join(root, 'bin/panels'), 0o755);
@@ -121,7 +122,7 @@ export async function launch_app(
   );
   const version = /^22\.(\d+)\.(\d+)$/.exec(process.versions.node);
   if (!version || Number(version[1]) < 18)
-    throw new AppValidationError('Node launcher requires host Node 22 >=22.18.0');
+    throw new AppValidationError('Node launcher requires bundled Node 22 >=22.18.0');
   const target = args.mode === 'foreground' ? 'foreground_main.ts' : 'managed_main.ts';
   return execve(
     process.execPath,

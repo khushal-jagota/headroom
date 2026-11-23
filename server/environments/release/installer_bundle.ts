@@ -232,7 +232,7 @@ export function parse_installer_file_manifest(
     else fail('invalid installer recipe entry');
   }
   if (
-    !source_files.every((path) =>
+    ![...source_files, 'node/bin/node', 'node/LICENSE'].every((path) =>
       files.some((entry) => entry.path === path && entry.kind === 'file'),
     )
   )
@@ -403,6 +403,8 @@ function selected_recipe(
         fail('copied native license is not regular');
     } else if (name.startsWith('runtime/lib/')) fail('copied native provider lacks provenance');
   }
+  native('node/bin/node');
+  add('node/LICENSE');
   for (const entry of records.values())
     if (packages.some((root) => entry.path.startsWith(root + '/'))) native(entry.path);
   if (darwin) {
@@ -531,21 +533,6 @@ function replaceable_applications(current_root: string): readonly string[] {
   }
   return roots;
 }
-function external_node(request: InstallerRequest): string {
-  if (!isAbsolute(request.node_executable)) fail('installer Node must be absolute');
-  const node = realpathSync(request.node_executable);
-  if (!lstatSync(node).isFile()) fail('installer Node must be a file');
-  accessSync(node, constants.X_OK);
-  for (const app of replaceable_applications(request.current_root)) {
-    try {
-      inside(app, node);
-    } catch {
-      continue;
-    }
-    fail('installer Node resolves inside a replaceable application');
-  }
-  return node;
-}
 export function copy_installer_runtime(
   application_root: string,
   request: InstallerRequest,
@@ -556,8 +543,7 @@ export function copy_installer_runtime(
   for (const path of [request.current_root, request.database, request.data_directory])
     assert_installer_path(path);
   installer_attempt_id(request.attempt_id);
-  const root = root_path(application_root),
-    node = external_node(request);
+  const root = root_path(application_root);
   const recipe_target =
     parse_optional_runtime_contract(read_json(root, RUNTIME_CONTRACT_PATH))?.system === 'darwin'
       ? MAC_HOME
@@ -612,6 +598,7 @@ export function copy_installer_runtime(
       }
     verify(work, recipe.files, fence);
     fence();
+    const node = join(runtime, 'node/bin/node');
     replace_existing_json(request_path, { ...request, node_executable: node });
     sync_directory(work);
     renameSync(work, runtime);

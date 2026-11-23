@@ -66,6 +66,31 @@ run_installer([sys.executable, '-c', sys.argv[2], *sys.argv[3:]], '{}', dict(os.
                 process.communicate(timeout=10)
 
 
+class ServerWithoutHostNode(unittest.TestCase):
+    # Existing release-source and interruption tests do not exercise prerequisites.
+    # Prove both platform preflights never select or execute the account's Node.
+    def test_home_preflight_needs_no_node(self) -> None:
+        import argparse
+        with tempfile.TemporaryDirectory(prefix="panels-no-host-node-") as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(command="home", root=home / "new", service="proof", port=18767)
+            def run(*arguments, **kwargs):
+                self.assertNotIn("node", " ".join(arguments))
+                output = "yes" if arguments[0] == "loginctl" else "not-found"
+                return subprocess.CompletedProcess(arguments, 0 if arguments[0] == "loginctl" else 1, output, "Could not find service")
+            def which(name, **kwargs):
+                self.assertNotEqual(name, "node")
+                return "/usr/bin/" + name
+            with patch.object(Path, "home", return_value=home), \
+                 patch.object(panels_install, "_run", run), \
+                 patch.object(panels_install.shutil, "which", which), \
+                 patch.object(panels_install.platform, "mac_ver", return_value=("15.0", (), "")), \
+                 patch.object(panels_install.socket, "socket"):
+                for target in ("linux", "darwin"):
+                    with self.subTest(target=target):
+                        panels_install.preflight(args, target)
+
+
 class PermanentReleaseSource(unittest.TestCase):
     # Existing rollback coverage never resolves release metadata or a package source.
     # This adapter boundary proves each role survives removal of Actions artifacts.

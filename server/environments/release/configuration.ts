@@ -20,6 +20,7 @@ export const APP_ARCHIVE_NAME = 'panels-app.tar.gz';
 export const PUBLICATION_RECEIPT_NAME = 'publication.json';
 export const RUNTIME_CONTRACT_PATH = 'runtime/contract.json';
 export const RUNTIME_INVENTORY_PATH = 'runtime/inventory.json';
+export const BUNDLED_NODE_PATH = 'node/bin/node';
 export const FILE_CHUNK_BYTES = 1024 * 1024;
 export const ARCHIVE_GZIP_LEVEL = 1;
 export const NODE_RUNTIME_EXECUTABLES = ['bin/panels', 'bin/panels-launcher'] as const;

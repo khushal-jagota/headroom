@@ -1,5 +1,5 @@
 /** Compose a complete native home from one exact source export and prepared native inputs. */
-import { chmod, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { macho_arm64, node_version } from '../../executor/mac/packaging/build.ts';
 import { path_is_within } from '../../core/path_containment.ts';
@@ -75,6 +75,9 @@ export async function build_mac_home(
       },
       execution,
     );
+    await mkdir(join(app, 'node/bin'), { recursive: true });
+    await cp(host_node, join(app, 'node/bin/node'));
+    await cp(join(dirname(dirname(host_node)), 'LICENSE'), join(app, 'node/LICENSE'));
     await validate_app_tree(app);
     await write_app_entrypoints(app, options.requested_sha, dependencies, execution);
     await writeFile(

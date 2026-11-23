@@ -1,7 +1,7 @@
 /** Hosted proof of the real bootstrap, native services, and a second isolated machine. */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { cp, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -66,6 +66,38 @@ await writeFile(
 );
 const environment: NodeJS.ProcessEnv = { ...process.env, HOME: home, PLAN_TEST_MODE: '0' };
 for (const key of Object.keys(environment)) if (key.startsWith('PLAN_')) delete environment[key];
+// Retain the runner's tools but exclude every PATH entry named node. This proves the
+// downloaded Python bootstrap and native server jobs do not need a host Node.
+const no_node_bin = join(base, 'host-without-node');
+await mkdir(no_node_bin);
+const linked = new Set<string>();
+for (const directory of (environment.PATH ?? '').split(':').filter(Boolean)) {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
+    throw error;
+  }
+  for (const name of names) {
+    if (name === 'node' || linked.has(name)) continue;
+    await symlink(join(directory, name), join(no_node_bin, name));
+    linked.add(name);
+  }
+}
+const no_node_environment = { ...environment, PATH: no_node_bin };
+const incompatible_bin = join(base, 'host-with-incompatible-node');
+await mkdir(incompatible_bin);
+const host_node_used = join(evidence, 'unexpected-host-node');
+await writeFile(
+  join(incompatible_bin, 'node'),
+  '#!/bin/sh\nprintf "host Node was invoked\\n" >> ' + shell_quote(host_node_used) + '\nexit 91\n',
+  { mode: 0o700 },
+);
+const incompatible_environment = {
+  ...environment,
+  PATH: incompatible_bin + ':' + no_node_bin,
+};
 const owner = new ChildProcesses();
 const commands = new OneShotChildren(owner);
 const primitives =
@@ -166,25 +198,33 @@ try {
     : [mac.install, mac.app, mac.state, mac.plist])
     await absent(path);
   install_attempted = true;
-  await run('first-install', [
-    'python3',
-    join(source, 'scripts/panels_install.py'),
-    'home',
-    '--root',
-    root,
-    '--service',
-    service,
-    '--port',
-    String(port),
-    '--archive',
-    archive,
-    '--receipt',
-    receipt_path,
-    '--revision',
-    revision,
-    '--isolated-providers',
-  ]);
+  await run(
+    'first-install',
+    [
+      'python3',
+      join(source, 'scripts/panels_install.py'),
+      'home',
+      '--root',
+      root,
+      '--service',
+      service,
+      '--port',
+      String(port),
+      '--archive',
+      archive,
+      '--receipt',
+      receipt_path,
+      '--revision',
+      revision,
+      '--isolated-providers',
+    ],
+    no_node_environment,
+  );
+  report.host_node_at_install = 'absent from PATH';
   const panels = join(root, 'app/bin/panels');
+  await run('cli-with-incompatible-host-node', [panels, '--help'], incompatible_environment);
+  await absent(host_node_used);
+  report.incompatible_host_node = 'CLI succeeds without invoking the incompatible host Node';
   const health = JSON.parse(
     await run('first-machine-health', [panels, 'executor', 'health'], {
       ...environment,

@@ -1,4 +1,4 @@
-/** Installation records bind a login account and external Node, never a Python probe. */
+/** Installation records bind a login account and its server Node, never a Python probe. */
 import { accessSync, constants, fstatSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { is_record } from '../../../core/records.ts';
@@ -10,11 +10,14 @@ import {
 } from '../../../executor/mac/platform.ts';
 import type { DarwinHomeIdentity } from './contracts.ts';
 
-export function external_home_node(root: string, path: string): string {
+export function home_node(root: string, path: string): string {
   if (!isAbsolute(path) || path.includes('\0')) throw new Error('Installer Node must be absolute');
   const actual = realpathSync(path);
-  if (!lstatSync(actual).isFile() || path_is_within(root, actual))
-    throw new Error('Installer Node must be executable outside the home installation');
+  if (
+    !lstatSync(actual).isFile() ||
+    (path_is_within(root, actual) && actual !== join(root, 'app/node/bin/node'))
+  )
+    throw new Error('Installer Node must be the bundled server Node or an external executable');
   accessSync(actual, constants.X_OK);
   return actual;
 }
@@ -68,7 +71,7 @@ export function read_home_identity(root: string, service: string, uid: number): 
     throw new Error('Mac installation plist differs from this home');
   const selected = value.installer_node;
   if (typeof selected !== 'string') throw new Error('Mac installation Node is invalid');
-  const installer_node = external_home_node(root, selected);
+  const installer_node = home_node(root, selected);
   if (installer_node !== selected) throw new Error('Mac installation Node must be canonical');
   return { version: 2, uid, root, label, domain, home_plist, backup_plist, installer_node };
 }

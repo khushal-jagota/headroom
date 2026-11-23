@@ -23,7 +23,7 @@ export function first_machine_arguments(
     '-c',
     'unset NODE_OPTIONS NODE_PATH LD_PRELOAD LD_LIBRARY_PATH DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH; exec "$@"',
     'panels-machine',
-    host.node_executable,
+    join(request.root, 'machine/runtime/node/bin/node'),
     join(request.root, 'machine/runtime/server/installation/machine_main.ts'),
     join(request.root, 'machine/data/identity.json'),
     request.revision,
@@ -60,7 +60,7 @@ export async function wait_for_first_machine(
     assert_release_execution(execution);
     const result = await run_release_command(
       [
-        host.node_executable,
+        join(request.root, 'machine/runtime/node/bin/node'),
         join(request.root, 'machine/runtime/server/executor/mac/entrypoint.ts'),
         'executor',
         'health',

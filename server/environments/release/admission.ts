@@ -1,7 +1,7 @@
 /** Candidate package, worker, and tool admission belongs to the invocation child owner. */
 import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { constants } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { path_is_within } from '../../core/path_containment.ts';
@@ -50,21 +50,12 @@ export async function candidate_tool_path(
   if (executable) await access(actual, constants.X_OK);
   return actual;
 }
-async function host_node(): Promise<string> {
-  const path =
-    process.platform === 'darwin'
-      ? dirname(process.execPath) + ':/opt/homebrew/bin:' + HOST_PATH
-      : HOST_PATH;
-  const found = await find_release_executable('node', { PATH: path });
-  if (found === null) throw new AppValidationError('runtime host prerequisite is missing: node');
-  return realpath(found);
-}
 async function verify_host(
   contract: RuntimeContract,
   state: string,
   deadline: number,
   owner: OwnedChildProcesses,
-): Promise<string> {
+): Promise<void> {
   if (contract.system === 'darwin') {
     if (process.platform !== 'darwin' || process.arch !== 'arm64')
       throw new AppValidationError('runtime requires macOS arm64');
@@ -76,12 +67,7 @@ async function verify_host(
       owner,
     );
     verify_darwin_host_facts(contract, process.platform, process.arch, version);
-    const node = await host_node();
-    require_host_node(
-      await run_runtime_probe([node, '--version'], state, deadline, owner),
-      contract,
-    );
-    return node;
+    return;
   }
   if (
     contract.system !== 'linux' ||
@@ -139,9 +125,6 @@ async function verify_host(
       throw new AppValidationError(`runtime host prerequisite is missing: ${name}`);
     current(deadline);
   }
-  const node = await host_node();
-  require_host_node(await run_runtime_probe([node, '--version'], state, deadline, owner), contract);
-  return node;
 }
 /** Each driver's admission commands for this system, drivers in manifest order. */
 export function native_tool_commands(
@@ -272,11 +255,14 @@ async function admit(
       await mkdir(join(state, name), { mode: 0o700 });
     await writeFile(join(state, 'config.yaml'), '{}\n', { mode: 0o600 });
     const contract = manifest.runtime_contract;
-    const node = await verify_host(contract, state, deadline, child_processes);
-    if (contract.system === 'darwin' && path_is_within(root, node))
-      throw new AppValidationError('Mac home requires a host Node outside its application');
+    await verify_host(contract, state, deadline, child_processes);
+    const node = await candidate_tool_path(root, join(root, 'node/bin/node'), true);
     current(deadline);
     if (!prove) return;
+    require_host_node(
+      await run_runtime_probe([node, '--version'], state, deadline, child_processes),
+      contract,
+    );
     const report = await run_runtime_json_probe(
       [
         node,
