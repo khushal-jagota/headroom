@@ -12,7 +12,10 @@ Mac Worker supervision records one launchd job per launch in `run/worker-process
 The private record retains the executor's login domain and a unique job label before bootstrap.
 New jobs use those identities for stop and restart, rather than recorded process numbers.
 The proxy selects the fixed signed app when its executable contains the Worker mode marker.
-That mode executes the selected release Node and Worker entrypoint with the original environment.
+That mode keeps the signed launcher alive and spawns the selected release Node and Worker entrypoint with the original environment.
+The launcher forwards TERM, INT, HUP, and QUIT to its exact Node child, reaps it, and preserves its exit status.
+Both processes retain the existing launchd process group and priority.
+The executor and console routes use the same retained launcher, with their fixed supervisor command.
 Missing, old, or unusable launchers retain the bare Node route with one warning per launch.
 Entry waits for explicit proxy admission before provider spawn. An unsuccessful app attempt
 must stop under the record lock before one bare Node attempt with fresh transport.

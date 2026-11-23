@@ -14,6 +14,8 @@ test('only an executable with Worker support selects the app, without invoking a
     expect(await usable_worker_launcher(app)).toBeNull();
     await writeFile(app, '#!/bin/sh\nexit 99\n', { mode: 0o755 });
     expect(await usable_worker_launcher(app)).toBeNull();
+    await writeFile(app, '--panels-worker-exec-v1\0');
+    expect(await usable_worker_launcher(app)).toBeNull();
     await writeFile(app, `${WORKER_LAUNCHER_MODE}\0`);
     expect(await usable_worker_launcher(app)).toBe(app);
     await chmod(app, 0o600);

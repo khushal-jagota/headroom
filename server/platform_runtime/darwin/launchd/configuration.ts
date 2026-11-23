@@ -6,7 +6,7 @@ export const WORKER_SWEEP_LIMIT_NOTICE =
 export const WORKER_JOB_ENVIRONMENT_KEY = 'PANELS_WORKER_JOB';
 
 /** Also embedded in the signed executable, so old launchers are never probed as a CLI. */
-export const WORKER_LAUNCHER_MODE = '--panels-worker-exec-v1';
+export const WORKER_LAUNCHER_MODE = '--panels-worker-spawn-v2';
 export const WORKER_LAUNCHER_FALLBACK_NOTICE =
   'Mac Worker app launcher is unavailable or unusable. Starting through bare Node.';
 

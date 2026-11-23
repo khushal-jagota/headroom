@@ -44,8 +44,11 @@ The supervisor puts the runtime's own `bin` first.
 ## The launcher and its signature
 
 The launcher app is the same for every account. It reads the account's home from the user database, not from `HOME`.
-For executor and console commands, it runs the fixed Node and bootstrap below that home with the original arguments.
-Worker jobs use its `--panels-worker-exec-v1` mode, which executes the selected release's Node and entrypoint with the original environment.
+For executor and console commands, it spawns the fixed Node and bootstrap below that home with the original arguments.
+Worker jobs use its `--panels-worker-spawn-v2` mode, which spawns the selected release's Node and entrypoint with the original environment.
+The signed launcher remains alive for both modes. It forwards TERM, INT, HUP, and QUIT to the exact Node child, then reaps and mirrors its exit status.
+Both processes keep the launchd process group and priority.
+The earlier `--panels-worker-exec-v1` mode replaces the app process with Node and does not satisfy the attribution requirement.
 New runtimes inspect that mode marker without executing old launchers.
 If the app is missing, lacks the mode, or fails before provider admission, the Worker uses bare Node and logs one warning.
 A failed app job must be absent before fallback. No provider starts before the proxy grants admission.
@@ -58,7 +61,7 @@ The publication proof checks the signature of the unpacked copy. The join copies
 
 macOS keys folder permissions on the designated requirement of the app.
 For a team signature, that requirement names the bundle identity and the team. For an ad-hoc signature, it names the exact code hash.
-So folder permissions stay when a later release changes the launcher.
+Folder permission decisions can remain valid when later releases keep that designated requirement stable.
 The launcher is not notarized. The join downloads it through the GitHub API, so it carries no quarantine flag, and Gatekeeper does not assess it.
 
 The hosted rehearsal `typescript-mac-executor.yml` signs its launcher ad hoc, because a pull request build has no release identity.
@@ -79,7 +82,11 @@ To enable the app route on an existing installation, the owner prepares a signed
 `server/executor/mac/packaging/launcher_main.ts`. The build holds no account path.
 Keep the installed bundle identifier, signing identity, and designated requirement.
 Compare `codesign -dv --verbose=4` and `codesign -d -r-` between the installed app and candidate, then verify the candidate with `codesign --verify --strict`.
-Do not switch an existing Apple Development installation to Developer ID as part of this update.
+An earlier Apple Development installation and a Developer ID release can have different designated requirements, even with the same bundle and team.
+Earlier privacy grants do not automatically transfer across that identity change. The user can need fresh consent for each protected resource.
+This is a one-time identity transition. Later updates can retain decisions if the bundle, team, and Developer ID requirement remain stable.
+Apple explains the stored requirement check in [TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements/).
+Preserve the existing identity for this launcher repair. Any Developer ID migration belongs to the separate machine release.
 Do not add entitlements or clear macOS consent records.
 The owner supplies signing and installation when Keychain access can produce a prompt.
 Before replacement, run a harmless candidate Worker job and record its responsible process, exact release Node, environment, and job absence after stop.

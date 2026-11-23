@@ -787,19 +787,85 @@ export function mac_launcher_bundle() {
     NSDocumentsFolderUsageDescription: 'Panels accesses your selected files in Documents.',
     NSDownloadsFolderUsageDescription: 'Panels accesses your selected files in Downloads.',
   });
-  const launcher = `/* Fixed native requester. execve preserves PID, signals and argument boundaries. */
+  const launcher = `/* Keep the signed requester alive while its Node child runs. */
+#include <errno.h>
 #include <limits.h>
 #include <pwd.h>
+#include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 extern char **environ;
+static volatile sig_atomic_t node_pid = 0;
+static void forward_signal(int number) {
+  int saved = errno;
+  if (node_pid > 0) kill((pid_t)node_pid, number);
+  errno = saved;
+}
+static int run_node(char **arguments) {
+  const int forwarded[] = { SIGTERM, SIGINT, SIGHUP, SIGQUIT };
+  sigset_t blocked, previous;
+  sigemptyset(&blocked);
+  for (size_t i = 0; i < sizeof forwarded / sizeof forwarded[0]; i++) sigaddset(&blocked, forwarded[i]);
+  if (sigprocmask(SIG_BLOCK, &blocked, &previous) != 0) { perror("Panels: signal mask"); return 1; }
+  struct sigaction action = {0};
+  action.sa_handler = forward_signal;
+  sigemptyset(&action.sa_mask);
+  for (size_t i = 0; i < sizeof forwarded / sizeof forwarded[0]; i++) {
+    if (sigaction(forwarded[i], &action, NULL) != 0) { perror("Panels: signal handler"); return 1; }
+  }
+  struct sigaction child_action = {0};
+  child_action.sa_handler = SIG_DFL;
+  sigemptyset(&child_action.sa_mask);
+  if (sigaction(SIGCHLD, &child_action, NULL) != 0) { perror("Panels: child status"); return 1; }
+  posix_spawnattr_t attributes;
+  int error = posix_spawnattr_init(&attributes);
+  if (error) { fprintf(stderr, "Panels: spawn attributes: %s\\n", strerror(error)); return 1; }
+  error = posix_spawnattr_setsigmask(&attributes, &previous);
+  if (!error) error = posix_spawnattr_setsigdefault(&attributes, &blocked);
+  if (!error) error = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
+  pid_t child = 0;
+  if (!error) error = posix_spawn(&child, arguments[0], NULL, &attributes, arguments, environ);
+  posix_spawnattr_destroy(&attributes);
+  if (error) { fprintf(stderr, "Panels: Node spawn: %s\\n", strerror(error)); return 1; }
+  node_pid = child;
+  if (sigprocmask(SIG_SETMASK, &previous, NULL) != 0) { perror("Panels: restore signal mask"); return 1; }
+  // Observe exit without reaping. The zombie retains its PID while the handler
+  // can signal it, so a concurrent signal cannot target a reused PID.
+  siginfo_t info = {0};
+  while (waitid(P_PID, (id_t)child, &info, WEXITED | WNOWAIT) != 0) {
+    if (errno != EINTR) { perror("Panels: Node exit"); return 1; }
+  }
+  if (sigprocmask(SIG_BLOCK, &blocked, NULL) != 0) { perror("Panels: reap signal mask"); return 1; }
+  int status;
+  while (waitpid(child, &status, 0) < 0) {
+    if (errno != EINTR) { perror("Panels: Node reap"); return 1; }
+  }
+  node_pid = 0;
+  if (sigprocmask(SIG_SETMASK, &previous, NULL) != 0) { perror("Panels: final signal mask"); return 1; }
+  if (WIFEXITED(status)) return WEXITSTATUS(status);
+  if (WIFSIGNALED(status)) {
+    int number = WTERMSIG(status);
+    struct sigaction terminal = {0};
+    terminal.sa_handler = SIG_DFL;
+    sigemptyset(&terminal.sa_mask);
+    sigaction(number, &terminal, NULL);
+    sigset_t unblocked;
+    sigemptyset(&unblocked);
+    sigaddset(&unblocked, number);
+    sigprocmask(SIG_UNBLOCK, &unblocked, NULL);
+    raise(number);
+    return 128 + number;
+  }
+  return 1;
+}
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], ${JSON.stringify(WORKER_LAUNCHER_MODE)}) == 0) {
     if (argc < 4 || argv[2][0] != '/') { fputs("Panels: invalid Worker command\\n", stderr); return 1; }
-    execve(argv[2], argv + 2, environ);
-    perror("Panels: Worker Node runtime"); return 1;
+    return run_node(argv + 2);
   }
   unsetenv("NODE_OPTIONS"); unsetenv("NODE_PATH");
   struct passwd *account = getpwuid(getuid());
@@ -817,8 +883,8 @@ int main(int argc, char **argv) {
   args[0] = node;
   args[1] = bootstrap;
   for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
-  execve(args[0], args, environ);
-  perror("Panels: fixed Node runtime"); free(args); return 1;
+  int result = run_node(args);
+  free(args); return result;
 }
 `;
   return { bundle_id: MAC_BUNDLE_ID, info_plist: info, launcher_source: launcher };
