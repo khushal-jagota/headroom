@@ -2,8 +2,8 @@ import type { TransitionConfig } from "svelte/transition";
 
 /** The review page's Directional Deck.
  *
- * Items move on the horizontal axis. Done or skipped leaves left and the next arrives from
- * the right. Only the way back from the final screen runs the other way. The artifact is a
+ * Items move on the horizontal axis, always the same way: the old view leaves left and the
+ * new one arrives from the right, including the way back from the final screen. The artifact is a
  * layer on the vertical axis: it rises to open and drops to close.
  *
  * Every distance, duration and curve comes from `assets/tokens.css`. The one value that is
@@ -18,13 +18,6 @@ export const ARRIVAL_DELAY_MS = 60;
 
 /** The view key of the final screen. Every other key is an item's own. */
 export const FINAL_VIEW = "final";
-
-export type DeckDirection = 1 | -1;
-
-/** Forward is the rule. Leaving the final screen is the only way back. */
-export function deckDirectionBetween(from: string | null, to: string | null): DeckDirection {
-  return from === FINAL_VIEW && to !== FINAL_VIEW ? -1 : 1;
-}
 
 type Easing = (progress: number) => number;
 
@@ -161,8 +154,6 @@ function standing(node: HTMLElement): Stood {
 
 /** What the deck remembers between renders. The page changes it, the transitions read it. */
 export class Deck {
-  /** Which way the item in motion goes. */
-  direction: DeckDirection = 1;
   /** False for the first thing drawn, which has nothing to arrive after. */
   hadPrevious = false;
   /** True from when the artifact layer starts to rise until it is fully gone. */
@@ -180,7 +171,6 @@ export class Deck {
     if (view === this.#view) return;
     const previous = this.#view;
     this.#view = view;
-    this.direction = deckDirectionBetween(previous, view);
     this.hadPrevious = previous !== null;
     this.#leaving = previous !== null && itemNode ? { node: itemNode, stood: standing(itemNode) } : null;
   }
@@ -196,7 +186,6 @@ type DeckParams = { deck: Deck };
 /** An item leaves: it stays where it was and slides out. */
 export function deckItemOut(node: HTMLElement, { deck }: DeckParams): TransitionConfig {
   const tokens = readDeckTokens(node);
-  const direction = deck.direction;
   pin(node, deck.stood(node), true);
   // Under an artifact the old card is never seen again, only the artifact leaving.
   if (deck.covering) node.style.visibility = "hidden";
@@ -204,21 +193,20 @@ export function deckItemOut(node: HTMLElement, { deck }: DeckParams): Transition
   return {
     duration: tokens.exit,
     easing: tokens.exitEase,
-    css: (t, u) => `opacity:${t};transform:translateX(${-direction * tokens.distance * u}px)`
+    css: (t, u) => `opacity:${t};transform:translateX(${-tokens.distance * u}px)`
   };
 }
 
-/** The next item arrives from the other side while the last one is still leaving. */
+/** The next item arrives from the right while the last one is still leaving. */
 export function deckItemIn(node: HTMLElement, { deck }: DeckParams): TransitionConfig {
   if (!deck.hadPrevious) return { duration: 0 };
   const tokens = readDeckTokens(node);
-  const direction = deck.direction;
   if (reducedMotion()) return { duration: tokens.fade, css: (t) => `opacity:${t}` };
   return {
     delay: ARRIVAL_DELAY_MS,
     duration: tokens.enter,
     easing: tokens.enterEase,
-    css: (t, u) => `opacity:${t};transform:translateX(${direction * tokens.distance * u}px)`
+    css: (t, u) => `opacity:${t};transform:translateX(${tokens.distance * u}px)`
   };
 }
 
