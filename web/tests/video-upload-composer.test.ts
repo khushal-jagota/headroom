@@ -1,3 +1,4 @@
+import { orderedComposerAttachments, replaceQuestionAttachmentOrder } from "../src/components/conversation/composer/attachments";
 import { mintOutgoingMessage, reserveOutgoingMessageImages, resetOutgoingImageReservationsForTest } from "../src/lib/conversation/outgoing";
 import { describe, expect, it, vi } from "vitest";
 import { beginComposerSend, restoreRefusedComposerSend, type ComposerDraft } from "../src/components/conversation/composer/draftTransaction";
@@ -144,4 +145,17 @@ describe("video attachment send intent", () => {
     const queue = new LocalComposerSends(dispatch, () => undefined); queue.entries = recalled;
     await queue.pump(); expect(dispatch).not.toHaveBeenCalled();
   });
+});
+
+// A video can already exist when a structured question arrives. Its tile must not disappear
+// when the answer pager replaces image/file drafts, because the later message still sends it.
+it("keeps an existing video visible through question draft replacement and answer completion", () => {
+  const pending = video(); pending.uploadId = "kept-video"; pending.phase = "ready";
+  const before = draft(pending);
+  const questionOrder = replaceQuestionAttachmentOrder(before.attachmentOrder!, [], [{ id: 9 }]);
+  const afterAnswer = replaceQuestionAttachmentOrder(questionOrder, [], []);
+  const visible = orderedComposerAttachments(afterAnswer, [], [], [pending]);
+  expect(visible.map((attachment) => attachment.kind)).toEqual(["video"]);
+  const sent = beginComposerSend({ ...before, attachmentOrder: afterAnswer }, { model: null, reasoningEffort: null });
+  expect(sent.content.filter((piece) => piece.piece === "video_upload")).toEqual([{ piece: "video_upload", upload_id: "kept-video" }]);
 });

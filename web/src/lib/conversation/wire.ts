@@ -160,7 +160,11 @@ export type UserInputQuestion = {
   allow_other: boolean;
 };
 
-export type UserInputAnswers = Record<string, { answers: string[] }>;
+/** Upload pieces belong to the question whose free-text answer receives their file references. */
+export type UserInputAttachment = Extract<SentMessagePiece, { piece: "image" | "file" }>;
+export type UserInputAnswers = Record<string, { answers: string[]; attachments?: UserInputAttachment[] }>;
+/** Stored answers refer to managed files rather than browser upload bytes. */
+export type RecordedUserInputAnswers = Record<string, { answers: string[]; attachments?: MessagePiece[] }>;
 
 export type PendingUserInput = {
   request_id: string;
@@ -311,7 +315,7 @@ export type ConversationEvent =
     >
   | Row<
       "user_input_answered",
-      { request_id: string; answers: UserInputAnswers; fate?: AnswerFate; answer_id?: string | null }
+      { request_id: string; answers: RecordedUserInputAnswers; fate?: AnswerFate; answer_id?: string | null }
     >
   | Row<"user_input_failed", { request_id: string; detail: string }>
   | Row<'credential_request', { request: import('./view/contracts').CredentialRequestRowBody }>
@@ -718,14 +722,18 @@ export function answerPermissionAsk(
   );
 }
 
-export function answerUserInput(
+export async function answerUserInput(
   conversationId: string,
   requestId: string,
   answers: UserInputAnswers
 ): Promise<{ fate: AnswerFate }> {
+  // The same answer draft keeps its identity across a lost response and retry.
+  const identity = JSON.stringify([conversationId, requestId, Object.entries(answers).sort(([left], [right]) => left.localeCompare(right))]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
+  const operationId = `answer-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
   return request<{ fate: AnswerFate }>(
     `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
-    postJson({ request_id: requestId, answers })
+    postJson({ request_id: requestId, answers, operation_id: operationId })
   );
 }
 

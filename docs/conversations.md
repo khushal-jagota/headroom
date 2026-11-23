@@ -38,6 +38,12 @@ Machine code gives each agent a capability for its exact child and conversation.
 
 Claude and Codex run from owner-maintained CLI installations outside the app. Settings → Backends shows their installed and latest versions on the selected machine. Only the owner can update them there. Antigravity runs the host's own `agy`, version 1.5.1 or later, with its normal CLI login under `~/.gemini`; Panels never updates it. Updates change the selected user-local installation, and new agent processes use that version. A failed lookup of newer releases does not stop ordinary conversations. Before each backend starts, it checks its selected CLI. Each version verdict is remembered for the exact installed file, so a start reads the version again only after the CLI changes. It also checks the version the running CLI reports when it connects. If that CLI lacks a required feature, the backend names the required update, and a turn is refused before any launch is recorded. The adapter reads only the protocol fields it needs and ignores unrelated additions. The feature minimums and their reasons live in each driver's manifest and in `server/conversation/backends/cli_compatibility.ts`. CLI updates stay on the selected machine.
 
+## Attachments in composers
+
+Every web composer accepts files through its picker, file paste, and a drop onto the whole composer. Conversation, Review, approval, and artifact views share that behavior.
+
+Claude and Codex free-text question answers can carry attachments. The files reach the agent's machine before the answer supplies their readable references. They belong to that answer and do not become a separate queued message. Questions that accept only listed choices retain that restriction and explain it beside the answer controls. Antigravity's current integration has no structured-question channel; its ordinary messages accept attachments.
+
 ## How a send works
 
 A busy agent is not a refusal. The sender picks how a busy agent meets the message:

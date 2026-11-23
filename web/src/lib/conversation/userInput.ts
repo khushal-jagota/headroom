@@ -1,7 +1,19 @@
 import type {
   UserInputAnswers,
+  UserInputAttachment,
   UserInputQuestion
 } from "./wire";
+import { pendingFilesAsPieces, type PendingConversationFile } from "./pendingFiles";
+import { pendingImagesAsPieces, type PendingConversationImage } from "./pendingImages";
+
+export function pendingAnswerAttachments(
+  images: readonly PendingConversationImage[],
+  files: readonly PendingConversationFile[]
+): UserInputAttachment[] {
+  return [...pendingImagesAsPieces(images), ...pendingFilesAsPieces(files)].filter(
+    (piece): piece is UserInputAttachment => piece.piece === "image" || piece.piece === "file"
+  );
+}
 
 export type UserInputDraft = {
   selected: Record<string, string[]>;
@@ -43,13 +55,16 @@ export function userInputAnswerFor(
 
 export function completeUserInputAnswers(
   draft: UserInputDraft,
-  questions: readonly UserInputQuestion[]
+  questions: readonly UserInputQuestion[],
+  attachmentsByQuestion: Record<string, UserInputAttachment[]> = {}
 ): UserInputAnswers | null {
   const answers: UserInputAnswers = {};
   for (const question of questions) {
     const given = userInputAnswerFor(draft, question);
-    if (given.length === 0) return null;
-    answers[question.question_id] = { answers: given };
+    const attachments = attachmentsByQuestion[question.question_id] ?? [];
+    if (given.length === 0 && (!question.allow_other || attachments.length === 0)) return null;
+    if (attachments.length && !question.allow_other) return null;
+    answers[question.question_id] = { answers: given, ...(attachments.length ? { attachments } : {}) };
   }
   return answers;
 }

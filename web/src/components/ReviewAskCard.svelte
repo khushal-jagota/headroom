@@ -14,6 +14,8 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import RequestRecapAction from "./RequestRecapAction.svelte";
   import SkeletonRegion from "./SkeletonRegion.svelte";
+  import { releasePendingImages, type PendingConversationImage } from "../lib/conversation/pendingImages";
+  import type { PendingConversationFile } from "../lib/conversation/pendingFiles";
   import ComposerField from "./conversation/ComposerField.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ReviewAskItem } from "../lib/types";
@@ -31,6 +33,7 @@
   import { readableConversationDetail } from "../lib/conversation/conversationDetail";
   import {
     completeUserInputAnswers,
+    pendingAnswerAttachments,
     emptyUserInputDraft,
     toggleUserInputChoice,
     userInputAnswerFor,
@@ -56,6 +59,12 @@
   let note = $state<string | null>(null);
   let draft = $state<UserInputDraft>(emptyUserInputDraft());
   let draftRequestId = "";
+  let attachmentDrafts = $state<Record<string, { images: PendingConversationImage[]; files: PendingConversationFile[]; busy: boolean }>>({});
+  let attachmentReadBusy = $derived(Object.values(attachmentDrafts).some((value) => value.busy));
+  function releaseAttachments(): void {
+    for (const entry of Object.values(attachmentDrafts)) releasePendingImages(entry.images);
+    attachmentDrafts = {};
+  }
   let destroyed = false;
 
   const chief = createQuery(() => ({ ...queries.chiefSettings(), enabled: item.owner_kind === "chief" && !embedded }));
@@ -72,15 +81,17 @@
         ? executorAnswerAvailable(view, "user_input", userInput.request_id)
         : false
   );
-  let answers = $derived(userInput ? completeUserInputAnswers(draft, userInput.questions) : null);
+  let answers = $derived(userInput ? completeUserInputAnswers(draft, userInput.questions, Object.fromEntries(Object.entries(attachmentDrafts).map(([id, entry]) => [id, pendingAnswerAttachments(entry.images, entry.files)]))) : null);
   let detail = $derived(readableConversationDetail(permission?.detail));
-  $effect(() => { onBusy?.(busy, conversationId); });
+  $effect(() => { onBusy?.(busy || attachmentReadBusy, conversationId); });
   // A new question starts with an empty draft.
   $effect(() => {
     const id = userInput?.request_id ?? "";
     if (id !== draftRequestId) {
       draftRequestId = id;
       draft = emptyUserInputDraft();
+      releaseAttachments();
+      attachmentDrafts = Object.fromEntries((userInput?.questions ?? []).map((question) => [question.question_id, { images: [], files: [], busy: false }]));
     }
   });
 
@@ -99,7 +110,7 @@
   }
   onMount(() => {
     void load();
-    return () => { destroyed = true; };
+    return () => { destroyed = true; releaseAttachments(); };
   });
 
   function sentence(fate: "applied" | "saved" | "refused", refused: string): string | null {
@@ -122,12 +133,13 @@
   }
   async function submitUserInput(): Promise<void> {
     const request = userInput;
-    if (!request || !answers || busy || !available) return;
+    if (!request || !answers || busy || attachmentReadBusy || !available) return;
     busy = true;
     note = null;
     try {
       const { fate } = await answerUserInput(conversationId, request.request_id, answers);
       note = sentence(fate, "The backend did not take those answers. You can try again.");
+      if (fate !== "refused") releaseAttachments();
       await load();
     } catch (problem) {
       error = problem;
@@ -182,6 +194,10 @@
               {#if question.allow_other || question.options.length === 0}
                 <div class="ask-own-words">
                   <ComposerField
+                    bind:images={() => attachmentDrafts[question.question_id]?.images ?? [], (value) => { attachmentDrafts[question.question_id].images = value; }}
+                    bind:files={() => attachmentDrafts[question.question_id]?.files ?? [], (value) => { attachmentDrafts[question.question_id].files = value; }}
+                    bind:intakeBusy={() => attachmentDrafts[question.question_id]?.busy ?? false, (value) => { attachmentDrafts[question.question_id].busy = value; }}
+                    onError={(problem) => { error = problem; }}
                     bind:value={
                       () => draft.other[question.question_id] ?? "",
                       (text) => {
@@ -196,11 +212,13 @@
                     disabled={busy || !available}
                     inputAttributes={{ "data-review-ask-own-words": question.question_id }} />
                 </div>
+              {:else}
+                <p class="ask-note" data-composer-attachment-unavailable>This question only accepts the listed choices. Answer with a listed choice, then attach files in a message.</p>
               {/if}
             </div>
           {/each}
           <div class="ask-actions">
-            <Button variant="secondary" data-review-ask-send disabled={busy || !available || !answers} onclick={() => void submitUserInput()}>Send answer</Button>
+            <Button variant="secondary" data-review-ask-send disabled={busy || attachmentReadBusy || !available || !answers} onclick={() => void submitUserInput()}>Send answer</Button>
           </div>
         {/if}
         {#if note}<p class="ask-note" data-review-ask-note>{note}</p>{/if}

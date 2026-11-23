@@ -220,7 +220,17 @@ export function row_body(
         answers:
           answer === null
             ? null
-            : answer.answers.map((value) => ({ ...value, answers: [...value.answers] })),
+            : answer.answers.map((value) => ({
+                question_id: value.question_id,
+                answers: [...value.answers],
+                ...(value.attachments?.length
+                  ? {
+                      attachments: content_pieces(value.attachments).filter(
+                        (piece) => piece.piece !== 'text',
+                      ),
+                    }
+                  : {}),
+              })),
         failure_detail: failure?.detail ?? null,
       } as UserInputRowBody;
       if (answer?.answer_id) {

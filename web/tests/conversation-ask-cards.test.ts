@@ -172,7 +172,7 @@ describe("the question panel", () => {
     // Choosing is a click and the tests run without a DOM; the wiring is read from the source.
     const panel = readFileSync(new URL("../src/components/conversation/UserInputQuestionPanel.svelte", import.meta.url), "utf8") as string;
     expect(panel).toMatch(/if \(question\.multi_select\) \{\s*draft = toggleUserInputChoice\(draft, question, option\);\s*return;\s*\}[\s\S]*?continueOrSubmit\(\);\s*\}/);
-    expect(panel).toContain("if (open >= 0) step = open;");
+    expect(panel).toContain("if (open >= 0) selectStep(open);");
   });
 });
 
@@ -273,6 +273,18 @@ describe("an own answer written in the composer", () => {
     const { withOwnAnswer, toggleUserInputChoice, emptyUserInputDraft, completeUserInputAnswers } = await import("../src/lib/conversation/userInput");
     const chosen = toggleUserInputChoice(emptyUserInputDraft(), multi, "Soft shapes");
     expect(completeUserInputAnswers(withOwnAnswer(chosen, multi, "Warm"), [multi])).toEqual({ tone: { answers: ["Soft shapes", "Warm"] } });
+  });
+
+  it("keeps attachment-only answers with their question and refuses files for an exact-choice question", async () => {
+    const { completeUserInputAnswers, emptyUserInputDraft, toggleUserInputChoice } = await import("../src/lib/conversation/userInput");
+    const file = { piece: "file" as const, data: "bm90ZXM=", file_name: "notes.txt", media_type: "text/plain" };
+    const second = { ...single, question_id: "proof" };
+    const selected = toggleUserInputChoice(emptyUserInputDraft(), second, "Soft shapes");
+    expect(completeUserInputAnswers(selected, [single, second], { style: [file] })).toEqual({
+      style: { answers: [], attachments: [file] }, proof: { answers: ["Soft shapes"] }
+    });
+    expect(completeUserInputAnswers(selected, [{ ...single, allow_other: false }, second], { style: [file] })).toBeNull();
+    expect(completeUserInputAnswers(selected, [single, second])).toBeNull();
   });
 
   it("is written in the composer when the panel is docked over it: no second field, a row that says where", () => {

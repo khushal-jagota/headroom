@@ -78,12 +78,10 @@ describe("a question asked in the composer's place", () => {
     expect(body).toMatch(/class="chat-send chat-ask-send[^"]*"[^>]*>(<!--[^>]*-->)*<span class="chat-ask-send-round"/);
   });
 
-  it("sends a several-answer question that has a choice and no words of its own", () => {
-    // The tests run without a DOM; the wiring is read from the source.
-    const composer = readFileSync(new URL("../src/components/conversation/ConversationComposer.svelte", import.meta.url), "utf8") as string;
+  it("keeps the ask send available for a selected answer without ordinary message content", () => {
+    // Browser question coverage proves the click route. This check keeps the controls' empty
+    // draft override explicit while the shared run-controls model still owns ordinary sends.
     const controls = readFileSync(new URL("../src/components/conversation/composer/ComposerRunControls.svelte", import.meta.url), "utf8") as string;
-    expect(composer).toContain('askCommitReady={userInput !== null && questionCommitReady && text.trim() === "" && attachments.length === 0}');
-    expect(composer).toMatch(/if \(userInput !== null && questionPanel !== null && questionCommitReady && text\.trim\(\) === "" && attachments\.length === 0\) \{\s*questionPanel\.commit\(\);\s*return;\s*\}/);
     expect(controls).toContain("disabled={view.submit.disabled && !askCommitReady}");
   });
 });

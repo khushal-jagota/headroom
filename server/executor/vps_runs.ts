@@ -4,7 +4,10 @@ import { same_reference } from './child_reference.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as pause } from 'node:timers/promises';
-import { BackendSpawnFailed } from '../conversation/backends/contracts.ts';
+import {
+  BackendSpawnFailed,
+  UserInputAnswerWriteFailed,
+} from '../conversation/backends/contracts.ts';
 import type {
   BackendChildFactory,
   BackendEventSink,
@@ -437,6 +440,15 @@ export class MacRuns {
   }
   save_answer(command: WireValue<'ChildCommand'>): Promise<boolean> {
     return this.own(async () => {
+      const args = command.arguments;
+      if (
+        args.kind === 'answer_user_input' &&
+        args.answers.some((answer) => answer.attachments?.length) &&
+        (this.presence.current_identity()?.protocol_version ?? 0) < 28
+      )
+        throw new UserInputAnswerWriteFailed(
+          'Update the executor to attach files to a question answer.',
+        );
       const conversations = this.require_conversations();
       let inserted = false;
       if (command.turn !== null)

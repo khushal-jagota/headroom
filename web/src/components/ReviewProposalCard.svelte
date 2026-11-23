@@ -27,7 +27,7 @@
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
-  import AttachableComposerField from "./conversation/AttachableComposerField.svelte";
+  import ComposerField from "./conversation/ComposerField.svelte";
   import type { PendingConversationFile } from "../lib/conversation/pendingFiles";
   import type { PendingConversationImage } from "../lib/conversation/pendingImages";
   import {
@@ -302,7 +302,7 @@
         <!-- The note goes with the explicit decision. Enter flashes the decision buttons and
              Shift+Enter adds a line; the field never chooses Send it back or Approve. Spoken words append to the note. -->
         <div class="review-revise" data-review-revision>
-          <AttachableComposerField
+          <ComposerField
             bind:value={revisionDraft}
             bind:images={revisionImages}
             bind:files={revisionFiles}

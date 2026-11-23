@@ -15,13 +15,17 @@ import type { MacFileTransport } from './transport/files.ts';
 import { ExecutorHttpError } from './transport/errors.ts';
 import { failure_detail } from './failure_detail.ts';
 export class InputDownloadRefused extends Error {}
-/** Every stored file a prompt or steer names, images and files alike, once each. */
+/** Every stored file a prompt, steer, or answer names, images and files alike, once each. */
 export function input_file_ids(command: ChildCommand): string[] {
   const args = command.arguments;
-  if (args.kind !== 'write_prompt' && args.kind !== 'steer') return [];
+  const pieces =
+    args.kind === 'answer_user_input'
+      ? args.answers.flatMap((answer) => answer.attachments ?? [])
+      : args.kind === 'write_prompt' || args.kind === 'steer'
+        ? [...args.content, ...(args.sender_content ?? [])]
+        : [];
   const ids = new Set<string>();
-  for (const piece of [...args.content, ...(args.sender_content ?? [])])
-    if ('stored_file_id' in piece) ids.add(piece.stored_file_id);
+  for (const piece of pieces) if ('stored_file_id' in piece) ids.add(piece.stored_file_id);
   return [...ids];
 }
 export class MacInputs {

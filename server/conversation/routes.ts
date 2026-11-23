@@ -8,6 +8,11 @@ import { stat } from 'node:fs/promises';
 import { PlannerError } from '../core/contracts.ts';
 import { sendFile } from '../core/http/static.ts';
 import { body_fields, Fields, object } from './http/intake.ts';
+import {
+  answer_attachments,
+  keep_answer_attachments,
+  type SentAnswerAttachment,
+} from './http/user_input.ts';
 import { public_event, send_event_tail } from './http/record.ts';
 import type { ConversationHttpWriteScope } from './http/writes.ts';
 import { readable_tool_call_detail } from './tool_detail.ts';
@@ -570,6 +575,7 @@ export function createConversationRoutes(
         const fields = body_fields(request.body);
         const request_id = fields.text('request_id');
         const answers: UserInputAnswer[] = [];
+        const uploads = new Map<string, SentAnswerAttachment[]>();
         const supplied = fields.body.answers;
         if (!('answers' in fields.body))
           fields.issue('missing', ['answers'], 'Field required', fields.body);
@@ -579,6 +585,8 @@ export function createConversationRoutes(
           for (const [question_id, value] of Object.entries(supplied)) {
             const nested = new Fields(value, ['body', 'answers', question_id]);
             if (object(value)) {
+              if (value.attachments !== undefined)
+                uploads.set(question_id, answer_attachments(value.attachments, question_id));
               const choices = value.answers;
               if (!('answers' in value))
                 nested.issue('missing', ['answers'], 'Field required', value);
@@ -605,12 +613,20 @@ export function createConversationRoutes(
         fields.finish();
         requireOwner(services.identity(request));
         answerable_conversation(runtime, request.params.conversation_id, operation_id);
+        const attached = await keep_answer_attachments(
+          runtime.core.options.message_files,
+          request.params.conversation_id,
+          request_id!,
+          operation_id,
+          answers,
+          uploads,
+        );
         return {
           fate: await answer_error(() =>
             runtime.core.answer_user_input(
               request.params.conversation_id,
               request_id!,
-              answers,
+              attached,
               operation_id,
             ),
           ),

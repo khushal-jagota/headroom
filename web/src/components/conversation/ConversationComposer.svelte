@@ -29,12 +29,13 @@
   import { LocalComposerSends, releaseRemovedLocalSends, recallLocalSends, rememberLocalSends, recallDraftVideo, rememberDraftVideo, type PendingComposerSend } from "../../lib/conversation/videoUploads/localSends";
 
   import { catalogEntriesForTrigger, catalogEntriesMatching } from "./composer/catalog";
+  import { attachmentSurface } from "./composer/attachmentSurface";
   import ComposerAttachments from "./composer/ComposerAttachments.svelte";
   import ComposerAddMenu from "./composer/ComposerAddMenu.svelte";
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
   import SystemLine from "./SystemLine.svelte";
   import {
-    orderedComposerAttachments, attachmentByteLabel,
+    orderedComposerAttachments, replaceQuestionAttachmentOrder, attachmentByteLabel,
     type ComposerAttachmentReference
   } from "./composer/attachments";
   import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
@@ -64,6 +65,7 @@
   } from "../../lib/conversation/runControls/contracts";
   import type { RunValues } from "../../lib/conversation/composer";
   import { askShape } from "../../lib/conversation/composer";
+  import { pendingAnswerAttachments } from "../../lib/conversation/userInput";
   import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import {
@@ -78,11 +80,13 @@
     createPendingConversationImages,
     pendingConversationImageBytes,
     releasePendingImages,
+    restoredPendingImages,
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
   import {
     CONVERSATION_FILE_ACCEPT,
     createPendingConversationFiles,
+    restoredPendingFiles,
     pendingConversationFileBytes,
     type PendingConversationFile
   } from "../../lib/conversation/pendingFiles";
@@ -95,6 +99,7 @@
     PromptDeliveryMode,
     SentMessagePiece,
     UserInputAnswers,
+    UserInputAttachment,
     UserInputQuestion
   } from "../../lib/conversation/wire";
 
@@ -213,7 +218,7 @@
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
-    onSubmitUserInput?: (answers: UserInputAnswers) => void;
+    onSubmitUserInput?: (answers: UserInputAnswers) => Promise<boolean> | boolean | void;
     onCancelTurn?: () => void;
     onDiscardHeldPrompt?: (heldPromptId: string) => Promise<void> | void;
     onPromoteHeldPrompt?: (
@@ -337,7 +342,6 @@
   });
   let nextImageId = 1;
   let nextFileId = 1;
-  let dragDepth = 0;
   let draggingAttachments = $state(false);
   let intakeError = $state<string | null>(null);
   let intakeTail: Promise<void> = Promise.resolve();
@@ -362,18 +366,39 @@
   // v6: no waiting line above an ask: the ask card's own label is the one waiting label.
   /** The question on screen, when it takes an own answer: the composer is then the one place
    *  to write it, right under the question, and its send answers. */
-  let questionPanel = $state<{ answerWith: (words: string) => boolean; commit: () => void } | null>(null);
+  let questionPanel = $state<{ answerWith: (words: string, attached?: UserInputAttachment[]) => boolean; commit: () => void } | null>(null);
   /** v10 (4): asks have no confirm pill: each option row is the action. The free-text well
    *  keeps its own round send. Only a question that takes several answers waits for that
    *  send to go on once something is chosen (questionCommitReady). */
   let questionCommitReady = $state(false);
   let questionTakesOwnAnswer = $state(false);
-  /** What a waiting ask makes of the draft (runControls contracts). Words alone answer a
-   *  question that takes an own answer; anything else waits for the blocked turn, or ends it. */
+  let questionAttachments = $derived(pendingAnswerAttachments(pendingImages, pendingFiles));
+  let questionForbidsAttachments = $derived(userInput !== null && !questionTakesOwnAnswer);
+
+  function clearQuestionDraft(requestId: string): void {
+    if (userInput !== null && userInput.requestId !== requestId) return;
+    releasePendingImages(pendingImages);
+    pendingImages = []; pendingFiles = []; attachmentOrder = replaceQuestionAttachmentOrder(attachmentOrder, [], []);
+    text = ""; cursorAt = 0;
+    recordDraftChange();
+  }
+
+  function restoreQuestionDraft(_questionId: string, words: string, attached: UserInputAttachment[]): void {
+    releasePendingImages(pendingImages);
+    const images = restoredPendingImages(attached, nextImageId);
+    const files = restoredPendingFiles(attached, nextFileId);
+    nextImageId = images.nextId; nextFileId = files.nextId;
+    pendingImages = images.images; pendingFiles = files.files;
+    attachmentOrder = replaceQuestionAttachmentOrder(attachmentOrder, pendingImages, pendingFiles);
+    text = words; cursorAt = words.length;
+    recordDraftChange();
+  }
+  /** A free-text question uses this draft, including files, as its answer. Other asks keep
+   *  their own actions. */
   let askWaiting = $derived<"answers" | "holds" | null>(
     !panelTakesTheBox
       ? null
-      : userInput !== null && questionTakesOwnAnswer && attachments.length === 0
+      : userInput !== null && questionTakesOwnAnswer
         ? "answers"
         : "holds"
   );
@@ -493,11 +518,7 @@
     activeCatalogEntryIndex = 0;
   });
 
-  $effect(() => {
-    if (!inputDisabled) return;
-    dragDepth = 0;
-    draggingAttachments = false;
-  });
+
 
   // Catalog changes may make a pending pick meaningless. That is reconciliation, not
   // something the person composed, so applying it never advances the draft revision.
@@ -583,20 +604,14 @@
 
   async function send(): Promise<void> {
     await intakeTail;
-    // v10 (4): a question that takes several answers goes on from the well's send once
-    // something is chosen and nothing is written.
-    if (userInput !== null && questionPanel !== null && questionCommitReady && text.trim() === "" && attachments.length === 0) {
-      questionPanel.commit();
-      return;
-    }
-    // Words written under a question that takes an own answer are that answer: they go to
-    // the question, not into the turn, and leave the box once taken.
-    if (askWaiting === "answers" && questionPanel !== null && text.trim() !== "") {
-      if (questionPanel.answerWith(text.trim())) {
-        text = "";
-        cursorAt = 0;
+    if (userInput !== null && questionPanel !== null) {
+      if (questionTakesOwnAnswer && (text.trim() || questionAttachments.length)) {
+        questionPanel.answerWith(text, questionAttachments);
         return;
       }
+      if (questionCommitReady) { questionPanel.commit(); return; }
+      // A pending question keeps this send on the answer path.
+      return;
     }
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0 && pendingVideos.length === 0) || inputDisabled) return;
@@ -689,6 +704,7 @@
     const chosen: File[] = [];
     for (const file of Array.from(files ?? [])) {
       if (!isVideoFile(file.name)) { chosen.push(file); continue; }
+      if (userInput !== null) { intakeError = "Structured answers accept pictures and files. Attach videos in a message."; continue; }
       if (!uploadDestination) { intakeError = "Video upload is unavailable for this conversation."; continue; }
       if (pendingVideos[0]?.phase === "interrupted" || (pendingVideos[0]?.phase === "failed" && !pendingVideos[0]?.file)) removeVideo(pendingVideos[0]);
       if (pendingVideos.length) { intakeError = "Attach one video per message."; continue; }
@@ -836,46 +852,6 @@
     recordDraftChange();
     pendingFiles = pendingFiles.filter((candidate) => candidate.id !== file.id);
     attachmentOrder = attachmentOrder.filter((reference) => reference.kind !== "file" || reference.id !== file.id);
-  }
-
-  function hasAttachmentTransfer(event: DragEvent): boolean {
-    return Array.from(event.dataTransfer?.items ?? []).some((item) =>
-      item.kind === "file"
-    );
-  }
-
-  function onDragEnter(event: DragEvent): void {
-    if (inputDisabled || !hasAttachmentTransfer(event)) return;
-    event.preventDefault();
-    dragDepth += 1;
-    draggingAttachments = true;
-  }
-
-  function onDragOver(event: DragEvent): void {
-    if (inputDisabled || !hasAttachmentTransfer(event)) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-    draggingAttachments = true;
-  }
-
-  function onDragLeave(): void {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) draggingAttachments = false;
-  }
-
-  function onDrop(event: DragEvent): void {
-    if (inputDisabled) return;
-    event.preventDefault();
-    dragDepth = 0;
-    draggingAttachments = false;
-    void intakeFiles(event.dataTransfer?.files);
-  }
-
-  function onPaste(event: ClipboardEvent): void {
-    const files = event.clipboardData?.files;
-    if (inputDisabled || !files || files.length === 0) return;
-    event.preventDefault();
-    void intakeFiles(files);
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -1301,10 +1277,7 @@
       data-conversation-box-shape={compact ? "line" : "grown"}
       role="group"
       aria-label="Conversation composer"
-      ondragenter={onDragEnter}
-      ondragover={onDragOver}
-      ondragleave={onDragLeave}
-      ondrop={onDrop}
+      use:attachmentSurface={{ disabled: inputDisabled || questionForbidsAttachments, onFiles: (chosen) => void intakeFiles(chosen), onDragChange: (active) => draggingAttachments = active }}
       onmousedown={keepTheFieldFocused}
       onclick={focusTheFieldFromTheBox}
     >
@@ -1319,12 +1292,14 @@
             bind:acceptsOwnAnswer={questionTakesOwnAnswer}
             bind:commitReady={questionCommitReady}
             framed={false}
-            ownAnswer={attachments.length === 0 ? text : ""}
-            onOwnAnswerUsed={() => { text = ""; cursorAt = 0; }}
+            ownAnswer={text}
+            ownAttachments={questionAttachments}
+            onQuestionDraftChange={restoreQuestionDraft}
+            onOwnAnswerUsed={clearQuestionDraft}
             onWriteOwnAnswer={() => inputElement?.focus()}
             request={userInput}
             onStop={undefined}
-            busy={disabled}
+            busy={inputDisabled}
             answerAvailable={userInputAvailable}
             note={userInputNote}
             onSubmit={(answers) => onSubmitUserInput?.(answers)}
@@ -1389,7 +1364,6 @@
         onclick={fieldPressed}
         onfocus={fieldFocused}
         onblur={() => { theCursorIsInTheBox = false; keyboardFocus = false; }}
-        onpaste={onPaste}
       ></textarea>
 
       <div class="chat-foot">
@@ -1450,7 +1424,7 @@
                draft, microphone, send); while a turn is open the header's "..." menu leads
                with "Stop the agent". -->
           <ComposerAddMenu bind:open={addMenuOpen} bind:root={addMenuElement}
-            disabled={inputDisabled} imageCount={pendingImages.length} fileCount={pendingFiles.length}
+            disabled={inputDisabled || questionForbidsAttachments} imageCount={pendingImages.length} fileCount={pendingFiles.length}
             onPicture={() => imageInput?.click()} onFile={() => fileInput?.click()} onCamera={() => cameraInput?.click()}
             onCommand={() => void startWritingACommand()}
           />

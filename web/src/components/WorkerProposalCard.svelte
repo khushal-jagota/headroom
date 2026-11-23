@@ -4,7 +4,7 @@
   import CeilingPicker from "./CeilingPicker.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
-  import AttachableComposerField from "./conversation/AttachableComposerField.svelte";
+  import ComposerField from "./conversation/ComposerField.svelte";
   import { pendingFilesAsPieces, restoredPendingFiles, type PendingConversationFile } from "../lib/conversation/pendingFiles";
   import { pendingImagesAsPieces, releasePendingImages, restoredPendingImages, type PendingConversationImage } from "../lib/conversation/pendingImages";
   import { advanceTargetFor, finalApprovalFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
@@ -217,7 +217,7 @@
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="revision" bind:this={revisionSlot}>
     {#if revisionEditor}{@render revisionEditor(flashDecisions)}{:else}
-      <AttachableComposerField bind:value={revisionText} bind:images={revisionImages} bind:files={revisionFiles} bind:intakeBusy={attachmentReadBusy}
+      <ComposerField bind:value={revisionText} bind:images={revisionImages} bind:files={revisionFiles} bind:intakeBusy={attachmentReadBusy}
         placeholder="Add a note for the worker…"
         inputAttributes={{ "data-revision-note": "" }} onsubmit={flashDecisions} />
     {/if}
