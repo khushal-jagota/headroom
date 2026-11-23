@@ -464,6 +464,8 @@ def main() -> int:
                      recap="The release build is ready for its test run.", pending_proposal=None)
         tickets["ask-ticket"] = asker
     if ARTIFACT_DOCK_SMOKE:
+        # The Ticket page shows the waiting proposal and its note, as in the queue walk.
+        manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
         tickets["offline-1"]["pending_proposal"]["body"] = (
             "The proof is in the [dock evidence](/files/tickets/offline-1/dock-proof.md)."
         )
@@ -1477,6 +1479,14 @@ def main() -> int:
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
                 self.wfile.write(content)
+                return
+            if ARTIFACT_DOCK_SMOKE and path == "/api/artifact-catalog/ticket/offline-1":
+                # The Ticket page keeps its two files behind the collapsed Artifacts row.
+                self.respond(dict(revision="dock", directory="", offset=0, total=2, entries=[
+                    dict(key=f"managed:{name}", path=name, label=name, kind="2",
+                         href=f"/files/tickets/offline-1/{name}", directory=None, child_count=0)
+                    for name in ("dock-proof.md", "nested-dock.md")
+                ]))
                 return
             if ARTIFACT_DOCK_SMOKE and path in (
                 "/files/tickets/offline-1/dock-proof.md",

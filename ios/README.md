@@ -270,6 +270,8 @@ methods. A selection that executes zero tests fails, even if Xcode returns succe
 They stay outside the permanent release suite. The existing fixture harnesses select
 that scheme with `--review`. These walks cover specialist attachment previews,
 Latest scrolling, detail navigation, large text, Goal edits, notification routing,
+the dock under an opened artifact with block Markdown (`ArtifactDockTests`, run with
+`PANELS_ARTIFACT_DOCK_SMOKE=1`),
 Review composer appearance, the shell (`SidebarNavigationTests/testDestinationsBackSwipeAndOneComposer`:
 Sidebar cards, destination switches, Back swipe over a root page, edge-only Sidebar
 swipe, one composer under an open conversation, and a Chief draft kept across
