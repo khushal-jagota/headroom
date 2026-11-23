@@ -6,7 +6,12 @@ struct AppShell: View {
     @Environment(NotificationController.self) private var notifications
     @Environment(\.scenePhase) private var scenePhase
     @State private var updateRequired = false
-    @State private var deploymentState: DeploymentStatusPresentation?
+    @State private var updateAttention = false
+    @State private var updateVisible = false
+    @State private var now = Date.now
+    private var connectionCovered: Bool {
+        store.serverUnreachable && !(store.updateStatus?.expectedRestart(now: now, starting: store.updateActions.starting(store.updateStatus, now: now)) ?? false)
+    }
     @State private var selectedTab: AppTab = .review
     @State private var savedReviewWork = ReviewSavedWork()
     @State private var reviewPath: [AppRoute] = []
@@ -16,12 +21,12 @@ struct AppShell: View {
     var body: some View {
         // Keep the tab graph mounted inside an owned UIKit view. Hide that exact
         // view while the separate connection cover remains visible and accessible.
-        MountedTabContent(content: tabs, isCovered: store.serverUnreachable)
+        MountedTabContent(content: tabs, isCovered: connectionCovered)
         // The inner UIKit host owns physical and keyboard safe areas once.
         .ignoresSafeArea(.all)
-        .allowsHitTesting(!store.serverUnreachable)
+        .allowsHitTesting(!connectionCovered)
         .overlay {
-            if store.serverUnreachable {
+            if connectionCovered {
                 ServerUnreachableView { await store.refresh() }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(PanelsTheme.surface)
@@ -31,7 +36,9 @@ struct AppShell: View {
         .task {
             while !Task.isCancelled {
                 updateRequired = NativeBuildGate.requiresUpdate(store.baseURL)
-                deploymentState = DeploymentStatusPresentation.resolve(store.deployment, connected: store.connection == "Following changes", readFailed: store.errors["Deployment"] != nil, now: .now)
+                now = .now
+                updateAttention = store.updateStatus?.needsAttention == true || store.updateFailure != nil || store.updateActions.error != nil
+                updateVisible = updateAttention || store.updateStatus.map { $0.state != "up_to_date" || $0.machines.contains { $0.attemptId != nil || $0.state != "current" } } == true || store.updateActions.inFlight
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
             }
         }
@@ -125,10 +132,10 @@ struct AppShell: View {
 
     private var moreTabImage: UIImage {
         let symbol = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: 23))!
-        guard let deploymentState else { return symbol }
+        guard updateVisible else { return symbol }
         return UIGraphicsImageRenderer(size: CGSize(width: 32, height: 25)).image { _ in
             symbol.withTintColor(UIColor(selectedTab == .more ? PanelsTheme.accent : PanelsTheme.faint)).draw(in: CGRect(x: 1, y: 9, width: 25, height: 6))
-            UIColor(deploymentState == .problem ? PanelsTheme.error : PanelsTheme.accent).setFill()
+            UIColor(updateAttention ? PanelsTheme.error : PanelsTheme.accent).setFill()
             UIBezierPath(ovalIn: CGRect(x: 26, y: 0, width: 6, height: 6)).fill()
         }.withRenderingMode(.alwaysOriginal)
     }

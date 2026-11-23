@@ -5,21 +5,7 @@ struct MoreView: View {
     var body: some View {
         List {
             Section {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let state = DeploymentStatusPresentation.resolve(store.deployment, connected: store.connection == "Following changes", readFailed: store.errors["Deployment"] != nil, now: context.date)
-                    HStack(spacing: PanelsTheme.Space.md) {
-                        Image(systemName: state == .problem ? "exclamationmark.triangle" : "server.rack")
-                            .foregroundStyle(state == .problem ? PanelsTheme.error : PanelsTheme.accent)
-                        VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
-                            Text("Panels server").foregroundStyle(PanelsTheme.strong)
-                            Text([state?.rawValue ?? "Up to date", store.deployment?.detail, store.deployment?.deployedSha.map { "Running \(String($0.prefix(7)))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(PanelsTheme.TypeScale.small)
-                                .foregroundStyle(state == .problem ? PanelsTheme.error : PanelsTheme.faint)
-                        }
-                    }.padding(.vertical, PanelsTheme.Space.xs)
-                    .accessibilityIdentifier("more.deployment")
-                    .accessibilityElement(children: .combine)
-                }
+                UpdateCard()
             }.listRowBackground(PanelsTheme.raised)
             Section {
                 destination("Feedback", symbol: "bubble.left", route: .feedback)
