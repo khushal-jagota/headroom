@@ -18,6 +18,10 @@ import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { load_machine_baselines } from './machine_baselines.ts';
 import { check_machine_wire } from './machine_wire_compatibility.ts';
 import { source_run } from './publication_identity.ts';
+import {
+  prepare_machine_providers,
+  SCRIPTED_MACHINE_BACKEND,
+} from '../../drivers/testing/machine_compatibility.ts';
 import type {
   MachineBaseline,
   MachineCompatibilityProof,
@@ -314,45 +318,19 @@ try {
     const state = join(root, label + '-state');
     await mkdir(state, { recursive: true });
     await write_credential(credential_path(state), server!.credential);
-    const bin = join(home, '.local/bin');
-    await mkdir(bin, { recursive: true });
     const node = platform === 'darwin' ? join(runtime, 'node/bin/node') : process.execPath;
-    for (const [name, script, extra] of [
-      [
-        'claude',
-        'claude/testing/scripted_cli.ts',
-        {
-          UNIT18_TRACE: join(root, label + '-claude.jsonl'),
-          UNIT18_WRAPPED_FILE: join(root, label + '-claude-launch.json'),
-        },
-      ],
-      [
-        'codex',
-        'codex/testing/scripted_app_server.ts',
-        { UNIT17_TRACE: join(root, label + '-codex.jsonl'), UNIT17_CORE_PROOF: '1' },
-      ],
-    ] as const)
-      await writeFile(
-        join(bin, name),
-        `#!${node}\nObject.assign(process.env, ${JSON.stringify(extra)});\nawait import(${JSON.stringify(join(source, 'server/drivers', script))});\n`,
-        { mode: 0o755 },
-      );
-    await writeFile(join(root, label + '-claude-launch.json'), '{}');
+    const providers = await prepare_machine_providers({ root, home, node, label, source });
     const environment = {
-      PATH: `${bin}:${dirname(node)}:${process.env.PATH}`,
+      PATH: `${providers.bin}:${dirname(node)}:${process.env.PATH}`,
       HOME: home,
       TMPDIR: process.env.TMPDIR,
       LANG: 'en_US.UTF-8',
       PLAN_EXECUTOR_ROOT: state,
-      PLAN_CLAUDE_EXECUTABLE: join(bin, 'claude'),
       PLAN_SERVER_URL: origin,
       PLAN_TEST_MODE: '0',
       NODE_EXTRA_CA_CERTS: join(tls, 'cert.pem'),
-      CODEX_HOME: join(home, '.codex'),
-      CLAUDE_CONFIG_DIR: join(home, '.claude'),
+      ...providers.environment,
     };
-    for (const path of [environment.CODEX_HOME, environment.CLAUDE_CONFIG_DIR])
-      await mkdir(join(path, 'skills'), { recursive: true });
     active = owner.spawn(
       node,
       [
@@ -386,8 +364,8 @@ try {
   );
   console.info('Machine compatibility: previous published runtime leased');
   // Historical Linux releases put bundled tools ahead of HOME/.local/bin.
-  // Claude's supported explicit executable setting selects the scripted provider.
-  const turn = await server.create_turn('claude');
+  // The provider's explicit executable setting selects the scripted peer.
+  const turn = await server.create_turn(SCRIPTED_MACHINE_BACKEND);
   await server.turn_result(turn.conversation_id);
   console.info(
     'Machine compatibility: previous published runtime delivered the scripted turn result',
