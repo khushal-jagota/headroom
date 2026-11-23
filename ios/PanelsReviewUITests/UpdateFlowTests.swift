@@ -175,6 +175,11 @@ final class UpdateFlowTests: XCTestCase {
         app.terminate()
         app.launch()
         openSettings(capturing: "none")
+        XCTAssertTrue(app.staticTexts["Up to date"].firstMatch.waitForExistence(timeout: 10))
+        // The last attempt keeps its press snapshot, but with nothing offered or running
+        // the card names no impact and no agents.
+        XCTAssertFalse(app.staticTexts["This update stops your agents"].exists)
+        XCTAssertFalse(app.staticTexts["Release reviewer"].exists)
         capture("updates-screen-none")
     }
 }

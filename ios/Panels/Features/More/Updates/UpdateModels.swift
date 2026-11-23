@@ -68,7 +68,17 @@ struct PanelsUpdateStatus: Decodable, Sendable {
         }
     }
     var answerKey: String { "\(state):\(attempt?.attemptId ?? "")" }
-    var cardInterruption: Interruption? { state == "available" ? interruption : attempt?.interruption }
+    /// The impact sentence belongs to an offer, a running update, or a failed server attempt
+    /// that offers Try again, because Try again stops the agents again. Up to date or after
+    /// a finished attempt, the card shows no sentence, even when the attempt kept its snapshot.
+    var cardInterruption: Interruption? {
+        switch state {
+        case "available": return interruption
+        case "updating": return attempt?.interruption
+        case "failed": return allowedActions.contains("retry") ? attempt?.interruption : nil
+        default: return nil
+        }
+    }
     var cardMachines: [Machine] {
         guard state == "available", available != nil else { return machines }
         return machines.map { row in

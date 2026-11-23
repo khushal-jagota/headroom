@@ -392,8 +392,9 @@ Opening the screen only reads stored values. Cost estimates are not bills.
 The Panels server row at the top of Settings displays deployment status without
 opening a page. Beside it, the Updates row opens the shared update card. Only that row
 tells of an update: a short line while one is offered or running. The Sidebar's gear,
-Review and the rest of the app stay quiet. The card shows the server’s interruption
-sentence, machine rows, and device warnings. Update opens the confirmation in the shared
+Review and the rest of the app stay quiet. The card shows machine rows and device
+warnings. It shows the server’s interruption sentence while an update is offered or running,
+and beside a failed server update's Try again, which stops the agents again. Update opens the confirmation in the shared
 sheet, which waits on the install and shows a refusal inside it. Server and machine
 failures offer their own Try again action. A machine retry retains that machine’s target,
 even when a later server attempt differs. Actions run once and never enter the message

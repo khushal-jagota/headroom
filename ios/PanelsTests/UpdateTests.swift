@@ -43,6 +43,11 @@ import XCTest
         XCTAssertEqual(progress.cardInterruption?.agents, ["Earlier worker"])
         let historical = try status(["state": "updating", "attempt": ["attempt_id": "historical", "state": "installing"]])
         XCTAssertNil(historical.cardInterruption, "A historical attempt must not inherit a new offer's impact")
+        let finished = try status(["state": "up_to_date", "available": NSNull(), "attempt": ["attempt_id": "new-attempt", "state": "done", "interruption": ["stops_agents": true, "agents": ["Earlier worker"], "machine_ids": []]]])
+        XCTAssertNil(finished.cardInterruption, "With nothing offered or running, the card states no impact")
+        let failed = try status(["state": "failed", "available": NSNull(), "allowed_actions": ["retry"]])
+        XCTAssertEqual(failed.cardInterruption?.sentence, "This update stops your agents", "Try again stops the agents again")
+        XCTAssertEqual(failed.cardInterruption?.agents, ["Earlier worker"])
     }
     func testCandidateCompatibilityIsOptionalAndWarnsForDeclaredClientsOnly() throws {
         XCTAssertEqual(try status().warnings, [])
