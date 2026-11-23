@@ -13,7 +13,7 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { create as create_tar } from 'tar';
-import { hash_archive } from '../../../environments/release/archive.ts';
+import { hash_archive, write_hardlinks_as_files } from '../../../environments/release/archive.ts';
 import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
 import {
   ARCHIVE_GZIP_LEVEL,
@@ -213,7 +213,13 @@ export async function build_mac_package(options: MacPackageOptions) {
   // Every top-level entry of the assembled runtime: a driver's release files
   // may add one beside server/, and with none there is no src/ to archive.
   await create_tar(
-    { cwd: runtime, file: archive, gzip: { level: ARCHIVE_GZIP_LEVEL }, portable: true },
+    {
+      cwd: runtime,
+      file: archive,
+      gzip: { level: ARCHIVE_GZIP_LEVEL },
+      portable: true,
+      onWriteEntry: write_hardlinks_as_files,
+    },
     (await readdir(runtime)).sort(),
   );
   if ((await stat(archive)).size > MAX_MAC_RUNTIME_ARCHIVE_BYTES)
