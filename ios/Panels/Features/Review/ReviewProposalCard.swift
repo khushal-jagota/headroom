@@ -192,7 +192,9 @@ struct ReviewProposalDock: View {
                 // Leaving clears the busy state.
                 if holder.kind != "owner" { onHold(); if exit.saved(sheetOpen: sheet != nil) { leave() } }
                 else { busyAction = nil }
-                await store.refresh()
+                // The change is saved, so the sheet closes now. The refresh can take a
+                // slow connection's full timeout, and it finishes in the background.
+                Task { await store.refresh() }
             })
     }
 
