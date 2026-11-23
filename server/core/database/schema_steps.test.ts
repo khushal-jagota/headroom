@@ -263,7 +263,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0006_answer_receipt_index',
+      to_revision: 'ts_0007_remove_tickets_blocks',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -271,10 +271,11 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0004_drop_ideas',
         'ts_0005_client_versions',
         'ts_0006_answer_receipt_index',
+        'ts_0007_remove_tickets_blocks',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0006_answer_receipt_index'],
+      revision: ['ts_0007_remove_tickets_blocks'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);
@@ -375,5 +376,49 @@ it('step 1 refuses before writing on any baseline difference but the recorded li
       /schema text differs from the baseline, so no step ran/,
     );
     assert.deepEqual(digest(path), before);
+  }
+});
+
+it('removes nested Tickets blocks without changing other document data or exact integers', () => {
+  const path = baseline_database(application_schema_seed);
+  const db = new BetterSqlite3(path);
+  const original =
+    '{"blocks":[{"type":"tickets","id":"first"},{"type":"section","id":"s","blocks":[{"type":"tickets","id":"nested"},{"type":"text","id":"t","text":"keep"}],"views":[{"id":"v","label":"V","blocks":[{"type":"tickets","id":"view"}]}]},{"type":"tickets","id":"last"}],"number":9007199254740993}';
+  const expected =
+    '{"blocks":[{"type":"section","id":"s","blocks":[{"type":"text","id":"t","text":"keep"}],"views":[{"id":"v","label":"V","blocks":[]}]}],"number":9007199254740993}';
+  try {
+    db.prepare("UPDATE alembic_version SET version_num = 'ts_0006_answer_receipt_index'").run();
+    db.prepare(
+      "INSERT INTO projects (id,name,created_at,updated_at) VALUES ('project','Project',0,0)",
+    ).run();
+    db.prepare(
+      "INSERT INTO managers (id,title,project_id,manager_backend,manager_model,created_at,updated_at,page,page_revision) VALUES ('m','Manager','project','codex','model',0,0,?,3)",
+    ).run(original);
+    db.prepare('INSERT INTO chief_page (singleton,page,page_revision) VALUES (1,?,4)').run(
+      original,
+    );
+    db.prepare(
+      "INSERT INTO goals (id,project_id,title,why,kind,active,completed,page,revision,created_at,updated_at,employee_backend,employee_launch_model) VALUES ('g','project','Goal','Why','binary',1,0,?,5,0,0,'codex','model')",
+    ).run(original);
+  } finally {
+    db.close();
+  }
+  release_steps(path);
+  const read = new BetterSqlite3(path, { readonly: true });
+  try {
+    assert.deepEqual(read.prepare('SELECT page,page_revision FROM managers').get(), {
+      page: expected,
+      page_revision: 4,
+    });
+    assert.deepEqual(read.prepare('SELECT page,page_revision FROM chief_page').get(), {
+      page: expected,
+      page_revision: 5,
+    });
+    assert.deepEqual(read.prepare('SELECT page,revision FROM goals').get(), {
+      page: expected,
+      revision: 6,
+    });
+  } finally {
+    read.close();
   }
 });
