@@ -263,7 +263,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0008_conversation_machine',
+      to_revision: 'ts_0009_work_moves',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -273,10 +273,11 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0006_server_link',
         'ts_0007_machine_backend_state',
         'ts_0008_conversation_machine',
+        'ts_0009_work_moves',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0008_conversation_machine'],
+      revision: ['ts_0009_work_moves'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);

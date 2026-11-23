@@ -255,6 +255,16 @@ export class SqliteCommandMailbox {
       options,
     );
   }
+  async put_work_move_request(
+    request: WireValue<'WorkMoveSourceRequest'>,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<WireValue<'MailboxCommand'>> {
+    return this.put(
+      (tx, now) => data.insert_work_move_request(tx, request, now, this.machine_id),
+      true,
+      options,
+    );
+  }
   /** Requires an authenticated executor whose identity the presence owner accepted as current. */
   async poll(
     identity: WireValue<'ExecutorIdentity'>,

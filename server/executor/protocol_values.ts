@@ -54,9 +54,12 @@ function command_admission(command: ChildCommand): boolean {
 }
 function mailbox_admission(command: MailboxCommand): boolean {
   if (
-    [command.child_command, command.model_list_request, command.backend_request].filter(
-      (value) => value != null,
-    ).length !== 1
+    [
+      command.child_command,
+      command.model_list_request,
+      command.backend_request,
+      command.work_move_request,
+    ].filter((value) => value != null).length !== 1
   )
     throw new ExecutorValidationError('A mailbox command requires exactly one payload.');
   if (command.child_command && command.child_command.command_id !== command.command_id)

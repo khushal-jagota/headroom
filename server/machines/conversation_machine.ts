@@ -33,6 +33,11 @@ export function agent_machine_id(
   agent: { kind: 'chief' } | { kind: 'manager'; id: string },
 ): string {
   const agent_key = agent.kind === 'chief' ? 'chief_of_staff' : `manager_${agent.id}`;
+  const selected = sql.get<{ machine_id: string | null }>(
+    'SELECT machine_id FROM agents WHERE agent_key=?',
+    [agent_key],
+  )?.machine_id;
+  if (selected != null) return selected;
   const current = sql.get<{ conversation_id: string | null }>(
     'SELECT conversation_id FROM agents WHERE agent_key=?',
     [agent_key],

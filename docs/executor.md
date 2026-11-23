@@ -99,6 +99,8 @@ which preserves their journals and outboxes.
 
 Machine code also owns provider sign-in, allowance reads, and application previews. Backend cards and actions select one machine. Provider credentials stay on that machine. Preview traffic reaches the reader through the server's existing HTTPS address and a restricted connection that machine code opens. HTTP streams and WebSockets use that connection. Native process checks stay with the application. See [Previews](previews.md) and [Usage](usage.md).
 
+After a server move, the owner can separately choose “Move everything” to its new machine. This moves unfinished Tickets, active Managers and the Chief through the ordinary [work move rule](tickets.md#where-the-worker-runs). Each gets a fresh conversation from its record. The old machine stays attached and keeps its work folders. Each refusal stays visible, so a partial move does not look complete.
+
 ## Restarts and recovery
 
 A graceful server restart leaves machine code and its current agent turns alive, including machine code on the server’s own machine. The server preserves mailboxes, assignments, results, and receipts, then adopts the same remote children. Pending prompts remain busy until their existing native result arrives. Neither path sends the prompt again.

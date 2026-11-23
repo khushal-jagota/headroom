@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 import { ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { expect, test, vi } from 'vitest';
 import { setup } from '../../tests/conversation_core_fixture.ts';
@@ -573,7 +574,7 @@ test('remote transient frames publish once after their durable receipt without t
   const f = setup({ core: { publish_frame } });
   const identity = {
     executor_incarnation: 'inc',
-    protocol_version: 26,
+    protocol_version: PROTOCOL_VERSION,
     spool_format_version: 5,
     application_revision: 'fixture',
     connection_generation: 0,

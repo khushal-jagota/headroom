@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 /** Reports must prove the leased content identity without rewriting release provenance. */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,7 +38,7 @@ test('current accepts matching leased content across revisions and rejects unlea
   const identity = parse_identity({
     application_revision: 'b'.repeat(40),
     build_id: target.build_id,
-    protocol_version: 26,
+    protocol_version: PROTOCOL_VERSION,
     spool_format_version: 5,
     executor_incarnation: '11111111-1111-4111-8111-111111111111',
   });
@@ -131,7 +132,7 @@ function machine_fixture(platform = 'darwin') {
   const identity = parse_identity({
     application_revision: 'a'.repeat(40),
     build_id: build,
-    protocol_version: 26,
+    protocol_version: PROTOCOL_VERSION,
     spool_format_version: 5,
     executor_incarnation: '11111111-1111-4111-8111-111111111111',
   });

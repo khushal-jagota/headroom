@@ -1145,6 +1145,14 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
   command('machine list', 'List stable destination identities and their current availability.', [
     option('as_json', '--json', boolean, { default: false }),
   ]);
+  command('machine move-work', 'Move work to a machine with a fresh conversation. Owner only.', [
+    argument('machine_id', '<MACHINE_ID>', text, {}),
+    option('ticket_id', '--ticket <TEXT>', text, {}),
+    option('manager_id', '--manager <TEXT>', text, {}),
+    option('chief', '--chief', boolean, { default: false }),
+    option('everything', '--everything', boolean, { default: false }),
+    option('as_json', '--json', boolean, { default: false }),
+  ]);
   command('machine register', 'Register an extra machine and print its credential once.', [
     argument('name', '<NAME>', text, {}),
     option('as_json', '--json', boolean, { default: false }),

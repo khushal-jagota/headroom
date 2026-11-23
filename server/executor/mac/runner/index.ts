@@ -1,3 +1,7 @@
+import { inspect_work_move } from '../../../ticket_workspaces/filesystem/work_move.ts';
+import { child_owner_start_key } from './logic/child_owner.ts';
+import type { WorkMoveSourceRequest, WorkMoveSourceResult } from '../../wire.generated.ts';
+import { join } from 'node:path';
 /** The local runner composes existing owners before any native admission can begin. */
 import type {
   BackendEventSink,
@@ -36,6 +40,7 @@ import { MacWorkspaceCleanup } from './workspaces.ts';
 
 export class MacRunner implements MacRunnerContract {
   private readonly options: MacRunnerOptions;
+  private readonly workspace_lock: FifoLock;
   private uncertainties: readonly WorkerCleanupUncertainty[] = [];
   private cleanup_notice: string | null = null;
   private readonly cleanup_refresh_lock = new FifoLock();
@@ -64,6 +69,7 @@ export class MacRunner implements MacRunnerContract {
     };
     const sources = new MacSourceWork(state, () => lifetime.permanently_stopped);
     const workspace_lock = new FifoLock();
+    this.workspace_lock = workspace_lock;
     const native = new MacNativeChildren({
       ...options.native,
       workspace_lock,
@@ -145,6 +151,49 @@ export class MacRunner implements MacRunnerContract {
       sources,
       commands,
       stop_and_publish: (command) => this.stop_and_publish(command),
+    });
+  }
+  async inspect_work_move(request: WorkMoveSourceRequest): Promise<WorkMoveSourceResult> {
+    this.assert_admission();
+    return this.workspace_lock.run(async () => {
+      try {
+        if (
+          !/^(t_|si_)[0-9a-z]+$/.test(request.owner_id) &&
+          !(request.owner_kind === 'chief' && request.owner_id === 'chief')
+        )
+          throw new Error('Invalid work owner.');
+        const key =
+          request.owner_kind === 'chief'
+            ? 'chief'
+            : request.owner_kind === 'ticket'
+              ? request.owner_id
+              : `manager:${request.owner_id}`;
+        if (
+          this.native_children
+            .retained_children()
+            .some((child) => child_owner_start_key(child.owner) === key)
+        )
+          throw new Error('The old agent has not stopped.');
+        if (
+          this.cleanup_notice !== null ||
+          (request.owner_kind === 'ticket' &&
+            this.uncertainties.some((item) => item.ticket_id === request.owner_id))
+        )
+          throw new Error('Worker cleanup is uncertain.');
+        const paths = this.options.native.paths;
+        const root =
+          request.owner_kind === 'chief'
+            ? paths.chief_home
+            : request.owner_kind === 'manager'
+              ? paths.manager_home(request.owner_id)
+              : join(paths.artifacts, request.owner_id);
+        const proof = await inspect_work_move(root, request.owner_kind === 'ticket', {
+          git_execution: this.options.workspace_git,
+        });
+        return { proof, error: null };
+      } catch (error) {
+        return { proof: null, error: error instanceof Error ? error.message : String(error) };
+      }
     });
   }
   cleanup_workspaces(states: readonly WorkspaceState[], now: number): Promise<void> {

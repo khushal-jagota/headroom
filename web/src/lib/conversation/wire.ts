@@ -525,6 +525,7 @@ export type OwnerSendBody = {
  * is on reported no catalogue. A start on that is refused rather than guessed at.
  */
 export type ConversationStartValues = {
+  machine_id?: string;
   workspace_folder?: string | null;
   workspace_path_policy?: "home_relative" | "absolute" | "executor_default";
   backend_key: ConversationBackendKey;

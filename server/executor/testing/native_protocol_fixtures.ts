@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '../../execution_configuration.ts';
 /** Native TS messages. No Python bytes, parser result, or schema sample supplies these values. */
 import { fileURLToPath } from 'node:url';
 import type { JsonObject, JsonValue, MessageContent, WireTypes } from '../wire.generated.ts';
@@ -7,7 +8,7 @@ function document(entries: readonly (readonly [string, JsonValue])[]): JsonObjec
 }
 export function native_wire_fixtures(): WireTypes {
   const identity: WireTypes['ExecutorIdentity'] = {
-    protocol_version: 26,
+    protocol_version: PROTOCOL_VERSION,
     application_revision: 'fixture',
     spool_format_version: 5,
     executor_incarnation: '11111111-1111-4111-8111-111111111111',
@@ -192,6 +193,9 @@ export function native_wire_fixtures(): WireTypes {
     ['counts', [1, 1, 1.5, 1234, '1', 0]],
   ]);
   return {
+    WorkMoveSourceRequest: { owner_kind: 'ticket', owner_id: 't_01234567' },
+    WorkMoveProof: { published_branch: 'ticket/work', published_revision: 'a'.repeat(40) },
+    WorkMoveSourceResult: { proof: null, error: 'Unpushed work' },
     BackendRequest: { backend_key: 'codex', operation: 'capabilities' },
     ServerLocation: {
       server_id: 'test-server',
