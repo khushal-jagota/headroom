@@ -1318,6 +1318,10 @@ def main() -> int:
                     return
                 elif name == "new-message":
                     state["new_message"] = True
+                elif DESIGN_REVIEW and name == "stall-refresh":
+                    state["stall_refresh"] = True
+                elif DESIGN_REVIEW and name == "unstall-refresh":
+                    state["stall_refresh"] = False
                 elif name == "offline":
                     state["offline"] = True
                 elif name == "online":
@@ -1382,6 +1386,10 @@ def main() -> int:
                 return
             if self.disconnected():
                 return
+            # The store's refresh reads the deployment status. Held here, a reviewer change
+            # keeps its sheet open after the save, until the proof releases it.
+            while path == "/api/deployment-status" and state.get("stall_refresh"):
+                time.sleep(0.1)
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
                 return

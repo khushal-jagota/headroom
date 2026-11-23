@@ -461,6 +461,54 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
     }
 
+    /// A reviewer change to Chief saves while the store's refresh stalls, so its sheet is
+    /// still open and the card is held. The app goes to the background and back. The held
+    /// card must still leave and the queue must move on: the three design cards share one
+    /// title, so only two cards are left to skip before the summary.
+    @MainActor func testHeldCardLeavesAcrossABackgroundReturn() async throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let approve = app.buttons["review.approve"]
+        let back = app.buttons["review.return"]
+        if !approve.waitForExistence(timeout: 12), back.exists { back.tap() }
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        let title = app.staticTexts["Match the iPhone app to the web"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        try await proof(base, "stall-refresh")
+        app.buttons["decision.reviewer"].tap()
+        let chief = app.buttons["decision.reviewer.chief"]
+        XCTAssertTrue(chief.waitForExistence(timeout: 5))
+        chief.tap()
+        var saved = false
+        for _ in 0..<40 where !saved {
+            let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/scopes")!)
+            saved = ((try? JSONSerialization.jsonObject(with: data) as? [Any])?.count ?? 0) == 1
+            if !saved { try await Task.sleep(for: .milliseconds(250)) }
+        }
+        XCTAssertTrue(saved, "The reviewer change saved")
+        XCTAssertTrue(chief.exists, "The stalled refresh keeps the sheet open after the save")
+        capture(app, "held-card-sheet-open-after-save")
+        XCUIDevice.shared.press(.home)
+        try await Task.sleep(for: .seconds(4))
+        app.activate()
+        try await Task.sleep(for: .seconds(3))
+        capture(app, "held-card-after-return")
+        try await proof(base, "unstall-refresh")
+        let skip = app.buttons["review.skip"]
+        let headline = app.staticTexts["review.summary.headline"]
+        for _ in 0..<3 where !headline.exists {
+            XCTAssertTrue(skip.waitForExistence(timeout: 8))
+            skip.tap()
+            _ = headline.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(headline.waitForExistence(timeout: 5))
+        XCTAssertEqual(headline.label, "2 skipped.", "The held card left, so only the other two were skipped")
+        capture(app, "held-card-queue-moved-on")
+    }
+
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {
         // Existence alone admitted an infinite/zero frame in the earlier review run.
         let ready = NSPredicate { _, _ in
