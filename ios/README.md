@@ -405,7 +405,12 @@ and reread local CLI records, just like Usage on the web. Existing readings stay
 visible during refresh, with each source’s last-read time; failed provider reads
 keep the previous allowance and show the error. Refresh gives haptic feedback.
 Opening the screen only reads stored values. Cost estimates are not bills.
-The Panels server row in More displays deployment status without opening a page;
+More shows the shared update card with the server’s interruption sentence, machine rows,
+and device warnings. Update opens an offer for confirmation. Server and machine failures
+offer their own Try again action. A machine retry retains that machine’s target, even
+when a later server attempt differs. Actions run once and never enter the message outbox.
+After a refused or uncertain action, the app reads status again before another press.
+An expected server restart retains update progress until the server’s deadline.
 VPS has its own navigation row.
 
 VPS reads machine measurements, CPU history, services and paged processes. Its
@@ -835,8 +840,8 @@ Sends, approval, send-back, queue changes, stopping and read acknowledgments kee
 the same Ticket and conversation identities on either machine. Permission and input
 requests still direct the reader to the web to answer. The transcript distinguishes
 an answer saved on VPS, applied on Mac, and application left unconfirmed. Creating
-Tickets or selecting/moving their machine has no native flow yet. Machine installation,
-updates and executor administration remain on the web. Existing scheduled-task detail
+Tickets or selecting/moving their machine has no native flow yet. Machine installation and executor administration remain on the web.
+The shared update card in More offers server updates and targeted machine retries. Existing scheduled-task detail
 shows the schedule's machine when one is saved.
 
 Usage reads the current date-range summary and refreshes pricing through the rates
