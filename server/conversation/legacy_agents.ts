@@ -8,7 +8,7 @@ import { legacy_direct_identity_matches } from './logic/legacy_agent_identity.ts
 import { WorkerCgroups } from '../platform_runtime/linux/worker_cgroups.ts';
 /** Read-only inventory of the one-release startup retirement, never a cleanup operation. */
 import BetterSqlite3 from 'better-sqlite3';
-import { readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkerProcess } from '../worker_supervision/contracts.ts';
@@ -25,6 +25,7 @@ import {
 } from '../worker_supervision/logic/ownership.ts';
 import { read as read_record } from '../worker_supervision/records.ts';
 import type { LocalChildCustodyRow } from './local_child_custody_contracts.ts';
+import { onlineBackup } from '../core/database/index.ts';
 
 export async function plan_legacy_agents(
   rows: readonly LocalChildCustodyRow[],
@@ -112,30 +113,12 @@ export async function inspect_legacy_agents(database_path: string): Promise<Lega
   // Deliberately bypass createDatabase: it initializes skills, schema and projections.
   const scratch = await mkdtemp(join(tmpdir(), 'panels-legacy-dry-run-'));
   const copy = join(scratch, 'database.sqlite');
-  const source = async (suffix: string): Promise<Buffer | null> => {
-    try {
-      return await readFile(database_path + suffix);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && suffix) return null;
-      throw error;
-    }
-  };
   let database: BetterSqlite3.Database | undefined;
   try {
-    const suffixes = ['', '-wal'];
-    const before = await Promise.all(suffixes.map(source));
-    for (let index = 0; index < suffixes.length; index++)
-      if (before[index] !== null)
-        await writeFile(copy + suffixes[index], before[index]!, { mode: 0o600 });
-    const after = await Promise.all(suffixes.map(source));
-    if (
-      before.some((bytes, index) =>
-        bytes === null
-          ? after[index] !== null
-          : after[index] === null || !bytes.equals(after[index]!),
-      )
-    )
-      throw new Error('Database or WAL changed during the read-only snapshot. Retry the dry run.');
+    // SQLite's online backup from a read-only connection, in one read step: one consistent
+    // snapshot at any size. It never writes the database or its WAL. As any reader, it can
+    // take a read mark in the shared -shm index.
+    await onlineBackup(database_path, copy);
     database = new BetterSqlite3(copy, { readonly: true, fileMustExist: true });
 
     database.pragma('query_only = ON');
