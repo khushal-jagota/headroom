@@ -38,15 +38,17 @@ export function conversationPreview(source: () => ConversationPreviewSource) {
     return { ...query, enabled: current.visible && target !== null && (current.conversationId === null
       || Boolean(record.data && (record.data.model === null || record.data.reasoning_effort === null))), retry: false };
   });
+  const health = createQuery(() => ({ ...queries.executorHealth(source().machineId), enabled: source().visible && source().locale === "macos" }));
   const backends = createQuery(() => {
     const current = source();
+    // A Mac Panels cannot reach cannot list its models; asking only earns a 409 each time.
+    const unreachableMac = current.locale === "macos" && (health.isError || !macActivityKnown(health.data));
     return {
       ...(current.target?.kind === "ticket" ? queries.ticketBackends(current.target.id) : queries.backends()),
-      enabled: current.visible && current.target !== null
+      enabled: current.visible && current.target !== null && !unreachableMac
     };
   });
   const drivers = createQuery(() => queries.drivers());
-  const health = createQuery(() => ({ ...queries.executorHealth(source().machineId), enabled: source().visible && source().locale === "macos" }));
 
   const activeConversationId = $derived.by(() => {
     const current = source();

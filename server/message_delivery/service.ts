@@ -57,6 +57,7 @@ export interface SendMessageOptions {
   owner_read_through_sequence?: number | null;
   sender_message_id?: string | null;
   sent_at_unix_milliseconds?: number | null;
+  reconciles_sequence?: number | null;
   retain_created_conversation?: boolean;
   system_message?: boolean;
   admission?: MessageAdmission | null;
@@ -128,6 +129,7 @@ export async function send_message(
     owner_read_through_sequence: options.owner_read_through_sequence ?? null,
     sender_message_id: options.sender_message_id ?? null,
     sent_at_unix_milliseconds: options.sent_at_unix_milliseconds ?? null,
+    reconciles_sequence: options.reconciles_sequence ?? null,
     sender,
     recipient,
     recording_receipt: options.recording_receipt ?? null,

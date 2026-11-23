@@ -43,20 +43,23 @@ test('test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers',
   expect(await page.locator('[data-user-input-panel]').innerText()).not.toContain('Approve');
   await page.reload();
   await page.waitForSelector('[data-conversation-rest-bar]', { timeout: WAIT_MS });
+  // The waiting question shows in the dock on first load, before any open and close.
+  await expect(page.locator('[data-conversation-ask-dock] [data-user-input-panel]')).toBeVisible({ timeout: WAIT_MS });
   await openConversationLayer(page);
   await page.waitForSelector('[data-user-input-panel]', { timeout: WAIT_MS });
   await page.locator('[data-conversation-lens-choice="full"]').click();
   await page.locator('[data-user-input-option="Composer"]').click();
   await page.locator('[data-user-input-option="Transcript"]').click();
-  await page.locator('[data-user-input-continue]').click();
-  await page.locator('[data-user-input-other]').fill('Recorded event replay');
+  // The second question allows its own answer: written in the composer's reply line, sent with Send.
+  await page.locator('[data-conversation-send]').click();
+  await page.locator('[data-conversation-input]').fill('Recorded event replay');
   const submittedRequest = page.waitForRequest(
     (request) => request.url().endsWith('/user-input-answers') && request.method() === 'POST',
   );
   const answeredResponse = page.waitForResponse(
     (response) => response.url().endsWith('/user-input-answers') && response.request().method() === 'POST',
   );
-  await page.locator('[data-user-input-continue]').click();
+  await page.locator('[data-conversation-send]').click();
   const answered = await answeredResponse;
   const submitted = await submittedRequest;
   const expectedAnswers = {
@@ -116,7 +119,10 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
     (response) =>
       response.url().endsWith(`/held-prompts/${discardId}`) && response.request().method() === 'DELETE',
   );
-  await page.locator(`[data-conversation-held-discard="${discardId}"]`).click();
+  // A queued row's actions sit in its "more" menu, which opens first.
+  const discardControl = page.locator(`[data-conversation-held-discard="${discardId}"]`);
+  await page.locator('[data-conversation-held-row]', { has: discardControl }).locator('[data-conversation-held-more]').click();
+  await discardControl.click();
   const discarded = await discardedResponse;
   expect(await discarded.json()).toEqual({ discarded: true });
   await expect(page.locator('[data-conversation-held-row]')).toHaveCount(1, { timeout: WAIT_MS });
@@ -125,9 +131,9 @@ test('test_canonical_queue_writes_refresh_the_mounted_pane', async ({ signalServ
     (response) =>
       response.url().endsWith(`/held-prompts/${promoteId}/promote`) && response.request().method() === 'POST',
   );
-  await page
-    .locator(`[data-conversation-held-promote="send_now"][data-held-prompt-id="${promoteId}"]`)
-    .click();
+  const promoteControl = page.locator(`[data-conversation-held-promote="send_now"][data-held-prompt-id="${promoteId}"]`);
+  await page.locator('[data-conversation-held-row]', { has: promoteControl }).locator('[data-conversation-held-more]').click();
+  await promoteControl.click();
   const promoted = await promotedResponse;
   expect(promoted.request().postDataJSON()).toEqual({ mode: 'send_now' });
   expect(await promoted.json()).toEqual({ promoted: true, fate: 'started' });
@@ -201,6 +207,9 @@ test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire',
   const card = page.locator(cardSelector);
   await page.reload();
   await page.waitForSelector('[data-conversation-rest-bar]', { timeout: WAIT_MS });
+  // Docked, the page reads no transcript: the waiting key request still shows on first load,
+  // with no open and close of the conversation first.
+  await expect(page.locator(`[data-conversation-ask-dock] ${cardSelector}`)).toBeVisible({ timeout: WAIT_MS });
   await openConversationLayer(page);
   await expect(card).toHaveAttribute('data-credential-state', 'pending', { timeout: WAIT_MS });
   // Three captures share this connected case; no repeated backend or state matrix.
@@ -224,7 +233,7 @@ test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire',
     (result) =>
       result.url().endsWith(`/credentials/requests/${requestId}/save`) && result.request().method() === 'POST',
   );
-  await card.getByRole('button', { name: 'Save', exact: true }).click();
+  await card.getByRole('button', { name: 'Save key', exact: true }).click();
   const saved = await savedResponse;
   await expectResponse(saved.status(), 200, saved);
   expect(saved.request().postDataJSON()).toEqual({
@@ -260,6 +269,7 @@ test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire',
   await openConversationLayer(page);
   await expect(card).toHaveAttribute('data-credential-state', 'saved', { timeout: WAIT_MS });
   await expect(card.locator('input')).toHaveCount(0);
-  await expect(card.getByText('Saved', { exact: true })).toBeVisible({ timeout: WAIT_MS });
+  // The record is one system line: "<provider> API key · <name> · Saved".
+  await expect(card.locator('[data-credential-record]')).toHaveText(/ · Saved$/, { timeout: WAIT_MS });
   await captureSuccess(page, 'credential-request-connected-saved.png');
 });

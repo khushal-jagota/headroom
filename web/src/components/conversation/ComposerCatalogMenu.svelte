@@ -80,10 +80,14 @@
 </div>
 
 <style>
+  /* The catalog stands on the floating plane with the composer's other popovers (app.css), and
+     its highlighted entry wears the same control fill as theirs. */
+  .chat-menu-item.on { background: var(--cv-control); }
+  .chat-menu-item.on :global(.chat-menu-desc) { color: var(--cv-t2); }
   .c2-catalog-argument {
     flex: none;
-    color: var(--text-faintest);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    color: var(--cv-t3);
+    font-family: var(--cv-mono);
+    font-size: var(--cv-type-caption);
   }
 </style>

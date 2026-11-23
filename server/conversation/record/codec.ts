@@ -242,6 +242,8 @@ export function conversation_event_payload_from_canonical_json(
       return new E.PromptDiscardedEventPayload({
         ...promptFields(stored),
         suppression_reason: optionalText(stored, 'suppression_reason'),
+        withdrawn_for_edit:
+          'withdrawn_for_edit' in stored ? boolean(stored, 'withdrawn_for_edit') : false,
       });
     case 'message_to_owner': {
       const fields = senderFields(stored);
@@ -433,7 +435,10 @@ export function conversation_event_payload_json_object(
             }
           : {}),
         ...(payload.kind === 'prompt_discarded'
-          ? minted('suppression_reason', payload.suppression_reason)
+          ? {
+              ...minted('suppression_reason', payload.suppression_reason),
+              ...(payload.withdrawn_for_edit ? { withdrawn_for_edit: true } : {}),
+            }
           : { mode: payload.mode }),
         ...(payload.kind === 'prompt'
           ? {

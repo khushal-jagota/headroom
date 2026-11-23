@@ -72,6 +72,9 @@ export function in_focus(payload: ConversationEventPayload, owner_label = 'owner
       return payload.recipient.kind === 'owner';
     case 'turn_ended':
       return payload.ending !== 'completed';
+    // A command reply answers a command the person typed, so it stays with the prompt
+    // that asked for it. effects.ts and the browser's lens read this same rule.
+    case 'command_reply':
     case 'credential_request':
     case 'permission_asked':
     case 'permission_answered':

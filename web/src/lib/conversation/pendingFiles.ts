@@ -5,6 +5,8 @@ export const MAX_CONVERSATION_MESSAGE_FILE_BYTES = 10 * 1024 * 1024;
 const MEDIA_TYPE_BY_EXTENSION = new Map<string, string>([
   ["pdf", "application/pdf"],
   ["txt", "text/plain"],
+  // A log is plain text under another name, read and checked exactly like a .txt.
+  ["log", "text/plain"],
   ["md", "text/markdown"],
   ["markdown", "text/markdown"],
   ["csv", "text/csv"],

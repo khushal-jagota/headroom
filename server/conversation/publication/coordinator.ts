@@ -1,6 +1,6 @@
 /** Publish current runtime and durable facts within ordinary source transactions. */
 import { randomUUID } from 'node:crypto';
-import type { Database, TransactionSql } from '../../core/database/contracts.ts';
+import type { Database, ReadSql, TransactionSql } from '../../core/database/contracts.ts';
 import type { CurrentAuthority } from '../../../web/src/lib/navigation/contracts.ts';
 import {
   SignalUnavailable,
@@ -28,6 +28,46 @@ interface PendingTurn {
   readonly pending_permission_ask_ids: ReadonlySet<string>;
   readonly pending_user_input_questions: ReadonlyMap<string, unknown>;
 }
+/** Conversations holding a key request the owner has not answered. Like a permission ask or a
+ *  question, it stops on the owner, so it counts as awaiting an answer. It is a stored row,
+ *  not live turn state, so it holds across restarts and after the turn that asked ended. */
+export function pendingCredentialConversations(sql: ReadSql, ids: Set<string>): Set<string> {
+  if (
+    ids.size === 0 ||
+    sql.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_requests'") ===
+      undefined
+  )
+    return new Set();
+  const sorted = [...ids].sort();
+  return new Set(
+    sql
+      .all<{ conversation_id: string }>(
+        'SELECT DISTINCT conversation_id FROM credential_requests WHERE conversation_id IN (' +
+          sorted.map(() => '?').join(',') +
+          ") AND json_extract(body,'$.state')='pending'",
+        sorted,
+      )
+      .map((row) => row.conversation_id),
+  );
+}
+
+/** The newest key request in one conversation that still waits on the owner, as its stored
+ *  row body. The docked conversation reads no transcript, so this is how it learns the key
+ *  request it must show, as it learns a waiting permission ask or question. */
+export function pendingCredentialRequestBody(sql: ReadSql, conversation_id: string): unknown {
+  if (
+    sql.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_requests'") ===
+    undefined
+  )
+    return null;
+  const row = sql.get<{ body: string }>(
+    'SELECT body FROM credential_requests WHERE conversation_id=? ' +
+      "AND json_extract(body,'$.state')='pending' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+    [conversation_id],
+  );
+  return row === undefined ? null : (JSON.parse(row.body) as unknown);
+}
+
 const identity = () => randomUUID().replaceAll('-', '');
 
 function sync<T>(work: () => T): T {
@@ -107,14 +147,19 @@ export class SignalPublicationCoordinator implements SignalPublicationSource {
     if (!durable) return null;
     if (!this.turn) throw new Error('Signal runtime is not bound');
     const turn = this.turn(id);
+    // A key request waits on the owner as an ask or a question does, and it outlives the turn
+    // that made it. Creating or settling one appends its card event to the conversation, and
+    // that append marks the conversation dirty, so this is read again whenever it changes.
+    const key_pending = pendingCredentialConversations(tx, new Set([id])).has(id);
     return {
       signal: {
         working: turn !== null || durable.has_live_background_task,
         message_for_owner: durable.message_for_owner,
       },
       awaiting_answer:
-        turn !== null &&
-        (turn.pending_permission_ask_ids.size > 0 || turn.pending_user_input_questions.size > 0),
+        key_pending ||
+        (turn !== null &&
+          (turn.pending_permission_ask_ids.size > 0 || turn.pending_user_input_questions.size > 0)),
       last_turn_failed: durable.last_turn_failed,
     };
   }

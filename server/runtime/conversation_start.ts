@@ -381,6 +381,7 @@ interface MessageOptions {
   owner_read_through_sequence?: number | null;
   sender_message_id?: string | null;
   sent_at_unix_milliseconds?: number | null;
+  reconciles_sequence?: number | null;
   sender?: Principal | null;
   recipient?: Principal | null;
   recording_receipt?: NativeMessageOperation | null;
@@ -403,6 +404,7 @@ function send_options(
     owner_read_through_sequence: options.owner_read_through_sequence,
     sender_message_id: options.sender_message_id,
     sent_at_unix_milliseconds: options.sent_at_unix_milliseconds,
+    reconciles_sequence: options.reconciles_sequence ?? null,
     sender: options.sender,
     recipient: options.recipient,
     recording_receipt: options.recording_receipt,

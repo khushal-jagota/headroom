@@ -28,5 +28,9 @@
   $effect(()=>{if(item && body) { reader.textBodyReady(item.key, row && 'content' in row ? row.content : []); }});
 </script>
 <SkeletonRegion shape="block" loading={!prompt&&!local&&!error} loadingText="Loading conversation detail…">
-  {#if prompt || local}{#key presentationAttempt}<UserMessage presentationRowKey={item?.key ?? null} row={prompt} {local} conversationId={reader.id} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>{/key}{:else if error}<p role="status">{error}</p>{/if}
+  {#if prompt || local}{#key presentationAttempt}<UserMessage presentationRowKey={item?.key ?? null} row={prompt} {local} conversationId={reader.id} {ownSenderLabel} {onStopDrawingMessage} {onSendAgain}/>{/key}{:else if error}<p class="c2-message-load-note" role="status">{error}</p>{/if}
 </SkeletonRegion>
+<style>
+  /* A message that did not load says so in the quiet note voice, where the message would be. */
+  .c2-message-load-note { margin: 0; color: var(--cv-t3); font-family: var(--cv-font); font-size: var(--cv-type-meta); line-height: var(--cv-leading-meta); }
+</style>

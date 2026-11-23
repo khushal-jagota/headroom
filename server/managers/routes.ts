@@ -299,6 +299,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           owner_read_through_sequence: body.owner_read_through_sequence,
           sender_message_id: body.sender_message_id,
           sent_at_unix_milliseconds: body.sent_at_unix_milliseconds,
+          reconciles_sequence: body.reconciles_sequence,
         },
       );
       return { conversation_id: delivered.conversation_id, ...delivery_fate_json(delivered.fate) };

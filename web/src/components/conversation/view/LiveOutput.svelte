@@ -74,6 +74,6 @@
   $effect(() => () => { generation++; abort?.abort(); if (timer !== null)
       clearTimeout(timer); text = ''; });
 </script>
-{#if expired}<p role="status">{DIAGNOSTIC_EXPIRED_MESSAGE}</p>{/if}
+{#if expired}<p class="c2-live-expired" role="status">{DIAGNOSTIC_EXPIRED_MESSAGE}</p>{/if}
 {#if text}<article class="chat-a c2-streaming" data-conversation-row="streaming" data-conversation-stream-arrival={arriving ? "true" : "false"}><MarkdownBlock {text}/></article>{/if}
-<style>.c2-streaming { color: var(--text-muted); }</style>
+<style>.c2-live-expired { margin: 0; color: var(--cv-t3); font-family: var(--cv-font); font-size: var(--cv-type-meta); line-height: var(--cv-leading-meta); }</style>

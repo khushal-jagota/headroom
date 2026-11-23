@@ -2,8 +2,6 @@ import { writeFileSync } from 'node:fs';
 import { emptyConversationFeed, feedWithCommittedEvents } from '../web/src/lib/conversation/feed';
 import { transcriptRows } from '../web/src/lib/conversation/transcript';
 import { conversationFeedForLens, conversationRowsForLens, conversationThreadItemsForLens } from '../web/src/lib/conversation/lens';
-import { restLineFrom } from '../web/src/lib/conversation/restLine';
-import { taskProgressFrom } from '../web/src/lib/conversation/taskProgress';
 import type { ConversationEvent } from '../web/src/lib/conversation/wire';
 const owner = {kind: 'owner', id:'owner'};
 const worker = {kind: 'ticket', id:'fixture-worker'};
@@ -74,7 +72,7 @@ const fixtures=cases.map(c=>{
  const rows=transcriptRows(feed,{turnStoppedWithoutAnEnding:c.stopped===true});
  return {name:c.name,stopped:c.stopped===true,owner_sender_label:'owner',events,expected:Object.fromEntries((['focus','full'] as const).map(lens=>{
  const visible=conversationRowsForLens(transcriptRows(conversationFeedForLens(feed,lens,'owner'),{turnStoppedWithoutAnEnding:c.stopped===true}),lens);
- return [lens,{rows:visible,items:conversationThreadItemsForLens(rows,visible,lens),rest:restLineFrom(rows,'owner',taskProgressFrom(rows),{visibleRows:visible,lens},0)}];
+ return [lens,{rows:visible,items:conversationThreadItemsForLens(rows,visible,lens)}];
  }))};
 });
 writeFileSync(new URL('../server/conversation/views/conversation_views.json', import.meta.url),JSON.stringify(fixtures,null,2)+'\n');

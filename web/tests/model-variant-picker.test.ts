@@ -162,3 +162,23 @@ it("offers the highest enabled version of each variant and keeps older exact cho
   expect(view.olderModels).toEqual([{value:"gpt-6-sol", name:"GPT-6 Sol"}]);
   expect(view.modelValue).toBe("gpt-6-sol");
 });
+
+describe("the picker's model list", () => {
+  const model = (model_id: string): BackendModel => ({ model_id, display_name: null } as BackendModel);
+
+  it("lists only the catalogue's models, with no extra row for the current model", () => {
+    const view = resolveModelPicker({
+      backendKey: "claude", drivers: [], model: "claude-opus-5-5", reasoningEffort: "high",
+      backends: [], backendLocked: true, models: [model("other-model")]
+    });
+    expect(view.models.map((choice) => choice.value)).toEqual(["other-model"]);
+  });
+
+  it("does not repeat a model the catalogue offers", () => {
+    const view = resolveModelPicker({
+      backendKey: "claude", drivers: [], model: "opus", reasoningEffort: null,
+      backends: [], models: [model("opus"), model("sonnet")]
+    });
+    expect(view.models.map((choice) => choice.value)).toEqual(["opus", "sonnet"]);
+  });
+});
