@@ -276,6 +276,19 @@ function answer_operation_id(fields: Fields): string | null {
   }
   return value;
 }
+/**
+ * A repeat of an answer that already has a receipt gets its saved fate from any conversation, so a
+ * retry still works after the Ticket moved on. Any other answer needs the active conversation.
+ */
+function answerable_conversation(
+  runtime: ConversationHttpRuntime,
+  conversation_id: string,
+  operation_id: string | null,
+): void {
+  if (operation_id !== null && runtime.core.answer_receipt(conversation_id, operation_id) !== null)
+    return;
+  mutable_conversation(runtime, conversation_id);
+}
 async function answer_error<T>(answer: () => Promise<T>): Promise<T> {
   try {
     return await answer();
@@ -533,7 +546,7 @@ export function createConversationRoutes(
         fields.extras(['ask_id', 'option_id', 'operation_id']);
         fields.finish();
         requireOwner(services.identity(request));
-        mutable_conversation(runtime, request.params.conversation_id);
+        answerable_conversation(runtime, request.params.conversation_id, operation_id);
         return {
           fate: await answer_error(() =>
             runtime.core.answer_permission_ask(
@@ -586,7 +599,7 @@ export function createConversationRoutes(
         fields.extras(['request_id', 'answers', 'operation_id']);
         fields.finish();
         requireOwner(services.identity(request));
-        mutable_conversation(runtime, request.params.conversation_id);
+        answerable_conversation(runtime, request.params.conversation_id, operation_id);
         return {
           fate: await answer_error(() =>
             runtime.core.answer_user_input(
