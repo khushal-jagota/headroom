@@ -116,6 +116,8 @@ final class ArtifactDockTests: XCTestCase {
     @MainActor func testLongBlockMarkdownConversationScrolls() throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        // Review's cards belong to the Ticket, so the bar opens the Ticket and its conversation.
+        _ = try Data(contentsOf: XCTUnwrap(URL(string: base + "/proof/review-owner/ticket-split")))
         let app = XCUIApplication()
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
