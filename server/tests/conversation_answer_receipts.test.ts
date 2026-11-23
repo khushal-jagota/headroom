@@ -1,5 +1,5 @@
 /** An answer sent with an operation ID is saved once, and a repeat gets the saved fate back. */
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { setup } from './conversation_core_fixture.ts';
 import { BackendPermissionAsk, PermissionAskRaised } from '../conversation/backends/contracts.ts';
 import { PermissionAskOption } from '../conversation/events.ts';
@@ -78,6 +78,24 @@ test('a repeat that arrives while the first answer is being written gets the sam
   expect(
     (await child.inspect()).calls.filter((call) => call.command === 'answer_permission_ask'),
   ).toHaveLength(1);
+  await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
+});
+
+test('an answer applied as its turn ends keeps its receipt and returns applied', async () => {
+  const { f, child, raise, answer_rows } = await with_asks();
+  await raise('first');
+  const [ask] = f.core.runtime_turn('core')!.pending_permission_ask_ids;
+  await child.configure('answer_permission_ask', { barrier: 'answer' });
+  const first = f.core.answer_permission_ask('core', ask, 'allow', 'op-1');
+  await child.wait_for_barrier('answer');
+  // The turn ends after the backend took the answer and before the answer is recorded.
+  await child.finish();
+  await vi.waitFor(() => expect(f.core.runtime_turn('core')).toBeNull());
+  await child.release('answer');
+  expect(await first).toBe('applied');
+  expect(f.core.answer_receipt('core', 'op-1')).toBe('applied');
+  expect(await f.core.answer_permission_ask('core', ask, 'allow', 'op-1')).toBe('applied');
+  expect(answer_rows()).toHaveLength(1);
   await f.core.shutdown({ deadline: performance.now() / 1000 + 5 });
 });
 
