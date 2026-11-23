@@ -110,6 +110,8 @@ struct ReviewCardExit: Equatable {
         guard let server = draftServer, let id = revisionDraftID else { return }
         let saved = LocalStore.shared.draft(server: server, id: id) ?? ""
         if saved != revisionDraft { restoringDrafts = true; revisionDraft = saved; restoringDrafts = false }
+        // The Ticket page edits the same note's pictures and files.
+        noteAttachments.reloadDraft()
     }
     var error: String?
     var changed = false

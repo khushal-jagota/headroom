@@ -21,6 +21,9 @@ import Observation
     private var server: String?
     private var identity: String?
     private var restoring = false
+    /// True while the note's pictures and files are prepared for a decision, so an
+    /// unrelated outbox change does not unlock the note meanwhile.
+    private var preparing = false
 
     struct Snapshot {
         let presentation: TicketPresentation
@@ -51,6 +54,14 @@ import Observation
         refresh(presentation: presentation, proposal: proposal)
     }
 
+    /// Reads the note again as the page shows, since Review edits the same draft.
+    func reloadNote() {
+        guard let server, let identity else { return }
+        let saved = LocalStore.shared.draft(server: server, id: identity + ":guidance") ?? ""
+        if saved != guidance { restoring = true; guidance = saved; restoring = false }
+        noteAttachments.reloadDraft()
+    }
+
     func matches(presentation: TicketPresentation, proposal: TicketProposal, api: APIClient) -> Bool {
         server == LocalStore.server(api.baseURL) && identity == DecisionGuidance.draftIdentity(ticketID: presentation.ticket.id, proposal: proposal)
     }
@@ -61,7 +72,7 @@ import Observation
         savedDecision = facts.last {
             $0.proposalField == proposal.field && $0.proposalRevision == proposal.revision && $0.proposalCreatedAt == proposal.createdAt
         }
-        if !pending { busyAction = nil }
+        if !pending && !preparing { busyAction = nil }
         if savedDecision?.refused == true { error = savedDecision?.note }
     }
 
@@ -108,7 +119,11 @@ import Observation
     /// and its actions stay locked while they are prepared.
     private func preparedAttachments(_ snapshot: Snapshot, action: String) async throws -> [ConversationSend.Piece] {
         guard server == snapshot.server, identity == snapshot.identity else { throw Self.changed }
+        // A second tap while the first decision prepares does nothing.
+        guard busyAction == nil else { throw CancellationError() }
         busyAction = action
+        preparing = true
+        defer { preparing = false }
         let pieces: [ConversationSend.Piece]
         do { pieces = try await noteAttachments.preparedContent().filter { $0.piece != "text" } }
         catch {
@@ -154,12 +169,13 @@ struct TicketProposalCard: View {
     var body: some View {
         DecisionProposalCard(fieldLabel: label, reviewer: presentation.holderLabel(presentation.ticket.ceilingHolder),
             text: proposal.body, baseURL: store.baseURL, dock: .conversation(.ticket(presentation.ticket.id))) {
-                guard !decision.pending else { return }
+                guard !decision.pending, decision.busyAction == nil else { return }
                 _ = decision.capture(presentation: presentation, proposal: proposal, api: store.client)
                 decision.sheet = .reviewer
             }
             .opacity(decision.pending ? 0.4 : 1)
             .task(id: identity) { decision.load(presentation: presentation, proposal: proposal, api: store.client) }
+            .onAppear { decision.reloadNote() }
             .onChange(of: LocalStore.shared.outgoingRevision(LocalStore.server(store.baseURL))) { _, _ in
                 decision.refresh(presentation: presentation, proposal: proposal)
                 if ["sent", "failed"].contains(decision.savedDecision?.state ?? "") { Task { await refresh() } }
