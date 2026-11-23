@@ -1,7 +1,7 @@
 /** Build the selected Node payload's native closure, then seal its final bytes. */
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { path_is_within } from '../../core/path_containment.ts';
 import { is_directory, is_file } from '../backup/evidence.ts';
 import { isDeepStrictEqual } from 'node:util';
@@ -12,8 +12,13 @@ import type {
   NativeElfFile,
   NativeInventory,
   NodeRuntimeContract,
+  RuntimeTarget,
 } from './contracts.ts';
-import { RUNTIME_CONTRACT_PATH, RUNTIME_INVENTORY_PATH } from './configuration.ts';
+import {
+  BUNDLED_NODE_PATH,
+  RUNTIME_CONTRACT_PATH,
+  RUNTIME_INVENTORY_PATH,
+} from './configuration.ts';
 import { app_tree_paths, validate_app_tree } from './identity.ts';
 import {
   assert_release_execution,
@@ -56,6 +61,7 @@ const external = new Set<string>(GLIBC_LIBRARIES);
 export async function complete_node_runtime(
   app_root: string,
   execution: ReleaseExecution,
+  target: RuntimeTarget,
 ): Promise<NodeRuntimeContract> {
   assert_release_execution(execution);
   app_root = await realpath(app_root);
@@ -63,6 +69,8 @@ export async function complete_node_runtime(
   await validate_app_tree(app_root);
   if (process.platform !== 'linux' || process.arch !== 'x64')
     throw new RuntimeContractError('Node runtime packaging requires Linux x86_64');
+  if (target.system !== 'linux' || target.architecture !== 'x86_64')
+    throw new RuntimeContractError('Linux native packaging requires a Linux x86_64 target');
   const [major, minor] = process.versions.node.split('.').map(Number);
   if (major !== 22 || minor < 18)
     throw new RuntimeContractError(
@@ -92,6 +100,24 @@ export async function complete_node_runtime(
     return object;
   }
   const node = await source_object(process.execPath);
+  if (target.role === 'home') {
+    const bundled_node = join(app_root, BUNDLED_NODE_PATH);
+    await mkdir(dirname(bundled_node), { recursive: true });
+    await copy_with_metadata(node.path, bundled_node, execution);
+    // Keep the original object's loader context while its copied executable is relocated.
+    objects.set(await realpath(bundled_node), node);
+    const distribution_license = join(dirname(dirname(node.path)), 'LICENSE');
+    if (await is_file(distribution_license))
+      await copy_with_metadata(distribution_license, join(app_root, 'node/LICENSE'), execution);
+    else {
+      const provenance = await copied_component(node.path, app_root, execution);
+      await copy_with_metadata(
+        join(app_root, provenance.license),
+        join(app_root, 'node/LICENSE'),
+        execution,
+      );
+    }
+  }
   let node_ancestors: readonly ElfObject[] = [node];
   for (const name of node.dynamic.needed)
     if (/^libnode\.so(?:\.\d+)*$/.test(name))
@@ -287,7 +313,7 @@ export async function complete_node_runtime(
     minimum_node_version: MINIMUM_NODE_VERSION,
     cpu_features: [...SUPPORTED_CPU_FEATURES],
     external_libraries: [...GLIBC_LIBRARIES],
-    external_executables: ['sh', 'node'],
+    external_executables: target.role === 'home' ? ['sh'] : ['sh', 'node'],
     inventory_sha256: createHash('sha256').update(bytes).digest('hex'),
   };
   assert_release_execution(execution);

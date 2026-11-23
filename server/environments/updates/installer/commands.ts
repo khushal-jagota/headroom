@@ -194,7 +194,16 @@ export function create_installer_effects(
           execution.environment,
         ),
       );
-      if (realpathSync(request.node_executable) !== service.identity.installer_node)
+      if (
+        realpathSync(request.node_executable) !==
+        realpathSync(
+          join(
+            request.data_directory,
+            'update-installer-' + request.attempt_id,
+            'runtime/node/bin/node',
+          ),
+        )
+      )
         throw new AppValidationError('Installer Node differs from the Mac installation identity');
       return service;
     }));

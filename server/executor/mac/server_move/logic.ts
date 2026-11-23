@@ -178,10 +178,6 @@ export function server_install_root(platform: ServerMovePlatform, home: string):
     ? join(home, 'Library', 'Application Support', 'PanelsHome')
     : join(home, '.local', 'share', 'panels-home');
 }
-/** The Node that runs the installer: Homebrew's on Apple Silicon, this machine code's on Linux. */
-export function host_node(platform: ServerMovePlatform, own_node: string): string {
-  return platform === 'darwin' ? '/opt/homebrew/bin/node' : own_node;
-}
 export function install_request(
   record: ServerMoveRunRecord,
   paths: { readonly root: string; readonly archive: string; readonly data_directory: string },

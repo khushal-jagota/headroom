@@ -13,7 +13,7 @@ export async function home_service_environment(
   host: HomeInstallHost,
 ): Promise<Record<string, string>> {
   const root = request.root;
-  const node_directory = dirname(host.node_executable);
+  const node_directory = join(root, 'app/node/bin');
   const directories =
     host.system === 'darwin'
       ? [node_directory, join(root, 'app/agent_backends/node_modules/.bin')]

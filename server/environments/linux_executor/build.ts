@@ -44,7 +44,12 @@ export async function build_linux_executor(
     fence();
     const built = await build_exported_app(
       options.source_root,
-      { requested_sha: revision, candidate_app: runtime, install_dependencies: true },
+      {
+        requested_sha: revision,
+        candidate_app: runtime,
+        install_dependencies: true,
+        target: LINUX_EXECUTOR,
+      },
       { public_cli_entrypoint: 'server/cli/main.ts' },
       execution,
     );

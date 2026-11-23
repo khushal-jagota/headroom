@@ -249,12 +249,12 @@ export async function build_exported_app(
     if (options.install_dependencies) {
       await require_generated_schema_frontier(payload);
       await install_app_dependencies(payload, join(workspace, 'npm-home'), execution);
-      runtime_contract = await complete_node_runtime(payload, execution);
+      runtime_contract = await complete_node_runtime(payload, execution, options.target);
     }
     assert_release_execution(execution);
-    await write_app_entrypoints(payload, requested, dependencies, execution);
+    await write_app_entrypoints(payload, requested, dependencies, execution, options.target);
     if (options.install_dependencies)
-      await write_installer_file_manifest(payload, requested, execution);
+      await write_installer_file_manifest(payload, requested, execution, options.target);
     manifest = {
       app_sha: requested,
       source_digest,

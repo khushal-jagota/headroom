@@ -193,7 +193,7 @@ process.argv = [process.execPath, entry, runtime];
 await import(pathToFileURL(entry).href);
 `;
 export async function render_managed_unit(options: ManagedUnitOptions): Promise<ManagedUnitFiles> {
-  const node = absolute(options.node_executable),
+  const node = join(absolute(options.current_root), 'app/node/bin/node'),
     name = options.runtime_directory_name;
   if (/^[A-Za-z0-9_-]+$/.exec(name)?.[0] !== name)
     throw new Error('Runtime directory must be one safe component');
@@ -233,7 +233,7 @@ export async function render_managed_unit(options: ManagedUnitOptions): Promise<
 export async function render_watchdog_units(
   options: WatchdogUnitOptions,
 ): Promise<WatchdogUnitFiles> {
-  const node = absolute(options.node_executable),
+  const node = join(absolute(options.current_root), 'app/node/bin/node'),
     environment = environment_bundle(options);
   const script =
     start_prefix(options.current_root, node) +

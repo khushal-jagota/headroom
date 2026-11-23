@@ -7,7 +7,6 @@ import { setTimeout as pause } from 'node:timers/promises';
 import type { ReleaseExecution } from '../environments/release/contracts.ts';
 import { first_machine_arguments } from './machine.ts';
 import { home_service_environment, machine_service_environment } from './environment.ts';
-import { external_home_node } from '../environments/updates/darwin/identity.ts';
 import { darwin_schedule_jobs, read_home_job } from '../environments/updates/darwin/jobs.ts';
 import { create_darwin_home_io } from '../environments/updates/darwin/service.ts';
 import {
@@ -138,7 +137,7 @@ export async function create_darwin_home_service(
         label: request.service,
         home_plist: files[0]!.path,
         backup_plist: files[1]!.path,
-        installer_node: external_home_node(request.root, host.node_executable),
+        installer_node: join(request.root, 'app/node/bin/node'),
       }) + '\n',
     mode: 0o600,
   });

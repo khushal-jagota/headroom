@@ -1,7 +1,7 @@
 /** Hosted proof of the real bootstrap, native services, and a second isolated machine. */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { cp, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -66,6 +66,38 @@ await writeFile(
 );
 const environment: NodeJS.ProcessEnv = { ...process.env, HOME: home, PLAN_TEST_MODE: '0' };
 for (const key of Object.keys(environment)) if (key.startsWith('PLAN_')) delete environment[key];
+// Retain the runner's tools but exclude every PATH entry named node. This proves the
+// downloaded Python bootstrap and native server jobs do not need a host Node.
+const no_node_bin = join(base, 'host-without-node');
+await mkdir(no_node_bin);
+const linked = new Set<string>();
+for (const directory of (environment.PATH ?? '').split(':').filter(Boolean)) {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) continue;
+    throw error;
+  }
+  for (const name of names) {
+    if (name === 'node' || linked.has(name)) continue;
+    await symlink(join(directory, name), join(no_node_bin, name));
+    linked.add(name);
+  }
+}
+const no_node_environment = { ...environment, PATH: no_node_bin };
+const incompatible_bin = join(base, 'host-with-incompatible-node');
+await mkdir(incompatible_bin);
+const host_node_used = join(evidence, 'unexpected-host-node');
+await writeFile(
+  join(incompatible_bin, 'node'),
+  '#!/bin/sh\nprintf "host Node was invoked\\n" >> ' + shell_quote(host_node_used) + '\nexit 91\n',
+  { mode: 0o700 },
+);
+const incompatible_environment = {
+  ...environment,
+  PATH: incompatible_bin + ':' + no_node_bin,
+};
 const owner = new ChildProcesses();
 const commands = new OneShotChildren(owner);
 const primitives =
@@ -86,7 +118,7 @@ const report: Record<string, unknown> = {
   boundary:
     'Real sealed candidate archives, the Python bootstrap, native service managers, first machine local socket, and second machine credential enrollment on the same clean runner account.',
   exclusions:
-    'No browser, provider login, remote HTTPS, physical sleep or macOS permission consent. The hosted Apple launcher uses an ad-hoc signature.',
+    'No provider login, remote HTTPS, physical sleep or macOS permission consent. The hosted Apple launcher uses an ad-hoc signature.',
   phases_seconds: phases,
 };
 const run = async (
@@ -166,25 +198,54 @@ try {
     : [mac.install, mac.app, mac.state, mac.plist])
     await absent(path);
   install_attempted = true;
-  await run('first-install', [
-    'python3',
-    join(source, 'scripts/panels_install.py'),
-    'home',
-    '--root',
-    root,
-    '--service',
-    service,
-    '--port',
-    String(port),
-    '--archive',
-    archive,
-    '--receipt',
-    receipt_path,
-    '--revision',
-    revision,
-    '--isolated-providers',
-  ]);
+  await run(
+    'first-install',
+    [
+      'python3',
+      join(source, 'scripts/panels_install.py'),
+      'home',
+      '--root',
+      root,
+      '--service',
+      service,
+      '--port',
+      String(port),
+      '--archive',
+      archive,
+      '--receipt',
+      receipt_path,
+      '--revision',
+      revision,
+      '--isolated-providers',
+    ],
+    no_node_environment,
+  );
+  // The native package can boot while its shared styles are absent. Check the
+  // actual HTTP output on both existing hosts; a SPA HTML fallback is not CSS.
+  const styles_started = performance.now();
+  const stylesheet_checks = [];
+  for (const path of ['/assets/tokens.css', '/assets/app.css']) {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    assert.equal(response.status, 200, `The installed package must serve ${path}`);
+    const content_type = response.headers.get('content-type') ?? '';
+    assert.match(
+      content_type,
+      /^text\/css(?:;|$)/i,
+      `${path} must return CSS, not the SPA fallback`,
+    );
+    const content = await response.text();
+    assert.ok(content.trim().length > 0, `${path} must contain a stylesheet`);
+    stylesheet_checks.push({ path, content_type, bytes: Buffer.byteLength(content) });
+  }
+  phases['installed-stylesheets'] = (performance.now() - styles_started) / 1000;
+  report.stylesheets = stylesheet_checks;
+  report.host_node_at_install = 'absent from PATH';
   const panels = join(root, 'app/bin/panels');
+  await run('cli-with-incompatible-host-node', [panels, '--help'], incompatible_environment);
+  await absent(host_node_used);
+  report.incompatible_host_node = 'CLI succeeds without invoking the incompatible host Node';
   const health = JSON.parse(
     await run('first-machine-health', [panels, 'executor', 'health'], {
       ...environment,
@@ -285,6 +346,42 @@ try {
     'The server and both machine programs must be distinct processes',
   );
   report.service_pids = pids;
+  if (system === 'darwin') {
+    // The requested screenshot uses the real installed package on this existing
+    // native host. It adds no preview server, browser host, or permanent test case.
+    const visual_started = performance.now();
+    const { chromium } = await import('playwright');
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+      await page.goto(`http://127.0.0.1:${port}/#/settings/machines`, {
+        waitUntil: 'domcontentloaded',
+      });
+      await page.getByRole('heading', { name: 'Machines', exact: true }).waitFor();
+      await page.locator(`[data-settings-row="machines:${named[0].machine_id}"]`).waitFor();
+      await page.waitForFunction(() =>
+        ['/assets/tokens.css', '/assets/app.css'].every((path) =>
+          [...document.styleSheets].some(
+            (sheet) => sheet.href?.endsWith(path) && sheet.cssRules.length > 0,
+          ),
+        ),
+      );
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+      });
+      const screenshot = join(evidence, 'installed-server.png');
+      await page.screenshot({ path: screenshot, fullPage: true });
+      report.visual_evidence = {
+        file: 'installed-server.png',
+        page: '/#/settings/machines',
+        boundary:
+          'Chromium renders the served Apple Silicon package with its real stylesheets and fonts.',
+      };
+    } finally {
+      await browser.close();
+      phases['installed-server-screenshot'] = (performance.now() - visual_started) / 1000;
+    }
+  }
   report.result = 'passed';
 } catch (error) {
   failed = error;

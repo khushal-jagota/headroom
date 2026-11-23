@@ -252,7 +252,7 @@ export async function native_copied_updates(options: {
       const item: { target: string; command?: string[]; birth?: WorkerProcess } = {
         target: `${domain}/${label}.update-${attempt}`,
         command: [
-          realpathSync(process.execPath),
+          join(copy, 'runtime/node/bin/node'),
           join(copy, 'runtime/server/environments/updates/installer/main.ts'),
           join(copy, 'request.json'),
         ],

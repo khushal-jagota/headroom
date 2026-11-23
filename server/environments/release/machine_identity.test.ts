@@ -1,3 +1,4 @@
+import { LINUX_EXECUTOR } from './contracts.ts';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -43,13 +44,21 @@ test('release provenance changes preserve identity while runtime bytes, modes an
       'runtime/installer-files.json',
       JSON.stringify({ source_sha: sha, files: [{ path: 'entry.sh', sha256: 'bound' }] }),
     );
-    await write_app_entrypoints(root, sha, { public_cli_entrypoint: 'entry.sh' }, execution);
+    await write_app_entrypoints(
+      root,
+      sha,
+      { public_cli_entrypoint: 'entry.sh' },
+      execution,
+      LINUX_EXECUTOR,
+    );
   };
   try {
     await file('entry.sh', '#!/bin/sh\nprintf "%s" "$PLAN_APP_SHA"\n');
     await chmod(join(root, 'entry.sh'), 0o755);
     await provenance('a'.repeat(40));
     const launcher = await readFile(join(root, 'bin/panels'), 'utf8');
+    expect(launcher).not.toContain('node/bin');
+    expect(await readFile(join(root, 'bin/panels-launcher'), 'utf8')).not.toContain('node/bin');
     const first = await digest_machine_build(root);
     await provenance('b'.repeat(40));
     expect(await digest_machine_build(root)).toBe(first);

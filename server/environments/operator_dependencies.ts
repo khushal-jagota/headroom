@@ -1,3 +1,4 @@
+import { LINUX_HOME } from './release/contracts.ts';
 /** Selected callbacks assemble real adapters. Importing this module creates no resources. */
 import { userInfo } from 'node:os';
 import type {
@@ -155,6 +156,7 @@ export async function create_production_operator_dependencies(
                 requested_sha: args.requested_sha,
                 candidate_app: paths.admit_path(paths.expand_path(args.candidate_app)),
                 install_dependencies: true,
+                target: LINUX_HOME,
               },
               { public_cli_entrypoint: 'server/cli/main.ts' },
               {

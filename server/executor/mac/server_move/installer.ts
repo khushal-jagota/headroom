@@ -29,7 +29,6 @@ function installer_environment(environment: Readonly<NodeJS.ProcessEnv>): Record
 }
 export interface ServerMoveInstallerOptions {
   readonly child_processes: OwnedChildProcesses;
-  readonly node: string;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
 }
 /** Runs `<node> <payload>/server/installation/move_main.ts` and returns its standard output. */
@@ -39,11 +38,14 @@ export async function run_move_installer(
   request: ServerMoveInstallRequest | ServerMoveRemoveRequest,
   signal: AbortSignal,
 ): Promise<string> {
-  const owned = await spawn_owned_process([options.node, join(payload, SERVER_MOVE_INSTALLER)], {
-    child_processes: options.child_processes,
-    environment: installer_environment(options.environment),
-    working_directory: payload,
-  });
+  const owned = await spawn_owned_process(
+    [join(payload, 'node/bin/node'), join(payload, SERVER_MOVE_INSTALLER)],
+    {
+      child_processes: options.child_processes,
+      environment: installer_environment(options.environment),
+      working_directory: payload,
+    },
+  );
   const deadline = AbortSignal.any([
     signal,
     AbortSignal.timeout(SERVER_MOVE_INSTALLER_SECONDS * 1000),

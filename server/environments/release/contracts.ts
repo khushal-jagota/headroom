@@ -47,6 +47,7 @@ export interface AppValidationOptions {
   expected_target?: RuntimeTarget;
 }
 export interface AppBuildOptions {
+  readonly target: RuntimeTarget;
   readonly requested_sha: string;
   readonly candidate_app: string;
   readonly install_dependencies: boolean;

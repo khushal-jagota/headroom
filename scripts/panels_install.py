@@ -78,20 +78,12 @@ def preflight(args: argparse.Namespace, target: str) -> None:
                 listener.bind(("127.0.0.1", args.port))
             except OSError as error:
                 raise ValueError(f"Port {args.port} is busy. Select an unused --port.") from error
-    # An Apple Silicon join runs on the Node inside the machine code release.
-    if not (args.command == "join" and target == "darwin"):
-        node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
-        if node is None or not Path(node).is_file():
-            raise ValueError(
-                "Install Node.js 22 or newer before installation. "
-                "On Mac use /opt/homebrew/bin/node."
-            )
-        version = _run(node, "--version").stdout.strip()
-        node_version = re.fullmatch(r"v(\d+)\.\d+\.\d+", version)
-        if node_version is None or int(node_version.group(1)) < 22:
-            raise ValueError(f"Install Node.js 22 or newer. The selected Node reports {version}.")
-        if args.command == "join":
-            require_linux_join_node(version)
+    # Server and Apple Silicon machine releases carry their own Node.
+    if args.command == "join" and target == "linux":
+        node = shutil.which("node")
+        if node is None:
+            raise ValueError("Linux executor join requires host Node 22 >=22.18.0.")
+        require_linux_join_node(_run(node, "--version").stdout)
     if target == "darwin":
         if int(platform.mac_ver()[0].split(".")[0]) < 15:
             raise ValueError("Update this Mac to macOS 15 or newer.")
@@ -631,10 +623,10 @@ def main() -> None:
                 key: value for key, value in os.environ.items() if not key.startswith("PLAN_")
             }
             if args.command == "home":
-                node = "/opt/homebrew/bin/node" if target == "darwin" else shutil.which("node")
-                if node is None:
-                    raise ValueError("Install Node.js 22 or newer before installation.")
-                command = [node, str(payload / "server/installation/home_main.ts")]
+                node = payload / "node/bin/node"
+                if not node.is_file() or node.is_symlink() or not os.access(node, os.X_OK):
+                    raise ValueError("The server release has no executable Node of its own.")
+                command = [str(node), str(payload / "server/installation/home_main.ts")]
                 value = {
                     "root": str(args.root),
                     "service": args.service,
