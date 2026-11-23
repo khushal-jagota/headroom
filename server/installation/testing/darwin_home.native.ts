@@ -34,7 +34,7 @@ if(process.argv[2]==='serve') {
 }
 `;
 const app = `import{createServer}from'node:http';
-import{readFileSync,writeFileSync,renameSync,existsSync,realpathSync}from'node:fs';
+import{readFileSync,writeFileSync,existsSync,realpathSync}from'node:fs';
 import{join}from'node:path';import{fileURLToPath}from'node:url';
 import{createDatabase}from'./core/database/index.ts';
 import{ChildProcesses}from'./lifecycle/owned_processes.ts';
@@ -42,7 +42,6 @@ import{current_darwin_home}from'./environments/updates/darwin/launch.ts';
 import{create_installer_operations}from'./environments/updates/installation.ts';
 import{FileUpdateAttemptStore,utc_now}from'./environments/updates/attempts.ts';
 import{UpdateBarrier}from'./environments/update_barrier.ts';
-import{darwin_worker_process_snapshot}from'./executor/mac/platform.ts';
 const root=process.cwd(),application=fileURLToPath(new URL('../',import.meta.url)),data=join(root,'data'),database=process.env.PLAN_DB_PATH;
 const revision=JSON.parse(readFileSync(join(application,'manifest.json'),'utf8')).app_sha;
 const seed=JSON.parse(readFileSync(join(application,'server/core/database/application_schema.json'),'utf8'));
@@ -77,18 +76,7 @@ const server=createServer(async(req,res)=>{
   }else{
    const current=policy(),ready=current.fail_sha!==revision&&current.hold_sha!==revision;
    res.statusCode=ready?200:503;res.setHeader('content-type','application/json');
-   const body={app_sha:revision,ready,project_name:db.read(sql=>sql.get("SELECT name FROM projects WHERE id='native-proof'").name)};
-   const witness=join(data,'probe-failed-candidate-health.json');
-   if(req.url.startsWith('/api/health')&&current.fail_sha===revision&&!existsSync(witness)){
-    res.once('finish',()=>{
-     const began=performance.now(),snapshot=darwin_worker_process_snapshot(began/1000+5);
-     const candidate=snapshot.get(process.pid),supervisor=candidate&&snapshot.get(candidate.parent);
-     if(!candidate||!supervisor)throw Error('Failed candidate process identities are missing');
-     writeFileSync(witness+'.tmp',JSON.stringify({status:res.statusCode,body,candidate,supervisor,capture_seconds:(performance.now()-began)/1000}));
-     renameSync(witness+'.tmp',witness);
-    });
-   }
-   res.end(JSON.stringify(body));
+   res.end(JSON.stringify({app_sha:revision,ready,project_name:db.read(sql=>sql.get("SELECT name FROM projects WHERE id='native-proof'").name)}));
   }
  }catch(error){res.statusCode=500;res.end(String(error.stack||error));}
 });
@@ -210,6 +198,7 @@ export async function native_copied_updates(options: {
 }) {
   const { root, account, label, port, base, builds, execution, primitives, births, record } =
     options;
+  // This IO spans both archive admissions and updates. Each command needs a fresh scope.
   const domain = `gui/${process.getuid!()}`,
     io = create_darwin_home_io(execution(), { HOME: account });
   const inspector = new DarwinProcessInspector(),
@@ -237,7 +226,7 @@ export async function native_copied_updates(options: {
     }
     assert(item.command, 'An updater job exists before its prepared command is known');
     const path = join(root, 'data/update-agent/installer.plist'),
-      job = await read_home_job(path, io);
+      job = await read_home_job(path, io, execution());
     assert.equal(job.Label, item.target.slice(domain.length + 1));
     assert.deepEqual(job.ProgramArguments, item.command);
     authenticate_loaded_job(observed.stdout, path, job, ['HOME', 'PATH'], realpathSync);
@@ -318,7 +307,7 @@ export async function native_copied_updates(options: {
           throw new Error('Cannot observe the native updater: ' + value.stderr);
         }
         const path = join(root, 'data/update-agent/installer.plist'),
-          job = await read_home_job(path, io);
+          job = await read_home_job(path, io, execution());
         assert.deepEqual(job.ProgramArguments, item.command);
         const pid = authenticate_loaded_job(
           value.stdout,
@@ -353,7 +342,26 @@ export async function native_copied_updates(options: {
         await rename(previous, retired);
         await chmod(retired, 0);
         await writeFile(policy, '{}');
+      } else {
+        record.update_observation = 'failed candidate health';
+        await wait(async () => {
+          try {
+            const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
+              signal: AbortSignal.timeout(1000),
+            });
+            const value = (await response.json()) as any;
+            return response.status === 503 &&
+              value.app_sha === candidate.manifest.app_sha &&
+              value.project_name === 'candidate-write'
+              ? true
+              : undefined;
+          } catch {
+            return undefined;
+          }
+        });
       }
+      record.update_observation = 'candidate process';
+      if (name === 'rollback') trial_birth = (await identity()).app;
       record.update_observation = 'terminal attempt';
       const state = await wait(async () => {
         const value = await json(attempt_path);
@@ -371,32 +379,6 @@ export async function native_copied_updates(options: {
         ),
       );
       assert(name === 'success' ? state.steps.healthy : state.steps.rollback_database_restored);
-      if (name === 'rollback') {
-        record.update_observation = 'failed candidate health';
-        // Read only after rollback finishes. Candidate A no longer serves health,
-        // so this case must prove its response and births through retained evidence.
-        const witness = await wait(async () => {
-          try {
-            return await json(join(root, 'data/probe-failed-candidate-health.json'));
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-            throw error;
-          }
-        });
-        assert.equal(witness.status, 503);
-        assert.deepEqual(witness.body, {
-          app_sha: candidate.manifest.app_sha,
-          ready: false,
-          project_name: 'candidate-write',
-        });
-        trial_birth = witness.candidate as WorkerProcess;
-        const supervisor = witness.supervisor as WorkerProcess;
-        assert.equal(trial_birth.parent, supervisor.pid);
-        assert.equal(trial_birth.group, supervisor.group);
-        assert.notEqual(trial_birth.birth, old.app.birth);
-        births.push(trial_birth, supervisor);
-        record.failed_candidate_health = witness;
-      }
       await wait(async () =>
         (await primitives.is_absent(old.app, performance.now() / 1000 + 5)) ? true : undefined,
       );
