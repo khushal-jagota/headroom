@@ -1,0 +1,6 @@
+export const SCREEN_CHECK_INTERVAL_MS = 15_000;
+export const SCREEN_REQUEST_TIMEOUT_MS = 10_000;
+export const SCREEN_START_TIMEOUT_MS = 15_000;
+export const SCREEN_READY_POLL_MS = 100;
+export const MAX_SCREEN_BYTES = 64 * 1024 * 1024;
+export const MAX_SCREEN_FILES = 4096;

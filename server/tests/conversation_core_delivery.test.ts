@@ -502,6 +502,9 @@ test('a failed admission save releases preparation before any provider starts', 
     expect(await f.send()).toBeInstanceOf(PromptDeliveryStarted);
     expect(f.children).toHaveLength(1);
     const child = await f.child;
+    // Observe the failed preparation before the production retry timer can run.
+    // This test retries explicitly below; other admission tests cover deferred starts.
+    vi.spyOn(f.core, 'defer_start_drain').mockImplementation(() => {});
     for (const method of ['mark_held_sender_messages_leaving_queue', 'reserve_turn'] as const) {
       const identity = `queued-${method}`;
       f.core.start_admission.try_start(await f.core.automatic_start_request(identity, 'core'));

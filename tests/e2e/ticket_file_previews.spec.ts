@@ -248,21 +248,34 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
       moduleUrl,
     ),
   ).toBe(true);
-  const moduleResponse = await context.request.get(moduleUrl);
-  expect(moduleResponse.status()).toBe(200);
-  const moduleBytes = await moduleResponse.body();
-  expect(moduleBytes.includes('Message the agent')).toBe(true);
+  // The entry starts the workspace through lazy chunks. Check the actual loaded bundle,
+  // and match every served script to this build rather than assuming one output file.
+  const scriptUrls = await page.evaluate((entryUrl) => [...new Set([
+    entryUrl,
+    ...performance.getEntriesByType('resource').map((entry) => entry.name).filter((name) => {
+      const url = new URL(name);
+      return url.origin === location.origin && url.pathname.startsWith('/_app/') && url.pathname.endsWith('.js');
+    }),
+  ])], moduleUrl);
+  const scripts = await Promise.all(scriptUrls.map(async (url) => {
+    const response = await context.request.get(url);
+    expect(response.status()).toBe(200);
+    const bytes = await response.body();
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const distPath = new URL(url).pathname.slice('/_app/'.length);
+    expect(sha256).toBe(createHash('sha256').update(readFileSync(join(dist, distPath))).digest('hex'));
+    return { url, bytes, sha256 };
+  }));
+  expect(scripts.some(({ bytes }) => bytes.includes('Message the agent'))).toBe(true);
   for (const retiredLiteral of ['Steer the work', 'Everything', 'Newsreader'])
-    expect(moduleBytes.includes(retiredLiteral)).toBe(false);
-  const servedSha256 = createHash('sha256').update(moduleBytes).digest('hex');
-  const distPath = moduleSrc.startsWith('/_app/') ? moduleSrc.slice('/_app/'.length) : moduleSrc;
-  expect(servedSha256).toBe(createHash('sha256').update(readFileSync(join(dist, distPath))).digest('hex'));
+    expect(scripts.some(({ bytes }) => bytes.includes(retiredLiteral))).toBe(false);
+  const servedSha256 = scripts.find(({ url }) => url === moduleUrl)!.sha256;
   const evidence = process.env.PANELS_TICKET_EVIDENCE_DIR || undefined;
   if (evidence) {
     mkdirSync(evidence, { recursive: true });
     writeFileSync(
       join(evidence, 'production-browser-asset.json'),
-      JSON.stringify({ module_url: moduleUrl, sha256: servedSha256 }, null, 2) + '\n',
+      JSON.stringify({ module_url: moduleUrl, sha256: servedSha256, scripts: scripts.map(({ url, sha256 }) => ({ url, sha256 })) }, null, 2) + '\n',
       'utf8',
     );
   }
@@ -364,7 +377,7 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
   expect(await standalone.locator('iframe').getAttribute('sandbox')).toBeNull();
 
   await page.goto(`${server.base}/#/review`);
-  await page.locator('[data-screen="review"] [data-review-empty]').waitFor({ timeout: WAIT_MS });
+  await page.locator('[data-screen="review"] [data-deck-item]:not([data-deck-leaving]) [data-review-empty]').waitFor({ timeout: WAIT_MS });
   for (const retiredText of ['Everything', 'Newsreader'])
     await expect(page.getByText(retiredText, { exact: true })).toHaveCount(0);
   if (evidence) await page.screenshot({ path: join(evidence, 'combined-review-ui.png'), fullPage: true });

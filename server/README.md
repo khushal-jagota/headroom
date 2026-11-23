@@ -143,7 +143,7 @@ The scripted test host can open and continue conversations through these routes.
 
 ## Claude backend child
 
-`create_claude_backend_child_factory` in `drivers/claude/runtime/adapter.ts` takes an explicit `claude_executable` and optional `environment_overrides`. Conversation identity overrides the launch environment. The adapter uses SDK `0.3.316`. It checks the selected executable against the `2.1.219` minimum before startup. It does not select the SDK's bundled CLI.
+`create_claude_backend_child_factory` in `drivers/claude/runtime/adapter.ts` takes an explicit `claude_executable` and optional `environment_overrides`. Conversation identity overrides the launch environment. The adapter uses SDK `0.3.316`. It checks the selected executable against the `2.1.259` minimum before startup. It does not select the SDK's bundled CLI.
 
 The SDK public spawn hook retains the exact child. Worker starts also use the shared supervision runtime and scratch owner. An input queue offer proves neither a completed write nor native acceptance. Ordinary delivery needs UUID admission receipts; native commands wait for write completion. Stop requires a valid cancellation receipt with an empty `still_queued` set and settlement of the active command.
 

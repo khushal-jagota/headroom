@@ -14,4 +14,4 @@
   <App />
 </QueryClientProvider>
 
-{#if location.protocol === "panels:" && location.host === "app"}<DesktopConnection />{/if}
+{#if typeof location !== "undefined" && location.protocol === "panels:" && location.host === "app"}<DesktopConnection />{/if}

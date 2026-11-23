@@ -193,6 +193,7 @@ export async function createEnvironmentRuntime(
       });
     },
     update_attempt_id: () => attempts.read()?.attempt_id ?? '',
+    waiting_screens_root: () => updates.ready_screens_root(),
     reopen_update_work(attempt_id) {
       updates.reopen_trial_work(attempt_id);
     },

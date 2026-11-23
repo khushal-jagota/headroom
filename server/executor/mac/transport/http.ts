@@ -1,6 +1,8 @@
 /** Protocol-22 Mac client. Each request retains its loop's independent session owner. */
 import type { ServerLinkAdmission } from '../../../server_link/contracts.ts';
 import type { WorkerSetupReport } from '../../wire.generated.ts';
+import { CLIENT_IDENTITY_HEADER } from '../../../client_versions/contracts.ts';
+import type { ClientIdentity } from '../../../client_versions/contracts.ts';
 import type { ExecutorIdentity } from '../../../execution_identity.ts';
 import { is_os_error } from '../../../core/system_errors.ts';
 import { observe_shutdown } from '../../../conversation/shutdown.ts';
@@ -38,6 +40,7 @@ const AUTHENTICATION_HEADERS = new Set([
   'X-Panels-Executor-ID',
   'X-Panels-Executor-Credential',
   'X-Panels-Executor-Platform',
+  CLIENT_IDENTITY_HEADER,
 ]);
 const CERTIFICATE_ERRORS = new Set([
   'CERT_HAS_EXPIRED',
@@ -114,6 +117,13 @@ export class MacHttpClient {
     this.initial_server_url = settings.validate_server_url(server_url).replace(/\/$/, '');
     this.identity = { ...identity };
     this.request_headers = Object.freeze({
+      [CLIENT_IDENTITY_HEADER]: JSON.stringify({
+        kind: 'machine',
+        device_id: executor_id,
+        version: identity.application_revision,
+        protocol_version: identity.protocol_version,
+        outbox_format: identity.spool_format_version,
+      } satisfies ClientIdentity),
       'X-Panels-Executor-ID': executor_id,
       'X-Panels-Executor-Incarnation': identity.executor_incarnation,
       'X-Panels-Executor-Protocol': String(identity.protocol_version),

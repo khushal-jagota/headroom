@@ -20,6 +20,9 @@ import {
   SCREENS_HOST,
   SCREENS_URL,
   handleAppScheme,
+  PACKED,
+  forward,
+  selectScreenPresentation,
   registerAppScheme,
 } from './app_scheme';
 import { bridgeChannel, type ServerAddressResult } from './bridge';
@@ -27,6 +30,12 @@ import { keepLastSessionFor, lastScreenUrl, rememberLastScreen } from './last_se
 import { holdNotificationStream } from './notifications';
 import { checkServerAddress, loadStoredServerAddress, localServerAddress, serverAddress, storeServerAddress } from './server_address';
 import { rememberWindowPlace, savedWindowBounds } from './window_place';
+import { startShellUpdates } from './updates';
+import type { ShellUpdates } from './updates/contracts';
+import { DESKTOP_BRIDGE_VERSION } from './bridge_version';
+import { ScreenStore } from './screens/store';
+import { ScreenController } from './screens/controller';
+import { SCREEN_CHECK_INTERVAL_MS, SCREEN_READY_POLL_MS, SCREEN_START_TIMEOUT_MS } from './screens/configuration';
 
 // Tests give each run its own data folder, so runs share no stored address or window place.
 if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PANELS_DESKTOP_USER_DATA);
@@ -34,6 +43,11 @@ if (process.env.PANELS_DESKTOP_USER_DATA) app.setPath('userData', process.env.PA
 registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
+let startingFirstWindow = true;
+let preparingScreens = 0;
+let shellUpdates: ShellUpdates | undefined;
+let screens: ScreenController;
+let screenInterval: ReturnType<typeof setInterval> | undefined;
 
 function createWindow(): BrowserWindow {
   const { bounds, maximized } = savedWindowBounds();
@@ -49,13 +63,16 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   });
+  shellUpdates?.windowChanged();
   if (maximized) window.maximize();
   window.once('ready-to-show', () => window.show());
   rememberWindowPlace(window);
   rememberLastScreen(window);
   sendLinksToTheBrowser(window);
+  observeScreenStart(window);
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
+    shellUpdates?.windowChanged();
   });
   return window;
 }
@@ -66,11 +83,26 @@ function openWindow(url: string): BrowserWindow {
   return mainWindow;
 }
 
+/** Prepare the current server copy before a notification or Dock navigation. */
+async function openScreensWindow(url: string, reconnect = false): Promise<BrowserWindow | null> {
+  mainWindow ??= createWindow();
+  const window = mainWindow;
+  preparingScreens++;
+  try {
+    if (reconnect) await screens.connect();
+    else await screens.prepare();
+    if (window.isDestroyed()) return null;
+    void window.loadURL(url);
+    return window;
+  } finally { preparingScreens--; }
+}
+
 /** A click on a notification opens its link in the screens, and brings the window forward. */
-function openRoute(route: string): void {
+async function openRoute(route: string): Promise<void> {
   const url = new URL(route, SCREENS_URL);
   if (url.protocol !== 'panels:' || url.host !== SCREENS_HOST) return;
-  const window = openWindow(url.href);
+  const window = await openScreensWindow(url.href);
+  if (!window) return;
   if (window.isMinimized()) window.restore();
   window.focus();
   app.focus({ steal: true });
@@ -97,6 +129,7 @@ async function switchServer(typed: string): Promise<ServerAddressResult> {
     return { ok: false, problem: 'The app could not clear the data it kept for the last server.' };
   }
   storeServerAddress(result.address);
+  shellUpdates?.serverChanged();
   return result;
 }
 
@@ -156,16 +189,73 @@ function answerBridgeCalls(): void {
     const result = await switchServer(typed);
     if (result.ok) {
       holdNotificationStream(openRoute);
-      void event.sender.loadURL(lastScreenUrl());
+      await openScreensWindow(lastScreenUrl(), true);
     }
     return result;
   });
+}
+
+/** A passive marker proves that the main document mounted the screens, not just HTML. */
+function isScreensDocument(address: string): boolean {
+  if (!address) return false;
+  try {
+    const url = new URL(address);
+    return url.protocol === 'panels:' && url.host === SCREENS_HOST && (url.pathname === '/' || url.pathname === '/index.html');
+  } catch { return false; }
+}
+
+function observeScreenStart(window: BrowserWindow): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let navigation = 0;
+  const clear = () => {
+    if (timer) clearTimeout(timer);
+    if (watchdog) clearTimeout(watchdog);
+    timer = undefined;
+    watchdog = undefined;
+    navigation++;
+  };
+  window.webContents.on('did-start-navigation', (_event, url, inPlace, mainFrame) => {
+    if (!mainFrame || inPlace) return;
+    clear();
+    if (!screens?.store.pending || !isScreensDocument(url)) return;
+    const token = navigation;
+    watchdog = setTimeout(() => {
+      if (token === navigation && screens.store.pending && !window.isDestroyed()) {
+        clear();
+        screens.failed();
+      }
+    }, SCREEN_START_TIMEOUT_MS);
+  });
+  window.webContents.on('did-finish-load', () => {
+    if (!screens?.store.pending || !isScreensDocument(window.webContents.getURL())) return;
+    const token = navigation;
+    const poll = async (): Promise<void> => {
+      if (window.isDestroyed() || token !== navigation || !screens.store.pending) return;
+      try {
+        const ready = await window.webContents.executeJavaScript('document.documentElement.dataset.panelsReady === "true"');
+        if (token !== navigation) return;
+        if (ready) { clear(); screens.ready(); return; }
+      } catch { /* A navigation can replace this document during the read. */ }
+      if (token === navigation) timer = setTimeout(() => { void poll(); }, SCREEN_READY_POLL_MS);
+    };
+    void poll();
+  });
+  window.webContents.on('did-fail-load', (_event, code, _description, url, mainFrame) => {
+    if (mainFrame && code !== -3) { clear(); if (isScreensDocument(url)) screens?.failed(); }
+  });
+  window.webContents.on('render-process-gone', () => { clear(); if (isScreensDocument(window.webContents.getURL())) screens?.failed(); });
+  window.on('closed', clear);
 }
 
 function applicationMenu(): Menu {
   const changeServer: MenuItemConstructorOptions = {
     label: 'Change Server…',
     click: () => openWindow(ADDRESS_PAGE_URL),
+  };
+  const retryScreens: MenuItemConstructorOptions = {
+    label: 'Try Screens Again',
+    click: () => { void screens.retry(); },
   };
   const template: MenuItemConstructorOptions[] =
     process.platform === 'darwin'
@@ -176,6 +266,7 @@ function applicationMenu(): Menu {
               { role: 'about' },
               { type: 'separator' },
               changeServer,
+              retryScreens,
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -192,7 +283,7 @@ function applicationMenu(): Menu {
           { role: 'windowMenu' },
         ]
       : [
-          { label: 'File', submenu: [changeServer, { type: 'separator' }, { role: 'quit' }] },
+          { label: 'File', submenu: [changeServer, retryScreens, { type: 'separator' }, { role: 'quit' }] },
           { role: 'editMenu' },
           { role: 'viewMenu' },
           { role: 'windowMenu' },
@@ -202,16 +293,46 @@ function applicationMenu(): Menu {
 
 void app.whenReady().then(async () => {
   handleAppScheme();
+  if (app.isPackaged && process.platform === 'darwin') shellUpdates = startShellUpdates(serverAddress);
+  screens = new ScreenController(new ScreenStore(join(app.getPath('userData'), 'screens'), PACKED), {
+    address: serverAddress,
+    canActivate: () => startingFirstWindow || preparingScreens > 0 || (mainWindow !== null && isScreensDocument(mainWindow.webContents.getURL())),
+    request: (path, signal) => {
+      const url = new URL(path, SCREENS_URL);
+      return forward(new Request(url, { signal }), url);
+    },
+    requireBridgeVersion: (required) => shellUpdates?.requireBridgeVersion(required) ?? Promise.resolve(required <= DESKTOP_BRIDGE_VERSION),
+    present: (value, reload) => {
+      selectScreenPresentation(value);
+      if (reload && mainWindow && new URL(mainWindow.webContents.getURL() || ADDRESS_PAGE_URL).host === SCREENS_HOST) {
+        void mainWindow.loadURL(lastScreenUrl());
+      }
+    },
+  });
   answerBridgeCalls();
   Menu.setApplicationMenu(applicationMenu());
-  openWindow(await firstPage());
+  const first = await firstPage();
+  await screens.connect();
+  openWindow(first);
+  startingFirstWindow = false;
+  screenInterval = setInterval(() => { void screens.check(); }, SCREEN_CHECK_INTERVAL_MS);
+  screenInterval.unref();
   holdNotificationStream(openRoute);
   // A Mac app stays open with no window. A click on its Dock icon brings the window back.
   app.on('activate', () => {
-    if (!mainWindow) openWindow(serverAddress() ? lastScreenUrl() : ADDRESS_PAGE_URL);
+    if (!mainWindow) {
+      if (serverAddress()) void openScreensWindow(lastScreenUrl());
+      else openWindow(ADDRESS_PAGE_URL);
+    }
   });
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  if (screenInterval) clearInterval(screenInterval);
+  screens?.stop();
+  shellUpdates?.stop();
 });

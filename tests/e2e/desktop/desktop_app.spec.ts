@@ -13,8 +13,10 @@ import { createServer } from 'node:net';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
-import { WAIT_MS, api, captureSuccess, cli, expect, proposeAsWorker, stopServer, test } from '../support/fixtures.ts';
+import { WAIT_MS, api, captureSuccess, cli, expect, proposeAsWorker, stopServer, test, withDatabase } from '../support/fixtures.ts';
 import { launchDesktopApp, waitForScreens } from '../support/desktop.ts';
+
+type ForwardedRequest = { path: string; method: string; identity: string | null; origin: string | null };
 
 const WORKSPACE = 'section[data-screen="workspace"]';
 
@@ -88,6 +90,20 @@ test('the screens reach the server through the app, and links leave it', async (
     });
     expect(preferences).toEqual({ sandbox: true, contextIsolation: true, nodeIntegration: false });
 
+    // Observe the native HTTP hop, rather than the renderer's scheme request.
+    await desktop.app.evaluate(({ session }, base) => {
+      const observed: { path: string; method: string; identity: string | null; origin: string | null }[] = [];
+      (globalThis as { forwardedRequests?: typeof observed }).forwardedRequests = observed;
+      session.defaultSession.webRequest.onBeforeSendHeaders({ urls: [`${base}/*`] }, (details: { url: string; method: string; resourceType: string; requestHeaders: Record<string, string> }, callback: (response: { requestHeaders: Record<string, string> }) => void) => {
+        // The foreign iframe below navigates to HTTP directly, without the native forward.
+        if (details.resourceType === 'subFrame') { callback({ requestHeaders: details.requestHeaders }); return; }
+        const headers = Object.fromEntries(Object.entries(details.requestHeaders).map(([name, value]) => [name.toLowerCase(), String(value)]));
+        observed.push({ path: new URL(details.url).pathname, method: details.method, identity: headers['x-panels-client'] ?? null, origin: headers.origin ?? null });
+        callback({ requestHeaders: details.requestHeaders });
+      });
+    }, server.base);
+
+
     // Read: the ticket screen shows the server's ticket.
     await page.evaluate((id) => (location.hash = `#/workspace/${id}`), ticketId);
     const title = page.locator('.ticket-title');
@@ -110,27 +126,48 @@ test('the screens reach the server through the app, and links leave it', async (
     expect(write.status, write.body).toBe(200);
     expect(JSON.stringify(await api.get(server, '/api/tickets?detail=summary'))).toContain('Ticket written by the desktop app');
 
-    // A page from another site inside the app, such as one an artifact frame opened,
-    // cannot write through the forward.
-    await page.evaluate(
-      (src) =>
-        new Promise<void>((done) => {
-          const frame = Object.assign(document.createElement('iframe'), { src, name: 'foreign' });
-          frame.onload = () => done();
-          document.body.append(frame);
-        }),
-      `${server.base}/api/meta`,
-    );
-    await page.frame({ name: 'foreign' })!.evaluate(
-      (ticket) =>
-        fetch('panels://app/api/tickets', {
-          method: 'POST',
-          mode: 'no-cors',
-          body: new Blob([JSON.stringify(ticket)]),
-        }).catch(() => undefined),
-      newTicket('Ticket written by a foreign page'),
-    );
-    expect(JSON.stringify(await api.get(server, '/api/tickets?detail=summary'))).not.toContain('Ticket written by a foreign page');
+    await test.step('the native metadata helper reads the bridge floor', async () => {
+      const compatibility = await desktop.app.evaluate(async ({ app }, address) => {
+        const load = process.getBuiltinModule('node:module').createRequire(`${app.getAppPath()}/build/main.js`);
+        const { fetchDesktopCompatibility } = load('./server_meta.js') as {
+          fetchDesktopCompatibility(address: string): Promise<{ minimum_bridge_version: number }>;
+        };
+        return fetchDesktopCompatibility(address);
+      }, server.base);
+      expect(compatibility).toEqual({ minimum_bridge_version: 1 });
+    }, { timeout: WAIT_MS * 3 });
+
+    await test.step('the native forward identifies API reads and files', async () => {
+      // The native identity replaces a renderer-supplied value on reads and files too.
+      await page.evaluate(async () => {
+        await (await fetch('/api/meta', { headers: { 'X-Panels-Client': 'renderer override' } })).text();
+        await (await fetch('/files/missing-client-identity-proof')).text();
+      });
+    }, { timeout: WAIT_MS * 3 });
+
+    await test.step('a foreign frame cannot write through the forward', async () => {
+      // A page from another site inside the app, such as one an artifact frame opened,
+      // cannot write through the forward.
+      await page.evaluate(
+        (src) =>
+          new Promise<void>((done) => {
+            const frame = Object.assign(document.createElement('iframe'), { src, name: 'foreign' });
+            frame.onload = () => done();
+            document.body.append(frame);
+          }),
+        `${server.base}/api/meta`,
+      );
+      await page.frame({ name: 'foreign' })!.evaluate(
+        (ticket) =>
+          fetch('panels://app/api/tickets', {
+            method: 'POST',
+            mode: 'no-cors',
+            body: new Blob([JSON.stringify(ticket)]),
+          }).catch(() => undefined),
+        newTicket('Ticket written by a foreign page'),
+      );
+      expect(JSON.stringify(await api.get(server, '/api/tickets?detail=summary'))).not.toContain('Ticket written by a foreign page');
+    }, { timeout: WAIT_MS * 3 });
 
     // Links that leave the app go to the browser, and the app stays on its screens.
     await page.evaluate(() => {
@@ -165,18 +202,48 @@ test('the screens reach the server through the app, and links leave it', async (
     expect(await page.evaluate(() => (window as unknown as { panels: { storedServerAddress(): Promise<string> } }).panels.storedServerAddress())).toBe(server.base);
     expect(await pageUrl(page)).toMatch(/^panels:\/\/app\//);
 
-    // With the server gone, a request fails as a network error, so live streams reconnect.
-    await stopServer(server);
-    const failure = await page.evaluate(() =>
-      fetch('/api/meta').then((response) => `HTTP ${response.status}`, (error: Error) => error.name),
-    );
-    expect(failure).toBe('TypeError');
+    await test.step('the native forward identifies an open live stream', async () => {
+      // EventSource is the production stream API. Closing it does not wait for an
+      // endless forwarded response body to settle its cancellation promise.
+      await page.evaluate(() => new Promise<void>((resolve, reject) => {
+        const source = new EventSource('/api/changes');
+        source.onopen = () => { source.close(); resolve(); };
+        source.onerror = () => { source.close(); reject(new Error('The forwarded change stream did not open.')); };
+      }));
+    }, { timeout: WAIT_MS * 3 });
+
+    await test.step('forwarded requests share identity and the server retains it', async () => {
+      const forwarded = await desktop.app.evaluate(() => (globalThis as { forwardedRequests?: ForwardedRequest[] }).forwardedRequests ?? []);
+      for (const path of ['/api/meta', '/api/tickets', '/files/missing-client-identity-proof', '/api/changes'])
+        expect(forwarded.some((request) => request.path === path)).toBe(true);
+      const identities = forwarded.map((request) => {
+        expect(request.origin).toBeNull();
+        expect(request.identity).not.toBeNull();
+        return JSON.parse(request.identity!);
+      });
+      const nativeIdentity = identities[0];
+      expect(nativeIdentity).toMatchObject({ kind: 'desktop', version: expect.any(String), bridge_version: 1, device_id: expect.any(String) });
+      for (const identity of identities) expect(identity).toEqual(nativeIdentity);
+      // The server received and retained these facts, independent of the observation above.
+      expect(withDatabase(server, (db) => db.read((sql) => sql.get<{ identity_json: string }>(
+        "SELECT identity_json FROM client_versions WHERE kind='desktop' AND device_id=?", [nativeIdentity.device_id],
+      )))?.identity_json).toBe(JSON.stringify(nativeIdentity));
+    }, { timeout: WAIT_MS * 3 });
+
+    await test.step('a stopped server produces a network failure', async () => {
+      // With the server gone, a request fails as a network error, so live streams reconnect.
+      await stopServer(server);
+      const failure = await page.evaluate(() =>
+        fetch('/api/meta').then((response) => `HTTP ${response.status}`, (error: Error) => error.name),
+      );
+      expect(failure).toBe('TypeError');
+    }, { timeout: WAIT_MS * 3 });
   } finally {
-    await desktop.app.close();
+    await test.step('close the desktop app', () => desktop.app.close(), { timeout: WAIT_MS * 3 });
   }
 });
 
-test('the app takes an address when no local server answers, and keeps it and its window place', async ({
+test('setup works offline, and the app keeps an address and window place', async ({
   server,
 }) => {
   const nothing = await closedAddress();

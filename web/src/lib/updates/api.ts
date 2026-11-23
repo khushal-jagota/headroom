@@ -1,3 +1,4 @@
+import { clientFetch } from "../clientIdentity";
 import { get, writable } from "svelte/store";
 import { PlannerFetchError } from "../api";
 import { queryClient } from "../queryClient";
@@ -53,7 +54,7 @@ export async function performUpdateAction(status: UpdateStatus, request: UpdateA
   try {
     let response: Response;
     try {
-      response = await fetch(path, {
+      response = await clientFetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Panels-App-SHA": status.app_sha },
         body: body === undefined ? undefined : JSON.stringify(body)

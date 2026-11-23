@@ -12,6 +12,7 @@
     "CREATE TABLE backend_usage_windows (\n          backend_key  TEXT NOT NULL\n                       REFERENCES backend_usage_snapshots(backend_key)\n                       ON DELETE CASCADE,\n          window_kind  TEXT NOT NULL CHECK (window_kind IN ('five_hour','seven_day')),\n          model_id     TEXT NOT NULL DEFAULT '',\n          used_percent REAL NOT NULL CHECK (used_percent >= 0 AND used_percent <= 100),\n          resets_at    INTEGER NOT NULL,\n          PRIMARY KEY (backend_key, window_kind, model_id)\n        )",
     "CREATE TABLE chief_page(singleton INTEGER PRIMARY KEY CHECK(singleton=1),page TEXT CHECK(page IS NULL OR json_valid(page)),page_revision INTEGER NOT NULL DEFAULT 0)",
     "CREATE TABLE chief_settings (employee_id TEXT PRIMARY KEY, label TEXT NOT NULL, employee_backend TEXT NOT NULL, employee_launch_model TEXT NOT NULL, employee_launch_reasoning_effort TEXT, recap TEXT NOT NULL DEFAULT '')",
+    "CREATE TABLE client_versions (kind TEXT NOT NULL,device_id TEXT NOT NULL,identity_json TEXT NOT NULL,last_seen_at INTEGER NOT NULL,PRIMARY KEY(kind,device_id))",
     "CREATE TABLE codex_login_rejection (id INTEGER PRIMARY KEY CHECK (id = 1),account_id TEXT NOT NULL,last_refresh TEXT NOT NULL,rejected_at INTEGER NOT NULL)",
     "CREATE TABLE conversation_background_tasks (conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),task_id TEXT NOT NULL, task_description TEXT NOT NULL,PRIMARY KEY(conversation_id, task_id))",
     "CREATE TABLE conversation_child_custody (conversation_id TEXT PRIMARY KEY REFERENCES conversations(conversation_id) ON DELETE CASCADE,generation TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('launch_pending','started','retired')),pid INTEGER,birth TEXT,boot TEXT,unit TEXT,runtime_epoch TEXT,occurrence_id TEXT,host TEXT, supervision_record TEXT)",
@@ -370,5 +371,5 @@
     "CREATE TRIGGER tickets_assignment_update BEFORE UPDATE ON tickets WHEN NOT ((NEW.manager_kind='chief' AND NEW.manager_id IS NULL) OR (NEW.manager_kind='manager' AND NEW.manager_id IS NOT NULL)) BEGIN SELECT RAISE(ABORT,'invalid manager assignment'); END",
     "CREATE TRIGGER tickets_legacy_machine AFTER INSERT ON tickets WHEN NEW.locale='macos' AND NEW.machine_id='75a49e78-97de-4e28-8dc5-79646761c46f' BEGIN UPDATE tickets SET machine_id='ee17b608-a449-4966-a808-a791ba7df1c7' WHERE id=NEW.id; END"
   ],
-  "alembicRevision": "ts_0007_conversation_machine"
+  "alembicRevision": "ts_0008_conversation_machine"
 }

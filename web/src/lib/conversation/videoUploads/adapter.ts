@@ -1,3 +1,4 @@
+import { clientFetch } from "../../clientIdentity";
 import { mutationHeaders } from "../../releaseMonitor";
 import type { VideoUploadAdapter, VideoUploadStatus } from "./contracts";
 const ROOT = "/api/conversation/video-uploads";
@@ -7,7 +8,7 @@ async function responseBody(response: Response): Promise<VideoUploadStatus> {
   return body as VideoUploadStatus;
 }
 export const videoUploadAdapter: VideoUploadAdapter = {
-  reserve: async (destination, file, signal) => fetch(ROOT, {
+  reserve: async (destination, file, signal) => clientFetch(ROOT, {
     method: "POST", headers: await mutationHeaders({"Content-Type": "application/json"}), signal,
     body: JSON.stringify({destination, filename: file.name, byte_count: file.size})
   }).then(responseBody),
@@ -35,6 +36,6 @@ export const videoUploadAdapter: VideoUploadAdapter = {
       else request.send(file);
     });
   },
-  status: uploadId => fetch(`${ROOT}/${encodeURIComponent(uploadId)}`).then(responseBody),
-  cancel: async uploadId => { await fetch(`${ROOT}/${encodeURIComponent(uploadId)}`, {method: "DELETE", headers: await mutationHeaders()}); }
+  status: uploadId => clientFetch(`${ROOT}/${encodeURIComponent(uploadId)}`).then(responseBody),
+  cancel: async uploadId => { await clientFetch(`${ROOT}/${encodeURIComponent(uploadId)}`, {method: "DELETE", headers: await mutationHeaders()}); }
 };

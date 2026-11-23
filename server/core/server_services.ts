@@ -461,6 +461,7 @@ export class ServerServices {
       conversationSystem,
       workspaceAdmission: conversationSystem?.workspace_admission,
       updateBarrier: this.update_barrier,
+      waitingScreensRoot: environments?.waiting_screens_root,
       executor,
       executorRoutes: environments?.executor_routes,
     });
