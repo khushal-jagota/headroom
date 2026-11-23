@@ -284,6 +284,42 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertFalse(raced.dismissed())
     }
 
+    /// Risk: the queue freezes for the rest of the run. Khushal moves a proposal to Chief,
+    /// and the app goes to the background before the Reviewer sheet closes. The card is
+    /// leaving, so it is not "the card he was on": a fresh window on the return must not
+    /// swap its exit for the summary, which removes the card and its sheet before the sheet
+    /// reports closing. The exit finishes and the queue moves on.
+    func testACardLeavingWhenTheAppGoesAwayFinishesItsExitOnTheReturn() {
+        var queue = ReviewQueue()
+        let all = [proposal, ticketMessage, chiefMessage]
+        queue.returnToCards(); reconcile(&queue, all)
+        XCTAssertEqual(queue.shown?.id, proposal.id)
+        queue.resolve(proposal)
+        queue.leaveApp(session: 4)
+        // The server has not caught up yet: the window still has the moved proposal.
+        reconcile(&queue, all, fresh: 5)
+        XCTAssertEqual(queue.shown?.id, proposal.id, "The exit still runs on the return")
+        queue.finishExit(proposal); reconcile(&queue, all)
+        XCTAssertEqual(queue.shown?.id, ticketMessage.id, "The queue moves on")
+        XCTAssertNil(queue.leaving)
+    }
+
+    /// Risk: the same freeze through a visit. Review becomes the destination again while a
+    /// card's exit runs; the summary must not replace the exit.
+    func testACardLeavingWhenReviewIsVisitedAgainFinishesItsExit() {
+        var queue = ReviewQueue()
+        let all = [proposal, ticketMessage, chiefMessage]
+        queue.visit(1)
+        queue.returnToCards(); reconcile(&queue, all)
+        queue.resolve(proposal)
+        queue.visit(2)
+        XCTAssertEqual(queue.shown?.id, proposal.id, "The exit still runs after the visit")
+        queue.finishExit(proposal); reconcile(&queue, all)
+        XCTAssertEqual(queue.shown?.id, ticketMessage.id, "The queue moves on")
+        queue.visit(3)
+        XCTAssertNil(queue.shown, "With no exit running, a visit opens on the summary")
+    }
+
     /// Risk: one saved reply moves the queue on twice. The card that sent it and an artifact
     /// opened from it both see the reply land: the artifact's dock finishes the exit at once,
     /// then the card's exit timer resolves and finishes again. The late calls must not bring

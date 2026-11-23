@@ -25,6 +25,15 @@ extension XCUIApplication {
         XCTAssertTrue(card.waitForNonExistence(timeout: timeout), "The Sidebar did not close", file: file, line: line)
     }
 
+    /// Review opens on its summary each time it becomes the destination. Back to review
+    /// (or Review skipped) brings its cards.
+    func openReviewCards(timeout: TimeInterval = 12, file: StaticString = #filePath, line: UInt = #line) {
+        let back = buttons["review.return"]
+        XCTAssertTrue(back.waitForExistence(timeout: timeout), "Review has no cards to return to", file: file, line: line)
+        back.tap()
+        XCTAssertTrue(back.waitForNonExistence(timeout: timeout), "Review stayed on its summary", file: file, line: line)
+    }
+
     func openSidebar(timeout: TimeInterval = 10, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(sidebarButton.waitForExistence(timeout: timeout), "No Sidebar button: not on a root page", file: file, line: line)
         sidebarButton.tap()

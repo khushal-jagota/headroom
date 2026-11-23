@@ -112,6 +112,100 @@ final class ArtifactDockTests: XCTestCase {
         XCTAssertEqual(writes.compactMap { $0 as? String }, ["approve"], "Approve lands once")
     }
 
+    /// The three docks on a bad connection. Each artifact is opened once online, then the
+    /// stub drops every connection: the proposal's, the message's and the conversation's
+    /// viewers open again with their docks, with no cover, banner or status note. The viewer
+    /// keeps no saved copy of an artifact, so offline it shows its quiet placeholder until
+    /// the next connection reads the file.
+    @MainActor func testDocksOnABadConnection() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        func proof(_ name: String) async throws {
+            let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/" + name)!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, name)
+        }
+        try await proof("review-owner/ticket-split")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        func noCover(_ screen: String) {
+            for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
+                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                               "\(screen) shows \"\(text)\"")
+            }
+        }
+        let viewer = app.buttons["Artifact actions"]
+        let approve = app.buttons["review.approve"]
+        let skip = app.buttons["review.skip"]
+        let message = app.staticTexts["First unread message"]
+        let dockLink = app.links["dock evidence"]
+        let html = app.links.matching(NSPredicate(format: "label CONTAINS %@", "proof.html")).firstMatch
+        let line = app.buttons["conversation-line"]
+        let evidence = app.links["Conversation evidence"].firstMatch
+        let placeholder = app.staticTexts["Opening artifact…"]
+        func openConversationArtifact(online: Bool) {
+            app.buttons["review.openTicket"].tap()
+            XCTAssertTrue(line.waitForExistence(timeout: 10)); line.tap()
+            XCTAssertTrue(evidence.waitForExistence(timeout: 10)); evidence.tap()
+            XCTAssertTrue(viewer.waitForExistence(timeout: 8))
+            if online { XCTAssertTrue(app.staticTexts["Dock artifact proof"].waitForExistence(timeout: 8)) }
+            else { XCTAssertTrue(placeholder.waitForExistence(timeout: 8), "No saved copy: the quiet placeholder") }
+            XCTAssertTrue(app.textFields["conversation-input"].firstMatch.waitForExistence(timeout: 5), "The conversation's composer docks below")
+        }
+        func closeConversationArtifact() {
+            app.backButton.tap(); XCTAssertTrue(evidence.waitForExistence(timeout: 8))
+            app.backButton.tap(); app.backButton.tap()
+            XCTAssertTrue(approve.waitForExistence(timeout: 10))
+        }
+
+        // Online: open the proposal's and the message's artifacts once. Opening the
+        // conversation reads the message, so the conversation's artifact comes last.
+        app.openReviewCards()
+        XCTAssertTrue(dockLink.waitForExistence(timeout: 10)); dockLink.tap()
+        XCTAssertTrue(app.staticTexts["Dock artifact proof"].waitForExistence(timeout: 10))
+        app.backButton.tap()
+        XCTAssertTrue(dockLink.waitForExistence(timeout: 8)); skip.tap()
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        XCTAssertTrue(html.waitForExistence(timeout: 5)); html.tap()
+        XCTAssertTrue(viewer.waitForExistence(timeout: 8))
+        app.backButton.tap()
+        XCTAssertTrue(message.waitForExistence(timeout: 8))
+
+        // Bad connection: both again, each with its dock.
+        try await proof("offline")
+        html.tap()
+        XCTAssertTrue(viewer.waitForExistence(timeout: 8), "The message's viewer opens offline")
+        XCTAssertTrue(app.textFields["conversation-input"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["review.markRead"].exists)
+        noCover("Message artifact"); capture("offline-message-artifact-dock")
+        app.backButton.tap()
+        XCTAssertTrue(message.waitForExistence(timeout: 8)); skip.tap()
+        XCTAssertTrue(app.staticTexts["Historical message"].waitForExistence(timeout: 10)); skip.tap()
+        app.openReviewCards()
+        XCTAssertTrue(dockLink.waitForExistence(timeout: 10)); dockLink.tap()
+        XCTAssertTrue(viewer.waitForExistence(timeout: 8), "The proposal's viewer opens offline")
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 8), "No saved copy: the quiet placeholder")
+        XCTAssertTrue(approve.waitForExistence(timeout: 5)); XCTAssertTrue(skip.exists)
+        noCover("Proposal artifact"); capture("offline-proposal-artifact-dock")
+        app.backButton.tap()
+        XCTAssertTrue(dockLink.waitForExistence(timeout: 8))
+
+        // The conversation's artifact: once online, then again offline.
+        try await proof("online")
+        openConversationArtifact(online: true); closeConversationArtifact()
+        try await proof("offline")
+        openConversationArtifact(online: false)
+        noCover("Conversation artifact"); capture("offline-conversation-artifact-composer-dock")
+        closeConversationArtifact()
+        try await proof("online")
+    }
+
     /// A long conversation whose rows carry tables, code and charts still scrolls freely.
     @MainActor func testLongBlockMarkdownConversationScrolls() throws {
         continueAfterFailure = false

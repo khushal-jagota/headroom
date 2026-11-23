@@ -14,7 +14,7 @@ Chief, and managers each offer the event types that apply to them.
 saved preferences and constructs a title, body, route and replacement tag.
 `runtime.ts`, `web_push.ts`, and `apns.ts` deliver those intents to browser
 subscriptions and registered native devices.
-`web/src/routes/NotificationsRoute.svelte` manages preferences and Web Push
+`web/src/components/settings/NotificationSettings.svelte` manages preferences and Web Push
 subscriptions. An APNs token is not a Web Push subscription: it has neither a
 browser endpoint nor the browser encryption keys.
 
@@ -343,7 +343,9 @@ PANELS_PUSH_TEST_OUTPUT=/tmp/panels-notification-proof \
   python3 ios/scripts/test-notifications-simulator.py --review
 ```
 
-The helper requires the owned PanelsLaneB already booted. It holds the lane lock
+The helper requires the owned PanelsLaneB already booted. Another task sets
+`PANELS_PUSH_LANE` to its own booted lane and `PANELS_PUSH_BUNDLE` to its own
+task bundle. It holds the lane lock
 and does not boot, erase, or shut down a Simulator. It surveys its loopback port
 and stops its own host when the review exits. The current Ticket records measured
 execution cost and evidence. Keep result bundles and build output outside artifacts.

@@ -22,7 +22,6 @@ struct SettingsPlaces: View {
             }
         }.listRowBackground(PanelsTheme.raised)
         Section {
-            place("Ideas", symbol: "lightbulb", route: .ideas)
             place("All goals", symbol: "target", route: .goals)
             place("Usage", symbol: "chart.bar", route: .usage)
             place("VPS", symbol: "server.rack", route: .vps)

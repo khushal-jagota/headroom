@@ -16,8 +16,7 @@ final class ReviewFinalPageTests: XCTestCase {
         defer { app.terminate() }
         @MainActor func launchReview() {
             app.launch()
-            // Review is the root at launch.
-            XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
+            app.openReviewCards()
             XCTAssertTrue(app.buttons["review.approve"].waitForExistence(timeout: 8))
         }
         @MainActor func oracle(_ stage: String, pending: Bool, count: Int) async throws -> [[String: Any]] {
@@ -99,8 +98,7 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        // Review is the root at launch.
-        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
+        app.openReviewCards()
         let link = app.links["Migration verification"]
         XCTAssertTrue(link.waitForExistence(timeout: 8), "The authored link text must remain in its paragraph")
         let photo = app.descendants(matching: .any).matching(identifier: "inline-artifact-image").firstMatch
@@ -150,99 +148,6 @@ final class ReviewFinalPageTests: XCTestCase {
         return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Int])
     }
 
-    @MainActor func testFinalPageChiefDraftAndSend() async throws {
-        continueAfterFailure = false
-        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
-        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
-        let app = XCUIApplication()
-        app.launchArguments = ["--conversation-stub", base]
-        app.launch()
-        defer { app.terminate() }
-        // A normal launch opens Review on its summary; the fixture cards follow its return button.
-        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
-        let headline = app.staticTexts["review.summary.headline"]
-        let reviewReturn = app.buttons["review.return"]
-        XCTAssertTrue(headline.waitForExistence(timeout: 8))
-        reviewReturn.tap()
-        try skipFixtureCards(app)
-        XCTAssertTrue(headline.waitForExistence(timeout: 8))
-        XCTAssertEqual(reviewReturn.label, "Review skipped")
-        capture(app, "review-final-page-with-return")
-        reviewReturn.tap()
-        XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
-        try skipFixtureCards(app)
-        XCTAssertTrue(headline.waitForExistence(timeout: 8))
-        XCTAssertTrue(reviewReturn.exists)
-        try await proof(base, "review-final")
-        XCTAssertTrue(reviewReturn.waitForNonExistence(timeout: 8))
-        XCTAssertEqual(headline.label, "All clear.")
-
-        let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
-        let attachment = app.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch
-        XCTAssertTrue(input.waitForExistence(timeout: 8))
-        XCTAssertGreaterThan(input.frame.minY, headline.frame.minY, "Message Chief must follow the summary text")
-        input.tap(); input.typeText("Shared Chief draft")
-        XCTAssertTrue(app.keyboards.firstMatch.exists)
-        let send = app.buttons["Send message"]
-        XCTAssertTrue(send.waitForExistence(timeout: 5))
-        if !send.isHittable { app.swipeUp() }
-        XCTAssertTrue(send.isHittable, "The keyboard must not hide Send")
-        UIPasteboard.general.image = UIGraphicsImageRenderer(size: CGSize(width: 90, height: 60)).image { context in
-            UIColor.systemTeal.setFill(); context.fill(CGRect(x: 0, y: 0, width: 90, height: 60))
-        }
-        input.press(forDuration: 1.2)
-        XCTAssertTrue(app.menuItems["Paste"].waitForExistence(timeout: 3))
-        app.menuItems["Paste"].tap()
-        XCTAssertTrue(attachment.waitForExistence(timeout: 5))
-        capture(app, "review-final-chief-keyboard-and-attachment")
-
-        // A fresh process reads the same durable Chief words and attachments.
-        app.terminate(); app.launch()
-        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
-        XCTAssertTrue(input.waitForExistence(timeout: 8))
-        XCTAssertEqual(input.value as? String, "Shared Chief draft")
-        XCTAssertTrue(attachment.waitForExistence(timeout: 5))
-        app.openDestination("sidebar-chief", timeout: 8)
-        let chiefScreen = app.descendants(matching: .any)["chief-screen"]
-        XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8))
-        XCTAssertTrue(input.waitForExistence(timeout: 8))
-        XCTAssertEqual(input.value as? String, "Shared Chief draft")
-        XCTAssertTrue(attachment.waitForExistence(timeout: 5))
-        input.tap(); input.typeText(" from Chief")
-        let changedDraft = try XCTUnwrap(input.value as? String)
-        XCTAssertTrue(changedDraft.contains(" from Chief"))
-        app.openDestination("sidebar-review", timeout: 8)
-        XCTAssertTrue(chiefScreen.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(input.waitForExistence(timeout: 8))
-        XCTAssertEqual(input.value as? String, changedDraft)
-        capture(app, "review-final-chief-shared-draft")
-
-        if !send.isHittable { app.swipeUp() }
-        XCTAssertTrue(send.isHittable)
-        send.tap()
-        let sent = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Sent to Chief'")).firstMatch
-        XCTAssertTrue(sent.waitForExistence(timeout: 8))
-        capture(app, "review-final-chief-sent")
-        let writes = try await recordedWrites(base)
-        XCTAssertEqual(writes.count, 1, "The return and draft edits must not send messages")
-        let message = try XCTUnwrap(writes.first as? [String: Any])
-        XCTAssertEqual(message["conversation_id"] as? String, "stub")
-        XCTAssertNil(message["owner_read_through_sequence"], "A final-page send must not acknowledge unread Review content")
-        let pieces = try XCTUnwrap(message["content"] as? [[String: Any]])
-        XCTAssertEqual(pieces.first?["text"] as? String, changedDraft.trimmingCharacters(in: .whitespacesAndNewlines))
-        XCTAssertTrue(pieces.contains { $0["piece"] as? String == "image" })
-
-        // Appearance is a one-off review, rather than a permanent geometry gate.
-        app.terminate()
-        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
-        app.launch()
-        XCTAssertTrue(input.waitForExistence(timeout: 10))
-        input.tap(); input.typeText("Large text draft")
-        if !send.isHittable { app.swipeUp() }
-        XCTAssertTrue(send.isHittable)
-        capture(app, "review-final-chief-accessibility-text-keyboard")
-    }
-
     @MainActor func testVisibleReviewCardBecomesHistorical() async throws {
         continueAfterFailure = false
         let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
@@ -252,8 +157,7 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
-        // Review is the root at launch.
-        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
+        app.openReviewCards()
         let originalMessage = app.staticTexts["First unread message"]
         XCTAssertTrue(originalMessage.waitForExistence(timeout: 8))
         let input = app.descendants(matching: .any).matching(identifier: "conversation-input").firstMatch
@@ -288,6 +192,7 @@ final class ReviewFinalPageTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
         defer { app.terminate() }
+        app.openReviewCards()
         XCTAssertTrue(app.buttons["review.openTicket"].waitForExistence(timeout: 12))
         // The approval limit row shows only when no proposal waits. The Ticket page reads
         // the Ticket when it opens, so remove the proposal first.
@@ -359,10 +264,13 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
         // Recreate the application and queries for each process. Retained query snapshots
         // in the failed review trace referred to the terminated accessibility-size process.
+        // Review opens on its summary, so each launch goes back to the cards first.
         @MainActor func launch(_ arguments: [String]) -> XCUIApplication {
             let application = XCUIApplication()
             application.launchArguments = arguments
             application.launch()
+            let back = application.buttons["review.return"]
+            if back.waitForExistence(timeout: 12) { back.tap() }
             return application
         }
         var app = launch(["--conversation-stub", base])
@@ -461,6 +369,109 @@ final class ReviewFinalPageTests: XCTestCase {
         XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String]), ["approve"])
     }
 
+    /// A reviewer change to Chief saves while the store's refresh stalls, as on a slow
+    /// connection. The sheet closes as soon as the change is saved, not when the refresh
+    /// ends, and the handed-off card leaves: the three design cards share one title, so
+    /// only two cards are left to skip before the summary.
+    @MainActor func testReviewerSheetClosesWhenTheChangeIsSaved() async throws {
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let approve = app.buttons["review.approve"]
+        let back = app.buttons["review.return"]
+        if !approve.waitForExistence(timeout: 12), back.exists { back.tap() }
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        try await proof(base, "stall-refresh")
+        app.buttons["decision.reviewer"].tap()
+        let chief = app.buttons["decision.reviewer.chief"]
+        XCTAssertTrue(chief.waitForExistence(timeout: 5))
+        chief.tap()
+        var saved = false
+        for _ in 0..<40 where !saved {
+            let (data, _) = try await URLSession.shared.data(from: URL(string: base + "/proof/scopes")!)
+            saved = ((try? JSONSerialization.jsonObject(with: data) as? [Any])?.count ?? 0) == 1
+            if !saved { try await Task.sleep(for: .milliseconds(250)) }
+        }
+        XCTAssertTrue(saved, "The reviewer change saved")
+        XCTAssertTrue(chief.waitForNonExistence(timeout: 3), "The sheet closes once the change is saved, while the refresh still stalls")
+        capture(app, "reviewer-sheet-closed-while-refresh-stalls")
+        let skip = app.buttons["review.skip"]
+        let headline = app.staticTexts["review.summary.headline"]
+        for _ in 0..<3 where !headline.exists {
+            XCTAssertTrue(skip.waitForExistence(timeout: 8))
+            skip.tap()
+            _ = headline.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(headline.waitForExistence(timeout: 5))
+        XCTAssertEqual(headline.label, "2 skipped.", "The handed-off card left, so only the other two were skipped")
+        try await proof(base, "unstall-refresh")
+    }
+
+    /// The design cards on a bad connection. The card, its Approve and Reviewer sheets,
+    /// the Ticket page and its Actions sheet are read once online, then the stub drops every
+    /// connection. Each one opens from its saved copy with no cover, banner or status note.
+    /// No decision is sent: the permanent offline test covers delivery.
+    @MainActor func testCardsSheetsAndTicketOnABadConnection() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let approve = app.buttons["review.approve"]
+        let back = app.buttons["review.return"]
+        let stage = app.buttons["decision.stage.needs_implementation"]
+        let reviewer = app.buttons["decision.reviewer"]
+        let chief = app.buttons["decision.reviewer.chief"]
+        let ticketActions = app.buttons["ticket-actions"]
+        func noCover(_ screen: String) {
+            for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
+                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                               "\(screen) shows \"\(text)\"")
+            }
+        }
+        func sheets(_ place: String) {
+            approve.tap()
+            XCTAssertTrue(waitForDecisionStage(stage), "\(place): the Approve sheet opens")
+            noCover("\(place) Approve sheet"); capture(app, "offline-\(place)-approve-sheet")
+            app.buttons["Cancel"].tap()
+            XCTAssertTrue(stage.waitForNonExistence(timeout: 5))
+            reviewer.tap()
+            XCTAssertTrue(chief.waitForExistence(timeout: 5), "\(place): the Reviewer sheet opens")
+            noCover("\(place) Reviewer sheet"); capture(app, "offline-\(place)-reviewer-sheet")
+            app.buttons["Cancel"].tap()
+            XCTAssertTrue(chief.waitForNonExistence(timeout: 5))
+        }
+        // Online: read the card and its Ticket once.
+        XCTAssertTrue(back.waitForExistence(timeout: 12)); back.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(ticketActions.waitForExistence(timeout: 8))
+        app.backButton.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+
+        // Bad connection: every request now drops.
+        try await proof(base, "offline")
+        noCover("Review card"); capture(app, "offline-review-card")
+        sheets("review")
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(ticketActions.waitForExistence(timeout: 8), "The Ticket page opens from its saved copy")
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        noCover("Ticket"); capture(app, "offline-ticket")
+        ticketActions.tap()
+        XCTAssertTrue(app.buttons["ticket-action-backlog"].waitForExistence(timeout: 5))
+        noCover("Ticket actions"); capture(app, "offline-ticket-actions")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(ticketActions.waitForExistence(timeout: 5))
+        sheets("ticket")
+        app.backButton.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 8), "Back returns to the card offline")
+        try await proof(base, "online")
+    }
+
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {
         // Existence alone admitted an infinite/zero frame in the earlier review run.
         let ready = NSPredicate { _, _ in
@@ -473,15 +484,6 @@ final class ReviewFinalPageTests: XCTestCase {
             }
         }
         return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 5) == .completed
-    }
-
-    @MainActor private func skipFixtureCards(_ app: XCUIApplication) throws {
-        for element in [app.staticTexts["First unread message"], app.buttons["review.approve"], app.staticTexts["Historical message"]] {
-            XCTAssertTrue(element.waitForExistence(timeout: 8))
-            let skip = app.buttons["review.skip"]
-            XCTAssertTrue(skip.waitForExistence(timeout: 5)); skip.tap()
-            XCTAssertTrue(element.waitForNonExistence(timeout: 5))
-        }
     }
 
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {

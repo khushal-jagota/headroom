@@ -14,7 +14,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
-BUNDLE = "app.panels.ios.pios-notify"
+BUNDLE = os.environ.get("PANELS_PUSH_BUNDLE", "app.panels.ios.pios-notify")
+# The owned lane, by name. Another task names its own booted lane here.
+LANE = os.environ.get("PANELS_PUSH_LANE", "PanelsLaneB")
 PORT = 18763
 
 
@@ -25,7 +27,7 @@ def main():
         return subprocess.call(
             [
                 "lockf",
-                "/tmp/panels-PanelsLaneB.lock",
+                f"/tmp/panels-{LANE}.lock",
                 sys.executable,
                 __file__,
                 *sys.argv[1:],
@@ -37,10 +39,10 @@ def main():
         device
         for group in devices["devices"].values()
         for device in group
-        if device["name"] == "PanelsLaneB"
+        if device["name"] == LANE
     ]
     if len(lane) != 1 or lane[0]["state"] != "Booted":
-        raise SystemExit("Exactly one PanelsLaneB must already be booted by its owner.")
+        raise SystemExit(f"Exactly one {LANE} must already be booted by its owner.")
     device = lane[0]["udid"]
     output = Path(os.environ["PANELS_PUSH_TEST_OUTPUT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)

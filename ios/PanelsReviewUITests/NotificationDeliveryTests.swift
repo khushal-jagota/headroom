@@ -21,6 +21,9 @@ final class NotificationDeliveryTests: XCTestCase {
             if permission.waitForExistence(timeout: 5) { permission.tap() }
         }
         let preference = app.switches["notification-preference-tickets-awaiting_reply"]
+        // Settings opens on the server row and the places above the tabs, so the Tickets
+        // preferences start at the bottom edge: the list builds them as they scroll in.
+        for _ in 0..<4 where !preference.waitForExistence(timeout: 2) { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(preference.waitForExistence(timeout: 8))
         assertValue(preference, "1")
         capture("preference-before-save")

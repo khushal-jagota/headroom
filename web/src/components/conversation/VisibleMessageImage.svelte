@@ -22,6 +22,9 @@
   {/if}
 </div>
 <style>
-  .c2-piece-image-slot { margin-block: var(--space-2); }
+  /* A picture is a block in its message: a block's gap from the words around it. In the
+     person's message the column's 8 px stack spacing takes over (UserMessage). */
+  .c2-piece-image-slot { margin-block: var(--cv-s2); }
+  .c2-piece-image-slot :global(.file-preview-media:focus-visible) { outline: var(--cv-focus-width) solid var(--cv-accent); outline-offset: var(--cv-focus-offset); }
   :global(.file-preview-grid) > .c2-piece-image-slot { margin: 0; min-width: 0; }
 </style>

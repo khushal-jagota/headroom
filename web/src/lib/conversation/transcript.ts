@@ -184,7 +184,7 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   no_such_conversation: "there is no such conversation to send to",
   model_resolution_failed: "the selected model could not be resolved",
   backend_rejected_prompt: "the provider rejected this prompt",
-  backend_did_not_start: "the backend would not start",
+  backend_did_not_start: "the backend did not start",
   session_did_not_load: "the backend's session would not load",
   write_to_backend_failed: "the write to the backend did not succeed",
   no_running_turn_to_steer_into: "there was no running turn to steer into",
@@ -206,18 +206,180 @@ export function refusalSentence(reason: PromptDeliveryRefusalReason, detail?: st
 export const PROMPT_DISCARDED_SENTENCE = "discarded without being delivered";
 export const AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE = "context was not compacted";
 
-const TURN_ENDING_SENTENCES: Record<ConversationTurnEnding, string> = {
-  completed: "turn complete",
-  failed: "turn failed",
-  interrupted: "turn interrupted"
+/** A line in the thread that says what happened to a turn or a message, rather than
+ *  anything anybody said. Every one of them is drawn the same way: a mark in its tone, a
+ *  plain sentence a person can act on, and, when the backend said something more exact,
+ *  that exact text beneath it, quieter, so nothing it said is lost.
+ *
+ *  `stopped` is a turn that ended before it finished, by the person's hand or with no
+ *  ending recorded: not a problem, but more than a turn's ordinary metadata. */
+export type TranscriptStatus = {
+  tone: "error" | "warning" | "stopped" | "neutral";
+  title: string;
+  detail: string | null;
+  /** What the person can do now, in plain words, when the product knows a real next step.
+   *  It is said, not offered as a control: only things the person can actually do. */
+  next?: string | null;
+  /** v9 (7): the card's words when its one button says the rest (a rate limit: "The
+   *  model's rate limit was reached. It resets in 41m."). */
+  brief?: string | null;
+  /** Whether the backend's own words are shown open. They are when the sentence above
+   *  could not name a cause, so the words are the only explanation there is. */
+  detailOpen?: boolean;
+  /** The one real next step the status offers as a control, when there is one the person
+   *  can take from the thread. "choose-model" opens the composer's model picker. */
+  action?: "choose-model" | null;
 };
 
-export function turnEndingSentence(
+/** The plain reason a turn failed, read from the backend's own words, and what the person
+ *  can do about it. Only causes those words name are said; anything else is said as an
+ *  error, and the words stay beneath. */
+const TURN_FAILURE_CAUSES: readonly [RegExp, string, (said: string) => string, ("choose-model" | null)?][] = [
+  [/rate[ _-]?limit|usage limit|quota|too many requests|\b429\b/i, "The turn stopped because the model's rate limit was reached.", rateLimitNextStep, "choose-model"],
+  [/unauthori[sz]ed|authenticat|\b401\b|\bapi key\b|not signed in|sign[ -]?in/i, "The turn stopped because the provider would not accept the sign-in.", () => "Sign in to the provider again, then send a message."],
+  [/disconnect|connection (?:reset|closed|refused|lost)|network|socket hang up|econnreset|timed out|timeout/i, "The turn stopped because the connection to the model dropped.", () => "Send a message to try again."],
+  [/exited with code|exited unexpectedly|crashed|was killed|\bsignal\b|sigkill|sigterm/i, "The turn stopped because the agent's process exited.", () => "Send a message to start it again."]
+];
+const TURN_FAILURE_UNNAMED = "The turn stopped because of an error.";
+
+/** When a limit lifts is the one next step a rate limit has. The provider says it relative
+ *  to the failure ("resets in 41m"), so it is quoted as the provider's, never restated as
+ *  a countdown from now. */
+function rateLimitResetsWhen(said: string): string | null {
+  return /\bresets? ((?:in|at) [^()\n;,]+?)\s*(?:\)|$|[;,\n]|\.\s)/i.exec(said)?.[1]?.trim() ?? null;
+}
+function rateLimitNextStep(said: string): string {
+  const when = rateLimitResetsWhen(said);
+  return when
+    ? `The provider said the limit resets ${when}. Send a message after that, or choose another model.`
+    : "Send a message once the limit resets, or choose another model.";
+}
+
+/** v9 (7): a rate-limited turn's card says the cause and when it lifts; its button
+ *  ("Choose another model") and Details say the rest. */
+export function rateLimitBrief(said: string): string {
+  const when = rateLimitResetsWhen(said);
+  return when ? `The model's rate limit was reached. It resets ${when}.` : "The model's rate limit was reached.";
+}
+
+export function turnFailureSentence(errorSummary: string | null): string {
+  const said = errorSummary?.trim() ?? "";
+  for (const [pattern, sentence] of TURN_FAILURE_CAUSES) if (pattern.test(said)) return sentence;
+  return TURN_FAILURE_UNNAMED;
+}
+
+/** How a turn's ending is drawn in the thread, or null when it draws nothing. */
+export function turnEndingStatus(
   ending: ConversationTurnEnding,
-  errorSummary: string | null
-): string {
-  const base = TURN_ENDING_SENTENCES[ending] ?? "turn ended";
-  return ending === "failed" && errorSummary ? errorSummary : base;
+  errorSummary: string | null,
+  /** How long the turn ran, when its head is known. A stopped turn then says it in its one
+   *  line ("Stopped after 8m 45s"), and no head says it again above. */
+  durationSeconds: number | null = null
+): TranscriptStatus | null {
+  if (ending === "failed") {
+    const said = errorSummary?.trim() || null;
+    const cause = TURN_FAILURE_CAUSES.find(([pattern]) => pattern.test(said ?? ""));
+    return {
+      tone: "error",
+      title: cause?.[1] ?? TURN_FAILURE_UNNAMED,
+      detail: said,
+      next: cause ? cause[2](said ?? "") : "Send a message to try again.",
+      action: cause?.[3] ?? null,
+      brief: cause?.[3] === "choose-model" ? rateLimitBrief(said ?? "") : null,
+      detailOpen: cause === undefined
+    };
+  }
+  if (ending === "interrupted") {
+    return { tone: "stopped", title: durationSeconds !== null && durationSeconds > 0 ? `Stopped after ${formatDuration(durationSeconds)}` : "Stopped before it finished", detail: null };
+  }
+  return null;
+}
+
+/** A status's reason in one short phrase, for the line "This turn failed · <reason>" or
+ *  "Not delivered · <reason>": the brief when there is one, otherwise the cause the title
+ *  names, without its lead-in and its full stop. */
+export function statusReason(status: Pick<TranscriptStatus, "title" | "brief">): string {
+  const said = (status.brief ?? status.title)
+    .replace(/^Not delivered:\s*/, "")
+    .replace(/^The turn stopped because\s*/, "")
+    .replace(/^of\s+/, "")
+    .trim()
+    .replace(/[.!?]$/, "");
+  return said.charAt(0).toUpperCase() + said.slice(1);
+}
+
+/** A turn the record never wrote an ending for, in the same family. */
+export const TURN_STOPPED_STATUS: TranscriptStatus = {
+  tone: "stopped",
+  title: "Stopped before it finished",
+  detail: null
+};
+
+/** What the person can do about a message that was turned away, by why it was. A reason
+ *  with nothing the person can do about it says nothing more. */
+const STEER_REFUSED_NEXT_STEP = "Send it again with Queue, so it goes in after this turn.";
+const REFUSAL_NEXT_STEPS: Partial<Record<PromptDeliveryRefusalReason, string>> = {
+  model_resolution_failed: "Choose another model in the composer, then send it again.",
+  backend_rejected_prompt: "Change the message, then send it again.",
+  backend_did_not_start: "Send it again to retry, or choose another model in the composer.",
+  session_did_not_load: "Send it again to retry.",
+  write_to_backend_failed: "Send it again to retry.",
+  no_running_turn_to_steer_into: "The turn had already ended. Send it again to start a new one.",
+  backend_cannot_steer: STEER_REFUSED_NEXT_STEP,
+  running_turn_changed_before_steer: STEER_REFUSED_NEXT_STEP,
+  running_turn_cannot_accept_steer: STEER_REFUSED_NEXT_STEP,
+  message_cannot_be_steered: STEER_REFUSED_NEXT_STEP,
+  backend_rejected_steer: STEER_REFUSED_NEXT_STEP,
+  remote_steer_not_delivered: STEER_REFUSED_NEXT_STEP,
+  command_cannot_join_running_turn: "Send it again after this turn ends."
+};
+
+/** The refusals that sending the same message again can get past: the backend or the
+ *  moment was the problem, not the message or the conversation. Under these the message
+ *  offers Resend, and its next step names that button. */
+const WHILE_A_TURN_RUNS = "Resend it. While a turn is running, it waits for that turn to end.";
+const RESEND_NEXT_STEPS: Partial<Record<PromptDeliveryRefusalReason, string>> = {
+  model_resolution_failed: "Choose another model in the composer, then resend it.",
+  backend_did_not_start: "Resend it, or choose another model in the composer first.",
+  session_did_not_load: "Resend it to retry.",
+  write_to_backend_failed: "Resend it to retry.",
+  no_running_turn_to_steer_into: "The turn had already ended. Resend it to start a new one.",
+  backend_cannot_steer: WHILE_A_TURN_RUNS,
+  running_turn_changed_before_steer: WHILE_A_TURN_RUNS,
+  running_turn_cannot_accept_steer: WHILE_A_TURN_RUNS,
+  message_cannot_be_steered: WHILE_A_TURN_RUNS,
+  backend_rejected_steer: WHILE_A_TURN_RUNS,
+  remote_steer_not_delivered: WHILE_A_TURN_RUNS,
+  command_cannot_join_running_turn: WHILE_A_TURN_RUNS
+};
+
+/** Whether a message refused for this reason offers Resend. */
+export function refusalOffersResend(reason: PromptDeliveryRefusalReason): boolean {
+  return RESEND_NEXT_STEPS[reason] !== undefined;
+}
+
+/** What became of a message the person sent, under the message rather than inside it: the
+ *  failure is the system's, and the words above it are still theirs. A refused message
+ *  that offers Resend says so in its next step; one that cannot (its reason, or an
+ *  attachment that cannot go out again) keeps the step that asks the person to send it. */
+export function promptOutcomeStatus(
+  row: { kind: "prompt_refused"; reason: PromptDeliveryRefusalReason; sentence: string } | { kind: "prompt_uncertain" | "prompt_discarded" },
+  resendable = false
+): TranscriptStatus {
+  if (row.kind !== "prompt_refused") {
+    return row.kind === "prompt_uncertain"
+      ? { tone: "warning", title: "Delivery not confirmed. It may have arrived, so do not send it again.", detail: null }
+      : { tone: "neutral", title: "Discarded without being delivered", detail: null };
+  }
+  const plain = REFUSAL_SENTENCES[row.reason] ?? "the delivery was impossible";
+  return {
+    tone: "error",
+    title: `Not delivered: ${plain}.`,
+    detail: row.sentence.trim() !== "" && row.sentence !== plain ? row.sentence : null,
+    next: (resendable ? RESEND_NEXT_STEPS[row.reason] : undefined) ?? REFUSAL_NEXT_STEPS[row.reason] ?? null,
+    // Where the next step names another model, the callout offers it as a control.
+    action: row.reason === "model_resolution_failed" || row.reason === "backend_did_not_start" ? "choose-model" : null
+  };
 }
 
 export type TranscriptReading = {
@@ -669,18 +831,16 @@ function believable(minted: number, writtenDown: number): boolean {
 
 export type ToolCallRow = Extract<TranscriptRow, { kind: "tool_call" }>;
 
-/** How many of a running turn's tool calls stay visible in each run. The newest one is
- *  what is happening; the ones before it are what happened, and they wait behind a count. */
-export const VISIBLE_RUNNING_WORK_ENTRIES = 1;
-
 /** A length of time, in the one format this pane says them in.
  *
  * Whole seconds throughout: the record keeps integer unix seconds, so a tenth of a second
- * is not a thing anybody here can know. Under a minute is just seconds; past that it is
- * minutes and seconds, with the seconds left off when there are none.
+ * is not a thing anybody here can know. Under a minute is just seconds; under an hour it is
+ * minutes and seconds, with the seconds left off when there are none; from an hour it is
+ * hours and minutes.
  */
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
@@ -716,12 +876,6 @@ export function hasBackgroundTaskAfterTheTurn(
   status: { turn_running: boolean | null; background_tasks: readonly unknown[] } | null | undefined
 ): boolean {
   return backgroundTasksAfterTheTurn(status).length > 0;
-}
-
-/** The live counter on a turn that is still going. */
-export function workingSentence(elapsedSeconds: number | null): string {
-  if (elapsedSeconds === null || elapsedSeconds < 0) return "Working";
-  return `Working for ${formatDuration(elapsedSeconds)}`;
 }
 
 /** How far past the second the counter's tick is aimed.
@@ -773,11 +927,6 @@ export function turnFoldLabel(item: {
     : workedSentence(item.durationSeconds);
 }
 
-/** What the affordance over a running turn's older tool calls says. */
-export function hiddenWorkSentence(hiddenCount: number): string {
-  return `+${hiddenCount} previous tool call${hiddenCount === 1 ? "" : "s"}`;
-}
-
 /** What is behind an opened turn's fold, counted by what it is.
  *
  * The fold used to hold tool calls and say so. It now also holds everything the turn said
@@ -794,6 +943,12 @@ export function foldedWorkSentence(toolCallCount: number, messageCount: number):
     counted.push(`${messageCount} message${messageCount === 1 ? "" : "s"}`);
   }
   return counted.join(" · ");
+}
+
+/** What a settled turn's fold holds in Focus: only what the turn said on the way to its
+ *  answer. Focus never counts or opens tool calls; that work belongs to Full. */
+export function earlierMessagesSentence(messageCount: number): string {
+  return messageCount <= 0 ? "" : `${messageCount} earlier message${messageCount === 1 ? "" : "s"}`;
 }
 
 /** How far through its plan the conversation is: what it has finished, out of what it
@@ -819,7 +974,7 @@ function completedPlanEntryCount(entries: readonly PlanEntry[]): number {
 }
 
 /** What the seam where the backend cut the thread says. */
-export const CONTEXT_COMPACTED_SENTENCE = "context compacted";
+export const CONTEXT_COMPACTED_SENTENCE = "Context compacted";
 
 /** The label over a prompt bubble, or nothing when it would only say "you".
  *
@@ -861,4 +1016,45 @@ export function liveUserInputFrom(rows: readonly TranscriptRow[]): Extract<
     if (row?.kind === "user_input" && row.state === "live") return row;
   }
   return null;
+}
+
+/** The words of a message, as a copy of it should hold them. Pictures and files are not
+ *  words, so a message that is only those has nothing to copy and offers no copy. */
+export function messageCopyText(content: readonly { piece: string; text?: string }[]): string {
+  return content.flatMap(piece => piece.piece === "text" && typeof piece.text === "string" && piece.text.trim() ? [piece.text] : []).join("\n\n");
+}
+
+/** When a message was recorded, read the way a thread reads it: the time alone today,
+ *  the day and time before that. Null when the record holds no time. */
+export function messageTimeLabel(createdAtUnixSeconds: number | null | undefined, now: Date = new Date()): { short: string; full: string; iso: string } | null {
+  if (typeof createdAtUnixSeconds !== "number" || !Number.isFinite(createdAtUnixSeconds) || createdAtUnixSeconds <= 0) return null;
+  const at = new Date(createdAtUnixSeconds * 1000);
+  const time = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  const day = at.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(at.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
+  return {
+    short: sameDay ? time : `${day}, ${time}`,
+    full: at.toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" }),
+    iso: at.toISOString()
+  };
+}
+
+/** What the ask card above the composer is saying right now, as the transcript needs to
+ *  know it. Given by the live conversation; absent, the card is taken to say nothing. */
+export const ASK_CARD_CONTEXT = Symbol("conversation-ask-card");
+export type AskCardReading = {
+  /** Whether the card for this ask is showing that its availability on the machine is unknown. */
+  saysAvailabilityUnknown(kind: "permission" | "user_input", id: string): boolean;
+};
+
+/** A live ask nobody has answered yet is shown once, by its card above the composer, and
+ *  the turn head already says it waits. Its transcript row is the record, drawn once the
+ *  ask is answered, saved, failed or dead. While the machine's activity is unknown the row
+ *  stays, because it says so, unless the card is already saying the same. */
+export function askShownByItsCard(
+  row: { state: string; answerFate?: string | null },
+  activityUncertain = false,
+  cardSaysAvailabilityUnknown = false
+): boolean {
+  return row.state === "live" && !row.answerFate && (!activityUncertain || cardSaysAvailabilityUnknown);
 }

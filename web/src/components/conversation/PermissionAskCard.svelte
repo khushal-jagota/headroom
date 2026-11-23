@@ -1,19 +1,22 @@
 <script lang="ts">
-  /** The band that says what the agent has stopped for.
+  /** What the agent has stopped for, in the ask shell (AskShell) every ask wears, inside the
+   * composer's own frame while it waits.
    *
-   * It sits on top of the composer and is deliberately one header line plus a bounded,
-   * scrolling body — that bound is the whole of why it stays the composer's size instead
-   * of growing to whatever the backend put in the request. Nothing is truncated and
-   * nothing hides behind a hover; a structured request is laid out to be read.
-   *
-   * A question is not an approval, so it does not borrow approval's words. Its choices
-   * are numbered and pickable by their number, and its raw request stays behind a
-   * disclosure — the owner should be reading the question, not its payload.
+   * The ask is read first: its title, then the command in a well, then the answers as one
+   * list of numbered tiles, the same tiles a question's choices are. Allow once leads and is
+   * chosen by default (key 1); the standing permissions follow, and decline comes last, a
+   * tone down. v10 (4): there is no confirm pill: each row is the action, docked or not. A
+   * click or its number answers at once. No row is pre-highlighted; hover and keyboard focus
+   * light a row. The turn is stopped from the footer's "Stop turn" (the composer draws it).
    */
+  import type { Snippet } from "svelte";
+  import AskShell from "./AskShell.svelte";
+  import AskOptionContent from "./AskOptionContent.svelte";
   import {
     askChoiceForDigit,
     askQuestionChoices,
-    askShape
+    askShape,
+    permissionAnswerRows
   } from "../../lib/conversation/composer";
   import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
   import type { PermissionAskOption } from "../../lib/conversation/wire";
@@ -23,6 +26,10 @@
     busy = false,
     answerAvailable = true,
     note = null,
+    framed = true,
+    replyStrip,
+    onStop,
+    docked = false,
     onAnswer
   }: {
     ask: {
@@ -34,190 +41,146 @@
     busy?: boolean;
     answerAvailable?: boolean;
     note?: string | null;
+    /** Whether it draws its own raised plane (the composer lends it its own frame). */
+    framed?: boolean;
+    /** The composer's one-line reply, under the answers. */
+    replyStrip?: Snippet;
+    /** Ends the waiting turn. v10 (3): the composer draws Stop turn in the footer, so it
+     *  passes none; standing alone the shell's header still offers it. */
+    onStop?: () => void;
+    /** In the composer's place. v10 (4): rows answer at once either way. */
+    docked?: boolean;
     onAnswer: (optionId: string) => void;
   } = $props();
 
   let shape = $derived(askShape(ask));
-  let choices = $derived(askQuestionChoices(ask));
+  let rows = $derived(shape === "question"
+    ? askQuestionChoices(ask).map((choice) => ({ ...choice, emphasis: "option" as const, supplied: true }))
+    : permissionAnswerRows(ask));
   let detail = $derived(readableConversationDetail(ask.detail));
-  let eyebrow = $derived(shape === "question" ? "question" : "pending approval");
+  /** v17 (7): the command wraps only at spaces. Each run of non-space characters is one
+   *  unbreakable piece, so a line never breaks inside a flag, a path or after a hyphen. */
+  let detailPieces = $derived(detail === null ? [] : detail.split(/([ \n]+)/).filter(piece => piece !== ""));
+  /** v9 (2): Deny is an option row (the last one), never a separate button. */
+  let tiles = $derived(rows);
+  // v5: a permission ask says "Needs your permission" (v16: with the dot); a question keeps
+  // "Needs your answer". "Needs your approval" belongs to proposals.
+  let eyebrow = $derived(shape === "question" ? "Needs your answer" : "Needs your permission");
   let rawOpen = $state(false);
 
+  /** v10 (4): a row is the action: choosing it answers. */
+  function pick(optionId: string): void {
+    if (busy || !answerAvailable) return;
+    onAnswer(optionId);
+  }
+
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (shape !== "question" || busy || !answerAvailable) return;
+    if (busy || !answerAvailable) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target;
     // Somebody typing a number into a field means the number, not the answer.
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
-    const chosen = askChoiceForDigit(ask, Number.parseInt(event.key, 10));
-    if (chosen === null) return;
+    const digit = Number.parseInt(event.key, 10);
+    const byDigit = shape === "question"
+      ? askChoiceForDigit(ask, digit)
+      : rows.find((row) => row.shortcutDigit === digit) ?? null;
+    if (byDigit === null) return;
     event.preventDefault();
-    onAnswer(chosen.optionId);
+    pick(byDigit.optionId);
   }
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<section
-  class="c2-ask"
+<AskShell
+  kind={shape === "question" ? "question" : "permission"}
+  {eyebrow}
+  title={ask.title}
+  {framed}
+  {replyStrip}
+  {onStop}
+  stopDisabled={busy}
   aria-label={shape === "question" ? "Question" : "Permission ask"}
   data-conversation-ask={ask.askId}
   data-conversation-ask-shape={shape}
 >
-  <div class="c2-ask-head">
-    <span class="c2-ask-eyebrow">{eyebrow}</span>
-    <span class="c2-ask-title">{ask.title}</span>
-  </div>
-
-  {#if shape === "question"}
-    <div class="c2-ask-choices" role="group" aria-label="Answers">
-      {#each choices as choice (choice.optionId)}
-        <button
-          type="button"
-          class="c2-ask-choice"
-          data-conversation-ask-choice={choice.optionId}
-          data-conversation-ask-shortcut={choice.shortcutDigit ?? undefined}
-          disabled={busy || !answerAvailable}
-          onclick={() => answerAvailable && onAnswer(choice.optionId)}
-        >
-          <span class="c2-ask-choice-label">{choice.label}</span>
-          {#if choice.shortcutDigit !== null}
-            <kbd class="c2-ask-kbd">{choice.shortcutDigit}</kbd>
-          {/if}
-        </button>
-      {/each}
-    </div>
-    {#if detail}
+  {#if shape !== "question" && detail}
+    <!-- The one place the command is shown while it waits: the answers sit right under it. -->
+    <pre class="c2-ask-detail" data-conversation-ask-detail>{#each detailPieces as piece, index (index)}{#if /^[ \n]+$/.test(piece)}{piece}{:else}<span class="c2-ask-word">{piece}</span>{/if}{/each}</pre>
+  {/if}
+  <div class="cv-ask-rows c2-ask-choices" class:after-detail={shape !== "question" && detail} role="group" aria-label="Answers">
+    {#each tiles as row, index (row.optionId)}
       <button
         type="button"
-        class="c2-ask-raw-toggle"
-        data-conversation-ask-raw-toggle
-        aria-expanded={rawOpen}
-        onclick={() => (rawOpen = !rawOpen)}
-      >{rawOpen ? "Hide the request" : "Show the request"}</button>
-      {#if rawOpen}
-        <pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>
-      {/if}
+        class="cv-ask-row c2-ask-choice"
+        data-conversation-ask-choice={row.optionId}
+        data-conversation-ask-action={shape === "question" ? undefined : row.optionId}
+        data-conversation-ask-emphasis={shape === "question" ? undefined : row.emphasis}
+        data-conversation-ask-supplied={row.supplied ? "true" : "false"}
+        data-conversation-ask-shortcut={row.shortcutDigit ?? undefined}
+        aria-keyshortcuts={row.shortcutDigit === null ? undefined : String(row.shortcutDigit)}
+        title={row.supplied ? undefined : "Panels supplied this answer; the backend may not take it"}
+        disabled={busy || !answerAvailable}
+        onclick={() => pick(row.optionId)}
+      >
+        <AskOptionContent label={row.label} digit={row.shortcutDigit} keyTag="kbd" />
+      </button>
+    {/each}
+  </div>
+  {#if shape === "question" && detail}
+    <button
+      type="button"
+      class="cv-button cv-button--ghost cv-button--small c2-ask-raw-toggle"
+      data-conversation-ask-raw-toggle
+      aria-expanded={rawOpen}
+      onclick={() => (rawOpen = !rawOpen)}
+    >{rawOpen ? "Hide the request" : "Show the request"}</button>
+    {#if rawOpen}
+      <pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>
     {/if}
-  {:else if detail}
-    <pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>
   {/if}
 
   {#if shape === "shapeless"}
     <p class="c2-ask-note" data-conversation-ask-fallback>
-      This ask did not offer the usual answers, so Panels offers these. Cancelling the turn
+      This ask did not offer the usual answers, so Panels offers these. Stopping the turn
       always works.
     </p>
   {/if}
   {#if note}
     <p class="c2-ask-note" data-conversation-ask-note>{note}</p>
   {/if}
-</section>
+</AskShell>
 
 <style>
-  .c2-ask {
-    min-width: 0;
-    max-width: 100%;
-    display: grid;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-block-end: var(--border-hairline) solid var(--border-color);
-    /* The recessed plane the card already uses for the well below it. The cool ink plane
-       was invisible while the card itself was drawn in ink; on the card's own warm surface
-       it read as a foreign rectangle. */
-    background: var(--surface-recessed);
-    color: var(--accent-text);
-    border-start-start-radius: var(--radius-lg);
-    border-start-end-radius: var(--radius-lg);
-  }
-  .c2-ask-head {
-    display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--space-2);
-  }
-  .c2-ask-eyebrow {
-    flex: none;
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-label);
-    text-transform: uppercase;
-  }
-  .c2-ask-title {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    font-family: var(--font-ui);
-    font-size: var(--type-sm);
-    color: var(--accent-text);
-  }
-  /* The bound that keeps this band the composer's size: whatever the backend sent
-     wraps and scrolls in here rather than growing the composer to fit it. */
+  /* The command, or the request behind a question: a code block inside the ask, bounded so
+     the ask stays the composer's size and scrolls inside instead. It wraps only at spaces (each
+     word is one unbreakable piece), so a long command stays on one line with room to the
+     right, and a single word wider than the block scrolls inside it instead of breaking. */
   .c2-ask-detail {
     margin: 0;
-    max-height: calc(var(--type-xs) * 12);
+    max-height: 240px;
     overflow: auto;
-    color: var(--accent-text);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    padding: var(--cv-s3) var(--cv-s4);
+    border: 1px solid var(--cv-control-edge);
+    border-radius: var(--cv-r-lg);
+    background: var(--cv-code-surface);
+    color: #e0e0e0;
+    font: var(--cv-weight-body) var(--cv-type-code)/var(--cv-leading-code) var(--cv-mono);
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
   }
-  .c2-ask-choices {
-    display: grid;
-    gap: var(--space-1);
-    max-height: calc(var(--type-xs) * 18);
-    overflow: auto;
-  }
-  .c2-ask-choice {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    width: 100%;
-    background: transparent;
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-sm);
-    color: var(--accent-text);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--type-sm);
-    padding: var(--space-2) var(--space-3);
-    text-align: start;
-  }
-  .c2-ask-choice:hover,
-  .c2-ask-choice:focus-visible { border-color: var(--accent-bright); }
-  .c2-ask-choice:disabled { cursor: default; opacity: 0.7; }
-  .c2-ask-choice-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .c2-ask-kbd {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: var(--space-4);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-sm);
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    font-variant-numeric: tabular-nums;
-    padding: 0 var(--space-1);
-  }
-  .c2-ask-raw-toggle {
-    justify-self: start;
-    background: transparent;
-    border: 0;
-    color: var(--accent-bright);
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    padding: 0;
-  }
+  .c2-ask-word { white-space: pre; }
+  .c2-ask-raw-toggle { margin: var(--cv-s2) 0 0 calc(var(--cv-s2) * -1); }
+  .c2-ask-raw-toggle + .c2-ask-detail { margin-block-start: var(--cv-s2); }
+  .c2-ask-choices.after-detail { margin-block-start: var(--cv-s4); }
+  /* The declining row's label is the failure red; the first option's label (Allow once) is
+     white and 500. Nothing is preselected: the row itself looks like every other row. */
+  .c2-ask-choice[data-conversation-ask-emphasis="decline"] :global(.cv-ask-label) { color: var(--cv-failure-ink); }
+  .c2-ask-choice[data-conversation-ask-emphasis="primary"] :global(.cv-ask-label) { color: #ffffff; font-weight: var(--cv-weight-label); }
   .c2-ask-note {
-    margin: 0;
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    margin: var(--cv-s3) 0 0;
+    color: var(--cv-t3);
+    font: var(--cv-weight-body) var(--cv-type-meta)/var(--cv-leading-meta) var(--cv-font);
     overflow-wrap: anywhere;
   }
 </style>

@@ -84,7 +84,7 @@ final class SidebarNavigationTests: XCTestCase {
 
         // Settings holds the old More places; a pushed place keeps native Back.
         app.openDestination("sidebar-settings")
-        for place in ["Ideas", "All goals", "Usage", "VPS"] {
+        for place in ["All goals", "Usage", "VPS"] {
             XCTAssertTrue(app.buttons[place].waitForExistence(timeout: 8), "Settings has no \(place)")
         }
         XCTAssertFalse(app.buttons["Feedback"].exists)
@@ -103,6 +103,83 @@ final class SidebarNavigationTests: XCTestCase {
         app.openDestination("sidebar-review")
         XCTAssertFalse(chiefScreen.exists)
         capture(app, "sidebar-09-back-on-review")
+    }
+
+    /// The same destinations on a bad connection. Each page is read once online, then the
+    /// stub drops every connection: each page shows its saved copy with no cover, banner or
+    /// status note, and the app moves between them as before. Back online, Review reads again.
+    /// This fixture has no Review cards; OfflineOperationTests acts on cards offline.
+    @MainActor func testDestinationsOnABadConnection() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        func proof(_ operation: String) async throws {
+            let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/" + operation)!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, operation)
+        }
+        try await proof("workspace-fixture")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let wren = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'sidebar-manager-' AND label CONTAINS %@", "Wren release")).firstMatch
+        let chiefScreen = app.descendants(matching: .any)["chief-screen"]
+        let managerScreen = app.descendants(matching: .any)["orchestrator-screen"]
+        let headline = app.staticTexts["review.summary.headline"]
+        func noCover(_ screen: String, except allowed: Set<String> = []) {
+            for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] where !allowed.contains(text) {
+                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                               "\(screen) shows \"\(text)\"")
+            }
+        }
+        // Online: read each page once, so the phone has its saved copy.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 12))
+        XCTAssertTrue(headline.waitForExistence(timeout: 12))
+        app.openDestination("sidebar-chief")
+        XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8))
+        app.buttons["conversation-line"].tap()
+        XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 8))
+        app.backButton.tap()
+        XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8))
+        app.openSidebar()
+        XCTAssertTrue(wren.waitForExistence(timeout: 8)); wren.tap()
+        XCTAssertTrue(managerScreen.waitForExistence(timeout: 8))
+        app.openDestination("sidebar-settings")
+        XCTAssertTrue(app.buttons["All goals"].waitForExistence(timeout: 8))
+
+        // Bad connection: every request now drops.
+        try await proof("offline")
+        app.openDestination("sidebar-review")
+        XCTAssertTrue(headline.waitForExistence(timeout: 8), "Review shows its saved summary offline")
+        noCover("Review"); capture(app, "offline-01-review-summary")
+        app.openSidebar()
+        XCTAssertTrue(app.buttons["sidebar-chief"].waitForExistence(timeout: 8))
+        XCTAssertTrue(wren.exists, "The Sidebar keeps its cards offline")
+        noCover("Sidebar"); capture(app, "offline-03-sidebar")
+        app.buttons["sidebar-chief"].tap()
+        XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8), "Chief shows its saved copy offline")
+        noCover("Chief"); capture(app, "offline-04-chief")
+        app.buttons["conversation-line"].tap()
+        XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 8), "The conversation opens offline")
+        noCover("Conversation"); capture(app, "offline-04b-chief-conversation")
+        app.backButton.tap()
+        XCTAssertTrue(chiefScreen.waitForExistence(timeout: 8))
+        app.openSidebar()
+        XCTAssertTrue(wren.waitForExistence(timeout: 8)); wren.tap()
+        XCTAssertTrue(managerScreen.waitForExistence(timeout: 8), "The Manager page shows its saved copy offline")
+        noCover("Manager"); capture(app, "offline-05-manager")
+        app.openDestination("sidebar-settings")
+        XCTAssertTrue(app.buttons["All goals"].waitForExistence(timeout: 8))
+        // The Panels server row reports the connection in place, as the design asks.
+        let server = app.descendants(matching: .any).matching(identifier: "settings.deployment").firstMatch
+        XCTAssertTrue(server.waitForExistence(timeout: 5))
+        noCover("Settings", except: ["Reconnecting"]); capture(app, "offline-06-settings")
+
+        // Back online: Review reads again and its card is still there to act on.
+        try await proof("online")
+        app.openDestination("sidebar-review")
+        XCTAssertTrue(headline.waitForExistence(timeout: 12))
+        noCover("Review after the return"); capture(app, "offline-07-review-back-online")
     }
 
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {

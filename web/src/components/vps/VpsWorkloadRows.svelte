@@ -7,7 +7,7 @@
   } = $props();
 </script>
 
-<section aria-label={kind === 'services' ? 'Services' : 'Processes'}>
+<section aria-label={kind === 'services' ? 'Services' : 'Processes'} data-vps-workload={kind}>
   <h2 class="section-heading">{kind === 'services' ? 'Services' : 'Processes'}
     <span class="section-heading-count">{kind === 'services' ? "of the machine’s memory" : 'by share of the machine'}</span>
   </h2>

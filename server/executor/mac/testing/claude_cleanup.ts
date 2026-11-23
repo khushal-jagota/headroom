@@ -8,12 +8,14 @@ export function create_claude_cleanup_fixture() {
   let cleanup = new Deferred<void>();
   cleanup.resolve();
   let cleanup_entered = false;
+  const results = new Map<string, Set<string>>();
   const clients: {
     session_id: string;
     resume: string | null;
     model: string | null;
     effort: string | null;
     prompts: string[];
+    unanswered_prompt_uuids: string[];
     disconnected: boolean;
     messages: PassThrough;
   }[] = [];
@@ -27,6 +29,7 @@ export function create_claude_cleanup_fixture() {
       model: options.model ?? null,
       effort: options.effort ?? null,
       prompts: [] as string[],
+      unanswered_prompt_uuids: [] as string[],
       disconnected: false,
       messages: new PassThrough({ objectMode: true }),
     };
@@ -38,6 +41,7 @@ export function create_claude_cleanup_fixture() {
         if (typeof prompt === 'string') client.prompts.push(prompt);
         else
           for await (const message of prompt) {
+            if (message.uuid) client.unanswered_prompt_uuids.push(message.uuid);
             const content = message.message.content;
             client.prompts.push(
               typeof content === 'string'
@@ -52,7 +56,8 @@ export function create_claude_cleanup_fixture() {
       watch_user_message: () => {},
       forget_user_message: () => {},
       wait_for_user_message_admission: async () => true,
-      user_message_uuids_for_result: () => new Set<string>(),
+      // Each result names the prompts it answers, as Claude does.
+      user_message_uuids_for_result: (uuid) => results.get(uuid ?? '') ?? new Set<string>(),
       user_message_is_settled: () => true,
       wait_for_user_message_settlement: async () => {},
       interrupt_and_cancel_queued: async () => [new Set<string>(), new Set<string>()],
@@ -71,11 +76,16 @@ export function create_claude_cleanup_fixture() {
     client_factory,
     state: () => ({
       cleanup_entered,
-      clients: clients.map(({ messages: _messages, ...client }) => client),
+      clients: clients.map(
+        ({ messages: _messages, unanswered_prompt_uuids: _unanswered, ...client }) => client,
+      ),
     }),
     finish_turn() {
       const client = clients.at(-1)!;
+      const uuid = `cleanup-result-${results.size + 1}`;
+      results.set(uuid, new Set(client.unanswered_prompt_uuids.splice(0)));
       client.messages.write({
+        uuid,
         type: 'result',
         subtype: 'success',
         duration_ms: 1,

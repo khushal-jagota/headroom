@@ -18,8 +18,9 @@ applies only to the predecessor's reviewed planning cohort. Do not expand that c
 # Creating a Ticket
 
 Use a Ticket for a concrete unit of work that one Worker can carry through its
-lifecycle. A Manager is the broader outcome that can own several Tickets; an idea
-is a loose thought that is not committed work. Choose a preset whose workflow fits the job, or define a custom workflow. A preset supplies stages, specialist guidance, and launch defaults. Each new Ticket owns its stages.
+lifecycle. A Manager is the broader outcome that can own several Tickets. An idea
+is a loose thought that is not committed work. The Chief keeps it as a file in its
+home folder, not as a Panels record. Choose a preset whose workflow fits the job, or define a custom workflow. A preset supplies stages, specialist guidance, and launch defaults. Each new Ticket owns its stages.
 
 For custom work, specify each stage’s name, owner, result field, and instructions. Put the stages in order and review the whole workflow. Include any guidance that applies across stages. An adapted preset keeps its initial launch choices unless you change them. Pure custom work must name its backend and model. Custom guidance reaches the Worker as one complete guide at kickoff. No new Worker type is necessary. End each new workflow with worker-owned Consequences, then Done. Put decisions and required owner-only actions before Consequences. Consequences records verified follow-through for review. Consequences can be a ceiling.
 

@@ -38,7 +38,7 @@ The store has one schema, in the `PanelsPhoneStore` folder. At launch the app
 deletes the older `PanelsPhone` folder with its store and recordings, so drafts and
 unsent work from builds before this one are dropped once.
 
-Conversation text, Review notes and Ideas text are saved as
+Conversation text and Review notes are saved as
 they change. A Review draft belongs to the exact ticket, field, proposal time and
 revision. A failed local save is shown in the app; a send cannot clear its composer
 until the outgoing work and the composer clear have committed together.

@@ -1,3 +1,4 @@
+import { clientFetch } from "../clientIdentity";
 /** Speaking into the composer, from the first tap to the words landing in the draft.
  *
  * The whole voice flow is one small machine with four resting places — idle, recording,
@@ -15,7 +16,9 @@ import { CONVERSATION_BASE } from "./wire";
 
 export type VoiceCaptureState =
   | { phase: "idle" }
-  | { phase: "recording"; elapsedMs: number }
+  /** `levels` is how loud the microphone has been, newest last, each 0..1, while a meter is
+   *  listening; absent where the browser cannot measure. */
+  | { phase: "recording"; elapsedMs: number; levels?: readonly number[] }
   | { phase: "transcribing"; keptMs: number }
   | { phase: "failed"; keptMs: number };
 
@@ -40,7 +43,7 @@ export async function postVoiceTranscription(
   const headers = await mutationHeaders({ "Content-Type": "application/json" });
   let response: Response;
   try {
-    response = await fetch(
+    response = await clientFetch(
       `${CONVERSATION_BASE}/voice-transcriptions`,
       {
         method: "POST",
@@ -131,7 +134,56 @@ export type VoiceCaptureDeps = {
   startTicker: (tick: () => void) => () => void;
   /** Hold a screen wake lock; returns the release. */
   acquireWakeLock: () => () => void;
+  /** Listen to how loud the open stream is, for the recording's level bars. Null when
+   *  this browser cannot measure; recording works the same without it. */
+  openMeter: (stream: VoiceStreamLike) => VoiceLevelMeter | null;
 };
+
+export type VoiceLevelMeter = {
+  /** The loudness right now, 0..1. */
+  read: () => number;
+  close: () => void;
+};
+
+/** How many recent levels a recording keeps for its bars. */
+export const VOICE_LEVEL_HISTORY = 32;
+
+/** The microphone's loudness from the browser's own analyser: the RMS of one window of
+ *  samples, lifted so ordinary speech fills most of a bar. Best-effort: anything the
+ *  browser refuses leaves the recording without bars. */
+function defaultOpenMeter(stream: VoiceStreamLike): VoiceLevelMeter | null {
+  const Context = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
+  if (typeof Context !== "function") return null;
+  let context: AudioContext | null = null;
+  try {
+    context = new Context();
+    const source = context.createMediaStreamSource(stream as unknown as MediaStream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    void context.resume?.().catch(() => {});
+    const samples = new Uint8Array(analyser.fftSize);
+    const opened = context;
+    return {
+      read: () => {
+        analyser.getByteTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) {
+          const centred = (sample - 128) / 128;
+          sum += centred * centred;
+        }
+        return Math.min(1, Math.sqrt(sum / samples.length) * 4);
+      },
+      close: () => {
+        source.disconnect();
+        void opened.close().catch(() => {});
+      }
+    };
+  } catch {
+    void context?.close().catch(() => {});
+    return null;
+  }
+}
 
 function defaultMakeRecorder(stream: VoiceStreamLike): VoiceRecorderLike {
   const webmSupported =
@@ -175,11 +227,13 @@ function defaultDeps(): VoiceCaptureDeps {
     makeRecorder: defaultMakeRecorder,
     transcribe: (body, signal) => postVoiceTranscription(body, signal),
     now: () => Date.now(),
+    // Fast enough for the level bars to move with the voice; the clock only shows seconds.
     startTicker: (tick) => {
-      const timer = setInterval(tick, 250);
+      const timer = setInterval(tick, 100);
       return () => clearInterval(timer);
     },
-    acquireWakeLock: defaultAcquireWakeLock
+    acquireWakeLock: defaultAcquireWakeLock,
+    openMeter: defaultOpenMeter
   };
 }
 
@@ -227,6 +281,8 @@ export function createVoiceCapture(
   let startedAt = 0;
   let recordingCancelled = false;
   let stopTicker: (() => void) | null = null;
+  let meter: VoiceLevelMeter | null = null;
+  let levels: number[] = [];
   let releaseWakeLock: (() => void) | null = null;
   let kept: {
     blob: Blob;
@@ -248,6 +304,9 @@ export function createVoiceCapture(
   function endRecordingMachinery(): void {
     stopTicker?.();
     stopTicker = null;
+    meter?.close();
+    meter = null;
+    levels = [];
     releaseWakeLock?.();
     releaseWakeLock = null;
   }
@@ -274,12 +333,21 @@ export function createVoiceCapture(
     recorder.onstop = () => onRecorderStopped();
     recorder.start();
     startedAt = deps.now();
-    setState({ phase: "recording", elapsedMs: 0 });
+    meter = deps.openMeter(opened);
+    levels = [];
+    setState(meter === null
+      ? { phase: "recording", elapsedMs: 0 }
+      : { phase: "recording", elapsedMs: 0, levels: [] });
     releaseWakeLock = deps.acquireWakeLock();
     stopTicker = deps.startTicker(() => {
-      if (state.phase === "recording") {
-        setState({ phase: "recording", elapsedMs: deps.now() - startedAt });
+      if (state.phase !== "recording") return;
+      const elapsedMs = deps.now() - startedAt;
+      if (meter === null) {
+        setState({ phase: "recording", elapsedMs });
+        return;
       }
+      levels = [...levels, meter.read()].slice(-VOICE_LEVEL_HISTORY);
+      setState({ phase: "recording", elapsedMs, levels });
     });
   }
 

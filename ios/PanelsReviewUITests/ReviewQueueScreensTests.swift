@@ -153,4 +153,104 @@ final class ReviewQueueScreensTests: XCTestCase {
         XCTAssertFalse(back.exists)
         try await shot("summary-all-clear")
     }
+
+    /// The card kinds on a bad connection. Each card is read once online, then the stub
+    /// drops every connection: the message, proposal, question and permission cards show
+    /// their saved copy with no cover, banner or status note. A reviewer move and a refused
+    /// decision that arrived online stay on their cards when the connection drops. Run with
+    /// PANELS_REVIEW_QUEUE=1 and PANELS_OFFLINE_TEST=ReviewQueueScreensTests/testCardKindsOnABadConnection.
+    @MainActor func testCardKindsOnABadConnection() async throws {
+        guard ProcessInfo.processInfo.environment["PANELS_REVIEW_QUEUE"] == "1" else {
+            throw XCTSkip("Run with the Review queue fixture")
+        }
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        func proof(_ name: String) async throws {
+            let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/" + name)!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, name)
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        func noCover(_ screen: String) {
+            for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
+                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                               "\(screen) shows \"\(text)\"")
+            }
+        }
+        let headline = app.staticTexts["review.summary.headline"]
+        let skip = app.buttons["review.skip"]
+        let approve = app.buttons["review.approve"]
+        let message = app.staticTexts["First unread message"]
+        let proposal = app.staticTexts["Rebuild the iPhone Review queue"]
+        let historical = app.staticTexts["Historical message"]
+        let question = app.staticTexts["Which build should go to TestFlight first?"]
+        let permission = app.staticTexts["Run the tests on the Mac simulator?"]
+        let order = [message, proposal, historical, question, permission]
+
+        // Online: read each card once.
+        XCTAssertTrue(headline.waitForExistence(timeout: 15))
+        app.openReviewCards()
+        for card in order {
+            XCTAssertTrue(card.waitForExistence(timeout: 10)); skip.tap()
+        }
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        XCTAssertEqual(headline.label, "5 skipped.")
+
+        // Bad connection: each card again from its saved copy.
+        try await proof("offline")
+        app.openReviewCards()
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["review.markRead"].exists)
+        noCover("Message card"); capture("offline-card-message"); skip.tap()
+        XCTAssertTrue(proposal.waitForExistence(timeout: 10))
+        XCTAssertTrue(approve.waitForExistence(timeout: 5))
+        noCover("Proposal card"); capture("offline-card-proposal"); skip.tap()
+        XCTAssertTrue(historical.waitForExistence(timeout: 10)); skip.tap()
+        XCTAssertTrue(question.waitForExistence(timeout: 10))
+        app.buttons["review.ask.option.Build 15"].tap()
+        XCTAssertTrue(app.buttons["review.ask.send"].isEnabled, "A choice can be made offline")
+        noCover("Question card"); capture("offline-card-ask-question"); skip.tap()
+        XCTAssertTrue(permission.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["review.ask.decline"].exists)
+        noCover("Permission card"); capture("offline-card-ask-permission"); skip.tap()
+        XCTAssertTrue(headline.waitForExistence(timeout: 8))
+        noCover("Summary")
+
+        // A reviewer move that lands online stays on its card when the connection drops.
+        try await proof("online")
+        try await proof("review-new-proposal")
+        XCTAssertTrue(app.staticTexts["6 to review."].waitForExistence(timeout: 15))
+        app.openReviewCards()
+        XCTAssertTrue(app.staticTexts["Add the summary screen"].waitForExistence(timeout: 10))
+        try await proof("review-move/offline-new")
+        let notice = app.descendants(matching: .any)["review.notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 10))
+        try await proof("offline")
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertTrue(notice.exists, "The move stays on its card offline")
+        XCTAssertFalse(approve.isEnabled)
+        noCover("Moved card"); capture("offline-card-reviewer-moved"); skip.tap()
+
+        // A refused decision that lands online stays on its card when the connection drops.
+        try await proof("online")
+        XCTAssertTrue(message.waitForExistence(timeout: 10)); skip.tap()
+        XCTAssertTrue(proposal.waitForExistence(timeout: 10))
+        try await proof("review-refuse-decisions")
+        XCTAssertTrue(approve.waitForExistence(timeout: 8)); approve.tap()
+        let refusal = app.descendants(matching: .any)["review.refusal"]
+        XCTAssertTrue(refusal.waitForExistence(timeout: 15))
+        try await proof("offline")
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertTrue(refusal.exists, "The refusal stays on its card offline")
+        XCTAssertTrue(proposal.exists)
+        noCover("Refused card"); capture("offline-card-refused-decision")
+        try await proof("online")
+    }
 }

@@ -140,7 +140,7 @@ The server's limits and retention policy do not change.
 Shared text roles in `Core/Theme/Theme.swift` follow the mobile web's weights.
 Review and Ticket titles use the approved web base of 26 points and semibold (600).
 Completion text remains medium. Proposal decisions use medium, while message actions and
-message prose remain regular. Notification labels use medium. Ideas capture and configuration headings use medium;
+message prose remain regular. Notification labels and configuration headings use medium;
 artifact filenames remain regular. Section headings follow their web surface:
 regular for navigation and VPS, medium for configuration and Usage.
 
@@ -279,6 +279,16 @@ destinations), and a live read-only review. The live walk
 contains historical selectors; review its comments before use. A one-off walk is a
 review tool, not a permanent gate. Record its result and diagnose failures.
 
+Review opens on its summary, so a walk that needs a card calls `openReviewCards()`
+first. Each walk names the stub flag its proofs need in the stub
+(`ios/scripts/test-offline-simulator.py`). The bad-connection walks read each screen
+once online, then the stub drops every connection: `SidebarNavigationTests/testDestinationsOnABadConnection`
+(`PANELS_DESIGN_REVIEW=1`), `ReviewFinalPageTests/testCardsSheetsAndTicketOnABadConnection`
+(`PANELS_DESIGN_REVIEW=1`), `ReviewQueueScreensTests/testCardKindsOnABadConnection`
+(`PANELS_REVIEW_QUEUE=1`) and `ArtifactDockTests/testDocksOnABadConnection`
+(`PANELS_ARTIFACT_DOCK_SMOKE=1`). Each checks that no screen shows a cover, banner or
+status note.
+
 A route without a screen test still needs a one-off check when a change touches it.
 Keep physical-device gaps on the phone checklist, including server entry and Save,
 airplane-mode delivery, Goal edit and Save, and notification taps.
@@ -311,7 +321,7 @@ rate, delivery through APNs, or every navigation route.
 | `Panels/Features/Orchestrator` | Orchestrator worker (server calls it manager) |
 | `Panels/Features/Chief` | Chief of Staff worker |
 | `Panels/Features/Artifacts` | Artifact list and viewer worker |
-| `Panels/Features/More` | Settings, Ideas, Usage, VPS and the Settings places section |
+| `Panels/Features/More` | Settings, Usage, VPS and the Settings places section |
 | `PanelsTests` | Focused contract verification; coordinate shared fixture changes |
 | `project.yml`, `Panels.xcodeproj` | Integration owner; regenerate once after combining added files |
 
@@ -332,12 +342,6 @@ writes need not emit a database change.
 `ConversationNavigation` supplies the shared composer and conversation page on Chief,
 Orchestrator and Ticket, described below. Artifact viewing uses native file screens. Usage, VPS and Settings have native read-only
 screens.
-
-Ideas reads the live idea list and project catalogue, expands captured detail,
-and captures a title with optional detail and project assignment. Return in the
-title field captures; project chips assign the new idea, matching the web. Failed
-captures keep the draft. The capture POST lives behind `IdeasServing`; its tests
-use a stub transport, and simulator verification never submits a live capture.
 
 Orchestrator and Chief pages show expandable recaps and grouped workers, with
 working and unread marks from the server. Active groups start open; Backlogged
@@ -370,8 +374,7 @@ Haptic helpers offer light, success, error and selection. By the owner’s
 give a light impact. Disclosures and read retries
 are silent; pull refresh and menus retain system feedback. Selection also
 acknowledges a changed control value.
-Ideas uses light feedback when submitting and success or error on
-the result; page menu actions acknowledge the result only. Copy and
+Page menu actions acknowledge the result only. Copy and
 local Settings saves acknowledge completion. Background updates never buzz.
 Native pushes retain system motion; shared disclosures use the same bounce-free
 spring, with instant changes under Reduce Motion.
@@ -417,16 +420,6 @@ ios/scripts/test-system-models.sh
 For this delivery, all simulator testing and Gemini motion review were deferred. Verification is a generic iOS Simulator SDK compile, these host
 unit tests, and decoding eight read-only endpoint snapshots. No iOS interaction,
 motion, or physical haptic behavior is claimed as verified.
-
-## Ideas verification
-
-`IdeasTests` covers three distinct gaps: blank submissions and failed writes must
-preserve a draft without accidental requests; acknowledged captures must display
-the server record and reset their draft; and the API adapter must send the exact
-POST payload (`project_id`, omitted blank optional fields) and decode the response.
-These are fast unit tests using an actor stub and URLProtocol, with no backend or
-browser host. The read-only simulator walkthrough is an external capture harness,
-not an added UI suite. Haptics still need physical-device verification.
 
 ## Sidebar
 
@@ -628,8 +621,7 @@ camera capture and server read-marker writes remain outside this proof.
 Chief and Orchestrator headers use the already loaded identity during
 the initial detail read. Ticket navigation uses its cached title. Activity marks
 reserve their width so arriving unread/working indicators do not rewrap titles.
-Expanded recaps stay expanded during refresh. Ideas disclosures clip their
-shrinking content to address the reviewed collapse overlap. System list headers
+Expanded recaps stay expanded during refresh. System list headers
 preserve mixed case; static group labels use title case.
 
 The polish revision was compiled with the generic iOS Simulator SDK and four

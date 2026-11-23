@@ -152,7 +152,7 @@ test('runtime retirement holds detach and can refuse replay despite a committed 
   }
   const result = await cleaning;
   const retained = result.skipped.find(
-    (item) => item.reason === 'Worker scratch path is not an owned real directory',
+    (item) => item.reason === 'Worker scratch is busy or not an owned real directory',
   );
   expect(retained).toBeDefined();
   expect(existsSync(folder)).toBe(false);

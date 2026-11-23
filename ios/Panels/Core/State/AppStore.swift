@@ -483,9 +483,15 @@ import SwiftUI
         let api = client
         async let settingsRead: () = readSettings(probing: false)
         if running {
-            let opened = streamsOpened
-            replaceStream(fresh: true)
-            await snapshotLanded(fromStreamAfter: opened)
+            // A replacement for the current scope is already on its way, and its snapshot is
+            // the fresh one: a pull in quick succession shares it, so no third stream opens.
+            if let pending = pendingStream, pending.request == viewRequest {
+                await snapshotLanded(fromStreamAfter: pending.id - 1)
+            } else {
+                let opened = streamsOpened
+                replaceStream(fresh: true)
+                await snapshotLanded(fromStreamAfter: opened)
+            }
         } else { await readView(from: api) }
         await settingsRead
         guard !Task.isCancelled, api.baseURL == baseURL else { return }

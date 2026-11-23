@@ -1196,6 +1196,13 @@ def main() -> int:
                             state["chief_conversation"] = None
                         elif action == "new":
                             state["chief_conversation"] = "replacement"
+                        elif action == "saved":
+                            # Read only: the walk waits for the app's own save before it ends the app.
+                            try:
+                                saved_replacement_reference()
+                            except (ValueError, OSError, sqlite3.Error) as error:
+                                self.respond({"error": str(error)}, 409)
+                                return
                         elif action == "relaunch-new":
                             try:
                                 saved_replacement_reference()
@@ -1318,6 +1325,10 @@ def main() -> int:
                     return
                 elif name == "new-message":
                     state["new_message"] = True
+                elif DESIGN_REVIEW and name == "stall-refresh":
+                    state["stall_refresh"] = True
+                elif DESIGN_REVIEW and name == "unstall-refresh":
+                    state["stall_refresh"] = False
                 elif name == "offline":
                     state["offline"] = True
                 elif name == "online":
@@ -1382,6 +1393,10 @@ def main() -> int:
                 return
             if self.disconnected():
                 return
+            # The store's refresh reads the deployment status. Held here, the refresh after a
+            # reviewer change stalls as on a slow connection, until the proof releases it.
+            while path == "/api/deployment-status" and state.get("stall_refresh"):
+                time.sleep(0.1)
             if state.get("request_failed"):
                 self.respond({"error": {"message": "Request failed on the reachable server."}}, 503)
                 return

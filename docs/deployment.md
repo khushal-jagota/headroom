@@ -16,6 +16,8 @@ installer unit: stop → snapshot if required → swap folders → start → hea
                                                     └─ not healthy → restore, swap back → resume work → failed
 ```
 
+The server publishes the installed release and its accepted client versions through one metadata answer. Clients identify their installation and software version. The server retains the last reported version for each device. Older installed manifests without a release number or parts omit those fields.
+
 ## What it is made of
 
 The TypeScript Linux builder rebuilds browser assets from source, then removes build tools and unused platform binaries before it seals the archive. The Linux executor uses the same builder. Installation consumes the sealed archive and runs no source build.
@@ -74,6 +76,14 @@ One server answer supplies the card's state and allowed actions: up to date, ava
 
 The publication carries a TypeScript Mac executor from the same source, with its own Node runtime and native dependencies. Its updates use the existing update channel. The separate Mac home package does not change. The card covers the home and its original Mac. Other registered Macs receive their own offers and keep separate reports. The VPS never waits for the Mac. The Mac sees its target from the press and activates it once the VPS install is done. The card stays updating until the Mac reports the new runtime. A Mac that reports a failure shows **Mac failed**; one that says nothing for about a minute and a half after the VPS part shows **Mac unreachable**; it may be asleep or offline. Either way **Try again for the Mac** sends a fresh target for the same release, and a Mac that returns later and reports the new runtime moves the card on by itself. A release without a Mac part, or a host without a Mac, skips it. See [Extra-machine updates](executor.md#updates-and-health).
 
+## The desktop app
+
+The macOS desktop app has its own workflow, separate from the home's publication. On a push to staging or `main`, or a manual run, a GitHub-hosted Mac builds it, signs it with the Developer ID of the Blue Door Labs team and the hardened runtime, and sends it to Apple for notarization. Then it staples Apple's ticket to the app and checks the result with Apple's own tools, so that a Mac opens the download with no warning. The signing certificate and the notarization key are repository secrets, set once ([steps](../ops/desktop/signing.md)). The run keeps the signed zip as the `panels-desktop-mac` artifact for 30 days. The CI run number sets its version, `0.0.<run>`.
+
+A push to `main` that touches the app's paths also publishes the signed shell and updater metadata as a public desktop release. The app downloads shell updates quietly and installs a ready update at quit or after a period without a window. A manual run produces private proof builds and publishes no release.
+
+The screens follow a separate route: the app takes them directly from its selected server. The server names its installed digest and serves the matching files, independently of publication metadata or GitHub Releases. The app verifies each copy and reloads only after the server and installed bridge fit it. See [The desktop app](desktop.md) for screen trust, recovery, and the bundled baseline.
+
 ## The private route
 
 Publication never changes Tailscale Serve. A separate manual workflow restores the private route if it is lost.
@@ -97,6 +107,7 @@ The archive digest detects damage after a write. If a write reaches the installe
 ## Code
 
 - `.github/workflows/publish-typescript-release.yml`: publication. `recover-private-route.yml`: route repair.
+- `.github/workflows/desktop.yml`, `desktop/`: the desktop app, its checks and its signed build. `ops/desktop/signing.md`: its Apple secrets.
 - `server/environments/release/`: building, sealing, runtime admission, the boot proof, and the receipt.
 - `server/environments/updates/provider.ts`: reading publications and streaming downloads. `service.ts`, `routes.ts`: getting ready, the press, and the card's state. `failure_notice.ts`: the owner push for a failed update.
 - `server/environments/updates/attempts.ts`: the attempt record. `installation.ts`: the installer's start. `server/environments/updates/installer/`: the standalone installer.
@@ -105,4 +116,4 @@ The archive digest detects damage after a write. If a write reaches the installe
 - `scripts/dev`: the npm launcher for development.
 - `ops/panels-environments/`: user units.
 
-_Last verified: 2026-11-18._
+_Last verified: 2026-11-22._

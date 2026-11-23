@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import type { InstrumentId, MetricsController, VpsMetricsState, WindowId, WorkloadRow } from '../../lib/vpsMetrics/contracts';
   import { createMetricsController } from '../../lib/vpsMetrics/controller';
   import { metricsConfig } from '../../lib/vpsMetrics/config';
@@ -10,7 +10,9 @@
   import VpsSkeleton from './VpsSkeleton.svelte';
   import './vps.css';
 
-  let { visible = true, embedded = false }: { visible?: boolean; embedded?: boolean } = $props();
+  /* The machine's diagnostics. `frame` places them on a page: it gets the freshness status
+     with the window control, for the page's title row, and the body. */
+  let { visible = true, frame }: { visible?: boolean; frame: Snippet<[Snippet, Snippet]> } = $props();
   let metricsState = $state.raw<VpsMetricsState | null>(null);
   let controller = $state.raw<MetricsController | null>(null);
   let browserVisible = $state(true);
@@ -42,28 +44,29 @@
   });
 </script>
 
-<div class="vps-container">
-  <div class="screen" class:embedded data-screen="vps" data-current={loading ? undefined : !current.stale} aria-busy={loading}>
-    <header class="screen-header">
-      <div class="screen-header-row">
-        <div class="screen-header-title">{#if !embedded}<h1 class="screen-header-title">VPS</h1>{/if}
-          {#if loading}<div class="machine"><VpsSkeleton shape="detail" /></div>{:else if sample}<p class="machine">{machineDescription(sample)}</p>{/if}
-        </div>
-        <div class="screen-header-meta">
-          <p class="asof" data-current={loading ? undefined : !current.stale} role="status" aria-live="polite">
-            {#if loading}<VpsSkeleton />{:else}<span class="asof-mark" aria-hidden="true"></span><span>{current.label}</span>{/if}
-          </p>
-          <SegmentedControl name="vps-window" label="Window" options={windows} bind:value={selectedWindow} optionAttributes={option => ({ 'data-vps-window': option.value ?? undefined })} />
-        </div>
-      </div>
-    </header>
-    {#if loading}<p class="vps-accessible" role="status">Reading the machine</p>{/if}
-    <div class="instruments">
-      {#each placeholders as placeholder (placeholder.id)}
-        <VpsInstrument {...placeholder} {loading} instrument={cards.find(card => card.id === placeholder.id)} trend={metricsState?.history[placeholder.id]} />
-      {/each}
-    </div>
-    <VpsWorkloadRows kind="services" rows={services} {loading} unavailable={!loading && !sample ? metricsState?.latest?.collection.reason || 'Services unavailable' : null} />
-    <VpsWorkloadRows kind="processes" rows={processes} loading={loading || !!sample && !metricsState?.processes && !metricsState?.processError} unavailable={metricsState?.processes?.availability === 'unavailable' ? metricsState.processes.reason || 'Processes unavailable' : metricsState?.processError && !metricsState.processes ? metricsState.processError : !loading && !sample ? 'Processes unavailable' : null} />
+{#snippet controls()}
+  <div class="vps-controls">
+    <p class="asof" data-current={loading ? undefined : !current.stale} role="status" aria-live="polite">
+      {#if loading}<VpsSkeleton />{:else}<span class="asof-mark" aria-hidden="true"></span><span>{current.label}</span>{/if}
+    </p>
+    <SegmentedControl name="vps-window" label="Window" options={windows} bind:value={selectedWindow} optionAttributes={option => ({ 'data-vps-window': option.value ?? undefined })} />
   </div>
-</div>
+{/snippet}
+
+{#snippet body()}
+  <div class="vps-container">
+    <div class="screen" data-screen="vps" data-current={loading ? undefined : !current.stale} aria-busy={loading}>
+      {#if loading}<div class="machine"><VpsSkeleton shape="detail" /></div>{:else if sample}<p class="machine">{machineDescription(sample)}</p>{/if}
+      {#if loading}<p class="vps-accessible" role="status">Reading the machine</p>{/if}
+      <div class="instruments">
+        {#each placeholders as placeholder (placeholder.id)}
+          <VpsInstrument {...placeholder} {loading} instrument={cards.find(card => card.id === placeholder.id)} trend={metricsState?.history[placeholder.id]} />
+        {/each}
+      </div>
+      <VpsWorkloadRows kind="services" rows={services} {loading} unavailable={!loading && !sample ? metricsState?.latest?.collection.reason || 'Services unavailable' : null} />
+      <VpsWorkloadRows kind="processes" rows={processes} loading={loading || !!sample && !metricsState?.processes && !metricsState?.processError} unavailable={metricsState?.processes?.availability === 'unavailable' ? metricsState.processes.reason || 'Processes unavailable' : metricsState?.processError && !metricsState.processes ? metricsState.processError : !loading && !sample ? 'Processes unavailable' : null} />
+    </div>
+  </div>
+{/snippet}
+
+{@render frame(controls, body)}

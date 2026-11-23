@@ -198,15 +198,20 @@ struct ReviewQueue: Equatable, Sendable {
         pinned = nil; notice = nil
     }
 
-    /// Each time Review becomes the destination again, it opens on the summary.
+    /// Each time Review becomes the destination again, it opens on the summary. A card
+    /// whose exit runs finishes it first, as after a return from the background: the
+    /// summary would remove the card and its sheet before the sheet reports closing.
     mutating func visit(_ visit: Int) {
-        if let seenVisit, seenVisit != visit { showSummary() }
+        if let seenVisit, seenVisit != visit, leaving == nil { showSummary() }
         seenVisit = visit
     }
 
-    /// The app went to the background during `session`.
+    /// The app went to the background during `session`. A card whose exit runs is
+    /// handled, not the card Khushal was on: its exit finishes on the return. Recorded,
+    /// a fresh window would show the summary over the exit and remove the card's sheet
+    /// before the sheet reports closing, so the card stays leaving and the queue stops.
     mutating func leaveApp(session: Int) {
-        away = shown.map { ($0.id, session) }
+        away = shown.flatMap { $0.id == leaving?.id ? nil : ($0.id, session) }
     }
 }
 

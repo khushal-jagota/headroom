@@ -1,12 +1,10 @@
 /** Shape conversion only. The server projection owns visibility and turn membership. */
-import type { ConversationViewRow, ViewRowBody, ConversationViewTurn, ConversationViewStatus, ViewRestEvent } from './contracts';
+import type { ConversationViewRow, ViewRowBody, ViewRestEvent } from './contracts';
 import type { MessagePiece } from '../wire';
 import type { ViewMessagePiece } from './contracts';
 import type { TranscriptRow } from '../transcript';
 import { refusalSentence } from '../transcript';
-import type { ThreadItem } from '../threadLayout';
-import type { ConversationTaskProgress } from '../taskProgress';
-import { whatThisRowSays, toolCallSentence, restLineBodyFor, type RestLine } from '../restLine';
+import { whatThisRowSays } from '../whatHappened';
 import type { ConversationViewItem, ConversationViewPage, ViewHistoryScope, ViewPageCursor } from './contracts';
 
 export function transcriptHistoryEdges(pages: readonly Pick<ConversationViewPage, 'scope' | 'items' | 'older' | 'newer'>[], items: readonly ConversationViewItem[]): {
@@ -64,15 +62,6 @@ export function rowForBody(item: Pick<ConversationViewRow, 'key' | 'source_seque
     rowsByBody.set(body, { key: item.key, row });
     return row;
 }
-export function turnFor(item: ConversationViewTurn): Extract<ThreadItem, {
-    kind: 'turn';
-}> {
-    return { kind: 'turn', key: item.key, turnKey: item.key, settled: item.settled, stopped: item.stopped, startedAtUnixMilliseconds: item.started_at_unix_milliseconds, ending: item.ending, isLatest: item.is_latest, durationSeconds: item.duration_seconds, toolCallCount: item.tool_call_count, foldedMessageCount: item.folded_message_count };
-}
-export function progressFor(status: ConversationViewStatus): ConversationTaskProgress {
-    const p = status.rest.plan_progress;
-    return { entries: [], totalCount: p.total_count, currentPosition: p.current_position, currentEntry: p.current_text_excerpt === null ? null : { text: p.current_text_excerpt, status: 'in_progress' }, completedCount: p.completed_count, hasUnfinishedEntry: p.has_unfinished_entry, turnRunning: status.turn_running === true };
-}
 export function happened(event: ViewRestEvent | null, sender: string): {
     who: string | null;
     text: string;
@@ -90,21 +79,4 @@ export function happened(event: ViewRestEvent | null, sender: string): {
     if (event.kind === 'turn_ended' || event.kind === 'context_compacted' || event.kind === 'turn_stopped')
         return whatThisRowSays(rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, event), sender);
     return null;
-}
-export function restFor(status: ConversationViewStatus, sender: string, readThrough: number, progress = progressFor(status)): RestLine | null {
-    const facts = status.rest;
-    const last = happened(facts.latest_happened, sender);
-    const running = status.turn_running === true;
-    const tool = facts.latest_tool;
-    const row = tool?.body.kind === 'inline' ? rowForBody({ key: 'rest', source_sequence: 0, created_at: 0 }, tool.body.value) : null;
-    const line = restLineBodyFor({
-        permissionTitle: status.pending_permission === null ? null : facts.permission_title_excerpt ?? 'waiting for you',
-        running,
-        startedAt: facts.latest_turn?.started_at_unix_milliseconds ?? null,
-        tool: row?.kind === 'tool_call' ? toolCallSentence(row) : tool?.title ?? null,
-        last,
-        progress
-    });
-    if (line === null) return null;
-    return { ...line, marks: { running, unreadReply: facts.latest_owner_message_sequence > readThrough, failed: facts.last_boundary_failed } };
 }

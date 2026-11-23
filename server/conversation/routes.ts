@@ -38,6 +38,7 @@ import {
 import { resolve_conversation_start_request } from './logic/conversation_start_resolution.ts';
 import type { SqliteProcessConversationSystem } from './system.ts';
 import type { ConversationViewRuntime } from './views/routes.ts';
+import { pendingCredentialRequestBody } from './publication/coordinator.ts';
 
 export interface ConversationHttpRuntime {
   readonly core: SqliteProcessConversationSystem;
@@ -168,6 +169,9 @@ async function state_json(
       event.payload instanceof UserInputRequestedEventPayload &&
       inputs.has(event.payload.request_id),
   )?.payload;
+  const credential_request = runtime.record.database.read((sql) =>
+    pendingCredentialRequestBody(sql, conversation_id),
+  );
   return {
     conversation_id: record.conversation_id,
     backend_key: record.backend_key,
@@ -222,6 +226,7 @@ async function state_json(
             })),
           }
         : null,
+    pending_credential_request: credential_request,
   };
 }
 function direct_send_body(body: unknown, reply: FastifyReply) {
@@ -270,6 +275,19 @@ function answer_operation_id(fields: Fields): string | null {
     return null;
   }
   return value;
+}
+/**
+ * A repeat of an answer that already has a receipt gets its saved fate from any conversation, so a
+ * retry still works after the Ticket moved on. Any other answer needs the active conversation.
+ */
+function answerable_conversation(
+  runtime: ConversationHttpRuntime,
+  conversation_id: string,
+  operation_id: string | null,
+): void {
+  if (operation_id !== null && runtime.core.answer_receipt(conversation_id, operation_id) !== null)
+    return;
+  mutable_conversation(runtime, conversation_id);
 }
 async function answer_error<T>(answer: () => Promise<T>): Promise<T> {
   try {
@@ -485,16 +503,21 @@ export function createConversationRoutes(
         reply.code(204).send();
       },
     );
-    app.delete<{ Params: { conversation_id: string; held_prompt_id: string } }>(
-      '/conversations/:conversation_id/held-prompts/:held_prompt_id',
-      async (request) => {
-        const { conversation_id, held_prompt_id } = request.params;
-        mutable_conversation(runtime, conversation_id);
-        return {
-          discarded: await runtime.core.discard_held_prompt(conversation_id, held_prompt_id),
-        };
-      },
-    );
+    app.delete<{
+      Params: { conversation_id: string; held_prompt_id: string };
+      Querystring: { for?: string };
+    }>('/conversations/:conversation_id/held-prompts/:held_prompt_id', async (request) => {
+      const { conversation_id, held_prompt_id } = request.params;
+      mutable_conversation(runtime, conversation_id);
+      // ?for=edit: the person took the message back into the composer to edit it.
+      return {
+        discarded: await runtime.core.discard_held_prompt(
+          conversation_id,
+          held_prompt_id,
+          request.query.for === 'edit',
+        ),
+      };
+    });
     app.post<{ Params: { conversation_id: string; held_prompt_id: string } }>(
       '/conversations/:conversation_id/held-prompts/:held_prompt_id/promote',
       async (request) => {
@@ -523,7 +546,7 @@ export function createConversationRoutes(
         fields.extras(['ask_id', 'option_id', 'operation_id']);
         fields.finish();
         requireOwner(services.identity(request));
-        mutable_conversation(runtime, request.params.conversation_id);
+        answerable_conversation(runtime, request.params.conversation_id, operation_id);
         return {
           fate: await answer_error(() =>
             runtime.core.answer_permission_ask(
@@ -576,7 +599,7 @@ export function createConversationRoutes(
         fields.extras(['request_id', 'answers', 'operation_id']);
         fields.finish();
         requireOwner(services.identity(request));
-        mutable_conversation(runtime, request.params.conversation_id);
+        answerable_conversation(runtime, request.params.conversation_id, operation_id);
         return {
           fate: await answer_error(() =>
             runtime.core.answer_user_input(

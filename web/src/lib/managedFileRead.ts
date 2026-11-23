@@ -1,3 +1,4 @@
+import { clientFetch } from "./clientIdentity";
 /** One read of a managed file, shared by every preview that names it.
  *
  * Two messages that link the same artifact draw two previews, and a lens that brings
@@ -49,7 +50,7 @@ export function readManagedFile(href: string, untilTheReaderLeaves: AbortSignal,
 
 function startRead(href: string, key: string, options: ManagedFileReadOptions): SharedRead {
   const request = new AbortController();
-  const body = fetch(href, {
+  const body = clientFetch(href, {
     signal: request.signal,
     ...(options.artifactRootHref ? {headers: {'X-Panels-Artifact-Root': options.artifactRootHref}, redirect: 'error' as const} : {}),
     ...(options.fresh ? {cache: 'no-store' as const} : {})

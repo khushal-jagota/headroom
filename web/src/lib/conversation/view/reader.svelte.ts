@@ -1,3 +1,4 @@
+import { clientFetch } from "../../clientIdentity";
 import type { ViewPageRequestOwner } from './requestContracts';
 import { copyViewReaderAnchor } from './copyAnchor';
 import { DiagnosticExpiredError, isDiagnosticExpiry } from '../diagnosticExpiry';
@@ -268,7 +269,7 @@ export class ConversationViewReader {
         return `/api/conversation/conversations/${encodeURIComponent(this.id)}/view${suffix}?${search}`;
     }
     private async get<T>(suffix: string, query: Record<string, string> = {}, signal = this.abort.signal): Promise<T> {
-        const response = await fetch(this.url(suffix, query), { signal });
+        const response = await clientFetch(this.url(suffix, query), { signal });
         if (!response.ok)
             throw new Error(`Conversation view: ${response.status}`);
         return await response.json() as T;
@@ -662,7 +663,7 @@ export class ConversationViewReader {
     }
     isExpanded(scope: ViewHistoryScope): boolean { void this.revision; return this.expanded.has(scopeKey(scope)); }
     async body(reference: ViewBodyReference, signal: AbortSignal): Promise<string> {
-        const response = await fetch(this.url('/body/content', { reference: JSON.stringify(reference) }), { signal });
+        const response = await clientFetch(this.url('/body/content', { reference: JSON.stringify(reference) }), { signal });
         if (!response.ok) {
             if (isDiagnosticExpiry(await response.text())) throw new DiagnosticExpiredError();
             throw new Error(`Conversation body: ${response.status}`);

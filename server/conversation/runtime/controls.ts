@@ -135,6 +135,7 @@ export async function discard_held_prompt(
   host: SqliteProcessConversationSystem,
   state: ConversationState,
   identity: string,
+  withdrawn_for_edit = false,
 ): Promise<boolean> {
   state.last_touched_monotonic = host.monotonic_now();
   return state.lock.run(async () => {
@@ -143,9 +144,11 @@ export async function discard_held_prompt(
     const [message] = state.held_prompts.splice(index, 1);
     host.publish_held_prompts_changed(state);
     const rows = await host.persist(state, () =>
-      host.options.store.append_events(state.record.conversation_id, [discarded_row(message)], {
-        recording_receipt: message.recording_receipt,
-      }),
+      host.options.store.append_events(
+        state.record.conversation_id,
+        [discarded_row(message, null, withdrawn_for_edit)],
+        { recording_receipt: message.recording_receipt },
+      ),
     );
     host.note_written(state, rows);
     await host.settle_automatic_ids(state, [message.sender_message_id]);

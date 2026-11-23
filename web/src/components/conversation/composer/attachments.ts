@@ -1,3 +1,4 @@
+import { friendlyFileType } from "../../../lib/conversation/fileTypes";
 import type { PendingVideo } from "../../../lib/conversation/videoUploads/contracts";
 import type { PendingConversationImage } from "../../../lib/conversation/pendingImages";
 import type { PendingConversationFile } from "../../../lib/conversation/pendingFiles";
@@ -33,7 +34,28 @@ export function attachmentExtension(name: string): string {
   return (dot < 0 ? "" : name.slice(dot + 1).toUpperCase()).slice(0, 4) || "FILE";
 }
 
+/** A file's size as the sent file card writes it ("692 B", "1.7 KiB", "24 KiB", "3.1 MiB"), so a
+ *  file reads the same waiting in the composer and once it is in the transcript. */
 export function attachmentByteLabel(bytes: number): string {
-  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
-    ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+/** The kind a file is called by, in words, as the sent file card calls it ("Text", "CSV",
+ *  "PDF"), never its raw media type: a person reads "Text · 692 B", not "text/plain · 692 B".
+ *  One naming for pending and sent files (lib/conversation/fileTypes.ts). */
+export function attachmentKindLabel(fileName: string, mediaType = ""): string {
+  return friendlyFileType(fileName, mediaType);
+}
+
+/** A file's name cut in its middle when it is long, so both its start and its kind survive
+ *  ("export-…-v1.csv"). The whole name stays in the tile's title. */
+export function attachmentDisplayName(name: string, longest = 26): string {
+  const characters = Array.from(name);
+  if (characters.length <= longest) return name;
+  const dot = name.lastIndexOf(".");
+  const tailLength = Math.min(Math.max(dot < 0 ? 0 : characters.length - Array.from(name.slice(0, dot)).length, 0) + 4, Math.floor(longest / 2));
+  const headLength = longest - tailLength - 1;
+  return `${characters.slice(0, headLength).join("")}…${characters.slice(characters.length - tailLength).join("")}`;
 }

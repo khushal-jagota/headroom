@@ -93,6 +93,15 @@ final class ConversationOperationTests: XCTestCase {
         XCTAssertTrue(old.waitForExistence(timeout: 8))
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        // The app saves its view in a task as it leaves the front. Wait for that save, so
+        // ending the app does not race it.
+        var saved = false
+        for _ in 0..<50 where !saved {
+            let (_, response) = try await URLSession.shared.data(from: URL(string: base + "/proof/replacement/saved")!)
+            saved = (response as? HTTPURLResponse)?.statusCode == 200
+            if !saved { try await Task.sleep(for: .milliseconds(200)) }
+        }
+        XCTAssertTrue(saved, "The app saved its old Chief reference")
         app.terminate()
         try await proof(base, "replacement/relaunch-new")
         app.launch()
@@ -108,6 +117,7 @@ final class ConversationOperationTests: XCTestCase {
         back.tap(); XCTAssertTrue(line.waitForExistence(timeout: 5))
         app.openDestination("sidebar-review", timeout: 5)
         try await proof(base, "replacement/unread")
+        app.openReviewCards()
         XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
         let open = app.buttons["review.openConversation"]
         XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
@@ -127,6 +137,7 @@ final class ConversationOperationTests: XCTestCase {
         back.tap(); XCTAssertTrue(line.waitForExistence(timeout: 5))
         try await proof(base, "replacement/unread")
         app.openDestination("sidebar-review", timeout: 5)
+        app.openReviewCards()
         XCTAssertTrue(app.staticTexts["First unread message"].waitForExistence(timeout: 8))
         let historical = app.staticTexts["Historical conversation · read only"]
         XCTAssertTrue(historical.waitForNonExistence(timeout: 5))
@@ -265,9 +276,10 @@ final class ConversationOperationTests: XCTestCase {
         app.launch()
         XCTAssertTrue(input.waitForExistence(timeout: 8))
         capture(app, "largest-text-resting")
+        // One tap: a second tap on the focused field opens the system edit menu, which
+        // covers the conversation line.
         input.tap(); input.typeText("Large text draft")
         XCTAssertTrue(input.waitForExistence(timeout: 8))
-        input.tap()
         let largeKeyboard = app.keyboards.firstMatch
         XCTAssertTrue(largeKeyboard.waitForExistence(timeout: 5))
         await fulfillment(of: [expectation(for: keyboardVisible, evaluatedWith: nil)], timeout: 5)

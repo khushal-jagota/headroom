@@ -7,7 +7,7 @@ import { SupportingMetric } from './components/supporting-metric';
 import { Gauge } from './components/gauge';
 import { ProgressCard, TimeBudgetCard, AllocationCard, seriesColor } from './components/goal-indicators';
 import { SeriesLegend } from './components/series-legend';
-import { Bars } from './components/bar-chart';
+import { Bars, comparisonColor } from './components/bar-chart';
 import { chartData, chartHeadline, chartTone, comparisonText, readingSuffix, formatReading, formatTrimmedReading, formatAxisTick, hasCountAxis, missingReadingText, readChartPreference, selectedSeries, selectedTarget, selectedDomain, allocationSummary, categoryRange, hasDateAxis, observationDetails, seriesKey, allocationData } from './presentation';
 import './theme.css';
 
@@ -90,7 +90,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
     ...(block.binding ? categorySeries : [
     { key: actualKey, label: authoredSeries[0]?.name ?? 'Current', color: block.expectation ? lineColors[chartTone(block, summary.value, summary.target, summary.point, summary.categorySummary, summary.coverage_status)] : latestReading?.target === undefined ? C.blue : latestReading[actualKey] === undefined ? badColor : lineColors[chartTone(block, latestReading[actualKey], latestReading.target, undefined, undefined, data.at(-1)?.coverage_status)], area: true,
       datedComparisons, neutralColor: colors.neutral, compareTo: !datedComparisons && data.some(d => d.values.target !== undefined) ? 'target' : undefined, higherIsBetter: block.direction !== 'atmost', goodColor: lineColors.good, badColor },
-    ...authoredSeries.slice(1).map((item, index) => ({ key: seriesKey(item, index + 1), label: item.name, area: false, color: seriesColor(item, index + 1) })),
+    ...authoredSeries.slice(1).map((item, index) => ({ key: seriesKey(item, index + 1), label: item.name, area: false, color: chatSnapshot ? comparisonColor(item, index + 1) : seriesColor(item, index + 1) })),
     ]),
     ...(data.some(d => d.values.target !== undefined) ? [{ key: 'target', label: block.expectation ? 'Expected' : block.binding || block.reference?.length || block.aggregate === 'sum' ? 'Target' : `${formatTrimmedReading(block, displayBlock.target!)} ${block.target_label ?? (block.direction === 'atmost' ? 'limit' : 'target')}`, color: C.reference, dashed: true, area: false, curve: block.expectation ? 'linear' as const : undefined }] : []),
   ];
@@ -112,7 +112,7 @@ export function GoalChart({ block, values, projection, narrow, preferenceKey, co
   // The period switch stands where staging put it: at the top right of a full chart, and as
   // one full-width row under the plot of a compact (card) chart.
   const rangeOnTop = !compact;
-  const plot = <>{chart}{chatSnapshot && block.kind === 'line' && <SeriesLegend series={series} />}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
+  const plot = <>{chatSnapshot && block.kind === 'line' && <SeriesLegend series={series} />}{chart}{!rangeOnTop && hasRange && <div className="chart-range-footer">{range}</div>}</>;
 
   if (block.kind === 'binary') return <article className={`metric-card indicator-card completion-card ${compact ? 'compact ' : ''}${foldable ? 'completion-summary ' : ''}${integrated ? 'integrated-card' : ''}`}>{block.title && <div className="metric-top"><h2>{block.title}</h2></div>}<CompletionReading done={completed} tone={colors[status]} context={completed ? null : status === 'bad' ? 'Overdue' : status === 'attention' ? 'Due today' : null} /></article>;
   if (foldable) {

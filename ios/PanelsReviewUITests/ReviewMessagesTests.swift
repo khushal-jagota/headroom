@@ -27,8 +27,7 @@ final class ReviewMessagesTests: XCTestCase {
                 "--conversation-fixture-speech", "--conversation-fixture-silence",
             ]
             app.launch()
-            // Review is the root at launch.
-            XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 10))
+            app.openReviewCards()
             let input = app.textFields["conversation-input"].firstMatch
             let box = app.otherElements["conversation-input-box"].firstMatch
             XCTAssertTrue(input.waitForExistence(timeout: 10))
@@ -69,28 +68,32 @@ final class ReviewMessagesTests: XCTestCase {
             XCTAssertTrue(box.frame.contains(feedback.frame))
             XCTAssertTrue(box.frame.contains(app.buttons["Try again"].frame))
             capture(owner + "-review-feedback")
-            app.buttons["review.openConversation"].tap()
-            XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 10))
-            XCTAssertTrue(input.waitForExistence(timeout: 8))
-            XCTAssertEqual(app.otherElements["conversation-composer-region"].frame.height, collapsedHeight, accuracy: 2)
-            XCTAssertFalse(app.sidebarButton.exists, "A pushed page shows Back, not the Sidebar button")
-            capture(owner + "-conversation")
-            app.buttons["Record voice input"].firstMatch.tap()
-            XCTAssertTrue(app.buttons["Stop recording"].waitForExistence(timeout: 5))
-            app.buttons["Stop recording"].tap()
-            XCTAssertTrue(feedback.waitForExistence(timeout: 6))
-            XCTAssertTrue(app.otherElements["conversation-composer-region"].frame.contains(feedback.frame))
-            capture(owner + "-conversation-feedback")
-            // A cancelled pop remains in the conversation; a completed pop returns to the
-            // Review card, since the conversation opened on top of Review.
-            let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
-            edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.45)), withVelocity: .slow, thenHoldForDuration: 0.5)
-            XCTAssertTrue(app.buttons["conversation-actions"].exists)
-            edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.45)))
-            XCTAssertTrue(app.buttons["conversation-actions"].waitForNonExistence(timeout: 8))
-            XCTAssertTrue(app.buttons["review.openConversation"].waitForExistence(timeout: 8))
-            XCTAssertTrue(app.sidebarButton.exists)
-            capture(owner + "-back-to-review")
+            // A Ticket's message card opens its Ticket, not the conversation (below), so the
+            // conversation link and its Back swipe are the Manager card's.
+            if owner == "manager" {
+                app.buttons["review.openConversation"].tap()
+                XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 10))
+                XCTAssertTrue(input.waitForExistence(timeout: 8))
+                XCTAssertEqual(app.otherElements["conversation-composer-region"].frame.height, collapsedHeight, accuracy: 2)
+                XCTAssertFalse(app.sidebarButton.exists, "A pushed page shows Back, not the Sidebar button")
+                capture(owner + "-conversation")
+                app.buttons["Record voice input"].firstMatch.tap()
+                XCTAssertTrue(app.buttons["Stop recording"].waitForExistence(timeout: 5))
+                app.buttons["Stop recording"].tap()
+                XCTAssertTrue(feedback.waitForExistence(timeout: 6))
+                XCTAssertTrue(app.otherElements["conversation-composer-region"].frame.contains(feedback.frame))
+                capture(owner + "-conversation-feedback")
+                // A cancelled pop remains in the conversation; a completed pop returns to the
+                // Review card, since the conversation opened on top of Review.
+                let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
+                edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.45)), withVelocity: .slow, thenHoldForDuration: 0.5)
+                XCTAssertTrue(app.buttons["conversation-actions"].exists)
+                edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.45)))
+                XCTAssertTrue(app.buttons["conversation-actions"].waitForNonExistence(timeout: 8))
+                XCTAssertTrue(app.buttons["review.openConversation"].waitForExistence(timeout: 8))
+                XCTAssertTrue(app.sidebarButton.exists)
+                capture(owner + "-back-to-review")
+            }
             if owner == "ticket" {
                 // The Ticket's own conversation draft stays on the Ticket, apart from the Review reply.
                 // The fixture's Manager is not in the Sidebar and its message card has no Open ticket,

@@ -24,7 +24,8 @@ export function defaultViewRequest(locale='en-US'):ViewRequest {
 }
 
 /** One raw immutable bounded view owns source admission. No global replica lives beside it. */
-export function createScopedNavigationOwner(options:{transport?:ViewTransport;request?:ViewRequest;reconnectDelayMs?:number}={}) {
+/** `saved` is a view from an earlier launch. It shows as retained until the server's first view replaces it. */
+export function createScopedNavigationOwner(options:{transport?:ViewTransport;request?:ViewRequest;reconnectDelayMs?:number;saved?:NavigationPublication}={}) {
   const transport=options.transport ?? createViewTransport();
   const knowledge=createNavigationKnowledge();
   const listeners=new Set<(state:ScopedNavigationOwnerState)=>void>();
@@ -44,6 +45,8 @@ export function createScopedNavigationOwner(options:{transport?:ViewTransport;re
   let priorityWindow:string|undefined;
   const retiredSessions=new Set<string>();
   let lastAuthority:CurrentAuthority|undefined;
+  // The saved view is for display only. It never becomes `current`, so no admission rule compares against it.
+  if(options.saved){knowledge.accept(options.saved);state={...state,publication:options.saved,effective:knowledge.loseRuntime()};}
   function emit(){for(const listener of listeners)listener(state);}
   function publication(value:ViewSnapshot):NavigationPublication {
     return Object.freeze({publicationId:++publicationSequence,admissionToken:`view:${state.generation}:${publicationSequence}`,continuity:value.coverage,cursor:null,mode:value.mode,authority:value.authority,records:Object.freeze(value.content.records),view:Object.freeze({id:value.view_id,scopeGeneration:value.scope_generation,contentVersion:value.content_version,orderingGeneration:value.ordering_generation,windows:Object.freeze(value.content.windows),counts:Object.freeze(value.content.counts),reviewContext:Object.freeze(value.content.review_context),reviewSummary:Object.freeze(value.content.review_summary)})});

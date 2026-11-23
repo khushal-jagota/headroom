@@ -540,6 +540,7 @@
         <div class="conversation-column">
           <LiveConversation machineId={masthead.machine_id} locale={masthead.locale}
             bind:conversationState
+            waitingOnPage={selectedPastConversationId === null && pageProposal && section?.detail.ceiling_holder.kind === "owner" ? "approval" : null}
             conversationId={shownConversationId}
             bind:selectedPastConversationId
             workerSetup={selectedPastConversationId === null ? masthead.worker_setup : null}
@@ -547,6 +548,8 @@
             persistenceKey={`owner:ticket:${detail.id}`}
             uploadOwner={{kind:"ticket",id:detail.id}}
             label={conversationWorkerTypeLabel(detail)}
+            title={masthead.title || conversationEmployeeLabel(detail)}
+            subtitle={masthead.title ? conversationEmployeeLabel(detail) : null}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"

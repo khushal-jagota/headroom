@@ -139,25 +139,27 @@ async function answer_request(
   return state.lock.run(async () => {
     const running = state.running_turn;
     if (!running || !same_turn(running.token, token)) {
-      if (fate === AnswerFate.saved) {
-        host.note_written(
-          state,
-          await host.persist(state, () =>
-            host.options.store.append_events(
-              state.record.conversation_id,
-              [pending.row(fate, attempt.identity)],
-              { lifecycle: [{ ...attempt, status: S.accepted }] },
-            ),
-          ),
+      if (fate === AnswerFate.refused) {
+        await host.persist(state, () =>
+          host.options.store.transition_lifecycle(state.record.conversation_id, [
+            { ...attempt, status: S.refused },
+          ]),
         );
         return fate;
       }
-      await host.persist(state, () =>
-        host.options.store.transition_lifecycle(state.record.conversation_id, [
-          { ...attempt, status: fate === AnswerFate.refused ? S.refused : S.accepted },
-        ]),
+      // The backend took the answer before its turn ended, so the answer keeps its row and receipt.
+      // Ending the turn already settled the request, so only the attempt is recorded here.
+      host.note_written(
+        state,
+        await host.persist(state, () =>
+          host.options.store.append_events(
+            state.record.conversation_id,
+            [pending.row(fate, fate === AnswerFate.saved ? attempt.identity : null)],
+            { lifecycle: [{ ...attempt, status: S.accepted }] },
+          ),
+        ),
       );
-      return AnswerFate.refused;
+      return fate;
     }
     if (fate === AnswerFate.refused) {
       await host.persist(
