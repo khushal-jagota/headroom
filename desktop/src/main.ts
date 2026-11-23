@@ -305,7 +305,9 @@ void app.whenReady().then(async () => {
     present: (value, reload) => {
       selectScreenPresentation(value);
       if (reload && mainWindow && new URL(mainWindow.webContents.getURL() || ADDRESS_PAGE_URL).host === SCREENS_HOST) {
-        void mainWindow.loadURL(lastScreenUrl());
+        // A reload, not loadURL: the screens route in the hash, and loading the same URL with
+        // a hash only moves within the old document, so the new copy would never start.
+        mainWindow.webContents.reload();
       }
     },
   });
