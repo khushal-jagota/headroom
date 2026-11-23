@@ -9,6 +9,7 @@ import type {
 } from './contracts.ts';
 import { parse_optional_runtime_contract } from './logic/runtime_contract.ts';
 import { is_record as is_object } from '../../core/records.ts';
+import type { ClientCompatibility } from '../../client_versions/contracts.ts';
 
 export { is_record as is_object } from '../../core/records.ts';
 
@@ -30,6 +31,34 @@ function artifact_source(payload: Record<string, unknown>): { artifact_source?: 
   if (payload.artifact_source === undefined) return {};
   if (payload.artifact_source !== 'github-release') throw new Error('invalid artifact source');
   return { artifact_source: payload.artifact_source };
+}
+function parse_compatibility(value: unknown): ClientCompatibility {
+  if (
+    !is_object(value) ||
+    !is_object(value.ios) ||
+    !is_object(value.desktop_shell) ||
+    !is_object(value.machine)
+  )
+    throw new Error('invalid release compatibility');
+  const positive_integer = (input: unknown): number => {
+    if (typeof input !== 'number' || !Number.isSafeInteger(input) || input < 1)
+      throw new Error('invalid release compatibility');
+    return input;
+  };
+  const result: ClientCompatibility = {
+    ios: { minimum_build: positive_integer(value.ios.minimum_build) },
+    desktop_shell: {
+      minimum_bridge_version: positive_integer(value.desktop_shell.minimum_bridge_version),
+    },
+    machine: {
+      minimum_protocol_version: positive_integer(value.machine.minimum_protocol_version),
+      maximum_protocol_version: positive_integer(value.machine.maximum_protocol_version),
+    },
+    outbox_format: positive_integer(value.outbox_format),
+  };
+  if (result.machine.minimum_protocol_version > result.machine.maximum_protocol_version)
+    throw new Error('invalid release compatibility');
+  return result;
 }
 function parse_parts(value: unknown): ReleaseParts {
   if (
@@ -80,6 +109,9 @@ export function parse_release(payload: Record<string, unknown>): PublishedUpdate
   return {
     ...source,
     ...(payload.parts === undefined ? {} : { parts: parse_parts(payload.parts) }),
+    ...(payload.compatibility === undefined
+      ? {}
+      : { compatibility: parse_compatibility(payload.compatibility) }),
     linux_executor:
       !is_object(linux) ||
       !['artifact_id', 'archive_sha256', 'archive_size'].every((key) => Object.hasOwn(linux, key))

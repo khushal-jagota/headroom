@@ -12,6 +12,7 @@ import { registerCoreRoutes } from '../core/routes.ts';
 import { CLIENT_COMPATIBILITY, supported_machine_versions } from './policy.ts';
 import { parse_client_identity } from './identity.ts';
 import { client_version_meta } from './meta.ts';
+import { list_client_versions } from './data.ts';
 
 // Distinct risk: a native forward without Origin bypasses compatibility, or a rejected
 // declaration disappears from diagnostics. Reuse Fastify inject and the schema seed.
@@ -44,11 +45,7 @@ test('declared versions gate writes and accepted device versions survive a datab
   };
   const headers = (value: unknown) => ({ 'x-panels-client': JSON.stringify(value) });
   const saved = () =>
-    database.read((sql) =>
-      sql.all<{ identity_json: string }>(
-        "SELECT identity_json FROM client_versions WHERE kind='desktop'",
-      ),
-    );
+    database.read(list_client_versions).filter((identity) => identity.kind === 'desktop');
   try {
     expect((await app.inject({ method: 'POST', url: '/api/write' })).statusCode).toBe(200);
     expect(
@@ -69,9 +66,7 @@ test('declared versions gate writes and accepted device versions survive a datab
         })
       ).statusCode,
     ).toBe(426);
-    expect(saved().map((row) => JSON.parse(row.identity_json))).toEqual([
-      { ...identity, bridge_version: 0 },
-    ]);
+    expect(saved()).toEqual([{ ...identity, bridge_version: 0 }]);
     const meta = await app.inject({
       url: '/api/meta',
       headers: headers({ ...identity, bridge_version: 0 }),
@@ -89,7 +84,7 @@ test('declared versions gate writes and accepted device versions survive a datab
       (await app.inject({ method: 'POST', url: '/api/write', headers: headers(identity) }))
         .statusCode,
     ).toBe(200);
-    expect(saved().map((row) => JSON.parse(row.identity_json))).toEqual([identity]);
+    expect(saved()).toEqual([identity]);
     const newer = { ...identity, version: '0.0.2', bridge_version: 2 };
     expect(
       (await app.inject({ method: 'POST', url: '/api/write', headers: headers(newer) })).statusCode,
@@ -99,7 +94,7 @@ test('declared versions gate writes and accepted device versions survive a datab
     expect((await app.inject({ url: '/api/missing', headers: headers(latest) })).statusCode).toBe(
       404,
     );
-    expect(saved().map((row) => JSON.parse(row.identity_json))).toEqual([latest]);
+    expect(saved()).toEqual([latest]);
     config.trusted_ingress_provider = 'tailscale';
     config.trusted_ingress_allowed_login = 'owner@example.test';
     config.trusted_ingress_canonical_origin = 'https://panels.example';
@@ -112,7 +107,7 @@ test('declared versions gate writes and accepted device versions survive a datab
         })
       ).statusCode,
     ).toBe(403);
-    expect(saved().map((row) => JSON.parse(row.identity_json))).toEqual([latest]);
+    expect(saved()).toEqual([latest]);
     const duplicate = await app.inject({
       method: 'POST',
       url: '/api/write',
@@ -146,13 +141,7 @@ test('declared versions gate writes and accepted device versions survive a datab
   const reopened = createReadAccess(path);
   try {
     expect(
-      reopened
-        .read((sql) =>
-          sql.all<{ identity_json: string }>(
-            "SELECT identity_json FROM client_versions WHERE kind='desktop'",
-          ),
-        )
-        .map((row) => JSON.parse(row.identity_json)),
+      reopened.read(list_client_versions).filter((identity) => identity.kind === 'desktop'),
     ).toEqual([{ ...identity, version: '0.0.3', bridge_version: 2 }]);
   } finally {
     reopened.close();

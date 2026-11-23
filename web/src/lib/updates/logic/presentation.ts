@@ -1,11 +1,10 @@
 import type { ConnectionStatus } from "../../changeStream";
-import type { MacStatus } from "../../ticketMachines";
-import type { UpdateStatus } from "../contracts";
+import type { UpdateStatus, MachineUpdateState, UpdateInterruption } from "../contracts";
 
 /** What the one update card shows. `null` is no card. */
 export type UpdateCardState =
   | "available" | "updating" | "complete"
-  | "failed" | "mac_failed" | "mac_unreachable" | "unreachable";
+  | "failed" | "mac_failed" | "mac_unreachable" | "unreachable" | "machines";
 export type UpdateFailureState = "failed" | "mac_failed" | "mac_unreachable";
 export type UpdatePresentation = { state: UpdateCardState | null; dimmed: boolean };
 
@@ -45,7 +44,11 @@ export function updatePresentation({ status, connection, pageIsBehind, starting,
   // Panels moved on. A page left behind cannot write, so it refreshes first and then
   // shows a Mac failure, which the server keeps.
   if (pageIsBehind) return { state: "complete", dimmed: false };
-  if (!status || status.state === "up_to_date") return { state: null, dimmed: false };
+  if (!status) return { state: null, dimmed: false };
+  if (status.state === "up_to_date") {
+    const hasTarget = status.machines.some(machine => machine.attempt_id !== null || machine.state !== "current");
+    return { state: hasTarget ? "machines" : null, dimmed: false };
+  }
   return { state: status.state, dimmed: false };
 }
 
@@ -66,62 +69,65 @@ export function updateCard(state: UpdateCardState, status: UpdateStatus | undefi
         action: allows("retry") && attempt ? { label: "Try again", does: "retry" } : undefined };
     case "mac_failed":
     case "mac_unreachable":
-      return { word: state === "mac_failed" ? "Mac didn't update" : "Can't reach the Mac", tone: "wrong", info: state,
-        action: allows("retry_mac") && attempt ? { label: "Try again", does: "retry_mac" } : undefined };
+      return { word: "Machine update needs attention", tone: "wrong" };
+    case "machines": {
+      const rows = status?.machines ?? [];
+      const failed = rows.some(row => row.state === "failed" || row.state === "unavailable");
+      const updating = rows.some(row => row.state === "updating");
+      return { word: failed ? "Machine update needs attention" : updating ? "Updating machines…" : rows.some(row => row.state === "waiting") ? "Machine updates" : "Update complete",
+        tone: failed ? "wrong" : updating ? "changing" : "done" };
+    }
     case "unreachable":
       return { word: "Can't reach Panels", tone: "wrong", detail: "Trying again every few seconds", action: { label: "Try now", does: "reconnect" } };
   }
 }
 
-export type UpdateDetails = { title: string; facts: [label: string, value: string][] };
-
-const DETAIL_TITLES: Record<UpdateFailureState, string> = {
-  failed: "Update didn't install",
-  mac_failed: "Mac didn't update",
-  mac_unreachable: "Can't reach the Mac",
-};
-
-const short = (sha: string) => sha.slice(0, 8);
-
-/** The plain facts behind the info button. Mac diagnostics appear only here. */
-export function updateDetails(state: UpdateFailureState, status: UpdateStatus, now: number): UpdateDetails {
-  const attempt = status.attempt;
-  if (state === "failed") {
-    return { title: DETAIL_TITLES[state], facts: [
-      ["What happened", status.detail ?? attempt?.detail ?? "Panels went back to the previous version."],
-      ["Panels", `${short(attempt?.from_sha ?? status.app_sha)} (previous)`],
-      ...(attempt ? [["Tried", short(attempt.to_sha)] as [string, string]] : []),
-      ["Mac", "Not changed"],
-    ] };
-  }
-  const mac = status.mac_details;
-  const fallback = state === "mac_failed"
-    ? mac?.update?.detail ?? "The Mac went back to its previous version."
-    : "The Mac did not check in during the update. It can be asleep or offline.";
-  const facts: [string, string][] = [
-    ["What happened", status.detail ?? fallback],
-    ["Panels", `${short(status.app_sha)} (updated)`],
-  ];
-  const refusal = mac?.presence === "refused" ? mac.refusal ?? null : null;
-  const identity = mac?.identity ?? refusal?.peer_identity ?? null;
-  if (identity) facts.push(["Mac", `${short(identity.application_revision)}${state === "mac_failed" ? " (previous)" : ""}`]);
-  facts.push(["Last contact", lastContact(mac, now)]);
-  if (identity) {
-    const server = refusal?.server_identity;
-    facts.push(["Protocol", `Mac ${identity.protocol_version}${server ? ` · server ${server.protocol_version}` : ""}`]);
-    facts.push(["Outbox format", `Mac ${identity.spool_format_version}${server ? ` · server ${server.spool_format_version}` : ""}`]);
-  }
-  if (refusal) facts.push(["Refused", refusal.reason]);
-  return { title: DETAIL_TITLES[state], facts };
+/** Keep current targets visible while a newer release is offered. */
+export function cardMachines(status: UpdateStatus, presentation: UpdateCardState | UpdateStatus["state"] = status.state): readonly MachineUpdateState[] {
+  if (presentation !== "available" || !status.available) return status.machines;
+  return status.machines.map(machine => machine.attempt_id !== null ? machine
+    : status.available_machines.find(offered => offered.machine_id === machine.machine_id) ?? machine);
 }
 
-function lastContact(mac: MacStatus | null, now: number): string {
-  const at = mac?.last_contact_at_ms;
-  if (at == null) return "Unknown";
-  const minutes = Math.floor(Math.max(0, now - at) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(at);
+export function machineUpdateLabel(machine: MachineUpdateState): string {
+  switch (machine.state) {
+    case "current": return machine.attempt_id ? "Done" : "Up to date";
+    case "available": return machine.present ? "Will update" : "Updates when it is back";
+    case "waiting": return "Updates when it is back";
+    case "updating": return "Updating…";
+    case "failed": return "Update failed";
+    case "unavailable": return "Needs an update to continue";
+  }
+}
+
+export function interruptionText(interruption: UpdateInterruption | null): string | null {
+  if (!interruption) return null;
+  return interruption.stops_agents ? "This update stops your agents" : "Your agents keep running";
+}
+
+/** An available offer is not evidence of what an earlier press interrupted. */
+export function cardInterruption(status: UpdateStatus, presentation: UpdateCardState | UpdateStatus["state"] = status.state): UpdateInterruption | null {
+  return presentation === "available" ? status.interruption : status.attempt?.interruption ?? null;
+}
+
+/** Offer requirements can differ from the requirements of the running server. */
+export function deviceUpdateWarnings(status: UpdateStatus): string[] {
+  const compatibility = status.available?.compatibility;
+  if (!compatibility) return [];
+  const warnings = new Set<string>();
+  for (const identity of status.client_versions) {
+    if (identity.kind === "ios" && identity.build !== undefined && identity.build < compatibility.ios.minimum_build) {
+      warnings.add("Your iPhone needs the TestFlight update first.");
+    } else if (identity.kind === "desktop" && identity.bridge_version !== undefined
+      && identity.bridge_version < compatibility.desktop_shell.minimum_bridge_version) {
+      warnings.add("Your desktop app needs an update first.");
+    } else if (identity.kind === "machine" && (
+      identity.protocol_version !== undefined && (identity.protocol_version < compatibility.machine.minimum_protocol_version
+        || identity.protocol_version > compatibility.machine.maximum_protocol_version)
+      || identity.outbox_format !== undefined && identity.outbox_format !== compatibility.outbox_format)) {
+      const machine = status.machines.find(row => row.machine_id === identity.device_id);
+      warnings.add(`${machine?.name ?? "A machine"} needs an update to continue.`);
+    }
+  }
+  return [...warnings];
 }

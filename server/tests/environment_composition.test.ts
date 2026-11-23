@@ -19,6 +19,7 @@ import type { StopOptions } from '../lifecycle/contracts.ts';
 import * as preview_routes from '../previews/routes.ts';
 import { PreviewService } from '../previews/service.ts';
 import { PreviewError } from '../previews/contracts.ts';
+import { CLIENT_COMPATIBILITY } from '../client_versions/policy.ts';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -173,9 +174,25 @@ test('environment providers and poll hooks share the server, and both producer g
       revision: 'same capture',
       body: { source: 'this server' },
     });
+    const client_identity = {
+      kind: 'ios',
+      device_id: 'owner-iphone',
+      version: '1',
+      build: CLIENT_COMPATIBILITY.ios.minimum_build,
+    };
+    const declaration = await fetch(server.address + '/api/meta', {
+      headers: { 'X-Panels-Client': JSON.stringify(client_identity) },
+    });
+    expect(declaration.status).toBe(200);
+    await declaration.text();
+    // The card's update read must include a device record from a prior request.
     const updates = await fetch(server.address + '/api/updates');
     expect(updates.status).toBe(200);
-    expect(await updates.json()).toMatchObject({ state: 'up_to_date', activity: 'idle' });
+    expect(await updates.json()).toMatchObject({
+      state: 'up_to_date',
+      activity: 'idle',
+      client_versions: [client_identity],
+    });
     const metrics = await fetch(server.address + '/api/vps-metrics/latest');
     expect(metrics.status).toBe(200);
     expect(await metrics.json()).toMatchObject({ sequence: null, sample: null });

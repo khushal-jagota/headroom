@@ -1,7 +1,7 @@
-import type { Database } from '../core/database/contracts.ts';
+import type { Database, ReadSql } from '../core/database/contracts.ts';
 import type { ClientIdentity } from './contracts.ts';
 
-/** No screen subscribes to diagnostic version rows. */
+/** The update-status read reconciles these declarations without a screen wake per request. */
 export function remember_client_version(
   database: Database,
   identity: ClientIdentity,
@@ -16,4 +16,13 @@ export function remember_client_version(
     },
     { changeSignal: 'silent' },
   );
+}
+
+/** Retain the last declaration from every device, including one that is away. */
+export function list_client_versions(sql: ReadSql): ClientIdentity[] {
+  return sql
+    .all<{ identity_json: string }>(
+      'SELECT identity_json FROM client_versions ORDER BY kind,device_id',
+    )
+    .map((row) => JSON.parse(row.identity_json) as ClientIdentity);
 }

@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { AreaServices } from '../../core/authority/register.ts';
 import { requireOwner } from '../../core/authority/identity.ts';
 import { HttpError } from '../../core/http/errors.ts';
+import { list_client_versions } from '../../client_versions/data.ts';
 import { UpdateConflict } from './attempts.ts';
 import { is_object } from './codec.ts';
 import type { UpdateAttempt, UpdateAttemptView, UpdateInterruption } from './contracts.ts';
@@ -68,6 +69,7 @@ export function create_update_routes(
       const mac_details = health === null ? null : { ...health, update: await mac.status() };
       return {
         ...result,
+        client_versions: services.database.read(list_client_versions),
         allowed_actions: [...result.allowed_actions],
         available:
           result.available === null
