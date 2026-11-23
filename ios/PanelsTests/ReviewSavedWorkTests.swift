@@ -13,9 +13,9 @@ import XCTest
         let elapsed = start.duration(to: .now).components
         return Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15
     }
-    private func cards(_ count: Int) -> [ReviewCard] {
+    private func cards(_ count: Int) -> [ReviewItem] {
         (0..<count).map { index in
-            ReviewCard(id: "card-\(index)", ticketId: "ticket-\(index)", parts: [ReviewItem(reviewItemType: "proposal", ticketId: "ticket-\(index)", field: "brief", title: "Ticket", waitingSince: 1, proposalRevision: 2)])
+            ReviewItem(reviewItemType: "proposal", ticketId: "ticket-\(index)", field: "brief", title: "Ticket", waitingSince: 1, proposalRevision: 2)
         }
     }
     func testQueueReadCountAndHostTimingsAcrossRetainedWorkloads() throws {
@@ -28,28 +28,27 @@ import XCTest
                 try outbox.save(PendingWork(id: "receipt-\(index)", created: Date(timeIntervalSince1970: Double(index)), kind: .message, state: .sent, message: message), server: "a")
             }
             var reads = 0
-            let read: (String) -> [OutgoingStore.Summary] = { server in reads += 1; return outbox.decisionSummaries(server) }
+            let read: (String) -> [OutgoingStore.Summary] = { server in reads += 1; return outbox.reviewSummaries(server) }
             let snapshot = ReviewSavedWork(outbox: outbox, read: read)
             let cold = milliseconds { snapshot.refresh("a") }
             XCTAssertEqual(reads, 1)
             for partCount in [1, 30] {
                 let queue = cards(partCount)
                 reads = 0
-                var baseline: [ReviewCard] = []
+                var baseline: [ReviewItem] = []
                 let before = milliseconds {
-                    // The old Review getter performed this full read inside each part.
-                    baseline = queue.compactMap { card in
-                        let parts = card.parts.filter { item in
-                            reads += 1
-                            let decisions = ((try? store.records(server: "a", kind: "outbox")) ?? []).compactMap { try? JSONDecoder().decode(PendingWork.self, from: $0.payload) }.filter { $0.kind == .approval || $0.kind == .sendBack }
-                            return !decisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && [.waiting, .sending, .uncertain, .sent].contains($0.state) }
-                        }
-                        return parts.isEmpty ? nil : ReviewCard(id: card.id, ticketId: card.ticketId, parts: parts)
+                    // The old Review getter performed this full read inside each card.
+                    baseline = queue.filter { item in
+                        reads += 1
+                        let records = (try? store.records(server: "a", kind: "outbox")) ?? []
+                        let decoded: [PendingWork] = records.compactMap { try? JSONDecoder().decode(PendingWork.self, from: $0.payload) }
+                        let decisions = decoded.filter { $0.kind == .approval || $0.kind == .sendBack }
+                        return !decisions.contains { $0.ticketID == item.ticketId && $0.proposal?.field == item.field && $0.proposal?.createdAt == item.waitingSince && $0.state != .failed }
                     }
                 }
                 XCTAssertEqual(reads, partCount)
                 reads = 0
-                var result: [ReviewCard] = []
+                var result: [ReviewItem] = []
                 let after = milliseconds { result = ReviewSavedWork.cards(queue, decisions: snapshot.decisions("a")) }
                 XCTAssertEqual(result.map(\.id), baseline.map(\.id))
                 for _ in 0..<20 {
@@ -66,29 +65,25 @@ import XCTest
         defer { try? FileManager.default.removeItem(at: directory) }
         let outbox = Outbox(store: store)
         var reads = 0
-        let snapshot = ReviewSavedWork(outbox: outbox) { server in reads += 1; return outbox.decisionSummaries(server) }
+        let snapshot = ReviewSavedWork(outbox: outbox) { server in reads += 1; return outbox.reviewSummaries(server) }
         let proposal = TicketProposal(field: "brief", body: "Read this", proposedBy: "worker", createdAt: 1, revision: 2)
         var work = PendingWork(id: "decision", created: .now, kind: .approval, ticketID: "ticket-0", proposal: proposal)
         try outbox.save(work, server: "a")
         snapshot.refresh("a")
         XCTAssertEqual(reads, 1)
         XCTAssertTrue(ReviewSavedWork.cards(cards(1), decisions: snapshot.decisions("a")).isEmpty)
-        let original = cards(1)[0].parts[0]
+        let original = cards(1)[0]
         let replacement = ReviewItem(reviewItemType: "proposal", ticketId: original.ticketId, field: original.field,
             title: original.title, waitingSince: original.waitingSince, proposalRevision: 3)
         let unknown = ReviewItem(reviewItemType: "proposal", ticketId: original.ticketId, field: original.field,
             title: original.title, waitingSince: original.waitingSince)
         XCTAssertNotEqual(original.id, replacement.id, "Same-second replacement has its own identity")
-        let newer = ReviewCard(id: cards(1)[0].id, parts: [replacement])
-        XCTAssertEqual(ReviewSavedWork.cards([newer], decisions: snapshot.decisions("a")).first?.parts.first?.id, replacement.id)
-        XCTAssertEqual(ReviewSavedWork.cards([ReviewCard(id: "unknown", parts: [unknown])], decisions: snapshot.decisions("a")).count, 1)
+        XCTAssertEqual(ReviewSavedWork.cards([replacement], decisions: snapshot.decisions("a")).first?.id, replacement.id)
+        XCTAssertEqual(ReviewSavedWork.cards([unknown], decisions: snapshot.decisions("a")).count, 1)
         XCTAssertEqual(ReviewSavedWork.pendingDecisionTickets(in: cards(1), decisions: snapshot.decisions("a")), [original.ticketId])
-        XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [newer], decisions: snapshot.decisions("a")).isEmpty)
-        XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [ReviewCard(id: "unknown", parts: [unknown])], decisions: snapshot.decisions("a")).isEmpty)
+        XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [replacement], decisions: snapshot.decisions("a")).isEmpty)
+        XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [unknown], decisions: snapshot.decisions("a")).isEmpty)
         XCTAssertTrue(ReviewSavedWork.pendingDecisionTickets(in: [], decisions: snapshot.decisions("a")).isEmpty)
-        var queue = ReviewQueue()
-        queue.skip(cards(1)[0]); queue.resolve(original)
-        XCTAssertEqual(queue.current(in: [newer])?.parts.first?.id, replacement.id)
         XCTAssertTrue(snapshot.decisions("b").isEmpty)
         let revision = store.outgoingRevision("a")
         try outbox.save(work, server: "a")
@@ -100,7 +95,7 @@ import XCTest
         XCTAssertEqual(store.outgoingRevision("a"), revision)
         snapshot.refresh("a")
         XCTAssertEqual(reads, 1)
-        work.state = .changed
+        work.state = .failed
         try outbox.save(work, server: "a")
         snapshot.refresh("a")
         XCTAssertEqual(reads, 2)
@@ -111,10 +106,39 @@ import XCTest
         XCTAssertTrue(snapshot.decisions("a").isEmpty)
         snapshot.refresh("a")
         XCTAssertEqual(reads, 4)
-        XCTAssertEqual(snapshot.decisions("a").first?.state, "changed")
+        XCTAssertEqual(snapshot.decisions("a").first?.state, "failed")
         try store.remove(server: "a", kind: "outbox", id: work.id)
         snapshot.refresh("a")
         XCTAssertEqual(reads, 5)
         XCTAssertTrue(snapshot.decisions("a").isEmpty)
+    }
+    /// A saved mark read or reply takes its messages off Review at once. A message that
+    /// arrives after the server's read point catches up shows again, and a refusal brings it back.
+    func testHandledMessagesLeaveReviewAtOnceUntilTheServerCatchesUp() throws {
+        let (store, directory) = try temporaryStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = Outbox(store: store)
+        let snapshot = ReviewSavedWork(outbox: outbox)
+        func card(readThrough: Int) -> [ReviewItem] {
+            [ReviewItem(reviewItemType: "message", title: "Chief", waitingSince: 1, conversationId: "c", ownerKind: "chief", ownerId: "chief", ownerReadThroughSequence: readThrough)]
+        }
+        try store.outgoing.enqueueMarkRead(server: "a", owner: .chief, conversationID: "c", through: 9)
+        snapshot.refresh("a")
+        XCTAssertTrue(ReviewSavedWork.cards(card(readThrough: 4), decisions: snapshot.decisions("a")).isEmpty, "Hidden while the read waits")
+        XCTAssertEqual(ReviewSavedWork.cards(card(readThrough: 9), decisions: snapshot.decisions("a")).count, 1, "A newer message after the read shows again")
+        let id = try XCTUnwrap(snapshot.decisions("a").first?.id)
+        try store.outgoing.settle(server: "a", id: id, state: .failed, note: "Refused")
+        snapshot.refresh("a")
+        XCTAssertEqual(ReviewSavedWork.cards(card(readThrough: 4), decisions: snapshot.decisions("a")).count, 1, "A refusal brings it back")
+        // An answer saved offline keeps its ask hidden, even after a relaunch, until it is sent.
+        let ask = [ReviewItem(reviewItemType: "ask", title: "Chief", waitingSince: 5, conversationId: "c", ownerKind: "chief", ownerId: "chief")]
+        let answer = AskAnswer(conversationID: "c", request: .userInput(requestID: "r"), questions: [.init(id: "q", prompt: "Which?", answers: ["A"], labels: ["A"])])
+        try outbox.save(PendingWork(id: "answer", created: .now, kind: .askAnswer, owner: .chief, askAnswer: answer), server: "a")
+        let relaunched = ReviewSavedWork(outbox: outbox)
+        relaunched.refresh("a")
+        XCTAssertTrue(ReviewSavedWork.cards(ask, decisions: relaunched.decisions("a")).isEmpty)
+        try store.outgoing.settle(server: "a", id: "answer", state: .sent)
+        snapshot.refresh("a")
+        XCTAssertEqual(ReviewSavedWork.cards(ask, decisions: snapshot.decisions("a")).count, 1, "A sent answer leaves it to the window")
     }
 }

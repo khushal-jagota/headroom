@@ -57,7 +57,7 @@ final class NotificationTests: XCTestCase {
         let invalid = NotificationRouting.reply(["server_url": selected.absoluteString, "reply": ["conversation_id": "../wrong"]])
         await controller.receivedReply(invalid, text: "Private reply", notificationID: "invalid-push")
         assertUnsentNotice(notices, selectedServer: selected)
-        XCTAssertTrue(try outbox.store.outgoing.schedulingSummaries(server: LocalStore.server(selected)).isEmpty)
+        XCTAssertTrue(try outbox.store.outgoing.allSummaries(server: LocalStore.server(selected)).isEmpty)
         XCTAssertNotNil(controller.routingError)
     }
 
@@ -71,8 +71,8 @@ final class NotificationTests: XCTestCase {
         let controller = NotificationController(replyOutbox: outbox, selectedServer: { selected }, postLocalNotification: { notices.append($0) })
         await controller.receivedReply(reply, text: "Private reply", notificationID: "other-server-push")
         assertUnsentNotice(notices, selectedServer: selected)
-        XCTAssertTrue(try outbox.store.outgoing.schedulingSummaries(server: LocalStore.server(selected)).isEmpty)
-        XCTAssertTrue(try outbox.store.outgoing.schedulingSummaries(server: LocalStore.server(reply.serverURL)).isEmpty)
+        XCTAssertTrue(try outbox.store.outgoing.allSummaries(server: LocalStore.server(selected)).isEmpty)
+        XCTAssertTrue(try outbox.store.outgoing.allSummaries(server: LocalStore.server(reply.serverURL)).isEmpty)
         XCTAssertNotNil(controller.routingError)
     }
 
@@ -91,7 +91,7 @@ final class NotificationTests: XCTestCase {
         fail = true
         await controller.receivedReply(reply, text: "Private reply", notificationID: "save-failure-push")
         assertUnsentNotice(notices, selectedServer: selected)
-        XCTAssertTrue(try store.outgoing.schedulingSummaries(server: server).isEmpty)
+        XCTAssertTrue(try store.outgoing.allSummaries(server: server).isEmpty)
         XCTAssertEqual(store.draft(server: server, id: "composer"), "Unfinished draft")
         XCTAssertNotNil(store.outgoingError)
         XCTAssertNotNil(controller.routingError)

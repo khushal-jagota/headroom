@@ -3,11 +3,12 @@ import XCTest
 @testable import Panels
 
 @MainActor final class ReviewChiefMessageTests: XCTestCase {
-    /// Existing outbox tests do not prove the final page's shared draft, pinned pointer,
-    /// or Check delivery action. This uses the same in-memory HTTP transport boundary.
-    func testPinnedAttemptAndHeldDeliveryKeepNewerSharedDraftWithoutAnotherPost() async throws {
+    /// The final page shares Chief's ordinary draft. A saved message clears only the draft
+    /// it was taken from, at once, and goes to Chief's current conversation without a pointer read.
+    func testSavedMessageClearsOnlyItsOwnDraftAtOnceAndLandsOnce() async throws {
         let api = makeAPI()
         ReviewChiefProtocol.state.reset(pointer: "original")
+        ReviewChiefProtocol.state.fate = "started"
         defer { clean(api) }
         let page = ReviewChiefMessageModel()
         page.restore(api: api)
@@ -20,65 +21,26 @@ import XCTest
         chief.draft = "Words from Chief"
         page.restore(api: api)
         XCTAssertEqual(page.composer.draft, "Words from Chief")
-        _ = await page.send()
-        XCTAssertEqual(page.attempt?.state, .uncertain)
-        let identity = try XCTUnwrap(page.attempt?.id)
-        XCTAssertEqual(page.attempt?.message?.conversationId, "original")
-        XCTAssertEqual(page.composer.attachments.first?.fileName, "note.txt")
-        ReviewChiefProtocol.state.pointer = "replacement"
-        let restored = ReviewChiefMessageModel()
-        restored.restore(api: api)
-        XCTAssertEqual(restored.attempt?.id, identity)
-        XCTAssertEqual(restored.composer.draft, "Words from Chief")
-        await restored.checkDelivery()
-        await restored.checkDelivery()
-        XCTAssertEqual(restored.attempt?.state, .uncertain)
+        let sent = await page.send()
+        XCTAssertTrue(sent)
+        XCTAssertEqual(page.attempt?.state, .waiting)
+        XCTAssertNil(page.note, "A saved message shows no status")
+        XCTAssertNil(page.attempt?.message?.conversationId, "The server picks Chief's current conversation")
+        XCTAssertTrue(page.composer.draft.isEmpty)
+        XCTAssertTrue(page.composer.attachments.isEmpty)
+        XCTAssertFalse(page.blocked, "Another message can follow at once")
+        await Outbox.shared.drain(api: api)
+        page.refreshAttempt()
+        XCTAssertEqual(page.attempt?.state, .sent)
         XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 1)
-        XCTAssertTrue(ReviewChiefProtocol.state.receiptPaths.allSatisfy { $0.contains("/original/") })
-        // A later identical edit and a new attachment must survive an old acceptance.
+        XCTAssertEqual(ReviewChiefProtocol.state.pointerReads, 0)
+        // A later identical edit belongs to the person, not the old message.
         chief.draft = "Words from Chief"
-        chief.attachments = [.init(piece: "file", data: "ZGVm", mediaType: "text/plain", fileName: "new.txt")]
-        ReviewChiefProtocol.state.held = true
-        await restored.checkDelivery()
-        XCTAssertEqual(restored.attempt?.state, .serverQueued)
-        XCTAssertEqual(restored.composer.draft, "Words from Chief")
-        XCTAssertEqual(restored.composer.attachments.first?.fileName, "new.txt")
-        XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 1)
-        chief.reloadDraft()
-        XCTAssertEqual(chief.draft, restored.composer.draft)
-    }
-    func testFirstConversationReceiptClearsOnlyOriginalDraftAndKeepsCapturedIdentity() async throws {
-        let api = makeAPI()
-        ReviewChiefProtocol.state.reset(pointer: nil)
-        defer { clean(api) }
-        let page = ReviewChiefMessageModel()
-        page.restore(api: api)
-        page.composer.draft = "First message"
-        page.composer.attachments = [.init(piece: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", mediaType: "image/png", fileName: "image.png")]
-        _ = await page.send()
-        let identity = try XCTUnwrap(page.attempt?.id)
-        XCTAssertNil(page.attempt?.message?.conversationId)
         let restored = ReviewChiefMessageModel()
         restored.restore(api: api)
-        await restored.checkDelivery()
-        XCTAssertEqual(restored.attempt?.state, .uncertain)
-        XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 1)
-        ReviewChiefProtocol.state.pointer = "created"
-        ReviewChiefProtocol.state.receipt = "prompt"
-        await restored.checkDelivery()
-        XCTAssertEqual(restored.attempt?.id, identity)
-        XCTAssertEqual(restored.attempt?.message?.conversationId, "created")
-        XCTAssertEqual(restored.attempt?.state, .sent)
-        XCTAssertTrue(restored.composer.draft.isEmpty)
-        XCTAssertTrue(restored.composer.attachments.isEmpty)
-        restored.composer.draft = "First message"
-        let again = ReviewChiefMessageModel()
-        again.restore(api: api)
-        XCTAssertEqual(again.composer.draft, "First message", "A prior accepted attempt cannot clear a newer identical draft")
-        await again.checkDelivery()
-        XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 1)
+        XCTAssertEqual(restored.composer.draft, "Words from Chief")
     }
-    func testRejectedPhotoKeepsRestoredDraftAndAllowsExplicitNewAttemptWithCurrentDestination() async throws {
+    func testRejectedPhotoKeepsRestoredDraftAndAllowsExplicitNewAttempt() async throws {
         let api = makeAPI()
         ReviewChiefProtocol.state.reset(pointer: "old")
         ReviewChiefProtocol.state.postStatus = 422
@@ -95,11 +57,15 @@ import XCTest
         let heic = try Data(contentsOf: XCTUnwrap(fixture))
         page.composer.attachments = [.init(piece: "image", data: heic.base64EncodedString(), mediaType: "image/heic", fileName: "Saved.heic")]
         _ = await page.send()
+        await Outbox.shared.drain(api: api)
+        page.refreshAttempt()
         let first = try XCTUnwrap(page.attempt?.id)
         XCTAssertEqual(page.attempt?.state, .failed)
+        XCTAssertTrue(page.attempt?.note.lowercased().contains("photo") == true)
+        XCTAssertEqual(page.note, "The message did not reach Chief. Your draft is ready to retry.")
+        page.composer.reloadDraft()
         XCTAssertEqual(page.composer.draft, "Keep refused words")
         XCTAssertEqual(page.composer.attachments.count, 1)
-        XCTAssertTrue(page.error?.lowercased().contains("photo") == true)
         let submitted = try XCTUnwrap(ReviewChiefProtocol.state.posts.first?["content"] as? [[String: Any]])
         XCTAssertEqual(submitted.last?["media_type"] as? String, "image/jpeg")
         XCTAssertEqual(submitted.last?["file_name"] as? String, "Saved.jpg")
@@ -108,22 +74,22 @@ import XCTest
         restored.restore(api: api)
         XCTAssertEqual(restored.attempt?.id, first)
         XCTAssertEqual(restored.composer.draft, "Keep refused words")
-        XCTAssertEqual(restored.composer.attachments.count, 1)
-        ReviewChiefProtocol.state.pointer = "current"
         ReviewChiefProtocol.state.postStatus = 200
         ReviewChiefProtocol.state.fate = "queued"
         _ = await restored.send()
         XCTAssertNotEqual(restored.attempt?.id, first)
-        XCTAssertEqual(restored.attempt?.message?.conversationId, "current")
-        XCTAssertEqual(restored.attempt?.state, .serverQueued)
         XCTAssertTrue(restored.composer.draft.isEmpty)
         XCTAssertTrue(restored.composer.attachments.isEmpty)
+        await Outbox.shared.drain(api: api)
+        restored.refreshAttempt()
+        XCTAssertEqual(restored.attempt?.state, .sent)
         XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 2)
     }
     func testUnreadableAttemptBlocksAnotherSend() async throws {
         let api = makeAPI()
         ReviewChiefProtocol.state.reset(pointer: "original")
-        defer { clean(api) }
+        OfflineSwitch.offline = true
+        defer { clean(api); OfflineSwitch.offline = false }
         let page = ReviewChiefMessageModel()
         page.restore(api: api)
         page.composer.draft = "Do not duplicate"
@@ -137,27 +103,9 @@ import XCTest
         restored.restore(api: api)
         XCTAssertTrue(restored.blocked)
         XCTAssertNotNil(restored.storageError)
-        _ = await restored.send()
-        XCTAssertEqual(ReviewChiefProtocol.state.posts.count, 1)
-    }
-    func testServerChangeDuringPointerReadDoesNotDispatchIntoAnotherPartition() async throws {
-        let api = makeAPI()
-        let other = makeAPI()
-        ReviewChiefProtocol.state.reset(pointer: "original")
-        ReviewChiefProtocol.state.delayPointer = true
-        defer { clean(api); clean(other) }
-        let page = ReviewChiefMessageModel()
-        page.restore(api: api)
-        page.composer.draft = "Original server only"
-        let sending = Task { await page.send() }
-        while !ReviewChiefProtocol.state.pointerSuspended { await Task.yield() }
-        page.restore(api: other)
-        ReviewChiefProtocol.state.releasePointer()
-        let sent = await sending.value
+        let sent = await restored.send()
         XCTAssertFalse(sent)
         XCTAssertTrue(ReviewChiefProtocol.state.posts.isEmpty)
-        XCTAssertNil(page.attempt)
-        XCTAssertTrue(try LocalStore.shared.outgoing.summaries(server: LocalStore.server(other.baseURL), draftID: ReviewChiefMessageModel.attemptDraftID).isEmpty)
     }
     private func makeAPI() -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
@@ -176,6 +124,9 @@ import XCTest
     }
 }
 
+private enum OfflineSwitch {
+    nonisolated(unsafe) static var offline = false
+}
 private final class ReviewChiefState: @unchecked Sendable {
     private let lock = NSLock()
     private var current: String?
@@ -243,6 +194,7 @@ private final class ReviewChiefProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if OfflineSwitch.offline { client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)); return }
         do {
             let data = try Self.state.response(request)
             if request.url?.path == "/api/chief/conversation", Self.state.delayPointer {

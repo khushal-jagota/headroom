@@ -52,15 +52,14 @@ struct ScreenTextEntryNavigationLink: View {
     let title: String
     let route: AppRoute
     @Environment(\.screenTextEntry) private var entry
-    @State private var opened = false
+    @Environment(\.openRoute) private var openRoute
 
     init(_ title: String, value: AppRoute) { self.title = title; route = value }
 
     var body: some View {
         Button(title) {
-            if let entry { entry.endEditingBeforeNavigation { opened = true } }
-            else { opened = true }
+            if let entry { entry.endEditingBeforeNavigation { openRoute(route) } }
+            else { openRoute(route) }
         }
-        .navigationDestination(isPresented: $opened) { RouteDestination(route: route) }
     }
 }

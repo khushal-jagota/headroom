@@ -1,12 +1,13 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import Panels
 
 final class TicketTests: XCTestCase {
     func testLinkedArtifactKeepsItsActualOwner() {
         let baseURL = URL(string: "https://ticket-stub.invalid")!
         let link = URL(string: "/files/tickets/t_other/artifacts/proof.html")!
-        XCTAssertEqual(TicketArtifactRoute.linkedDestination(link, baseURL: baseURL, title: "Proof"),
-                       .artifact(owner: ArtifactOwner(kind: .ticket, id: "t_other"), path: "artifacts/proof.html", title: "Proof"))
+        XCTAssertEqual(TicketArtifactRoute.linkedDestination(link, baseURL: baseURL, title: "Proof", conversationOwner: .ticket("t_here")),
+                       .artifact(owner: ArtifactOwner(kind: .ticket, id: "t_other"), path: "artifacts/proof.html", title: "Proof", dock: .conversation(.ticket("t_here"))))
     }
 
     private func ticket() throws -> TicketDetail {
@@ -41,7 +42,7 @@ final class TicketTests: XCTestCase {
         try await client.setTicketApprovalLimit(ticket.id, ceiling: nil, holder: Principal(kind: "chief", id: "chief"))
         try await client.setTicketApprovalLimit(ticket.id, ceiling: "done", holder: Principal(kind: "owner", id: "owner"))
         let delivery = try await client.requestTicketRecap(ticket.id)
-        XCTAssertEqual(delivery.note, "Delivery uncertain · do not resend")
+        XCTAssertNil(delivery.note)
     }
 
     func testConsequencesRemainsAReviewBoundary() throws {
@@ -69,9 +70,6 @@ final class TicketTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let client = APIClient(baseURL: URL(string: "https://edit-stub.invalid")!, session: session)
         let ticket = try ticket()
-        try await client.editTicketRecap(ticket.id, recap: "Updated recap")
-        try await client.completeTicketField(ticket.id, field: "answer", body: "Owner answer")
-        try await client.removeTicketBlocker(ticket.id, blockerID: "t_blocker")
         try await client.setTicketWorkerConfiguration(ticket.id, backend: "codex", model: nil, effort: nil)
     }
 
@@ -97,6 +95,37 @@ final class TicketTests: XCTestCase {
         let other = APIClient(baseURL: URL(string: "https://other-note-stub.invalid")!)
         XCTAssertFalse(state.matches(presentation: presentation, proposal: proposal, api: other))
         XCTAssertNil(state.capture(presentation: presentation, proposal: proposal, api: other).guidance)
+    }
+
+    /// Risk: a Ticket-page approval drops the note's pictures and files, or leaves out the
+    /// note's draft identity when the note has no words, so an applied receipt cannot clear them.
+    @MainActor func testTicketApprovalCarriesNoteAttachmentsAndDraftIdentity() async throws {
+        let ticket = try ticket()
+        let proposal = try XCTUnwrap(ticket.pendingProposal)
+        let manifest = TicketWorkerType(workerType: "product_design", label: "Product design", stages: [], fields: [])
+        let presentation = TicketPresentation(ticket: ticket, manifest: manifest)
+        let api = APIClient(baseURL: URL(string: "https://ticket-attach-stub.invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        let draftID = DecisionGuidance.draftIdentity(ticketID: ticket.id, proposal: proposal) + ":guidance"
+        func clear() {
+            for kind in ["draft", "attachments", "outbox"] {
+                for entry in (try? LocalStore.shared.records(server: server, kind: kind)) ?? [] {
+                    try? LocalStore.shared.remove(server: server, kind: kind, id: entry.key.components(separatedBy: "\u{1f}").last!)
+                }
+            }
+        }
+        clear(); defer { clear() }
+        let state = TicketDecisionState()
+        state.load(presentation: presentation, proposal: proposal, api: api)
+        let attached = await state.noteAttachments.attach(Data("Notes for the worker".utf8), type: .plainText, fileName: "notes.txt")
+        XCTAssertTrue(attached)
+        try await state.approve(state.capture(presentation: presentation, proposal: proposal, api: api))
+        let work = try XCTUnwrap(Outbox.shared.entries(server).last)
+        XCTAssertEqual(work.draftID, draftID, "The note's draft identity goes with its pictures and files")
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
+        XCTAssertEqual(command.attachments?.map(\.fileName), ["notes.txt"])
+        XCTAssertNil(command.message)
+        XCTAssertTrue(state.pending)
     }
 
     func testWriteFailureRemainsAnErrorAndRefusedRecapIsNotSuccess() async throws {
@@ -144,15 +173,6 @@ private final class TicketStubProtocol: URLProtocol, @unchecked Sendable {
                 response = #"{"error":{"message":"Ticket changed. Refresh before trying again."}}"#
             } else if url.host == "edit-stub.invalid" {
                 switch url.path {
-                case "/api/tickets/t_02zd37tz":
-                    XCTAssertEqual(request.httpMethod, "PATCH")
-                    XCTAssertEqual(body.count, 1)
-                    XCTAssertEqual(body["recap"] as? String, "Updated recap")
-                case "/api/tickets/t_02zd37tz/complete/answer":
-                    XCTAssertEqual(request.httpMethod, "POST")
-                    XCTAssertEqual(body as? [String: String], ["body": "Owner answer"])
-                case "/api/collections/blockers/t_02zd37tz/t_blocker":
-                    XCTAssertEqual(request.httpMethod, "DELETE"); XCTAssertTrue(body.isEmpty)
                 case "/api/tickets/t_02zd37tz/employee-configuration":
                     XCTAssertEqual(request.httpMethod, "PUT")
                     XCTAssertEqual(body["employee_backend"] as? String, "codex")

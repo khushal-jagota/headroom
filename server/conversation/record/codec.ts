@@ -301,6 +301,7 @@ export function conversation_event_payload_from_canonical_json(
         option_id: text(stored, 'option_id'),
         fate: choice(stored.fate === undefined ? 'applied' : stored.fate, AnswerFate, 'AnswerFate'),
         answer_id: stored.answer_id as string | null | undefined,
+        operation_id: stored.operation_id as string | null | undefined,
       });
     case 'answer_applied':
       return new E.AnswerAppliedEventPayload({ answer_id: text(stored, 'answer_id') });
@@ -331,6 +332,7 @@ export function conversation_event_payload_from_canonical_json(
         request_id: text(stored, 'request_id'),
         fate: choice(stored.fate === undefined ? 'applied' : stored.fate, AnswerFate, 'AnswerFate'),
         answer_id: stored.answer_id as string | null | undefined,
+        operation_id: stored.operation_id as string | null | undefined,
         answers: Object.entries(answers)
           .filter(
             ([, value]) => value !== null && typeof value === 'object' && !Array.isArray(value),
@@ -493,6 +495,7 @@ export function conversation_event_payload_json_object(
         ask_id: payload.ask_id,
         option_id: payload.option_id,
         ...(payload.answer_id === null ? {} : { fate: payload.fate, answer_id: payload.answer_id }),
+        ...(payload.operation_id === null ? {} : { operation_id: payload.operation_id }),
       };
     case 'answer_applied':
       return { answer_id: payload.answer_id };
@@ -515,6 +518,7 @@ export function conversation_event_payload_json_object(
       return {
         request_id: payload.request_id,
         ...(payload.answer_id === null ? {} : { fate: payload.fate, answer_id: payload.answer_id }),
+        ...(payload.operation_id === null ? {} : { operation_id: payload.operation_id }),
         answers: Object.fromEntries(
           payload.answers.map((answer) => [answer.question_id, { answers: answer.answers }]),
         ),

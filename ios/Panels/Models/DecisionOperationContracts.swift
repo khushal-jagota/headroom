@@ -39,12 +39,14 @@ struct DecisionCommand: Codable, Sendable, Equatable {
     let nextCeiling: String?
     let nextHolder: DecisionHolder?
     let message: String?
+    /// Pictures and files sent with the note, in the pieces a conversation message uses.
+    let attachments: [ConversationSend.Piece]?
 
     private enum CodingKeys: String, CodingKey {
-        case decision, field, expectedProposalRevision, editedBody, nextCeiling, nextHolder, message
+        case decision, field, expectedProposalRevision, editedBody, nextCeiling, nextHolder, message, attachments
     }
 
-    init(decision: String, field: String, expectedProposalRevision: Int, editedBody: String? = nil, nextCeiling: String? = nil, nextHolder: DecisionHolder? = nil, message: String? = nil) {
+    init(decision: String, field: String, expectedProposalRevision: Int, editedBody: String? = nil, nextCeiling: String? = nil, nextHolder: DecisionHolder? = nil, message: String? = nil, attachments: [ConversationSend.Piece]? = nil) {
         self.decision = decision
         self.field = field
         self.expectedProposalRevision = expectedProposalRevision
@@ -52,6 +54,7 @@ struct DecisionCommand: Codable, Sendable, Equatable {
         self.nextCeiling = nextCeiling
         self.nextHolder = nextHolder
         self.message = message
+        self.attachments = attachments
     }
 
     init(from decoder: Decoder) throws {
@@ -67,6 +70,7 @@ struct DecisionCommand: Codable, Sendable, Equatable {
         nextCeiling = try values.decodeIfPresent(String.self, forKey: .nextCeiling)
         nextHolder = try values.decodeIfPresent(DecisionHolder.self, forKey: .nextHolder)
         message = try values.decodeIfPresent(String.self, forKey: .message)
+        attachments = try values.decodeIfPresent([ConversationSend.Piece].self, forKey: .attachments)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -78,6 +82,7 @@ struct DecisionCommand: Codable, Sendable, Equatable {
         try values.encodeIfPresent(nextCeiling, forKey: .nextCeiling)
         try values.encodeIfPresent(nextHolder, forKey: .nextHolder)
         try values.encodeIfPresent(message, forKey: .message)
+        try values.encodeIfPresent(attachments, forKey: .attachments)
     }
 }
 

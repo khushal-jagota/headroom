@@ -9,8 +9,7 @@ cp ios/Panels/Core/Networking/ResourceRead.swift ios/Panels/Core/Networking/Reso
   ios/Panels/Features/Ticket/Models/TicketLifecycle.swift ios/Panels/Features/More/Usage/UsageModels.swift \
   ios/Panels/Features/More/VPS/VPSModels.swift \
   ios/Panels/Features/More/Settings/SettingsModels.swift "$build/Sources/Panels/"
-cp ios/Panels/Features/More/Feedback/FeedbackContracts.swift ios/Panels/Features/More/Feedback/Data/FeedbackAPI.swift ios/Panels/Features/More/Feedback/Data/FeedbackModel.swift "$build/Sources/Panels/"
-cp ios/Panels/Features/Orchestrator/Logic/WorkerGroups.swift ios/Panels/Features/Workspace/Logic/WorkspaceGrouping.swift "$build/Sources/Panels/"
+cp ios/Panels/Features/Orchestrator/Logic/WorkerGroups.swift "$build/Sources/Panels/"
 cp ios/PanelsTests/SyncMainTests.swift ios/PanelsTests/SystemScreenTests.swift "$build/Tests/PanelsTests/"
 cat > "$build/Package.swift" <<'SWIFT'
 // swift-tools-version: 6.0

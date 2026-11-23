@@ -12,13 +12,14 @@ import XCTest
         let url = directory.appendingPathComponent("test.store")
         let store = LocalStore(url: url)
         try store.put(server: "a", kind: "draft", id: "text", data: Data("Keep my words".utf8))
-        try store.put(server: "a", kind: "outbox", id: "send", data: Data("same identity".utf8))
+        try store.outgoing.enqueue(pending("send"), server: "a")
         for index in 0..<100 { try store.put(server: "a", kind: "cache", id: String(index), data: Data([1])) }
         let reopened = LocalStore(url: url)
         XCTAssertEqual(reopened.draft(server: "a", id: "text"), "Keep my words")
         XCTAssertNil(reopened.draft(server: "b", id: "text"))
         XCTAssertEqual(try reopened.records(server: "a", kind: "cache").count, LocalStore.cacheLimit)
-        XCTAssertEqual(try reopened.record(server: "a", kind: "outbox", id: "send")?.payload, Data("same identity".utf8))
+        XCTAssertEqual(try reopened.outgoing.work(server: "a", id: "send")?.message?.senderMessageId, "send")
+        XCTAssertNil(try reopened.outgoing.work(server: "b", id: "send"))
     }
     func testBackgroundCacheRefreshesIdenticalPayloadAndReadsLatestAcrossContexts() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -89,7 +90,7 @@ import XCTest
         do {
             let _: String = try await restored.read(ResourceRegistration<String>(key: key))
             XCTFail("A failed fresh lookup cannot return saved content as current")
-        } catch { XCTAssertNotNil(handle.error) }
+        } catch { XCTAssertNotNil(handle.failure); XCTAssertNil(ServerReadFailure.note(error), "The failed lookup stays a connection failure") }
         XCTAssertEqual(handle.value, "Live content", "Saved display remains useful after the failed read")
         restored.stop()
     }
@@ -143,13 +144,11 @@ import XCTest
         try store.put(server: "a", kind: "cache", id: "read", data: Data([2]))
         try store.remove(server: "a", kind: "cache", id: "read")
         XCTAssertEqual(changes.withLock { $0 }, 0)
-        let message = ConversationSend(conversationId: "c", content: [.init(text: "Keep this")], senderMessageId: "stable", sentAtUnixMilliseconds: 1)
-        let work = PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message)
-        try store.put(server: "a", kind: "outbox", id: work.id, data: JSONEncoder().encode(work), draft: ("draft", ""))
+        try store.outgoing.enqueue(pending("stable", conversation: "c"), server: "a")
         XCTAssertEqual(changes.withLock { $0 }, 1)
         XCTAssertEqual(outbox.entries("a").map(\.id), ["stable"])
         withObservationTracking { _ = outbox.entries("a") } onChange: { changes.withLock { $0 += 1 } }
-        try store.remove(server: "a", kind: "outbox", id: work.id)
+        try store.remove(server: "a", kind: "outbox", id: "stable")
         XCTAssertEqual(changes.withLock { $0 }, 2)
         XCTAssertTrue(outbox.entries("a").isEmpty)
         // A key press saves the draft. It must not wake every saved-work observer.
@@ -158,372 +157,132 @@ import XCTest
         XCTAssertEqual(changes.withLock { $0 }, 2)
         XCTAssertEqual(store.draft(server: "a", id: "text"), "Keep the typed words")
     }
-    func testClearFinishedRemovesSettledWorkAtItsWindowInOneSaveAndKeepsTheRest() throws {
+    func testClearFinishedRemovesOnlyFinishedWorkAfterItsDayAndKeepsRefusedMessages() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = LocalStore(url: directory.appendingPathComponent("test.store"))
         let outbox = Outbox(store: store)
         let now = Date(), day: TimeInterval = 24 * 60 * 60
-        func work(_ id: String, _ state: PendingWork.State, age: TimeInterval, completedAge: TimeInterval? = nil) -> PendingWork {
-            PendingWork(id: id, created: now.addingTimeInterval(-age), kind: .message, state: state, completed: completedAge.map { now.addingTimeInterval(-$0) })
+        func work(_ id: String, _ kind: PendingWork.Kind, _ state: PendingWork.State, completedAge: TimeInterval) -> PendingWork {
+            PendingWork(id: id, created: now.addingTimeInterval(-3 * day), kind: kind, state: state, completed: now.addingTimeInterval(-completedAge))
         }
-        let rows = [
-            work("old-sent", .sent, age: 3 * day, completedAge: day), work("recent-sent", .sent, age: 3 * day, completedAge: day - 60),
-            // Changed work never records completion, so its creation time counts.
-            work("old-changed", .changed, age: day), work("recent-changed", .changed, age: day - 60),
-            work("old-uncertain", .uncertain, age: 7 * day), work("recent-uncertain", .uncertain, age: 7 * day - 60),
-            work("failed", .failed, age: 30 * day), work("waiting", .waiting, age: 30 * day), work("sending", .sending, age: 30 * day),
-            work("queued", .serverQueued, age: 30 * day), work("recording", .recording, age: 30 * day),
-        ]
-        for row in rows {
-            if row.state == .uncertain {
-                var waiting = row; waiting.state = .waiting
-                try outbox.save(waiting, server: "a")
-                try store.outgoing.settle(server: "a", id: row.id, state: .uncertain, note: "Uncertain", now: row.created)
-            } else { try outbox.save(row, server: "a") }
+        for row in [work("old-sent", .message, .sent, completedAge: day), work("recent-sent", .message, .sent, completedAge: day - 60),
+                    work("old-refused-decision", .approval, .failed, completedAge: day), work("refused-message", .message, .failed, completedAge: 30 * day),
+                    work("waiting", .message, .waiting, completedAge: 30 * day), work("recording", .voice, .recording, completedAge: 30 * day)] {
+            try outbox.save(row, server: "a")
         }
-        try outbox.save(work("other-server", .sent, age: 3 * day, completedAge: 2 * day), server: "b")
+        try outbox.save(work("other-server", .message, .sent, completedAge: 2 * day), server: "b")
         let revision = store.workRevision
         outbox.clearFinished("a", now: now)
-        XCTAssertEqual(store.workRevision, revision + 1)
-        XCTAssertEqual(Set(outbox.entries("a").map(\.id)), ["recent-sent", "recent-changed", "recent-uncertain", "failed", "waiting", "sending", "queued", "recording"])
+        XCTAssertEqual(store.workRevision, revision + 1, "One save for the whole batch")
+        XCTAssertEqual(Set(outbox.entries("a").map(\.id)), ["recent-sent", "refused-message", "waiting", "recording"])
         XCTAssertEqual(outbox.entries("b").map(\.id), ["other-server"])
-        outbox.clearFinished("a", now: now)
-        XCTAssertEqual(store.workRevision, revision + 1)
-        for index in 0...OutgoingStore.expiryBatchLimit { try outbox.save(work("batch-\(index)", .sent, age: 3 * day), server: "a") }
-        let started = ContinuousClock.now
-        outbox.clearFinished("a", now: now)
-        let elapsed = started.duration(to: .now).components
-        print("EXPIRY_BATCH rows=\(OutgoingStore.expiryBatchLimit) seconds=\(elapsed.seconds) attoseconds=\(elapsed.attoseconds)")
-        XCTAssertEqual(outbox.entries("a").filter { $0.id.hasPrefix("batch-") }.count, 1)
-        outbox.clearFinished("a", now: now)
-        XCTAssertTrue(outbox.entries("a").allSatisfy { !$0.id.hasPrefix("batch-") })
     }
     func testEnqueueAndComposerClearShareDurableSave() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("test.store")
         var failSave = false
-        var injectedFailures = 0
-        let store = LocalStore(url: url, beforeSave: {
-            if failSave { injectedFailures += 1; throw CocoaError(.fileWriteUnknown) }
-        })
+        let store = LocalStore(url: url, beforeSave: { if failSave { throw CocoaError(.fileWriteUnknown) } })
         store.saveDraft("Unsent", server: "a", id: "draft")
         let attachments = Data("[{\"name\":\"photo.jpg\",\"bytes\":\"AQID\"}]".utf8)
         try store.put(server: "a", kind: "attachments", id: "draft", data: attachments)
         let outgoing = try store.outgoing
         let capture = try outgoing.captureDraft(server: "a", id: "draft")
         let work = pending("stable", conversation: "c")
-        let draftBefore = try XCTUnwrap(store.record(server: "a", kind: "draft", id: "draft"))
-        let textBytes = draftBefore.payload, textDate = draftBefore.updatedAt
-        let attachmentBefore = try XCTUnwrap(store.record(server: "a", kind: "attachments", id: "draft"))
-        let attachmentDate = attachmentBefore.updatedAt
-        let workRevision = store.workRevision, outgoingRevision = store.outgoingRevision("a")
         failSave = true
         XCTAssertThrowsError(try outgoing.enqueue(work, server: "a", capturedDraft: capture))
-        XCTAssertEqual(injectedFailures, 1)
         XCTAssertNotNil(store.outgoingError)
-        XCTAssertEqual(store.workRevision, workRevision)
-        XCTAssertEqual(store.outgoingRevision("a"), outgoingRevision)
         for inspected in [store, LocalStore(url: url)] {
-            XCTAssertEqual(try inspected.record(server: "a", kind: "draft", id: "draft")?.payload, textBytes)
-            XCTAssertEqual(try inspected.record(server: "a", kind: "draft", id: "draft")?.updatedAt, textDate)
+            XCTAssertEqual(inspected.draft(server: "a", id: "draft"), "Unsent")
             XCTAssertEqual(try inspected.record(server: "a", kind: "attachments", id: "draft")?.payload, attachments)
-            XCTAssertEqual(try inspected.record(server: "a", kind: "attachments", id: "draft")?.updatedAt, attachmentDate)
-            XCTAssertNil(try inspected.record(server: "a", kind: "outbox", id: work.id))
             XCTAssertNil(try inspected.outgoing.summary(server: "a", id: work.id))
         }
         failSave = false
         try outgoing.enqueue(work, server: "a", capturedDraft: capture)
-        XCTAssertEqual(store.workRevision, workRevision + 1)
-        XCTAssertEqual(store.outgoingRevision("a"), outgoingRevision + 1)
+        XCTAssertNil(store.outgoingError)
         let reopened = LocalStore(url: url)
         XCTAssertEqual(reopened.draft(server: "a", id: "draft"), "")
         XCTAssertEqual(try reopened.record(server: "a", kind: "attachments", id: "draft")?.payload, Data("[]".utf8))
-        let saved = try XCTUnwrap(reopened.outgoing.work(server: "a", id: "stable"))
-        XCTAssertEqual(saved.message?.senderMessageId, "stable")
-        XCTAssertEqual(saved.message?.sentAtUnixMilliseconds, 123)
-        XCTAssertEqual(saved.displayText, "stable")
+        XCTAssertEqual(try reopened.outgoing.work(server: "a", id: "stable")?.message?.sentAtUnixMilliseconds, 123)
         // A captured composer version never clears newer words or attachments.
         store.saveDraft("Captured", server: "a", id: "draft")
         let older = try outgoing.captureDraft(server: "a", id: "draft")
         store.saveDraft("Newer words", server: "a", id: "draft")
-        try store.put(server: "a", kind: "attachments", id: "draft", data: attachments)
         try outgoing.enqueue(pending("next", conversation: "c"), server: "a", capturedDraft: older)
         XCTAssertEqual(store.draft(server: "a", id: "draft"), "Newer words")
-        XCTAssertEqual(try store.record(server: "a", kind: "attachments", id: "draft")?.payload, attachments)
-        let revision = store.outgoingRevision("a")
+        // A duplicate identity changes nothing.
         XCTAssertThrowsError(try outgoing.enqueue(work, server: "a", capturedDraft: try outgoing.captureDraft(server: "a", id: "draft")))
-        // Rejected duplicate intent leaves all transaction participants unchanged.
-        XCTAssertEqual(store.outgoingRevision("a"), revision)
-        let afterRejection = LocalStore(url: url)
-        XCTAssertEqual(afterRejection.draft(server: "a", id: "draft"), "Newer words")
-        XCTAssertEqual(try afterRejection.record(server: "a", kind: "attachments", id: "draft")?.payload, attachments)
-        XCTAssertEqual(try afterRejection.outgoing.summary(server: "a", id: "next")?.predecessorID, "stable")
+        XCTAssertEqual(LocalStore(url: url).draft(server: "a", id: "draft"), "Newer words")
+    }
+    /// A Review message to Chief has no conversation ID; the Chief screen's has one. They
+    /// still go out in the order they were saved.
+    func testOwnersMessagesShareOneLaneWhateverTheirDestination() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        try store.outgoing.enqueue(pending("known", conversation: "c"), server: "a")
+        try store.outgoing.enqueue(pending("current"), server: "a")
+        XCTAssertEqual(try store.outgoing.runnable(server: "a").map(\.id), ["known"])
     }
     private func pending(_ id: String, conversation: String? = nil, created: Date = .now) -> PendingWork {
         PendingWork(id: id, created: created, kind: .message, owner: .chief,
             message: ConversationSend(conversationId: conversation, content: [.init(text: id)], backendKey: "backend", model: "model", reasoningEffort: "high", senderMessageId: id, sentAtUnixMilliseconds: 123))
     }
-    func testReplacementKeepsLogicalPositionAndLateReceiptsKeepTheirOwnIdentityAcrossRestart() throws {
+    func testRequiredUpdateRetainsPendingIdentityAndDraftWithoutReplay() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent("test.store")
-        let store = LocalStore(url: url), server = "a"
-        let outgoing = try store.outgoing
-        try outgoing.enqueue(pending("A"), server: server)
-        try outgoing.enqueue(pending("B"), server: server)
-        let rawA = try XCTUnwrap(store.record(server: server, kind: "outbox", id: "A")?.payload)
-        let rawB = try XCTUnwrap(store.record(server: server, kind: "outbox", id: "B")?.payload)
-        XCTAssertTrue(try outgoing.canSubmit(server: server, id: "A"))
-        XCTAssertFalse(try outgoing.canSubmit(server: server, id: "B"))
-        try outgoing.beginAttempt(server: server, id: "A")
-        try outgoing.settle(server: server, id: "A", state: .uncertain, note: "Delivery uncertain")
-        XCTAssertThrowsError(try outgoing.replace(server: server, id: "A", with: pending("B")))
-        XCTAssertEqual(try outgoing.summary(server: server, id: "A")?.scheduled, true)
-        XCTAssertEqual(try outgoing.summary(server: server, id: "B")?.predecessorID, "A")
-        var aliased = pending("A2")
-        aliased.priorMessageIDs = ["A"]
-        XCTAssertThrowsError(try outgoing.replace(server: server, id: "A", with: aliased))
-        try outgoing.replace(server: server, id: "A", with: pending("A2"))
-        let position = try outgoing.summary(server: server, id: "A")?.sequence
-        XCTAssertEqual(try outgoing.summary(server: server, id: "A2")?.sequence, position)
-        XCTAssertEqual(try outgoing.summary(server: server, id: "B")?.predecessorID, "A2")
-        XCTAssertEqual(try outgoing.summary(server: server, id: "A")?.scheduled, false)
-        let afterFirstReplacement = store.outgoingRevision(server)
-        XCTAssertThrowsError(try outgoing.replace(server: server, id: "A", with: pending("A3")))
-        XCTAssertNil(try outgoing.summary(server: server, id: "A3"))
-        XCTAssertNil(try store.record(server: server, kind: "outbox", id: "A3"))
-        XCTAssertEqual(store.outgoingRevision(server), afterFirstReplacement)
-        XCTAssertEqual(try outgoing.summary(server: server, id: "A")?.replacementID, "A2")
-
-        XCTAssertEqual(try outgoing.summary(server: server, id: "A2")?.holdReason, "destinationUnresolved")
-        XCTAssertFalse(try outgoing.canSubmit(server: server, id: "A2"))
-        XCTAssertNil(try outgoing.work(server: server, id: "A2")?.priorMessageIDs)
-        // The original succeeds late. It must remain visible without binding B to its destination.
-        try outgoing.settle(server: server, id: "A", state: .sent, note: "Sent", conversationID: "original-conversation")
-        XCTAssertNil(try outgoing.work(server: server, id: "B")?.message?.conversationId)
-        XCTAssertFalse(try outgoing.canSubmit(server: server, id: "B"))
-        XCTAssertThrowsError(try outgoing.replace(server: server, id: "A2", with: pending("B")))
-        let reopened = LocalStore(url: url)
-        let resumed = try reopened.outgoing
-        XCTAssertEqual(try resumed.work(server: server, id: "A")?.state, .sent)
-        XCTAssertEqual(try resumed.summary(server: server, id: "B")?.predecessorID, "A2")
-        try resumed.releaseHold(server: server, id: "A2", destination: .newConversation)
-        try resumed.beginAttempt(server: server, id: "A2")
-        var explicit = pending("explicit")
-        explicit.message?.model = "different-model"; explicit.message?.reasoningEffort = nil; explicit.message?.reasoningEffortIsSet = true
-        try resumed.enqueue(explicit, server: server)
-        try resumed.enqueue(pending("revert"), server: server)
-        try resumed.settle(server: server, id: "A2", state: .serverQueued, note: "Queued on server", conversationID: "replacement-conversation")
-        XCTAssertTrue(try resumed.canSubmit(server: server, id: "B"))
-        let bound = try XCTUnwrap(resumed.work(server: server, id: "B")?.message)
-        XCTAssertEqual(bound.conversationId, "replacement-conversation")
-        XCTAssertNil(bound.backendKey); XCTAssertNil(bound.model); XCTAssertNil(bound.reasoningEffort)
-        let explicitBound = try XCTUnwrap(resumed.work(server: server, id: "explicit")?.message)
-        XCTAssertEqual(explicitBound.model, "different-model")
-        XCTAssertNil(explicitBound.reasoningEffort); XCTAssertTrue(explicitBound.reasoningEffortIsSet)
-        let reverted = try XCTUnwrap(resumed.work(server: server, id: "revert")?.message)
-        XCTAssertEqual(reverted.model, "model")
-        XCTAssertEqual(reverted.reasoningEffort, "high")
-        try resumed.beginAttempt(server: server, id: "B")
-        try resumed.settle(server: server, id: "A2", state: .sent, note: "Sent", conversationID: "different-late-value")
-        XCTAssertEqual(try resumed.work(server: server, id: "B")?.message?.conversationId, "replacement-conversation")
-        XCTAssertEqual(try reopened.record(server: server, kind: "outbox", id: "A")?.payload, rawA)
-        XCTAssertEqual(try reopened.record(server: server, kind: "outbox", id: "B")?.payload, rawB)
-        XCTAssertTrue(try resumed.summaries(server: "other", owner: .chief).isEmpty)
-    }
-    func testExpiredPredecessorLeavesDurableExplicitHoldAndNoReceiptShadow() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent("test.store")
-        let store = LocalStore(url: url), now = Date()
-        let outgoing = try store.outgoing
-        for (id, conversation) in [("unknown", nil), ("known", "conversation")] as [(String, String?)] {
-            try outgoing.enqueue(pending(id, conversation: conversation, created: now.addingTimeInterval(-8 * 86400)), server: "a")
-            try outgoing.enqueue(pending(id + "-successor", conversation: conversation), server: "a")
-            try outgoing.enqueue(pending(id + "-tail", conversation: conversation), server: "a")
-            try outgoing.beginAttempt(server: "a", id: id)
-            try outgoing.settle(server: "a", id: id, state: .uncertain, note: "Delivery uncertain", now: now.addingTimeInterval(-8 * 86400))
-        }
-        try outgoing.expire(server: "a", now: now)
-        let reopened = LocalStore(url: url), resumed = try reopened.outgoing
-        for id in ["unknown", "known"] {
-            XCTAssertNil(try resumed.summary(server: "a", id: id))
-            XCTAssertNil(try reopened.record(server: "a", kind: "outbox", id: id))
-            XCTAssertFalse(try resumed.canSubmit(server: "a", id: id + "-successor"))
-            XCTAssertThrowsError(try resumed.settle(server: "a", id: id, state: .sent, note: "Late"))
-        }
-        XCTAssertEqual(try resumed.summary(server: "a", id: "unknown-successor")?.holdReason, "destinationUnresolved")
-        XCTAssertEqual(try resumed.summary(server: "a", id: "known-successor")?.holdReason, "predecessorExpired")
-        XCTAssertThrowsError(try resumed.releaseHold(server: "a", id: "unknown-successor", destination: .conversation("")))
-        XCTAssertFalse(try resumed.canSubmit(server: "a", id: "unknown-successor"))
-        XCTAssertThrowsError(try resumed.releaseHold(server: "a", id: "known-successor", destination: .newConversation))
-        XCTAssertThrowsError(try resumed.releaseHold(server: "a", id: "known-successor", destination: .conversation("other")))
-        try resumed.releaseHold(server: "a", id: "known-successor", destination: .conversation("conversation"))
-        try resumed.releaseHold(server: "a", id: "unknown-successor", destination: .newConversation)
-        XCTAssertTrue(try resumed.canSubmit(server: "a", id: "known-successor"))
-        XCTAssertTrue(try resumed.canSubmit(server: "a", id: "unknown-successor"))
-        let releasedLane = try resumed.summary(server: "a", id: "unknown-successor")?.lane
-        XCTAssertEqual(try resumed.summary(server: "a", id: "unknown-tail")?.lane, releasedLane)
-        XCTAssertFalse(try resumed.canSubmit(server: "a", id: "unknown-tail"))
-        try resumed.beginAttempt(server: "a", id: "unknown-successor")
-        try resumed.settle(server: "a", id: "unknown-successor", state: .sent, note: "Sent", conversationID: "chosen-new-start")
-        let afterRelease = LocalStore(url: url)
-        XCTAssertTrue(try afterRelease.outgoing.canSubmit(server: "a", id: "unknown-tail"))
-        XCTAssertEqual(try afterRelease.outgoing.work(server: "a", id: "unknown-tail")?.message?.conversationId, "chosen-new-start")
-    }
-
-    func testPredecessorQueryMatchesReleaseRulesAcrossRetiredAndFailedRows() throws {
-        let container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
-        let context = ModelContext(container)
-        context.autosaveEnabled = false
-        let lane = "conversation:c"
-        func seed(_ id: String, server: String = "a", lane: String = "conversation:c", sequence: Int64, state: PendingWork.State = .waiting, conversation: String? = "c", scheduled: Bool = true) throws {
-            var work = pending(id, conversation: conversation)
-            work.state = state
-            let record = LocalRecord(key: LocalStore.key(server, "outbox", id), server: server, kind: "outbox", payload: try JSONEncoder().encode(work), updated: .now)
-            let metadata = OutgoingMetadata(record: record, work: work, sequence: sequence)
-            metadata.lane = lane
-            metadata.scheduled = scheduled
-            context.insert(record)
-            context.insert(metadata)
-        }
-        // Higher released, retired and foreign rows must not consume the fetch limit.
-        try seed("waiting", sequence: 1)
-        try seed("foreign-server", server: "b", sequence: 20)
-        try seed("sending", sequence: 3, state: .sending)
-        try seed("foreign-lane", lane: "conversation:other", sequence: 21, conversation: "other")
-        try seed("uncertain", sequence: 5, state: .uncertain)
-        try seed("failed-unknown", sequence: 7, state: .failed, conversation: nil)
-        try seed("sent", sequence: 8, state: .sent)
-        try seed("changed", sequence: 9, state: .changed)
-        try seed("queued", sequence: 10, state: .serverQueued)
-        try seed("failed-known", sequence: 11, state: .failed)
-        try seed("retired", sequence: 12, scheduled: false)
-        try context.save()
-
-        // Exercise the exact descriptor used by insert, including its result bound.
-        for (server, selectedLane, expected) in [
-            ("a", lane, "failed-unknown"), ("a", "conversation:other", "foreign-lane"),
-            ("b", lane, "foreign-server"), ("missing", lane, nil)
-        ] as [(String, String, String?)] {
-            let query = OutgoingStore.predecessorQuery(server: server, lane: selectedLane)
-            XCTAssertEqual(query.fetchLimit, 1)
-            let rows = try context.fetch(query)
-            XCTAssertLessThanOrEqual(rows.count, 1)
-            XCTAssertEqual(rows.first?.identity, expected)
-        }
-        let outgoing = OutgoingStore(context: context, changed: { _ in }, failed: { _ in })
-        try outgoing.enqueue(pending("next", conversation: "c"), server: "a")
-        XCTAssertEqual(try outgoing.summary(server: "a", id: "next")?.predecessorID, "failed-unknown")
-        XCTAssertEqual(try outgoing.summary(server: "a", id: "next")?.holdReason, "destinationUnresolved")
-    }
-
-    func testKnownRefusalReleasesLaneButUnresolvedCreationNeedsExplicitDestination() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent("test.store"), store = LocalStore(url: url)
-        let outgoing = try store.outgoing
-        for (prefix, conversation) in [("known", "c"), ("unknown", nil)] as [(String, String?)] {
-            try outgoing.enqueue(pending(prefix, conversation: conversation), server: "a")
-            try outgoing.enqueue(pending(prefix + "-B", conversation: conversation), server: "a")
-            try outgoing.beginAttempt(server: "a", id: prefix)
-            try outgoing.settle(server: "a", id: prefix, state: .failed, note: "Refused")
-            try outgoing.enqueue(pending(prefix + "-C", conversation: conversation), server: "a")
-        }
-        let reopened = LocalStore(url: url), resumed = try reopened.outgoing
-        XCTAssertTrue(try resumed.canSubmit(server: "a", id: "known-B"))
-        try resumed.beginAttempt(server: "a", id: "known-B")
-        try resumed.settle(server: "a", id: "known-B", state: .serverQueued, note: "Queued")
-        XCTAssertTrue(try resumed.canSubmit(server: "a", id: "known-C"))
-        for id in ["unknown-B", "unknown-C"] {
-            XCTAssertEqual(try resumed.summary(server: "a", id: id)?.holdReason, "destinationUnresolved")
-            XCTAssertFalse(try resumed.canSubmit(server: "a", id: id))
-        }
-        try resumed.releaseHold(server: "a", id: "unknown-B", destination: .newConversation)
-        XCTAssertTrue(try resumed.canSubmit(server: "a", id: "unknown-B"))
-    }
-
-    func testUncertaintyStartsAtTransitionAndRetiredRefusalExpiresWithoutLosingLateOriginal() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent("test.store"), store = LocalStore(url: url)
-        let outgoing = try store.outgoing, now = Date(), week: TimeInterval = 7 * 86400
-        try outgoing.enqueue(pending("uncertain", conversation: "c", created: now.addingTimeInterval(-30 * 86400)), server: "a")
-        try outgoing.beginAttempt(server: "a", id: "uncertain")
-        try outgoing.settle(server: "a", id: "uncertain", state: .uncertain, note: "Uncertain", now: now)
-        try outgoing.settle(server: "a", id: "uncertain", state: .uncertain, note: "Still uncertain", now: now.addingTimeInterval(3600))
-        XCTAssertEqual(try outgoing.summary(server: "a", id: "uncertain")?.expiresAt, now.addingTimeInterval(week))
-        try outgoing.replace(server: "a", id: "uncertain", with: pending("replacement", conversation: "c"), now: now)
-        try outgoing.enqueue(pending("refused", conversation: "other"), server: "a")
-        try outgoing.beginAttempt(server: "a", id: "refused")
-        try outgoing.settle(server: "a", id: "refused", state: .failed, note: "Refused", now: now)
-        try outgoing.replace(server: "a", id: "refused", with: pending("retry", conversation: "other"), now: now)
-        let reopened = LocalStore(url: url), resumed = try reopened.outgoing
-        try resumed.expire(server: "a", now: now.addingTimeInterval(86400))
-        XCTAssertNil(try resumed.summary(server: "a", id: "refused"))
-        XCTAssertNotNil(try resumed.summary(server: "a", id: "retry"))
-        XCTAssertNotNil(try resumed.summary(server: "a", id: "uncertain"))
-        try resumed.settle(server: "a", id: "uncertain", state: .sent, note: "Late original", now: now.addingTimeInterval(2 * 86400))
-        XCTAssertEqual(try resumed.work(server: "a", id: "uncertain")?.state, .sent)
-        XCTAssertEqual(try resumed.summary(server: "a", id: "replacement")?.state, "waiting")
-    }
-
-    func testOutgoingStorageFaultClearsOnlyAfterCommitAndCorruptBytesNeedExplicitRemoval() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        var fail = false
-        let store = LocalStore(url: directory.appendingPathComponent("test.store"), beforeSave: { if fail { throw CocoaError(.fileWriteUnknown) } })
-        let outgoing = try store.outgoing
-        XCTAssertThrowsError(try outgoing.beginAttempt(server: "a", id: "missing"))
-        XCTAssertNil(store.outgoingError, "Logical transition errors are not a persistent storage failure")
-        let voiceAPI = APIClient(baseURL: URL(string: "https://fault.invalid")!)
-        let voiceServer = LocalStore.server(voiceAPI.baseURL)
-        let voice = PendingWork(id: "already-sending-voice", created: .now, kind: .voice, state: .sending, audioFile: "voice.m4a")
-        try outgoing.saveEncoded(Outbox.encode(voice), server: voiceServer, id: voice.id)
+        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        let api = APIClient(baseURL: URL(string: "https://update-\(UUID().uuidString).invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        store.saveDraft("More unsent words", server: server, id: "draft")
         let outbox = Outbox(store: store)
-        let racingRetry = await outbox.retry(voice.id, api: voiceAPI)
-        XCTAssertNil(racingRetry, "A racing voice retry is a logical rejection")
-        outbox.sendHeld("missing", api: voiceAPI, destination: .newConversation)
-        XCTAssertNil(store.outgoingError)
-        XCTAssertNil(store.saveError, "Action boundaries do not relabel a logical rejection as storage failure")
-        try outgoing.settle(server: voiceServer, id: voice.id, state: .uncertain, note: "Unknown")
-        fail = true
-        let failedRetry = await outbox.retry(voice.id, api: voiceAPI)
-        XCTAssertNil(failedRetry)
-        XCTAssertNotNil(store.outgoingError)
-        XCTAssertEqual(store.saveError, store.outgoingError, "Action catch preserves storage callback ownership of the error lifetime")
-        XCTAssertThrowsError(try outgoing.enqueue(pending("retry", conversation: "c"), server: "a"))
-        XCTAssertNotNil(store.outgoingError)
-        fail = false
-        try outgoing.enqueue(pending("retry", conversation: "c"), server: "a")
-        XCTAssertNil(store.outgoingError)
-        XCTAssertNil(store.saveError, "A successful outgoing retry commit clears its action storage fault")
-        let bytes = Data([0xff, 0x00])
-        try outgoing.saveEncoded(bytes, server: "a", id: "corrupt")
-        XCTAssertNotNil(store.outgoingError)
-        XCTAssertEqual(try outgoing.corruptSummaries(server: "a").map(\.id), ["corrupt"])
-        try outgoing.enqueue(pending("other", conversation: "other"), server: "a")
-        XCTAssertNotNil(store.outgoingError)
-        XCTAssertEqual(try store.record(server: "a", kind: "outbox", id: "corrupt")?.payload, bytes)
-        store.saveError = "Unrelated draft fault"
-        try outgoing.remove(server: "a", ids: ["corrupt"])
-        XCTAssertNil(store.outgoingError)
-        XCTAssertEqual(store.saveError, "Unrelated draft fault")
-        XCTAssertTrue(try outgoing.corruptSummaries(server: "a").isEmpty)
+        try outbox.save(pending("stable", conversation: "c"), server: server)
+        NativeBuildGate.requireUpdate(api.baseURL)
+        await outbox.drain(api: api)
+        let saved = try XCTUnwrap(outbox.entries(server).first)
+        XCTAssertEqual(saved.state, .waiting)
+        XCTAssertEqual(saved.message?.senderMessageId, "stable")
+        XCTAssertEqual(store.draft(server: server, id: "draft"), "More unsent words")
     }
-
+    /// The retry mark: only a refused message shows a note and a retry, and a retry by tap
+    /// keeps the bubble where it was.
+    func testOnlyRefusedMessageShowsRetryMarkAndRetryKeepsItsBubble() async throws {
+        let api = APIClient(baseURL: URL(string: "https://retry-\(UUID().uuidString.lowercased()).invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        defer { try? LocalStore.shared.remove(server: server, kind: "outbox", ids: Outbox.shared.entries(server).map(\.id)) }
+        func message(_ id: String, _ state: PendingWork.State) -> PendingWork {
+            PendingWork(id: id, created: .now, kind: .message, state: state, note: state == .failed ? "Not delivered · agent could not start" : "", owner: .chief,
+                message: ConversationSend(conversationId: "c", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: 1))
+        }
+        try Outbox.shared.save(message("waiting", .waiting), server: server)
+        try Outbox.shared.save(message("refused", .failed), server: server)
+        let model = ConversationModel()
+        model.conversationID = "c"
+        model.restore(owner: .chief, api: api)
+        XCTAssertEqual(model.rows.map(\.id), ["waiting", "refused"])
+        XCTAssertNil(model.rows[0].note, "A waiting message looks sent")
+        XCTAssertNil(model.rows[0].retryID)
+        XCTAssertEqual(model.rows[1].note, "Not delivered · agent could not start")
+        XCTAssertEqual(model.rows[1].retryID, "refused")
+        await model.retry("refused", to: .chief, using: api)
+        XCTAssertEqual(model.rows.map(\.id), ["waiting", "refused"], "The retried message keeps its bubble")
+        XCTAssertNil(model.rows[1].note)
+        XCTAssertNil(model.rows[1].retryID)
+        XCTAssertNil(Outbox.shared.work(server, id: "refused"), "A refused original has no receipt to wait for")
+    }
 }
 
+/// Each kind lands once across a lost connection, a lost response and a relaunch.
 @MainActor final class OutboxRecoveryTests: XCTestCase {
     private var directory: URL!
     private var store: LocalStore!
     private var api: APIClient!
     private let server = "https://offline-test.invalid"
+    private var storeURL: URL { directory.appendingPathComponent("test.store") }
     override func setUp() async throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        store = LocalStore(url: directory.appendingPathComponent("test.store"))
+        store = LocalStore(url: storeURL)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OfflineProtocol.self]
         api = APIClient(baseURL: URL(string: server)!, session: URLSession(configuration: configuration))
@@ -535,597 +294,364 @@ import XCTest
         OfflineProtocol.state.reset(ticket: try Data(contentsOf: url))
     }
     override func tearDown() async throws { try? FileManager.default.removeItem(at: directory) }
-    /// Recent creation times, ordered by `at`. Older uncertain work is past its cleanup window.
-    private func message(_ id: String, at: TimeInterval = 1, readThrough: Int? = nil) -> PendingWork {
+    /// A relaunch: a new store and outbox over the same file, with no foreground memory.
+    private func relaunch() -> Outbox { store = LocalStore(url: storeURL); return Outbox(store: store) }
+    private func message(_ id: String, conversation: String? = "conversation", at: TimeInterval = 1) -> PendingWork {
         PendingWork(id: id, created: Date(timeIntervalSinceNow: at - 60), kind: .message, owner: .ticket("ticket"),
-            message: ConversationSend(conversationId: "conversation", content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: Int64(at * 1000), ownerReadThroughSequence: readThrough))
+            message: ConversationSend(conversationId: conversation, content: [.init(text: id)], backendKey: conversation == nil ? "codex" : nil,
+                senderMessageId: id, sentAtUnixMilliseconds: Int64(at * 1000)))
     }
     private var tinyPhoto: ConversationSend.Piece {
         .init(piece: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", mediaType: "image/png", fileName: "photo.png")
     }
-    private func enqueuePhoto(_ id: String, draftID: String) throws -> PendingWork {
-        store.saveDraft("  Original words  ", server: server, id: draftID)
-        try store.put(server: server, kind: "attachments", id: draftID, data: JSONEncoder().encode([tinyPhoto]))
-        let work = PendingWork(id: id, created: .now, kind: .message, owner: .ticket("ticket"),
-            message: ConversationSend(conversationId: "conversation", content: [.init(text: "Original words"), tinyPhoto], senderMessageId: id, sentAtUnixMilliseconds: 123))
-        try store.outgoing.enqueue(work, server: server, capturedDraft: store.outgoing.captureDraft(server: server, id: draftID))
-        return work
+
+    private func json(_ data: Data) throws -> NSDictionary { try JSONSerialization.jsonObject(with: data) as! NSDictionary }
+
+    // MARK: Messages
+
+    func testMessagesLandOnceInOrderAcrossLostConnectionLostResponseAndRelaunch() async throws {
+        var outbox = Outbox(store: store)
+        try store.outgoing.enqueue(message("first"), server: server)
+        try store.outgoing.enqueue(message("second", at: 2), server: server)
+        OfflineProtocol.state.offline = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.waiting, .waiting])
+
+        outbox = relaunch()
+        OfflineProtocol.state.offline = false
+        OfflineProtocol.state.loseResponse = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes, ["first"], "The second waits behind the first in its conversation")
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.waiting, .waiting], "A lost response is not shown")
+
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes, ["first", "first", "second"])
+        let bodies = OfflineProtocol.state.messageBodies.filter { $0.0 == "first" }.map(\.1)
+        XCTAssertEqual(bodies.count, 2); XCTAssertEqual(try json(bodies[0]), try json(bodies[1]), "A resend is the exact body that went out")
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, ["first", "second"], "The server keeps one of each")
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.sent, .sent])
     }
-    func testPhoto422RestoresDraftDurablyAndExplicitRetryClearsOnlyThatDraft() async throws {
-        let original = try enqueuePhoto("photo-rejected", draftID: "photo-draft")
-        let originalBytes = try XCTUnwrap(store.record(server: server, kind: "outbox", id: original.id)?.payload)
+    func testFirstMessageResendsWithoutDestinationAndLaterMessagesJoinTheConversationItCreated() async throws {
+        var outbox = Outbox(store: store)
+        try store.outgoing.enqueue(message("start", conversation: nil), server: server)
+        try store.outgoing.enqueue(message("follow", conversation: nil, at: 2), server: server)
+        OfflineProtocol.state.createdConversation = "created"
+        OfflineProtocol.state.loseResponseIDs = ["follow"]
+        OfflineProtocol.state.loseResponse = true
+        await outbox.drain(api: api)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        // The follow-up loses its response too: its resend names the conversation again.
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        let sent = OfflineProtocol.state.messageBodies
+        XCTAssertEqual(sent.map(\.0), ["start", "start", "follow", "follow"])
+        XCTAssertEqual(try json(sent[2].1), try json(sent[3].1), "Every send of the follow-up is the same body")
+        XCTAssertEqual(try json(sent[0].1), try json(sent[1].1), "The creating message resends unchanged, with no destination")
+        let start = try JSONSerialization.jsonObject(with: sent[1].1) as! [String: Any]
+        XCTAssertNil(start["conversation_id"]); XCTAssertEqual(start["backend_key"] as? String, "codex")
+        let follow = try JSONSerialization.jsonObject(with: sent[3].1) as! [String: Any]
+        XCTAssertEqual(follow["conversation_id"] as? String, "created")
+        XCTAssertNil(follow["backend_key"], "Creation settings stay with the creating message")
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.sent, .sent])
+    }
+    func testRefusedMessageShowsItsReasonAndReleasesItsConversation() async throws {
+        let outbox = Outbox(store: store)
+        try store.outgoing.enqueue(message("refused"), server: server)
+        try store.outgoing.enqueue(message("after", at: 2), server: server)
+        OfflineProtocol.state.refuseMessageIDs = ["refused"]
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: "refused")?.state, .failed)
+        XCTAssertEqual(outbox.work(server, id: "refused")?.note, "Not delivered · agent could not start")
+        XCTAssertEqual(outbox.work(server, id: "after")?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.writes, ["refused", "after"], "A refusal is never resent by itself")
+    }
+    func testPhoto422RestoresDraftAndRetryClearsOnlyThatDraft() async throws {
+        store.saveDraft("  Original words  ", server: server, id: "photo-draft")
+        try store.put(server: server, kind: "attachments", id: "photo-draft", data: JSONEncoder().encode([tinyPhoto]))
+        let original = PendingWork(id: "photo", created: .now, kind: .message, owner: .ticket("ticket"),
+            message: ConversationSend(conversationId: "conversation", content: [.init(text: "Original words"), tinyPhoto], senderMessageId: "photo", sentAtUnixMilliseconds: 123))
+        try store.outgoing.enqueue(original, server: server, capturedDraft: store.outgoing.captureDraft(server: server, id: "photo-draft"))
+        XCTAssertEqual(store.draft(server: server, id: "photo-draft"), "")
         OfflineProtocol.state.messageStatus = 422
         let outbox = Outbox(store: store)
         await outbox.drain(api: api)
-        let reopened = LocalStore(url: directory.appendingPathComponent("test.store"))
-        let failed = try XCTUnwrap(reopened.outgoing.work(server: server, id: original.id))
-        XCTAssertEqual(failed.state, .failed)
-        XCTAssertTrue(failed.note.lowercased().contains("photo"))
-        XCTAssertEqual(failed.message?.senderMessageId, original.id)
-        XCTAssertEqual(failed.message?.sentAtUnixMilliseconds, 123)
+        let reopened = LocalStore(url: storeURL)
+        XCTAssertEqual(try reopened.outgoing.work(server: server, id: "photo")?.state, .failed)
         XCTAssertEqual(reopened.draft(server: server, id: "photo-draft"), "  Original words  ")
         let restored = try XCTUnwrap(reopened.record(server: server, kind: "attachments", id: "photo-draft")?.payload)
         XCTAssertEqual(try JSONDecoder().decode([ConversationSend.Piece].self, from: restored), [tinyPhoto])
-        let restoredCapture = try reopened.outgoing.captureDraft(server: server, id: "photo-draft")
-        XCTAssertEqual(restoredCapture.text?.updated, failed.completed)
-        XCTAssertEqual(restoredCapture.attachments?.updated, failed.completed)
-        XCTAssertEqual(try reopened.record(server: server, kind: "outbox", id: original.id)?.payload, originalBytes)
         OfflineProtocol.state.messageStatus = 200
-        let retried = await outbox.retry(original.id, api: api)
+        let retried = await outbox.retry("photo", api: api)
         let nextID = try XCTUnwrap(retried)
-        XCTAssertNotEqual(nextID, original.id)
-        XCTAssertEqual(outbox.work(server, id: nextID)?.priorMessageIDs, [original.id])
+        XCTAssertEqual(outbox.work(server, id: nextID)?.priorMessageIDs, ["photo"])
         XCTAssertEqual(store.draft(server: server, id: "photo-draft"), "")
         await outbox.drain(api: api)
         XCTAssertEqual(outbox.work(server, id: nextID)?.state, .sent)
-        XCTAssertEqual(OfflineProtocol.state.writes, [original.id, nextID])
-
-        // Identical words saved later are still a newer draft, not the restored version.
-        let newerOriginal = try enqueuePhoto("photo-newer-identical", draftID: "photo-newer-draft")
-        OfflineProtocol.state.messageStatus = 422
-        await outbox.drain(api: api)
-        store.saveDraft("  Original words  ", server: server, id: "photo-newer-draft")
-        let newerCapture = try store.outgoing.captureDraft(server: server, id: "photo-newer-draft")
-        XCTAssertNotEqual(newerCapture.text?.updated, outbox.work(server, id: newerOriginal.id)?.completed)
-        OfflineProtocol.state.messageStatus = 200
-        let newerRetried = await outbox.retry(newerOriginal.id, api: api)
-        let newerRetry = try XCTUnwrap(newerRetried)
-        XCTAssertNil(outbox.work(server, id: newerRetry)?.rejectedPhotoDraft)
-        XCTAssertEqual(try store.outgoing.captureDraft(server: server, id: "photo-newer-draft"), newerCapture)
-        await outbox.drain(api: api)
-        XCTAssertEqual(outbox.work(server, id: newerRetry)?.state, .sent)
-        XCTAssertEqual(try store.outgoing.captureDraft(server: server, id: "photo-newer-draft"), newerCapture)
+        XCTAssertEqual(OfflineProtocol.state.writes, ["photo", nextID])
     }
-    func testPhoto422CannotRestoreOverEitherNewerComposerVersion() async throws {
-        OfflineProtocol.state.messageStatus = 422
-        for edit in ["text", "type-delete", "attachments"] {
-            let draftID = "draft-" + edit
-            _ = try enqueuePhoto("photo-" + edit, draftID: draftID)
-            if edit == "attachments" {
-                try store.put(server: server, kind: "attachments", id: draftID, data: Data("[]".utf8))
-            } else {
-                store.saveDraft("New words", server: server, id: draftID)
-                if edit == "type-delete" { store.saveDraft("", server: server, id: draftID) }
-            }
-            let newer = try store.outgoing.captureDraft(server: server, id: draftID)
-            await Outbox(store: store).drain(api: api)
-            XCTAssertEqual(try store.outgoing.captureDraft(server: server, id: draftID), newer,
-                "A newer \(edit) version protects both composer records")
-        }
-    }
-    func testFailedPhotoRetryPreparesBytesWhileUncertainRetryKeepsOriginalBytes() async throws {
-        #if SWIFT_PACKAGE
-        let fixture = Bundle.module.url(forResource: "photo", withExtension: "heic", subdirectory: "Fixtures")
-        #else
-        let fixture = Bundle(for: Self.self).url(forResource: "photo", withExtension: "heic")
-        #endif
-        let heic = try Data(contentsOf: XCTUnwrap(fixture)).base64EncodedString()
-        let photo = ConversationSend.Piece(piece: "image", data: heic, mediaType: "image/heic", fileName: "saved.heic")
-        let outbox = Outbox(store: store)
-        OfflineProtocol.state.offline = true
-        for state in [PendingWork.State.failed, .uncertain] {
-            let id = "retry-" + state.rawValue
-            let work = PendingWork(id: id, created: .now, kind: .message, state: state, owner: .ticket(id),
-                message: ConversationSend(conversationId: id, content: [photo], senderMessageId: id, sentAtUnixMilliseconds: 123))
-            try outbox.save(work, server: server)
-            let before = try store.record(server: server, kind: "outbox", id: id)?.payload
-            let retried = await outbox.retry(id, api: api)
-            let replacementID = try XCTUnwrap(retried)
-            let replacement = try XCTUnwrap(outbox.work(server, id: replacementID)?.message?.content.first)
-            if state == .failed {
-                XCTAssertEqual(replacement.mediaType, "image/jpeg")
-                XCTAssertNotEqual(replacement.data, heic)
-                XCTAssertEqual(outbox.work(server, id: replacementID)?.priorMessageIDs, [id])
-            } else {
-                XCTAssertEqual(replacement, photo)
-                XCTAssertNil(outbox.work(server, id: replacementID)?.priorMessageIDs)
-            }
-            XCTAssertEqual(try store.record(server: server, kind: "outbox", id: id)?.payload, before)
-        }
-        await outbox.drain(api: api)
-    }
-    func testDeferredPhoto422RefreshesOnlyTheUntouchedVisibleComposer() async throws {
-        for newerEdit in [false, true] {
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.protocolClasses = [OfflineProtocol.self]
-            let api = APIClient(baseURL: URL(string: "https://offline-test-\(UUID().uuidString.lowercased()).invalid")!, session: URLSession(configuration: configuration))
-            let server = LocalStore.server(api.baseURL)
-            defer {
-                for kind in ["outbox", "draft", "attachments", "cache"] {
-                    for record in (try? LocalStore.shared.records(server: server, kind: kind)) ?? [] {
-                        if let id = record.key.components(separatedBy: "\u{1f}").last { try? LocalStore.shared.remove(server: server, kind: kind, id: id) }
-                    }
-                }
-            }
-            OfflineProtocol.state.offline = true
-            let model = ConversationModel()
-            model.conversationID = "conversation"
-            model.restore(owner: .chief, api: api)
-            model.draft = "  Deferred photo  "
-            model.attachments = [tinyPhoto]
-            _ = await model.send(to: .chief, using: api)
-            let identity = try XCTUnwrap(try LocalStore.shared.outgoing.summaries(server: server, owner: .chief).first?.id)
-            await Outbox.shared.drain(api: api)
-            // Await the durable failure notification, rather than guessing how many actor turns it takes.
-            let (changes, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-            var change = changes.makeAsyncIterator()
-            while true {
-                withObservationTracking { _ = LocalStore.shared.outgoingRevision(server) } onChange: { continuation.yield(()) }
-                let failed = OfflineProtocol.state.failedOffline(try api.url("/api/chief/conversation/send"))
-                if failed, try LocalStore.shared.outgoing.summary(server: server, id: identity)?.state == "waiting" { break }
-                _ = await change.next()
-            }
-            continuation.finish()
-            XCTAssertEqual(try LocalStore.shared.outgoing.summary(server: server, id: identity)?.state, "waiting")
-            if newerEdit { model.draft = "New words"; model.draft = "" }
-            OfflineProtocol.state.offline = false
-            OfflineProtocol.state.messageStatus = 422
-            // A fresh drainer models foreground recovery/relaunch without the earlier backoff clock.
-            await Outbox(store: .shared).drain(api: api)
-            model.syncOutbox()
-            XCTAssertEqual(try LocalStore.shared.outgoing.summary(server: server, id: identity)?.state, "failed")
-            XCTAssertTrue(model.error?.lowercased().contains("photo") == true)
-            XCTAssertEqual(model.draft, newerEdit ? "" : "  Deferred photo  ")
-            XCTAssertEqual(model.attachments, newerEdit ? [] : [tinyPhoto])
-            if !newerEdit {
-                let probe = PhotoPreparationProbe()
-                let recreated = ConversationModel(imageWorkStarted: { probe.observe() })
-                recreated.conversationID = "conversation"
-                recreated.restore(owner: .chief, api: api)
-                XCTAssertEqual(recreated.draft, model.draft)
-                XCTAssertEqual(recreated.attachments, model.attachments)
-                let retry = Task { await recreated.retry(identity, to: .chief, using: api) }
-                await fulfillment(of: [probe.started], timeout: 3)
-                defer { probe.release() }
-                XCTAssertEqual(recreated.preparingOutgoingID, identity)
-                XCTAssertTrue(recreated.preparingPhoto)
-                await recreated.retry(identity, to: .chief, using: api)
-                let prematureSend = await recreated.send(to: .chief, using: api)
-                XCTAssertFalse(prematureSend)
-                probe.release()
-                await retry.value
-                XCTAssertNil(recreated.preparingOutgoingID)
-                XCTAssertFalse(recreated.preparingPhoto)
-                XCTAssertFalse(probe.usedMainThread)
-                XCTAssertEqual(try LocalStore.shared.outgoing.summaries(server: server, owner: .chief).count, 2,
-                    "A second retry tap during preparation must not create another outgoing identity")
-            }
-            OfflineProtocol.state.messageStatus = 200
-        }
-    }
-    func testWaitingMessagePostsWithoutReceiptOrHeldMessageReads() async throws {
-        let outbox = Outbox(store: store)
-        try outbox.save(message("new", readThrough: 12), server: server)
-
-        await outbox.drain(api: api)
-
-        XCTAssertEqual(OfflineProtocol.state.requests, ["POST /api/tickets/ticket/conversation/send"])
-        XCTAssertEqual(outbox.entries(server).first?.state, .sent)
-    }
-    func testMissingReceiptNeverReadmitsAttemptedWorkAfterRestart() async throws {
-        let outbox = Outbox(store: store)
-        var work = message("held", readThrough: 12)
-        work.state = .sending
-        try outbox.save(work, server: server)
-        OfflineProtocol.state.heldMessageID = "held"
-
-        await outbox.drain(api: api)
-        XCTAssertEqual(outbox.entries(server).first?.state, .uncertain)
-        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
-        await reopened.drain(api: api)
-
-        XCTAssertEqual(OfflineProtocol.state.requests, [
-            "GET /api/conversation/conversations/conversation/view/receipts",
-            "GET /api/conversation/conversations/conversation/view/receipts"
-        ])
-        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
-        XCTAssertEqual(reopened.entries(server).first?.state, .uncertain)
-    }
-    func testOfflineRelaunchDrainsInOrderOnceAndPreservesIdentity() async throws {
-        var clock = Date.now
-        let outbox = Outbox(store: store, now: { clock })
-        try outbox.save(message("first"), server: server)
-        try outbox.save(message("second", at: 2), server: server)
-        OfflineProtocol.state.offline = true
-        for code: URLError.Code in [.notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed] {
-            OfflineProtocol.state.offlineError = code
-            clock = clock.addingTimeInterval(60)
-            await outbox.drain(api: api)
-            XCTAssertEqual(outbox.entries(server).map(\.state), [.waiting, .waiting])
-            XCTAssertEqual(try store.outgoing.summary(server: server, id: "first")?.provenance, "unattempted")
-            XCTAssertEqual(try store.outgoing.summary(server: server, id: "second")?.provenance, "unattempted")
-            XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
-        }
-        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
-        OfflineProtocol.state.offline = false
-        await reopened.drain(api: api)
-        await reopened.drain(api: api)
-        XCTAssertEqual(OfflineProtocol.state.writes, ["first", "second"])
-        XCTAssertEqual(reopened.entries(server).map(\.state), [.sent, .sent])
-    }
-    func testUnreachableServerBackoffSkipsPayloadAndSavesUntilRetryDeadline() async throws {
-        var clock = Date.now
-        var decodes = 0
-        let local = LocalStore(url: directory.appendingPathComponent("backoff.store"), onPayloadDecode: { decodes += 1 })
-        let outbox = Outbox(store: local, now: { clock })
-        let photo = ConversationSend.Piece(piece: "image", data: Data(repeating: 7, count: 512 * 1024).base64EncodedString(), mediaType: "image/jpeg", fileName: "photo.jpg")
-        for id in ["outage-a", "outage-b"] {
-            try outbox.save(PendingWork(id: id, created: .now, kind: .message, owner: .ticket(id),
-                message: ConversationSend(conversationId: id, content: [.init(text: id), photo], senderMessageId: id, sentAtUnixMilliseconds: 1)), server: server)
-        }
-        OfflineProtocol.state.offline = true
-        OfflineProtocol.state.offlineError = .cannotConnectToHost
-        await outbox.drain(api: api)
-        XCTAssertEqual(decodes, 2)
-        XCTAssertEqual(outbox.reconciliationDelay(server: server), 15)
-        let revision = local.outgoingRevision(server)
-        let requestCount = OfflineProtocol.state.requests.count
-        for _ in 0..<4 {
-            clock = clock.addingTimeInterval(3)
-            await outbox.drain(api: api)
-        }
-        XCTAssertEqual(decodes, 2)
-        XCTAssertEqual(local.outgoingRevision(server), revision)
-        XCTAssertEqual(OfflineProtocol.state.requests.count, requestCount)
-        for id in ["outage-a", "outage-b"] {
-            let fact = try XCTUnwrap(local.outgoing.summary(server: server, id: id))
-            XCTAssertEqual(fact.state, "waiting")
-            XCTAssertEqual(fact.provenance, "unattempted")
-        }
-        // Another lane remains eligible during these lane heads' delay.
-        OfflineProtocol.state.offline = false
-        try outbox.save(message("new-lane"), server: server)
-        await outbox.drain(api: api)
-        XCTAssertEqual(OfflineProtocol.state.writes, ["new-lane"])
-        XCTAssertEqual(decodes, 3)
-        OfflineProtocol.state.offline = true
-        clock = clock.addingTimeInterval(3)
-        await outbox.drain(api: api)
-        XCTAssertEqual(outbox.reconciliationDelay(server: server), 30)
-        clock = clock.addingTimeInterval(30)
-        await outbox.drain(api: api)
-        XCTAssertEqual(outbox.reconciliationDelay(server: server), 60)
-        clock = clock.addingTimeInterval(60)
-        OfflineProtocol.state.offline = false
-        await outbox.drain(api: api)
-        XCTAssertEqual(Set(OfflineProtocol.state.writes), Set(["new-lane", "outage-a", "outage-b"]))
-        XCTAssertNil(outbox.reconciliationDelay(server: server))
-        XCTAssertEqual(try local.outgoing.summary(server: server, id: "outage-a")?.state, "sent")
-        XCTAssertEqual(try local.outgoing.summary(server: server, id: "outage-b")?.state, "sent")
-        print("OUTAGE_BACKOFF photo_bytes_each=524288 lanes=2 repeated_ticks=4 additional_decodes=0 revision_bumps=0 delays_seconds=15,30,60 recovered=3")
-    }
-    func testLaneSlotsReleaseQueuedSuccessorAndProgressWhileAnotherLaneStalls() async throws {
-        let outbox = Outbox(store: store)
-        func work(_ id: String, _ lane: String, _ state: PendingWork.State = .waiting) -> PendingWork {
-            PendingWork(id: id, created: .now, kind: .message, state: state, owner: .ticket(lane),
-                message: ConversationSend(conversationId: lane, content: [.init(text: id)], senderMessageId: id, sentAtUnixMilliseconds: 1))
-        }
-        try outbox.save(work("queued", "queued", .serverQueued), server: server)
-        try outbox.save(work("B", "queued"), server: server)
-        try outbox.save(work("stall", "stalled"), server: server)
-        try outbox.save(work("quick", "quick"), server: server)
-        OfflineProtocol.state.holdLanes = true
-        let draining = Task { await outbox.drain(api: api) }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while !OfflineProtocol.state.writes.contains("quick"), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-        let progressedBeforeRelease = OfflineProtocol.state.writes
-        let peaks = OfflineProtocol.state.peaks
-        // Always release both blocked requests before assertions, including a failure.
-        OfflineProtocol.state.releaseHeldRequests()
-        await draining.value
-        XCTAssertTrue(progressedBeforeRelease.contains("B"), "Queued acceptance releases B without A's eventual receipt")
-        XCTAssertTrue(progressedBeforeRelease.contains("quick"), "A stalled lane cannot occupy the free server slot")
-        XCTAssertLessThanOrEqual(peaks.server, 2)
-        XCTAssertEqual(peaks.server, 2)
-        XCTAssertLessThanOrEqual(peaks.lane, 1)
-        XCTAssertEqual(outbox.work(server, id: "queued")?.state, .serverQueued)
-
-        let dynamic = Outbox(store: LocalStore(url: directory.appendingPathComponent("dynamic.store")))
-        OfflineProtocol.state.holdLanes = true
-        let creation = PendingWork(id: "stall-dynamic", created: .now, kind: .message, owner: .ticket("stalled"),
-            message: ConversationSend(conversationId: nil, content: [.init(text: "Held creation")], senderMessageId: "stall-dynamic", sentAtUnixMilliseconds: 1))
-        try dynamic.save(creation, server: server)
-        let pending = Task { await dynamic.drain(api: api) }
-        let heldDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while OfflineProtocol.state.heldRequestCount == 0, ContinuousClock.now < heldDeadline { try await Task.sleep(for: .milliseconds(5)) }
-        XCTAssertGreaterThan(OfflineProtocol.state.heldRequestCount, 0)
-        try dynamic.enqueue(work("late-quick", "late"), api: api)
-        let lateDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while !OfflineProtocol.state.writes.contains("late-quick"), ContinuousClock.now < lateDeadline { try await Task.sleep(for: .milliseconds(5)) }
-        let lateProgress = OfflineProtocol.state.writes.contains("late-quick")
-        XCTAssertEqual(try dynamic.store.outgoing.summary(server: server, id: creation.id)?.state, "sending", "An enqueue wake cannot normalize its own active creation as abandoned")
-        OfflineProtocol.state.offline = true
-        OfflineProtocol.state.releaseHeldRequests()
-        await pending.value
-        OfflineProtocol.state.offline = false
-        XCTAssertTrue(lateProgress, "A new lane is admitted while the earlier request is still held")
-        XCTAssertEqual(try dynamic.store.outgoing.summary(server: server, id: creation.id)?.state, "waiting")
-        XCTAssertEqual(try dynamic.store.outgoing.summary(server: server, id: creation.id)?.provenance, "unattempted")
-    }
-    /// Reuse the existing recovery host to prove the new notification handoff,
-    /// rather than repeat the transport matrix for another composer.
-    func testNotificationReplySurvivesOfflineRelaunchAndReconcilesWithoutDuplicateSend() async throws {
-        let outbox = Outbox(store: store)
+    func testNotificationReplySurvivesOfflineRelaunchAndLostResponseWithOneIdentity() async throws {
+        var outbox = Outbox(store: store)
         let reply = NotificationReply(serverURL: api.baseURL, conversationID: "conversation", messageID: "conversation:7", owner: .ticket("ticket"))
         let id = try outbox.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api)
         OfflineProtocol.state.offline = true
         await outbox.drain(api: api)
-        XCTAssertEqual(outbox.work(server, id: id)?.state, .waiting)
-        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
-
-        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
-        XCTAssertEqual(try reopened.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api), id)
-        XCTAssertEqual(reopened.entries(server).count, 1)
-        XCTAssertEqual(reopened.work(server, id: id)?.message?.conversationId, "conversation")
+        outbox = relaunch()
+        XCTAssertEqual(try outbox.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api), id)
+        XCTAssertEqual(outbox.entries(server).count, 1)
         OfflineProtocol.state.offline = false
         OfflineProtocol.state.loseResponse = true
         OfflineProtocol.state.responseError = .cancelled
-        await reopened.drain(api: api)
-        XCTAssertEqual(reopened.work(server, id: id)?.state, .uncertain)
-        XCTAssertEqual(try reopened.store.outgoing.summary(server: server, id: id)?.provenance, "attempted")
+        await outbox.drain(api: api)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.writes, [id, id])
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, [id])
+        XCTAssertEqual(outbox.work(server, id: id)?.state, .sent)
+    }
 
-        let resumed = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
-        XCTAssertEqual(try resumed.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api), id)
-        await resumed.drain(api: api)
-        XCTAssertEqual(OfflineProtocol.state.requests, [
-            "POST /api/tickets/ticket/conversation/send",
-            "POST /api/tickets/ticket/conversation/send",
-            "GET /api/conversation/conversations/conversation/view/receipts"
-        ])
-        XCTAssertEqual(OfflineProtocol.state.writes, [id])
-        XCTAssertEqual(resumed.work(server, id: id)?.state, .sent)
-    }
-    func testChangedProposalHoldsBothDecisionKindsAndKeepsGuidance() async throws {
-        let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)
-        let proposal = try XCTUnwrap(detail.pendingProposal)
+    func testNotificationReplySendsWhenTheOfflineFlagWentStale() async throws {
         let outbox = Outbox(store: store)
-        let approval = ReviewApproval(expectedProposalRevision: proposal.revision, editedBody: "Edit", nextCeiling: "done", nextHolder: .init(kind: "owner", id: "owner"))
-        try outbox.enqueue(PendingWork(id: "approve", created: .now, kind: .approval, ticketID: detail.id, proposal: proposal, approval: approval), api: api)
-        try outbox.enqueue(PendingWork(id: "return", created: .now, kind: .sendBack, ticketID: detail.id, proposal: proposal, guidance: "Keep these words"), api: api)
-        OfflineProtocol.state.bumpRevision()
+        outbox.networkAvailable = false // The app went to the background offline; no loop watches the path now.
+        let reply = NotificationReply(serverURL: api.baseURL, conversationID: "conversation", messageID: "conversation:7", owner: .ticket("ticket"))
+        let id = try outbox.enqueueNotificationReply(reply, text: "Reply from notification", notificationID: "push-7", api: api)
         await outbox.drain(api: api)
-        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
-        XCTAssertEqual(outbox.entries(server).map(\.state), [.changed, .changed])
-        let frozen = try XCTUnwrap(outbox.entries(server).last?.protectedDecisionBody)
-        XCTAssertEqual(try APIClient.decoder().decode(DecisionCommand.self, from: frozen).message, "Keep these words")
-        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 2)
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, [id])
+        XCTAssertEqual(outbox.work(server, id: id)?.state, .sent)
     }
-    func testLegacyDecisionNeverGainsProtectedOrLegacyReplayAuthority() async throws {
-        let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)
-        let outbox = Outbox(store: store)
-        try outbox.save(PendingWork(id: "return", created: .now, kind: .sendBack, ticketID: detail.id, proposal: detail.pendingProposal, guidance: "Change it"), server: server)
-        OfflineProtocol.state.loseResponse = true
+
+    func testServerErrorsFailAMessageAfterTheBoundAndItsLaneMovesOn() async throws {
+        var clock = Date.now
+        let outbox = Outbox(store: store, now: { clock })
+        try store.outgoing.enqueue(message("first"), server: server)
+        try store.outgoing.enqueue(message("second", at: 2), server: server)
+        OfflineProtocol.state.messageStatus = 503
+        for _ in 1..<Outbox.unsettledAttemptBound {
+            await outbox.drain(api: api); clock += 60
+            OfflineProtocol.state.offline = true
+            await outbox.drain(api: api); clock += 60 // No network does not count.
+            OfflineProtocol.state.offline = false
+        }
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.waiting, .waiting], "The second waits behind the first")
+        await outbox.drain(api: api); clock += 60
+        let first = try XCTUnwrap(outbox.work(server, id: "first"))
+        XCTAssertEqual(first.state, .failed)
+        XCTAssertEqual(first.note, "Not sent · Server returned HTTP 503.")
+        OfflineProtocol.state.messageStatus = 200
         await outbox.drain(api: api)
-        let reopened = Outbox(store: LocalStore(url: directory.appendingPathComponent("test.store")))
-        await reopened.drain(api: api)
-        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
-        XCTAssertTrue(OfflineProtocol.state.decisionBodies.isEmpty)
-        XCTAssertNil(reopened.entries(server).first?.protectedDecisionBody)
-        XCTAssertEqual(reopened.entries(server).first?.guidance, "Change it")
-        XCTAssertEqual(reopened.entries(server).first?.state, .uncertain)
+        XCTAssertEqual(outbox.work(server, id: "second")?.state, .sent, "The lane moves on past the failed item")
+        let retried = await outbox.retry("first", api: api)
+        XCTAssertEqual(retried, "first", "The server may hold it already, so Try Again keeps its identity")
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: "first")?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.writes, Array(repeating: "first", count: Outbox.unsettledAttemptBound) + ["second", "second", "first"])
+        XCTAssertEqual(OfflineProtocol.state.deliveredMessages, ["first", "second"])
     }
-    private func protectedDecision(_ id: String, kind: PendingWork.Kind = .approval) throws -> PendingWork {
+
+    // MARK: Decisions
+
+    private func decision(_ id: String, kind: PendingWork.Kind = .approval, guidance: String? = nil) throws -> PendingWork {
         let detail = try APIClient.decoder().decode(TicketDetail.self, from: OfflineProtocol.state.ticket)
         let proposal = try XCTUnwrap(detail.pendingProposal)
         return PendingWork(id: id, created: .now, kind: kind, ticketID: detail.id, proposal: proposal,
-            approval: kind == .approval ? ReviewApproval(expectedProposalRevision: proposal.revision, editedBody: "Edited once", nextCeiling: "needs_implementation", nextHolder: .init(kind: "owner", id: "owner")) : nil,
-            guidance: kind == .sendBack ? "Keep these exact words" : nil)
+            approval: kind == .approval ? ReviewApproval(expectedProposalRevision: proposal.revision, editedBody: nil, nextCeiling: "needs_implementation", nextHolder: .init(kind: "owner", id: "owner")) : nil,
+            guidance: guidance ?? (kind == .sendBack ? "Keep these exact words" : nil))
     }
-    func testProtectedDecisionLostAfterCommitRestartsFromReceiptWithoutAnotherOutcome() async throws {
-        let outbox = Outbox(store: store)
-        var original = try protectedDecision("committed")
-        let note = "  Exact approval note\n\nwith Unicode 🪶.  \n"
-        original.guidance = note; original.draftID = "approval-guidance"
-        store.saveDraft(note, server: server, id: original.draftID!)
-        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: original.draftID!).text?.updated
+    func testDecisionLostAfterCommitRelaunchesFromItsReceiptWithoutAnotherSubmit() async throws {
+        var outbox = Outbox(store: store)
+        var original = try decision("committed", guidance: "  Exact approval note 🪶  ")
+        original.draftID = "approval-guidance"
+        store.saveDraft(original.guidance!, server: server, id: "approval-guidance")
+        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: "approval-guidance").text?.updated
         OfflineProtocol.state.loseDecisionAfterCommit = true
         try outbox.enqueue(original, api: api)
         await outbox.drain(api: api)
-        let frozen = try XCTUnwrap(outbox.work(server, id: original.id))
-        XCTAssertNil(frozen.proposal); XCTAssertNil(frozen.approval); XCTAssertNil(frozen.guidance)
-        XCTAssertNotNil(frozen.protectedDecisionBody)
-        XCTAssertEqual(frozen.protectedProposalCreatedAt, original.proposal?.createdAt)
-        XCTAssertEqual(frozen.state, .uncertain)
-        XCTAssertEqual(store.draft(server: server, id: original.draftID!), note, "A lost response cannot clear the draft")
-        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(frozen.protectedDecisionBody))
-        XCTAssertEqual(command.message, note)
-        let raw = try XCTUnwrap(store.record(server: server, kind: "outbox", id: original.id)?.payload)
-        OfflineProtocol.state.bumpRevision() // Recovery must precede any current-proposal read.
-        let reopenedStore = LocalStore(url: directory.appendingPathComponent("test.store"))
-        let reopened = Outbox(store: reopenedStore)
-        await reopened.drain(api: api)
-        await reopened.drain(api: api)
-        XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
-        XCTAssertEqual(reopenedStore.draft(server: server, id: original.draftID!), "", "Only the applied receipt clears the captured draft")
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting, "A lost response is not shown")
+        XCTAssertEqual(store.draft(server: server, id: "approval-guidance"), "  Exact approval note 🪶  ", "A lost response cannot clear the draft")
+        OfflineProtocol.state.bumpRevision() // The receipt is read before any current proposal.
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(store.draft(server: server, id: "approval-guidance"), "", "The applied receipt clears the captured draft")
         XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
         XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
-        XCTAssertEqual(try reopenedStore.record(server: server, kind: "outbox", id: original.id)?.payload, raw)
-        XCTAssertFalse(OfflineProtocol.state.requests.contains("GET /api/tickets/\(original.ticketID!)"))
     }
-    func testSupportedNullRetriesOnlyOriginalDecisionIDAndFrozenBytesAfterRestart() async throws {
-        let outbox = Outbox(store: store)
-        var original = try protectedDecision("null-retry", kind: .sendBack)
-        let note = "  Exact send-back note\n\nwith Unicode 🪶.  \n"
-        original.guidance = note; original.draftID = "send-back-guidance"
-        store.saveDraft(note, server: server, id: original.draftID!)
+    func testDecisionLostBeforeCommitResubmitsOnlyItsOperationAndFrozenBytes() async throws {
+        var outbox = Outbox(store: store)
+        let original = try decision("null-retry", kind: .sendBack)
         OfflineProtocol.state.loseDecisionBeforeCommit = true
         try outbox.enqueue(original, api: api)
         await outbox.drain(api: api)
         let body = try XCTUnwrap(outbox.work(server, id: original.id)?.protectedDecisionBody)
-        XCTAssertEqual(try APIClient.decoder().decode(DecisionCommand.self, from: body).message, note)
-        XCTAssertEqual(store.draft(server: server, id: original.draftID!), note)
-        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
-        XCTAssertEqual(try store.outgoing.summary(server: server, id: original.id)?.provenance, "attempted")
-        let reopenedStore = LocalStore(url: directory.appendingPathComponent("test.store"))
-        let reopened = Outbox(store: reopenedStore)
-        await reopened.drain(api: api)
-        XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
-        XCTAssertEqual(reopenedStore.draft(server: server, id: original.draftID!), "")
-        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.0 }, [original.id, original.id])
-        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.1 }, [body, body])
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.0), [original.id, original.id])
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.1), [body, body])
         XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
-        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "No legacy decision endpoint is available as fallback")
     }
-    func testAppliedDecisionPreservesANewerDraftEvenWhenTextMatches() async throws {
-        let outbox = Outbox(store: store)
-        var original = try protectedDecision("newer-draft")
-        original.guidance = "The same text after another edit"; original.draftID = "guidance"
-        store.saveDraft(original.guidance!, server: server, id: original.draftID!)
-        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: original.draftID!).text?.updated
-        OfflineProtocol.state.loseDecisionAfterCommit = true
-        try outbox.enqueue(original, api: api)
-        await outbox.drain(api: api)
-        let frozen = try XCTUnwrap(outbox.work(server, id: original.id))
-        XCTAssertEqual(frozen.state, .uncertain)
-        XCTAssertNotNil(frozen.decisionDraftUpdatedAt)
-        store.saveDraft("Newer text", server: server, id: original.draftID!)
-        store.saveDraft(original.guidance!, server: server, id: original.draftID!)
-        let reopenedStore = LocalStore(url: directory.appendingPathComponent("test.store"))
-        let reopened = Outbox(store: reopenedStore)
-        await reopened.drain(api: api)
-        XCTAssertEqual(reopened.work(server, id: original.id)?.state, .sent)
-        XCTAssertEqual(reopenedStore.draft(server: server, id: original.draftID!), original.guidance)
-        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
-        XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
-    }
-
-    func testUnsupportedDecisionServerRestoresCardAndDraftAfterTransientPreflight() async throws {
-        let outbox = Outbox(store: store)
-        var original = try protectedDecision("unsupported")
-        original.guidance = "Kept local guidance"; original.draftID = "draft"
-        store.saveDraft(original.guidance!, server: server, id: original.draftID!)
-        OfflineProtocol.state.lookupStatus = 503
-        OfflineProtocol.state.decisionLookup = Data(#"{"error":{"message":"Temporary failure"}}"#.utf8)
-        try outbox.enqueue(original, api: api)
-        await outbox.drain(api: api)
-        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting)
-        XCTAssertEqual(try store.outgoing.summary(server: server, id: original.id)?.provenance, "unattempted")
-        OfflineProtocol.state.lookupStatus = 200
-        OfflineProtocol.state.decisionLookup = Data("{}".utf8)
-        await outbox.drain(api: api)
-        let saved = try XCTUnwrap(outbox.work(server, id: original.id))
-        XCTAssertEqual(saved.state, .changed)
-        XCTAssertTrue(saved.note.contains("invalid decision response"))
-        XCTAssertEqual(store.draft(server: server, id: "draft"), "Kept local guidance")
-        XCTAssertTrue(OfflineProtocol.state.decisionBodies.isEmpty)
-        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
-        let item = ReviewItem(reviewItemType: "proposal", ticketId: original.ticketID!, field: original.proposal!.field, title: "Still needs review", waitingSince: original.proposal!.createdAt)
-        let card = ReviewCard(id: "card", ticketId: original.ticketID!, parts: [item])
-        let snapshot = ReviewSavedWork(outbox: outbox); snapshot.refresh(server)
-        XCTAssertEqual(ReviewSavedWork.cards([card], decisions: snapshot.decisions(server)).map(\.id), [card.id])
-        for status in [401, 403, 404] {
-            let work = try protectedDecision("lookup-\(status)")
-            OfflineProtocol.state.lookupStatus = status
-            try outbox.enqueue(work, api: api)
-            await outbox.drain(api: api)
-            let result = try XCTUnwrap(outbox.work(server, id: work.id))
-            XCTAssertEqual(result.state, .changed)
-            XCTAssertEqual(try store.outgoing.summary(server: server, id: work.id)?.provenance, "unattempted")
-            if status == 404 {
-                XCTAssertEqual(result.note, "Not sent · the server needs an update before the phone can approve or send back. Use the web for now.")
-            } else {
-                XCTAssertTrue(result.note.contains("check your access"))
-            }
-        }
-        XCTAssertTrue(OfflineProtocol.state.decisionBodies.isEmpty)
-    }
-    func testAttemptedDecisionMalformedMismatchedAndAmbiguousResponsesStayUncertain() async throws {
-        let outbox = Outbox(store: store)
-        let original = try protectedDecision("ambiguous")
+    /// Risk: a decision's pictures and files are lost before the decision is sent, are sent
+    /// in bytes that differ between attempts, or make a decision land twice when its reply
+    /// is lost. They are saved first inside the frozen body, resent unchanged, and land once.
+    func testDecisionWithAttachmentIsFrozenFirstResentUnchangedAndLandsOnceAcrossLostReplies() async throws {
+        var outbox = Outbox(store: store)
+        var original = try decision("with-photo", guidance: "See the picture")
+        original.draftID = "photo-guidance"
+        original.decisionAttachments = [tinyPhoto]
+        store.saveDraft("See the picture", server: server, id: "photo-guidance")
+        try store.put(server: server, kind: "attachments", id: "photo-guidance", data: JSONEncoder().encode([tinyPhoto]))
+        original.decisionDraftUpdatedAt = try store.outgoing.captureDraft(server: server, id: "photo-guidance").text?.updated
         OfflineProtocol.state.loseDecisionBeforeCommit = true
         try outbox.enqueue(original, api: api)
+        let saved = try XCTUnwrap(outbox.work(server, id: original.id))
+        XCTAssertNil(saved.decisionAttachments, "The pictures live only in the frozen body")
+        let body = try XCTUnwrap(saved.protectedDecisionBody)
+        let posted = try XCTUnwrap(try json(body)["attachments"] as? [[String: String]])
+        XCTAssertEqual(posted, [["piece": "image", "data": tinyPhoto.data!, "media_type": "image/png", "file_name": "photo.png"]])
         await outbox.drain(api: api)
-        OfflineProtocol.state.decisionLookup = Data("{}".utf8)
+        // The next attempt commits, and its reply is lost too.
+        OfflineProtocol.state.loseDecisionAfterCommit = true
+        outbox = relaunch()
         await outbox.drain(api: api)
-        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
-        XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
-        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(outbox.work(server, id: original.id)?.protectedDecisionBody))
-        let wrong = DecisionReceipt(operationId: "different-operation", ticketId: original.ticketID!, decision: command.decision, field: command.field,
-            expectedProposalRevision: command.expectedProposalRevision, outcome: "applied",
-            transition: DecisionTransition(stage: "needs_implementation", ceiling: "needs_implementation", ceilingHolder: .init(kind: "owner", id: "owner"), ticketStatus: "ready", pendingProposalRevision: 16), error: nil, createdAt: 100)
-        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
-        OfflineProtocol.state.decisionLookup = try encoder.encode(DecisionOperationResponse(receiptContract: 1, receipt: wrong))
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .waiting, "A lost response is not shown")
+        XCTAssertNotEqual(try store.record(server: server, kind: "attachments", id: "photo-guidance")?.payload, Data("[]".utf8),
+                          "A lost response cannot clear the note's pictures")
+        outbox = relaunch()
         await outbox.drain(api: api)
-        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .uncertain)
-        XCTAssertEqual(OfflineProtocol.state.decisionBodies.count, 1)
-        OfflineProtocol.state.decisionLookup = nil // Explicit supported null permits only this same operation to retry.
-        OfflineProtocol.state.decisionPost = Data(#"{"error":{"message":"Conflict without a receipt"}}"#.utf8)
-        OfflineProtocol.state.decisionStatus = 429
+        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .sent)
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.0), [original.id, original.id])
+        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map(\.1), [body, body])
+        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 1)
+        XCTAssertEqual(try store.record(server: server, kind: "attachments", id: "photo-guidance")?.payload, Data("[]".utf8),
+                       "The applied receipt clears the note's pictures with its words")
+        XCTAssertEqual(store.draft(server: server, id: "photo-guidance"), "")
+    }
+    func testChangedProposalRefusesBothDecisionKindsOnTheirItemAndKeepsGuidance() async throws {
+        let outbox = Outbox(store: store)
+        try outbox.enqueue(try decision("approve"), api: api)
+        try outbox.enqueue(try decision("return", kind: .sendBack), api: api)
+        OfflineProtocol.state.bumpRevision()
         await outbox.drain(api: api)
-        XCTAssertEqual(outbox.work(server, id: original.id)?.state, .changed)
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.failed, .failed])
+        XCTAssertEqual(outbox.entries(server).first?.note, "Not sent · Proposal changed")
+        let frozen = try XCTUnwrap(outbox.entries(server).last?.protectedDecisionBody)
+        XCTAssertEqual(try APIClient.decoder().decode(DecisionCommand.self, from: frozen).message, "Keep these exact words")
+    }
+
+    // MARK: Mark read
+
+    func testMarkReadCoalescesToTheHighestPointAndResendsAfterALostResponse() async throws {
+        var outbox = Outbox(store: store)
+        OfflineProtocol.state.offline = true
+        for through in [3, 9, 5] { try outbox.enqueueMarkRead(owner: .chief, conversationID: "conversation", through: through, api: api) }
+        try outbox.enqueueMarkRead(owner: .chief, conversationID: "other", through: 2, api: api)
         await outbox.drain(api: api)
-        XCTAssertEqual(OfflineProtocol.state.decisionBodies.map { $0.0 }, [original.id, original.id])
-        XCTAssertEqual(try store.outgoing.summary(server: server, id: original.id)?.provenance, "attempted")
-        XCTAssertEqual(OfflineProtocol.state.decisionOutcomes, 0)
+        let saved = outbox.entries(server)
+        XCTAssertEqual(saved.map(\.readThroughSequence), [9, 2], "One waiting read per conversation, at the highest point")
+        outbox = relaunch()
+        OfflineProtocol.state.offline = false
+        OfflineProtocol.state.loseResponse = true
+        await outbox.drain(api: api)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        let reads = OfflineProtocol.state.reads
+        XCTAssertEqual(reads.count, 3, "One lost read is sent again; nothing else repeats")
+        XCTAssertEqual(Set(reads.filter { $0.0 == "conversation" }.map(\.1)), [9])
+        XCTAssertEqual(Set(reads.filter { $0.0 == "other" }.map(\.1)), [2])
+        XCTAssertEqual(outbox.entries(server).map(\.state), [.sent, .sent])
+        try outbox.enqueueMarkRead(owner: .chief, conversationID: "conversation", through: 9, api: api)
+        XCTAssertEqual(outbox.entries(server).count, 2, "A point already sent is not saved again")
+    }
+
+    // MARK: Ask answers
+
+    private let question = AskAnswer(conversationID: "conversation", request: .userInput(requestID: "request-1"),
+        questions: [.init(id: "colourChoice", prompt: "Which colour?", answers: ["blue"], labels: ["Blue"])])
+    func testRefusedAskAnswerWaitsWhileItsAskWaitsThenBecomesExactlyOneLateMessage() async throws {
+        var outbox = Outbox(store: store)
+        OfflineProtocol.state.answerFate = "refused"
+        OfflineProtocol.state.pendingUserInput = "request-1"
+        let operation = try outbox.enqueueAskAnswer(question, owner: .ticket("ticket"), api: api)
+        await outbox.drain(api: api)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "The ask still waits: the answer is sent again later, not as a message")
+        XCTAssertEqual(outbox.work(server, id: operation)?.state, .waiting)
+        // The view names only the newest waiting ask, which can hide this one: still wait.
+        OfflineProtocol.state.pendingUserInput = "request-2"
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "Another waiting ask may hide this one")
+        OfflineProtocol.state.pendingUserInput = nil
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        await outbox.drain(api: api)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        let late = Outbox.lateAnswerMessageID(operationID: operation)
+        XCTAssertEqual(OfflineProtocol.state.answers, [operation, operation, operation], "Each try reuses the operation ID")
+        XCTAssertEqual(OfflineProtocol.state.writes, [late], "One late message, sent once")
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(OfflineProtocol.state.messageBodies.first?.1)) as! [String: Any]
+        XCTAssertEqual(body["conversation_id"] as? String, "conversation")
+        XCTAssertEqual((body["content"] as? [[String: Any]])?.first?["text"] as? String, "Answer to \"Which colour?\": Blue")
+        XCTAssertEqual(outbox.work(server, id: operation)?.state, .sent)
+        XCTAssertEqual(outbox.work(server, id: late)?.state, .sent)
+        let sentAnswer = try XCTUnwrap(OfflineProtocol.state.answerBodies.first)
+        let answers = (sentAnswer["answers"] as? [String: Any])?["colourChoice"] as? [String: Any]
+        XCTAssertEqual(answers?["answers"] as? [String], ["blue"], "Question IDs reach the server as named")
+    }
+    func testAnswerRefusedWithAnHTTPErrorTakesTheSamePathAndTryAgainKeepsItsIdentity() async throws {
+        var clock = Date.now
+        let outbox = Outbox(store: store, now: { clock })
+        OfflineProtocol.state.answerStatus = 409
+        OfflineProtocol.state.pendingUserInput = "request-1"
+        let operation = try outbox.enqueueAskAnswer(question, owner: .ticket("ticket"), api: api)
+        for _ in 0..<Outbox.unsettledAttemptBound { await outbox.drain(api: api); clock += 60 }
+        XCTAssertEqual(outbox.work(server, id: operation)?.state, .failed, "An ask that keeps waiting fails after the bound")
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
+        OfflineProtocol.state.pendingUserInput = nil
+        let retried = await outbox.retry(operation, api: api)
+        XCTAssertEqual(retried, operation)
+        await outbox.drain(api: api)
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.answers, Array(repeating: operation, count: Outbox.unsettledAttemptBound + 1))
+        XCTAssertEqual(OfflineProtocol.state.writes, [Outbox.lateAnswerMessageID(operationID: operation)], "The ask is gone: one late message")
+    }
+    func testRefusedAskAnswerWithAReceiptSendsNothingMore() async throws {
+        let outbox = Outbox(store: store)
+        OfflineProtocol.state.answerFate = "refused"
+        let operation = try outbox.enqueueAskAnswer(question, owner: .ticket("ticket"), api: api)
+        OfflineProtocol.state.answerReceipts[operation] = "applied"
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.answers, [operation])
+        XCTAssertTrue(OfflineProtocol.state.writes.isEmpty, "A receipt means the answer landed")
+        XCTAssertEqual(outbox.work(server, id: operation)?.state, .sent)
+        XCTAssertEqual(outbox.entries(server).count, 1)
+    }
+    func testLostAskAnswerChecksItsReceiptBeforeAnythingElse() async throws {
+        var outbox = Outbox(store: store)
+        let lost = try outbox.enqueueAskAnswer(question, owner: .ticket("ticket"), api: api)
+        OfflineProtocol.state.loseResponse = true
+        await outbox.drain(api: api)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.requests.filter { $0.contains("answer") }, [
+            "POST /api/conversation/conversations/conversation/user-input-answers",
+            "GET /api/conversation/conversations/conversation/answer-receipts/\(lost)",
+        ], "The first answer landed before its response was lost: its receipt settles it")
+        XCTAssertEqual(outbox.work(server, id: lost)?.state, .sent)
+
+        let unsaved = try outbox.enqueueAskAnswer(question, owner: .ticket("ticket"), api: api)
+        OfflineProtocol.state.loseAnswerBeforeSave = true
+        await outbox.drain(api: api)
+        outbox = relaunch()
+        await outbox.drain(api: api)
+        XCTAssertEqual(OfflineProtocol.state.answers, [lost, unsaved, unsaved], "No receipt after a lost response: the same answer again")
+        XCTAssertEqual(outbox.work(server, id: unsaved)?.state, .sent)
         XCTAssertTrue(OfflineProtocol.state.writes.isEmpty)
     }
-    func testReceiptPollingSkipsPhotoDecodeAndUnaddressableWorkParks() async throws {
-        var decodes = 0
-        let local = LocalStore(url: directory.appendingPathComponent("polling.store"), onPayloadDecode: { decodes += 1 })
-        let storage = try local.outgoing
-        let photo = ConversationSend.Piece(piece: "image", data: Data(repeating: 7, count: 512 * 1024).base64EncodedString(), mediaType: "image/jpeg", fileName: "large.jpg")
-        let addressed = PendingWork(id: "photo-poll", created: .now, kind: .message, owner: .chief,
-            message: ConversationSend(conversationId: "photo", content: [photo], senderMessageId: "photo-poll", sentAtUnixMilliseconds: 1))
-        try storage.enqueue(addressed, server: server)
-        try storage.beginAttempt(server: server, id: addressed.id)
-        try storage.settle(server: server, id: addressed.id, state: .serverQueued, note: "Queued")
-        let unknown = PendingWork(id: "unknown-photo", created: .now, kind: .message, owner: .chief,
-            message: ConversationSend(conversationId: nil, content: [photo], senderMessageId: "unknown-photo", sentAtUnixMilliseconds: 2))
-        try storage.enqueue(unknown, server: server)
-        try storage.beginAttempt(server: server, id: unknown.id)
-        try storage.settle(server: server, id: unknown.id, state: .uncertain, note: "Unknown")
-        try storage.saveEncoded(Outbox.encode(PendingWork(id: "unknown-voice", created: .now, kind: .voice, state: .uncertain, audioFile: "missing.m4a")), server: server, id: "unknown-voice")
-        try storage.saveEncoded(Outbox.encode(PendingWork(id: "bodyless", created: .now, kind: .approval, state: .uncertain, ticketID: "ticket")), server: server, id: "bodyless")
-        let outbox = Outbox(store: local)
-        let before = decodes
-        for _ in 0..<3 { await outbox.drain(api: api) }
-        XCTAssertEqual(decodes, before, "Receipt polls and unpollable candidates never decode original photo/voice bodies")
-        XCTAssertTrue(outbox.hasReconciliationWork(server: server))
-        let protected = try protectedDecision("metadata-protected")
-        try outbox.enqueue(protected, api: api)
-        await outbox.drain(api: api)
-        XCTAssertEqual(try storage.summary(server: server, id: protected.id)?.state, "sent")
-        try storage.settle(server: server, id: protected.id, state: .uncertain, note: "Recover receipt")
-        OfflineProtocol.state.lookupStatus = 503
-        OfflineProtocol.state.decisionLookup = Data("{}".utf8)
-        let protectedBefore = decodes
-        for _ in 0..<3 { await outbox.drain(api: api) }
-        XCTAssertEqual(decodes, protectedBefore, "Protected GET polling validates indexed identity without decoding saved command bytes")
-        OfflineProtocol.state.lookupStatus = 200; OfflineProtocol.state.decisionLookup = nil
-        await outbox.drain(api: api)
-        XCTAssertEqual(try storage.summary(server: server, id: protected.id)?.state, "sent")
-        XCTAssertEqual(decodes, protectedBefore, "An existing receipt needs no saved body decode")
-        let parkedBefore = decodes
-        try storage.settle(server: server, id: addressed.id, state: .sent, note: "Sent")
-        XCTAssertFalse(outbox.hasReconciliationWork(server: server), "Unknown destination, voice and bodyless decisions need an explicit wake, not a timer")
-        let requests = OfflineProtocol.state.requests.count
-        let foreground = Task { await outbox.run(api: api) }
-        try await Task.sleep(for: .milliseconds(3_150))
-        foreground.cancel(); await foreground.value
-        XCTAssertEqual(OfflineProtocol.state.requests.count, requests)
-        XCTAssertEqual(decodes, parkedBefore)
-        print("OUTGOING_DECODE protected_get_polls=3 protected_payload_decodes=0 receipt_polls=3 photo_bytes=524288 payload_decodes=0 idle_wait_ms=3150")
-    }
+
+    // MARK: Recordings
+
     func testTranscriptionPersistsDraftBeforeDeletingAudioAndDoesNotAppendTwice() async throws {
         let file = "test-\(UUID()).m4a"
         let url = LocalStore.directory.appendingPathComponent(file)
@@ -1136,112 +662,113 @@ import XCTest
         let outbox = Outbox(store: store)
         try outbox.save(PendingWork(id: "audio", created: .now, kind: .voice, audioFile: file, draftID: "guidance"), server: server)
         await outbox.drain(api: api)
-        let reopened = LocalStore(url: directory.appendingPathComponent("test.store"))
-        await Outbox(store: reopened).drain(api: api)
-        XCTAssertEqual(reopened.draft(server: server, id: "guidance"), "Typed\n\nRecorded words")
+        await relaunch().drain(api: api)
+        XCTAssertEqual(store.draft(server: server, id: "guidance"), "Typed\n\nRecorded words")
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertEqual(OfflineProtocol.state.writes, ["voice"])
-        let unowned = "expired-\(UUID()).m4a", shared = "shared-\(UUID()).m4a"
-        let unownedURL = LocalStore.directory.appendingPathComponent(unowned), sharedURL = LocalStore.directory.appendingPathComponent(shared)
-        try Data([4]).write(to: unownedURL); try Data([5]).write(to: sharedURL)
-        defer { try? FileManager.default.removeItem(at: unownedURL); try? FileManager.default.removeItem(at: sharedURL) }
-        let past = Date(timeIntervalSinceNow: -8 * 86400)
-        try outbox.save(PendingWork(id: "expired-audio", created: past, kind: .voice, state: .waiting, audioFile: unowned, draftID: "old"), server: server)
-        try outbox.save(PendingWork(id: "expired-shared", created: past, kind: .voice, state: .waiting, audioFile: shared, draftID: "old"), server: server)
-        for id in ["expired-audio", "expired-shared"] {
-            try store.outgoing.settle(server: server, id: id, state: .uncertain, note: "Delivery uncertain", now: past)
-        }
-        try outbox.save(PendingWork(id: "retained-audio", created: past, kind: .voice, state: .recording, audioFile: shared, draftID: "kept"), server: server + "-foreign")
-        outbox.clearFinished(server)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: unownedURL.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: sharedURL.path))
-        XCTAssertNil(outbox.work(server, id: "expired-audio"))
-        XCTAssertNil(outbox.work(server, id: "expired-shared"))
-        XCTAssertNotNil(outbox.work(server + "-foreign", id: "retained-audio"))
+    }
+
+    /// The note says "saved" while a recording waits and "transcribing" only while its request runs.
+    func testRecordingIsInFlightOnlyWhileItsTranscriptionRequestRuns() async throws {
+        let file = "test-\(UUID()).m4a"
+        let url = LocalStore.directory.appendingPathComponent(file)
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let outbox = Outbox(store: store)
+        try outbox.save(PendingWork(id: "audio", created: .now, kind: .voice, audioFile: file, draftID: "guidance"), server: server)
+        OfflineProtocol.state.offline = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: "audio")?.state, .waiting)
+        XCTAssertTrue(outbox.transcriptionsInFlight.isEmpty, "A dropped request leaves the recording saved, not transcribing")
+
+        OfflineProtocol.state.offline = false
+        let gate = DispatchSemaphore(value: 0)
+        OfflineProtocol.state.voiceGate = gate
+        let online = relaunch()
+        let drain = Task { await online.drain(api: api) }
+        for _ in 0..<500 where online.transcriptionsInFlight.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(online.transcriptionsInFlight, ["audio"])
+        gate.signal()
+        await drain.value
+        XCTAssertTrue(online.transcriptionsInFlight.isEmpty)
+        XCTAssertEqual(online.work(server, id: "audio")?.state, .sent)
     }
 }
 
 private final class OfflineState: @unchecked Sendable {
     private let lock = NSLock()
-    private var _offline = false
-    private var offlineFailures: Set<URL> = []
-    func failedOffline(_ url: URL) -> Bool { lock.withLock { offlineFailures.contains(url) } }
-    private var _offlineError: URLError.Code = .notConnectedToInternet
-    private var _responseError: URLError.Code = .networkConnectionLost
-    var offlineError: URLError.Code { get { lock.withLock { _offlineError } } set { lock.withLock { _offlineError = newValue } } }
-    var responseError: URLError.Code { get { lock.withLock { _responseError } } set { lock.withLock { _responseError = newValue } } }
-    var heldRequestCount: Int { lock.withLock { held.count } }
-    private var _loseResponse = false
-    private var _ticket = Data()
-    private var _writes: [String] = []
-    private var _requests: [String] = []
-    private var _heldMessageID: String?
-    private var receipts: Set<String> = []
-    private var decisionReceipts: [String: Data] = [:]
-    private var recordedDecisions: [(String, Data)] = []
-    private var _decisionOutcomes = 0
-    private var _decisionLookup: Data?
-    private var _decisionPost: Data?
-    private var _decisionStatus = 200
-    private var _lookupStatus = 200
-    private var _messageStatus = 200
-    var messageStatus: Int { get { lock.withLock { _messageStatus } } set { lock.withLock { _messageStatus = newValue } } }
-    private var _loseDecisionBeforeCommit = false
-    private var _loseDecisionAfterCommit = false
-    var decisionBodies: [(String, Data)] { lock.withLock { recordedDecisions } }
-    var decisionOutcomes: Int { lock.withLock { _decisionOutcomes } }
-    var decisionLookup: Data? { get { lock.withLock { _decisionLookup } } set { lock.withLock { _decisionLookup = newValue } } }
-    var decisionPost: Data? { get { lock.withLock { _decisionPost } } set { lock.withLock { _decisionPost = newValue } } }
-    var decisionStatus: Int { get { lock.withLock { _decisionStatus } } set { lock.withLock { _decisionStatus = newValue } } }
-    var lookupStatus: Int { get { lock.withLock { _lookupStatus } } set { lock.withLock { _lookupStatus = newValue } } }
-    var loseDecisionBeforeCommit: Bool { get { lock.withLock { _loseDecisionBeforeCommit } } set { lock.withLock { _loseDecisionBeforeCommit = newValue } } }
-    var loseDecisionAfterCommit: Bool { get { lock.withLock { _loseDecisionAfterCommit } } set { lock.withLock { _loseDecisionAfterCommit = newValue } } }
-    func status(_ request: URLRequest) -> Int { lock.withLock {
-        if request.url!.path.hasSuffix("/send") { return _messageStatus }
-        return request.url!.path.contains("/decision-operations/") ? (request.httpMethod == "POST" ? _decisionStatus : _lookupStatus) : 200
-    } }
-    private var _holdLanes = false
-    private var held: [@Sendable () -> Void] = []
-    private var active = 0, peak = 0, lanePeak = 0
-    private var activeLanes: [String: Int] = [:]
-    var holdLanes: Bool { get { lock.withLock { _holdLanes } } set { lock.withLock { _holdLanes = newValue } } }
-    var peaks: (server: Int, lane: Int) { lock.withLock { (peak, lanePeak) } }
-    private func lane(_ request: URLRequest) -> String {
-        let components = request.url!.path.split(separator: "/").map(String.init)
-        if components.count > 2, components[1] == "tickets" { return components[2] }
-        return components.count > 3 ? components[3] : request.url!.path
+    private var values = Values()
+    private struct Values {
+        var offline = false
+        var responseError: URLError.Code = .networkConnectionLost
+        var loseResponse = false
+        var loseAnswerBeforeSave = false
+        var ticket = Data()
+        var writes: [String] = []
+        var messageBodies: [(String, Data)] = []
+        var deliveredMessages: [String] = []
+        var refuseMessageIDs: Set<String> = []
+        var loseResponseIDs: Set<String> = []
+        var createdConversation: String?
+        var requests: [String] = []
+        var reads: [(String, Int)] = []
+        var answers: [String] = []
+        var answerBodies: [[String: Any]] = []
+        var answerFate = "applied"
+        var answerReceipts: [String: String] = [:]
+        var answerStatus = 200
+        var pendingUserInput: String?
+        var decisionReceipts: [String: Data] = [:]
+        var recordedDecisions: [(String, Data)] = []
+        var decisionOutcomes = 0
+        var messageStatus = 200
+        var loseDecisionBeforeCommit = false
+        var loseDecisionAfterCommit = false
+        /// Holds a transcription request open until the test signals it.
+        var voiceGate: DispatchSemaphore?
     }
-    func begin(_ request: URLRequest, respond: @escaping @Sendable () -> Void) {
-        let delayed = lock.withLock {
-            let key = lane(request)
-            active += 1; peak = max(peak, active)
-            activeLanes[key, default: 0] += 1; lanePeak = max(lanePeak, activeLanes[key, default: 0])
-            if _holdLanes && (key == "stalled" || (key == "queued" && request.url!.path.hasSuffix("/receipts"))) {
-                held.append(respond); return true
-            }
-            return false
-        }
-        if !delayed { respond() }
-    }
-    func end(_ request: URLRequest) { lock.withLock { active -= 1; activeLanes[lane(request), default: 0] -= 1 } }
-    func releaseHeldRequests() {
-        let callbacks = lock.withLock { _holdLanes = false; let all = held; held = []; return all }
-        for callback in callbacks { callback() }
-    }
-    var offline: Bool { get { lock.withLock { _offline } } set { lock.withLock { _offline = newValue } } }
-    var loseResponse: Bool { get { lock.withLock { _loseResponse } } set { lock.withLock { _loseResponse = newValue } } }
-    var heldMessageID: String? { get { lock.withLock { _heldMessageID } } set { lock.withLock { _heldMessageID = newValue } } }
-    var requests: [String] { lock.withLock { _requests } }
-    var ticket: Data { lock.withLock { _ticket } }
-    var writes: [String] { lock.withLock { _writes } }
-    func reset(ticket: Data) { lock.withLock { _ticket = ticket; _offline = false; offlineFailures = []; _offlineError = .notConnectedToInternet; _responseError = .networkConnectionLost; _loseResponse = false; _writes = []; _requests = []; _heldMessageID = nil; receipts = []; decisionReceipts = [:]; recordedDecisions = []; _decisionOutcomes = 0; _decisionLookup = nil; _decisionPost = nil; _decisionStatus = 200; _lookupStatus = 200; _messageStatus = 200; _loseDecisionBeforeCommit = false; _loseDecisionAfterCommit = false } }
+    private func value<T>(_ key: KeyPath<Values, T>) -> T { lock.withLock { values[keyPath: key] } }
+    private func store<T>(_ key: WritableKeyPath<Values, T>, _ new: T) { lock.withLock { values[keyPath: key] = new } }
+    var offline: Bool { get { value(\.offline) } set { store(\.offline, newValue) } }
+    var responseError: URLError.Code { get { value(\.responseError) } set { store(\.responseError, newValue) } }
+    var loseResponse: Bool { get { value(\.loseResponse) } set { store(\.loseResponse, newValue) } }
+    var loseAnswerBeforeSave: Bool { get { value(\.loseAnswerBeforeSave) } set { store(\.loseAnswerBeforeSave, newValue) } }
+    var refuseMessageIDs: Set<String> { get { value(\.refuseMessageIDs) } set { store(\.refuseMessageIDs, newValue) } }
+    var loseResponseIDs: Set<String> { get { value(\.loseResponseIDs) } set { store(\.loseResponseIDs, newValue) } }
+    var createdConversation: String? { get { value(\.createdConversation) } set { store(\.createdConversation, newValue) } }
+    var answerFate: String { get { value(\.answerFate) } set { store(\.answerFate, newValue) } }
+    var answerReceipts: [String: String] { get { value(\.answerReceipts) } set { store(\.answerReceipts, newValue) } }
+    var answerStatus: Int { get { value(\.answerStatus) } set { store(\.answerStatus, newValue) } }
+    var pendingUserInput: String? { get { value(\.pendingUserInput) } set { store(\.pendingUserInput, newValue) } }
+    var messageStatus: Int { get { value(\.messageStatus) } set { store(\.messageStatus, newValue) } }
+    var loseDecisionBeforeCommit: Bool { get { value(\.loseDecisionBeforeCommit) } set { store(\.loseDecisionBeforeCommit, newValue) } }
+    var loseDecisionAfterCommit: Bool { get { value(\.loseDecisionAfterCommit) } set { store(\.loseDecisionAfterCommit, newValue) } }
+    var voiceGate: DispatchSemaphore? { get { value(\.voiceGate) } set { store(\.voiceGate, newValue) } }
+    var ticket: Data { value(\.ticket) }
+    var writes: [String] { value(\.writes) }
+    var messageBodies: [(String, Data)] { value(\.messageBodies) }
+    var deliveredMessages: [String] { value(\.deliveredMessages) }
+    var requests: [String] { value(\.requests) }
+    var reads: [(String, Int)] { value(\.reads) }
+    var answers: [String] { value(\.answers) }
+    var answerBodies: [[String: Any]] { value(\.answerBodies) }
+    var decisionBodies: [(String, Data)] { value(\.recordedDecisions) }
+    var decisionOutcomes: Int { value(\.decisionOutcomes) }
+    func reset(ticket: Data) { lock.withLock { values = Values(); values.ticket = ticket } }
     func bumpRevision() {
         lock.withLock {
-            var value = try! JSONSerialization.jsonObject(with: _ticket) as! [String: Any]
+            var value = try! JSONSerialization.jsonObject(with: values.ticket) as! [String: Any]
             var proposal = value["pending_proposal"] as! [String: Any]
             proposal["revision"] = (proposal["revision"] as! Int) + 1
             value["pending_proposal"] = proposal
-            _ticket = try! JSONSerialization.data(withJSONObject: value)
+            values.ticket = try! JSONSerialization.data(withJSONObject: value)
+        }
+    }
+    func status(_ request: URLRequest) -> Int {
+        lock.withLock {
+            let path = request.url!.path
+            return path.hasSuffix("/send") ? values.messageStatus : path.hasSuffix("-answers") ? values.answerStatus : 200
         }
     }
     private func requestBody(_ request: URLRequest) -> Data {
@@ -1253,60 +780,82 @@ private final class OfflineState: @unchecked Sendable {
         }
         return data
     }
+    /// Commits first, then may lose the response, like a dropped connection after the server acted.
+    private func respond(_ data: Data) throws -> Data {
+        if values.loseResponse { values.loseResponse = false; throw URLError(values.responseError) }
+        return data
+    }
     func response(_ request: URLRequest) throws -> Data {
         try lock.withLock {
             let path = request.url!.path
-            _requests.append("\(request.httpMethod ?? "GET") \(path)")
-            if _offline { offlineFailures.insert(request.url!); throw URLError(_offlineError) }
+            values.requests.append("\(request.httpMethod ?? "GET") \(path)")
+            if values.offline { throw URLError(.notConnectedToInternet) }
             if path.contains("/decision-operations/") {
                 let operationID = request.url!.lastPathComponent
                 if request.httpMethod != "POST" {
-                    return _decisionLookup ?? decisionReceipts[operationID] ?? Data(#"{"receipt_contract":1,"receipt":null}"#.utf8)
+                    return values.decisionReceipts[operationID] ?? Data(#"{"receipt_contract":1,"receipt":null}"#.utf8)
                 }
                 let data = requestBody(request)
-                recordedDecisions.append((operationID, data))
-                if _loseDecisionBeforeCommit { _loseDecisionBeforeCommit = false; throw URLError(.networkConnectionLost) }
-                if let override = _decisionPost { return override }
-                if let existing = decisionReceipts[operationID] { return existing }
+                values.recordedDecisions.append((operationID, data))
+                if values.loseDecisionBeforeCommit { values.loseDecisionBeforeCommit = false; throw URLError(.networkConnectionLost) }
+                if let existing = values.decisionReceipts[operationID] { return existing }
                 let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-                let ticket = try JSONSerialization.jsonObject(with: _ticket) as! [String: Any]
+                let ticket = try JSONSerialization.jsonObject(with: values.ticket) as! [String: Any]
                 let current = ticket["pending_proposal"] as? [String: Any]
                 let refused = (body["expected_proposal_revision"] as? Int) != (current?["revision"] as? Int)
                 let value: [String: Any] = ["receipt_contract": 1, "receipt": [
-                    "operation_id": operationID, "ticket_id": String(request.url!.path.split(separator: "/")[2]),
+                    "operation_id": operationID, "ticket_id": String(path.split(separator: "/")[2]),
                     "decision": body["decision"]!, "field": body["field"]!, "expected_proposal_revision": body["expected_proposal_revision"]!,
                     "outcome": refused ? "refused" : "applied", "created_at": 100,
                     "transition": refused ? NSNull() : ["stage": "needs_implementation", "ceiling": "needs_implementation", "ceiling_holder": ["kind": "owner", "id": "owner"], "ticket_status": "ready", "pending_proposal_revision": 16],
                     "error": refused ? ["code": "changed_proposal", "message": "Proposal changed", "detail": [:]] : NSNull()
                 ]]
                 let response = try JSONSerialization.data(withJSONObject: value)
-                decisionReceipts[operationID] = response; _decisionOutcomes += 1
-                if _loseDecisionAfterCommit { _loseDecisionAfterCommit = false; throw URLError(.networkConnectionLost) }
+                values.decisionReceipts[operationID] = response; values.decisionOutcomes += 1
+                if values.loseDecisionAfterCommit { values.loseDecisionAfterCommit = false; throw URLError(.networkConnectionLost) }
                 return response
             }
-            if path.hasSuffix("/receipts") {
-                return try JSONSerialization.data(withJSONObject: ["receipts": receipts.map { ["sender_message_id": $0, "fate": "prompt"] }])
+            if path.contains("/answer-receipts/") {
+                let operationID = request.url!.lastPathComponent
+                let receipt: Any = values.answerReceipts[operationID].map { ["operation_id": operationID, "fate": $0] } ?? NSNull()
+                return try JSONSerialization.data(withJSONObject: ["receipt": receipt])
             }
-            if path == "/api/conversation/conversations/conversation", let id = _heldMessageID {
-                return try JSONSerialization.data(withJSONObject: ["backend_key": "codex", "held_prompts": [
-                    ["held_prompt_id": "held-1", "sender_message_id": id, "content": [["piece": "text", "text": "Held"]]]
-                ]])
+            if path.hasSuffix("/view") {
+                let input: Any = values.pendingUserInput.map { ["kind": "user_input", "request_id": $0, "row_key": "input", "source_sequence": 2] } ?? NSNull()
+                return try JSONSerialization.data(withJSONObject: ["page": ["items": [], "older": NSNull()],
+                    "status": ["authority": "current", "turn_running": true, "rest": ["plan_progress": [:]], "pending_user_input": input]])
             }
-            if request.httpMethod != "POST" { return _ticket }
-            var data = request.httpBody ?? Data()
-            if let stream = request.httpBodyStream {
-                stream.open(); defer { stream.close() }
-                var buffer = [UInt8](repeating: 0, count: 4096)
-                while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
-            }
+            if request.httpMethod != "POST" { return values.ticket }
+            let data = requestBody(request)
             let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-            let id = body["sender_message_id"] as? String ?? (path.hasSuffix("voice-transcriptions") ? "voice" : "decision")
-            _writes.append(id)
-            if path.hasSuffix("/send"), _messageStatus == 422 { return Data(#"{"detail":"unsupported or invalid conversation image"}"#.utf8) }
-            if id != "queued" { receipts.insert(id) }
-            if _loseResponse { _loseResponse = false; throw URLError(_responseError) }
-            if id == "voice" { return Data(#"{"transcript":"Recorded words"}"#.utf8) }
-            return try JSONSerialization.data(withJSONObject: ["conversation_id": body["conversation_id"] as? String ?? "conversation", "fate": id == "queued" ? "queued" : "started"])
+            if path.hasSuffix("/owner-read") {
+                let through = body["through_sequence"] as! Int
+                values.reads.append((String(path.split(separator: "/")[3]), through))
+                return try respond(JSONSerialization.data(withJSONObject: ["owner_read_through_sequence": through]))
+            }
+            if path.hasSuffix("-answers") {
+                let operationID = body["operation_id"] as! String
+                values.answers.append(operationID); values.answerBodies.append(body)
+                if values.answerStatus != 200 { return Data(#"{"error":{"message":"the conversation is not the Ticket's active conversation"}}"#.utf8) }
+                if values.loseAnswerBeforeSave { values.loseAnswerBeforeSave = false; throw URLError(.networkConnectionLost) }
+                if values.answerFate != "refused" { values.answerReceipts[operationID] = values.answerFate }
+                return try respond(JSONSerialization.data(withJSONObject: ["fate": values.answerFate]))
+            }
+            if path.hasSuffix("voice-transcriptions") {
+                values.writes.append("voice")
+                return try respond(Data(#"{"transcript":"Recorded words"}"#.utf8))
+            }
+            let id = body["sender_message_id"] as! String
+            values.writes.append(id); values.messageBodies.append((id, data))
+            if values.messageStatus == 422 { return Data(#"{"detail":"unsupported or invalid conversation image"}"#.utf8) }
+            if values.refuseMessageIDs.contains(id) {
+                return try JSONSerialization.data(withJSONObject: ["fate": "refused", "refusal_reason": "backend_did_not_start"])
+            }
+            // The server drops a repeat by its sender message ID.
+            if !values.deliveredMessages.contains(id) { values.deliveredMessages.append(id) }
+            let conversation = body["conversation_id"] as? String ?? values.createdConversation ?? "conversation"
+            if values.loseResponseIDs.remove(id) != nil { throw URLError(.networkConnectionLost) }
+            return try respond(JSONSerialization.data(withJSONObject: ["conversation_id": conversation, "fate": "started"]))
         }
     }
 }
@@ -1314,9 +863,8 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
     static let state = OfflineState()
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasPrefix("offline-test") == true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() { Self.state.begin(request) { [self] in respond() } }
-    private func respond() {
-        defer { Self.state.end(request) }
+    override func startLoading() {
+        if request.url?.path.hasSuffix("voice-transcriptions") == true { _ = Self.state.voiceGate?.wait(timeout: .now() + 10) }
         do {
             let data = try Self.state.response(request)
             client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: Self.state.status(request), httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
@@ -1324,306 +872,4 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() {}
-}
-
-@MainActor final class OfflinePresentationTests: XCTestCase {
-    func testSelectedProvisionalWorkSurvivesDestinationChangeWithIncrementalDecode() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        var decodes = 0
-        let local = LocalStore(url: directory.appendingPathComponent("render.store"), onPayloadDecode: { decodes += 1 })
-        let server = "https://render.invalid", api = APIClient(baseURL: URL(string: server)!)
-        let storage = try local.outgoing
-        let photo = ConversationSend.Piece(piece: "image", data: Data(repeating: 9, count: 512 * 1024).base64EncodedString(), mediaType: "image/jpeg", fileName: "photo.jpg")
-        func work(_ id: String, target: String?) -> PendingWork {
-            PendingWork(id: id, created: .now, kind: .message, owner: .chief,
-                message: ConversationSend(conversationId: target, content: [.init(text: id), photo], senderMessageId: id, sentAtUnixMilliseconds: 1))
-        }
-        for id in ["history-1", "history-2", "history-3"] {
-            try storage.enqueue(work(id, target: "known"), server: server)
-            try storage.beginAttempt(server: server, id: id)
-            try storage.settle(server: server, id: id, state: .sent, note: "Sent")
-        }
-        try storage.enqueue(work("A", target: nil), server: server)
-        try storage.beginAttempt(server: server, id: "A")
-        try storage.settle(server: server, id: "A", state: .uncertain, note: "Unknown")
-        try storage.enqueue(work("B", target: nil), server: server)
-        let model = ConversationModel(outgoingStore: local); model.conversationID = "known"
-        model.restore(owner: .chief, api: api)
-        XCTAssertEqual(Set(model.outgoing.map(\.id)), ["history-1", "history-2", "history-3", "A", "B"])
-        let first = decodes
-        XCTAssertEqual(first, 5)
-        for _ in 0..<20 { model.syncOutbox() }
-        try storage.settle(server: server, id: "A", state: .uncertain, note: "Still unknown")
-        model.syncOutbox()
-        XCTAssertEqual(decodes, first, "Metadata updates and repeated sync reuse rendered content, not full payload history")
-        model.conversationID = "another-server-conversation"
-        model.syncOutbox()
-        XCTAssertEqual(Set(model.outgoing.map(\.id)), ["A", "B"], "The owner's provisional chain remains visible after navigation learns a destination")
-        XCTAssertEqual(decodes, first)
-        XCTAssertTrue(model.recoveries["A"]?.unknownDestination == true)
-        XCTAssertNil(try storage.summary(server: server, id: "A")?.conversationID)
-        XCTAssertNil(try storage.summary(server: server, id: "B")?.conversationID)
-        XCTAssertFalse(try storage.canSubmit(server: server, id: "B"))
-        let recurringDecodes = decodes - first
-        try storage.replace(server: server, id: "A", with: work("A2", target: nil))
-        XCTAssertFalse(try storage.canSubmit(server: server, id: "A2"))
-        try storage.releaseHold(server: server, id: "A2", destination: .conversation("explicit"))
-        XCTAssertEqual(try storage.summary(server: server, id: "B")?.conversationID, "explicit")
-        XCTAssertNil(try storage.summary(server: server, id: "A")?.conversationID, "Attempted original is never automatically retargeted")
-        print("OUTGOING_DECODE selected=5 photo_bytes_each=524288 initial_decodes=\(first) repeated_sync=20 metadata_sync=1 destination_sync=1 recurring_additional_decodes=\(recurringDecodes) explicit_recovery_decodes=\(decodes - first - recurringDecodes)")
-        let coldOwner = ConversationOwner.manager("cold-owner")
-        let cold = PendingWork(id: "cold-known", created: .now, kind: .message, owner: coldOwner,
-            message: ConversationSend(conversationId: "saved-known", content: [.init(text: "Saved while offline")], senderMessageId: "cold-known", sentAtUnixMilliseconds: 3))
-        try storage.enqueue(cold, server: server)
-        let coldModel = ConversationModel(outgoingStore: local)
-        coldModel.restore(owner: coldOwner, api: api)
-        XCTAssertEqual(coldModel.conversationID, "saved-known", "Cold offline restore uses bounded latest scheduled owner metadata")
-        XCTAssertEqual(coldModel.outgoing.map(\.id), [cold.id])
-        let newStart = PendingWork(id: "cold-start", created: .now, kind: .message, owner: coldOwner,
-            message: ConversationSend(conversationId: nil, content: [.init(text: "Explicit new start")], senderMessageId: "cold-start", sentAtUnixMilliseconds: 4))
-        try storage.enqueue(newStart, server: server)
-        let starting = ConversationModel(outgoingStore: local)
-        starting.restore(owner: coldOwner, api: api)
-        XCTAssertNil(starting.conversationID, "Latest provisional start cannot resurrect an older known target")
-        XCTAssertEqual(starting.outgoing.map(\.id), [newStart.id])
-        let retryOwner = ConversationOwner.manager("retry-owner")
-        let refused = PendingWork(id: "alias-old", created: .now, kind: .message, state: .failed, owner: retryOwner,
-            message: ConversationSend(conversationId: "retry-target", content: [.init(text: "Retry words"), photo], senderMessageId: "alias-old", sentAtUnixMilliseconds: 5))
-        try storage.enqueue(refused, server: server)
-        let retry = PendingWork(id: "alias-new", created: .now, kind: .message, owner: retryOwner,
-            message: ConversationSend(conversationId: "retry-target", content: [.init(text: "Retry words"), photo], senderMessageId: "alias-new", sentAtUnixMilliseconds: 6), priorMessageIDs: [refused.id])
-        try storage.replace(server: server, id: refused.id, with: retry)
-        let aliases = ConversationModel(outgoingStore: local); aliases.conversationID = "retry-target"
-        aliases.restore(owner: retryOwner, api: api)
-        XCTAssertEqual(aliases.outgoing.map(\.id), [retry.id])
-        let aliasBefore = decodes
-        aliases.syncOutbox(); aliases.syncOutbox()
-        XCTAssertEqual(decodes, aliasBefore, "A hidden retry original never reloads its photo payload on later sync")
-        print("OUTGOING_DECODE retry_alias_repeat_sync=2 additional_decodes=\(decodes - aliasBefore)")
-    }
-    func testPersistedRetryReplacesRefusedBubbleAfterModelRecreation() throws {
-        let api = APIClient(baseURL: URL(string: "https://retry-\(UUID().uuidString.lowercased()).invalid")!)
-        let server = LocalStore.server(api.baseURL)
-        defer {
-            try? LocalStore.shared.remove(server: server, kind: "outbox", id: "new")
-            try? LocalStore.shared.remove(server: server, kind: "outbox", id: "old")
-            try? LocalStore.shared.remove(server: server, kind: "outbox", ids: ["other-old", "other-new", "late-original", "late-replacement"])
-        }
-        let old = PendingWork(id: "old", created: .now, kind: .message, state: .failed, owner: .chief,
-            message: ConversationSend(conversationId: "c", content: [.init(text: "Words")], senderMessageId: "old", sentAtUnixMilliseconds: 1))
-        var retry = PendingWork(id: "new", created: .now, kind: .message, owner: .chief,
-            message: ConversationSend(conversationId: "c", content: [.init(text: "Words")], senderMessageId: "new", sentAtUnixMilliseconds: 2))
-        retry.priorMessageIDs = ["old"]
-        try Outbox.shared.save(old, server: server)
-        try Outbox.shared.save(retry, server: server)
-        let other = PendingWork(id: "other-old", created: .now, kind: .message, state: .failed, owner: .chief,
-            message: ConversationSend(conversationId: "other-conversation", content: [.init(text: "Other destination")], senderMessageId: "other-old", sentAtUnixMilliseconds: 3))
-        let otherReplacement = PendingWork(id: "other-new", created: .now, kind: .message, owner: .chief,
-            message: ConversationSend(conversationId: "other-conversation", content: [.init(text: "Other destination")], senderMessageId: "other-new", sentAtUnixMilliseconds: 4))
-        try Outbox.shared.save(other, server: server)
-        try LocalStore.shared.outgoing.replace(server: server, id: other.id, with: otherReplacement)
-        let model = ConversationModel()
-        model.conversationID = "c"
-        model.restore(owner: .chief, api: api)
-        XCTAssertEqual(model.rows.count, 1)
-        XCTAssertEqual(model.rows.first?.id, "old")
-        XCTAssertEqual(model.rows.first?.text, "Words")
-        let original = PendingWork(id: "late-original", created: .now, kind: .message, state: .uncertain, owner: .chief,
-            message: ConversationSend(conversationId: nil, content: [.init(text: "Independent original")], senderMessageId: "late-original", sentAtUnixMilliseconds: 5))
-        let replacement = PendingWork(id: "late-replacement", created: .now, kind: .message, owner: .chief,
-            message: ConversationSend(conversationId: nil, content: [.init(text: "Independent replacement")], senderMessageId: "late-replacement", sentAtUnixMilliseconds: 6))
-        let storage = try LocalStore.shared.outgoing
-        try storage.enqueue(original, server: server)
-        try storage.replace(server: server, id: original.id, with: replacement)
-        try storage.releaseHold(server: server, id: replacement.id, destination: .newConversation)
-        try storage.settle(server: server, id: replacement.id, state: .sent, note: "Sent", conversationID: "c2")
-        let secondDestination = ConversationModel()
-        secondDestination.conversationID = "c2"
-        secondDestination.restore(owner: .chief, api: api)
-        XCTAssertEqual(Set(secondDestination.rows.map(\.id)), [original.id, replacement.id], "Unknown original stays inspectable with its replacement")
-        try storage.settle(server: server, id: original.id, state: .sent, note: "Sent", conversationID: "c1")
-        secondDestination.syncOutbox()
-        XCTAssertEqual(secondDestination.rows.map(\.id), [replacement.id], "A known late result cannot appear as Sent in the replacement's different destination")
-        let firstDestination = ConversationModel()
-        firstDestination.conversationID = "c1"
-        firstDestination.restore(owner: .chief, api: api)
-        XCTAssertEqual(firstDestination.rows.map(\.id), [original.id])
-        XCTAssertEqual(firstDestination.outgoing.first?.note, "Sent")
-    }
-}
-
-extension OfflineTests {
-    func testRequiredUpdateRetainsPendingIdentityAndDraftWithoutReplay() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = LocalStore(url: directory.appendingPathComponent("test.store"))
-        let api = APIClient(baseURL: URL(string: "https://update-\(UUID().uuidString).invalid")!)
-        let server = LocalStore.server(api.baseURL)
-        store.saveDraft("More unsent words", server: server, id: "draft")
-        let message = ConversationSend(conversationId: "c", content: [.init(text: "Pending words")], senderMessageId: "stable", sentAtUnixMilliseconds: 123)
-        let outbox = Outbox(store: store)
-        try outbox.save(PendingWork(id: "stable", created: .now, kind: .message, owner: .chief, message: message), server: server)
-        NativeBuildGate.requireUpdate(api.baseURL)
-        await outbox.drain(api: api)
-        let saved = try XCTUnwrap(outbox.entries(server).first)
-        XCTAssertEqual(saved.state, .waiting)
-        XCTAssertEqual(saved.message?.senderMessageId, "stable")
-        XCTAssertEqual(saved.message?.content.first?.text, "Pending words")
-        XCTAssertEqual(store.draft(server: server, id: "draft"), "More unsent words")
-    }
-}
-
-
-// Matches the app's original unversioned model. The entity keeps its LocalRecord
-// name, while the new model renames only the Core Data-colliding date property.
-private enum LegacyPhoneSchema {
-    @Model final class LocalRecord {
-        @Attribute(.unique) var key: String
-        var server: String
-        var kind: String
-        var payload: Data
-        var updated: Date
-        init(key: String, server: String, kind: String, payload: Data, updated: Date) {
-            self.key = key; self.server = server; self.kind = kind; self.payload = payload; self.updated = updated
-        }
-    }
-}
-
-extension OfflineTests {
-    func testLegacyStoreMigrationPreservesDraftAndPendingMessage() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let server = "https://legacy.invalid", foreign = "https://other.invalid"
-        let date = Date(timeIntervalSince1970: 1_700_000_001.125)
-        let attachment = ConversationSend.Piece(piece: "image", data: "AAECA/8=", mediaType: "image/png", fileName: "saved.png")
-        let message = ConversationSend(conversationId: "saved-conversation", content: [.init(text: "Exact legacy words"), attachment], senderMessageId: "legacy-id", sentAtUnixMilliseconds: 123)
-        let waiting = PendingWork(id: "legacy-id", created: date, kind: .message, owner: .chief, message: message)
-        let sending = PendingWork(id: "sending", created: date, kind: .message, state: .sending, owner: .chief, message: message)
-        let approval = PendingWork(id: "approval", created: date, kind: .approval, ticketID: "ticket")
-        let voice = PendingWork(id: "voice", created: date, kind: .voice, state: .recording, audioFile: "owned.m4a", draftID: "voice-draft")
-        func raw(_ work: PendingWork) throws -> Data {
-            var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(work)) as! [String: Any]
-            object["futureLegacyField"] = ["keep": "unknown bytes survive"]
-            return try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        }
-        let records: [(String, String, String, Data)] = [
-            (server, "draft", "draft", Data("Legacy unsent draft 🪶\n".utf8)),
-            (server, "attachments", "draft", try JSONEncoder().encode([attachment])),
-            (server, "outbox", waiting.id, try raw(waiting)),
-            (server, "outbox", sending.id, try raw(sending)),
-            (server, "outbox", approval.id, try raw(approval)),
-            (server, "outbox", voice.id, try raw(voice)),
-            (server, "outbox", "corrupt", Data([0xff, 0x00, 0x7b])),
-            (foreign, "outbox", waiting.id, try raw(waiting)),
-        ]
-        for originalDateName in [true, false] {
-            let source = root.appendingPathComponent(originalDateName ? "original" : "installed")
-            let copied = root.appendingPathComponent(originalDateName ? "original-copy" : "installed-copy")
-            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-            let sourceURL = source.appendingPathComponent("phone.store")
-            // Both sources are actual unversioned installed model schemas. Release all
-            // seed contexts before copying the whole coherent directory, including WAL.
-            try autoreleasepool {
-                let schema = originalDateName ? Schema([LegacyPhoneSchema.LocalRecord.self]) : Schema([LocalRecord.self])
-                let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(url: sourceURL)])
-                let context = ModelContext(container)
-                context.autosaveEnabled = false
-                for (origin, kind, id, bytes) in records {
-                    if originalDateName {
-                        context.insert(LegacyPhoneSchema.LocalRecord(key: LocalStore.key(origin, kind, id), server: origin, kind: kind, payload: bytes, updated: date))
-                    } else {
-                        context.insert(LocalRecord(key: LocalStore.key(origin, kind, id), server: origin, kind: kind, payload: bytes, updated: date))
-                    }
-                }
-                try context.save()
-            }
-            let audio = Data([0x6d, 0x34, 0x61, 0x00, 0xff])
-            try audio.write(to: source.appendingPathComponent("owned.m4a"))
-            try FileManager.default.copyItem(at: source, to: copied)
-            let migratedURL = copied.appendingPathComponent("phone.store")
-            var injectedFailures = 0
-            let failed = LocalStore(url: migratedURL, beforeSave: {
-                injectedFailures += 1
-                throw CocoaError(.fileWriteUnknown)
-            })
-            XCTAssertEqual(injectedFailures, 1)
-            XCTAssertNotNil(failed.saveError)
-            XCTAssertThrowsError(try failed.records(server: server, kind: "outbox"))
-            XCTAssertThrowsError(try failed.outgoing)
-            XCTAssertEqual(failed.workRevision, 0)
-            XCTAssertEqual(failed.outgoingRevision(server), 0)
-            // Inspect durable state without LocalStore, which would retry backfill.
-            try autoreleasepool {
-                let container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), configurations: [ModelConfiguration(url: migratedURL)])
-                let context = ModelContext(container)
-                context.autosaveEnabled = false
-                let rawRows = try context.fetch(FetchDescriptor<LocalRecord>())
-                XCTAssertFalse(rawRows.contains { $0.kind == "outgoingMigration" })
-                XCTAssertTrue(try context.fetch(FetchDescriptor<OutgoingMetadata>()).isEmpty)
-                for (origin, kind, id, bytes) in records {
-                    let row = try XCTUnwrap(rawRows.first { $0.key == LocalStore.key(origin, kind, id) })
-                    XCTAssertEqual(row.payload, bytes)
-                    XCTAssertEqual(row.updatedAt, date)
-                }
-            }
-            XCTAssertEqual(try Data(contentsOf: copied.appendingPathComponent("owned.m4a")), audio)
-            // The same copied store can retry successfully after the failed precommit.
-            let migrated = LocalStore(url: migratedURL)
-            XCTAssertTrue(migrated.saveError?.contains("original bytes remain") == true, "The corrupt row remains visible as a storage error")
-            for (origin, kind, id, bytes) in records {
-                let row = try XCTUnwrap(migrated.record(server: origin, kind: kind, id: id))
-                XCTAssertEqual(row.key, LocalStore.key(origin, kind, id))
-                XCTAssertEqual(row.server, origin); XCTAssertEqual(row.kind, kind)
-                XCTAssertEqual(row.payload, bytes); XCTAssertEqual(row.updatedAt, date)
-            }
-            XCTAssertEqual(try Data(contentsOf: copied.appendingPathComponent("owned.m4a")), audio)
-            func metadata() throws -> [OutgoingMetadata] {
-                let container = try ModelContainer(for: Schema(versionedSchema: PhoneOutgoingSchema.self), configurations: [ModelConfiguration(url: migratedURL)])
-                return try ModelContext(container).fetch(FetchDescriptor<OutgoingMetadata>(sortBy: [SortDescriptor(\.sequence)]))
-            }
-            let marker = try XCTUnwrap(migrated.record(server: "", kind: "outgoingMigration", id: OutgoingStoreMigration.markerID))
-            XCTAssertEqual(marker.payload, Data([1]))
-            let markerDate = marker.updatedAt
-            let migratedWaiting = try XCTUnwrap(migrated.outgoing.summary(server: server, id: waiting.id))
-            XCTAssertEqual(migratedWaiting.expiresAt, markerDate.addingTimeInterval(7 * 86400))
-            try migrated.outgoing.expire(server: server, now: markerDate)
-            XCTAssertNotNil(try migrated.outgoing.summary(server: server, id: waiting.id), "First cleanup cannot delete aged work just migrated to uncertainty")
-            XCTAssertEqual(try migrated.record(server: server, kind: "outbox", id: waiting.id)?.payload, try raw(waiting))
-
-            let indexed = try metadata()
-            XCTAssertEqual(indexed.count, 6)
-            XCTAssertEqual(Set(indexed.map(\.provenance)), ["unknown"])
-            XCTAssertTrue(indexed.filter { ["legacy-id", "sending", "approval"].contains($0.identity) }.allSatisfy { $0.state == "uncertain" })
-            XCTAssertEqual(indexed.first(where: { $0.identity == "corrupt" })?.state, "storageError")
-            XCTAssertNotNil(indexed.first(where: { $0.identity == "corrupt" })?.failure)
-            XCTAssertEqual(indexed.first(where: { $0.identity == "voice" })?.draftID, "voice-draft")
-            XCTAssertEqual(indexed.filter { $0.server == foreign }.count, 1)
-            migrated.saveDraft("A new draft", server: server, id: "fresh-draft")
-            try migrated.put(server: server, kind: "cache", id: "fresh-cache", data: Data([1]))
-            XCTAssertNil(migrated.saveError)
-            XCTAssertTrue(migrated.outgoingError?.contains("original bytes remain") == true)
-            let identities = indexed.map { ($0.key, $0.sequence) }
-            let reopened = LocalStore(url: migratedURL)
-            XCTAssertEqual(reopened.draft(server: server, id: "draft"), "Legacy unsent draft 🪶\n")
-            let reopenedMarker = try XCTUnwrap(reopened.record(server: "", kind: "outgoingMigration", id: OutgoingStoreMigration.markerID))
-            XCTAssertEqual(reopenedMarker.updatedAt, markerDate)
-            XCTAssertEqual(reopenedMarker.payload, Data([1]))
-            XCTAssertTrue(reopened.outgoingError?.contains("original bytes remain") == true)
-            let again = try metadata()
-            XCTAssertEqual(again.map(\.key), identities.map { $0.0 })
-            XCTAssertEqual(again.map(\.sequence), identities.map { $0.1 })
-            XCTAssertEqual(try reopened.records(server: server, kind: "outbox").count, 5)
-            XCTAssertEqual(try reopened.records(server: foreign, kind: "outbox").count, 1)
-            XCTAssertEqual(try reopened.record(server: server, kind: "outbox", id: "corrupt")?.payload, Data([0xff, 0x00, 0x7b]))
-            XCTAssertFalse(try reopened.outgoing.canSubmit(server: server, id: waiting.id))
-            XCTAssertThrowsError(try reopened.outgoing.beginAttempt(server: server, id: waiting.id))
-            try reopened.outgoing.settle(server: server, id: waiting.id, state: .sent, note: "Late receipt", conversationID: "receipt-conversation")
-            let legacyAfterSettlement = try XCTUnwrap(reopened.record(server: server, kind: "outbox", id: waiting.id))
-            XCTAssertEqual(legacyAfterSettlement.payload, try raw(waiting))
-            XCTAssertEqual(legacyAfterSettlement.updatedAt, date)
-            XCTAssertEqual(try reopened.outgoing.summary(server: server, id: waiting.id)?.provenance, "unknown")
-            XCTAssertEqual(try reopened.outgoing.work(server: server, id: waiting.id)?.message?.conversationId, "receipt-conversation")
-        }
-    }
 }

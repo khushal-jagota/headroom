@@ -3,7 +3,6 @@ import UIKit
 
 struct TicketView: View {
     let ticketID: String
-    var openConversationID: String?
     @Environment(AppStore.self) private var store
     private var resource: ResourceHandle<TicketRead> { store.resources.handle(TicketResources.detail(ticketID)) }
     private var detail: TicketDetail? { resource.value?.detail }
@@ -15,14 +14,12 @@ struct TicketView: View {
     @State private var artifacts: ArtifactPage?
     private var error: String? { resource.error ?? manifestResource?.error }
     @State private var artifactError: String?
-    @State private var actionNote: String?
-    @State private var busy = false
     @State private var scopeOpen = false
+    @State private var actionsOpen = false
     @State private var stepsOpen = false
-    @State private var recapEditorOpen = false
     @State private var configurationOpen = false
     @State private var decision = TicketDecisionState()
-    @State private var linkedArtifact: AppRoute?
+    @Environment(\.openRoute) private var openRoute
     private var owner: ArtifactOwner { ArtifactOwner(kind: .ticket, id: ticketID) }
     private var presentation: TicketPresentation? {
         guard let detail, let manifest else { return nil }
@@ -36,7 +33,6 @@ struct TicketView: View {
     private func ticketContent(textEntry: ScreenTextEntryContext) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xl) {
-                AgentPageControls { ticketMenu }
                 if let detail {
                     masthead(detail)
                     if let presentation {
@@ -49,7 +45,8 @@ struct TicketView: View {
                 .padding(.horizontal, AgentPageLayout.gutter).padding(.bottom, PanelsTheme.Space.lg)
                 .frame(maxWidth: .infinity)
         }
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { ticketMenu } }
         .scrollContentBackground(.hidden).textCase(nil)
         .background(PanelsTheme.Web.surface).foregroundStyle(PanelsTheme.Web.text)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -57,9 +54,9 @@ struct TicketView: View {
                 TicketDecisionDock(presentation: presentation, proposal: proposal, decision: decision)
             }
         }
-        .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, title: detail?.title ?? "Ticket", openConversationID: openConversationID, refreshError: error, retry: { await load() }, textEntry: textEntry)
+        .conversationNavigation(owner: .ticket(ticketID), conversationID: detail?.conversationId, refreshError: error, retry: { await load() }, textEntry: textEntry)
         .panelsRefreshable { await load(); await loadArtifacts() }
-        .screenLoadState("ticket", hasContent: detail != nil, error: error, showsRefreshError: false) { await load() }
+        .screenLoadState("ticket", hasContent: detail != nil, error: error) { await load() }
         .resourceDemand(resource)
         .task(id: store.baseURL.absoluteString + "|" + (detail?.workerType ?? "") + "|" + String(detail?.workflow == nil)) {
             guard detail?.workflow == nil, let handle = manifestResource else { return }
@@ -68,7 +65,7 @@ struct TicketView: View {
             while !Task.isCancelled { do { try await Task.sleep(for: .seconds(3600)) } catch { return } }
         }
         .navigationDemand("ticket:\(ticketID)", selected: ViewOwner(kind: "ticket", id: ticketID))
-        .task(id: store.baseURL.absoluteString) { await loadArtifacts() }
+        .task(id: "\(store.baseURL)|\(artifacts == nil ? store.connectionSession : 0)") { await loadArtifacts() }
         .sheet(isPresented: $scopeOpen) {
             if let presentation {
                 TicketApprovalLimitSheet(presentation: presentation) { ceiling, holder in
@@ -77,36 +74,32 @@ struct TicketView: View {
                 }
             }
         }
-        .sheet(isPresented: $recapEditorOpen) {
-            TicketTextEditor(title: "Recap", save: { text in
-                try await store.client.editTicketRecap(ticketID, recap: text)
-                await load(); await store.refresh()
-            }, text: detail?.recap ?? "")
+        .sheet(isPresented: $actionsOpen) {
+            if let detail {
+                TicketActionsSheet(ticket: detail, canChange: presentation?.terminal == false, baseURL: store.baseURL,
+                    askForRecap: {
+                        let delivery = try await store.client.requestTicketRecap(ticketID)
+                        if let note = delivery.note { throw APIError(status: 0, message: note) }
+                        await load(); await store.refresh()
+                    },
+                    setBacklog: {
+                        try await store.client.setTicketBacklogged(detail, backlogged: !detail.isBacklogged)
+                        await load(); await store.refresh()
+                    })
+            }
         }
         .sheet(isPresented: $configurationOpen) {
             if let detail { TicketWorkerSetup(ticket: detail) { await load() } }
         }
-        .navigationDestination(item: $linkedArtifact) { RouteDestination(route: $0) }
         .environment(\.openURL, OpenURLAction { url in
-            if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { textEntry.endEditingBeforeNavigation { linkedArtifact = route }; return .handled }
+            if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent, conversationOwner: .ticket(ticketID)) { textEntry.endEditingBeforeNavigation { openRoute(route) }; return .handled }
             return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
         })
     }
 
     private var ticketMenu: some View {
-        Menu {
-            if let detail, presentation?.terminal == false {
-                Button("Ask for a recap", systemImage: "arrow.clockwise") { requestRecap() }
-                Button(detail.isBacklogged ? "Resume ticket" : "Backlog ticket", systemImage: detail.isBacklogged ? "play" : "pause") { changeBacklog(detail) }
-            }
-            Button("Copy link", systemImage: "doc.on.doc") {
-                var components = URLComponents(url: store.baseURL, resolvingAgainstBaseURL: false)
-                components?.fragment = "/workspace/\(ticketID)"
-                UIPasteboard.general.url = components?.url
-                Haptics.success()
-            }
-        } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }
-            .disabled(busy).accessibilityLabel("Ticket actions").accessibilityIdentifier("ticket-actions")
+        Button { actionsOpen = true } label: { Image(systemName: "ellipsis") }
+            .accessibilityLabel("Ticket actions").accessibilityIdentifier("ticket-actions")
     }
 
     private func masthead(_ detail: TicketDetail) -> some View {
@@ -121,39 +114,18 @@ struct TicketView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             TicketMachineLabel(locale: detail.locale)
-            Group {
-                if detail.recap.isEmpty {
-                    Button("+ add orientation") { recapEditorOpen = true }.foregroundStyle(PanelsTheme.faint)
-                } else { TicketRecapText(text: detail.recap) }
-            }
-                .contextMenu {
-                    Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = detail.recap; Haptics.success() }
-                    Button("Edit", systemImage: "pencil") { recapEditorOpen = true }
-                    Button("Ask for a fresh recap", systemImage: "arrow.clockwise") { requestRecap() }
-                }
+            if !detail.recap.isEmpty { TicketRecapText(text: detail.recap) }
             if let blockers = detail.blockerSummary?.blockedBy, !blockers.isEmpty {
                 VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
                     Text("Blocked by").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
                     ForEach(blockers, id: \.ticketId) { blocker in
                         NavigationLink(value: AppRoute.ticket(blocker.ticketId)) { Text(blocker.title).multilineTextAlignment(.leading) }
                             .font(PanelsTheme.TypeScale.small).padding(.vertical, PanelsTheme.Space.xs)
-                            .contextMenu {
-                                Button("Remove blocker", systemImage: "minus.circle", role: .destructive) {
-                                    Task { await perform { try await store.client.removeTicketBlocker(ticketID, blockerID: blocker.ticketId); return nil } }
-                                }
-                            }
                     }
                 }
             }
             if detail.isBacklogged {
-                HStack {
-                    Text("Backlogged. Automatic work is paused.").foregroundStyle(PanelsTheme.faint)
-                    Button("Resume") { changeBacklog(detail) }.font(PanelsTheme.TypeScale.sectionLabel).disabled(busy)
-                }.font(PanelsTheme.TypeScale.small)
-            }
-            if let actionNote {
-                Text(actionNote).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.error)
-                    .accessibilityIdentifier("ticket-action-note")
+                Text("Backlogged. Automatic work is paused.").font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.faint)
             }
         }
     }
@@ -180,7 +152,7 @@ struct TicketView: View {
                         }.panelsScaledFont(size: PanelsTheme.Web.bodySize)
                             .foregroundStyle(PanelsTheme.Web.secondary)
                             .frame(minHeight: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
-                    }.buttonStyle(.plain).disabled(busy).accessibilityIdentifier("ticket-approval-limit")
+                    }.buttonStyle(.plain).accessibilityIdentifier("ticket-approval-limit")
                 }
             if !presentation.terminal, presentation.ticket.assigned == true || presentation.currentStage?.ownershipMode == "user", let field = presentation.currentField,
                presentation.ticket.pendingProposal?.field != field {
@@ -231,10 +203,6 @@ struct TicketView: View {
         }
     }
 
-    private func requestRecap() { Task { await perform { try await store.client.requestTicketRecap(ticketID).note } } }
-    private func changeBacklog(_ ticket: TicketDetail) {
-        Task { await perform { try await store.client.setTicketBacklogged(ticket, backlogged: !ticket.isBacklogged); return nil } }
-    }
     private func load() async {
         store.resources.invalidate([resource.key])
         await resource.refresh()
@@ -247,16 +215,6 @@ struct TicketView: View {
             try Task.checkCancellation()
             guard client.baseURL == store.baseURL else { return }
             artifacts = result; artifactError = nil
-        } catch { if !Task.isCancelled { artifactError = error.localizedDescription } }
-    }
-    private func perform(_ action: () async throws -> String?) async {
-        guard !busy else { return }
-        busy = true; actionNote = nil
-        defer { busy = false }
-        do {
-            actionNote = try await action()
-            if actionNote == nil { Haptics.success() } else { Haptics.error() }
-            await load(); await store.refresh()
-        } catch { actionNote = error.localizedDescription; Haptics.error() }
+        } catch { if !Task.isCancelled { artifactError = ServerReadFailure.note(error) } }
     }
 }
