@@ -31,8 +31,7 @@ export const RECOVERY_PROMPT =
   'For direct Panels API calls, use `panels api METHOD PATH --input-json - --json`. ' +
   "The command sends this conversation's credential automatically. " +
   'Do not use X-Plan-* identity headers. ' +
-  'Chief recap: pipe one JSON object `{"recap":"your short recap"}` into ' +
-  '`panels api PUT /api/workers/chief-of-staff/recap --input-json -`.';
+  'To write a recap, use `panels recap`.';
 export async function recover_conversations(
   system: ConversationSystem,
   database: Database,

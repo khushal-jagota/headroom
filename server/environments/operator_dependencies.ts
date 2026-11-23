@@ -128,7 +128,7 @@ export async function create_production_operator_dependencies(
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<OperatorDependencies<OperatorName>> {
   const snapshot = { ...environment };
-  if (name === 'inspect' || name === 'server-event-loop-tasks') return undefined;
+  if (name === 'inspect') return undefined;
   const home = snapshot.HOME ?? userInfo().homedir;
   // Even path adapters load only for the selected callback, never for help/table imports.
   const path_inputs = async (): Promise<OperatorPathInputs> => {

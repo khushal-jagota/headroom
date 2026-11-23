@@ -1,7 +1,7 @@
 /** Client-only measure commands. Domain validation remains at the HTTP boundary. */
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { send } from '../../cli/http.ts';
-import { stdin_object } from '../../cli/input.ts';
+import { read_json_input } from '../../cli/input.ts';
 import { emit } from '../../cli/measure_io.ts';
 import { CREATE } from './schema.ts';
 const quote = (value: string) =>
@@ -34,7 +34,7 @@ export async function run_measure_command(inv: Invocation): Promise<CommandResul
           ? path + '/read'
           : path + '/' + quote(v.measure_id) + (command === 'manual-write' ? '/manual-writes' : '');
     data = await send(inv, command === 'edit' ? 'PATCH' : 'POST', endpoint, {
-      json_body: await stdin_object(inv),
+      json_body: await read_json_input(inv, 'measure request'),
     });
   }
   return emit(data, inv);

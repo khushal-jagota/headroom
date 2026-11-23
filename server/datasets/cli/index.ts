@@ -1,7 +1,7 @@
 /** Dataset commands use the same bounded input and output contract as measures. */
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
 import { send } from '../../cli/http.ts';
-import { stdin_object } from '../../cli/input.ts';
+import { read_json_input } from '../../cli/input.ts';
 import { emit } from '../../cli/measure_io.ts';
 const quote = (value: string) =>
   encodeURIComponent(value).replace(
@@ -27,7 +27,7 @@ export async function run_dataset_command(inv: Invocation): Promise<CommandResul
           ? path + '/read'
           : path + '/' + quote(v.dataset_id);
     data = await send(inv, command === 'edit' ? 'PATCH' : 'POST', endpoint, {
-      json_body: await stdin_object(inv),
+      json_body: await read_json_input(inv, 'dataset request'),
     });
   }
   return emit(data, inv);

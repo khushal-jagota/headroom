@@ -46,7 +46,7 @@ import {
 } from '../manager_wakes/runtime.ts';
 
 // A deferred proposal remains open but cannot hide factual failures or inflate its Manager.
-test('deferral pauses proposal slots and Manager rollups while direct Ticket facts remain', async () => {
+test('deferral pauses proposal slots and moves the Ticket to its Manager backlog count', async () => {
   const db = fixture(),
     id = manager(db, 'Deferred work');
   const ticket = propose(
@@ -68,17 +68,22 @@ test('deferral pauses proposal slots and Manager rollups while direct Ticket fac
   const detail: Record<string, unknown>[] = [{ id: ticket.id }],
     managers: Record<string, unknown>[] = [{ id }];
   await add_work_attention(db, undefined, detail, managers);
-  expect(managers[0]!.ticket_rollup).toMatchObject({ awaiting_agent_approval: true });
-  db.write((sql) =>
+  expect(managers[0]!.ticket_needs).toEqual({ agent_approval: 1 });
+  db.write((sql) => {
     tickets.set_ticket_backlog(sql, ticket.id, {
       is_backlogged: true,
       principal: OWNER,
       now: now + 3,
-    }),
-  );
+    });
+    // This fixture has no navigation commit step, so the record follows by hand.
+    sql.run(
+      "UPDATE navigation_records SET value=json_set(value,'$.is_backlogged',json('true')) WHERE kind='ticket' AND id=?",
+      [ticket.id],
+    );
+  });
   await add_work_attention(db, undefined, detail, managers);
-  expect(detail[0]!.awaiting_agent_approval).toBe(true);
-  expect(managers[0]!.ticket_rollup).toMatchObject({ awaiting_agent_approval: false });
+  expect(detail[0]).toMatchObject({ needs: 'backlog', awaiting_agent_approval: false });
+  expect(managers[0]!.ticket_needs).toEqual({ backlog: 1 });
   expect(
     db.write((sql) => data.claim_next_batch(sql, { process_token: 'deferral', now: now + 4 })),
   ).toBeNull();

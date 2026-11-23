@@ -3,9 +3,16 @@ import { dirname, join, parse } from 'node:path';
 import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
 import type { ReadSql } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import type { Principal } from '../core/contracts.ts';
 import { is_private_ticket_name } from '../files/logic/paths.ts';
-import type { Ticket } from './contracts.ts';
+import { TICKET_NEEDS } from './contracts.ts';
+import type {
+  LegacyTicketListFilters,
+  Ticket,
+  TicketListFilters,
+  TicketListScope,
+  TicketNeed,
+} from './contracts.ts';
+import { ticket_need, ticketIsTerminal } from '../navigation/views/logic.ts';
 import * as data from './data/index.ts';
 import { blocker_summary } from '../core/ticket_blocks.ts';
 import { workflow_manifest } from '../worker_types/registry.ts';
@@ -267,58 +274,69 @@ export function list_tickets(
     )
     .map((r) => broken_ticket(sql, r.id) ?? ticket_json(data.read_ticket(sql, r.id), now));
 }
-export interface TicketListFilters {
-  manager: Principal | null;
-  stages: string[];
-  excluded_stages: string[];
-  ticket_statuses: string[];
-  excluded_ticket_statuses: string[];
-  is_backlogged: boolean | null;
-  worker_types: string[];
-  include_terminal: boolean;
-  active?: boolean;
-  search: string | null;
+interface SummaryRecord {
+  id: string;
+  value: string;
+  project_name: string | null;
+  manager_title: string | null;
+  recap: string;
+  field_values: string;
+  pending_proposal: string | null;
 }
-export function list_ticket_summaries(
+function summary_records(sql: ReadSql): SummaryRecord[] {
+  return sql.all<SummaryRecord>(
+    "SELECT r.id,r.value,p.name AS project_name,m.title AS manager_title,t.recap,t.field_values,t.pending_proposal FROM navigation_records r LEFT JOIN managers m ON m.id=json_extract(r.value,'$.manager_id') LEFT JOIN projects p ON p.id=json_extract(r.value,'$.project_id') JOIN tickets t ON t.id=r.id WHERE r.kind='ticket' ORDER BY json_extract(r.value,'$.created_at'),r.id",
+  );
+}
+function summary_row(row: SummaryRecord, v: Json): Json {
+  return {
+    is_backlogged: Boolean(v.is_backlogged),
+    id: row.id,
+    title: v.title,
+    locale: v.locale,
+    machine_id: v.machine_id,
+    worker_type: v.worker_type,
+    stage: v.stage,
+    ticket_status: v.ticket_status,
+    project_id: v.project_id,
+    project: row.project_name,
+    manager_id: v.manager_id,
+    manager: { kind: v.manager_kind, id: v.manager_id ?? 'chief' },
+    manager_title: row.manager_title,
+    recap: v.recap,
+    recap_preview: v.recap_preview,
+    recap_updated_at: v.recap_updated_at,
+    recap_stage_changed: Boolean(v.recap_stage_changed),
+  };
+}
+function in_manager(filters: { manager: LegacyTicketListFilters['manager'] }, v: Json): boolean {
+  return (
+    !filters.manager ||
+    (v.manager_kind === filters.manager.kind &&
+      (filters.manager.kind !== 'manager' || v.manager_id === filters.manager.id))
+  );
+}
+/**
+ * The list read as it was before need words, for a request that names no `scope` and no `needs`.
+ * Its caller is the installed iPhone app, which sends `is_backlogged` and `include_terminal`.
+ */
+export function list_ticket_summaries_by_flags(
   sql: ReadSql,
   page: ListPageRequest,
-  filters: TicketListFilters,
+  filters: LegacyTicketListFilters,
   project_id: string | null,
   manager_id: string | null,
 ): { tickets: Json[]; page: ReturnType<typeof pageFacts> } {
   checkPage(page);
-  const records = sql.all<{
-    id: string;
-    value: string;
-    project_name: string | null;
-    manager_title: string | null;
-    recap: string;
-    field_values: string;
-    pending_proposal: string | null;
-  }>(
-    "SELECT r.id,r.value,p.name AS project_name,m.title AS manager_title,t.recap,t.field_values,t.pending_proposal FROM navigation_records r LEFT JOIN managers m ON m.id=json_extract(r.value,'$.manager_id') LEFT JOIN projects p ON p.id=json_extract(r.value,'$.project_id') JOIN tickets t ON t.id=r.id WHERE r.kind='ticket' ORDER BY json_extract(r.value,'$.created_at'),r.id",
-  );
   const matches: Json[] = [];
-  for (const row of records) {
-    const v = JSON.parse(row.value) as Json,
-      status = String(v.ticket_status);
-    if (
-      filters.manager &&
-      (v.manager_kind !== filters.manager.kind ||
-        (filters.manager.kind === 'manager' && v.manager_id !== filters.manager.id))
-    )
-      continue;
+  for (const row of summary_records(sql)) {
+    const v = JSON.parse(row.value) as Json;
+    if (!in_manager(filters, v)) continue;
     if (
       (project_id !== null && v.project_id !== project_id) ||
       (manager_id !== null && v.manager_id !== manager_id)
     )
       continue;
-    if (
-      (filters.ticket_statuses.length && !filters.ticket_statuses.includes(status)) ||
-      filters.excluded_ticket_statuses.includes(status)
-    )
-      continue;
-    if (filters.active && (v.terminal || v.is_backlogged)) continue;
     if ('integrity_error' in v) {
       const broken = broken_ticket(sql, row.id)!;
       if (
@@ -351,28 +369,112 @@ export function list_ticket_summaries(
       ].join('\n');
       if (!text.toLowerCase().includes(filters.search.toLowerCase())) continue;
     }
-    matches.push({
-      is_backlogged: Boolean(v.is_backlogged),
-      id: row.id,
-      title: v.title,
-      locale: v.locale,
-      machine_id: v.machine_id,
-      worker_type: v.worker_type,
-      stage: v.stage,
-      ticket_status: status,
-      project_id: v.project_id,
-      project: row.project_name,
-      manager_id: v.manager_id,
-      manager: { kind: v.manager_kind, id: v.manager_id ?? 'chief' },
-      manager_title: row.manager_title,
-      recap: v.recap,
-      recap_preview: v.recap_preview,
-      recap_updated_at: v.recap_updated_at,
-      recap_stage_changed: Boolean(v.recap_stage_changed),
-    });
+    matches.push(summary_row(row, v));
   }
   const tickets = matches.slice(page.offset, page.offset + page.limit);
   return { tickets, page: pageFacts(matches.length, tickets.length, page) };
+}
+export interface TicketSummaryMatch {
+  row: Json;
+  /** Most recent activity first within one need: `updated_at`, else `created_at`. */
+  activity: number;
+}
+/**
+ * Every Ticket summary that matches the filters, before need filtering and paging. A done or
+ * backlogged match already carries `needs`, which reads no conversation. `not_shown` counts,
+ * for the live scope, the done and backlogged Tickets that match every other filter.
+ */
+export function list_ticket_summaries(
+  sql: ReadSql,
+  filters: TicketListFilters,
+  project_id: string | null,
+  manager_id: string | null,
+): { matches: TicketSummaryMatch[]; not_shown: { backlog: number; done: number } | null } {
+  const records = summary_records(sql);
+  const matches: TicketSummaryMatch[] = [];
+  const not_shown = filters.scope === 'live' ? { backlog: 0, done: 0 } : null;
+  const wanted = (need: TicketNeed) => !filters.needs.length || filters.needs.includes(need);
+  for (const row of records) {
+    const v = JSON.parse(row.value) as Json;
+    if (!in_manager(filters, v)) continue;
+    if (
+      (project_id !== null && v.project_id !== project_id) ||
+      (manager_id !== null && v.manager_id !== manager_id)
+    )
+      continue;
+    const activity = Number(v.updated_at ?? v.created_at ?? 0);
+    if ('integrity_error' in v) {
+      // A broken Ticket needs repair, so it is live whatever its stored Stage or backlog says.
+      if (!['live', 'all'].includes(filters.scope) || !wanted('errored')) continue;
+      const broken = broken_ticket(sql, row.id)!;
+      if (
+        filters.search !== null &&
+        !JSON.stringify(broken).toLowerCase().includes(filters.search.toLowerCase())
+      )
+        continue;
+      matches.push({ row: broken, activity });
+      continue;
+    }
+    if (filters.worker_types.length && !filters.worker_types.includes(String(v.worker_type)))
+      continue;
+    if (
+      (filters.stages.length && !filters.stages.includes(String(v.stage))) ||
+      filters.excluded_stages.includes(String(v.stage))
+    )
+      continue;
+    const terminal = ticketIsTerminal(v),
+      backlogged = Boolean(v.is_backlogged);
+    // Scopes follow the need rule: backlog wins over done.
+    const bucket: TicketListScope = backlogged ? 'backlog' : terminal ? 'done' : 'live';
+    const in_scope = filters.scope === 'all' || filters.scope === bucket;
+    const settled_need = bucket === 'live' ? null : ticket_need(v, null);
+    if (!in_scope && !not_shown) continue;
+    if (settled_need !== null && !wanted(settled_need)) continue;
+    if (filters.search) {
+      // The stored columns hold the whole text, so no row needs a full Ticket read.
+      const text = [
+        v.title,
+        row.recap,
+        ...Object.values(JSON.parse(row.field_values) as Record<string, string>),
+        row.pending_proposal ? (JSON.parse(row.pending_proposal) as { body: string }).body : '',
+      ].join('\n');
+      if (!text.toLowerCase().includes(filters.search.toLowerCase())) continue;
+    }
+    if (!in_scope) {
+      not_shown![bucket as 'backlog' | 'done']++;
+      continue;
+    }
+    matches.push({
+      row: {
+        ...summary_row(row, v),
+        ...(settled_need === null ? {} : { needs: settled_need }),
+      },
+      activity,
+    });
+  }
+  return { matches, not_shown };
+}
+/**
+ * Filter by need, order by need, then most recent activity, then id, and only then page.
+ * Every match must already carry `needs`.
+ */
+export function page_ticket_summaries(
+  matches: TicketSummaryMatch[],
+  needs: readonly TicketNeed[],
+  page: ListPageRequest,
+): { tickets: Json[]; page: ReturnType<typeof pageFacts> } {
+  checkPage(page);
+  const rank = (match: TicketSummaryMatch) => TICKET_NEEDS.indexOf(match.row.needs as TicketNeed);
+  const ordered = matches
+    .filter((match) => !needs.length || needs.includes(match.row.needs as TicketNeed))
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        b.activity - a.activity ||
+        (String(a.row.id) < String(b.row.id) ? -1 : String(a.row.id) > String(b.row.id) ? 1 : 0),
+    );
+  const tickets = ordered.slice(page.offset, page.offset + page.limit).map((match) => match.row);
+  return { tickets, page: pageFacts(ordered.length, tickets.length, page) };
 }
 export function copy_text(sql: ReadSql, id: string): string {
   const broken = broken_ticket(sql, id);
@@ -390,113 +492,4 @@ export function copy_text(sql: ReadSql, id: string): string {
       .map((r) => `- ${r.title} (${r.ticket_id}, ${r.stage})`)
       .join('\n') || '(none)';
   return `${ticket.title}\nstage: ${ticket.stage}\nemployee_backend: ${ticket.employee_backend}\nowner: ${ownership ?? '(none)'}\n\n${field_blocks}pending proposal:\n${show(ticket.pending_proposal?.body)}\nrecap:\n${show(ticket.recap)}\n\nblocked_by:\n${blockers}\n`;
-}
-export function review_view(sql: ReadSql): Json {
-  const items: Json[] = [];
-  for (const { id } of sql.all<{ id: string }>('SELECT id FROM tickets ORDER BY id')) {
-    if (broken_ticket(sql, id)) continue;
-    const t = data.read_ticket(sql, id),
-      field = t.workflow.stages.find((s) => s.id === t.stage)?.gating_field;
-    if (
-      t.ticket_status === 'awaiting_approval' &&
-      !t.is_backlogged &&
-      t.ceiling_holder.kind === 'owner' &&
-      field &&
-      t.pending_proposal
-    )
-      items.push({
-        review_item_type: 'proposal',
-        ticket_id: id,
-        field,
-        title: t.title,
-        waiting_since: t.pending_proposal.created_at,
-      });
-  }
-  const messages: Json[] = [];
-  for (const conversation of sql.all<{ id: string; value: string }>(
-    "SELECT id,value FROM navigation_records WHERE kind='conversation' ORDER BY id",
-  )) {
-    const c = JSON.parse(conversation.value) as {
-      attention: { durable: { message_for_owner: boolean } };
-      first_unread_owner_message_at: number;
-    };
-    if (!c.attention.durable.message_for_owner) continue;
-    const row = sql.get<{ id: string; value: string }>(
-      "SELECT a.id,a.value FROM navigation_records a JOIN navigation_records owner ON owner.kind=json_extract(a.value,'$.owner_kind') AND owner.id=json_extract(a.value,'$.owner_id') WHERE a.kind='address' AND json_extract(a.value,'$.conversation_id')=? ORDER BY json_extract(a.value,'$.current') DESC,a.id LIMIT 1",
-      [conversation.id],
-    );
-    if (!row) continue;
-    const address = JSON.parse(row.value) as {
-      owner_kind: string;
-      owner_id: string;
-      current: boolean;
-    };
-    const owner = JSON.parse(
-      sql.get<{ value: string }>('SELECT value FROM navigation_records WHERE kind=? AND id=?', [
-        address.owner_kind,
-        address.owner_id,
-      ])!.value,
-    ) as Json;
-    if (
-      (address.owner_kind === 'ticket' && (owner.stage === 'done' || owner.is_backlogged)) ||
-      (address.owner_kind === 'manager' && owner.settled)
-    )
-      continue;
-    messages.push({
-      review_item_type: 'message',
-      conversation_id: conversation.id,
-      address_id: row.id,
-      owner_kind: address.owner_kind,
-      owner_id: address.owner_id,
-      title: owner.title ?? owner.label ?? '',
-      waiting_since: c.first_unread_owner_message_at,
-      recap: owner.recap ?? '',
-      recap_reference: null,
-      _current: address.current,
-    });
-  }
-  messages.sort(
-    (a, b) =>
-      Number(b._current) - Number(a._current) ||
-      String(a.address_id).localeCompare(String(b.address_id)) ||
-      String(a.conversation_id).localeCompare(String(b.conversation_id)),
-  );
-  for (const m of messages) {
-    delete m._current;
-    items.push(m);
-  }
-  const tickets = new Map<string, Json>(),
-    result: Json[] = [];
-  for (const item of items) {
-    if (item.review_item_type === 'message' && item.owner_kind !== 'ticket') {
-      result.push(item);
-      continue;
-    }
-    const id = String(item.review_item_type === 'proposal' ? item.ticket_id : item.owner_id);
-    let card = tickets.get(id);
-    if (!card) {
-      card = {
-        review_item_type: 'ticket',
-        ticket_id: id,
-        title: item.title,
-        waiting_since: item.waiting_since,
-        proposal: null,
-        messages: [],
-      };
-      tickets.set(id, card);
-    }
-    card.waiting_since = Math.min(Number(card.waiting_since), Number(item.waiting_since));
-    if (item.review_item_type === 'proposal') card.proposal = item;
-    else (card.messages as Json[]).push(item);
-  }
-  result.push(...tickets.values());
-  result.sort(
-    (a, b) =>
-      Number(a.waiting_since) - Number(b.waiting_since) ||
-      String(a.review_item_type).localeCompare(String(b.review_item_type)) ||
-      String(a.conversation_id ?? a.ticket_id).localeCompare(
-        String(b.conversation_id ?? b.ticket_id),
-      ),
-  );
-  return { items: result };
 }

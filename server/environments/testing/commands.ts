@@ -235,11 +235,10 @@ async function operator_probe(root: string): Promise<unknown> {
     assert.equal(typeof Object.getOwnPropertyDescriptor(dependencies, callback)?.value, 'function');
     composed_callbacks[name] = Object.keys(dependencies).sort();
   }
-  for (const name of ['inspect', 'server-event-loop-tasks'] as const)
-    assert.equal(
-      await create_production_operator_dependencies(name, undefined, environment),
-      undefined,
-    );
+  assert.equal(
+    await create_production_operator_dependencies('inspect', undefined, environment),
+    undefined,
+  );
   const identity = await create_production_operator_dependencies(
     'app-identity',
     undefined,
@@ -309,11 +308,6 @@ async function operator_probe(root: string): Promise<unknown> {
   );
   return {
     composed_callbacks,
-    diagnostic: await Promise.all(
-      [false, true].map((json) =>
-        operator_commands['server-event-loop-tasks'].handler({ json }, undefined),
-      ),
-    ),
     watchdog: await operator_commands.watchdog.handler(watchdog_args, {
       run_watchdog: async () => 'recorded watchdog',
     }),

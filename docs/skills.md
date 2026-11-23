@@ -23,7 +23,7 @@ Khushal and the Chief stand above skills, so both may edit them. `panels skill d
 
 Every Worker follows its own Ticket's workflow guide, which it receives at kickoff. A specialist skill is the current guide of its preset, for reading and editing. It does not reach a Ticket made earlier. See [Worker types](worker-types.md). A saved skill reaches an agent the next time it loads the skill. A turn already running keeps what it read. Saving a skill sends no prompt, so the conversation notebook does not change.
 
-`panels skill check` reports a skill that names a command, stage, or skill this build lacks. It reports and does not rewrite.
+`panels skill check` reports a skill that names a command, stage, or skill this build lacks. It reads the command tree that the CLI itself declares, so it cannot fall behind the commands. It reports and does not rewrite.
 
 ## Decisions that shape it
 
@@ -33,9 +33,9 @@ Every Worker follows its own Ticket's workflow guide, which it receives at kicko
 
 ## Code
 
-- `server/skills/`: rows, published copies, and saved history (`data.ts`).
+- `server/skills/`: rows, published copies, saved history (`data.ts`), and the check (`staleness.ts`).
 - `server/worker_settings/`: the HTTP writers.
 - `server/skills/seeds/`: the seed, read by `server/skills/data.ts`.
 - `web/src/components/settings/SettingsSkillSections.svelte`: the editor, on the Settings Agents pages.
 
-_Last verified: 2026-11-18._
+_Last verified: 2026-11-23._

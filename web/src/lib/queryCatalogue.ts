@@ -12,8 +12,6 @@ import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   ChiefManagementSettings,
   EmployeeConfigurationSnapshot,
-  ManagerPrincipal,
-  ManagerChildFilter,
   NotificationSettingsResponse,
   ProjectsResponse,
   SkillsHomeResponse,
@@ -21,7 +19,6 @@ import type {
   ManagerWorkspace,
   ManagerWorkspaceContent,
   TicketDetail,
-  TicketSummariesResponse,
   WorkerManagementDetail,
   WorkersResponse
 } from "./types";
@@ -88,11 +85,6 @@ export const queries = {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false
   }),
-  managerTicketSummaries: (principal: ManagerPrincipal, filter: ManagerChildFilter, offset: number, limit = 30) =>
-    jsonQuery<TicketSummariesResponse>(
-      ["tickets", "manager", { principal, filter, offset, limit }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&manager_kind=${principal.kind}${principal.kind === "manager" ? `&manager_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
-    ),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   managers: () => jsonQuery<ManagersResponse>(["managers"], "/api/managers?detail=full"),
   managerWorkspaceContent: (itemId: string) =>

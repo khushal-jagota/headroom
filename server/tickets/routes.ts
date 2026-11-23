@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { TICKET_CREATE_KEYS, TICKET_EDIT_KEYS } from './logic/body_keys.ts';
 import { is_record as record } from '../core/records.ts';
 import type { AreaServices } from '../core/authority/register.ts';
 import { PlannerError } from '../core/contracts.ts';
@@ -6,13 +7,24 @@ import type { Principal } from '../core/contracts.ts';
 import type { ReadSql, TransactionSql } from '../core/database/contracts.ts';
 import { dictionaryBody, integerQuery, QueryIntegerError } from '../list_reads/http.ts';
 import { DEFAULT_LIST_LIMIT } from '../list_reads/configuration.ts';
-import { parseReadDetail, rejectParameters, requireFullForOne } from '../list_reads/logic/index.ts';
+import {
+  checkPage,
+  parseReadDetail,
+  rejectParameters,
+  requireFullForOne,
+} from '../list_reads/logic/index.ts';
 import { resolveProject } from '../projects/data/index.ts';
 import { configured_worker_type_registry } from '../worker_types/configuration.ts';
 import { custom_workflow_from_dict } from '../worker_types/store.ts';
 import * as data from './data/index.ts';
-import { TITLE_MAX_CHARS } from './contracts.ts';
-import type { TicketEdit, ReviewTransferNotice } from './contracts.ts';
+import { TICKET_LIST_SCOPES, TICKET_NEEDS, TITLE_MAX_CHARS } from './contracts.ts';
+import type {
+  TicketEdit,
+  TicketListFilters,
+  TicketListScope,
+  TicketNeed,
+  ReviewTransferNotice,
+} from './contracts.ts';
 import type { WorkflowDefinition } from '../worker_types/contracts.ts';
 import {
   ticket_json,
@@ -20,14 +32,16 @@ import {
   ticket_detail,
   list_tickets,
   list_ticket_summaries,
+  list_ticket_summaries_by_flags,
+  page_ticket_summaries,
   copy_text,
-  review_view,
 } from './views.ts';
-import type { Json } from './views.ts';
+import type { Json, TicketSummaryMatch } from './views.ts';
 import { notify_review_transfers } from './review_transfer.ts';
+import { review_body } from '../navigation/views/review_cards.ts';
 import { workspace_ticket, workspace_field } from './workspace/views.ts';
 import { decision_routes } from './decision_routes.ts';
-import { add_work_attention, read_running_conversation_count } from '../work_attention.ts';
+import { add_ticket_need, add_work_attention } from '../work_attention.ts';
 
 export function write_reject_ticket_proposal(
   tx: TransactionSql,
@@ -136,24 +150,6 @@ function validate_field(workflow: WorkflowDefinition, field: string): void {
       workflow: workflow.label,
     });
 }
-const CREATE_KEYS = [
-  'worker_type',
-  'workflow',
-  'employee_backend',
-  'employee_launch_model',
-  'employee_launch_reasoning_effort',
-  'locale',
-  'machine_id',
-  'title',
-  'brief',
-  'deadline',
-  'project',
-  'project_id',
-  'manager',
-  'blocked_by_ticket_ids',
-  'ceiling',
-  'ceiling_holder',
-];
 export function write_create_ticket(
   sql: TransactionSql,
   raw: Json,
@@ -167,7 +163,7 @@ export function write_create_ticket(
   )
     throw new PlannerError('validation', 'use manager assignment instead of calendar placement');
   for (const field of Object.keys(raw))
-    if (!CREATE_KEYS.includes(field))
+    if (!(TICKET_CREATE_KEYS as readonly string[]).includes(field))
       throw new PlannerError('validation', 'unknown ticket field', { field });
   const worker_type = body_opt_str(raw, 'worker_type'),
     known = configured_worker_type_registry().supported_worker_types();
@@ -230,19 +226,8 @@ export function write_patch_ticket(
   now: number,
   review_transfer_notices: ReviewTransferNotice[] = [],
 ): Json {
-  const recognized = [
-    'title',
-    'deadline',
-    'project',
-    'project_id',
-    'manager',
-    'recap',
-    'field_values',
-    'ceiling',
-    'ceiling_holder',
-  ];
   for (const field of Object.keys(body))
-    if (!recognized.includes(field))
+    if (!(TICKET_EDIT_KEYS as readonly string[]).includes(field))
       throw new PlannerError('validation', 'unknown ticket field', { field });
   if (!Object.keys(body).length) throw new PlannerError('validation', 'no ticket fields to update');
   const edit: TicketEdit = {};
@@ -324,22 +309,19 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       array = (k: string) => (q.has(k) ? q.getAll(k) : null);
     let limit: number | undefined,
       offset: number | undefined,
-      is_backlogged: boolean | null,
-      include_terminal: boolean,
-      active: boolean;
+      is_backlogged: boolean | null = null,
+      include_terminal = false;
     const failures: unknown[] = [];
-    try {
-      limit = integerQuery(scalar('limit'), 'limit');
-    } catch (e) {
-      if (e instanceof QueryIntegerError) failures.push(e.payload());
-      else throw e;
-    }
-    try {
-      offset = integerQuery(scalar('offset'), 'offset');
-    } catch (e) {
-      if (e instanceof QueryIntegerError) failures.push(e.payload());
-      else throw e;
-    }
+    for (const [key, assign] of [
+      ['limit', (raw: string | undefined) => (limit = integerQuery(raw, 'limit'))],
+      ['offset', (raw: string | undefined) => (offset = integerQuery(raw, 'offset'))],
+    ] as const)
+      try {
+        assign(scalar(key));
+      } catch (e) {
+        if (e instanceof QueryIntegerError) failures.push(e.payload());
+        else throw e;
+      }
     try {
       is_backlogged = boolean_query(last('is_backlogged'), 'is_backlogged');
     } catch (e) {
@@ -352,38 +334,35 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       if (e instanceof QueryBooleanError) failures.push(e.payload());
       else throw e;
     }
-    try {
-      active = boolean_query(last('active'), 'active') ?? false;
-    } catch (e) {
-      if (e instanceof QueryBooleanError) failures.push(e.payload());
-      else throw e;
-    }
     if (failures.length) {
       reply.code(422).send({ detail: failures });
       return;
     }
     const level = parseReadDetail(scalar('detail')),
       id = last('id'),
+      scope = last('scope'),
+      needs = array('needs'),
       stage = array('stage'),
       exclude_stage = array('exclude_stage'),
-      ticket_status = array('ticket_status'),
-      exclude_ticket_status = array('exclude_ticket_status'),
       worker_type = array('worker_type'),
       search = last('search'),
       project = last('project'),
       project_id = last('project_id'),
       manager_id = last('manager_id'),
       manager_kind = last('manager_kind');
-    const [response, rows] = services.database.read((sql): [Json, Json[]] => {
-      const scope = {
+    const page = { limit: limit ?? DEFAULT_LIST_LIMIT, offset: offset ?? 0 };
+    type Read =
+      | { rows: Json[]; body: Json }
+      | { matches: TicketSummaryMatch[]; filters: TicketListFilters; not_shown: Json | null };
+    const read = services.database.read((sql): Read => {
+      const given = {
+        scope,
+        needs,
         stage,
         exclude_stage,
-        ticket_status,
-        exclude_ticket_status,
         is_backlogged,
-        worker_type,
         include_terminal: include_terminal || null,
-        active: active || null,
+        worker_type,
         search,
         project,
         project_id,
@@ -394,25 +373,18 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       };
       if (id !== null) {
         requireFullForOne(level);
-        rejectParameters('id', scope);
+        rejectParameters('id', given);
         const one = ticket_detail(sql, id, services.clock.nowUnix(), services.config.db_path);
-        return [one, [one]];
+        return { rows: [one], body: one };
       }
       const resolved = resolveProject(sql, project_id, project);
       if (level === 'full') {
         rejectParameters('detail=full', {
-          manager_kind,
-          manager_id,
-          is_backlogged,
-          active: active || null,
-          worker_type,
-          exclude_stage,
-          ticket_status,
-          exclude_ticket_status,
-          include_terminal: include_terminal || null,
-          search,
-          limit,
-          offset,
+          ...given,
+          stage: null,
+          project: null,
+          project_id: null,
+          manager_id: null,
         });
         if (stage !== null && stage.length > 1)
           throw new PlannerError('validation', 'detail=full takes at most one stage', {
@@ -425,10 +397,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           resolved?.id ?? null,
           manager_id,
         );
-        return [{ tickets: rows }, rows];
+        return { rows, body: { tickets: rows } };
       }
-      if (active && (is_backlogged === true || include_terminal))
-        throw new PlannerError('validation', 'active excludes backlogged and terminal Tickets');
       const manager =
         manager_kind !== null || manager_id !== null
           ? parse_manager({
@@ -441,42 +411,91 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           registry.registered_worker_types().map((w) => registry.require(w).stages.at(-1)!.id),
         );
       const requested_terminal = [...new Set(stage ?? [])].filter((s) => terminal.has(s)).sort();
-      if (requested_terminal.length && !include_terminal)
-        throw new PlannerError('validation', 'terminal stages require include_terminal', {
+      const by_need = scope !== null || needs !== null;
+      if (!by_need) {
+        // The installed iPhone app sends is_backlogged and include_terminal, never scope or needs.
+        // An installed app cannot change with the server, so this read keeps its old behaviour.
+        if (requested_terminal.length && !include_terminal)
+          throw new PlannerError('validation', 'terminal stages require include_terminal', {
+            stages: requested_terminal,
+          });
+        const result = list_ticket_summaries_by_flags(
+          sql,
+          page,
+          {
+            manager,
+            is_backlogged,
+            include_terminal,
+            stages: stage ?? [],
+            excluded_stages: exclude_stage ?? [],
+            worker_types: worker_type ?? [],
+            search,
+          },
+          resolved?.id ?? null,
+          manager_id,
+        );
+        return { rows: result.tickets, body: result };
+      }
+      rejectParameters('scope or needs', {
+        is_backlogged,
+        include_terminal: include_terminal || null,
+      });
+      if (scope !== null && !(TICKET_LIST_SCOPES as readonly string[]).includes(scope))
+        throw new PlannerError('validation', 'invalid scope', {
+          scope,
+          allowed: TICKET_LIST_SCOPES,
+        });
+      for (const value of needs ?? [])
+        if (!(TICKET_NEEDS as readonly string[]).includes(value))
+          throw new PlannerError('validation', 'invalid needs', {
+            needs: value,
+            allowed: TICKET_NEEDS,
+          });
+      const filters: TicketListFilters = {
+        manager,
+        scope: (scope ?? 'live') as TicketListScope,
+        needs: [...new Set(needs ?? [])] as TicketNeed[],
+        stages: stage ?? [],
+        excluded_stages: exclude_stage ?? [],
+        worker_types: worker_type ?? [],
+        search,
+      };
+      if (requested_terminal.length && !['done', 'all'].includes(filters.scope))
+        throw new PlannerError('validation', 'terminal stages require scope done or all', {
           stages: requested_terminal,
         });
-      for (const [name, values] of [
-        ['ticket_status', ticket_status],
-        ['exclude_ticket_status', exclude_ticket_status],
-      ] as const)
-        for (const value of values ?? [])
-          if (!['empty', 'blocked', 'agent', 'awaiting_approval', 'errored'].includes(value))
-            throw new PlannerError('validation', `invalid ${name}`, { [name]: value });
-      const result = list_ticket_summaries(
+      checkPage(page);
+      const { matches, not_shown } = list_ticket_summaries(
         sql,
-        { limit: limit ?? DEFAULT_LIST_LIMIT, offset: offset ?? 0 },
-        {
-          manager,
-          stages: stage ?? [],
-          excluded_stages: exclude_stage ?? [],
-          ticket_statuses: ticket_status ?? [],
-          excluded_ticket_statuses: exclude_ticket_status ?? [],
-          is_backlogged: is_backlogged!,
-          worker_types: worker_type ?? [],
-          include_terminal: include_terminal!,
-          active: active!,
-          search,
-        },
+        filters,
         resolved?.id ?? null,
         manager_id,
       );
-      return [result, result.tickets];
+      return { matches, filters, not_shown };
     });
-    await add_work_attention(services.database, services.conversationSystem, rows);
-    return response;
+    if ('rows' in read) {
+      await add_work_attention(services.database, services.conversationSystem, read.rows);
+      return read.body;
+    }
+    // A live need reads its conversation, so need filtering and ordering precede the page.
+    await add_work_attention(
+      services.database,
+      services.conversationSystem,
+      read.matches.filter((match) => match.row.needs === undefined).map((match) => match.row),
+    );
+    const result = page_ticket_summaries(read.matches, read.filters.needs, page);
+    await add_work_attention(
+      services.database,
+      services.conversationSystem,
+      result.tickets.filter((row) => !('conversation_signal' in row)),
+    );
+    return {
+      tickets: result.tickets,
+      page: read.not_shown ? { ...result.page, not_shown: read.not_shown } : result.page,
+    };
   });
-  app.get<{ Params: { ticket_id: string } }>('/tickets/:ticket_id/worker-self', async (request) =>
-    services.database.read((sql) => {
+  app.get<{ Params: { ticket_id: string } }>('/tickets/:ticket_id/worker-self', async (request) => {
+    const body = services.database.read((sql) => {
       const t = data.read_ticket(sql, request.params.ticket_id);
       if (t.conversation_id !== null) {
         const owner = data.read_ticket_by_conversation_id(sql, t.conversation_id);
@@ -488,8 +507,10 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           );
       }
       return ticket_detail(sql, t.id, services.clock.nowUnix(), services.config.db_path);
-    }),
-  );
+    });
+    await add_ticket_need(services.database, services.conversationSystem, body);
+    return body;
+  });
   app.patch<{ Params: { ticket_id: string } }>('/tickets/:ticket_id', async (request, reply) => {
     if (!dictionaryBody(request.body, reply)) return;
     const raw = request.body;
@@ -652,14 +673,7 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       return services.database.read((sql) => copy_text(sql, request.params.ticket_id));
     },
   );
-  app.get('/review', async () => {
-    const response = services.database.read(review_view);
-    response.running_worker_count = await read_running_conversation_count(
-      services.database,
-      services.conversationSystem,
-    );
-    return response;
-  });
+  app.get('/review', async () => services.database.read(review_body));
   app.get<{ Params: { ticket_id: string } }>('/tickets/:ticket_id/workspace', async (request) => {
     const response = services.database.read((sql) =>
       workspace_ticket(sql, request.params.ticket_id),

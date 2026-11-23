@@ -8,6 +8,7 @@ import { registerArea } from '../core/authority/register.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildClock } from '../core/clock.ts';
 import type { CurrentViewSnapshot } from '../../web/src/lib/navigation/contracts.ts';
+import { review_body } from '../navigation/views/review_cards.ts';
 
 const view = encodeURIComponent(
   JSON.stringify({
@@ -79,6 +80,7 @@ async function setup(asking = false) {
   await navigation.start();
   return {
     app,
+    database,
     producer,
     navigation,
     revokeSnapshot: () => {
@@ -216,6 +218,17 @@ test('a Chief with an open ask joins Review and not the unread list', async () =
     expect(await members(asking, 'review')).toEqual([expect.stringMatching(/^address:/)]);
     expect(await members(asking, 'unread')).toEqual([]);
     expect(await members(quiet, 'review')).toEqual([]);
+    // Distinct risk: GET /api/review rebuilt on this window must show the same ask-only card,
+    // say why it waits, and refuse to read an unprojected index as an empty queue.
+    expect(asking.database.read(review_body)).toMatchObject({
+      available: true,
+      total: 1,
+      cards: [
+        { kind: 'chief', id: 'chief', title: 'Chief of Staff', waits: ['question'], stage: null },
+      ],
+    });
+    expect(quiet.database.read(review_body)).toEqual({ available: true, total: 0, cards: [] });
+    expect(fixture().read(review_body)).toEqual({ available: false, total: null, cards: [] });
   } finally {
     await asking.app.close();
     asking.navigation.close();
