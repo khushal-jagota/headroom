@@ -156,7 +156,40 @@ async function sent(page: Page, path: string, action: () => Promise<void>): Prom
   return response;
 }
 
-async function expectStructuredAnswer(server: ServerHandle, conversation: string, response: Response, attachments: Attached[], ordinarySends: string[]): Promise<void> {
+/** A file in the DOM can still be clipped by the composer's finite height morph. */
+async function settleComposerGeometry(composer: Locator): Promise<void> {
+  await composer.evaluate(async (box, timeout) => {
+    const deadline = performance.now() + timeout;
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    let previous = '';
+    let stableFrames = 0;
+    while (performance.now() < deadline) {
+      const moving = box.getAnimations({ subtree: true }).filter((animation) =>
+        Number.isFinite(animation.effect?.getComputedTiming().endTime) && animation.playState !== 'finished');
+      await Promise.all(moving.map((animation) => animation.finished.catch(() => undefined)));
+      await frame();
+      const geometry = JSON.stringify([box, ...box.querySelectorAll('[data-conversation-input], .chat-att, [data-conversation-send]')]
+        .map((node) => {
+          const rect = node.getBoundingClientRect();
+          return [rect.x, rect.y, rect.width, rect.height];
+        }));
+      stableFrames = moving.length === 0 && geometry === previous ? stableFrames + 1 : 0;
+      previous = geometry;
+      if (stableFrames >= 2) return;
+    }
+    throw new Error('The structured answer composer did not settle for its visible proof.');
+  }, WAIT_MS);
+}
+
+/** Preserve the observed UI state instead of fast-forwarding its animations for a capture. */
+async function captureStructuredState(page: Page, name: string): Promise<void> {
+  const output = process.env.PANELS_UI_PROOF_DIR;
+  if (!output) return;
+  mkdirSync(output, { recursive: true });
+  await page.screenshot({ path: join(output, name), fullPage: true });
+}
+
+async function expectStructuredAnswer(server: ServerHandle, conversation: string, response: Response, attachments: Attached[], ordinarySends: string[]): Promise<JsonObject[]> {
   const submitted = response.request().postDataJSON();
   expect(submitted.answers.scope.answers).toEqual(['Composer', 'Transcript']);
   expectUploadPieces(submitted.answers.proof.attachments, attachments);
@@ -170,6 +203,44 @@ async function expectStructuredAnswer(server: ServerHandle, conversation: string
   const answered = events.filter((event) => event.kind === 'user_input_answered');
   expect(answered).toHaveLength(1);
   await expectStoredPieces(server, conversation, answered[0].payload.answers.proof.attachments, attachments);
+  return answered[0].payload.answers.proof.attachments;
+}
+
+/** A new document must render the recorded answer, including the exact managed identities. */
+async function expectRecordedStructuredAnswer(page: Page, conversation: string, attached: Attached[], managed: JsonObject[]): Promise<void> {
+  await page.reload();
+  await page.waitForSelector('[data-conversation-rest-bar]', { timeout: WAIT_MS });
+  if (await page.locator('[data-conversation-pane]').getAttribute('data-conversation-state') !== 'opened')
+    await openConversationLayer(page);
+  await page.locator('[data-conversation-lens-choice="full"]').click();
+  const recorded = page.locator('[data-conversation-user-input-state="answered"]');
+  await expect(recorded).toHaveCount(1);
+  const rows = recorded.locator('[data-conversation-user-input-answers] > div');
+  const scope = rows.filter({ has: page.getByText('Scope', { exact: true }) });
+  const proof = rows.filter({ has: page.getByText('Proof', { exact: true }) });
+  await expect(scope).toContainText('Composer, Transcript');
+  await expect(scope.locator('[data-conversation-file-name]')).toHaveCount(0);
+  await expect(proof).toContainText('The files answer the question.');
+  await expect(proof.locator('[data-conversation-file-name]')).toHaveCount(2);
+  for (const file of attached) {
+    const kept = managed.find((piece) => piece.file_name === file.name);
+    expect(kept).toBeDefined();
+    const href = `/api/conversation/conversations/${conversation}/files/${kept!.stored_file_id}`;
+    const card = proof.locator(`[data-conversation-file-name="${file.name}"]`);
+    await card.scrollIntoViewIfNeeded();
+    if (file.mediaType.startsWith('video/')) {
+      const video = card.locator('video');
+      await expect(video).toHaveAttribute('src', `${href}#t=0.1`);
+      await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState >= 1 && node.videoWidth > 0), { timeout: WAIT_MS }).toBe(true);
+    } else {
+      await expect(card.locator('[data-conversation-file-download]')).toHaveAttribute('href', href);
+    }
+  }
+  await recorded.scrollIntoViewIfNeeded();
+  await expect(recorded).toBeInViewport({ ratio: 1, timeout: WAIT_MS });
+  for (const card of await proof.locator('[data-conversation-file-name]').all())
+    await expect(card).toBeInViewport({ ratio: 1, timeout: WAIT_MS });
+  await captureStructuredState(page, 'attachments-conversation-structured-sent.png');
 }
 
 test('drop and paste reach conversation sends in every placement and structured answers', async ({ signalServer, newContext }) => {
@@ -180,7 +251,11 @@ test('drop and paste reach conversation sends in every placement and structured 
   for (const placement of ['dock', 'expanded', 'artifact', 'structured'] as const) {
     const conversation = `attachment-conversation-${placement}`;
     const ticket = await createTicketConversation(server, { conversationId: conversation, title: `Attach in ${placement}` });
-    if (placement === 'structured') await post(server, `/api/test/signals/${conversation}/questions`);
+    if (placement === 'structured') {
+      await post(server, `/api/test/signals/${conversation}/questions`);
+      const waiting = await getJson(server, `/api/conversation/conversations/${conversation}`);
+      expect(waiting.pending_user_input.questions.find((question: JsonObject) => question.question_id === 'proof').allow_other).toBe(true);
+    }
     else await post(server, `/api/test/signals/${conversation}/finish`);
     const link = placement === 'artifact' ? artifact(server, ticket, 'conversation-evidence') : '';
     if (link) await connectedMessage(server, conversation, ticketPrincipal(ticket), link);
@@ -223,13 +298,24 @@ test('drop and paste reach conversation sends in every placement and structured 
       await expect(restored).toHaveCount(2);
       for (const [index, file] of attachments.entries())
         await expect.poll(async () => (await restored.nth(index).getAttribute('title'))?.split(' · ')[0]).toBe(file.name);
+      await composer.scrollIntoViewIfNeeded();
+      await settleComposerGeometry(composer);
+      await input.scrollIntoViewIfNeeded();
+      await settleComposerGeometry(composer);
+      await expect(composer.getByText('What proof should be required?', { exact: true })).toBeInViewport({ ratio: 1, timeout: WAIT_MS });
+      await expect(input).toBeInViewport({ ratio: 1, timeout: WAIT_MS });
+      for (const tile of await restored.all()) await expect(tile).toBeInViewport({ ratio: 1, timeout: WAIT_MS });
+      await expect(composer.locator('[data-conversation-send]')).toBeInViewport({ ratio: 1, timeout: WAIT_MS });
       console.log(`Structured answer reload boundary: ${((performance.now() - reloadStarted) / 1000).toFixed(2)}s`);
     }
-    await captureSuccess(page, `attachments-conversation-${placement}.png`);
+    if (placement === 'structured') await captureStructuredState(page, 'attachments-conversation-structured.png');
+    else await captureSuccess(page, `attachments-conversation-${placement}.png`);
     const response = await sent(page, placement === 'structured' ? '/user-input-answers' : `/api/tickets/${ticket}/conversation/send`, () => composer.locator('[data-conversation-send]').click());
     if (placement === 'structured') {
-      await expectStructuredAnswer(server, conversation, response, attachments, ordinarySends);
+      const managed = await expectStructuredAnswer(server, conversation, response, attachments, ordinarySends);
       await expect(composer.locator('.chat-att')).toHaveCount(0);
+      await expectRecordedStructuredAnswer(page, conversation, attachments, managed);
+      expect(ordinarySends).toEqual([]);
     } else {
       expectUploadPieces(response.request().postDataJSON().content, attachments);
       await expectPromptFiles(server, conversation, attachments);
