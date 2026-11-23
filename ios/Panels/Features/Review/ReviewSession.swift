@@ -170,14 +170,19 @@ struct ReviewQueue: Equatable, Sendable {
         if pinned?.id == item.id { pinned = nil }
     }
 
-    /// Handled here: the card stays only while its exit runs.
+    /// Handled here: the card stays only while its exit runs. Only the card on screen is
+    /// handled, so a card leaves once: the card and an artifact opened from it can both see
+    /// one saved reply, and the later call, after the next card shows, changes nothing.
     mutating func resolve(_ item: ReviewItem) {
+        guard shown?.id == item.id else { return }
         leaving = item
         away = nil
         handled.insert(item.id)
     }
-    /// The exit finished. The next reconcile shows the next card.
-    mutating func finishExit() {
+    /// The exit of `item` finished. The next reconcile shows the next card. A late finish for
+    /// a card that already left changes nothing, so it never touches the next card's exit.
+    mutating func finishExit(_ item: ReviewItem) {
+        guard leaving?.id == item.id else { return }
         if let leaving, pinned?.id == leaving.id { pinned = nil }
         if let leaving, notice?.item.id == leaving.id { notice = nil }
         leaving = nil
@@ -269,9 +274,10 @@ struct ReviewQueue: Equatable, Sendable {
         store.setReviewHistory(queue.history)
     }
     func resolve(_ item: ReviewItem) { queue.resolve(item) }
-    func finishExit() {
-        if let item = queue.leaving, item.isMessage { messageDecisions.drop(item.id) }
-        queue.finishExit()
+    func finishExit(_ item: ReviewItem) {
+        guard queue.leaving?.id == item.id else { return }
+        if item.isMessage { messageDecisions.drop(item.id) }
+        queue.finishExit(item)
         exits += 1
         reconcile()
     }

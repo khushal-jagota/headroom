@@ -66,6 +66,13 @@ struct ReviewArtifactDock: ViewModifier {
             .onChange(of: session?.shown?.id, initial: true) { _, shown in
                 if session != nil, shown != itemID { closeArtifacts() }
             }
+            // Opened before the card's first read finished, which the push cancelled: the dock
+            // reads the run itself, or Reply and Mark read stay off until Back.
+            .task(id: "\(visible)|\(store.connectionSession)") {
+                guard visible, isMessage, let session, let savedWork, let item else { return }
+                let decision = session.messageDecisions.decision(for: item, savedWork: savedWork)
+                if !decision.loaded { await decision.load(item: store.reviewMessageFacts(item), api: store.client) }
+            }
     }
 
     @ViewBuilder private func dock(_ item: ReviewItem, session: ReviewSession, savedWork: ReviewSavedWork) -> some View {
@@ -117,7 +124,7 @@ struct ReviewArtifactDock: ViewModifier {
         session.resolve(item)
         closeArtifacts()
         afterExit?()
-        withoutAnimation { session.finishExit() }
+        withoutAnimation { session.finishExit(item) }
         Task { await store.refresh() }
     }
 
