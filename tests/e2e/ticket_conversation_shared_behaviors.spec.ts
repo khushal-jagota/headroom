@@ -269,6 +269,7 @@ test('test_private_credential_save_survives_reload_and_reaches_the_actual_wire',
   await openConversationLayer(page);
   await expect(card).toHaveAttribute('data-credential-state', 'saved', { timeout: WAIT_MS });
   await expect(card.locator('input')).toHaveCount(0);
-  await expect(card.getByText('Saved', { exact: true })).toBeVisible({ timeout: WAIT_MS });
+  // The record is one system line: "<provider> API key · <name> · Saved".
+  await expect(card.locator('[data-credential-record]')).toHaveText(/ · Saved$/, { timeout: WAIT_MS });
   await captureSuccess(page, 'credential-request-connected-saved.png');
 });
