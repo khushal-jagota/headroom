@@ -28,7 +28,7 @@ Two things tell the ordinary reads that the record moved.
 These rules hold for all three channels.
 
 1. **A write ends when the server answers.** A busy mark means that the server did not answer yet, and nothing else. When the answer arrives, the control is free.
-2. **After its own write, the app starts the revision check at once and does not wait for it.** It is the same check that any change causes. A control that closes on save waits a short, limited time for it, so that the old value does not flash. A page editor that sends a document revision with its next edit waits for the check, because that revision reaches its controls through reads.
+2. **After its own write, the app starts the revision check at once and does not wait for it.** It is the same check that any change causes. A control that shows its result from a read waits a short, limited time for it, so that the old state does not flash. A page editor takes the document revision for its next edit from the server's answer to its own write, so that edit does not wait for a read.
 3. **Ordinary reads have one refresh path.** An own write, the change signal, a reconnect and a return to the tab all run the revision check. No code refreshes everything.
 4. **Every request has a time limit.** A read that passes its limit shows its error line above the data that the screen already has. A write that passes its limit says that the server did not answer. That is not a refusal, because the server can still save the write, and the check that follows shows what happened.
 5. **A failure stays where it is.** One slow or failed read affects only the part of the screen that shows it. It cannot hold a control, stop the revision check, or make the page read everything again.

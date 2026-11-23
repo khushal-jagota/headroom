@@ -10,6 +10,8 @@
  * offered for sending again rather than being sent without it.
  */
 import { conversationFileHref, type MessagePiece, type SentMessagePiece } from "./wire";
+import { clientFetch } from "../clientIdentity";
+import { ATTACHMENT_READ_LIMIT_MS } from "../requestLimit/config";
 import { MAX_CONVERSATION_MESSAGE_FILE_BYTES } from "./pendingFiles";
 import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 
@@ -40,7 +42,7 @@ export const ATTACHMENT_NOT_READ_BACK = "An attachment could not be read back fr
 export async function sentPiecesFromRecorded(
   conversationId: string,
   content: readonly MessagePiece[],
-  read: typeof fetch = fetch
+  read: (href: string, init?: RequestInit) => Promise<Response> = (href, init) => clientFetch(href, init, ATTACHMENT_READ_LIMIT_MS)
 ): Promise<SentMessagePiece[]> {
   if (!recordedContentCanBeResent(content)) throw new Error(ATTACHMENT_NOT_READ_BACK);
   const pieces: SentMessagePiece[] = [];

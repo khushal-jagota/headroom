@@ -17,5 +17,7 @@ export const USAGE_SCAN_LIMIT_MS = 120_000;
 export const VOICE_TRANSCRIPTION_LIMIT_MS = 120_000;
 /** The server waits up to 30 s for the Ticket's machine before it answers. */
 export const WORKER_CLEANUP_RECHECK_LIMIT_MS = 60_000;
+/** A kept picture or file of up to ten mebibytes, read back to send it again. */
+export const ATTACHMENT_READ_LIMIT_MS = 120_000;
 /** How long a control that closes on save waits for its screen to show the saved value. */
 export const SCREEN_REFRESH_WAIT_MS = 2_000;

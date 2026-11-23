@@ -215,7 +215,7 @@
     onAnswer?: (optionId: string) => void;
     onSubmitUserInput?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
-    onDiscardHeldPrompt?: (heldPromptId: string) => Promise<void> | void;
+    onDiscardHeldPrompt?: (heldPromptId: string) => Promise<unknown> | void;
     onPromoteHeldPrompt?: (
       heldPromptId: string,
       mode: "send_now" | "steer"

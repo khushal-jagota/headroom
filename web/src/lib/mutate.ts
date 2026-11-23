@@ -43,7 +43,16 @@ export async function mutateJsonAndWaitForScreen<T = unknown>(
 
 /** The refresh that the last own write started, or the wait limit, whichever is first. */
 export function screenShowsOwnWrite(): Promise<void> {
+  return withinScreenWait(ownWriteRefresh);
+}
+
+/**
+ * A read that shows the result of an own write, or the wait limit, whichever is first.
+ * For a control that would show the old state for a moment if it did not wait at all.
+ * A read that fails ends the wait too: the write is already answered.
+ */
+export function withinScreenWait(read: Promise<unknown>): Promise<void> {
   let timer: ReturnType<typeof setTimeout>;
   const limit = new Promise<void>((resolve) => { timer = setTimeout(resolve, SCREEN_REFRESH_WAIT_MS); });
-  return Promise.race([ownWriteRefresh, limit]).finally(() => clearTimeout(timer));
+  return Promise.race([read.then(() => undefined, () => undefined), limit]).finally(() => clearTimeout(timer));
 }
