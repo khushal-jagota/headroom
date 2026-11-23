@@ -1601,7 +1601,14 @@
      model, no mode chip and no Stop under it. */
   .chat-box.has-ask, .chat-box.has-ask.is-compact { padding: var(--cv-s1) var(--cv-s2) var(--cv-s2); }
   .chat-ask:not(.animate-ask) :global(.cv-ask) { animation: none; }
-  .chat-box > .chat-ask { flex: 1 0 100%; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
+  /* The ask fills a row only in the compact, wrapping layout. In the grown column its
+     natural height leaves room for attachments, the measured draft and the send row. */
+  .chat-box > .chat-ask { flex: none; order: -1; min-width: 0; margin-block-end: var(--cv-s4); }
+  .chat-box.is-compact > .chat-ask { flex: 1 0 100%; }
+  /* The enclosing composer owns overflow. Its column must not squeeze measured controls
+     or attachment tiles to fit beside a tall question. */
+  .chat-box:not(.is-compact) > :is(.chat-ta, .chat-foot),
+  .chat-box:not(.is-compact) > :global(.chat-attachments) { flex-shrink: 0; }
   .chat-box > .chat-ask :global(.cv-ask-body) { padding: var(--cv-s4) var(--cv-s2) 0; }
   .chat-box > .chat-ask :global(.cv-ask-footer) { padding: var(--cv-s3) var(--cv-s2) 0; }
   .chat-box.has-ask > .chat-foot :is(:global(.chat-add), :global([data-conversation-model-picker])) { display: none; }
