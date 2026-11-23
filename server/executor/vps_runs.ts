@@ -201,6 +201,10 @@ export class MacRuns {
       return {
         repository_url: project.repository_url,
         default_branch: project.default_branch,
+        ...sql.get<{ published_branch: string | null; published_revision: string | null }>(
+          'SELECT published_branch,published_revision FROM tickets WHERE id=?',
+          [ticket.id],
+        ),
       };
     });
   };

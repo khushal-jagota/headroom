@@ -25,7 +25,9 @@ test('an event leaves the totals alone and an association change still recounts 
         VALUES(?,'codex','fixture','/synthetic','full',0)`,
         [id],
       );
-    tx.run("INSERT INTO agents VALUES('chief_of_staff','chief_conversation')");
+    tx.run(
+      "INSERT INTO agents(agent_key,conversation_id) VALUES('chief_of_staff','chief_conversation')",
+    );
   });
   const ticket = create(database);
   producer = new SignalPublicationCoordinator({ database, require_runtime_ownership: () => {} });

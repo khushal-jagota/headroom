@@ -182,6 +182,7 @@ export type CommandResult = {
   child_outcome?: CommandOutcome | null;
   command_id: string;
   model_list?: JsonObject | null;
+  work_move_result?: WorkMoveSourceResult | null;
 };
 export type ComposerCatalogEntry = {
   argument_hint?: string | null;
@@ -227,6 +228,7 @@ export type ExecutorIdentity = {
   executor_incarnation: string;
   protocol_version: number;
   spool_format_version: number;
+  supports_work_moves?: boolean;
 };
 export type ExecutorRefusal = {
   peer_identity: ExecutorIdentity | null;
@@ -374,6 +376,7 @@ export type MailboxCommand = {
   command_sequence: number;
   created_at_vps_ms: number;
   model_list_request?: ModelListRequest | null;
+  work_move_request?: WorkMoveSourceRequest | null;
 };
 export type MailboxPollReply = { commands: MailboxCommand[] };
 export type MessageContent = MessagePiece[];
@@ -509,6 +512,12 @@ export type UserInputQuestion = {
 export type UserInputRequested = { request: BackendUserInputRequest };
 export type VendorSessionCursorRebound = { vendor_session_cursor: string };
 export type WaitingConversation = { conversation_id: string; oldest_sequence: number };
+export type WorkMoveProof = { published_branch: string | null; published_revision: string | null };
+export type WorkMoveSourceRequest = {
+  owner_id: string;
+  owner_kind: 'ticket' | 'manager' | 'chief';
+};
+export type WorkMoveSourceResult = { error: string | null; proof: WorkMoveProof | null };
 export type WorkerCleanupUncertainty = {
   conversation_id: string;
   reason: string;
@@ -522,7 +531,12 @@ export type WorkingTurn = { child: ChildReference; tool_running: boolean; turn: 
 export type WorkspaceIdentity = { machine_id: string; workspace_id: string };
 export type WorkspacePathPolicy = 'home_relative' | 'absolute' | 'executor_default';
 export type WorkspaceRegistrationRequest = { child: ChildReference; workspace: WorkspaceIdentity };
-export type WorkspaceRepository = { default_branch: string | null; repository_url: string | null };
+export type WorkspaceRepository = {
+  default_branch: string | null;
+  published_branch?: string | null;
+  published_revision?: string | null;
+  repository_url: string | null;
+};
 export type WorkspaceRetirementReply = { authorized: boolean };
 export type WorkspaceRetirementRequest = {
   replay?: boolean;
@@ -641,5 +655,8 @@ export interface WireTypes {
   WritePrompt: WritePrompt;
   ServerLocation: ServerLocation;
   BackendRequest: BackendRequest;
+  WorkMoveSourceRequest: WorkMoveSourceRequest;
+  WorkMoveProof: WorkMoveProof;
+  WorkMoveSourceResult: WorkMoveSourceResult;
 }
 export type WireRootName = keyof WireTypes;

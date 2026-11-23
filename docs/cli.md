@@ -33,7 +33,7 @@ printf '%s\n' '{"recap":"The current work awaits a decision."}' |
 
 A `show` returns a short header and a list of parts, and the caller names the parts to expand. Lists come in pages and say what they left out. Backlog and resume need no record fingerprint. `ticket delete` needs no confirmation flag, but a running Ticket still needs `--force`. `ticket create --input-json FILE` sends one object to the same create route as the browser, which validates the whole Ticket before one write. A new Ticket starts from a preset or custom stages. Custom stages carry their result fields, ownership, and instructions together.
 
-`ticket create --machine-id ID` chooses the machine from `machine list`. The JSON object also accepts `machine_id`. Omission selects the home. The destination stays fixed after creation, including when a machine changes its name. Away work waits for that machine. Legacy `--locale vps` and `--locale macos` remain aliases for the original home and Mac. If both forms arrive, the server rejects disagreement.
+`ticket create --machine-id ID` chooses the machine from `machine list`. The JSON object also accepts `machine_id`. Omission selects the home. A machine rename never moves work. The owner can use `machine move-work MACHINE_ID` with `--ticket ID`, `--manager ID` or `--chief` for an explicit move. After a server move, `--everything` moves unfinished Tickets, active Managers and the Chief to the server's new machine. Each result says whether the work moved and reports any refusal. Away work waits for that machine. Legacy `--locale vps` and `--locale macos` remain aliases for the original home and Mac. If both forms arrive, the server rejects disagreement.
 
 `ticket list --active` selects unfinished Tickets outside backlog. The default list remains an inventory that includes deferred Tickets. Manager rollups exclude deferred children, while a Manager workspace keeps the complete child inventory and its backlog marks.
 
@@ -63,4 +63,4 @@ A Worker's proposal feeds the [proposal resolver](tickets.md#how-a-stage-advance
 - `server/lifecycle/control.ts`: the control socket and its messages. `server/lifecycle/cli.ts`: the event loop tasks command.
 - Each domain's `cli/` folder holds its own group, such as `server/credentials/cli/` and `server/goals/cli/`. The routes they call are in each domain's `routes.ts`.
 
-_Last verified: 2026-11-16._
+_Last verified: 2026-11-23._

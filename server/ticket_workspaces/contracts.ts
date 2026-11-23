@@ -27,6 +27,8 @@ export type WorkspaceRetirementOperation = (
 ) => MaybePromise<RetirementTarget>;
 export interface ProjectRepository {
   readonly repository_url: string | null;
+  readonly published_branch?: string | null;
+  readonly published_revision?: string | null;
   readonly default_branch?: string | null;
 }
 export interface WorkspaceOptions {
@@ -70,6 +72,7 @@ export interface RetirementOptions extends WorkspaceOptions {
   identity?: WorkspaceIdentity;
 }
 export interface WorkspaceMarker extends WorkspaceIdentity {
+  recovered_published_revision?: string;
   checkout_kind?: 'clone';
   temporary?: string;
   ticket_id: string;

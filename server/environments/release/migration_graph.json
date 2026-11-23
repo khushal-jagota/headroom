@@ -114,6 +114,9 @@
     "ts_0008_conversation_machine": [
       "ts_0007_machine_backend_state"
     ],
+    "ts_0009_work_moves": [
+      "ts_0008_conversation_machine"
+    ],
     "worker_cleanup_recheck": [
       "worker_supervision"
     ],

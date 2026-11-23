@@ -53,6 +53,7 @@ export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
 }
 
 export const queries = {
+  workMoves: () => jsonQuery<import("../../../server/work_moves/contracts").WorkMoveStatus>(["work-moves"], "/api/work-moves"),
   machines: () => ({...jsonQuery<import("./machines/contracts").MachinesResponse>(["machines"], "/api/machines"), refetchInterval: MACHINE_HEALTH_POLL_MS, retry: false}),
   // The latest move of the server. The change signal can be held during the pause, so an
   // active run also polls; a settled one follows the change stream alone.

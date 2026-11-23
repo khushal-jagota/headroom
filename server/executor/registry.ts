@@ -1,3 +1,5 @@
+import type { WorkMoveOwner, WorkMoveProof } from '../work_moves/contracts.ts';
+import { HttpError } from '../core/http/errors.ts';
 /** One executor owner per destination, shared by startup adoption and new work. */
 import type { FastifyInstance } from 'fastify';
 import type {
@@ -127,6 +129,29 @@ export class VpsExecutorRegistry {
       () => this.pending.delete(machine_id),
     );
     return creation;
+  }
+
+  async work_move_source(machine_id: string, owner: WorkMoveOwner): Promise<WorkMoveProof> {
+    this.admit();
+    const endpoint = this.get(machine_id);
+    if (!endpoint?.presence.is_present())
+      throw new HttpError(503, 'The source machine is unavailable.');
+    if (endpoint.presence.current_identity()?.supports_work_moves !== true)
+      throw new HttpError(503, 'Update source machine code before a work move.');
+    const command = await endpoint.mailbox.put_work_move_request({
+      owner_kind: owner.kind,
+      owner_id: owner.kind === 'chief' ? 'chief' : owner.id,
+    });
+    try {
+      const result = await endpoint.mailbox.wait_result(command.command_id, 60);
+      const answer = result?.work_move_result;
+      if (!answer) throw new HttpError(503, 'The source machine did not answer.');
+      if (answer.error || !answer.proof)
+        throw new HttpError(409, answer.error ?? 'The source machine could not verify its work.');
+      return answer.proof;
+    } finally {
+      await endpoint.mailbox.withdraw_waiting(command.command_id, 'delivery_withdrawn');
+    }
   }
 
   configure(

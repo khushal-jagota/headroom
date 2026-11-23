@@ -245,7 +245,7 @@ export function worker_resolve(
       '\n[/Ticket workflow guidance]' +
       '\n\n[Ticket machine]\n' +
       `This Ticket runs on ${database.read((sql) => read_machine(sql, ticket.machine_id).name)}. ` +
-      `Its fixed destination is ${ticket.machine_id}. ` +
+      `Its current destination is ${ticket.machine_id}. ` +
       'A rename never changes this destination.\n[/Ticket machine]',
   });
   if (ticket.employee_launch_model === null || overrides.model != null)

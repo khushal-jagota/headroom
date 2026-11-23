@@ -10,7 +10,7 @@ A Ticket is one piece of work small enough to hand to a single AI Worker. It is 
 - **An assignment** to Chief or one ordinary Manager. This is who the work sits under.
 - **A conversation**, the Worker's only input. Workers send ordinary messages to an explicit recipient, separate from the ceiling holder. See [Conversations](conversations.md).
 - **A launch setup**: backend, model, and reasoning, copied from a selected preset or explicitly chosen for custom work, and fixed once the conversation exists.
-- **A machine**: a fixed execution destination, chosen at creation.
+- **A machine**: the execution destination, chosen at creation and changed only by an explicit owner move.
 - **Blockers**, other Tickets that must be Done before this one may start a step.
 - **A recap**, the Worker's short status for a person, and **artifacts**, the plans, documents, images, and prototypes the work produced.
 
@@ -76,7 +76,7 @@ Delete removes the Ticket's record and leaves its files. It is available from th
 
 ## Where the Worker runs
 
-The machine destination is chosen at creation and never changes. It defaults to the home. Settings → Machines edits its name, icon, and color. These display edits never move work. Each destination's machine code pulls its own work, and the work waits while that machine is away. The Chief and Managers record their own machine; see [Managers](managers.md).
+The machine destination defaults to the home at creation. The owner can move a Ticket to another registered machine. The source must prove that repository work is clean and pushed, and that the old agent stopped. A fresh conversation starts from the same Ticket record and the published work branch. The stage, proposal, ceiling, assignment and backlog state stay. Private agent memory does not transfer. Settings → Machines edits its name, icon, and color. These display edits never move work. Each destination's machine code pulls its own work, and the work waits while that machine is away. The Chief and Managers record their own machine; see [Managers](managers.md).
 
 The browser and CLI use `machine_id`. Legacy `locale` requests remain compatible: `vps` names only the original home, and `macos` names only the original Mac. Requests that supply both must agree. The operator registers extra destinations without an enrollment screen. See [Extra machines](executor.md).
 
@@ -97,4 +97,4 @@ The Ticket page is the inspector: the stage ladder, the current gate with its pr
 - `server/tickets/logic/`: the stage machine, proposal routing, and the resolver (`machine.ts`, `proposal_routing.ts`, `resolution.ts`).
 - `web/src/routes/TicketRoute.svelte` and `web/src/components/WorkerProposalCard.svelte`: the Ticket page and its gate.
 
-_Last verified: 2026-11-15._
+_Last verified: 2026-11-23._

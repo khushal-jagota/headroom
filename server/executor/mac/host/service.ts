@@ -286,6 +286,7 @@ export class MacService {
     let identity = parse_identity(
       configuration.identity ?? {
         protocol_version: PROTOCOL_VERSION,
+        supports_work_moves: true,
         application_revision: configuration.revision,
         ...(configuration.build_id === undefined ? {} : { build_id: configuration.build_id }),
         spool_format_version: SPOOL_FORMAT_VERSION,

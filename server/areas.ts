@@ -35,6 +35,7 @@ import { PromptDispatchDecision } from './conversation/contracts.ts';
 import type { OwnedAreaContext } from './core/authority/register.ts';
 import { routes as managers } from './managers/routes.ts';
 import { routes as machines } from './machines/routes.ts';
+import { routes as workMoves } from './work_moves/routes.ts';
 import { routes as messageDelivery } from './message_delivery/routes.ts';
 import { configure_manager_resources } from './managers/resource_versions.ts';
 import { routes as notifications } from './notifications/routes.ts';
@@ -216,6 +217,7 @@ export function createAreasRuntime(
         { prefix: '/api', routes: credentials },
         { prefix: '/api', routes: managers },
         { prefix: '/api', routes: machines },
+        { prefix: '/api', routes: workMoves },
         { prefix: '/api', routes: messageDelivery },
         { prefix: '/api', routes: notifications },
         { prefix: '/api', routes: tickets },

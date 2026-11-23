@@ -186,6 +186,7 @@ test('quiesce cancels a catalog probe before native dispatch and joins HTTP befo
       outbox_format: context.identity.spool_format_version,
     });
     expect(context.client.authentication_headers()['X-Panels-Client']).toBe(client_identity);
+    expect(context.identity.supports_work_moves).toBe(true);
     expect(invocation.child_processes).toBe(service.child_processes);
     expect(invocation.one_shot_children).toBe(service.one_shot_children);
     expect(context.outbox).toBe(service.outbox);

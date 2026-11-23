@@ -1,4 +1,5 @@
 <script lang="ts">
+  import WorkMoveDialog from "./machines/WorkMoveDialog.svelte";
   import Button from "./Button.svelte";
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -210,16 +211,17 @@
           {#snippet settleButton()}
             <Button variant="ghost" class="page-settle" disabled={settleBusy} onclick={()=>void setSettled(!(item.settled??false))} aria-label={`${item.settled?'Reopen':'Settle'} ${item.title}`}><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{item.settled?'Reopen':'Settle'}</Button>
           {/snippet}
+          {#snippet moveAction()}{#if !item.settled}<WorkMoveDialog owner={{kind:"manager",id:itemId}} label={item.title} currentMachineId={startValues.data?.machine_id} />{/if}{/snippet}
           {#snippet goalHeading()}
             {#if soleGoal}<GoalHeader goal={soleGoal} textEditable={false}>
               {#snippet title()}{@render managerTitle()}<ConversationSignalMark signal={item.conversation_signal && {...item.conversation_signal, working:false}} conversationId={item.conversation_id}/>{/snippet}
-              {#snippet mark()}<span class="goal-head-actions">{@render settleButton()}<RequestRecapAction kind="manager" id={item.id} bind:note={recapNote} noteInline={false} /></span>{/snippet}
+              {#snippet mark()}<span class="goal-head-actions">{@render moveAction()}{@render settleButton()}<RequestRecapAction kind="manager" id={item.id} bind:note={recapNote} noteInline={false} /></span>{/snippet}
             </GoalHeader>{/if}
           {/snippet}
           <ManagerHeader bind:recapNote heading={soleGoal?goalHeading:undefined} signal={item.conversation_signal} conversationId={item.conversation_id}
             recap={item.recap} recapTarget={{kind:"manager",id:item.id}}>
             {#snippet eyebrow()}<div class="page-eyebrow"><span>{item.project}</span>{#if backHref!==null}<a class="page-back" href={backHref} aria-label={`Back to ${workspaceName}`} title={`Back to ${workspaceName}`}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 11 5 5M5 10V5h5"/></svg></a>{/if}</div>{/snippet}
-            {#snippet actions()}{@render settleButton()}{/snippet}
+            {#snippet actions()}{@render moveAction()}{@render settleButton()}{/snippet}
             {#snippet title()}{@render managerTitle()}{/snippet}
           </ManagerHeader>
           {#if settleError}<p role="alert">{settleError}</p>{/if}

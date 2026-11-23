@@ -167,6 +167,8 @@ test('MacRuns populates StartRun.workspace_repository from the Ticket effective 
     expect(parsed.child_command.arguments.workspace_repository).toEqual({
       repository_url: 'https://github.com/khushal-jagota/Wren.git',
       default_branch: 'main',
+      published_branch: null,
+      published_revision: null,
     });
   } finally {
     const deadline = performance.now() / 1000 + 2;

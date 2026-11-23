@@ -22,6 +22,8 @@ A Manager's home is its files folder on its machine. Each new Manager conversati
 
 Chief is the special case. It is a global principal that stands above everything, with its own retained conversation and settings. Tickets can be assigned to Chief directly. Chief is not stored as an ordinary Manager, has no goal field, and can never be settled.
 
+The owner can move a Manager or the Chief to another registered machine. The same [move rule](tickets.md#where-the-worker-runs) requires pushed work and proof that the old agent stopped. A fresh conversation reads the current record there. The agent keeps its identity and responsibilities. Its private memory stays on the old machine.
+
 ## What a Manager does
 
 A Manager acts through the same routes as everyone else. It has no private API. [Authority](authority.md) limits it to its own record and its current children. It can create child Tickets, approve or send back their proposals, message them, delete them, and restart a Worker that errored. It cannot move a Ticket to another Manager. Only Khushal and Chief can.
@@ -77,4 +79,4 @@ Manager lists include recap freshness. Workspace reads also include each child T
 - `server/worker_settings/`: Chief's own settings.
 - `web/src/components/ManagerWorkspace.svelte` and `web/src/components/ChiefConversation.svelte`: the screens.
 
-_Last verified: 2026-11-16._
+_Last verified: 2026-11-23._

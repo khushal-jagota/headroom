@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '../execution_configuration.ts';
 /** Gap: a generic agent write runs outside the receipt transaction. Prove one route run per
  * inbox position, the child's in-process identity, the local CLI's error payloads, and that a
  * lost or late answer leaves an uncertain receipt that nothing repeats. Reuse the Ticket database and
@@ -21,7 +22,7 @@ import type { JsonObject, QueuedEnvelope } from './wire.generated.ts';
 const identity: ExecutorIdentity = {
   executor_incarnation: '11111111-1111-4111-8111-111111111111',
   application_revision: 'test',
-  protocol_version: 26,
+  protocol_version: PROTOCOL_VERSION,
   spool_format_version: 5,
   connection_generation: 0,
 };

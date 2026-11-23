@@ -18,7 +18,7 @@ import { loadConfig } from '../core/config.ts';
 import { createReadAccess } from '../core/database/index.ts';
 import { ChangeSignal } from '../core/changes/index.ts';
 import type { MacUpdateServiceContract } from '../environments/updates/mac/contracts.ts';
-import { ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
+import { ORIGINAL_MAC_MACHINE_ID, parse_identity } from '../execution_identity.ts';
 import { issue_original_credential } from '../machines/executor_credentials.ts';
 import { create, fixture, fixture_path } from '../tests/ticket_fixture.ts';
 import { PROTOCOL_VERSION } from '../execution_configuration.ts';
@@ -314,6 +314,17 @@ test('a machine saves and removes files for its own Ticket only', async () => {
     expect((await request('DELETE', foreign.id, 'artifacts/report.txt')).statusCode).toBe(403);
     expect((await request('DELETE', own.id, 'artifacts/report.txt')).statusCode).toBe(204);
     expect(existsSync(served(own.id))).toBe(false);
+    // Additive capability leaves compatible historical work admitted without granting moves.
+    for (const protocol_version of [26, 27]) {
+      expect(parse_identity({ ...identity, protocol_version }).supports_work_moves).toBe(false);
+      expect(
+        parse_identity({ ...identity, protocol_version, supports_work_moves: true })
+          .supports_work_moves,
+      ).toBe(true);
+    }
+    expect(() => parse_identity({ ...identity, supports_work_moves: 'true' })).toThrow(
+      'capability has wrong type',
+    );
     // An adjacent release keeps its lease and its requests, with fields this release ignores.
     for (const adjacent of [PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1]) {
       expect((await lease(adjacent, { later_field: true })).statusCode).toBe(200);

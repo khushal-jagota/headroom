@@ -6,6 +6,7 @@
   import { MACHINE_ICONS, MACHINE_COLORS, type Machine, type MachineIcon, type MachineColor } from "../../lib/machines/contracts";
   import MacStatus from "../machines/MacStatus.svelte";
   import MachineSymbol from "../machines/MachineSymbol.svelte";
+  import WorkMoveDialog from "../machines/WorkMoveDialog.svelte";
   import ServerMoveDialog from "../machines/ServerMoveDialog.svelte";
   import { canMoveServerTo, serverMoveActive, serverMovePhaseText } from "../../lib/machines/logic/serverMove";
   import Button from "../Button.svelte";
@@ -23,6 +24,7 @@
   const executorHealth = $derived(new Map(remoteMachines.map((machine, index) => [machine.machine_id, healthQueries[index]?.data])));
   // The latest move of the server, shown on its target machine's row.
   const serverMove = createQuery(() => queries.serverMove());
+  const workMoves = createQuery(() => queries.workMoves());
   const move = $derived(serverMove.data?.move ?? null);
   let moveDialog = $state<ServerMoveDialog | null>(null);
 
@@ -140,6 +142,10 @@
           {#snippet control()}
             {#if editing !== machine.machine_id}
               {#if canMoveServerTo(machine, move)}<Button variant="ghost" onclick={() => void moveDialog?.openDialog(machine)} data-server-move={machine.machine_id}>Move the server here</Button>{/if}
+              {#if workMoves.data?.move_everything_machine_id === machine.machine_id}
+                <WorkMoveDialog label="everything" targetMachineId={machine.machine_id} everything triggerLabel="Move everything" />
+                <WorkMoveDialog owner={{kind:"chief"}} label="the Chief" targetMachineId={machine.machine_id} triggerLabel="Move Chief here" />
+              {/if}
               <Button variant="ghost" onclick={() => edit(machine)} aria-label={`Edit ${machine.name}`}>Edit</Button>
             {/if}
           {/snippet}

@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '../../../execution_configuration.ts';
 /** Unique storage risks; populated parity and process-crash checks live in the direct driver. */
 import {
   mkdirSync,
@@ -220,7 +221,7 @@ test('a restart retains the delivery deadline and a failed backend event after c
     {
       application_revision: 'test',
       executor_incarnation: 'incarnation',
-      protocol_version: 26,
+      protocol_version: PROTOCOL_VERSION,
       spool_format_version: 5,
     },
     () => 1_700_000_180_000,
