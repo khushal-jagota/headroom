@@ -304,6 +304,22 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertNil(queue.leaving)
     }
 
+    /// Risk: the same freeze through a visit. Review becomes the destination again while a
+    /// card's exit runs; the summary must not replace the exit.
+    func testACardLeavingWhenReviewIsVisitedAgainFinishesItsExit() {
+        var queue = ReviewQueue()
+        let all = [proposal, ticketMessage, chiefMessage]
+        queue.visit(1)
+        queue.returnToCards(); reconcile(&queue, all)
+        queue.resolve(proposal)
+        queue.visit(2)
+        XCTAssertEqual(queue.shown?.id, proposal.id, "The exit still runs after the visit")
+        queue.finishExit(proposal); reconcile(&queue, all)
+        XCTAssertEqual(queue.shown?.id, ticketMessage.id, "The queue moves on")
+        queue.visit(3)
+        XCTAssertNil(queue.shown, "With no exit running, a visit opens on the summary")
+    }
+
     /// Risk: one saved reply moves the queue on twice. The card that sent it and an artifact
     /// opened from it both see the reply land: the artifact's dock finishes the exit at once,
     /// then the card's exit timer resolves and finishes again. The late calls must not bring

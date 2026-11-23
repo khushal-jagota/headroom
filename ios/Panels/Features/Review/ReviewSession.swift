@@ -198,9 +198,11 @@ struct ReviewQueue: Equatable, Sendable {
         pinned = nil; notice = nil
     }
 
-    /// Each time Review becomes the destination again, it opens on the summary.
+    /// Each time Review becomes the destination again, it opens on the summary. A card
+    /// whose exit runs finishes it first, as after a return from the background: the
+    /// summary would remove the card and its sheet before the sheet reports closing.
     mutating func visit(_ visit: Int) {
-        if let seenVisit, seenVisit != visit { showSummary() }
+        if let seenVisit, seenVisit != visit, leaving == nil { showSummary() }
         seenVisit = visit
     }
 
