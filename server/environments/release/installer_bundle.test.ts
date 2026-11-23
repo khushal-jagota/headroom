@@ -41,7 +41,7 @@ import {
   DARWIN_HOME_INSTALLER_PACKAGE_ROOTS,
   DARWIN_HOME_INSTALLER_KOFFI_OPTIONAL_ROOT,
 } from './installer_bundle_configuration.ts';
-import { MAC_HOME } from './contracts.ts';
+import { LINUX_HOME, LINUX_EXECUTOR, MAC_HOME } from './contracts.ts';
 import { compose_mac_home_payload } from './mac_home_payload.ts';
 import { MAC_HOME_REQUIRED_FILES } from './mac_home_configuration.ts';
 import { migration_frontier, read_migration_graph } from './migrations.ts';
@@ -492,7 +492,7 @@ it('copies Node and its selected closure independently and refuses changed sourc
       minimum_node_version: '22.18.0',
       cpu_features: SUPPORTED_CPU_FEATURES,
       external_libraries: GLIBC_LIBRARIES,
-      external_executables: ['sh', 'node'],
+      external_executables: ['sh'],
       inventory_sha256: hash(inventory),
     };
     write('runtime/inventory.json', inventory);
@@ -590,7 +590,7 @@ it('copies Node and its selected closure independently and refuses changed sourc
         seconds: (performance.now() - payload_began) / 1000,
       }),
     );
-    await write_installer_file_manifest(app, 'a'.repeat(40), execution);
+    await write_installer_file_manifest(app, 'a'.repeat(40), execution, LINUX_HOME);
     const recipe = parse_installer_file_manifest(
       JSON.parse(readFileSync(join(app, INSTALLER_RECIPE_PATH), 'utf8')),
     );
@@ -685,6 +685,32 @@ it('copies Node and its selected closure independently and refuses changed sourc
       /complete selected closure/,
     );
     assert(!existsSync(join(data, 'update-installer-tamper')));
+    // Linux machine code keeps its host-Node contract and recipe, without a private Node payload.
+    const executor_app = join(root, 'executor-app');
+    cpSync(app, executor_app, { recursive: true, verbatimSymlinks: true });
+    rmSync(join(executor_app, 'node'), { recursive: true });
+    const executor_inventory = JSON.stringify({
+      ...JSON.parse(inventory),
+      native_files: JSON.parse(inventory).native_files.filter(
+        (entry: { path: string }) => entry.path !== 'node/bin/node',
+      ),
+    });
+    writeFileSync(join(executor_app, 'runtime/inventory.json'), executor_inventory);
+    writeFileSync(
+      join(executor_app, 'runtime/contract.json'),
+      JSON.stringify({
+        ...contract,
+        external_executables: ['sh', 'node'],
+        inventory_sha256: hash(executor_inventory),
+      }),
+    );
+    await write_installer_file_manifest(executor_app, 'a'.repeat(40), execution, LINUX_EXECUTOR);
+    const executor_recipe = parse_installer_file_manifest(
+      JSON.parse(readFileSync(join(executor_app, INSTALLER_RECIPE_PATH), 'utf8')),
+      LINUX_EXECUTOR,
+    );
+    assert(!executor_recipe.files.some((entry) => entry.path.startsWith('node/')));
+
     // Reuse this copy lifetime for Darwin's distinct inventory and synchronous pure-ESM decoder.
     // These native bytes remain structural. The hosted package proves the real Darwin ABI.
     const mac_app = join(current, '.app-next-' + 'd'.repeat(40));
@@ -753,7 +779,7 @@ it('copies Node and its selected closure independently and refuses changed sourc
         runtime_contract: mac_contract,
       }),
     );
-    await write_installer_file_manifest(mac_app, 'a'.repeat(40), execution);
+    await write_installer_file_manifest(mac_app, 'a'.repeat(40), execution, MAC_HOME);
     const mac_recipe = parse_installer_file_manifest(
       JSON.parse(readFileSync(join(mac_app, INSTALLER_RECIPE_PATH), 'utf8')),
       MAC_HOME,

@@ -1,3 +1,4 @@
+import { LINUX_HOME } from './release/contracts.ts';
 /** Four command boundaries, private files and owned Node witnesses; no provider or executor. */
 import {
   mkdir,
@@ -195,7 +196,7 @@ test('app-build emits a manifest for a real exact-SHA source export', async () =
         build_app: (args) =>
           build_exported_app(
             args.source_root,
-            { ...args, install_dependencies: false },
+            { ...args, install_dependencies: false, target: LINUX_HOME },
             { public_cli_entrypoint: 'cli' },
             f.execution,
           ),
@@ -329,6 +330,7 @@ test('installed launcher runs nightly backup and applied maintenance on private 
       revision,
       { public_cli_entrypoint: 'server/cli/main.ts' },
       f.execution,
+      LINUX_HOME,
     );
     await file(
       'manifest.json',

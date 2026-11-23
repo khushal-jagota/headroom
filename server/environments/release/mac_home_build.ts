@@ -61,6 +61,7 @@ export async function build_mac_home(
         requested_sha: options.requested_sha,
         candidate_app: exported,
         install_dependencies: false,
+        target: MAC_HOME,
       },
       dependencies,
       execution,
@@ -79,7 +80,7 @@ export async function build_mac_home(
     await cp(host_node, join(app, 'node/bin/node'));
     await cp(join(dirname(dirname(host_node)), 'LICENSE'), join(app, 'node/LICENSE'));
     await validate_app_tree(app);
-    await write_app_entrypoints(app, options.requested_sha, dependencies, execution);
+    await write_app_entrypoints(app, options.requested_sha, dependencies, execution, MAC_HOME);
     await writeFile(
       join(app, 'mac-runtime.json'),
       JSON.stringify({
@@ -105,7 +106,7 @@ export async function build_mac_home(
       )
     )
       throw new Error('Mac home requires native Darwin SQLite and Koffi addons');
-    await write_installer_file_manifest(app, options.requested_sha, execution);
+    await write_installer_file_manifest(app, options.requested_sha, execution, MAC_HOME);
     for (const name of MAC_HOME_REQUIRED_FILES)
       if (!(await lstat(join(app, name))).isFile())
         throw new Error(`Mac home runtime file is missing: ${name}`);

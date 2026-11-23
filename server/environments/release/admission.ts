@@ -121,7 +121,10 @@ async function verify_host(
     current(deadline);
   }
   for (const name of contract.external_executables) {
-    if ((await find_release_executable(name, { PATH: HOST_PATH })) === null)
+    if (name === 'node') {
+      // Linux machine code keeps its supervisor's baseline interpreter, even without global Node.
+      await access(await realpath(process.execPath), constants.X_OK);
+    } else if ((await find_release_executable(name, { PATH: HOST_PATH })) === null)
       throw new AppValidationError(`runtime host prerequisite is missing: ${name}`);
     current(deadline);
   }
@@ -256,7 +259,15 @@ async function admit(
     await writeFile(join(state, 'config.yaml'), '{}\n', { mode: 0o600 });
     const contract = manifest.runtime_contract;
     await verify_host(contract, state, deadline, child_processes);
-    const node = await candidate_tool_path(root, join(root, 'node/bin/node'), true);
+    const host_node = expected_target?.system === 'linux' && expected_target.role === 'executor';
+    const node = host_node
+      ? await realpath(process.execPath)
+      : await candidate_tool_path(root, join(root, 'node/bin/node'), true);
+    if (host_node)
+      require_host_node(
+        await run_runtime_probe([node, '--version'], state, deadline, child_processes),
+        contract,
+      );
     current(deadline);
     if (!prove) return;
     require_host_node(
