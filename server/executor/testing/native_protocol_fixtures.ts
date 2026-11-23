@@ -9,6 +9,7 @@ function document(entries: readonly (readonly [string, JsonValue])[]): JsonObjec
 export function native_wire_fixtures(): WireTypes {
   const identity: WireTypes['ExecutorIdentity'] = {
     protocol_version: PROTOCOL_VERSION,
+    supports_work_moves: true,
     application_revision: 'fixture',
     spool_format_version: 5,
     executor_incarnation: '11111111-1111-4111-8111-111111111111',

@@ -25,7 +25,6 @@ import {
 } from '../runtime/conversation_start.ts';
 import { seed_machine_lease } from '../machines/testing/lease.ts';
 import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../execution_identity.ts';
-import { WORK_MOVE_PROTOCOL_VERSION } from '../execution_configuration.ts';
 import { read_manager } from '../managers/data.ts';
 import {
   issue_launch_token,
@@ -125,8 +124,8 @@ test('source unavailability, unproven cleanup and unpublished work never change 
   const kill = vi.spyOn(system, 'kill');
   database.write((tx) =>
     tx.run(
-      "UPDATE mac_executor_presence SET identity_json=json_set(identity_json,'$.protocol_version',?) WHERE machine_id=?",
-      [WORK_MOVE_PROTOCOL_VERSION - 1, ORIGINAL_MAC_MACHINE_ID],
+      "UPDATE mac_executor_presence SET identity_json=json_set(identity_json,'$.supports_work_moves',json('false')) WHERE machine_id=?",
+      [ORIGINAL_MAC_MACHINE_ID],
     ),
   );
   expect(
@@ -142,8 +141,8 @@ test('source unavailability, unproven cleanup and unpublished work never change 
   expect(registry.work_move_source).not.toHaveBeenCalled();
   database.write((tx) =>
     tx.run(
-      "UPDATE mac_executor_presence SET identity_json=json_set(identity_json,'$.protocol_version',?) WHERE machine_id=?",
-      [WORK_MOVE_PROTOCOL_VERSION, ORIGINAL_MAC_MACHINE_ID],
+      "UPDATE mac_executor_presence SET identity_json=json_set(identity_json,'$.supports_work_moves',json('true')) WHERE machine_id=?",
+      [ORIGINAL_MAC_MACHINE_ID],
     ),
   );
   database.write((tx) =>

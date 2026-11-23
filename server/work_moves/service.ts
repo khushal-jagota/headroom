@@ -1,7 +1,6 @@
 /** One explicit rule for an individual move and every member of a bulk move. */
 import type { Database } from '../core/database/contracts.ts';
 import { PlannerError } from '../core/contracts.ts';
-import { WORK_MOVE_PROTOCOL_VERSION } from '../execution_configuration.ts';
 import type { ConversationSystem } from '../conversation/contracts.ts';
 import { PromptDeliveryRefused } from '../conversation/contracts.ts';
 import { text_message_content } from '../conversation/message_content.ts';
@@ -55,10 +54,7 @@ export async function move_work(
           if (!can_execute_machine(selected, sql) || !mac_is_present(sql, Date.now(), selected))
             throw new PlannerError('validation', machine_unavailable_reason(selected, sql));
         for (const selected of [machine_id, work.machine_id])
-          if (
-            (read_presence(sql, selected)?.identity?.protocol_version ?? 0) <
-            WORK_MOVE_PROTOCOL_VERSION
-          )
+          if (read_presence(sql, selected)?.identity?.supports_work_moves !== true)
             throw new PlannerError(
               'validation',
               'Update source and destination machine code before a move.',

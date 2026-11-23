@@ -2,7 +2,7 @@
 // Required nullable fields stay required. Defaults are optional on the wire.
 import wire_schema from './wire.schema.json' with { type: 'json' };
 export const WIRE_SCHEMA = wire_schema;
-export const PROTOCOL_VERSION = 28;
+export const PROTOCOL_VERSION = 27;
 export const SPOOL_FORMAT_VERSION = 5;
 export const COMMAND_JOURNAL_FORMAT_VERSION = 1;
 export type AcceptanceReceipt = {
@@ -228,6 +228,7 @@ export type ExecutorIdentity = {
   executor_incarnation: string;
   protocol_version: number;
   spool_format_version: number;
+  supports_work_moves?: boolean;
 };
 export type ExecutorRefusal = {
   peer_identity: ExecutorIdentity | null;

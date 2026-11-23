@@ -6,7 +6,11 @@ import { BUILT_IN_MANIFESTS } from '../../drivers/built_in_manifests.ts';
 
 export function seed_machine_lease(tx: TransactionSql, machine_id: string): void {
   const fixture = native_wire_fixtures().LeaseRequest;
-  const identity = { ...fixture.identity, protocol_version: PROTOCOL_VERSION };
+  const identity = {
+    ...fixture.identity,
+    protocol_version: PROTOCOL_VERSION,
+    supports_work_moves: true,
+  };
   const lease = {
     ...fixture,
     identity,

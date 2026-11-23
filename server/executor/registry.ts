@@ -1,4 +1,3 @@
-import { WORK_MOVE_PROTOCOL_VERSION } from '../execution_configuration.ts';
 import type { WorkMoveOwner, WorkMoveProof } from '../work_moves/contracts.ts';
 import { HttpError } from '../core/http/errors.ts';
 /** One executor owner per destination, shared by startup adoption and new work. */
@@ -137,7 +136,7 @@ export class VpsExecutorRegistry {
     const endpoint = this.get(machine_id);
     if (!endpoint?.presence.is_present())
       throw new HttpError(503, 'The source machine is unavailable.');
-    if ((endpoint.presence.current_identity()?.protocol_version ?? 0) < WORK_MOVE_PROTOCOL_VERSION)
+    if (endpoint.presence.current_identity()?.supports_work_moves !== true)
       throw new HttpError(503, 'Update source machine code before a work move.');
     const command = await endpoint.mailbox.put_work_move_request({
       owner_kind: owner.kind,
