@@ -88,3 +88,22 @@ describe("page version headers", () => {
     } finally { stopReleaseMonitor(); vi.unstubAllGlobals(); }
   });
 });
+
+// Desktop activation owns an integrity and bridge-version boundary absent in browsers.
+it("leaves desktop reloads to the native activation gate", async () => {
+  vi.stubGlobal("location", { protocol: "panels:" });
+  try {
+    const page = listeners();
+    const reload = vi.fn();
+    const monitor = createReleaseMonitor({
+      bootSha: "old", document: page.target, window: page.target, reload,
+      fetchMeta: vi.fn(async () => ({ ok: true, json: async () => ({ app_sha: "new" }) }) as Response)
+    });
+    monitor.start();
+    await monitor.check();
+    monitor.requestReload();
+    await monitor.check();
+    expect(reload).not.toHaveBeenCalled();
+    monitor.stop();
+  } finally { vi.unstubAllGlobals(); }
+});

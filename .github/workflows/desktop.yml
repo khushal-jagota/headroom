@@ -50,6 +50,7 @@ jobs:
           set -euo pipefail
           npm --prefix desktop run check
           npm --prefix desktop run test:updates
+          npm --prefix desktop run test:screens
           npm --prefix tests/e2e run check
       - name: Build the screens and the app
         run: |
@@ -59,9 +60,18 @@ jobs:
       - name: Drive the app against a test server
         env:
           PANELS_E2E_FAILURE_DIR: ${{ runner.temp }}/desktop-failure
+          PANELS_UI_PROOF_DIR: ${{ runner.temp }}/desktop-proof
         run: |
           cd tests/e2e
           xvfb-run -a node_modules/.bin/playwright test --config desktop.config.ts
+      - name: Upload desktop review images
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-proof
+          path: ${{ runner.temp }}/desktop-proof
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -1,3 +1,4 @@
+import { ScreenSnapshots } from '../screens/snapshot.ts';
 import { client_version_meta } from '../client_versions/meta.ts';
 import type { FastifyInstance } from 'fastify';
 import { Readable } from 'node:stream';
@@ -22,11 +23,24 @@ export async function registerCoreRoutes(
   changes: Changes,
   root: string,
   database: Database,
+  waiting_screens_root?: () => string | null,
 ): Promise<void> {
   const version_meta = client_version_meta(root, config.app_sha);
+  const screens = new ScreenSnapshots(root, waiting_screens_root);
   app.get('/api/meta', async (_request, reply) => {
     reply.header('cache-control', 'no-store');
-    return { test_mode: config.test_mode, app_sha: config.app_sha, ...version_meta };
+    return {
+      test_mode: config.test_mode,
+      app_sha: config.app_sha,
+      ...version_meta,
+      ...(await screens.meta()),
+    };
+  });
+  app.get<{ Params: { sha256: string } }>('/api/screens/:sha256', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const payload = await screens.payload(request.params.sha256);
+    if (payload === null) return reply.code(404).send({ detail: 'Unknown screen snapshot.' });
+    return payload;
   });
   app.get('/api/health', async (request, reply) => {
     if (config.app_sha === null) {

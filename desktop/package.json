@@ -10,7 +10,8 @@
     "build": "tsc -p . && node scripts/pack_web.mjs",
     "start": "electron .",
     "build:mac": "npm run build && electron-builder --mac --publish never",
-    "test:updates": "node scripts/test_updates.mjs"
+    "test:updates": "node scripts/test_updates.mjs",
+    "test:screens": "node scripts/test_updates.mjs screens/screens.test.cjs"
   },
   "devDependencies": {
     "@types/node": "22.19.3",
