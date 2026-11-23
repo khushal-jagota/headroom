@@ -512,6 +512,69 @@ final class ReviewFinalPageTests: XCTestCase {
         capture(app, "held-card-queue-moved-on")
     }
 
+    /// The design cards on a bad connection. The card, its Approve and Reviewer sheets,
+    /// the Ticket page and its Actions sheet are read once online, then the stub drops every
+    /// connection. Each one opens from its saved copy with no cover, banner or status note.
+    /// No decision is sent: the permanent offline test covers delivery.
+    @MainActor func testCardsSheetsAndTicketOnABadConnection() async throws {
+        continueAfterFailure = false
+        let base = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_OFFLINE_STUB_URL"])
+        XCTAssertEqual(URL(string: base)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--conversation-stub", base]
+        app.launch()
+        defer { app.terminate() }
+        let approve = app.buttons["review.approve"]
+        let back = app.buttons["review.return"]
+        let stage = app.buttons["decision.stage.needs_implementation"]
+        let reviewer = app.buttons["decision.reviewer"]
+        let chief = app.buttons["decision.reviewer.chief"]
+        let ticketActions = app.buttons["ticket-actions"]
+        func noCover(_ screen: String) {
+            for text in ["Offline", "offline", "Delivery uncertain", "Slow connection", "Reconnecting", "Not connected"] {
+                XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                               "\(screen) shows \"\(text)\"")
+            }
+        }
+        func sheets(_ place: String) {
+            approve.tap()
+            XCTAssertTrue(waitForDecisionStage(stage), "\(place): the Approve sheet opens")
+            noCover("\(place) Approve sheet"); capture(app, "offline-\(place)-approve-sheet")
+            app.buttons["Cancel"].tap()
+            XCTAssertTrue(stage.waitForNonExistence(timeout: 5))
+            reviewer.tap()
+            XCTAssertTrue(chief.waitForExistence(timeout: 5), "\(place): the Reviewer sheet opens")
+            noCover("\(place) Reviewer sheet"); capture(app, "offline-\(place)-reviewer-sheet")
+            app.buttons["Cancel"].tap()
+            XCTAssertTrue(chief.waitForNonExistence(timeout: 5))
+        }
+        // Online: read the card and its Ticket once.
+        XCTAssertTrue(back.waitForExistence(timeout: 12)); back.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(ticketActions.waitForExistence(timeout: 8))
+        app.backButton.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+
+        // Bad connection: every request now drops.
+        try await proof(base, "offline")
+        noCover("Review card"); capture(app, "offline-review-card")
+        sheets("review")
+        app.buttons["review.openTicket"].tap()
+        XCTAssertTrue(ticketActions.waitForExistence(timeout: 8), "The Ticket page opens from its saved copy")
+        XCTAssertTrue(approve.waitForExistence(timeout: 8))
+        noCover("Ticket"); capture(app, "offline-ticket")
+        ticketActions.tap()
+        XCTAssertTrue(app.buttons["ticket-action-backlog"].waitForExistence(timeout: 5))
+        noCover("Ticket actions"); capture(app, "offline-ticket-actions")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(ticketActions.waitForExistence(timeout: 5))
+        sheets("ticket")
+        app.backButton.tap()
+        XCTAssertTrue(approve.waitForExistence(timeout: 8), "Back returns to the card offline")
+        try await proof(base, "online")
+    }
+
     @MainActor private func waitForDecisionStage(_ stage: XCUIElement) -> Bool {
         // Existence alone admitted an infinite/zero frame in the earlier review run.
         let ready = NSPredicate { _, _ in
