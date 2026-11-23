@@ -61,9 +61,32 @@ test('a download needs ten continuous windowless minutes, reopening resets them,
   assert.equal(installed, 1, 'quit cancels outstanding timer');
 });
 
+function loadNativeUpdater(updater, nativeUpdater, host) {
+  const Module = require('node:module');
+  const indexPath = join(process.env.PANELS_DESKTOP_TEST_BUILD, 'updates/index.js');
+  const originalLoad = Module._load;
+  Module._load = function(request, parent, ...rest) {
+    if (parent?.filename.endsWith('/updates/index.js')) {
+      if (request === 'electron') return {
+        BrowserWindow: { getAllWindows: () => Array.from({ length: host.windows() }, () => ({})) },
+        autoUpdater: nativeUpdater,
+        dialog: { showMessageBox: () => new Promise(resolve => host.prompts.push(resolve)) },
+      };
+      if (request === 'electron-updater') return { autoUpdater: updater };
+      if (request === '../bridge_version') return { DESKTOP_BRIDGE_VERSION: 1 };
+      if (request === '../server_meta') return { fetchDesktopCompatibility: async () => ({ minimum_bridge_version: host.floor() }) };
+      if (request === './feed') return { updateFeed: async () => 'https://private-proof.example/' };
+    }
+    return originalLoad.call(this, request, parent, ...rest);
+  };
+  try {
+    delete require.cache[indexPath];
+    return require(indexPath).startShellUpdates;
+  } finally { Module._load = originalLoad; }
+}
+
 test('the native restart dialog waits for verified download and consent, and ignores consent for a previous server', async () => {
   const { EventEmitter } = require('node:events');
-  const Module = require('node:module');
   const updater = new EventEmitter();
   const nativeUpdater = new EventEmitter();
   let installed = 0, floor = 2, windows = 1;
@@ -71,24 +94,10 @@ test('the native restart dialog waits for verified download and consent, and ign
   updater.setFeedURL = () => {};
   updater.checkForUpdates = async () => {};
   updater.quitAndInstall = () => installed++;
-  const originalLoad = Module._load;
-  Module._load = function(request, parent, ...rest) {
-    if (parent?.filename.endsWith('/updates/index.js')) {
-      if (request === 'electron') return {
-        BrowserWindow: { getAllWindows: () => Array.from({ length: windows }, () => ({})) },
-        autoUpdater: nativeUpdater,
-        dialog: { showMessageBox: () => new Promise(resolve => prompts.push(resolve)) },
-      };
-      if (request === 'electron-updater') return { autoUpdater: updater };
-      if (request === '../bridge_version') return { DESKTOP_BRIDGE_VERSION: 1 };
-      if (request === '../server_meta') return { fetchDesktopCompatibility: async () => ({ minimum_bridge_version: floor }) };
-      if (request === './feed') return { updateFeed: async () => 'https://private-proof.example/' };
-    }
-    return originalLoad.call(this, request, parent, ...rest);
-  };
+
   let controller;
   try {
-    const { startShellUpdates } = require(join(process.env.PANELS_DESKTOP_TEST_BUILD, 'updates/index.js'));
+    const startShellUpdates = loadNativeUpdater(updater, nativeUpdater, { floor: () => floor, windows: () => windows, prompts });
     controller = startShellUpdates(() => 'https://server.example');
     await new Promise(setImmediate);
     assert.equal(prompts.length, 0, 'required shell cannot prompt before verified download');
@@ -134,6 +143,38 @@ test('the native restart dialog waits for verified download and consent, and ign
     assert.equal(updater.autoRunAppAfterInstall, false, 'windowless installation cannot reopen a window');
   } finally {
     controller?.stop();
-    Module._load = originalLoad;
+  }
+});
+
+
+test('a failed background download handles both the updater error event and its rejected download promise', async () => {
+  const { EventEmitter } = require('node:events');
+  const updater = new EventEmitter();
+  const nativeUpdater = new EventEmitter();
+  const failure = new Error('net::ERR_CONTENT_LENGTH_MISMATCH');
+  const reported = [];
+  const originalWarn = console.warn;
+  let installed = 0;
+  updater.setFeedURL = () => {};
+  updater.quitAndInstall = () => installed++;
+  updater.checkForUpdates = async () => ({
+    isUpdateAvailable: true,
+    downloadPromise: new Promise((_, reject) => setImmediate(() => {
+      updater.emit('error', failure);
+      reject(failure);
+    })),
+  });
+  const startShellUpdates = loadNativeUpdater(updater, nativeUpdater, { floor: () => 1, windows: () => 1, prompts: [] });
+  console.warn = (...args) => reported.push(args);
+  const controller = startShellUpdates(() => null);
+  try {
+    // The download fails after checkForUpdates resolves, as electron-updater does.
+    await new Promise(setImmediate);
+    await new Promise(setImmediate);
+    assert.ok(reported.some(args => args.includes(failure)), 'the failure reaches the existing native error report');
+    assert.equal(installed, 0, 'a failed background download does not install or quit');
+  } finally {
+    controller.stop();
+    console.warn = originalWarn;
   }
 });

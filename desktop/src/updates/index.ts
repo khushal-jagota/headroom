@@ -73,7 +73,9 @@ export function startShellUpdates(serverAddress: () => string | null): ShellUpda
       if (stopped) return;
       try {
         autoUpdater.setFeedURL({ provider: 'generic', url: await updateFeed() });
-        await autoUpdater.checkForUpdates();
+        const result = await autoUpdater.checkForUpdates();
+        // The error event reports a failed download but does not consume its rejection.
+        await result?.downloadPromise;
       } catch (error) {
         logError(error);
       }

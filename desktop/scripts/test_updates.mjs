@@ -16,7 +16,7 @@ try {
   status = compile.status ?? 1;
   if (status === 0) {
     const tests = spawnSync(process.execPath, [
-      '--test', join(desktop, 'src/updates/updates.test.cjs'),
+      '--unhandled-rejections=strict', '--test', join(desktop, 'src/updates/updates.test.cjs'),
     ], { stdio: 'inherit', env: { ...process.env, PANELS_DESKTOP_TEST_BUILD: compiled } });
     status = tests.status ?? 1;
   }
