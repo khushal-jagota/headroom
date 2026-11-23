@@ -35,7 +35,7 @@ A command is `panels <thing> <action>`. The things are the things in the product
 
 **A show is a header and parts.** The caller names the parts to expand. The Ticket header leads with its need, Stage, ceiling, holder, and active blockers. `ticket history` prints the conversation's messages as text, oldest first, and counts other events. `manager show` gives the purpose, the recap, the held goals, the count of Tickets by need, and which document the browser displays with its read and edit commands.
 
-**Decisions pin what was read.** `ticket approve` needs the new ceiling, and `--holder` names who supervises next: `me`, `owner`, `chief`, or a Manager. `me` is the caller. `ticket send-back` carries the guidance into the Worker's prompt. A separate message does not replace that guidance. Both pin the proposal revision from their own read, or from `--expected-proposal-revision` for a proposal the caller inspected earlier.
+**Decisions pin what was read.** `ticket approve` needs the new ceiling, and `--holder` names who supervises next: `owner`, `chief`, or a Manager. Without it, the holder is the caller. `ticket send-back` carries the guidance into the Worker's prompt. A separate message does not replace that guidance. Both pin the proposal revision from their own read, or from `--expected-proposal-revision` for a proposal the caller inspected earlier.
 
 **Creation validates the whole Ticket before one write.** `ticket create` sends one object to the same route as the browser. `ticket schema create` and `ticket schema edit` print the keys those objects accept, from the list the server validates with. A new Ticket starts from a preset or custom stages. `machine_id` chooses its destination from `machine list`, and omission selects the home. Blockers go in the object or later through `ticket block`. A running Ticket needs `--force` to delete.
 
@@ -52,6 +52,8 @@ Every command declares who it is for: a Worker on its own Ticket, a supervisor, 
 A conversation that started before a change still holds old skill text. So a removed command or option is not kept as an alias. It fails with one line that names its replacement, such as `Use: panels ticket propose < PROPOSAL_FILE`. The replacements come from one stated table of removed names. A wrong name that is not in the table lists the commands of its group, and may ask `Did you mean …?`. A guess by spelling is never printed as the replacement.
 
 `panels skill check` reads the same command tree that the CLI declares, so a skill that names a removed command is reported.
+
+A machine updates after the server, so for a time an older command line calls a newer server. The Ticket list route keeps the parameters that older command lines and the iPhone app send. For the minutes of an install, a newer command line can call an older server. A read that needs the newer server then refuses and says to run it again, rather than print an answer without the need word.
 
 ## What the CLI feeds
 

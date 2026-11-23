@@ -157,11 +157,14 @@ export interface TicketListFilters {
   worker_types: readonly string[];
   search: string | null;
 }
-/** The flag filters the installed iPhone app sends instead of `scope` and `needs`. */
+/** The flag filters the iPhone app and older `panels` CLIs send instead of `scope` and `needs`. */
 export interface LegacyTicketListFilters {
   manager: Principal | null;
+  ticket_statuses: readonly string[];
+  excluded_ticket_statuses: readonly string[];
   is_backlogged: boolean | null;
   include_terminal: boolean;
+  active: boolean;
   stages: readonly string[];
   excluded_stages: readonly string[];
   worker_types: readonly string[];

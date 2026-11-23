@@ -318,7 +318,7 @@ function in_manager(filters: { manager: LegacyTicketListFilters['manager'] }, v:
 }
 /**
  * The list read as it was before need words, for a request that names no `scope` and no `needs`.
- * Its caller is the installed iPhone app, which sends `is_backlogged` and `include_terminal`.
+ * Its callers are the installed iPhone app and older `panels` CLIs, which send the flags.
  */
 export function list_ticket_summaries_by_flags(
   sql: ReadSql,
@@ -337,6 +337,13 @@ export function list_ticket_summaries_by_flags(
       (manager_id !== null && v.manager_id !== manager_id)
     )
       continue;
+    const status = String(v.ticket_status);
+    if (
+      (filters.ticket_statuses.length && !filters.ticket_statuses.includes(status)) ||
+      filters.excluded_ticket_statuses.includes(status)
+    )
+      continue;
+    if (filters.active && (v.terminal || v.is_backlogged)) continue;
     if ('integrity_error' in v) {
       const broken = broken_ticket(sql, row.id)!;
       if (

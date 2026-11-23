@@ -16,6 +16,7 @@ import { join_command, require_released_revision } from '../installation/join_co
 import { need_counts_display, need_display } from './needs.ts';
 import { response_field } from './response_field.ts';
 import { CliFailure } from './errors.ts';
+import { require_current_server } from './current_server.ts';
 
 type Body = Record<string, any>;
 const quote = (value: string, slash = false): string => {
@@ -25,6 +26,9 @@ const quote = (value: string, slash = false): string => {
   );
   return slash ? encoded.replace(/%2F/g, '/') : encoded;
 };
+/** A field the response states, even as null. */
+const has = (record: unknown, key: string): boolean =>
+  record !== null && typeof record === 'object' && Object.hasOwn(record, key);
 const drop_none = (body: Body): Body =>
   Object.fromEntries(
     Object.entries(body).filter(([, value]) => value !== null && value !== undefined),
@@ -88,13 +92,21 @@ function own_ticket(inv: Invocation): string {
     no_route: 'Only the Worker of a Ticket can do this, from its own conversation.',
   });
 }
-/** `me` is the caller. Any other word that is not owner or chief is a Manager id. */
-function holder(inv: Invocation, value: string): Body {
-  value = value.trim();
-  const word = value.toLowerCase();
+/**
+ * The next holder: `owner`, `chief`, or a Manager id. With no word it is the caller. `me` is
+ * refused: on older command lines it named the owner, so an agent with old text in its
+ * context must not have it change meaning without notice.
+ */
+function holder(inv: Invocation, value: string | null): Body {
+  const word = value?.trim().toLowerCase();
   if (word === 'owner') return { kind: 'owner', id: 'owner' };
   if (word === 'chief') return { kind: 'chief', id: 'chief' };
-  if (word !== 'me') return { kind: 'manager', id: value };
+  if (word === 'me')
+    return fail_validation(inv, '"me" is no longer a holder word', {
+      no_route:
+        'Use --holder owner, --holder chief, or --holder MANAGER_ID. With no --holder, the holder is the caller.',
+    });
+  if (value != null) return { kind: 'manager', id: value.trim() };
   const self = caller(inv);
   if (self === null) return { kind: 'owner', id: 'owner' };
   if (self.kind === 'chief') return { kind: 'chief', id: 'chief' };
@@ -256,6 +268,7 @@ async function show_ticket(inv: Invocation): Promise<CommandResult> {
     named ? '/api/tickets' : `/api/tickets/${tid}/worker-self`,
     named ? { params: { detail: 'full', id: tid } } : {},
   );
+  require_current_server(inv, has(data, 'needs'));
   const [header, human] = ticket_headers(data);
   return emit_record(inv, header, await ticket_parts(inv, data, positional), positional, human);
 }
@@ -305,7 +318,7 @@ async function approve(inv: Invocation): Promise<CommandResult> {
     expected_proposal_revision: revision,
     decision_id: `${tid}:${scalar(revision)}:accept`,
     ...(!final_approval
-      ? { next_ceiling: v.ceiling, next_holder: holder(inv, v.holder ?? 'me') }
+      ? { next_ceiling: v.ceiling, next_holder: holder(inv, v.holder ?? null) }
       : {}),
   };
   const edited = v.edit_file ?? v.kickoff_note_file;
@@ -365,6 +378,12 @@ async function list_tickets(inv: Invocation): Promise<CommandResult> {
       offset: v.offset,
     }),
   });
+  require_current_server(
+    inv,
+    Array.isArray(data.tickets) &&
+      data.tickets.every((row: Body) => has(row, 'needs')) &&
+      (scopes.length > 0 || has(data.page, 'not_shown')),
+  );
   if (v.as_json) return emit(data, true, '');
   const tickets: Body[] = data.tickets;
   const page: Body = data.page;
@@ -406,6 +425,12 @@ async function list_managers(inv: Invocation): Promise<CommandResult> {
       offset: v.offset,
     }),
   });
+  require_current_server(
+    inv,
+    Array.isArray(data.managers) &&
+      data.managers.every((row: Body) => has(row, 'ticket_needs')) &&
+      (v.settled || v.all || has(data.page, 'not_shown')),
+  );
   if (v.as_json) return emit(data, true, '');
   const managers: Body[] = data.managers;
   const page: Body = data.page;
@@ -449,6 +474,7 @@ async function manager_show(inv: Invocation): Promise<CommandResult> {
       recovery: 'panels page show --manager MANAGER_ID',
     });
   const data = await send(inv, 'GET', '/api/managers', { params: { detail: 'full', id } });
+  require_current_server(inv, has(data, 'ticket_needs') && has(data, 'goals'));
   const header: Body = {};
   for (const key of ['id', 'title', 'project_id', 'project'])
     if (key in data) header[key] = data[key];
@@ -491,6 +517,7 @@ async function manager_show(inv: Invocation): Promise<CommandResult> {
 }
 async function review(inv: Invocation): Promise<CommandResult> {
   const data = await send(inv, 'GET', '/api/review');
+  require_current_server(inv, has(data, 'available') && has(data, 'cards'));
   if (!data.available) {
     const message = 'Review is not available right now.';
     throw new CliFailure({

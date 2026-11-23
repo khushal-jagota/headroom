@@ -780,7 +780,8 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
       description: 'The next ceiling. Not needed for the final approval.',
     }),
     option('holder', '--holder <HOLDER>', text, {
-      description: 'Who holds the next ceiling: me, owner, chief, or a Manager id. Default: me.',
+      description:
+        'Who holds the next ceiling: owner, chief, or a Manager id. Default: the caller.',
     }),
     option('edit_file', '--edit-file <FILE>', readable_file, {
       description: 'Approve this edited text instead, or - for stdin.',

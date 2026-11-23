@@ -101,6 +101,7 @@ test('CLI validates missing native values and skips an absent optional page cont
     const names = ['__proto__', 'constructor', 'toString'];
     request.mockResolvedValue({
       id: 't_own_keys',
+      needs: 'ready',
       workflow: { fields: names.map((id) => ({ id })) },
       field_values: {},
       field_approvals: {},
@@ -245,9 +246,10 @@ test('recap writes the caller record for each role and refuses without an identi
   }
 });
 
-// Risk: --holder me names the owner (the old fault) instead of the caller, and the final
-// approval sends onward scope. Send-back uses the shared text rule and pins the revision.
-test('approve resolves me to the caller and send-back sends its guidance', async () => {
+// Risk: an approval with no --holder names someone other than the caller, the old word
+// "me" (which meant the owner) changes meaning without notice, and the final approval sends
+// onward scope. Send-back uses the shared text rule and pins the revision.
+test('approve defaults the holder to the caller, refuses me, and send-back sends its guidance', async () => {
   const request = vi.spyOn(http, 'send');
   const detail = (stage: string, field: string, target: string) => ({
     id: 't_cli',
@@ -260,8 +262,18 @@ test('approve resolves me to the caller and send-back sends its guidance', async
     request
       .mockResolvedValueOnce(detail('needs_implementation', 'implementation', 'needs_consequences'))
       .mockResolvedValueOnce({ id: 't_cli' });
-    const approved = await run(
+    const refused = await run(
       ['ticket', 'approve', 't_cli', '--ceiling', 'needs_consequences', '--holder', 'me'],
+      manager,
+    );
+    expect(refused.exit_code).toBe(1);
+    expect(refused.stderr).toContain('Use --holder owner, --holder chief, or --holder MANAGER_ID');
+    request.mockReset();
+    request
+      .mockResolvedValueOnce(detail('needs_implementation', 'implementation', 'needs_consequences'))
+      .mockResolvedValueOnce({ id: 't_cli' });
+    const approved = await run(
+      ['ticket', 'approve', 't_cli', '--ceiling', 'needs_consequences'],
       manager,
     );
     expect(approved).toMatchObject({ exit_code: 0, stdout: 't_cli approved implementation\n' });
@@ -329,6 +341,40 @@ test('manager show defaults to the caller and names the visible page', async () 
     expect(own.stdout).toContain('parts:\n  recap:\n    value: Recap');
     const page = await run(['manager', 'show', 'si_me', 'page'], SERVER);
     expect(page.stderr).toContain('Use: panels page show --manager MANAGER_ID');
+  } finally {
+    request.mockRestore();
+  }
+});
+
+// Risk: during an install this CLI reaches the release before it, which ignores scope and
+// omits the need fields. A list would then silently include backlog with no need column.
+test('each new read refuses an old-server response instead of printing it', async () => {
+  const old_page = complete_page(1);
+  const cases: [string[], unknown][] = [
+    [
+      ['ticket', 'list'],
+      { tickets: [{ id: 't_old', stage: 'done', title: 'Old' }], page: old_page },
+    ],
+    [['ticket', 'show', 't_old'], { id: 't_old', workflow: { fields: [] }, field_values: {} }],
+    [['manager', 'list'], { managers: [{ id: 'si_old', title: 'Old' }], page: old_page }],
+    [['manager', 'show', 'si_old'], { id: 'si_old', title: 'Old', goal: '', recap: '' }],
+    [['review'], { items: [] }],
+  ];
+  const request = vi.spyOn(http, 'send');
+  try {
+    for (const [argv, body] of cases) {
+      request.mockResolvedValue(body);
+      const human = await run(argv, SERVER);
+      expect(human, argv.join(' ')).toEqual({
+        exit_code: 1,
+        stdout: '',
+        stderr:
+          'error: The Panels server is older than this command. It is being updated. Run the command again in a few minutes.\n',
+      });
+      const machine = await run([...argv, '--json'], SERVER);
+      expect(machine.stdout).toBe('');
+      expect(JSON.parse(machine.stderr).error.code).toBe('server_too_old');
+    }
   } finally {
     request.mockRestore();
   }

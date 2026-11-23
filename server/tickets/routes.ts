@@ -310,7 +310,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
     let limit: number | undefined,
       offset: number | undefined,
       is_backlogged: boolean | null = null,
-      include_terminal = false;
+      include_terminal = false,
+      active = false;
     const failures: unknown[] = [];
     for (const [key, assign] of [
       ['limit', (raw: string | undefined) => (limit = integerQuery(raw, 'limit'))],
@@ -334,6 +335,12 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       if (e instanceof QueryBooleanError) failures.push(e.payload());
       else throw e;
     }
+    try {
+      active = boolean_query(last('active'), 'active') ?? false;
+    } catch (e) {
+      if (e instanceof QueryBooleanError) failures.push(e.payload());
+      else throw e;
+    }
     if (failures.length) {
       reply.code(422).send({ detail: failures });
       return;
@@ -344,6 +351,8 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
       needs = array('needs'),
       stage = array('stage'),
       exclude_stage = array('exclude_stage'),
+      ticket_status = array('ticket_status'),
+      exclude_ticket_status = array('exclude_ticket_status'),
       worker_type = array('worker_type'),
       search = last('search'),
       project = last('project'),
@@ -360,8 +369,11 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         needs,
         stage,
         exclude_stage,
+        ticket_status,
+        exclude_ticket_status,
         is_backlogged,
         include_terminal: include_terminal || null,
+        active: active || null,
         worker_type,
         search,
         project,
@@ -399,6 +411,9 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         );
         return { rows, body: { tickets: rows } };
       }
+      const by_need = scope !== null || needs !== null;
+      if (!by_need && active && (is_backlogged === true || include_terminal))
+        throw new PlannerError('validation', 'active excludes backlogged and terminal Tickets');
       const manager =
         manager_kind !== null || manager_id !== null
           ? parse_manager({
@@ -411,21 +426,31 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
           registry.registered_worker_types().map((w) => registry.require(w).stages.at(-1)!.id),
         );
       const requested_terminal = [...new Set(stage ?? [])].filter((s) => terminal.has(s)).sort();
-      const by_need = scope !== null || needs !== null;
       if (!by_need) {
-        // The installed iPhone app sends is_backlogged and include_terminal, never scope or needs.
-        // An installed app cannot change with the server, so this read keeps its old behaviour.
+        // Two callers cannot change with this server: the installed iPhone app and older
+        // `panels` CLIs, such as the one a Mac machine runs from its own release. They send the
+        // flag parameters, never scope or needs, so this read keeps its old behaviour exactly.
         if (requested_terminal.length && !include_terminal)
           throw new PlannerError('validation', 'terminal stages require include_terminal', {
             stages: requested_terminal,
           });
+        for (const [name, values] of [
+          ['ticket_status', ticket_status],
+          ['exclude_ticket_status', exclude_ticket_status],
+        ] as const)
+          for (const value of values ?? [])
+            if (!['empty', 'blocked', 'agent', 'awaiting_approval', 'errored'].includes(value))
+              throw new PlannerError('validation', `invalid ${name}`, { [name]: value });
         const result = list_ticket_summaries_by_flags(
           sql,
           page,
           {
             manager,
+            ticket_statuses: ticket_status ?? [],
+            excluded_ticket_statuses: exclude_ticket_status ?? [],
             is_backlogged,
             include_terminal,
+            active,
             stages: stage ?? [],
             excluded_stages: exclude_stage ?? [],
             worker_types: worker_type ?? [],
@@ -437,8 +462,11 @@ export const routes: FastifyPluginAsync<AreaServices> = async (app, services) =>
         return { rows: result.tickets, body: result };
       }
       rejectParameters('scope or needs', {
+        ticket_status,
+        exclude_ticket_status,
         is_backlogged,
         include_terminal: include_terminal || null,
+        active: active || null,
       });
       if (scope !== null && !(TICKET_LIST_SCOPES as readonly string[]).includes(scope))
         throw new PlannerError('validation', 'invalid scope', {

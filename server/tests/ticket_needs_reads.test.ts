@@ -111,7 +111,7 @@ test('the live list orders by need, pages after need filtering, and counts what 
 
 // Distinct risk: the installed iPhone app cannot change with the server. Its three exact list
 // requests must keep their old filtering and created_at order.
-test('the iPhone list requests without scope or needs keep the flag behaviour', async () => {
+test('the iPhone and older CLI list requests without scope or needs keep the flag behaviour', async () => {
   const f = await setup();
   try {
     const base = `/tickets?detail=summary&limit=30&offset=0`;
@@ -130,6 +130,25 @@ test('the iPhone list requests without scope or needs keep the flag behaviour', 
     expect(f.names(await f.get(`${base}&include_terminal=true&stage=done&${holder}`))).toEqual([
       'done:done',
     ]);
+    // An older panels CLI sends these.
+    expect(f.names(await f.get(`${base}&active=true`))).toEqual([
+      'approve:owner_approval',
+      'ready_old:ready',
+      'working:working',
+      'ready_new:ready',
+    ]);
+    expect(f.names(await f.get(`${base}&ticket_status=awaiting_approval`))).toEqual([
+      'approve:owner_approval',
+      'backlog:backlog',
+    ]);
+    expect(f.names(await f.get(`${base}&exclude_ticket_status=agent`))).toEqual([
+      'approve:owner_approval',
+      'ready_old:ready',
+      'ready_new:ready',
+      'backlog:backlog',
+    ]);
+    expect((await f.app.inject(`/api${base}&active=true&is_backlogged=true`)).statusCode).toBe(400);
+    expect((await f.app.inject(`/api${base}&active=true&scope=live`)).statusCode).toBe(400);
   } finally {
     await f.app.close();
   }
