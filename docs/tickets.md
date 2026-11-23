@@ -38,6 +38,8 @@ Approvals name the next ceiling and holder. The Worker performs authorized follo
 
 By default a new Ticket's ceiling is on Brief and its holder is whoever created it. The Brief then waits for that person, and their approval sets the first real ceiling. A creator can set a later decision ceiling up front, including Consequences, but never Done.
 
+If creation supplies Brief text, the first stage must gate the `brief` field. The server refuses the text otherwise. A custom workflow can omit Brief when creation supplies no Brief text.
+
 On a collaborative stage, the person can also complete the gate directly, without a Worker proposal. That uses the same resolver and still moves one stage. A reply typed into the conversation never decides a proposal. Approval and Send back enforce any supplied proposal revision in the same write as the decision. Protected decision receipts retain an exact command and its outcome for the Ticket's lifetime. Repeating that command returns its saved result, even after the Ticket advances.
 
 The browser and iPhone use protected decisions on Review and Ticket pages. The older accept and reject routes remain available to the CLI and existing callers through the same proposal writers. Those routes do not provide receipt recovery.

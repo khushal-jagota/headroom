@@ -25,6 +25,32 @@ import {
   worker,
 } from './ticket_fixture.ts';
 afterEach(() => vi.restoreAllMocks());
+// A custom workflow can omit Brief or put it later. Neither can accept create-time
+// Brief text without losing it or settling the wrong stage.
+test('creation refuses Brief text unless Brief is the first gate', () => {
+  const db = fixture();
+  const base = create(db, { settle_kickoff: false }).workflow;
+  const withoutBrief = {
+    ...base,
+    specialist_skill: null,
+    fields: base.fields.filter((field) => field.id !== 'brief'),
+    stages: base.stages.filter((stage) => stage.gating_field !== 'brief'),
+  };
+  const laterBrief = {
+    ...base,
+    specialist_skill: null,
+    stages: [base.stages[1]!, base.stages[0]!, ...base.stages.slice(2)],
+  };
+  expect(() => create(db, { workflow: withoutBrief, settle_kickoff: false })).toThrow(
+    'supplied brief requires brief as the first workflow gate',
+  );
+  expect(() => create(db, { workflow: laterBrief, settle_kickoff: false })).toThrow(
+    'brief stage and field must be paired first',
+  );
+  const ticket = create(db, { workflow: withoutBrief, brief: '', settle_kickoff: false });
+  expect(ticket.stage).toBe(withoutBrief.stages[0]!.id);
+  expect(ticket.pending_proposal).toBeNull();
+});
 test('accept_kickoff_field_advances_to_what_changes_and_leaves_title_independent', () => {
   const db = fixture();
   let t = create(db, { title: 'Proposed title', brief: 'proposed note', settle_kickoff: false });
