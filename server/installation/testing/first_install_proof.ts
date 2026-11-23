@@ -358,7 +358,7 @@ try {
         waitUntil: 'domcontentloaded',
       });
       await page.getByRole('heading', { name: 'Machines', exact: true }).waitFor();
-      await page.getByText('Second proof machine', { exact: true }).waitFor();
+      await page.locator(`[data-settings-row="machines:${named[0].machine_id}"]`).waitFor();
       await page.waitForFunction(() =>
         ['/assets/tokens.css', '/assets/app.css'].every((path) =>
           [...document.styleSheets].some(
