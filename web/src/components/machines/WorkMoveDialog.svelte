@@ -47,6 +47,7 @@
   <form onsubmit={event => { event.preventDefault(); void move(); }}>
     <h2 id={id}>{everything ? "Move everything" : `Move ${label}`}{targetMachineId ? ` to ${target?.name ?? "this machine"}?` : "?"}</h2>
     <p>{everything ? "Unfinished Tickets, active Managers and the Chief start new conversations from their records." : "Starts a new conversation from its record."} Push work before the move.</p>
+    <p>If the move is refused, the source can remain stopped. To restart it, close this dialog. Choose “New conversation” in the source conversation menu. Send a message to start the agent.</p>
     {#if choices.length || targetMachineId}
       <MachineChoice machines={targetMachineId ? machines.data?.machines ?? [] : choices} value={destination} disabled={sending || Boolean(targetMachineId)} onchange={value => destination = value} />
     {:else if machines.isPending}<p role="status">Loading machines…</p>
