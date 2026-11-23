@@ -17,6 +17,7 @@ import { createTicketConversation, getJson, openConversationLayer, post } from '
 import { createVideoFixture } from './support/video.ts';
 
 type Attached = { name: string; bytes: Buffer; mediaType: string; uploadId?: string };
+type UploadResponse = { ok: boolean; body: JsonObject };
 const UPLOAD_ROOT = '/api/conversation/video-uploads';
 const BINARY_PATTERN = [0, 255, 128, 1, 13, 10, 65];
 
@@ -27,11 +28,13 @@ async function dropAndPaste(scope: Locator, input: Locator, label: string, video
     { name: `${label}-paste.bin`, bytes: Buffer.alloc(largeBinary ? 20 * 1024 * 1024 + 1 : 257, Buffer.from(BINARY_PATTERN)), mediaType: 'application/octet-stream' },
   ];
   const page = input.page();
-  const reserved: Response[] = [];
-  const transferred: Response[] = [];
+  const reserved: Promise<UploadResponse>[] = [];
+  const transferred: Promise<UploadResponse>[] = [];
+  // Read each small status body now: a later large upload can evict Chromium's response cache.
+  const cache = async (response: Response): Promise<UploadResponse> => ({ ok: response.ok(), body: await response.json() });
   const track = (response: Response) => {
-    if (response.request().method() === 'POST' && response.url().endsWith(UPLOAD_ROOT)) reserved.push(response);
-    if (response.request().method() === 'PUT' && response.url().includes(UPLOAD_ROOT) && response.url().endsWith('/bytes')) transferred.push(response);
+    if (response.request().method() === 'POST' && response.url().endsWith(UPLOAD_ROOT)) reserved.push(cache(response));
+    if (response.request().method() === 'PUT' && response.url().includes(UPLOAD_ROOT) && response.url().endsWith('/bytes')) transferred.push(cache(response));
   };
   page.on('response', track);
   const surface = input.locator('xpath=ancestor::*[@data-composer-attachment-surface][1]');
@@ -51,9 +54,9 @@ async function dropAndPaste(scope: Locator, input: Locator, label: string, video
   }, { name: picked[0].name, base64: video.toString('base64') });
   await expect(scope.locator('.chat-att')).toHaveCount(1);
   await expect.poll(() => transferred.length, { timeout: WAIT_MS }).toBe(1);
-  expect(transferred[0].ok(), await transferred[0].text()).toBe(true);
-  const first = await transferred[0].json();
-  expect(first.state).toBe('ready');
+  const first = await transferred[0];
+  expect(first.ok, JSON.stringify(first.body)).toBe(true);
+  expect(first.body.state).toBe('ready');
   await expect(input).toBeEnabled();
   await input.evaluate((node, attachment) => {
     const transfer = new DataTransfer();
@@ -70,14 +73,16 @@ async function dropAndPaste(scope: Locator, input: Locator, label: string, video
   await expect.poll(() => transferred.length, { timeout: WAIT_MS }).toBe(2);
   expect(reserved).toHaveLength(2);
   for (const [index, file] of picked.entries()) {
-    const response = transferred[index];
-    expect(response.ok(), await response.text()).toBe(true);
-    const status = await response.json();
+    const response = await transferred[index];
+    expect(response.ok, JSON.stringify(response.body)).toBe(true);
+    const status = response.body;
     expect(status.state).toBe('ready');
     expect(status.filename).toBe(file.name);
     expect(status.media_type).toBe(file.mediaType);
     expect(status.received_bytes).toBe(file.bytes.length);
-    expect((await reserved[index].json()).upload_id).toBe(status.upload_id);
+    const reservation = await reserved[index];
+    expect(reservation.ok, JSON.stringify(reservation.body)).toBe(true);
+    expect(reservation.body.upload_id).toBe(status.upload_id);
     file.uploadId = status.upload_id;
   }
   page.off('response', track);

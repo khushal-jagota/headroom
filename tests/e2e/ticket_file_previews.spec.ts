@@ -417,12 +417,13 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
     await expect(page.getByText(retiredText, { exact: true })).toHaveCount(0);
   if (evidence) await page.screenshot({ path: join(evidence, 'combined-review-ui.png'), fullPage: true });
 
-  // An empty Chief thread uses its first-message prompt. The lower-level default
-  // agent placeholder is checked in the executed production module above.
+  // An empty Chief thread uses the same canonical placeholder as every empty composer.
+  // The role-named caller base does not override that product choice, even before first Send.
   await page.goto(`${server.base}/#/workspace/chief-of-staff`);
-  await expect(page.getByPlaceholder('Send the first message to start it...', { exact: true })).toBeVisible({
+  await expect(page.getByPlaceholder('Write a message', { exact: true })).toBeVisible({
     timeout: WAIT_MS,
   });
+  expect((await api.get(server, '/api/chief/conversation')).conversation_id).toBeNull();
   for (const retiredText of ['Steer the work', 'Everything', 'Newsreader'])
     await expect(page.getByText(retiredText, { exact: true })).toHaveCount(0);
   if (evidence) await page.screenshot({ path: join(evidence, 'combined-chief-ui.png'), fullPage: true });
