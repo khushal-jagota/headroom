@@ -4,6 +4,7 @@ import { MACHINE_HEALTH_POLL_MS } from "./machines/config";
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
+import { USAGE_SCAN_LIMIT_MS } from "./requestLimit/config";
 import { readBackends, readScopedBackends, type ConversationStartValues, type BackendSnapshot } from "./conversation/wire";
 import { usageSummaryPath, type UsageSummaryInput, type UsageSummary } from "./conversation/recordedUsageWire";
 import { readDrivers } from "./drivers/read";
@@ -80,7 +81,7 @@ export const queries = {
     meta: { resourceBody: true, savedForNextLaunch: false }
   }),
   recordedUsage: (input: UsageSummaryInput) => ({
-    ...jsonQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input)),
+    ...resourceQuery<UsageSummary>(["recorded-usage", input], usageSummaryPath(input), false, USAGE_SCAN_LIMIT_MS),
     // Transcript scans follow explicit window changes and Refresh, not database commits.
     meta: { resourceBody: true, followsChangeStream: false },
     retry: false,

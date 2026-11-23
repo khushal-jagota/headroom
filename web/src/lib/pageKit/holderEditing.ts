@@ -1,5 +1,6 @@
 import {fetchJson} from '../api';
 import {queryClient} from '../queryClient';
+import {refreshScreen} from '../resourceVersions/refresh';
 import {jsonQuery} from '../queryCatalogue';
 import {createPageEditor} from '../goals/editing';
 import type {ManagerPrincipal} from '../types';
@@ -15,6 +16,6 @@ export function createHolderEditor(holder:ManagerPrincipal){
   page:document=>document.page,
   pagePatch:(page,expected_revision)=>({page,expected_revision}),
   revision:document=>document.page_revision,
-  refresh:()=>queryClient.invalidateQueries(),
+  refresh:()=>refreshScreen(),
  });
 }

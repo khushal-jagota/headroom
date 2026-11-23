@@ -3,7 +3,7 @@
   import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy } from "svelte";
-  import { mutateJson } from "../lib/mutate";
+  import { mutateJson, mutateJsonAndWaitForScreen } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import {hasTickets} from '../lib/pageKit/holderDocument';
   import PageTickets from "./pageKit/PageTickets.svelte";
@@ -31,6 +31,7 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
+  import { sendRequestLimitMs } from "../lib/conversation/outgoing";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
@@ -167,7 +168,7 @@
     settleBusy = true;
     settleError = "";
     try {
-      await mutateJson(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
+      await mutateJsonAndWaitForScreen(`/api/managers/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled}});
     } catch (error) {
       settleError = error instanceof Error ? error.message : "The manager could not be updated.";
     } finally {
@@ -177,7 +178,7 @@
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
     const delivered = await mutateJson<DeliveredMessage>(
-      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body});
+      `/api/managers/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body,limitMs:sendRequestLimitMs(body.content)});
     conversationId = delivered.conversation_id;
     return delivered;
   }

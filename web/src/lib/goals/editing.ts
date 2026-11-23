@@ -1,6 +1,7 @@
 import { fetchJson } from '../api';
 import { tick } from 'svelte';
 import { queryClient } from '../queryClient';
+import { refreshScreen } from '../resourceVersions/refresh';
 import { updatePageBlock } from './presentation';
 import { goalQueries } from './queries';
 import type { Block, GoalEditBody, GoalResponse, PageDocument } from './contracts';
@@ -15,7 +16,10 @@ type EditorIO = {
 const http: EditorIO = {
   read: async id => (await queryClient.fetchQuery(goalQueries.detail(id))).body,
   write: (id, body) => fetchJson<GoalResponse>(`/api/goals/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
-  refresh: () => queryClient.invalidateQueries(),
+  // The next edit sends the document revision, and that revision reaches the controls
+  // through reads: the goal, the goal list, a Manager page. So this editor waits for the
+  // refresh. The wait ends when the changed bodies are on screen or at their time limit.
+  refresh: () => refreshScreen(),
 };
 
 // Only unfinished commands live here. Accepted documents remain in server queries.

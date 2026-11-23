@@ -44,6 +44,7 @@
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
   import { queryClient } from "../../lib/queryClient";
+  import { refreshScreen } from "../../lib/resourceVersions/refresh";
   import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
   import SystemLine from "./SystemLine.svelte";
@@ -361,9 +362,9 @@
           );
           if (latestOwnerMessage > previouslyReadThrough && latestOwnerMessage <= advanced) {
             refreshedReadThrough.set(reading.conversation_id, advanced);
-            // The server accepted this read. Ask mounted queries for current truth,
+            // The server accepted this read. Start the ordinary refresh for current truth,
             // even if the owner switched conversations while the request was pending.
-            void queryClient.invalidateQueries();
+            void refreshScreen();
           }
           if (view?.conversation_id === reading.conversation_id) {
             view = {
@@ -756,12 +757,16 @@
           errorNote = "The browser could not carry the pending file into this conversation.";
         }
       }
+      // The send ends here, with the server's answer. The reads that bring the screen up
+      // to date start now and are not waited for, so a slow read cannot hold the composer.
+      let opens = false;
       if (delivered.conversation_id !== null && delivered.conversation_id !== openedId) {
         // The message made a conversation. Pointed at it and opened, without recalling:
         // what this browser is holding is the message being sent right now, which is newer
         // than anything remembered.
         openedId = delivered.conversation_id;
-        await openConversation(delivered.conversation_id);
+        opens = true;
+        void openConversation(delivered.conversation_id);
       }
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
       // A durable refusal/uncertainty speaks on its bubble, not a second receipt.
@@ -774,7 +779,7 @@
         const recordedOutcome = delivered.conversation_id !== null;
         if (recordedOutcome) acknowledgedMessageIds.add(message.messageId);
         await stopDrawing(message.messageId, recordedOutcome);
-        await refreshView();
+        if (!opens) void refreshView();
         return recordedOutcome;
       }
       if (fate.fate === "started" || fate.fate === "injected") {
@@ -789,7 +794,7 @@
           composerStackMessageIds = [...composerStackMessageIds, message.messageId];
         }
       }
-      await refreshView();
+      if (!opens) void refreshView();
       return true;
     } catch (error) {
       // The correlated record already settled this send. A later transport failure

@@ -4,7 +4,7 @@
 
 `navigationApplication()` reads that context. An isolated component host without the provider receives `undefined`. It never creates another owner.
 
-The owner requests bounded views through `/api/navigation/view/snapshot` and `/api/navigation/view/events`. Mounted consumers register their selected owner and required windows with the owner. The server supplies coherent records, window membership, global counts, and authority for that scope. A replacement scope retains the last coherent display until the new view arrives.
+The owner requests bounded views through `/api/navigation/view/events`. The first frame of that stream is the snapshot. Mounted consumers register their selected owner and required windows with the owner. The server supplies coherent records, window membership, global counts, and authority for that scope. A replacement scope retains the last coherent display until the new view arrives.
 
 `publication.ts` defines the shared immutable publication. The current scoped owner publishes raw immutable views directly. No TanStack navigation collection or whole-workspace replay client runs beside it. Tests of active consumer projections use a synthetic publication fixture in `web/tests/support/navigation/collection.ts`.
 

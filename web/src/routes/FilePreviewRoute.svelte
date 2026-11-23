@@ -15,6 +15,7 @@
 
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { readBackends, type BackendSnapshot, type DeliveredMessage, type OwnerSendBody } from "../lib/conversation/wire";
+  import { sendRequestLimitMs } from "../lib/conversation/outgoing";
 
   let { target: suppliedTarget = null, onClose }: {
     target?: ManagedFileTarget | null;
@@ -74,7 +75,7 @@
 
     const operation = () => mutateJson<DeliveredMessage>(
       recipient.kind === "chief" ? "/api/chief/conversation/send" : `/api/${recipient.kind === "ticket" ? "tickets" : "managers"}/${encodeURIComponent(recipient.id)}/conversation/send`,
-      { method: "POST", body });
+      { method: "POST", body, limitMs: sendRequestLimitMs(body.content) });
     const delivered = await operation();
     if (delivered.conversation_id !== null) sentConversationId = delivered.conversation_id;
     return delivered;

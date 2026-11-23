@@ -7,7 +7,7 @@
 
   import {workspaceAddress} from '../lib/workspaceAddress';
   import {readComposerDraft,writeComposerDraft} from '../lib/conversation/composerDraft';
-  import {mintOutgoingMessage} from '../lib/conversation/outgoing';
+  import {mintOutgoingMessage,sendRequestLimitMs} from '../lib/conversation/outgoing';
   import {pendingImagesAsPieces,restoredPendingImages,releasePendingImages,type PendingConversationImage} from '../lib/conversation/pendingImages';
   import {pendingFilesAsPieces,restoredPendingFiles,type PendingConversationFile} from '../lib/conversation/pendingFiles';
   import {sendBodyFor,fateSentence} from '../lib/conversation/composer';
@@ -97,7 +97,7 @@
       await saveChiefAttempt(sending);attempt=sending;
       const effective=navigation.state.effective;
       requestSent=true;
-      const delivered=await mutateJson<DeliveredMessage>('/api/chief/conversation/send',{method:'POST',body:sendBodyFor({message:sending.message,current:{model:null,reasoningEffort:null},picked:{model:null,reasoningEffort:null},conversationId:sending.expectedConversationId})});
+      const delivered=await mutateJson<DeliveredMessage>('/api/chief/conversation/send',{method:'POST',body:sendBodyFor({message:sending.message,current:{model:null,reasoningEffort:null},picked:{model:null,reasoningEffort:null},conversationId:sending.expectedConversationId}),limitMs:sendRequestLimitMs(sending.message.content)});
       if(delivered.fate==='started'){await finish(sending,'Sent to Chief');}
       else if(delivered.fate==='injected'){await finish(sending,'Sent to Chief’s current turn');}
       else if(delivered.fate==='queued'){await finish(sending,'Queued for Chief');}

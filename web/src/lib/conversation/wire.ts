@@ -4,6 +4,8 @@ import type { ProviderOptionDescriptor } from "../usage/contracts/model";
 export type { BackendScopeRequest, TicketBackendScope, DraftBackendScope } from "./modelResolutionWire";
 
 import { mutationHeaders } from "../releaseMonitor";
+import { RequestLimitError } from "../requestLimit/limit";
+import { BACKEND_READ_LIMIT_MS, BACKEND_SIGN_IN_LIMIT_MS, BACKEND_UPDATE_LIMIT_MS } from "../requestLimit/config";
 import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 import type { CredentialRequestRowBody } from "./view/contracts";
 /** The conversation system's HTTP wire, as the browser speaks it.
@@ -576,7 +578,11 @@ export async function mutateCredentialRequest(
     response = await clientFetch(`/api/credentials/requests/${encodeURIComponent(requestId)}/${action}`, {
       method: 'POST', ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     });
-  } catch { throw new CredentialRequestWireError('The server could not be reached.', false); }
+  } catch (error) {
+    // No answer is not a refusal: the server can still save the value.
+    if (error instanceof RequestLimitError) throw new CredentialRequestWireError('The server did not answer in time. Check the conversation before another attempt.', false);
+    throw new CredentialRequestWireError('The server could not be reached.', false);
+  }
   if (!response.ok) {
     let code: unknown;
     try { code = (await response.json()).error?.code; } catch { /* Never echo arbitrary server payloads into this private form. */ }
@@ -589,17 +595,19 @@ export async function mutateCredentialRequest(
   catch { throw new CredentialRequestWireError('The result could not be read. Check the conversation before another attempt.', false); }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, limitMs?: number): Promise<T> {
   if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
     init = { ...init, headers: await mutationHeaders(init.headers) };
   }
   let response: Response;
+  let raw: string;
   try {
-    response = await clientFetch(`${CONVERSATION_BASE}${path}`, init);
-  } catch {
+    response = await clientFetch(`${CONVERSATION_BASE}${path}`, init, limitMs);
+    raw = await response.text();
+  } catch (error) {
+    if (error instanceof RequestLimitError) throw new ConversationWireError(error.message, 0);
     throw new ConversationWireError("The server could not be reached.", 0);
   }
-  const raw = await response.text();
   if (response.ok) {
     if (raw === "") return {} as T;
     try {
@@ -763,14 +771,14 @@ export async function readScopedBackends(
   selection: BackendScopeRequest, refresh = false
 ): Promise<BackendSnapshot[]> {
   const answer = await request<{backends: BackendSnapshot[]}>(
-    `/backends${refresh ? "?refresh=true" : ""}`, postJson({ ticket_id: selection.ticket_id })
+    `/backends${refresh ? "?refresh=true" : ""}`, postJson({ ticket_id: selection.ticket_id }), BACKEND_READ_LIMIT_MS
   );
   return answer.backends;
 }
 
 export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {
   const answer = await request<{ backends: BackendSnapshot[] }>(
-    `/backends${refresh ? "?refresh=true" : ""}`
+    `/backends${refresh ? "?refresh=true" : ""}`, undefined, BACKEND_READ_LIMIT_MS
   );
   return answer.backends;
 }
@@ -780,7 +788,7 @@ export function updateBackend(
 ): Promise<BackendUpdateResult> {
   return request<BackendUpdateResult>(`/backends/${encodeURIComponent(backendKey)}/update`, {
     method: "POST"
-  });
+  }, BACKEND_UPDATE_LIMIT_MS);
 }
 
 export type BackendSignInState =
@@ -807,7 +815,7 @@ export function startBackendSignIn(
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
     `/backends/${encodeURIComponent(backendKey)}/sign-in`,
-    { method: "POST" }
+    { method: "POST" }, BACKEND_SIGN_IN_LIMIT_MS
   );
 }
 
@@ -838,12 +846,12 @@ export function submitBackendSignInReturnUrl(
 ): Promise<{ sign_in: BackendSignIn }> {
   return request<{ sign_in: BackendSignIn }>(
     `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}/return-url`,
-    postJson({ return_url: returnUrl })
+    postJson({ return_url: returnUrl }), BACKEND_SIGN_IN_LIMIT_MS
   );
 }
 
 export function refreshBackends(): Promise<BackendsRefreshResult> {
-  return request<BackendsRefreshResult>("/backends/refresh", { method: "POST" });
+  return request<BackendsRefreshResult>("/backends/refresh", { method: "POST" }, BACKEND_READ_LIMIT_MS);
 }
 
 export function setBackendModelEnabled(
