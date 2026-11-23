@@ -9,6 +9,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Locator, Page, Response } from '@playwright/test';
+import type { UploadDestination } from '../../server/conversation/video_uploads/contracts.ts';
 import {
   api, bindConversation, captureSuccess, connectedMessage, expect, openPage, proposeAsWorker, test,
   ticketPrincipal, WAIT_MS, withDatabase, type JsonObject, type ServerHandle,
@@ -17,24 +18,40 @@ import { createTicketConversation, getJson, openConversationLayer, post } from '
 import { createVideoFixture } from './support/video.ts';
 
 type Attached = { name: string; bytes: Buffer; mediaType: string; uploadId?: string };
-type UploadResponse = { ok: boolean; body: JsonObject };
+type UploadResponse = { ok: boolean; status: number; url: string; declaration?: JsonObject };
 const UPLOAD_ROOT = '/api/conversation/video-uploads';
 const BINARY_PATTERN = [0, 255, 128, 1, 13, 10, 65];
 
 /** Dispatch native browser file events on a control and the textarea, rather than a picker. */
-async function dropAndPaste(scope: Locator, input: Locator, label: string, video: Buffer, largeBinary = false): Promise<Attached[]> {
+async function dropAndPaste(scope: Locator, input: Locator, label: string, video: Buffer, destination: UploadDestination, largeBinary = false): Promise<Attached[]> {
   const picked: Attached[] = [
     { name: `${label}-drop.mp4`, bytes: video, mediaType: 'video/mp4' },
     { name: `${label}-paste.bin`, bytes: Buffer.alloc(largeBinary ? 20 * 1024 * 1024 + 1 : 257, Buffer.from(BINARY_PATTERN)), mediaType: 'application/octet-stream' },
   ];
   const page = input.page();
-  const reserved: Promise<UploadResponse>[] = [];
-  const transferred: Promise<UploadResponse>[] = [];
-  // Read each small status body now: a later large upload can evict Chromium's response cache.
-  const cache = async (response: Response): Promise<UploadResponse> => ({ ok: response.ok(), body: await response.json() });
+  const reserved: UploadResponse[] = [];
+  const transferred: UploadResponse[] = [];
+  // Keep transport metadata only. Large request bodies can evict even the PUT's own CDP body.
   const track = (response: Response) => {
-    if (response.request().method() === 'POST' && response.url().endsWith(UPLOAD_ROOT)) reserved.push(cache(response));
-    if (response.request().method() === 'PUT' && response.url().includes(UPLOAD_ROOT) && response.url().endsWith('/bytes')) transferred.push(cache(response));
+    const request = response.request();
+    const transport = { ok: response.ok(), status: response.status(), url: response.url() };
+    if (request.method() === 'POST' && response.url().endsWith(UPLOAD_ROOT))
+      reserved.push({ ...transport, declaration: request.postDataJSON() });
+    if (request.method() === 'PUT' && response.url().includes(UPLOAD_ROOT) && response.url().endsWith('/bytes'))
+      transferred.push(transport);
+  };
+  const readyStatus = async (transfer: UploadResponse): Promise<JsonObject> => {
+    expect(transfer.ok, JSON.stringify(transfer)).toBe(true);
+    const url = new URL(transfer.url);
+    url.pathname = url.pathname.replace(/\/bytes$/, '');
+    // This public GET uses Node's HTTP transport, independent of Chromium's inspector cache.
+    const response = await fetch(url);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const status = JSON.parse(body) as JsonObject;
+    expect(status.state).toBe('ready');
+    expect(status.upload_id).toBe(decodeURIComponent(url.pathname.split('/').at(-1)!));
+    return status;
   };
   page.on('response', track);
   const surface = input.locator('xpath=ancestor::*[@data-composer-attachment-surface][1]');
@@ -54,9 +71,7 @@ async function dropAndPaste(scope: Locator, input: Locator, label: string, video
   }, { name: picked[0].name, base64: video.toString('base64') });
   await expect(scope.locator('.chat-att')).toHaveCount(1);
   await expect.poll(() => transferred.length, { timeout: WAIT_MS }).toBe(1);
-  const first = await transferred[0];
-  expect(first.ok, JSON.stringify(first.body)).toBe(true);
-  expect(first.body.state).toBe('ready');
+  await readyStatus(transferred[0]);
   await expect(input).toBeEnabled();
   await input.evaluate((node, attachment) => {
     const transfer = new DataTransfer();
@@ -73,18 +88,18 @@ async function dropAndPaste(scope: Locator, input: Locator, label: string, video
   await expect.poll(() => transferred.length, { timeout: WAIT_MS }).toBe(2);
   expect(reserved).toHaveLength(2);
   for (const [index, file] of picked.entries()) {
-    const response = await transferred[index];
-    expect(response.ok, JSON.stringify(response.body)).toBe(true);
-    const status = response.body;
-    expect(status.state).toBe('ready');
+    const status = await readyStatus(transferred[index]);
     expect(status.filename).toBe(file.name);
     expect(status.media_type).toBe(file.mediaType);
+    expect(status.byte_count).toBe(file.bytes.length);
     expect(status.received_bytes).toBe(file.bytes.length);
-    const reservation = await reserved[index];
-    expect(reservation.ok, JSON.stringify(reservation.body)).toBe(true);
-    expect(reservation.body.upload_id).toBe(status.upload_id);
+    expect(status.destination).toEqual(destination);
+    const reservation = reserved[index];
+    expect(reservation.ok, JSON.stringify(reservation)).toBe(true);
+    expect(reservation.declaration).toEqual({ destination, filename: file.name, byte_count: file.bytes.length });
     file.uploadId = status.upload_id;
   }
+  expect(new Set(picked.map((file) => file.uploadId)).size).toBe(2);
   page.off('response', track);
   await expect(input).toBeEnabled();
   return picked;
@@ -190,7 +205,8 @@ test('drop and paste reach conversation sends in every placement and structured 
     const composer = page.locator('[data-conversation-box]');
     const input = composer.locator('[data-conversation-input]');
     await input.fill(placement === 'structured' ? 'The files answer the question.' : `Files from ${placement}`);
-    const attachments = await dropAndPaste(composer, input, `conversation-${placement}`, video);
+    const attachments = await dropAndPaste(composer, input, `conversation-${placement}`, video,
+      { kind: 'ticket', id: ticket, expected_conversation_id: conversation });
     if (placement === 'dock') await expect(page.locator('[data-conversation-pane]')).toHaveAttribute('data-conversation-state', 'rest');
     if (placement === 'expanded') await expect(page.locator('[data-conversation-pane]')).toHaveAttribute('data-conversation-state', 'opened');
     if (placement === 'artifact') await expect(page.locator('[data-ticket-artifact]')).toBeVisible();
@@ -249,7 +265,9 @@ test('drop and paste reach Review replies, artifact bars, structured answers, an
       : placement === 'structured' ? page.locator('[data-review-ask="question"]') : page.locator('[data-review-item-type="message"]');
     const input = placement === 'structured' ? scope.locator('[data-review-ask-own-words]').last() : scope.locator('[data-review-reply]');
     await input.fill(placement === 'structured' ? 'The files answer the question.' : `Reply from ${placement}`);
-    const attachments = await dropAndPaste(scope, input, `review-${placement}`, video, placement === 'artifact');
+    const attachments = await dropAndPaste(scope, input, `review-${placement}`, video,
+      { kind: placement === 'structured' ? 'conversation' : 'ticket', id: placement === 'structured' ? conversation : ticket, expected_conversation_id: conversation },
+      placement === 'artifact');
     await captureSuccess(page, `attachments-review-${placement}.png`);
     const ordinarySends: string[] = [];
     page.on('request', (request) => {
@@ -279,7 +297,8 @@ test('drop and paste reach Review replies, artifact bars, structured answers, an
   const input = chief.locator('[data-review-reply]');
   const chiefText = 'Chief, review the attached recording and binary file.';
   await input.fill(chiefText);
-  const attachments = await dropAndPaste(chief, input, 'review-final-chief', video);
+  const attachments = await dropAndPaste(chief, input, 'review-final-chief', video,
+    { kind: 'chief', id: 'chief', expected_conversation_id: chiefConversation });
   await captureSuccess(page, 'attachments-review-final-chief.png');
   const chiefSends: string[] = [];
   page.on('request', (request) => {
@@ -325,7 +344,9 @@ test('drop and paste reach approval notes on Ticket and Review, including artifa
     const scope = link ? page.locator('[data-artifact-bar]') : page.locator('[data-approval-block]');
     const input = scope.locator('[data-revision-note], [data-review-revision-input]');
     await input.fill(`Please use the files from ${placement}.`);
-    const attachments = await dropAndPaste(scope, input, `approval-${placement}`, video);
+    const detail = await api.get(server, `/api/tickets?id=${id}&detail=full`);
+    const attachments = await dropAndPaste(scope, input, `approval-${placement}`, video,
+      { kind: 'ticket', id, expected_conversation_id: detail.conversation_id });
     await captureSuccess(page, `attachments-approval-${placement}.png`);
     const response = await sent(page, `/api/tickets/${id}/decision-operations/`, () => scope.locator('[data-send-back]').click());
     expect((await response.json()).receipt.outcome).toBe('applied');
