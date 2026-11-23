@@ -315,7 +315,7 @@ test('a machine saves and removes files for its own Ticket only', async () => {
     expect((await request('DELETE', own.id, 'artifacts/report.txt')).statusCode).toBe(204);
     expect(existsSync(served(own.id))).toBe(false);
     // Additive capability leaves compatible historical work admitted without granting moves.
-    for (const protocol_version of [26, 27]) {
+    for (const protocol_version of [PROTOCOL_VERSION - 1, PROTOCOL_VERSION]) {
       expect(parse_identity({ ...identity, protocol_version }).supports_work_moves).toBe(false);
       expect(
         parse_identity({ ...identity, protocol_version, supports_work_moves: true })
