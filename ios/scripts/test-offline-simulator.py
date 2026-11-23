@@ -2199,7 +2199,9 @@ def main() -> int:
     env["TEST_RUNNER_PANELS_REVIEW_SPLIT"] = os.environ.get("PANELS_REVIEW_SPLIT", "0")
     env["TEST_RUNNER_PANELS_REVIEW_QUEUE"] = "1" if REVIEW_QUEUE else "0"
     control = None
-    if REACHABILITY_SMOKE:
+    # The update review drops the listener during an expected restart, as the reachability
+    # review does, so PANELS_UPDATES_SMOKE=1 starts the same connection control.
+    if REACHABILITY_SMOKE or UPDATES_SMOKE:
         port = server.server_port
 
         class ConnectionControl(http.server.BaseHTTPRequestHandler):
