@@ -37,6 +37,16 @@ export function create_commands(environment: NodeJS.ProcessEnv = {}): CliCommand
     ],
     true,
   );
+  command('legacy-agents', 'Inspect agents from an old Panels build.');
+  command(
+    'legacy-agents dry-run',
+    'Read startup retirement candidates without source writes or target signals.',
+    [
+      option('database_path', '--database-path <PATH>', readable_path('any', false), {
+        required: true,
+      }),
+    ],
+  );
   command('attention', 'Read where owner involvement went over selected dates.');
   command(
     'attention setup-collection',

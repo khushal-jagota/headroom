@@ -14,7 +14,7 @@ import type {
   WorkerProcessRecord,
 } from './contracts.ts';
 import { INSPECTION_SECONDS, STOP_SECONDS, TERM_SECONDS } from './config.ts';
-import { alive, discover, validate_pending_shape } from './logic/ownership.ts';
+import { alive, retirement_process_scope, validate_pending_shape } from './logic/ownership.ts';
 import { capture_observation } from './observation.ts';
 import { WorkerSupervisionRuntime } from './runtime.ts';
 import * as records from './records.ts';
@@ -68,20 +68,17 @@ export async function observe_unlocked(
       (options.fresh
         ? await runtime.fresh.capture(context, deadline)
         : await capture_observation(context, deadline));
-    const found = discover(record, observation);
+    const found = retirement_process_scope(
+      record,
+      observation,
+      context.primitives.owns_isolated_session_members,
+    );
     const known = new Set(found.map((process) => `${process.pid}:${process.birth}`));
     const root = record.root;
     let members: typeof found = [];
     if (root != null && record.isolated && root.session === root.pid) {
       const leader = observation.stable.get(root.pid);
       if (!leader || leader.birth === root.birth) {
-        if (context.primitives.owns_isolated_session_members)
-          for (const process of observation.sessions.get(root.session) ?? []) {
-            if (!process.zombie && !known.has(`${process.pid}:${process.birth}`)) {
-              found.push(process);
-              known.add(`${process.pid}:${process.birth}`);
-            }
-          }
         members = (observation.latest_sessions.get(root.session) ?? []).filter(
           (process) => !process.zombie && !known.has(`${process.pid}:${process.birth}`),
         );

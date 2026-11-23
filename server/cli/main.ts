@@ -23,6 +23,15 @@ export async function run(
     if (parsed.help) return { exit_code: 0, stdout: parsed.help, stderr: '' };
     invocation = { ...parsed, environment, stdin, write_stderr };
     switch (parsed.command.path[0]) {
+      case 'legacy-agents': {
+        const { inspect_legacy_agents } = await import('../conversation/legacy_agents.ts');
+        const report = await inspect_legacy_agents(invocation.values.database_path);
+        return {
+          exit_code: report.unproven.length ? 1 : 0,
+          stdout: JSON.stringify(report, null, 2) + '\n',
+          stderr: '',
+        };
+      }
       case 'api':
         return await (await import('./api.ts')).run_api_command(invocation);
       case 'executor':

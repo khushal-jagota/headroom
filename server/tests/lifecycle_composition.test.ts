@@ -53,7 +53,7 @@ import {
 import { ConversationMessageFiles } from '../conversation/record/message_files.ts';
 import { PromptDeliveryStarted } from '../conversation/contracts.ts';
 import { WorkerStepReadinessLoop } from '../runtime/worker_step_readiness_loop.ts';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configure_conversation_start } from '../runtime/conversation_start.ts';
 import * as wakeData from '../manager_wakes/data.ts';
@@ -801,6 +801,9 @@ test('startServer reconciles before core construction and a route collision star
         createConversationCore(context) {
           expect(trace).toEqual(['reconcile']);
           expect(existsSync(uploads)).toBe(false);
+          const archive = join(dirname(path), 'executor-upload-archive');
+          const [run] = readdirSync(archive);
+          expect(readFileSync(join(archive, run, '.incoming-abandoned'), 'utf8')).toBe('partial');
           expect(() => acquireRuntimeOwnership(path)).toThrow();
           trace.push('core');
           const noProvider = () => {

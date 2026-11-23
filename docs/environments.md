@@ -26,7 +26,7 @@ Each development checkout installs its own Node dependencies with `npm ci`, sepa
 
 The server state is one folder, normally `data/`. It holds the database, its credential key, served files, skill files, and private push and update secrets. Database rows also hold managed skill text. Disk copies of that text can accompany their supporting files.
 
-Settings describe the machine and are written again after a move. The state inventory excludes settings, provider logins, locks, sockets, process records, updates, metrics, caches, transfer uploads, and old backups. Private Ticket worktrees stay outside the served-file inventory. The server clears abandoned transfer uploads before its first transfer service starts, while it holds exclusive runtime ownership.
+Settings describe the machine and are written again after a move. The state inventory excludes settings, provider logins, locks, sockets, process records, updates, metrics, caches, transfer uploads, and old backups. Private Ticket worktrees stay outside the served-file inventory. The server archives abandoned transfer uploads before its first transfer service starts, while it holds exclusive runtime ownership. Archives stay in `executor-upload-archive/` inside the server folder, outside served files. A person removes them later by hand.
 
 An explicit `server_root` resolves from the settings file. Server file paths resolve from that folder. An absolute `PLAN_DB_PATH` selects its parent as the root unless `PLAN_SERVER_ROOT` also specifies one. This lets an isolated command select its own state. The database stays directly inside the root so every database-adjacent file owner agrees on the folder.
 
