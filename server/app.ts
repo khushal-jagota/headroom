@@ -39,6 +39,7 @@ export interface AppServices {
   areas?: readonly Area[];
   workspaceAdmission?: WorkspaceAdmission;
   updateBarrier?: UpdateBarrier;
+  waitingScreensRoot?: () => string | null;
   executor?: VpsExecutorRegistry | null;
   /** More executor routes that authenticate machines themselves, such as the server move. */
   executorRoutes?: readonly FastifyPluginAsync[];
@@ -66,6 +67,7 @@ export async function createApp(config: Config, services: AppServices): Promise<
     services.workspaceAdmission,
     request_lifetime,
     services.updateBarrier,
+    { database: services.database, clock },
   );
   const configuredRoot = process.env.PLAN_APP_ROOT;
   const root = configuredRoot
@@ -77,7 +79,15 @@ export async function createApp(config: Config, services: AppServices): Promise<
             : configuredRoot,
       )
     : fileURLToPath(new URL('../', import.meta.url));
-  await registerCoreRoutes(app, config, clock, changes, root, services.database);
+  await registerCoreRoutes(
+    app,
+    config,
+    clock,
+    changes,
+    root,
+    services.database,
+    services.waitingScreensRoot,
+  );
   app.register(
     create_executor_routes({
       config,

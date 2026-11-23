@@ -102,14 +102,17 @@
     "ts_0004_drop_ideas": [
       "ts_0003_ticket_worker_setups"
     ],
-    "ts_0005_server_link": [
+    "ts_0005_client_versions": [
       "ts_0004_drop_ideas"
     ],
-    "ts_0006_machine_backend_state": [
-      "ts_0005_server_link"
+    "ts_0006_server_link": [
+      "ts_0005_client_versions"
     ],
-    "ts_0007_conversation_machine": [
-      "ts_0006_machine_backend_state"
+    "ts_0007_machine_backend_state": [
+      "ts_0006_server_link"
+    ],
+    "ts_0008_conversation_machine": [
+      "ts_0007_machine_backend_state"
     ],
     "worker_cleanup_recheck": [
       "worker_supervision"

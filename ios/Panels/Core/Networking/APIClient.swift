@@ -56,6 +56,7 @@ struct APIClient: Sendable {
         }
         var request = URLRequest(url: target)
         request.setValue(NativeBuildGate.build, forHTTPHeaderField: "X-Panels-iOS-Build")
+        request.setValue(try NativeClientIdentity.header(), forHTTPHeaderField: "X-Panels-Client")
         return request
     }
 
@@ -191,4 +192,27 @@ enum NativeBuildGate {
     }
     static func requiresUpdate(_ url: URL) -> Bool { UserDefaults.standard.bool(forKey: key(url)) }
     static func requireUpdate(_ url: URL) { UserDefaults.standard.set(true, forKey: key(url)) }
+}
+
+/// An installation identifier, independent of notification permission and credentials.
+private enum NativeClientIdentity {
+    private static let deviceID: String = {
+        let key = "panels.client.deviceID"
+        if let saved = UserDefaults.standard.string(forKey: key) { return saved }
+        let created = UUID().uuidString
+        UserDefaults.standard.set(created, forKey: key)
+        return created
+    }()
+
+    private struct Identity: Encodable {
+        let kind = "ios"
+        let device_id: String
+        let version: String
+        let build: Int?
+    }
+
+    static func header() throws -> String {
+        let identity = Identity(device_id: deviceID, version: NativeBuildGate.build, build: Int(NativeBuildGate.build))
+        return String(decoding: try JSONEncoder().encode(identity), as: UTF8.self)
+    }
 }

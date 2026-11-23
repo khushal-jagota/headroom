@@ -1,3 +1,4 @@
+import { clientFetch } from "../../clientIdentity";
 import type {ViewContentReference} from '../contracts';
 /** One selected body, aborted and released with its owning surface; never an archive cache. */
 export function selectedRecap(reference:()=>ViewContentReference|null|undefined,enabled:()=>boolean) {
@@ -9,7 +10,7 @@ export function selectedRecap(reference:()=>ViewContentReference|null|undefined,
     if(!active||!ref)return;
     const controller=new AbortController();
     const query=new URLSearchParams({kind:ref.owner.kind,identity:ref.owner.id,version:ref.version});
-    void fetch(`/api/navigation/view/content?${query}`,{signal:controller.signal,cache:'no-store'}).then(async response=>{
+    void clientFetch(`/api/navigation/view/content?${query}`,{signal:controller.signal,cache:'no-store'}).then(async response=>{
       if(!response.ok)throw new Error('Recap changed while it was read');
       const value=await response.text();
       if(!controller.signal.aborted){body=value;version=ref.version;}

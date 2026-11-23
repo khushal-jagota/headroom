@@ -1,5 +1,6 @@
 // The one server address the app holds, and the check that a Panels server answers there.
 import { net } from 'electron';
+import { desktopIdentityHeaders } from './client_identity';
 import { readJson, writeJson } from './stored_json';
 import type { ServerAddressResult } from './bridge';
 
@@ -26,7 +27,7 @@ export function storeServerAddress(address: string): void {
   current = address;
 }
 
-/** The address the app tries first, before it asks the person. */
+/** The default address setup offers after the person selects this Mac. */
 export function localServerAddress(): string {
   return process.env.PANELS_LOCAL_SERVER_ADDRESS ?? DEFAULT_LOCAL_SERVER_ADDRESS;
 }
@@ -51,6 +52,7 @@ async function checkServer(address: string): Promise<ServerAddressResult> {
   try {
     const response = await net.fetch(`${address}/api/meta`, {
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+      headers: desktopIdentityHeaders(),
     });
     if (!response.ok) return { ok: false, problem: `The address answered ${response.status}.` };
     const body: unknown = await response.json().catch(() => null);

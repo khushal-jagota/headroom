@@ -77,11 +77,33 @@ describe("page version headers", () => {
       await fetchJson("/api/example", { method: "DELETE" });
       const mutations = request.mock.calls.filter(([path]) => path === "/api/example");
       expect(mutations).toHaveLength(3);
-      for (const [,options] of mutations) expect(options?.headers).toMatchObject({"X-Panels-App-SHA":"booted"});
-      expect(await mutationHeaders({"Content-Type":"application/octet-stream"})).toEqual({"content-type":"application/octet-stream","X-Panels-App-SHA":"booted"});
+      for (const [,options] of mutations) {
+        expect(options?.headers).toMatchObject({"X-Panels-App-SHA":"booted"});
+        expect(JSON.parse((options?.headers as Record<string,string>)["X-Panels-Client"])).toMatchObject({kind:"browser",version:"booted"});
+      }
+      expect(await mutationHeaders({"Content-Type":"application/octet-stream"})).toMatchObject({"content-type":"application/octet-stream","X-Panels-App-SHA":"booted"});
       await expect(fetchJson("/api/refused", {method:"POST",body:{}})).rejects.toMatchObject({code:"validation",message:"Refresh page before making changes."});
       expect(request.mock.calls.filter(([path]) => path === "/api/meta")).toHaveLength(1);
       expect(reload).not.toHaveBeenCalled();
     } finally { stopReleaseMonitor(); vi.unstubAllGlobals(); }
   });
+});
+
+// Desktop activation owns an integrity and bridge-version boundary absent in browsers.
+it("leaves desktop reloads to the native activation gate", async () => {
+  vi.stubGlobal("location", { protocol: "panels:" });
+  try {
+    const page = listeners();
+    const reload = vi.fn();
+    const monitor = createReleaseMonitor({
+      bootSha: "old", document: page.target, window: page.target, reload,
+      fetchMeta: vi.fn(async () => ({ ok: true, json: async () => ({ app_sha: "new" }) }) as Response)
+    });
+    monitor.start();
+    await monitor.check();
+    monitor.requestReload();
+    await monitor.check();
+    expect(reload).not.toHaveBeenCalled();
+    monitor.stop();
+  } finally { vi.unstubAllGlobals(); }
 });

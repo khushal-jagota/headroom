@@ -16,6 +16,8 @@ On the live host, the owner is the caller Tailscale Serve vouches for. The brows
 
 A browser write must come from the server's own address. The desktop app is the one other origin the server accepts, `panels://app`, named once in `server/core/http/middleware.ts`. The server sends CORS headers to that origin only, for reads, writes, preflights and live streams. The origin adds no identity: the app still reaches a hosted server through Tailscale Serve. The app as built forwards its requests from its native side, which sends no Origin, so it does not rely on this rule.
 
+Client version headers describe software and devices. They grant no authority and do not replace launch credentials or trusted ingress.
+
 An unidentified caller stands above nothing. It can read what any caller can read and send a message to Chief. Other writes are refused. The refusal directs an agent to the authenticated CLI API command instead of hand-built headers. Panels supplies a resumed child with its credential. A terminal without identity and the stall watchdog use unidentified access on the live host.
 
 A server without trusted ingress, such as staging or a local checkout, retains owner access for a call with no identity. An attempted agent call with an invalid credential or old identity headers stays unidentified there too.
@@ -75,4 +77,4 @@ Recap requests follow the same hierarchy. The owner can request any agent. Chief
 - `server/core/authority/identity.ts`: turns a request into a caller. Executor self-reads enter through a verified in-process context.
 - `server/agent_identity/`: conversation credentials, hash storage and private launch delivery.
 
-_Last verified: 2026-11-16._
+_Last verified: 2026-11-22._

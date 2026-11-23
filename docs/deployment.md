@@ -16,6 +16,8 @@ installer unit: stop → snapshot if required → swap folders → start → hea
                                                     └─ not healthy → restore, swap back → resume work → failed
 ```
 
+The server publishes the installed release and its accepted client versions through one metadata answer. Clients identify their installation and software version. The server retains the last reported version for each device. Older installed manifests without a release number or parts omit those fields.
+
 ## What it is made of
 
 The TypeScript Linux builder rebuilds browser assets from source, then removes build tools and unused platform binaries before it seals the archive. The Linux executor uses the same builder. Installation consumes the sealed archive and runs no source build.
@@ -83,7 +85,9 @@ The server reports which active agents the pending release stops. It computes th
 
 The macOS desktop app has its own workflow, separate from the home's publication. On a push to staging or `main`, or a manual run, a GitHub-hosted Mac builds it, signs it with the Developer ID of the Blue Door Labs team and the hardened runtime, and sends it to Apple for notarization. Then it staples Apple's ticket to the app and checks the result with Apple's own tools, so that a Mac opens the download with no warning. The signing certificate and the notarization key are repository secrets, set once ([steps](../ops/desktop/signing.md)). The run keeps the signed zip as the `panels-desktop-mac` artifact for 30 days. The CI run number sets its version, `0.0.<run>`.
 
-A push to `main` that touches the app's paths also publishes the zip as a public GitHub Release, tagged `desktop-v<version>`. The newest one always downloads from <https://github.com/khushal-jagota/headroom/releases/latest/download/Panels-mac-arm64.zip>. The app runs on Apple silicon Macs. A manual run makes a draft Release instead, which is not public, so that the job can be checked before a release. Delete such a draft after the check. Its updates come later.
+A push to `main` that touches the app's paths also publishes the signed shell and updater metadata as a public desktop release. The app downloads shell updates quietly and installs a ready update at quit or after a period without a window. A manual run produces private proof builds and publishes no release.
+
+The screens follow a separate route: the app takes them directly from its selected server. The server names its installed digest and serves the matching files, independently of publication metadata or GitHub Releases. The app verifies each copy and reloads only after the server and installed bridge fit it. See [The desktop app](desktop.md) for screen trust, recovery, and the bundled baseline.
 
 ## The private route
 
