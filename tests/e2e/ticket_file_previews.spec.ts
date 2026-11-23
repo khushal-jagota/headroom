@@ -377,7 +377,7 @@ test('test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place',
   expect(await standalone.locator('iframe').getAttribute('sandbox')).toBeNull();
 
   await page.goto(`${server.base}/#/review`);
-  await page.locator('[data-screen="review"] [data-review-empty]').waitFor({ timeout: WAIT_MS });
+  await page.locator('[data-screen="review"] [data-deck-item]:not([data-deck-leaving]) [data-review-empty]').waitFor({ timeout: WAIT_MS });
   for (const retiredText of ['Everything', 'Newsreader'])
     await expect(page.getByText(retiredText, { exact: true })).toHaveCount(0);
   if (evidence) await page.screenshot({ path: join(evidence, 'combined-review-ui.png'), fullPage: true });
