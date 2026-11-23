@@ -49,6 +49,9 @@ struct ReviewArtifactDock: ViewModifier {
     /// The card whose decision is saved, held by the queue until it leaves.
     @State private var held: ReviewItem?
     @State private var left = false
+    /// Set when this dock read the run itself: no screen showed those messages, so
+    /// Mark read stays off here. Back shows the run on the card, where it works.
+    @State private var readUnshownRun = false
     private var item: ReviewItem? { session?.shown.flatMap { $0.id == itemID ? $0 : nil } }
 
     func body(content: Content) -> some View {
@@ -67,11 +70,15 @@ struct ReviewArtifactDock: ViewModifier {
                 if session != nil, shown != itemID { closeArtifacts() }
             }
             // Opened before the card's first read finished, which the push cancelled: the dock
-            // reads the run itself, or Reply and Mark read stay off until Back.
+            // reads the run itself, so Reply works. Mark read waits for Back, where the card
+            // shows the run.
             .task(id: "\(visible)|\(store.connectionSession)") {
                 guard visible, isMessage, let session, let savedWork, let item else { return }
                 let decision = session.messageDecisions.decision(for: item, savedWork: savedWork)
-                if !decision.loaded { await decision.load(item: store.reviewMessageFacts(item), api: store.client) }
+                if !decision.loaded {
+                    readUnshownRun = true
+                    await decision.load(item: store.reviewMessageFacts(item), api: store.client)
+                }
             }
     }
 
@@ -82,6 +89,7 @@ struct ReviewArtifactDock: ViewModifier {
             // A refused reply shows its reason in its composer; a refused Mark read here.
             if let refusal, decision.attempt?.state != .failed { notes { ReviewInlineNote(tone: .refused, title: "Refused", text: refusal) } }
             ReviewMessageDock(item: item, isActive: scenePhase == .active, decision: decision, actions: messageActions,
+                              markReadAllowed: !readUnshownRun,
                               onSkip: { skip(item, session: session) },
                               onResolve: { resolve(item, session: session, afterExit: $0) })
         } else {

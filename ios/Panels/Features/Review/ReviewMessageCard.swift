@@ -127,6 +127,8 @@ struct ReviewMessageDock: View {
     let isActive: Bool
     let decision: ReviewMessageDecision
     let actions: ReviewMessageActions
+    /// Off where the run on screen is one that no screen showed.
+    var markReadAllowed = true
     let onSkip: () -> Void
     let onResolve: (_ afterExit: (() -> Void)?) -> Void
     @Environment(AppStore.self) private var store
@@ -146,7 +148,7 @@ struct ReviewMessageDock: View {
                     skipButton
                     Button("Mark read") { actions.markRead(decision, onResolve: onResolve) }
                         .buttonStyle(ReviewButtonStyle()).accessibilityIdentifier("review.markRead")
-                        .disabled(decision.through == 0 || decision.busy || actions.capturing || actions.finished)
+                        .disabled(!markReadAllowed || decision.through == 0 || decision.busy || actions.capturing || actions.finished)
                 }
             } else {
                 skipButton
