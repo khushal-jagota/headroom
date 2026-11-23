@@ -9,12 +9,16 @@
     "check": "tsc --noEmit -p .",
     "build": "tsc -p . && node scripts/pack_web.mjs",
     "start": "electron .",
-    "build:mac": "npm run build && electron-builder --mac --publish never"
+    "build:mac": "npm run build && electron-builder --mac --publish never",
+    "test:updates": "node scripts/test_updates.mjs"
   },
   "devDependencies": {
     "@types/node": "22.19.3",
     "electron": "45.4.1",
     "electron-builder": "26.18.0",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
   }
 }

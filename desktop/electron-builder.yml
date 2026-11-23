@@ -3,8 +3,12 @@ productName: Panels
 files:
   - build/**
   - package.json
+publish:
+  - provider: github
+    owner: khushal-jagota
+    repo: headroom
 mac:
-  # A fixed name, so that releases/latest/download/Panels-mac-arm64.zip always works.
+  # Each desktop release carries this ZIP and its matching latest-mac.yml.
   artifactName: Panels-mac-${arch}.${ext}
   category: public.app-category.productivity
   target:
