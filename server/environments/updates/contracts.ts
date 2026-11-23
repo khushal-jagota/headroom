@@ -1,5 +1,6 @@
 /** Persisted and in-process update contracts. */
 import type { ConversationSystem } from '../../conversation/contracts.ts';
+import type { ExecutorIdentity } from '../../execution_identity.ts';
 import type { Database } from '../../core/database/contracts.ts';
 
 export type UpdateMode = 'now' | 'idle';
@@ -95,7 +96,46 @@ export interface UpdateAttempt {
   mac_attempt_id: string | null;
   extra: Record<string, unknown>;
 }
+export interface MachineUpdateMachine {
+  machine_id: string;
+  name: string;
+  platform: string;
+  present: boolean;
+  identity: ExecutorIdentity | null;
+}
+export interface MachineUpdateState {
+  attempt_id: string | null;
+  machine_id: string;
+  name: string;
+  platform: string;
+  present: boolean;
+  build_id: string | null;
+  target_build_id: string | null;
+  changed: boolean;
+  state: 'current' | 'available' | 'waiting' | 'updating' | 'failed' | 'unavailable';
+  request_id: string | null;
+  detail: string | null;
+  can_retry: boolean;
+}
+export interface UpdateInterruption {
+  stops_agents: boolean;
+  agents: readonly string[];
+  machine_ids: readonly string[];
+}
+export interface UpdateAttemptView {
+  attempt_id: string;
+  from_sha: string;
+  to_sha: string;
+  mode: UpdateMode;
+  state: UpdateAttemptState;
+  detail: string | null;
+  deadline_at: string | null;
+  interruption: UpdateInterruption | null;
+}
 export interface UpdateStatus {
+  machines: readonly MachineUpdateState[];
+  available_machines: readonly MachineUpdateState[];
+  interruption: UpdateInterruption;
   state: UpdateExperienceState;
   allowed_actions: readonly UpdateAction[];
   activity: UpdateActivity;
@@ -157,6 +197,8 @@ export interface InstallerOperations {
   launch(attempt_id: string, command: readonly string[]): Promise<void>;
 }
 export interface MacUpdateOperations {
+  machine_states(release?: PublishedUpdate | null): MachineUpdateState[];
+  retry_machine(machine_id: string, attempt_id: string): void;
   prepare(release: PublishedUpdate): Promise<void>;
   phase(attempt_id: string): string | null;
   reported_at(attempt_id: string): number | null;

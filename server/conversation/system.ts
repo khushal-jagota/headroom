@@ -658,8 +658,8 @@ export class SqliteProcessConversationSystem implements DeliveryServices, Conver
   workspace_activity(): 'idle' | 'busy' | 'unknown' {
     return queries.workspace_activity(this);
   }
-  update_interrupted_work(): readonly string[] {
-    return update_preparation.update_interrupted_work(this);
+  update_interrupted_work(machine_ids?: readonly string[]): readonly string[] {
+    return update_preparation.update_interrupted_work(this, machine_ids);
   }
   reopen_after_update(): void {
     update_preparation.reopen_after_update(this);

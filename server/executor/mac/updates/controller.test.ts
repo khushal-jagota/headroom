@@ -439,3 +439,16 @@ test('equal content identities across release revisions confirm without prefetch
   );
   expect(f.phases).toEqual(['current']);
 });
+
+test('a target content identity cannot match a machine that only reports the same revision', async () => {
+  const f = fixture();
+  await f.controller.apply(
+    f.check({
+      ...f.target,
+      application_revision: f.identity.application_revision,
+      build_id: 'd'.repeat(64),
+      activate: false,
+    }),
+  );
+  expect(f.phases).toEqual([]);
+});

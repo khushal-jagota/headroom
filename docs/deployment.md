@@ -71,11 +71,13 @@ Three cases still need a person. A kill after the stop and before the first rena
 
 Every update ends as done or failed. A failed update writes its reason to the journal and the card, and sends one push to the owner's devices. A refused press writes its reason to the journal too. If no app returns after a failure, the installer unit's journal still holds the reason, and no push is possible. The installing state carries a deadline. A deadline alone never proves trial health while the saved update gate remains closed. If the installer disappears, the gate retains results and requires recovery. A terminal attempt with a released gate permits another update.
 
-## The card and the Mac
+## The server and each machine
 
-One server answer supplies the card's state and allowed actions: up to date, available, updating, failed, Mac failed, or Mac unreachable. While the connection is lost during the restart, the card keeps saying updating until the deadline. The browser offers a refresh when its loaded app differs from the server, and the server rejects a write from an outdated page.
+The server keeps its own update attempt. Each registered machine keeps a separate state and retry. A new offer does not erase a failed machine's retry. The server compares machine content identities and skips unchanged builds and their downloads. Machines without a content identity count as changed.
 
-The publication carries a TypeScript Mac executor from the same source, with its own Node runtime and native dependencies. Its updates use the existing update channel. The separate Mac home package does not change. The card covers the home and its original Mac. Other registered Macs receive their own offers and keep separate reports. The VPS never waits for the Mac. The Mac sees its target from the press and activates it once the VPS install is done. The card stays updating until the Mac reports the new runtime. A Mac that reports a failure shows **Mac failed**; one that says nothing for about a minute and a half after the VPS part shows **Mac unreachable**; it may be asleep or offline. Either way **Try again for the Mac** sends a fresh target for the same release, and a Mac that returns later and reports the new runtime moves the card on by itself. A release without a Mac part, or a host without a Mac, skips it. See [Extra-machine updates](executor.md#updates-and-health).
+The machine channel retains targets for absent machines. Changed machines activate only after the server succeeds. A machine failure leaves its previous runtime available. Linux archive readiness survives a server restart through validation of the retained archive.
+
+The server reports which active agents the pending release stops. It computes this effect again at the press. Until the server and its own machine run separately, the report also includes home work that the server restart stops. The update card can use the machine states and this effect through the [update API](../server/environments/updates/README.md). See [Extra-machine updates](executor.md#updates-and-health).
 
 ## The desktop app
 

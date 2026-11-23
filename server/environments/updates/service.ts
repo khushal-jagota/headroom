@@ -1,4 +1,5 @@
 /** The server launches the installer at once. The installer owns the stop and the replacement. */
+import { HOME_MACHINE_ID, ORIGINAL_MAC_MACHINE_ID } from '../../execution_identity.ts';
 import { randomUUID } from 'node:crypto';
 import { lstatSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -22,6 +23,8 @@ import {
 import { install_deadline_seconds } from './logic/install_deadline.ts';
 import type {
   InstallerOperations,
+  MachineUpdateState,
+  UpdateInterruption,
   MacUpdateOperations,
   PublishedUpdate,
   ReleaseStaging,
@@ -278,27 +281,33 @@ export class UpdateService {
     const system = this.options.runtime.conversation();
     const activity = system?.workspace_activity() ?? 'unknown';
     const available = this.ready_release();
-    const reported = attempt?.mac_attempt_id
-      ? this.options.mac.reported_at(attempt.mac_attempt_id)
-      : null;
+    const machines = this.options.mac.machine_states();
+    const available_machines = available === null ? [] : this.options.mac.machine_states(available);
+    const interruption =
+      available === null
+        ? { stops_agents: false, agents: [], machine_ids: [] }
+        : this.interruption(available_machines);
     const [state, allowed_actions, resolved_detail, deadline_at] = resolve(
       attempt,
       available,
       this.current_app_sha,
       {
-        mac_applies: attempt?.release.mac != null && this.options.mac.configured(),
-        mac_phase: attempt?.mac_attempt_id ? this.options.mac.phase(attempt.mac_attempt_id) : null,
-        mac_reported_at: reported === null ? null : timestamp(reported),
+        mac_applies: false,
+        mac_phase: null,
+        mac_reported_at: null,
         mac_report_seconds: MAC_UPDATE_REPORT_SECONDS,
         now: timestamp(this.now()),
       },
     );
     let detail = resolved_detail;
     // Information only. Running work never refuses or delays an update.
-    const interrupted = state === 'available' ? (system?.update_interrupted_work() ?? []) : [];
+    const interrupted = state === 'available' ? interruption.agents : [];
     if (interrupted.length)
       detail = `The update interrupts this work, and Panels resumes it afterwards: ${interrupted.join(', ')}.`;
     return {
+      machines,
+      available_machines,
+      interruption,
       state,
       allowed_actions,
       activity,
@@ -308,6 +317,17 @@ export class UpdateService {
       detail,
       deadline_at,
     };
+  }
+  private interruption(machines: readonly MachineUpdateState[]): UpdateInterruption {
+    // Until the server and its machine run separately, a server restart stops home work.
+    const machine_ids = [
+      ...new Set([
+        HOME_MACHINE_ID,
+        ...machines.filter((machine) => machine.changed).map((machine) => machine.machine_id),
+      ]),
+    ];
+    const agents = this.options.runtime.conversation()?.update_interrupted_work(machine_ids) ?? [];
+    return { stops_agents: agents.length > 0, agents, machine_ids };
   }
   private release_barrier(): void {
     const barrier = this.options.update_barrier;
@@ -349,7 +369,7 @@ export class UpdateService {
         release.mac === null && release.linux_executor == null
           ? null
           : randomUUID().replaceAll('-', ''),
-      extra: {},
+      extra: { interruption: this.interruption(this.options.mac.machine_states(release)) },
     });
     this.launch();
     return attempt;
@@ -361,14 +381,23 @@ export class UpdateService {
       throw new UpdateConflict('The update changed or already moved on.');
     return this.install(attempt.to_sha);
   }
-  retry_mac(attempt_id: string): UpdateAttempt {
+  retry_machine(
+    machine_id: string,
+    attempt_id: string,
+  ): { attempt: UpdateAttempt; machine: MachineUpdateState } {
     this.require_running();
     this.options.runtime.assert_database_owned();
-    return this.attempts.change(attempt_id, states('done'), (current) => ({
-      ...current,
-      mac_attempt_id: randomUUID().replaceAll('-', ''),
-      steps: { ...current.steps, retry_mac: this.record_now() },
-    }));
+    this.options.mac.retry_machine(machine_id, attempt_id);
+    const attempt = this.attempts.read();
+    const machine = this.options.mac
+      .machine_states()
+      .find((value) => value.machine_id === machine_id);
+    if (attempt === null || machine === undefined)
+      throw new UpdateConflict('The machine update changed or already moved on.');
+    return { attempt, machine };
+  }
+  retry_mac(attempt_id: string): UpdateAttempt {
+    return this.retry_machine(ORIGINAL_MAC_MACHINE_ID, attempt_id).attempt;
   }
   start(): void {
     if (this.running) return;

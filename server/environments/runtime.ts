@@ -1,5 +1,9 @@
 /** Per-server composition. External release and executor operations remain explicit. */
 import { dirname, join } from 'node:path';
+import { list_machines } from '../machines/data.ts';
+import { read_presence } from '../executor/vps_presence_store.ts';
+import { judge_presence } from '../executor/logic/presence.ts';
+import { now_ms } from '../executor/clock.ts';
 import { executor_platform } from '../machines/executor_credentials.ts';
 import { UpdateBarrier } from './update_barrier.ts';
 import { notify_update_failure } from './updates/failure_notice.ts';
@@ -75,6 +79,27 @@ export async function createEnvironmentRuntime(
     root: join(data_directory, 'mac-updates'),
     platform_for: (machine_id) =>
       context.database.read((sql) => executor_platform(sql, machine_id)),
+    machines: () =>
+      context.database.read((sql) =>
+        list_machines(sql)
+          .filter((machine) =>
+            Boolean(
+              sql.get('SELECT 1 FROM machine_executor_credentials WHERE machine_id=?', [
+                machine.machine_id,
+              ]),
+            ),
+          )
+          .map((machine) => {
+            const presence = read_presence(sql, machine.machine_id);
+            return {
+              machine_id: machine.machine_id,
+              name: machine.name,
+              platform: executor_platform(sql, machine.machine_id),
+              present: judge_presence(presence, now_ms()).presence === 'present',
+              identity: presence?.identity ?? null,
+            };
+          }),
+      ),
     linux_registered: () =>
       context.database.read((sql) =>
         Boolean(

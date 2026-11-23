@@ -1440,6 +1440,12 @@ export class ConversationStore
   update_work_metadata(): ReadonlyMap<string, readonly [string, string]> {
     return this.database.read((sql) => {
       const result = new Map<string, readonly [string, string]>();
+      for (const row of sql.all<{
+        conversation_id: string;
+        backend_key: string;
+        machine_id: string;
+      }>('SELECT conversation_id,backend_key,machine_id FROM conversations'))
+        result.set(row.conversation_id, [`${row.backend_key} conversation`, row.machine_id]);
       for (const row of sql.all<{ conversation_id: string; title: string; machine_id: string }>(
         'SELECT conversation_id,title,machine_id FROM tickets WHERE conversation_id IS NOT NULL',
       ))
