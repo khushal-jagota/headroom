@@ -245,6 +245,7 @@ export async function native_copied_updates(options: {
       ['success', builds.b],
       ['rollback', builds.a],
     ] as const) {
+      record.update_phase = name;
       const started = performance.now(),
         old = await identity(),
         attempt = 'native-' + name;
@@ -297,6 +298,7 @@ export async function native_copied_updates(options: {
       assert.deepEqual(launch.command, item.command);
       assert.equal(launch.app_pid, old.app.pid);
       assert.equal(launch.supervisor_pid, old.supervisor.pid);
+      record.update_observation = 'updater process';
       item.birth = await wait(async () => {
         const value = await control(['print', item.target], true);
         if (value.code !== 0) {
@@ -323,6 +325,7 @@ export async function native_copied_updates(options: {
         }
         return undefined;
       });
+      record.update_observation = 'app swap';
       await wait(async () => {
         const error = await readFile(
           join(root, 'data/probe-launch-error-' + attempt + '.json'),
@@ -339,6 +342,7 @@ export async function native_copied_updates(options: {
         await chmod(retired, 0);
         await writeFile(policy, '{}');
       } else {
+        record.update_observation = 'failed candidate health';
         await wait(async () => {
           try {
             const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
@@ -355,11 +359,14 @@ export async function native_copied_updates(options: {
           }
         });
       }
+      record.update_observation = 'candidate process';
       if (name === 'rollback') trial_birth = (await identity()).app;
+      record.update_observation = 'terminal attempt';
       const state = await wait(async () => {
         const value = await json(attempt_path);
         return ['done', 'failed'].includes(value.state) ? value : undefined;
       }, 90);
+      record.update_observation = 'restoration assertions';
       assert.equal(state.state, name === 'success' ? 'done' : 'failed');
       assert(
         await lstat(join(root, 'data/update-barrier.json')).then(
@@ -391,6 +398,7 @@ export async function native_copied_updates(options: {
       assert.notEqual(current.app.birth, old.app.birth);
       for (const suffix of ['', '.backup', '.maintenance', '.stall-watchdog'])
         assert.equal((await control(['print', `${domain}/${label}${suffix}`], true)).code, 0);
+      record.update_observation = 'updater exit';
       await wait(
         async () =>
           (await primitives.is_absent(item.birth!, performance.now() / 1000 + 5))
