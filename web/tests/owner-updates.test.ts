@@ -2,16 +2,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 import { render } from "svelte/server";
 import UpdateActions from "../src/components/UpdateActions.svelte";
-import { performUpdateAction, settleUpdateStarting, updateStarting } from "../src/lib/updates/api";
+import { performUpdateAction, settleUpdateStarting, updateStarting, updateActionRoute } from "../src/lib/updates/api";
 import { atUpdateDeadline } from "../src/lib/updates/deadline";
-import { updateCard, updateDetails, updatePresentation, type UpdatePresentationInput } from "../src/lib/updates/logic/presentation";
-import type { UpdateStatus } from "../src/lib/updates/contracts";
-import type { MacStatus } from "../src/lib/ticketMachines";
+import { updateCard, deviceUpdateWarnings, cardMachines, cardInterruption, interruptionText, machineUpdateLabel, updatePresentation, type UpdatePresentationInput } from "../src/lib/updates/logic/presentation";
+import type { UpdateStatus, MachineUpdateState } from "../src/lib/updates/contracts";
+import MachineRows from "../src/lib/updates/MachineRows.svelte";
 
 const attempt = { attempt_id: "a1", from_sha: "1".repeat(40), to_sha: "2".repeat(40),
-  state: "failed" as const, detail: null, deadline_at: null };
+  state: "failed" as const, detail: null, deadline_at: null, mode: "now" as const, interruption: null };
 const status: UpdateStatus = { state: "available", allowed_actions: ["update"], activity: "unknown",
+  client_versions: [], machines: [], available_machines: [], interruption: { stops_agents: false, agents: [], machine_ids: [] },
   available: { app_sha: "2".repeat(40) }, attempt: null, app_sha: "1".repeat(40), detail: null, deadline_at: null, mac_details: null };
+const machine = (name: string, state: MachineUpdateState["state"]): MachineUpdateState => ({
+  machine_id: name, name, platform: "linux", present: state !== "waiting", build_id: "old", target_build_id: "new",
+  changed: true, state, attempt_id: "old", request_id: name, detail: null, can_retry: state === "failed",
+});
 const base: UpdatePresentationInput = { status, connection: "connected", pageIsBehind: false, starting: false, now: 1000 };
 const at = (state: UpdateStatus["state"], extra: Partial<UpdateStatus> = {}) => ({ ...status, state, ...extra });
 
@@ -61,14 +66,13 @@ describe("the update card resolver", () => {
 describe("the update card", () => {
   it("uses the approved words and only offers what the server allows", () => {
     const failed = at("failed", { attempt, allowed_actions: ["retry"] });
-    const mac = at("mac_failed", { attempt, allowed_actions: ["retry_mac"] });
     const cards = {
       available: updateCard("available", status),
       updating: updateCard("updating", at("updating")),
       complete: updateCard("complete", status),
       failed: updateCard("failed", failed),
-      mac_failed: updateCard("mac_failed", mac),
-      mac_unreachable: updateCard("mac_unreachable", { ...mac, state: "mac_unreachable" }),
+      mac_failed: updateCard("mac_failed", at("mac_failed")),
+      mac_unreachable: updateCard("mac_unreachable", at("mac_unreachable")),
       unreachable: updateCard("unreachable", undefined),
     };
     expect(Object.fromEntries(Object.entries(cards).map(([state, card]) =>
@@ -77,8 +81,8 @@ describe("the update card", () => {
       updating: ["Updating…", null, null, null, true],
       complete: ["Update complete", "Refresh", "refresh", null, false],
       failed: ["Update didn't install", "Try again", "retry", "failed", false],
-      mac_failed: ["Mac didn't update", "Try again", "retry_mac", "mac_failed", false],
-      mac_unreachable: ["Can't reach the Mac", "Try again", "retry_mac", "mac_unreachable", false],
+      mac_failed: ["Machine update needs attention", null, null, null, false],
+      mac_unreachable: ["Machine update needs attention", null, null, null, false],
       unreachable: ["Can't reach Panels", "Try now", "reconnect", null, false],
     });
     // A failure the server will not retry keeps its details, without a dead button.
@@ -86,33 +90,59 @@ describe("the update card", () => {
     expect(updateCard("available", { ...status, allowed_actions: [] }).action).toBeUndefined();
   });
 
-  it("keeps Mac diagnostics in the details, with plain facts for each failure", () => {
-    const identity = { protocol_version: 7, application_revision: "3f9a2c1d00", spool_format_version: 5, executor_incarnation: "mac" };
-    const refused: MacStatus = { presence: "refused", since_ms: 0, identity: null, last_contact_at_ms: 1000 - 14 * 60_000,
-      refusal: { reason: "Mac needs update", peer_identity: identity, server_identity: { ...identity, protocol_version: 8 }, refused_at_ms: 0 } };
-    expect(updateDetails("failed", at("failed", { attempt, detail: "The new version did not pass its health check." }), 1000)).toEqual({
-      title: "Update didn't install", facts: [
-        ["What happened", "The new version did not pass its health check."],
-        ["Panels", "11111111 (previous)"], ["Tried", "22222222"], ["Mac", "Not changed"]] });
-    expect(updateDetails("mac_unreachable", at("mac_unreachable", { attempt, app_sha: "2".repeat(40), mac_details: refused }), 1000)).toEqual({
-      title: "Can't reach the Mac", facts: [
-        ["What happened", "The Mac did not check in during the update. It can be asleep or offline."],
-        ["Panels", "22222222 (updated)"], ["Mac", "3f9a2c1d"], ["Last contact", "14 minutes ago"],
-        ["Protocol", "Mac 7 · server 8"], ["Outbox format", "Mac 5 · server 5"], ["Refused", "Mac needs update"]] });
-    const reverted: MacStatus = { presence: "present", since_ms: 0, identity, last_contact_at_ms: 1000,
-      update: { request_id: "m1", target_revision: "next", phase: "reverted", detail: "The new Mac runtime did not start." } };
-    expect(updateDetails("mac_failed", at("mac_failed", { mac_details: reverted }), 1000).facts).toEqual([
-      ["What happened", "The new Mac runtime did not start."], ["Panels", "11111111 (updated)"], ["Mac", "3f9a2c1d (previous)"],
-      ["Last contact", "just now"], ["Protocol", "Mac 7"], ["Outbox format", "Mac 5"]]);
+  it("keeps retained targets distinct from future offers, with each machine's outcome", () => {
+    const rows = [machine("desk", "failed"), machine("server", "updating"), machine("away", "waiting"),
+      machine("done", "current"), machine("unsupported", "unavailable")];
+    const mixed = at("up_to_date", { available: null, machines: rows });
+    expect(updatePresentation({ ...base, status: mixed }).state).toBe("machines");
+    const body = render(MachineRows, { props: { machines: rows, retry: () => {} } }).body;
+    for (const word of ["Update failed", "Updating…", "Updates when it is back", "Done", "Needs an update to continue"])
+      expect(body).toContain(word);
+    expect(body).toContain('aria-label="Try again for desk"');
+    const offered = rows.map(row => ({ ...row, attempt_id: null, state: "available" as const, can_retry: false }));
+    expect(cardMachines({ ...mixed, available: status.available, available_machines: offered })).toEqual(rows);
+    expect(machineUpdateLabel({ ...offered[0], present: false })).toBe("Updates when it is back");
   });
 
-  it("names the work an update interrupts, with one Update action and no way to wait", () => {
-    const detail = "The update interrupts this work, and Panels resumes it afterwards: Release proof, Inbox cleanup.";
-    const body = render(UpdateActions, { props: { status: { ...status, activity: "busy", detail }, now: 0 } }).body;
-    expect(body).toContain("A new version is ready for Panels and the Mac. Panels restarts, then you refresh to finish.");
+  it("warns before the press from offered requirements and retained device versions", () => {
+    const compatibility = { ios: { minimum_build: 20 }, desktop_shell: { minimum_bridge_version: 3 },
+      machine: { minimum_protocol_version: 4, maximum_protocol_version: 6 }, outbox_format: 2 };
+    const offered: UpdateStatus = { ...status, available: { ...status.available!, compatibility },
+      machines: [machine("Office", "available")],
+      client_versions: [
+        { kind: "ios", device_id: "phone", version: "1", build: 19 },
+        { kind: "desktop", device_id: "desk", version: "1", bridge_version: 2 },
+        { kind: "machine", device_id: "Office", version: "1", protocol_version: 7, outbox_format: 2 },
+      ] };
+    expect(deviceUpdateWarnings(offered)).toEqual([
+      "Your iPhone needs the TestFlight update first.", "Your desktop app needs an update first.",
+      "Office needs an update to continue.",
+    ]);
+    expect(render(UpdateActions, { props: { status: offered, now: 0 } }).body).toContain("Your iPhone needs the TestFlight update first.");
+    expect(deviceUpdateWarnings({ ...offered, available: status.available })).toEqual([]);
+    const compatible = offered.client_versions.map(identity => ({ ...identity, build: 20, bridge_version: 3, protocol_version: 6 }));
+    expect(deviceUpdateWarnings({ ...offered, client_versions: compatible })).toEqual([]);
+    expect(deviceUpdateWarnings({ ...offered, client_versions: [{ kind: "machine", device_id: "Office", version: "1", protocol_version: 3, outbox_format: 2 }] }))
+      .toEqual(["Office needs an update to continue."]);
+    expect(deviceUpdateWarnings({ ...offered, client_versions: [{ kind: "machine", device_id: "Office", version: "1", protocol_version: 6, outbox_format: 1 }] }))
+      .toEqual(["Office needs an update to continue."]);
+  });
+
+  it("names affected agents before Update and uses the press snapshot afterwards", () => {
+    const interruption = { stops_agents: true, agents: ["Release proof", "Inbox cleanup"], machine_ids: ["desk"] };
+    const offered = { ...status, interruption, activity: "busy" as const };
+    const body = render(UpdateActions, { props: { status: offered, now: 0 } }).body;
+    expect(body).toContain("This update stops your agents");
     expect(body).toContain("Release proof, Inbox cleanup");
     expect(body).toContain(">Update</button>");
     expect(body).not.toContain("When work finishes");
+    expect(body).not.toContain("Protocol");
+    expect(interruptionText(status.interruption)).toBe("Your agents keep running");
+    const pressed = { ...offered, state: "updating" as const, attempt: { ...attempt, interruption: status.interruption } };
+    expect(cardInterruption(pressed)).toBe(status.interruption);
+    expect(cardInterruption({ ...pressed, attempt })).toBeNull();
+    expect(cardInterruption({ ...offered, attempt }, "complete")).toBeNull();
+    expect(interruptionText(null)).toBeNull();
   });
 });
 
@@ -123,13 +153,24 @@ describe("owner update actions", () => {
     const withAttempt = { ...status, attempt };
     await performUpdateAction(status, { action: "install" });
     await performUpdateAction(withAttempt, { action: "retry" });
-    await performUpdateAction(withAttempt, { action: "retry_mac" });
+
     expect(fetch.mock.calls.map(([path, init]) => [path, init?.body ? JSON.parse(String(init.body)) : null])).toEqual([
       ["/api/updates/install", { app_sha: "2".repeat(40) }],
       ["/api/updates/attempts/a1/retry", null],
-      ["/api/updates/attempts/a1/retry-mac", null],
     ]);
     for (const [, init] of fetch.mock.calls) expect(init?.headers).toMatchObject({ "X-Panels-App-SHA": "1".repeat(40) });
+  });
+
+  it("retries a retained machine target rather than the latest server attempt, without a global restart", async () => {
+    const retained = machine("desk/one", "failed");
+    const current = { ...status, attempt: { ...attempt, attempt_id: "new" }, machines: [retained] };
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    await performUpdateAction(current, { action: "retry_machine", machine_id: retained.machine_id });
+    expect(fetch.mock.calls[0][0]).toBe("/api/updates/attempts/old/machines/desk%2Fone/retry");
+    expect(get(updateStarting)).toBeNull();
+    expect(() => updateActionRoute({ ...current, machines: [{ ...retained, can_retry: false }] },
+      { action: "retry_machine", machine_id: retained.machine_id })).toThrow("no longer available");
   });
 
   it("holds Updating… until the server's answer moves, and drops it on a refusal", async () => {

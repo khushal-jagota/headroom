@@ -52,6 +52,12 @@ async function fixture() {
       screens: { sha256: 'c'.repeat(64) },
       machines: { 'darwin-arm64': { archive_sha256: 'd'.repeat(64), build_id: null } },
     },
+    compatibility: {
+      ios: { minimum_build: 42 },
+      desktop_shell: { minimum_bridge_version: 2 },
+      machine: { minimum_protocol_version: 7, maximum_protocol_version: 8 },
+      outbox_format: 5,
+    },
     mac: { artifact_id: 2 },
     linux_executor: { artifact_id: 3 },
     mac_home: { artifact_id: 4 },
@@ -121,6 +127,7 @@ test('permanent server publication keeps desktop latest and binds every consumer
       ['PATCH', 'false'],
     ]);
     const durable = JSON.parse(uploaded.get('publication.json')!.bytes);
+    expect(durable.compatibility).toEqual(receipt.compatibility);
     expect(durable).toMatchObject({
       artifact_source: 'github-release',
       expires_at: null,

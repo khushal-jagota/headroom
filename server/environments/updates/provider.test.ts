@@ -59,6 +59,12 @@ function publication() {
       screens: { sha256: digest },
       machines: { darwin: { archive_sha256: digest, build_id: null } },
     },
+    compatibility: {
+      ios: { minimum_build: 42 },
+      desktop_shell: { minimum_bridge_version: 2 },
+      machine: { minimum_protocol_version: 7, maximum_protocol_version: 8 },
+      outbox_format: 5,
+    },
   };
 }
 async function setup(payload = publication()) {
@@ -98,13 +104,14 @@ async function setup(payload = publication()) {
   });
   return { provider, root, calls };
 }
-test('durable publication survives absent Actions evidence and persists source and parts', async () => {
+test('durable publication persists source, parts, and offered compatibility without Actions evidence', async () => {
   const { provider, root, calls } = await setup();
   const release = await provider.available();
   expect(release).not.toBeNull();
   expect(parse_release(JSON.parse(JSON.stringify(release)))).toEqual(release);
   expect(release?.mac?.artifact_source).toBe('github-release');
   expect(release?.parts?.machines.darwin?.build_id).toBeNull();
+  expect(release?.compatibility).toEqual(publication().compatibility);
   validate_release(release!);
   await provider.download_artifact(
     release!.artifact_id,
@@ -134,6 +141,8 @@ test('retains Actions download interpretation for old pinned attempts', async ()
     '/repos/owner/repo/actions/artifacts/7',
     '/repos/owner/repo/actions/artifacts/7/zip',
   ]);
+  const { compatibility: _compatibility, ...older } = publication();
+  expect(parse_release({ ...older, proof_artifact_id: 20 }).compatibility).toBeUndefined();
   expect(() =>
     parse_release({ ...publication(), artifact_source: undefined, proof_artifact_id: 20 }),
   ).toThrow('no expiry');

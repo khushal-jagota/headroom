@@ -2,6 +2,10 @@
 
 The owner API separates the server attempt from each machine update. All routes require the owner.
 
+An offered release can include `available.compatibility`, with the same shape as `/api/meta` compatibility. These limits belong to the offered release. Older publications omit them, so clients must not substitute the running server's limits for a warning about the offer. The publication receipt writes the limits from the exact published source, beside `parts`.
+
+`client_versions` contains the last retained identity from each device. The card compares those declarations with the offered release's compatibility limits before Update. The ordinary update-status read reconciles new declarations.
+
 `GET /api/updates` retains the server's `state`, `allowed_actions`, `available`, and `attempt`. The server state no longer depends on the original Mac. The legacy `mac_details` field remains for existing clients.
 
 - `machines` describes each registered executor machine against the current attempt, including failed targets that remain eligible for retry.

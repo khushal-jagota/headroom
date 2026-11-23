@@ -2,10 +2,12 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { check_head_review } from '../../ios_compatibility/check.ts';
 import { is_record } from '../../core/records.ts';
+import { CLIENT_COMPATIBILITY } from '../../client_versions/policy.ts';
 import { sha256_file } from '../backup/evidence.ts';
 import { replace_existing_json } from '../updates/attempts.ts';
 import { with_zip_member } from '../updates/zip.ts';
@@ -206,6 +208,8 @@ export async function write_publication_receipt(
       throw new Error('Publication paths must be absolute');
   const source = await realpath(options.source_root),
     output = options.output_directory;
+  if (source !== (await realpath(fileURLToPath(new URL('../../../', import.meta.url)))))
+    throw new Error('Publication compatibility policy must come from the published source');
   let owned = false;
   try {
     fence();
@@ -493,6 +497,7 @@ export async function write_publication_receipt(
       artifact_id,
       manifest: actual_manifest,
       parts,
+      compatibility: CLIENT_COMPATIBILITY,
       archive_sha256,
       mac: published_mac,
       ...(mac_home ? { mac_home } : {}),

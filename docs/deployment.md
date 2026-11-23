@@ -79,7 +79,9 @@ The server keeps its own update attempt. Each registered machine keeps a separat
 
 The machine channel retains targets for absent machines. Changed machines activate only after the server succeeds. A machine failure leaves its previous runtime available. Linux archive readiness survives a server restart through validation of the retained archive.
 
-The server reports which active agents the pending release stops. It computes this effect again at the press. Until the server and its own machine run separately, the report also includes home work that the server restart stops. The update card can use the machine states and this effect through the [update API](../server/environments/updates/README.md). See [Extra-machine updates](executor.md#updates-and-health).
+The card names the agents that the pending release stops, or says that agents keep running. The server computes this effect again at the press. Until the server and its own machine run separately, the report also includes home work that the server restart stops.
+
+Each machine has a short row with its own progress and retry. The offer describes future changes separately from current targets, so a new offer does not hide a failed machine. Before Update, the card warns when an offered release requires a newer device version. The publication supplies its own compatibility limits. Older publications without those limits supply no device warning. The card uses the [update API](../server/environments/updates/README.md). See [Extra-machine updates](executor.md#updates-and-health).
 
 ## The desktop app
 
@@ -121,4 +123,4 @@ The archive digest detects damage after a write. If a write reaches the installe
 - `scripts/dev`: the npm launcher for development.
 - `ops/panels-environments/`: user units.
 
-_Last verified: 2026-11-22._
+_Last verified: 2026-11-23._

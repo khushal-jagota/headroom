@@ -1,11 +1,24 @@
 /** Persisted and in-process update contracts. */
+import type {
+  UpdateMode,
+  UpdateAttemptState,
+  MachineUpdateState,
+  UpdateInterruption,
+  UpdateAttemptView,
+} from './view_contracts.ts';
+export type {
+  UpdateMode,
+  UpdateAttemptState,
+  MachineUpdateState,
+  UpdateInterruption,
+  UpdateAttemptView,
+} from './view_contracts.ts';
 import type { ConversationSystem } from '../../conversation/contracts.ts';
 import type { ExecutorIdentity } from '../../execution_identity.ts';
 import type { Database } from '../../core/database/contracts.ts';
+import type { ClientCompatibility } from '../../client_versions/contracts.ts';
 
-export type UpdateMode = 'now' | 'idle';
 export type UpdateActivity = 'idle' | 'busy' | 'unknown';
-export type UpdateAttemptState = 'waiting' | 'preparing' | 'installing' | 'done' | 'failed';
 export type UpdateExperienceState =
   'up_to_date' | 'available' | 'updating' | 'failed' | 'mac_failed' | 'mac_unreachable';
 export type UpdateAction = 'update' | 'retry' | 'retry_mac';
@@ -67,6 +80,8 @@ export type PublishedLinuxExecutorUpdate = PublishedMacUpdate;
 export interface PublishedUpdate {
   artifact_source?: ArtifactSource;
   parts?: ReleaseParts;
+  /** The offered release's limits, never the running server's limits. */
+  compatibility?: ClientCompatibility;
   publication_run_id: number;
   artifact_id: number;
   proof_artifact_id: number;
@@ -102,35 +117,6 @@ export interface MachineUpdateMachine {
   platform: string;
   present: boolean;
   identity: ExecutorIdentity | null;
-}
-export interface MachineUpdateState {
-  attempt_id: string | null;
-  machine_id: string;
-  name: string;
-  platform: string;
-  present: boolean;
-  build_id: string | null;
-  target_build_id: string | null;
-  changed: boolean;
-  state: 'current' | 'available' | 'waiting' | 'updating' | 'failed' | 'unavailable';
-  request_id: string | null;
-  detail: string | null;
-  can_retry: boolean;
-}
-export interface UpdateInterruption {
-  stops_agents: boolean;
-  agents: readonly string[];
-  machine_ids: readonly string[];
-}
-export interface UpdateAttemptView {
-  attempt_id: string;
-  from_sha: string;
-  to_sha: string;
-  mode: UpdateMode;
-  state: UpdateAttemptState;
-  detail: string | null;
-  deadline_at: string | null;
-  interruption: UpdateInterruption | null;
 }
 export interface UpdateStatus {
   machines: readonly MachineUpdateState[];
