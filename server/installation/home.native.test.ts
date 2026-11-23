@@ -519,7 +519,7 @@ test.skipIf(!admitted)(
               await expect(lstat(command_link)).rejects.toMatchObject({ code: 'ENOENT' });
             expect(await readFile(sentinel, 'utf8')).toBe('unrelated sentinel');
             clean = true;
-            record.cleanup_verified = true;
+            record.cleanup_verified = !retain_resources;
           } finally {
             commands.seal();
             processes.seal();
