@@ -45,7 +45,7 @@ struct TicketExpandableText: View {
     }
 }
 
-/// Recap disclosure matches the phone design while its context menu stays editable.
+/// Recap disclosure matches the phone design. The text stays selectable.
 struct TicketRecapText: View {
     let text: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

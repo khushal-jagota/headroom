@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor @Observable final class AppStore {
     var baseURL: URL
@@ -62,14 +63,27 @@ import Observation
     private(set) var presentation: NavigationPresentation?
     private(set) var viewRequest = ViewRequest(windows: NavigationScope.baseWindows)
     private var demands: [String: [ViewWindowRequest]] = [:]
-    private var reviewConversationDemands: [String: [String]] = [:]
+    private var reviewHistory = ReviewHistory()
     /// Detail screens that named a selected owner, most recent last.
     private var selections: [(name: String, owner: ViewOwner)] = []
     private var running = false
     private var runGeneration = 0
-    private var viewConsumer: Task<ViewStreamEnd, Never>?
-    /// The scope the running stream follows, which may be wider than `viewRequest`.
-    private var streamRequest: ViewRequest?
+    private struct ViewStream { let id: Int; let request: ViewRequest; let task: Task<ViewStreamEnd, Never> }
+    /// The stream the view follows, and a replacement opened beside it. The replacement
+    /// takes over when its snapshot lands, and the followed stream closes then. At most
+    /// these two are open, and two only while the replacement waits for its snapshot.
+    private var activeStream: ViewStream?
+    private var pendingStream: ViewStream?
+    private var replacementScheduled = false
+    /// A pull asked for a new stream even if the followed one carries the current scope.
+    private var freshStreamRequested = false
+    private var streamsOpened = 0
+    /// The newest stream that ended. A pull stops waiting when its stream ended without a snapshot.
+    private var lastEndedStream = 0
+    /// The newest stream whose snapshot landed. A pull waits for a stream opened after it began.
+    private var lastSnapshotStream = 0
+    /// The scope the followed stream carries, which may be wider than `viewRequest`.
+    private var streamRequest: ViewRequest? { activeStream?.request }
     private var reconnectRequested = false
     private var viewReading = false
     private var viewReadsStarted = 0
@@ -109,6 +123,9 @@ import Observation
         managers = []; tickets = []; workspaceLoaded = false; workspaceHidden = [:]; workspaceSettled = []; workspaceView = nil; chiefSignal = nil; review = nil; counts = nil; view = nil
         presentation = nil; recordStamps = [:]
         errors = [:]
+        // Review's history names one server's Tickets and conversations.
+        reviewHistory = ReviewHistory()
+        updateScope(opening: false)
         restore()
     }
 
@@ -126,8 +143,9 @@ import Observation
     private func restore() {
         let server = LocalStore.server(baseURL)
         for name in ["workspace", "latest"] {
-            guard let data = try? LocalStore.shared.record(server: server, kind: "cache", id: savedViewID(name))?.payload,
-                  let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: data),
+            guard let record = try? LocalStore.shared.record(server: server, kind: "cache", id: savedViewID(name)),
+                  record.updated > Date.now.addingTimeInterval(-DisplayCacheConfiguration.maximumAge),
+                  let snapshot = try? APIClient.decoder().decode(ViewSnapshot.self, from: record.payload),
                   snapshot.wireVersion == NavigationViewVersion.wire,
                   snapshot.projectionVersion == NavigationViewVersion.projection else { continue }
             admit(snapshot.savedDisplay, persist: false)
@@ -181,15 +199,22 @@ import Observation
     // MARK: Scope
 
     /// A mounted screen states the windows it shows; nil withdraws them. A new or
-    /// changed demand opens a stream for the new scope at once, and the last coherent
-    /// view stays on screen until its snapshot arrives. A withdrawal only narrows the
+    /// changed demand opens a stream for the new scope at once, and the current stream
+    /// keeps the view live until the new snapshot arrives. A withdrawal only narrows the
     /// next stream, so leaving a screen puts no view read in front of the next screen's own.
-    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?, reviewConversationIDs: [String] = []) {
-        let conversations = Array(Set(reviewConversationIDs)).sorted()
-        guard demands[name] != windows || reviewConversationDemands[name, default: []] != conversations else { return }
+    func setNavigationDemand(_ name: String, _ windows: [ViewWindowRequest]?) {
+        guard demands[name] != windows else { return }
         demands[name] = windows
-        reviewConversationDemands[name] = windows == nil || conversations.isEmpty ? nil : conversations
         updateScope(opening: windows != nil)
+    }
+
+    /// Review's skipped and returned entries. Only a new return order changes what the
+    /// window holds, so only it opens a stream; skipped keys ride the next one.
+    func setReviewHistory(_ history: ReviewHistory) {
+        guard history != reviewHistory else { return }
+        let reordered = history.priority != reviewHistory.priority
+        reviewHistory = history
+        updateScope(opening: reordered)
     }
 
     /// A detail screen names the one record it keys its reloads on, so the view carries
@@ -209,21 +234,58 @@ import Observation
     }
 
     func withdrawNavigationDemand(_ name: String) {
-        guard demands[name] != nil || reviewConversationDemands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
+        guard demands[name] != nil || selections.contains(where: { $0.name == name }) else { return }
         demands[name] = nil
-        reviewConversationDemands[name] = nil
         selections.removeAll { $0.name == name }
         updateScope(opening: false)
     }
 
     private func updateScope(opening: Bool) {
         let next = NavigationScope.request(demands: demands, selected: selections.last?.owner,
-            reviewConversationIDs: reviewConversationDemands.values.flatMap { $0 }, previous: viewRequest)
+            reviewHistory: reviewHistory, previous: viewRequest)
         guard next != viewRequest else { return }
         viewRequest = next
         guard running, opening else { return }
-        // The follow loop opens the new scope's stream; several changes in one turn share it.
-        if let viewConsumer { viewConsumer.cancel() } else { reconnectRequested = true }
+        replaceStream()
+    }
+
+    /// Opens a stream for the current scope. A current stream stays followed until the
+    /// new one's snapshot lands, as the web does; several requests in one turn share
+    /// one new stream. Without a current stream there is nothing live to keep, so the
+    /// follow loop opens the new stream at once.
+    private func replaceStream(fresh: Bool = false) {
+        guard running else { return }
+        if fresh { freshStreamRequested = true }
+        guard activeStream != nil, connection == "Following changes" else {
+            pendingStream?.task.cancel(); pendingStream = nil
+            if let activeStream { activeStream.task.cancel() } else { reconnectRequested = true }
+            return
+        }
+        guard !replacementScheduled else { return }
+        replacementScheduled = true
+        Task {
+            replacementScheduled = false
+            guard running else { return }
+            // The followed stream ended meanwhile: the follow loop opens the current scope now.
+            guard let active = activeStream else { reconnectRequested = true; return }
+            let fresh = freshStreamRequested
+            freshStreamRequested = false
+            // A replacement that took over meanwhile may already carry this scope.
+            guard fresh || active.request != viewRequest else { return }
+            pendingStream?.task.cancel()
+            pendingStream = openStream(viewRequest)
+        }
+    }
+
+    private func openStream(_ request: ViewRequest) -> ViewStream {
+        streamsOpened += 1
+        let id = streamsOpened, api = client
+        return ViewStream(id: id, request: request, task: Task { await self.consume(request, api: api, stream: id) })
+    }
+
+    private func closeStreams() {
+        activeStream?.task.cancel(); pendingStream?.task.cancel()
+        activeStream = nil; pendingStream = nil
     }
 
     private func admit(_ snapshot: ViewSnapshot, persist: Bool = true) {
@@ -294,6 +356,10 @@ import Observation
 
     // MARK: Following the view
 
+    /// The shell keys `run()` on this. A brief inactive moment, such as Control Center or a
+    /// notification pull-down, keeps the streams open; only the background ends them.
+    nonisolated static func follows(_ phase: ScenePhase) -> Bool { phase != .background }
+
     /// Owned by the foreground shell task. SwiftUI cancels it on background or URL change,
     /// which closes both streams; the next foreground entry starts with fresh snapshots.
     /// SwiftUI starts the next run without waiting for the cancelled one to unwind, so
@@ -305,6 +371,9 @@ import Observation
         let chief = chiefResource, deployment = deploymentResource, updates = updateResource, health = healthResource, drivers = driversResource
         chief.acquire(); deployment.acquire(); updates.acquire(); health.acquire(); drivers.acquire()
         resources.start()
+        // An earlier run's streams close now, so a new run never follows beside them.
+        closeStreams()
+        connection = "Connecting"
         let updateReads = Task {
             await UpdateStatusRefresh.follow(current: { updates.value }, refresh: { await updates.refresh() })
         }
@@ -315,7 +384,7 @@ import Observation
             chief.release(); deployment.release(); updates.release(); health.release(); drivers.release()
             if runGeneration == generation {
                 Task { await saveNavigationDisplay() }
-                resources.stop(); running = false; viewConsumer = nil; streamRequest = nil
+                resources.stop(); running = false; closeStreams(); connection = "Connecting"
             }
         }
         await followView()
@@ -327,19 +396,25 @@ import Observation
     /// A gap, an obsolete frame, a reset or a closed stream needs a fresh snapshot, which
     /// a new stream sends first. Failures retry with backoff and show Reconnecting.
     private func followView() async {
+        let generation = runGeneration
         var failures = 0
-        while !Task.isCancelled {
-            let api = client
-            let request = viewRequest
+        while !Task.isCancelled, generation == runGeneration {
             reconnectRequested = false
-            streamRequest = request
-            let consumer = Task { await self.consume(request, api: api) }
-            viewConsumer = consumer
-            let end = await withTaskCancellationHandler { await consumer.value } onCancel: { consumer.cancel() }
-            if viewConsumer == consumer { viewConsumer = nil }
-            if Task.isCancelled { return }
+            let stream = activeStream ?? openStream(viewRequest)
+            activeStream = stream
+            let end = await withTaskCancellationHandler { await stream.task.value } onCancel: { stream.task.cancel() }
+            if Task.isCancelled || generation != runGeneration { return }
+            // A replacement's snapshot landed and it took over: follow it.
+            if activeStream?.id != stream.id { failures = 0; continue }
+            activeStream = nil
+            if let pending = pendingStream {
+                // The followed stream ended while its replacement waited: the replacement is followed
+                // now. Its scope is the newest asked for, or wider after a narrowing.
+                pendingStream = nil
+                activeStream = pending
+            }
             switch end {
-            case .cancelled: continue // A new or widened scope: open its stream at once.
+            case .cancelled: break // A new or widened scope: open its stream at once.
             case .ended(let admitted), .refused(let admitted):
                 // A stream that was current reconnects after a second for its fresh
                 // snapshot, as the web does: the server closes on change-log gaps, and a
@@ -347,7 +422,10 @@ import Observation
                 if admitted { failures = 0 } else { failures += 1 }
             case .failed: failures += 1
             }
-            if failures > 0 { connection = "Reconnecting" }
+            // The stream that delivered changes is gone: the view is not following until the next snapshot.
+            if failures > 0 { connection = "Reconnecting" } else if connection == "Following changes" { connection = "Connecting" }
+            if case .cancelled = end { continue }
+            if activeStream != nil { continue }
             // 1, 2, 4, then 8 s: a phone in the foreground wants to be current again soon.
             let delay = Duration.seconds(1 << min(max(failures, 1) - 1, 3))
             let deadline = ContinuousClock.now + delay
@@ -357,8 +435,12 @@ import Observation
         }
     }
 
-    private func consume(_ request: ViewRequest, api: APIClient) async -> ViewStreamEnd {
+    private func consume(_ request: ViewRequest, api: APIClient, stream: Int) async -> ViewStreamEnd {
         let generation = runGeneration
+        defer {
+            if pendingStream?.id == stream { pendingStream = nil }
+            lastEndedStream = max(lastEndedStream, stream)
+        }
         // Frames apply to this stream's own snapshot, never to a restored or older view.
         var current: ViewSnapshot?
         var admitted = false
@@ -368,17 +450,23 @@ import Observation
                 if let generation = frame.scopeGeneration, generation != request.scopeGeneration { return .refused(admitted: admitted) }
                 guard case .success(let next) = NavigationViewFrames.apply(current, frame) else { return .refused(admitted: admitted) }
                 current = next
-                switch frame {
-                case .checkpoint: continue // Coverage only; the content is unchanged.
-                case .snapshot:
+                if case .checkpoint = frame { continue } // Coverage only; the content is unchanged.
+                if case .snapshot = frame, let pending = pendingStream, pending.id == stream {
+                    // The replacement's snapshot landed: it takes over, and the stream it replaces closes now.
+                    let replaced = activeStream
+                    activeStream = pending; pendingStream = nil
+                    replaced?.task.cancel()
+                }
+                guard activeStream?.id == stream else { continue }
+                if case .snapshot = frame {
                     admit(next)
                     admitted = true
+                    lastSnapshotStream = max(lastSnapshotStream, stream)
                     if connection == "Reconnecting" { connectionSession += 1 }
                     connection = "Following changes"
                     errors["Navigation"] = nil
                     Task { await Outbox.shared.drain(api: api) }
-                default: admit(next)
-                }
+                } else { admit(next) }
                 // A page that waited for the next stream was carried by another screen's
                 // window. Once its record leaves this stream, open one with it selected.
                 if let owner = selections.last?.owner, request.selected != owner,
@@ -387,13 +475,50 @@ import Observation
             return Task.isCancelled || generation != runGeneration ? .cancelled : .ended(admitted: admitted)
         } catch {
             if Task.isCancelled || generation != runGeneration || api.baseURL != baseURL { return .cancelled }
-            errors["Navigation"] = ServerReadFailure(error)
+            // A replacement that fails leaves the followed stream as it was.
+            if activeStream?.id == stream { errors["Navigation"] = ServerReadFailure(error) }
             return .failed
         }
     }
 
-    /// Manual refresh and confirmed writes. Chief settings and deployment read again. The
-    /// view follows its stream; a stream that is not current reconnects now. Without a
+    /// Pull to refresh. Chief settings and deployment read again, and the view opens a
+    /// new stream, whose first frame is a fresh snapshot. The pull ends when that
+    /// snapshot lands, or when the new stream ends without one. Without a foreground
+    /// stream, one snapshot is read.
+    func pull() async {
+        guard !Task.isCancelled else { return }
+        isLoading = view == nil && chief == nil
+        defer { isLoading = false }
+        let api = client
+        async let settingsRead: () = readSettings(probing: false)
+        if running {
+            // A replacement for the current scope is already on its way, and its snapshot is
+            // the fresh one: a pull in quick succession shares it, so no third stream opens.
+            if let pending = pendingStream, pending.request == viewRequest {
+                await snapshotLanded(fromStreamAfter: pending.id - 1)
+            } else {
+                let opened = streamsOpened
+                replaceStream(fresh: true)
+                await snapshotLanded(fromStreamAfter: opened)
+            }
+        } else { await readView(from: api) }
+        await settingsRead
+        guard !Task.isCancelled, api.baseURL == baseURL else { return }
+        if errors.isEmpty { Task { await Outbox.shared.drain(api: api) } }
+    }
+
+    private func snapshotLanded(fromStreamAfter opened: Int) async {
+        let deadline = ContinuousClock.now + .seconds(25)
+        while lastSnapshotStream <= opened, running, ContinuousClock.now < deadline, !Task.isCancelled {
+            let open = [activeStream, pendingStream].contains { ($0?.id ?? 0) > opened }
+            // The new stream ended without a snapshot, as when the phone is offline.
+            if !open, lastEndedStream > opened { return }
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+    }
+
+    /// Refresh after confirmed writes. Chief settings and deployment read again. The
+    /// view follows its stream, which carries the write; a stream that is not current reconnects now. Without a
     /// foreground stream, one snapshot is read.
     func refresh() async {
         guard !Task.isCancelled else { return }

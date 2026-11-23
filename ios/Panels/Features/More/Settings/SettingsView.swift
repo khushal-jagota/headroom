@@ -3,7 +3,6 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @State private var section = "Config"
-    @AppStorage("panels.goals-sidebar-rows") private var showGoalsInSidebarRows = false
     @State private var notificationEditor = NotificationPreferenceEditor()
     private var workerResource: ResourceHandle<SettingsWorkers> { store.resources.handle(SettingsResources.workers) }
     private var skillResource: ResourceHandle<SettingsSkills> { store.resources.handle(SettingsResources.skills) }
@@ -22,10 +21,10 @@ struct SettingsView: View {
     }
     private var loading: Bool { !hasData && error == nil }
     @State private var showingServer = false
-    @State private var swipeLogExport: ChiefSwipeLogExport?
 
     var body: some View {
         List {
+            SettingsPlaces()
             Section {
                 Picker("Settings", selection: $section) {
                     Text("Config").tag("Config")
@@ -57,20 +56,12 @@ struct SettingsView: View {
         .sheet(isPresented: $showingServer) {
             ServerAddressSheet(initialAddress: store.baseURL.absoluteString) { store.configure(baseURL: $0) }
         }
-        .sheet(item: $swipeLogExport) { ChiefSwipeShareSheet(url: $0.url) }
-        .onAppear { ChiefSwipeLog.shared.refresh() }
     }
     private var hasData: Bool {
         switch section { case "Config": workers != nil; case "Scheduled": schedules != nil; default: notifications != nil }
     }
     private var configuration: some View {
         Group {
-            ChiefSwipeSettingsSection(export: $swipeLogExport)
-            Section {
-                Toggle("Show goals in sidebar rows", isOn: $showGoalsInSidebarRows)
-                    .accessibilityIdentifier("settings-goals-sidebar-rows")
-            }.listRowBackground(PanelsTheme.raised)
-
             if let workers {
                 Section {
                     LabeledContent("Mac executor", value: store.executorHealth?.activityKnown == true ? "Connected" : "Activity unknown")

@@ -9,7 +9,7 @@ struct ScreenPlaceholder: View {
     }
 }
 
-/// Request failures retain loaded content; server reachability is handled by the shell.
+/// A section-level read note. A read that could not reach the server passes no message.
 struct LoadErrorView: View {
     let message: String
     let retry: () async -> Void
@@ -33,22 +33,6 @@ private struct ScreenRetryButton: View {
         } label: {
             Text(retrying ? "Retrying…" : "Try again").frame(minHeight: 44)
         }.disabled(retrying)
-    }
-}
-
-struct ServerUnreachableView: View {
-    let retry: () async -> Void
-
-    var body: some View {
-        ContentUnavailableView {
-            Label("Panels can’t reach the server.", systemImage: "network.slash")
-        } description: {
-            Text("Turn on Tailscale, then try again.")
-        } actions: {
-            ScreenRetryButton(retry: retry).buttonStyle(.bordered)
-                .accessibilityIdentifier("server-unreachable.retry")
-        }
-        .panelsScreen()
     }
 }
 
@@ -78,8 +62,9 @@ private struct ScreenLoadState: ViewModifier {
     let hasContent: Bool
     let error: String?
     let retry: () async -> Void
-    let showsRefreshError: Bool
 
+    /// A failed refresh keeps the content on screen with no note; the next stream event
+    /// or pull replaces it. Only a first load the server refused shows its error.
     func body(content: Content) -> some View {
         content
             .overlay {
@@ -95,19 +80,12 @@ private struct ScreenLoadState: ViewModifier {
                     } else { ScreenLoadingView(title: title) }
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if showsRefreshError, hasContent, let error {
-                    LoadErrorView(message: "Couldn’t refresh. Showing the last loaded content. \(error)", retry: retry)
-                        .padding(.horizontal, PanelsTheme.Space.lg)
-                        .background(PanelsTheme.surface)
-                }
-            }
     }
 }
 
 extension View {
-    func screenLoadState(_ title: String, hasContent: Bool, error: String?, showsRefreshError: Bool = true, retry: @escaping () async -> Void) -> some View {
-        modifier(ScreenLoadState(title: title, hasContent: hasContent, error: error, retry: retry, showsRefreshError: showsRefreshError))
+    func screenLoadState(_ title: String, hasContent: Bool, error: String?, retry: @escaping () async -> Void) -> some View {
+        modifier(ScreenLoadState(title: title, hasContent: hasContent, error: error, retry: retry))
     }
 }
 

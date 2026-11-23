@@ -27,8 +27,7 @@ final class ReviewMessagesTests: XCTestCase {
                 "--conversation-fixture-speech", "--conversation-fixture-silence",
             ]
             app.launch()
-            XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 10))
-            app.tabBars.buttons["Review"].tap()
+            app.openReviewCards()
             let input = app.textFields["conversation-input"].firstMatch
             let box = app.otherElements["conversation-input-box"].firstMatch
             XCTAssertTrue(input.waitForExistence(timeout: 10))
@@ -69,65 +68,73 @@ final class ReviewMessagesTests: XCTestCase {
             XCTAssertTrue(box.frame.contains(feedback.frame))
             XCTAssertTrue(box.frame.contains(app.buttons["Try again"].frame))
             capture(owner + "-review-feedback")
-            app.buttons["review.openConversation"].tap()
-            XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 10))
-            XCTAssertTrue(input.waitForExistence(timeout: 8))
-            XCTAssertEqual(app.otherElements["conversation-composer-region"].frame.height, collapsedHeight, accuracy: 2)
-            XCTAssertEqual(app.navigationBars.count, 0)
-            XCTAssertFalse(app.tabBars.firstMatch.isHittable)
-            capture(owner + "-conversation")
-            app.buttons["Record voice input"].firstMatch.tap()
-            XCTAssertTrue(app.buttons["Stop recording"].waitForExistence(timeout: 5))
-            app.buttons["Stop recording"].tap()
-            XCTAssertTrue(feedback.waitForExistence(timeout: 6))
-            XCTAssertTrue(app.otherElements["conversation-composer-region"].frame.contains(feedback.frame))
-            capture(owner + "-conversation-feedback")
-            // A cancelled pop remains in the conversation; a completed pop reveals its owner.
-            let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
-            edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.45)), withVelocity: .slow, thenHoldForDuration: 0.5)
-            XCTAssertTrue(app.buttons["conversation-actions"].exists)
-            edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.45)))
-            let title = owner == "ticket" ? "Approve offline" : "Review orchestrator"
-            XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 8))
-            XCTAssertFalse(app.buttons["conversation-actions"].exists)
-            capture(owner + "-back-to-owner")
-            app.buttons["conversation-line"].tap()
-            XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 8))
-            input.tap(); input.typeText("Keep this normal conversation draft")
-            app.buttons["detail-back"].tap()
-            XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 8))
-            XCTAssertEqual(input.value as? String, "Keep this normal conversation draft")
-            app.buttons["detail-back"].tap()
-            XCTAssertTrue(app.tabBars.buttons["Review"].waitForExistence(timeout: 8))
-            app.tabBars.buttons["Review"].tap()
+            // A Ticket's message card opens its Ticket, not the conversation (below), so the
+            // conversation link and its Back swipe are the Manager card's.
+            if owner == "manager" {
+                app.buttons["review.openConversation"].tap()
+                XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 10))
+                XCTAssertTrue(input.waitForExistence(timeout: 8))
+                XCTAssertEqual(app.otherElements["conversation-composer-region"].frame.height, collapsedHeight, accuracy: 2)
+                XCTAssertFalse(app.sidebarButton.exists, "A pushed page shows Back, not the Sidebar button")
+                capture(owner + "-conversation")
+                app.buttons["Record voice input"].firstMatch.tap()
+                XCTAssertTrue(app.buttons["Stop recording"].waitForExistence(timeout: 5))
+                app.buttons["Stop recording"].tap()
+                XCTAssertTrue(feedback.waitForExistence(timeout: 6))
+                XCTAssertTrue(app.otherElements["conversation-composer-region"].frame.contains(feedback.frame))
+                capture(owner + "-conversation-feedback")
+                // A cancelled pop remains in the conversation; a completed pop returns to the
+                // Review card, since the conversation opened on top of Review.
+                let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: 0.45))
+                edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.45)), withVelocity: .slow, thenHoldForDuration: 0.5)
+                XCTAssertTrue(app.buttons["conversation-actions"].exists)
+                edge.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.45)))
+                XCTAssertTrue(app.buttons["conversation-actions"].waitForNonExistence(timeout: 8))
+                XCTAssertTrue(app.buttons["review.openConversation"].waitForExistence(timeout: 8))
+                XCTAssertTrue(app.sidebarButton.exists)
+                capture(owner + "-back-to-review")
+            }
+            if owner == "ticket" {
+                // The Ticket's own conversation draft stays on the Ticket, apart from the Review reply.
+                // The fixture's Manager is not in the Sidebar and its message card has no Open ticket,
+                // so only the Ticket owner reaches its own page from here.
+                app.buttons["review.openTicket"].tap()
+                XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+                app.buttons["conversation-line"].tap()
+                XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 8))
+                input.tap(); input.typeText("Keep this normal conversation draft")
+                app.backButton.tap()
+                XCTAssertTrue(app.buttons["ticket-actions"].waitForExistence(timeout: 8))
+                XCTAssertEqual(input.value as? String, "Keep this normal conversation draft")
+                // Open ticket pushes the Ticket on Review, so Back returns to the card.
+                app.backButton.tap()
+                XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 8))
+            }
             XCTAssertTrue(["", "Reply…"].contains(input.value as? String ?? "missing"))
             app.terminate()
         }
         _ = try await URLSession.shared.data(from: URL(string: base + "/proof/review-owner/chief")!)
     }
 
-    // This one-off walkthrough retains obsolete Close conversation/chevron selectors.
-    // It needs a separate repair and explicit live-read authorization before use.
+    // This one-off walkthrough needs explicit live-read authorization before use.
     @MainActor func testLiveReadOnlyWorkspaceAndReview() throws {
         guard ProcessInfo.processInfo.environment["PANELS_LIVE_READ_ONLY"] == "1" else { throw XCTSkip("Explicit read-only live pass only") }
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
-        let workspaceTab = app.tabBars.buttons["Workspace"]
-        XCTAssertTrue(workspaceTab.waitForExistence(timeout: 20)); workspaceTab.tap()
-        let chief = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Chief of Staff'")).firstMatch
-        XCTAssertTrue(chief.waitForExistence(timeout: 20))
-        let workspace = XCTAttachment(screenshot: app.screenshot()); workspace.name = "live-workspace"; workspace.lifetime = .keepAlways; add(workspace)
-        app.tabBars.buttons["Review"].tap()
-        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["You’re caught up."].exists)
+        // Review is the root at launch; the Sidebar lists Chief and the Managers.
+        XCTAssertTrue(app.sidebarButton.waitForExistence(timeout: 20))
+        app.openSidebar(timeout: 20)
+        XCTAssertTrue(app.buttons["sidebar-chief"].waitForExistence(timeout: 20))
+        let sidebar = XCTAttachment(screenshot: app.screenshot()); sidebar.name = "live-sidebar"; sidebar.lifetime = .keepAlways; add(sidebar)
+        app.buttons["sidebar-review"].tap()
+        XCTAssertTrue(app.buttons["review.skip"].waitForExistence(timeout: 15) || app.staticTexts["review.summary.headline"].exists)
         let review = XCTAttachment(screenshot: app.screenshot()); review.name = "live-review-read-only"; review.lifetime = .keepAlways; add(review)
-        app.tabBars.buttons["Workspace"].tap()
-        chief.tap()
-        // The Chief page's container identifier is inherited by this button.
-        let line = app.buttons.containing(.image, identifier: "chevron.up").firstMatch
+        app.openDestination("sidebar-chief", timeout: 15)
+        let line = app.buttons["conversation-line"]
         XCTAssertTrue(line.waitForExistence(timeout: 15))
         line.tap()
-        XCTAssertTrue(app.buttons["Close conversation"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["conversation-actions"].waitForExistence(timeout: 10))
         let conversation = XCTAttachment(screenshot: app.screenshot()); conversation.name = "live-conversation-read-only"; conversation.lifetime = .keepAlways; add(conversation)
         app.terminate()
     }

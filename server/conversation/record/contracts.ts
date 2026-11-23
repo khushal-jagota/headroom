@@ -361,6 +361,10 @@ export interface ConversationRecordStore {
     conversation_id: string,
     sender_message_id: string,
   ): StoredConversationEvent | null;
+  answer_operation_outcome(
+    conversation_id: string,
+    operation_id: string,
+  ): StoredConversationEvent | null;
   latest_turn_ended_sequences(conversation_ids: readonly string[]): ReadonlyMap<string, number>;
   owner_read_through_sequences(conversation_ids: readonly string[]): ReadonlyMap<string, number>;
   has_delivered_prompt(conversation_id: string): boolean;

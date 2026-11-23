@@ -24,7 +24,7 @@ Protected decision operations retain the exact command and its outcome with the 
 
 The browser and iPhone use this same route. The browser saves unresolved decisions across closed tabs and checks their receipts when it opens again. An uncertain result retains the original decision and blocks a conflicting choice. A changed proposal requires another review. Its replacement card keeps the refusal visible beside the proposal.
 
-An ask shows in the same card style as a proposal. A permission ask answers with one click on its options. A question shows its numbered options and a field for Khushal's own words, and Send answer submits them. The ask itself is read from its conversation. Answering removes only that part of the card. The agent then continues, and a second ask in the same turn shows in its place.
+An ask shows in the same card style as a proposal. A permission ask answers with one click on its options. A question shows its numbered options and a field for Khushal's own words, and Send answer submits them. The ask itself is read from its conversation. The phone's outbox can send each answer with an operation ID and resend it, because the server returns the saved fate for a repeat; no phone screen answers asks yet ([conversations](conversations.md#models-and-asks)). Answering removes only that part of the card. The agent then continues, and a second ask in the same turn shows in its place.
 
 If the index is not yet trustworthy, Review says it is unavailable instead of showing an empty queue that might be wrong.
 
@@ -32,7 +32,7 @@ On iPhone, Review and its badge share a snapshot of saved outgoing work. Only ch
 
 ## Where it shows up
 
-Review is a primary destination in the browser, with a count, and the initial tab on iPhone. The final page lets Khushal message Chief and revisit skipped items. Its composer shares Chief’s draft and keeps each send tied to its original destination. Check delivery reads the existing attempt without another send. [Notifications](notifications.md) are a separate path. They tell Khushal that something newly needs him, and link to the Ticket.
+Review is a primary destination in the browser, with a count, and the root page on iPhone. The final page lets Khushal message Chief and revisit skipped items. Its composer shares Chief’s draft. In the browser each send stays tied to its original destination, and Check delivery reads the existing attempt without another send. The iPhone sends without a conversation ID, so the server delivers to Chief's current conversation, and a resend with the same ID lands once. [Notifications](notifications.md) are a separate path. They tell Khushal that something newly needs him, and link to the Ticket.
 
 A file linked from a card opens over that card, inside Review. Under it stand the controls of what held the link: the note, Send it back and Approve for a proposal, or the reply for a message. They are the card's own controls and keep the same note. Close or Escape returns to the card. A decision, reply or Skip that finishes the card moves to the next card and takes the file with it. A decision that leaves part of the card, such as a decided proposal with messages still waiting, drops the file onto what remains. A decided card leaves at once, before the queue's refresh confirms it. A reload shows the card without the file. The iPhone app has its own file viewer and does not show this.
 

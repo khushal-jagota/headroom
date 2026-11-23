@@ -263,7 +263,7 @@ it('step 1 brings a baseline database, with either trigger text and with or with
 
     assert.deepEqual(release_steps(path), {
       from_revision: BASELINE_SEED.alembicRevision,
-      to_revision: 'ts_0009_work_moves',
+      to_revision: 'ts_0010_answer_receipt_index',
       applied: [
         'ts_0001_open_backend_keys',
         'ts_0002_project_repository',
@@ -274,10 +274,11 @@ it('step 1 brings a baseline database, with either trigger text and with or with
         'ts_0007_machine_backend_state',
         'ts_0008_conversation_machine',
         'ts_0009_work_moves',
+        'ts_0010_answer_receipt_index',
       ],
     });
     assert.deepEqual(state(path), {
-      revision: ['ts_0009_work_moves'],
+      revision: ['ts_0010_answer_receipt_index'],
       statements: application_schema_seed.statements,
     });
     const project_reader = createReadAccess(path);
@@ -321,6 +322,37 @@ it('step 1 brings a baseline database, with either trigger text and with or with
     assert.deepEqual(foreign_key_violations(path), []);
     // Every formerly checked column now stores a new backend key.
     write(path, keyed_rows('acme'));
+  }
+});
+
+it('the answer receipt step indexes the receipt lookup', () => {
+  // Without the index, every answer with an operation ID scans the conversation's whole event log.
+  // Real SQLite, the release chain from the baseline, and the store's exact lookup.
+  const path = baseline_database();
+  release_steps(path);
+  const connection = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
+  try {
+    assert.deepEqual(
+      connection
+        .prepare("SELECT tbl_name FROM sqlite_master WHERE type='index' AND name=?")
+        .all('idx_conversation_events_answer_operation_id'),
+      [{ tbl_name: 'conversation_events' }],
+    );
+    const plan = connection
+      .prepare(
+        'EXPLAIN QUERY PLAN SELECT * FROM conversation_events ' +
+          "WHERE conversation_id=? AND json_extract(payload,'$.operation_id')=? " +
+          "AND kind IN ('permission_answered','user_input_answered') ORDER BY sequence DESC LIMIT 1",
+      )
+      .all('conversation', 'operation') as { detail: string }[];
+    assert(
+      plan.some((row) =>
+        row.detail.includes('USING INDEX idx_conversation_events_answer_operation_id'),
+      ),
+      JSON.stringify(plan),
+    );
+  } finally {
+    connection.close();
   }
 });
 

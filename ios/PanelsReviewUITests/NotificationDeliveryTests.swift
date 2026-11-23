@@ -11,8 +11,7 @@ final class NotificationDeliveryTests: XCTestCase {
         app.launchArguments = ["--conversation-stub", base]
         defer { app.terminate() }
         app.launch()
-        app.tabBars.buttons["More"].tap()
-        app.buttons["Settings"].tap()
+        app.openDestination("sidebar-settings")
         app.segmentedControls.buttons["Notifications"].tap()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let allow = app.buttons["allow-notifications"]
@@ -22,6 +21,9 @@ final class NotificationDeliveryTests: XCTestCase {
             if permission.waitForExistence(timeout: 5) { permission.tap() }
         }
         let preference = app.switches["notification-preference-tickets-awaiting_reply"]
+        // Settings opens on the server row and the places above the tabs, so the Tickets
+        // preferences start at the bottom edge: the list builds them as they scroll in.
+        for _ in 0..<4 where !preference.waitForExistence(timeout: 2) { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(preference.waitForExistence(timeout: 8))
         assertValue(preference, "1")
         capture("preference-before-save")
@@ -58,8 +60,8 @@ final class NotificationDeliveryTests: XCTestCase {
         _ = try await waitState(base) { ($0["accepted"] as? [[String: Any]])?.count == 2 }
         XCTAssertNotEqual(app.state, .runningForeground, "A terminated launch must handle the reply in the background")
 
-        // Accept a third reply but drop its response. Hide receipts until relaunch.
-        // The existing recovery path must reconcile it without another send.
+        // Accept a third reply but drop its response. After relaunch the outbox sends it
+        // again with the same sender message ID, which the server drops as a repeat.
         app.terminate()
         try await control(base, "/proof/drop-reply-response")
         try await reply(base, name: "reply-recovery", text: "Recover the notification receipt", springboard: springboard)
@@ -70,14 +72,10 @@ final class NotificationDeliveryTests: XCTestCase {
         app.terminate()
         try await control(base, "/proof/recover")
         app.launch()
-        let state = try await waitState(base) { state in
-            guard let receipts = state["receipts"] as? [[String: Any]] else { return false }
-            return receipts.contains { receipt in
-                receipt["available"] as? Bool == true && (receipt["ids"] as? [String])?.contains(recoveryID) == true
-            }
-        }
+        let state = try await waitState(base) { ($0["attempts"] as? [[String: Any]])?.count == 4 }
         let attempts = try XCTUnwrap(state["attempts"] as? [[String: Any]])
-        XCTAssertEqual(attempts.count, 3, "A receipt recovery must not resend the accepted reply")
+        let resent = try XCTUnwrap(attempts.last?["body"] as? [String: Any])
+        XCTAssertEqual(resent["sender_message_id"] as? String, recoveryID, "The lost reply is resent with its own identity")
         var identities = Set<String>()
         var texts = Set<String>()
         for entry in attempts {

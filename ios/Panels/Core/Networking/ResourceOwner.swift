@@ -41,7 +41,6 @@ fileprivate struct ResourceDecoder: Sendable {
     let versioned: Bool
     var publication = 0
     var data: Data?
-    var error: String?
     var failure: ServerReadFailure?
     var isStale = true
     var demands = 0
@@ -85,9 +84,10 @@ fileprivate struct ResourceDecoder: Sendable {
         _ = entry.publication
         return entry.decoded[type] as? Value
     }
+    /// What a screen may say about this resource; see `ServerReadFailure.note`.
     var error: String? {
         _ = entry.publication
-        return entry.error ?? entry.decodeErrors[type]
+        return entry.failure?.note ?? entry.decodeErrors[type]
     }
     var failure: ServerReadFailure? { entry.failure }
     var isStale: Bool { entry.isStale }
@@ -507,7 +507,6 @@ struct ResourceCacheEnvelope: Codable {
                     if entry.epoch != epoch { entry.epoch = epoch }
                     if entry.revision != revision { entry.revision = revision }
                     if entry.isStale != (revision == nil) { entry.isStale = revision == nil }
-                    if entry.error != nil { entry.error = nil }
                     if entry.failure != nil { entry.failure = nil }
                     entry.lastUsed = Date()
                     entry.failures = 0; entry.retryAt = .distantPast
@@ -530,7 +529,7 @@ struct ResourceCacheEnvelope: Codable {
                         entry.terminallyDiscarded = true
                         entry.data = nil; entry.decoded = [:]; entry.decodeErrors = [:]; entry.publication += 1
                     }
-                    entry.error = error.localizedDescription; entry.failure = ServerReadFailure(error); entry.isStale = true
+                    entry.failure = ServerReadFailure(error); entry.isStale = true
                     return
                 }
             }

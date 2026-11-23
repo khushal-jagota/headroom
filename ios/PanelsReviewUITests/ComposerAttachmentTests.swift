@@ -28,6 +28,16 @@ final class ComposerAttachmentTests: XCTestCase {
             XCTAssertTrue(item.waitForExistence(timeout: 3), "Paste is missing from the edit menu")
             item.tap()
         }
+        // A picture is copied in another app, as Khushal does: the app learns of a clipboard
+        // change from another process when it becomes active again. Changed while the app
+        // stays in front, the menu offers no Paste for a picture until a key is pressed.
+        func copyFromAnotherApp(_ copy: () -> Void) async throws {
+            XCUIDevice.shared.press(.home)
+            copy()
+            try await Task.sleep(for: .seconds(1))
+            app.activate()
+            if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { input.tap() }
+        }
         input.tap()
 
         UIPasteboard.general.string = "Words still paste"
@@ -39,7 +49,7 @@ final class ComposerAttachmentTests: XCTestCase {
             UIColor.systemOrange.setFill(); context.fill(CGRect(x: 0, y: 0, width: 160, height: 120))
             UIColor.systemBlue.setFill(); context.fill(CGRect(x: 40, y: 30, width: 80, height: 60))
         }
-        UIPasteboard.general.image = picture
+        try await copyFromAnotherApp { UIPasteboard.general.image = picture }
         paste()
         XCTAssertTrue(tiles.firstMatch.waitForExistence(timeout: 5))
         paste()
@@ -50,8 +60,8 @@ final class ComposerAttachmentTests: XCTestCase {
 
         app.buttons["Send message"].tap()
         let thread = app.scrollViews["conversation-thread"]
-        XCTAssertTrue(app.staticTexts["Sending…"].firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(thread.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch.exists)
+        // The saved message shows at once with its preview; there is no sending note.
+        XCTAssertTrue(thread.descendants(matching: .any).matching(identifier: "conversation-attachment").firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(tiles.count, 0)
         capture("sending-with-preview")
     }

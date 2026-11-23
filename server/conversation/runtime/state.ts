@@ -10,6 +10,7 @@ import { wait_for_item } from '../../executor/item_budget.ts';
 import type { ConversationRecord, RunningTurn } from '../record/contracts.ts';
 import type { ConversationPhase, Message, ReservedTurn, SenderAdmission } from './contracts.ts';
 import { Deferred } from '../../core/deferred.ts';
+import type { AnswerFate } from '../contracts.ts';
 
 export class FifoLock {
   #locked = false;
@@ -70,6 +71,8 @@ export class ConversationState {
   readonly held_prompts: Message[] = [];
   readonly admitted_sender_messages = new Map<string, SenderAdmission>();
   readonly sender_messages_being_delivered = new Map<string, SenderAdmission>();
+  /** Answers with an operation ID that are being written now. A repeat waits for the same fate. */
+  readonly answers_in_flight = new Map<string, { content: string; fate: Promise<AnswerFate> }>();
   readonly settlement_tasks = new Set<Promise<unknown>>();
   readonly backend_events: (() => Promise<void>)[] = [];
   backend_event_pump: Promise<void> | null = null;

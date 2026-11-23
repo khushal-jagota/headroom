@@ -30,21 +30,6 @@ extension APIClient {
         return try Self.decoder().decode(TicketRecapDelivery.self, from: data)
     }
 
-    func editTicketRecap(_ id: String, recap: String) async throws {
-        struct Body: Encodable { let recap: String }
-        _ = try await ticketWrite("/api/tickets/\(id)", method: "PATCH", body: Body(recap: recap))
-    }
-
-    func completeTicketField(_ id: String, field: String, body: String) async throws {
-        struct Body: Encodable { let body: String }
-        _ = try await ticketWrite("/api/tickets/\(id)/complete/\(field)", method: "POST", body: Body(body: body))
-    }
-
-    func removeTicketBlocker(_ id: String, blockerID: String) async throws {
-        struct Body: Encodable {}
-        _ = try await ticketWrite("/api/collections/blockers/\(id)/\(blockerID)", method: "DELETE", body: Body())
-    }
-
     func setTicketWorkerConfiguration(_ id: String, backend: String, model: String?, effort: String?) async throws {
         // Explicit null resets a previous override to the backend default.
         var body: [String: String?] = ["employee_backend": backend]

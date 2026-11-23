@@ -24,10 +24,13 @@ final class UpdateFlowTests: XCTestCase {
             }
             XCTAssertTrue(element.exists && element.isHittable)
         }
-        func openMore() {
-            let more = app.tabBars.buttons["More"]
-            XCTAssertTrue(more.waitForExistence(timeout: 15))
-            more.tap()
+        // The update card sits behind Settings' Updates row. The Sidebar's gear stays quiet.
+        func openSettings(capturing name: String? = nil) {
+            app.openDestination("sidebar-settings", timeout: 15)
+            let updates = app.buttons["settings.updates"]
+            XCTAssertTrue(updates.waitForExistence(timeout: 10))
+            if let name { capture("settings-updates-row-" + name) }
+            updates.tap()
             XCTAssertTrue(app.descendants(matching: .any)["updates.card"].waitForExistence(timeout: 10))
         }
         func proof(_ path: String) async throws -> Any {
@@ -42,7 +45,8 @@ final class UpdateFlowTests: XCTestCase {
         }
 
         app.launch()
-        openMore()
+        openSettings(capturing: "offer")
+        capture("updates-screen-offer")
         let hierarchy = XCTAttachment(string: app.debugDescription)
         hierarchy.name = "updates-initial-accessibility-hierarchy"
         hierarchy.lifetime = .keepAlways
@@ -65,8 +69,8 @@ final class UpdateFlowTests: XCTestCase {
         XCTAssertNotNil(writes[0]["client_identity"] as? String)
 
         // A screen revisit can refresh facts, but it must not replay the refused write.
-        app.tabBars.buttons["Workspace"].tap()
-        openMore()
+        app.openDestination("sidebar-review")
+        openSettings()
         writes = try await updateWrites()
         XCTAssertEqual(writes.count, 1)
         reveal(retry)
@@ -83,7 +87,7 @@ final class UpdateFlowTests: XCTestCase {
         let install = app.buttons["updates.install"]
         reveal(install)
         install.tap()
-        let confirm = app.buttons["updates.confirm"]
+        let confirm = app.buttons["sheet-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         capture("updates-offer-confirmation")
         reveal(confirm)
@@ -102,7 +106,7 @@ final class UpdateFlowTests: XCTestCase {
         _ = try await proof("updates/failed")
         app.terminate()
         app.launch()
-        openMore()
+        openSettings()
         let serverRetry = app.buttons["updates.retry-server"]
         reveal(serverRetry)
         capture("updates-server-failure")
@@ -117,22 +121,23 @@ final class UpdateFlowTests: XCTestCase {
         app.terminate()
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
-        openMore()
+        openSettings()
         XCTAssertTrue(app.staticTexts["This update stops your agents"].waitForExistence(timeout: 10))
         capture("updates-large-text-card-top")
         reveal(app.buttons["updates.install"])
         capture("updates-large-text-card-actions")
         app.buttons["updates.install"].tap()
-        XCTAssertTrue(app.buttons["updates.confirm"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["sheet-confirm"].waitForExistence(timeout: 5))
         capture("updates-large-text-confirmation-top")
-        reveal(app.buttons["updates.confirm"])
+        reveal(app.buttons["sheet-confirm"])
         capture("updates-large-text-confirmation-actions")
         // Large text is a layout review only. It must not send another update.
         writes = try await updateWrites()
         XCTAssertEqual(writes.count, 4)
 
-        // The same host drops its listener during an expected restart. The real
-        // shell must retain progress until the server deadline, then show recovery.
+        // The same host drops its listener during an expected restart. The card must retain
+        // progress until the server deadline, then say that Panels can't be reached. The
+        // rebuilt shell has no full-screen cover, so the card's own Try now recovers.
         let control = try XCTUnwrap(ProcessInfo.processInfo.environment["PANELS_REACHABILITY_CONTROL_URL"])
         func connection(_ action: String) async throws {
             let (_, response) = try await URLSession.shared.data(from: URL(string: control + "/" + action)!)
@@ -142,20 +147,29 @@ final class UpdateFlowTests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--conversation-stub", base]
         app.launch()
-        openMore()
+        openSettings()
         XCTAssertTrue(app.staticTexts["Updating…"].firstMatch.waitForExistence(timeout: 10))
         try await connection("offline")
         XCTAssertFalse(app.buttons["server-unreachable.retry"].exists)
         capture("updates-progress-during-expected-restart")
-        let unreachableRetry = app.buttons["server-unreachable.retry"]
-        XCTAssertTrue(unreachableRetry.waitForExistence(timeout: 30))
-        capture("updates-deadline-restores-unreachable-cover")
+        XCTAssertTrue(app.staticTexts["Can't reach Panels"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["server-unreachable.retry"].exists)
+        let tryNow = app.buttons["Try now"]
+        XCTAssertTrue(tryNow.exists)
+        capture("updates-deadline-card-cannot-reach")
         try await connection("online")
-        unreachableRetry.tap()
-        XCTAssertTrue(unreachableRetry.waitForNonExistence(timeout: 15))
+        tryNow.tap()
+        XCTAssertTrue(app.staticTexts["Can't reach Panels"].waitForNonExistence(timeout: 15))
         XCTAssertTrue(app.descendants(matching: .any)["updates.card"].waitForExistence(timeout: 10))
         capture("updates-reconnected-without-write-replay")
         writes = try await updateWrites()
         XCTAssertEqual(writes.count, 4)
+
+        // With nothing offered, the row stays quiet and the screen says so.
+        _ = try await proof("updates/complete")
+        app.terminate()
+        app.launch()
+        openSettings(capturing: "none")
+        capture("updates-screen-none")
     }
 }

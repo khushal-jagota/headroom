@@ -152,10 +152,10 @@ struct ArtifactWebView: UIViewRepresentable {
             presenter.present(alert, animated: true)
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            if (error as NSError).code != NSURLErrorCancelled { failed(error.localizedDescription) }
+            if let note = ServerReadFailure.note(error) { failed(note) }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            if (error as NSError).code != NSURLErrorCancelled { failed(error.localizedDescription) }
+            if let note = ServerReadFailure.note(error) { failed(note) }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             if webView === mainView, let url = webView.url { navigated(url) }

@@ -7,8 +7,7 @@ struct ArtifactViewerView: View {
     let owner: ArtifactOwner
     let path: String
     let title: String
-    var showsConversation = true
-    var conversationOwner: ConversationOwner? = nil
+    let dock: ArtifactDock
     @State private var conversationID: String?
     @Environment(AppStore.self) private var store
     @Environment(\.openURL) private var openURL
@@ -24,7 +23,7 @@ struct ArtifactViewerView: View {
     @State private var isLoading = true
     @State private var showLoading = false
     @State private var sharePresented = false
-    @State private var linkedArtifact: ArtifactTarget?
+    @Environment(\.openRoute) private var openRoute
     @State private var loadVersion = 0
     @State private var renderVersion = 0
     @State private var htmlReloadSignal = 0
@@ -32,15 +31,18 @@ struct ArtifactViewerView: View {
     @State private var desktopPreview = false
     private var target: ArtifactTarget { .init(owner: owner, path: path, title: title) }
 
-    private var activeConversationOwner: ConversationOwner {
-        conversationOwner ?? owner.conversationOwner
+    /// The conversation whose composer sits below, when the dock is a conversation's.
+    private var activeConversationOwner: ConversationOwner? {
+        if case .conversation(let owner) = dock { return owner }
+        return nil
     }
 
-    private var waitingForPreview: Bool { isLoading || (target.kind == .html && htmlURL != nil && !webReady && error == nil) }
+    private var hasPreview: Bool { document != nil || webReady }
+    /// A read that could not reach the server leaves no error, so the quiet placeholder stays.
+    private var waitingForPreview: Bool { isLoading || (!hasPreview && error == nil) }
 
     var body: some View {
         ScreenTextEntryScope { textEntry in artifactContent(textEntry: textEntry) }
-            .toolbar(.hidden, for: .tabBar)
     }
 
     private func artifactContent(textEntry: ScreenTextEntryContext) -> some View {
@@ -62,13 +64,14 @@ struct ArtifactViewerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let error, document != nil || htmlURL != nil {
-                LoadErrorView(message: "Couldn’t refresh. Showing the last loaded artifact. \(error)") { reloadPreview() }
+            // A page that never drew has no saved copy to keep; a failed reload says nothing.
+            if let error, htmlURL != nil, !hasPreview {
+                LoadErrorView(message: error) { reloadPreview() }
                     .padding(.horizontal, PanelsTheme.Space.lg).background(PanelsTheme.surface)
             }
         }
         .panelsScreen()
-        .modifier(ArtifactConversationSurface(owner: activeConversationOwner, conversationID: conversationID, enabled: showsConversation, textEntry: textEntry))
+        .modifier(ArtifactDockSurface(dock: dock, conversationID: conversationID, textEntry: textEntry))
         .navigationTitle((path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -95,11 +98,8 @@ struct ArtifactViewerView: View {
             if let shareDocument { ArtifactShareSheet(document: shareDocument).presentationDetents([.medium, .large]) }
             else if let shareURL { ArtifactURLShareSheet(url: shareURL).presentationDetents([.medium, .large]) }
         }
-        .navigationDestination(item: $linkedArtifact) { target in
-            ArtifactViewerView(owner: target.owner, path: target.path, title: target.title, showsConversation: showsConversation, conversationOwner: activeConversationOwner)
-        }
         .task(id: store.baseURL.absoluteString + "|" + String(describing: activeConversationOwner)) {
-            guard showsConversation else { return }
+            guard let activeConversationOwner else { return }
             let generation = store.resources.admissionGeneration
             do {
                 let resolved: String?
@@ -116,7 +116,8 @@ struct ArtifactViewerView: View {
                 conversationID = nil
             }
         }
-        .task(id: "\(target.id)|\(loadVersion)") { await load() }
+        // With nothing drawn yet, the next connection reads again.
+        .task(id: "\(target.id)|\(loadVersion)|\(hasPreview ? 0 : store.connectionSession)") { await load() }
         .task(id: waitingForPreview) {
             showLoading = false
             if waitingForPreview {
@@ -170,7 +171,7 @@ struct ArtifactViewerView: View {
     private func follow(_ url: URL, textEntry: ScreenTextEntryContext) {
         if ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) { return }
         if let target = ArtifactTarget.from(url, baseURL: store.baseURL) {
-            if target.id != self.target.id { textEntry.endEditingBeforeNavigation { linkedArtifact = target } }
+            if target.id != self.target.id { textEntry.endEditingBeforeNavigation { openRoute(.artifact(target, dock: dock)) } }
         } else if ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") { openURL(url) }
     }
     private func share() async {
@@ -216,8 +217,8 @@ struct ArtifactViewerView: View {
             self.image = image
             document = result; error = nil; webReady = false; renderVersion += 1
         } catch {
-            if !Task.isCancelled {
-                self.error = error.localizedDescription
+            if !Task.isCancelled, let note = ServerReadFailure.note(error) {
+                self.error = note
                 Haptics.error()
             }
         }
@@ -239,13 +240,16 @@ struct ArtifactMediaView: View {
     var body: some View { VideoPlayer(player: player).background(.black).onDisappear { player.pause() } }
 }
 
-private struct ArtifactConversationSurface: ViewModifier {
-    let owner: ConversationOwner
+/// The dock below the artifact: the conversation's composer, or the Review card's own controls.
+private struct ArtifactDockSurface: ViewModifier {
+    let dock: ArtifactDock
     let conversationID: String?
-    let enabled: Bool
     let textEntry: ScreenTextEntryContext
     @ViewBuilder func body(content: Content) -> some View {
-        if enabled { content.conversationNavigation(owner: owner, conversationID: conversationID, textEntry: textEntry) }
-        else { content }
+        switch dock {
+        case .conversation(let owner): content.conversationNavigation(owner: owner, conversationID: conversationID, textEntry: textEntry)
+        case .reviewProposal(let itemID): content.modifier(ReviewArtifactDock(itemID: itemID, isMessage: false))
+        case .reviewMessage(let itemID): content.modifier(ReviewArtifactDock(itemID: itemID, isMessage: true))
+        }
     }
 }

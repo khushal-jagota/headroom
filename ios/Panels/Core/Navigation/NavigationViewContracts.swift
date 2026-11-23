@@ -162,6 +162,8 @@ struct ViewAttention: Codable, Sendable {
 
 struct ViewConversationValue: Codable, Sendable {
     let firstUnreadOwnerMessageAt: Double?
+    /// When the newest ask began to wait; it orders an ask in Review.
+    var latestAskAt: Double? = nil
     let ownerReadThroughSequence: Int
     let errorAcknowledgedThroughSequence: Int
     let attention: ViewAttention
@@ -306,7 +308,7 @@ extension ViewSnapshot {
         snapshot.content.records = content.records.map { record in
             guard case .conversation(let id, let value) = record else { return record }
             return .conversation(id, ViewConversationValue(firstUnreadOwnerMessageAt: value.firstUnreadOwnerMessageAt,
-                ownerReadThroughSequence: value.ownerReadThroughSequence,
+                latestAskAt: value.latestAskAt, ownerReadThroughSequence: value.ownerReadThroughSequence,
                 errorAcknowledgedThroughSequence: value.errorAcknowledgedThroughSequence,
                 attention: ViewAttention(current: nil, durable: value.attention.durable)))
         }
@@ -421,8 +423,9 @@ extension APIClient {
                     var urlRequest = try self.request(try navigationViewURL("/api/navigation/view/events", request))
                     urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
-                    // Longer than the server's 15 s heartbeat, so a silent socket is noticed.
-                    urlRequest.timeoutInterval = 45
+                    // An idle limit that each server heartbeat (every 15 s) resets: two
+                    // missed heartbeats and a margin, so a silent socket is replaced.
+                    urlRequest.timeoutInterval = 35
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     try Self.validate(response)
                     let decoder = Self.decoder()

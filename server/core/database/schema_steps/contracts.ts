@@ -8,6 +8,7 @@ import { machine_backend_state_step } from './ts_0007_machine_backend_state.ts';
 import { server_link_step } from './ts_0006_server_link.ts';
 import { conversation_machine_step } from './ts_0008_conversation_machine.ts';
 import { work_moves_step } from './ts_0009_work_moves.ts';
+import { answer_receipt_index_step } from './ts_0010_answer_receipt_index.ts';
 
 /** One statement at a time, through the same statement allowlist as the write door. */
 export interface SchemaTransaction {
@@ -40,6 +41,7 @@ export const SCHEMA_STEPS: readonly SchemaStep[] = [
   machine_backend_state_step,
   conversation_machine_step,
   work_moves_step,
+  answer_receipt_index_step,
 ];
 
 /** The steps a database at `current` still needs to reach `head`. */

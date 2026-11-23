@@ -1,19 +1,13 @@
 import SwiftUI
-import UIKit
 
 struct AgentRecap: View {
     let recap: String
-    let target: Principal
-    let refresh: () async -> Void
-    let actions: AgentPageActions
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
-    @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
     @State private var fullHeight: CGFloat = 0
     @State private var clampedHeight: CGFloat = 0
-    @State private var editing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
@@ -40,30 +34,13 @@ struct AgentRecap: View {
                     }
                 }
             }
-            if recap.isEmpty {
-                Text("Write a concise recap…").font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.faint)
-            }
-            if actions.isSending { RingSpinner("Sending recap request…", size: .compact) }
-            if let note = actions.note { Text(note).font(PanelsTheme.TypeScale.small).foregroundStyle(PanelsTheme.muted) }
         }.clipped()
-            .contextMenu {
-                Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = recap; Haptics.success() }
-                Button("Edit", systemImage: "pencil") { editing = true }
-                Button("Ask for a recap", systemImage: "arrow.clockwise") {
-                    Task { await actions.requestRecap(client: store.client, target: target, refresh: refresh) }
-                }.disabled(actions.isSending)
-            }
-            .navigationDestination(isPresented: $editing) {
-                AgentReadingPage(title: "Recap", originalText: recap, initiallyEditing: true) { text in
-                    try await store.client.saveAgentRecap(target: target, recap: text)
-                    await refresh()
-                }
-            }
     }
 
     private var recapText: some View {
         Text((try? AttributedString(markdown: recap, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(recap))
             .font(PanelsTheme.TypeScale.body).foregroundStyle(PanelsTheme.muted)
             .lineSpacing(PanelsTheme.Space.xs).frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
     }
 }

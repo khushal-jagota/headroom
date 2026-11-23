@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPhone app rebuild — question tree</title>
+<style>
+  :root { color-scheme: light dark; --ink:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --bg:#fff; --tag:#f2f2f7; --open:#0a66c2; --done:#1a7f37; --later:#8a6d00; }
+  @media (prefers-color-scheme: dark) { :root { --ink:#f2f2f7; --muted:#a1a1a6; --line:#2c2c2e; --bg:#111; --tag:#1c1c1e; --open:#6cb6ff; --done:#56d364; --later:#e3b341; } }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width:780px; margin:0 auto; padding:48px 24px 96px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 28px; }
+  h2 { font-size:19px; margin:40px 0 6px; }
+  h2 small { font-weight:400; color:var(--muted); font-size:14px; }
+  details { border-top:1px solid var(--line); padding:12px 0; }
+  details details { border-top:none; padding:6px 0 4px 18px; }
+  summary { cursor:pointer; list-style:none; }
+  summary::-webkit-details-marker { display:none; }
+  summary::before { content:"▸"; display:inline-block; width:1.1em; color:var(--muted); }
+  details[open] > summary::before { content:"▾"; }
+  .q { font-weight:600; }
+  .body { margin:8px 0 4px 1.1em; font-size:15px; }
+  .k { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .pill { font-size:11.5px; font-weight:600; padding:1px 7px; border-radius:10px; margin-left:6px; border:1px solid currentColor; vertical-align:2px; }
+  .open { color:var(--open); } .done { color:var(--done); } .later { color:var(--later); } .prop { color:var(--muted); }
+  .ans { background:var(--tag); border-radius:8px; padding:10px 12px; margin:8px 0; }
+  .ans p { margin:4px 0; }
+  ul { margin:4px 0; padding-left:20px; }
+  code { background:var(--tag); padding:1px 5px; border-radius:5px; font-size:13.5px; }
+  .settled li { margin:4px 0; }
+  .legend { font-size:14px; color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<h1>iPhone app rebuild — question tree</h1>
+<p class="sub">Planning Ticket "Plan the Panels iPhone app rebuild from the approved mockup". The living copy of the shared questions. Updated 22 November 2026, at Question Answers. Each question shows the recommended answer and its review state.</p>
+
+<p>The rebuild has eight parts (see the <a href="proposed-tickets.html">rough split</a>). Some questions decide more than one part, or the boundary between two Tickets. This page lists only those questions. A question that one Ticket can answer alone stays with that Ticket.</p>
+<p class="legend"><span class="pill open">blocks</span> must be answered before the Ticket outlines. <span class="pill later">can carry</span> can safely go to a downstream Ticket if needed. <span class="pill done">settled</span> already decided by Khushal. <span class="pill prop">recommended</span> researched, waiting for Khushal's review. Evidence: <a href="research-notes.md">research notes</a>.</p>
+
+<h2>Already settled</h2>
+<ul class="settled">
+<li><b>The review queue comes first.</b> "An app that was just the review queue would be a fine app." (Brief)</li>
+<li><b>The app opens on the Review summary screen.</b> It shows what needs Khushal, with Message Chief at the bottom, not straight into a card. (Rough Split approval)</li>
+<li><b>The app feels instant and normal on a mobile connection.</b> It keeps working while the connection drops in and out. It does not show connection state. It can queue work to go through when connected. (Rough Split approval)</li>
+<li><b>Asks that wait for an answer are in the iPhone queue.</b> (Chief note, Brief)</li>
+<li><b>Long-press previews and menus go.</b> They can come back as later work. (Brief approval)</li>
+<li><b>Built-in iOS controls where appropriate.</b> Our own controls only where needed, and then impeccable. (Brief approval)</li>
+<li><b>The strip list is "mostly correct".</b> Which items stay is question 1.2. (Rough Split approval)</li>
+<li><b>No support for older servers.</b> (Earlier Manager "Make the Panels iPhone app's data work like the web app")</li>
+</ul>
+
+<h2>Discussion log</h2>
+<ul class="settled">
+<li><b>22 Nov, group 1</b> (approach, strip list, staleness). Settled 1.1, 1.2, 2.1, 6.2. New rule: no editing in the app; the composer is the only place to type. Asked: proposal edits before approval, and Remove blocker.</li>
+<li><b>22 Nov, follow-up.</b> No proposal edits. Remove blocker goes. Group 2 (offline: 2.2, 3.1, 3.2, 3.3) sent, with a new point: a late ask answer becomes an ordinary message in that conversation.</li>
+<li><b>22 Nov, group 2 accepted.</b> Khushal: "This all makes sense to me." Raised two points: queued work sends only while the app is open (iOS background limit), and ask-answer receipts are the one server change. No reply needed if both are fine.</li>
+<li><b>22 Nov, correction.</b> "Going to the hospital" was a misread of Khushal's voice note. He asked whether any builds are too difficult. Answer: none; the two points stand, and Simulator time on the shared Mac is the slowest part. Group 3 (4.1, 4.2, 4.3, 5.1, 5.2) sent, with one question: how many minutes away bring back the summary screen (suggested 5).</li>
+<li><b>22 Nov, group 3.</b> Accepted except 4.2: Khushal finds a timer odd and gave a navigation rule. Asked about leaving the app and returning. Group 4 (6.1 server change: ask-answer receipts in its own Ticket first; gate unchanged) sent.</li>
+<li><b>22 Nov, close.</b> Khushal: leaving the app must not change it. Recorded, with the one exception of a card handled elsewhere. Server group raised no objection. Question Answers filed for approval.</li>
+<li><b>22 Nov, revision.</b> Khushal: no need for old phone builds to keep working; he is the only user; the whole build ships together. Answers revised: no compatibility work for old builds.</li>
+</ul>
+
+<h2>1. The overall approach <small>constrains every part</small></h2>
+
+<details open>
+<summary><span class="q">1.1 Rebuild the app fresh, or reshape the current app in place?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 1, sent 22 Nov</span><p>Reshape in place. The data, offline and decision code is solid and well tested (about 7,900 lines of host tests). Keep: networking, persistence, outbox, the navigation-view client, models, ConversationModel, Ticket, Manager, Chief, Artifacts, Notifications. Replace: the tab shell, the Review card views, the hand-drawn Approve sheet. Khushal leaned this way in his Question Tree approval.</p><p><b>Decision (Khushal, 22 Nov):</b> Reshape in place. Khushal challenged "solid and well tested". Corrected: the sending core (save first, one ID per operation, receipt check) is sound. The read side carries his problems, and the offline layer is over-built in places. It is a base to keep and repair, not proven on a device.</p></div>
+<span class="k">Affects</span> every Ticket boundary, the order, and how much of today's 21,700 lines of app code each Ticket inherits.
+<details><summary>1.1a If fresh: which current pieces carry over as they are (outbox, decision operations, markdown, voice, artifact viewer)?</summary></details>
+<details><summary>1.1b If in place: which part goes first, so later parts build on it?</summary></details>
+</div>
+</details>
+
+<details>
+<summary><span class="q">1.2 Which strip candidates stay?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 1, sent 22 Nov</span><p>Strip: tab bar hosting, the custom back-swipe code, Chief swipe diagnostics, the "Try again" cover screen, status notes and "Sent" toasts, long-press menus and previews, Feedback (no server route, not on web), the Steer / Queue / Send now composer menu. Keep behind the Settings gear: Usage, Ideas, VPS, the standalone Goals list. Goals stay on Chief and Manager pages. Before the menus go, Remove blocker and Edit recap on Manager pages need visible buttons.</p><p><b>Decision (Khushal, 22 Nov):</b> Strip as proposed, including the Steer / Queue / Send now menu. New rule: nothing is edited in the app; the composer is the only place to type. Edit recap, recap edits, renames and goal text edits go. Confirmed: no proposal text edits before approval (send back with a note instead). Remove blocker is removed.</p></div>
+<span class="k">Affects</span> the shell Ticket and the scope of every page Ticket. Candidates: tab bar hosting, hidden navigation-bar delegate, Chief swipe diagnostics, network banners and "Sent" toasts, Feedback, Ideas, VPS, Usage, Goals screens.
+</div>
+</details>
+
+<h2>2. Live data and freshness <small>part 1</small></h2>
+
+<details>
+<summary><span class="q">2.1 What single read model feeds the queue, the badge, the Sidebar and the pages?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 1, sent 22 Nov</span><p>Keep the navigation-view stream as the one read model, and repair it. The main cause of staleness is the Review screen's own memory of shown cards, which only a restart clears. Pull never replaces a live stream. Repairs: fresh server data on every app open and on pull, a heartbeat check of about 30 seconds, connection state reset, fewer full reloads (no reload on brief inactive moments, read ahead a few cards only). This can ship first as a quick win.</p><p><b>Decision (Khushal, 22 Nov):</b> Fix inside the current read model, as recommended.</p></div>
+<span class="k">Affects</span> parts 1, 2, 3, 6 and 7. Today the navigation-view stream feeds all of them. The answer decides if the data Ticket is a repair or a replacement, and if the server must change.
+<details><summary>2.1a When does the app become current: launch, return to foreground, pull to refresh, network change?</summary></details>
+<details><summary>2.1b How many server reads may the phone make, so it never overloads the server again?</summary></details>
+</div>
+</details>
+
+<details>
+<summary><span class="q">2.2 What does the app show from its saved copy before the server answers?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 2</span><p>Every screen shows its saved copy at once and replaces it silently when the server answers. A card never acts on stale data: a decision on a proposal that changed is refused by the server and handled as in 3.2.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended.</p></div>
+<span class="k">Affects</span> parts 1, 2 and 6. "Feels instant" needs a saved copy at once. "Shows stuff from ages ago" says the current saved copy is wrong. One rule must serve every screen.
+<details><summary>2.2a On the summary screen, can a count from the saved copy show before the server confirms it?</summary></details>
+</div>
+</details>
+
+<h2>3. Sending and offline work <small>part 5</small></h2>
+
+<details>
+<summary><span class="q">3.1 Which actions take effect on screen at once and go through later, and which must wait for the server?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 2</span><p>Take effect at once and go through later: approve, return, skip, reply, mark read, Chief and conversation messages, voice, photos. Mark read joins the outbox (it moves a read position, so it is safe to repeat). Ask answers: card leaves at once and the answer is queued, but the server needs an answer receipt so the phone can tell "my answer landed" from "too late" (a small server change, see 6.1). Rare Ticket actions (reviewer or ceiling only, backlog, recap request, blocker removal, worker setup) wait for the server inside their sheet, with no banner.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended, including queued ask answers. A late ask answer becomes an ordinary message in that conversation. Known limit raised to Khushal: queued work sends only while the app is open.</p></div>
+<span class="k">Affects</span> parts 2, 4, 5 and 6. Actions: approve, return, skip, reply, mark read, ask answers, permission answers, Ticket actions, attachments, voice.
+</div>
+</details>
+
+<details>
+<summary><span class="q">3.2 When queued work cannot go through, how does the app tell Khushal without banners?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 2</span><p>In place, on the item itself, like Messages: a refused decision brings its card back to the queue with the reason and the draft kept. A message that cannot go through stays in its conversation with a quiet retry mark. An ask that was answered elsewhere just leaves. No cover screen, no banners.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended.</p></div>
+<span class="k">Affects</span> parts 2, 5 and 6. Cases: a refusal, a reviewer change while the card is open, an ask that is already answered elsewhere, a send that stays uncertain.
+</div>
+</details>
+
+<details>
+<summary><span class="q">3.3 Do all screens send through one shared path, built on today's outbox and decision operations?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 2</span><p>Yes: the existing outbox, extended with mark read and ask answers. Simplify it where the server already protects us: messages can be replayed safely because the server de-duplicates them, which removes most "uncertain" states.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended.</p></div>
+<span class="k">Affects</span> who owns the sending code, and whether Review, Conversation and Ticket Tickets can run in parallel.
+</div>
+</details>
+
+<h2>4. Review queue <small>part 2</small></h2>
+
+<details>
+<summary><span class="q">4.1 Who splits the queue into proposal, message and ask cards: the phone or the server?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 3</span><p>The phone. The review window already carries proposals, messages and asks, and the badge counts all three. The phone builds single-purpose cards from those parts and reads an ask's wording from its conversation, as web does. No server change for the queue itself.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended.</p></div>
+<span class="k">Affects</span> parts 2 and 7. The web joins a Ticket's ask to that Ticket's card. The approved iPhone design gives each card one purpose. A server change moves work into a server Ticket.
+</div>
+</details>
+
+<details>
+<summary><span class="q">4.2 After the summary screen, when does the app return to it?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 3</span><p>The summary screen on every cold launch, and on return after a few minutes away. A short switch away resumes the open card. An unsent draft is never lost, and its card comes first when Khushal taps into the queue.</p><p><b>Decision (Khushal, 22 Nov):</b> Not time-based. Follow navigation: an artifact or page opened from a card returns to the same card; going to Chief, a Manager or another Sidebar destination and back shows the summary; a fresh launch shows the summary. Leaving the app and coming back keeps Khushal exactly where he was. Only if that card was handled elsewhere meanwhile does he see the summary screen.</p></div>
+<span class="k">Affects</span> parts 2 and 3. For example: every return from the background, or only after some time away, or never while a card is open with a draft.
+</div>
+</details>
+
+<details>
+<summary><span class="q">4.3 Do Review and the Ticket page share one proposal decision control and its sheets?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 3</span><p>Yes. Review and the Ticket page already share the Approve sheet, so one shared decision control and sheet, owned by the sheets work.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended.</p></div>
+<span class="k">Affects</span> parts 2, 4 and 6. If shared, one Ticket owns it and the other depends on it.
+</div>
+</details>
+
+<h2>5. Shell, sheets and pages <small>parts 3, 4, 6</small></h2>
+
+<details>
+<summary><span class="q">5.1 What state survives a move between Sidebar destinations?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 3</span><p>Drafts survive everywhere (they are saved already). Each Sidebar destination keeps its own page stack. Review keeps its place within one visit. The shell Ticket decides the details.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended, with the 4.2 rule for Review.</p></div>
+<span class="k">Affects</span> parts 2, 3 and 6: scroll position, drafts, an open Review card.
+</div>
+</details>
+
+<details>
+<summary><span class="q">5.2 Is there one shared set of sheets and controls, owned before the screens that use them?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 3</span><p>Yes, one shared set built before the screens that use it: Approve and ceiling, Reviewer, Attach, Ticket actions, on system Form with a Cancel / title / confirm toolbar. TicketApprovalLimitSheet is already close. Stop panelsScreen() repainting every Form flat.</p><p><b>Decision (Khushal, 22 Nov):</b> Accepted as recommended.</p></div>
+<span class="k">Affects</span> parts 2, 4 and 6, and Ticket order.
+</div>
+</details>
+
+<h2>6. Server contract and shipping <small>part 7</small></h2>
+
+<details>
+<summary><span class="q">6.1 Does the rebuild need any server change, or only the server as it is on staging?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 4</span><p>One small server change: receipts for ask answers (3.1). Each server change updates the iOS compatibility review. The minimum-build gate (HTTP 426) already exists. Raise it only if a server change breaks old builds.</p><p><b>Decision (Khushal, 22 Nov):</b> Receipts for ask answers, as recommended. No compatibility work for old phone builds: Khushal is the only user, and the server change ships with the new build.</p></div>
+<span class="k">Affects</span> whether a server Ticket exists and what waits on it. Depends on 2.1 and 4.1.
+<details><summary>6.1a Does an old phone build need a minimum-build gate when the server changes?</summary></details>
+</div>
+</details>
+
+<details>
+<summary><span class="q">6.2 One TestFlight build at the end, or a build after each part lands?</span><span class="pill done">settled</span></summary>
+<div class="body">
+<div class="ans"><span class="k">Recommended answer · Group 4</span><p>A build after each stage that Khushal can feel: first the freshness fix, then shell, sheets and Review, then the rest. Each Ticket proves bad-connection behavior with the existing offline UI tests in the Simulator, plus Khushal's phone check per build.</p><p><b>Decision (Khushal, 22 Nov):</b> One build at the end, with everything, including the freshness fix. Khushal: a new build is effort, so fix it all together. Per-Ticket Simulator checks still apply.</p></div>
+<span class="k">Affects</span> Ticket order, branch plan, and when Khushal tests on his phone.
+<details><summary>6.2a How does each Ticket prove "works on a bad connection" before it reaches the phone?</summary></details>
+</div>
+</details>
+
+</main>
+</body>
+</html>
