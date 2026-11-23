@@ -445,6 +445,7 @@ test.skipIf(!admitted)(
                 record.host_node =
                   'incompatible account Node never executed during install, update, or rollback';
               } catch (error) {
+                record.update_failure = error instanceof Error ? error.stack : String(error);
                 retain_resources = true;
                 throw error;
               }
@@ -512,10 +513,13 @@ test.skipIf(!admitted)(
                 : undefined,
             );
             await check_home_port(request.port);
-            await expect(lstat(command_link)).rejects.toMatchObject({ code: 'ENOENT' });
+            // Failed copied-update proofs deliberately retain files for diagnosis.
+            // Their original failure must survive this finalizer.
+            if (!retain_resources)
+              await expect(lstat(command_link)).rejects.toMatchObject({ code: 'ENOENT' });
             expect(await readFile(sentinel, 'utf8')).toBe('unrelated sentinel');
             clean = true;
-            record.cleanup_verified = true;
+            record.cleanup_verified = !retain_resources;
           } finally {
             commands.seal();
             processes.seal();
