@@ -92,7 +92,7 @@ struct TicketView: View {
             if let detail { TicketWorkerSetup(ticket: detail) { await load() } }
         }
         .environment(\.openURL, OpenURLAction { url in
-            if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent) { textEntry.endEditingBeforeNavigation { openRoute(route) }; return .handled }
+            if let route = TicketArtifactRoute.linkedDestination(url, baseURL: store.baseURL, title: url.lastPathComponent, conversationOwner: .ticket(ticketID)) { textEntry.endEditingBeforeNavigation { openRoute(route) }; return .handled }
             return ArtifactTarget.isRetiredGoalURL(url, baseURL: store.baseURL) ? .discarded : .systemAction
         })
     }

@@ -55,7 +55,10 @@ struct AppShell: View {
                 .accessibilityIdentifier("ios-update-required")
             }
         }
+        // An artifact opened from a Review card docks that card's own controls, on the
+        // same session and saved work as the card.
         .environment(savedReviewWork)
+        .environment(reviewSession)
         .task(id: notifications.pendingOpen?.id) { openNotification() }
         .task(id: "push:\(store.baseURL):\(scenePhase == .active)") {
             if scenePhase == .active { await notifications.refresh(using: store.client) }

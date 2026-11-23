@@ -40,8 +40,22 @@ REPLACEMENT_SMOKE = os.environ.get("PANELS_REPLACEMENT_SMOKE") == "1"
 # Review's other card kinds beside the message fixture: a worker question, a permission
 # ask, a refused decision and a reviewer move, for the one-off Review screen walk.
 REVIEW_QUEUE = os.environ.get("PANELS_REVIEW_QUEUE") == "1"
+# The docks under an opened artifact, and the one Markdown display, for the one-off walk:
+# a proposal and a message that link artifacts, and a long conversation with block Markdown.
+ARTIFACT_DOCK_SMOKE = os.environ.get("PANELS_ARTIFACT_DOCK_SMOKE") == "1"
 REVIEW_MESSAGES = (
     os.environ.get("PANELS_REVIEW_MESSAGES") == "1" or GOALS_SMOKE or REPLACEMENT_SMOKE or REVIEW_QUEUE
+    or ARTIFACT_DOCK_SMOKE
+)
+DOCK_MARKDOWN = (
+    "## Evidence table\n\n"
+    "| Check | Result |\n| --- | --- |\n| Host tests | Passed |\n| Simulator walk | Passed |\n\n"
+    "```swift\nlet dock = ArtifactDock.reviewProposal(itemID: id)\n```\n\n"
+    "```panels-chart\n"
+    '{"kind":"bar","title":"Merged PRs per week","series":[{"name":"Panels","points":'
+    '[{"label":"Week 1","value":4},{"label":"Week 2","value":7}]},{"name":"Website","points":'
+    '[{"label":"Week 1","value":2},{"label":"Week 2","value":3}]}]}\n'
+    "```\n"
 )
 
 
@@ -449,6 +463,12 @@ def main() -> int:
         asker.update(id="ask-ticket", title="Ship Wren build 15", conversation_id="ask-permission",
                      recap="The release build is ready for its test run.", pending_proposal=None)
         tickets["ask-ticket"] = asker
+    if ARTIFACT_DOCK_SMOKE:
+        # The Ticket page shows the waiting proposal and its note, as in the queue walk.
+        manifest["worker_types"][0]["stages"][0]["gating_field"] = "wireframe"
+        tickets["offline-1"]["pending_proposal"]["body"] = (
+            "The proof is in the [dock evidence](/files/tickets/offline-1/dock-proof.md)."
+        )
     if ARTIFACT_LINKS_PROOF:
         state["slow"] = False
         state["artifact_reads"] = {"text": 0, "photo": 0, "html": 0}
@@ -1033,6 +1053,21 @@ def main() -> int:
                 value["coverage"]["through_sequence"] = max(
                     len(state["messages"]), 1 + state["agent_messages"]
                 )
+        if ARTIFACT_DOCK_SMOKE and "/conversations/history/" not in path:
+            # A long transcript whose rows carry block Markdown, for the scroll check.
+            for index in range(1, 61):
+                text = (
+                    f"Rich update {index}\n\n" + DOCK_MARKDOWN
+                    + "\n[Conversation evidence](/files/tickets/offline-1/dock-proof.md)"
+                    if index % 10 == 0 else f"Plain update {index}\n\n- one\n- two"
+                )
+                value["page"]["items"].append({
+                    "kind": "row", "key": f"dock-{index}", "source_sequence": 100 + index,
+                    "body": {"kind": "inline", "value": {
+                        "kind": "agent_message", "content": [{"piece": "text", "text": text}],
+                    }},
+                })
+            value["coverage"]["through_sequence"] = 160
         if REVIEW_MESSAGES and "/conversations/history/" in path:
             value["page"]["items"] = [
                 {
@@ -1438,6 +1473,29 @@ def main() -> int:
                 content = (
                     b"# Table artifact proof\n\n[Next artifact](nested-proof.md)"
                     if path.endswith("/table-proof.md") else b"# Nested artifact proof"
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            if ARTIFACT_DOCK_SMOKE and path == "/api/artifact-catalog/ticket/offline-1":
+                # The Ticket page keeps its two files behind the collapsed Artifacts row.
+                self.respond(dict(revision="dock", directory="", offset=0, total=2, entries=[
+                    dict(key=f"managed:{name}", path=name, label=name, kind="2",
+                         href=f"/files/tickets/offline-1/{name}", directory=None, child_count=0)
+                    for name in ("dock-proof.md", "nested-dock.md")
+                ]))
+                return
+            if ARTIFACT_DOCK_SMOKE and path in (
+                "/files/tickets/offline-1/dock-proof.md",
+                "/files/tickets/offline-1/nested-dock.md",
+            ):
+                content = (
+                    ("# Dock artifact proof\n\n" + DOCK_MARKDOWN
+                     + "\n[Nested dock artifact](nested-dock.md)\n").encode()
+                    if path.endswith("/dock-proof.md") else b"# Nested dock proof"
                 )
                 self.send_response(200)
                 self.send_header("Content-Type", "text/markdown")

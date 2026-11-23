@@ -19,6 +19,9 @@ import Observation
     private var foregroundWakes: [String: (id: UUID, continuation: AsyncStream<Void>.Continuation)] = [:]
     /// Live only while the foreground loop watches the network path.
     var networkAvailable = true
+    /// Recordings whose transcription request is in flight now. A saved recording outside
+    /// it waits for its turn, offline included. Memory only.
+    private(set) var transcriptionsInFlight: Set<String> = []
     @ObservationIgnored private let now: () -> Date
     private struct Backoff { let deadline: Date; let delay: TimeInterval }
     nonisolated static let initialRetryDelay: TimeInterval = 5
@@ -369,6 +372,8 @@ import Observation
         do {
             let audio = try Data(contentsOf: LocalStore.directory.appendingPathComponent(file))
             try store.outgoing.beginAttempt(server: server, id: work.id)
+            transcriptionsInFlight.insert(work.id)
+            defer { transcriptionsInFlight.remove(work.id) }
             let transcript = try await api.transcribeReviewAudio(audio)
             // The local transaction prevents a late duplicate response from appending twice.
             guard self.work(server, id: work.id) != nil else { return }

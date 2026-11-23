@@ -161,7 +161,7 @@ private struct ReviewCardScreen: View {
             afterExit?()
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
-            withTransaction(transaction) { session.finishExit() }
+            withTransaction(transaction) { session.finishExit(item) }
             Task { await store.refresh() }
         }
     }

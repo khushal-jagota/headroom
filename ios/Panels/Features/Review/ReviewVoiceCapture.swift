@@ -3,11 +3,17 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class ReviewVoiceCapture {
-    enum Phase { case idle, recording, transcribing, failed }
+    /// `saved`: the recording is on disk and waits for its words.
+    enum Phase { case idle, recording, saved, failed }
     var phase = Phase.idle
+    /// A saved recording is transcribing only while the outbox's request for it is in flight.
+    var transcribing: Bool { phase == .saved && work.map { Outbox.shared.transcriptionsInFlight.contains($0.id) } == true }
     var startedAt = Date()
     var error: String?
     private var recorder: AVAudioRecorder?
+    /// The recording this app is making now. The card and an artifact above it each have a
+    /// note on the same draft, so the other note must not take it for an interrupted one.
+    private static var recordingID: String?
     private var work: PendingWork?
     private var api: APIClient?
     @ObservationIgnored private let awake: KeepAwake
@@ -19,7 +25,7 @@ import Observation
         self.api = api
         work = savedWork.last { $0.kind == .voice && $0.draftID == draftID && $0.state != .sent }
         guard var saved = work else { phase = .idle; error = nil; return }
-        if saved.state == .recording {
+        if saved.state == .recording, saved.id != Self.recordingID {
             // An interrupted recording is kept and transcribed like any other.
             saved.state = .waiting
             do { try Outbox.shared.save(saved, server: LocalStore.server(api.baseURL)); work = saved }
@@ -27,7 +33,7 @@ import Observation
             Task { await Outbox.shared.drain(api: api) }
         }
         // A saved recording waits for its words. Only a refusal offers Retry.
-        phase = saved.state == .failed ? .failed : .transcribing
+        phase = saved.state == .failed ? .failed : .saved
         error = saved.state == .failed ? saved.note : nil
     }
     func start(api: APIClient, draftID: String?) async {
@@ -48,7 +54,7 @@ import Observation
             self.work = saved; self.api = api
             let recorder = try AVAudioRecorder(url: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000])
             guard recorder.record() else { throw APIError(status: 0, message: "Recording could not start.") }
-            self.recorder = recorder; startedAt = Date(); phase = .recording; error = nil
+            self.recorder = recorder; Self.recordingID = id; startedAt = Date(); phase = .recording; error = nil
             awake.hold(self)
             Haptics.light()
         } catch { self.error = error.localizedDescription; phase = .failed }
@@ -56,13 +62,13 @@ import Observation
     func preserve() {
         awake.release(self)
         guard recorder != nil else { return }
-        recorder?.stop(); recorder = nil
+        recorder?.stop(); recorder = nil; Self.recordingID = nil
         try? AVAudioSession.sharedInstance().setActive(false)
         guard var work, let api else { return }
         work.state = .waiting
         do { try Outbox.shared.save(work, server: LocalStore.server(api.baseURL)); self.work = work }
         catch { self.error = error.localizedDescription }
-        phase = .transcribing
+        phase = .saved
         Task { await Outbox.shared.drain(api: api) }
     }
     func stop(api: APIClient) async -> String? {
@@ -71,7 +77,7 @@ import Observation
     }
     func transcribe(api: APIClient) async -> String? {
         guard let work else { return nil }
-        phase = .transcribing; error = nil
+        phase = .saved; error = nil
         if Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)?.state == .failed { await Outbox.shared.retry(work.id, api: api) }
         await Outbox.shared.drain(api: api)
         let current = Outbox.shared.work(LocalStore.server(api.baseURL), id: work.id)
@@ -83,7 +89,7 @@ import Observation
     /// Only an explicit discard removes audio. Leaving the composer always preserves it.
     func cancel() {
         awake.release(self)
-        recorder?.stop(); recorder = nil
+        if recorder != nil { recorder?.stop(); recorder = nil; Self.recordingID = nil }
         try? AVAudioSession.sharedInstance().setActive(false)
         guard let work, let api else { phase = .idle; return }
         do {

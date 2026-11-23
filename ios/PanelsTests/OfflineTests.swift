@@ -667,6 +667,33 @@ import XCTest
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertEqual(OfflineProtocol.state.writes, ["voice"])
     }
+
+    /// The note says "saved" while a recording waits and "transcribing" only while its request runs.
+    func testRecordingIsInFlightOnlyWhileItsTranscriptionRequestRuns() async throws {
+        let file = "test-\(UUID()).m4a"
+        let url = LocalStore.directory.appendingPathComponent(file)
+        try FileManager.default.createDirectory(at: LocalStore.directory, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let outbox = Outbox(store: store)
+        try outbox.save(PendingWork(id: "audio", created: .now, kind: .voice, audioFile: file, draftID: "guidance"), server: server)
+        OfflineProtocol.state.offline = true
+        await outbox.drain(api: api)
+        XCTAssertEqual(outbox.work(server, id: "audio")?.state, .waiting)
+        XCTAssertTrue(outbox.transcriptionsInFlight.isEmpty, "A dropped request leaves the recording saved, not transcribing")
+
+        OfflineProtocol.state.offline = false
+        let gate = DispatchSemaphore(value: 0)
+        OfflineProtocol.state.voiceGate = gate
+        let online = relaunch()
+        let drain = Task { await online.drain(api: api) }
+        for _ in 0..<500 where online.transcriptionsInFlight.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(online.transcriptionsInFlight, ["audio"])
+        gate.signal()
+        await drain.value
+        XCTAssertTrue(online.transcriptionsInFlight.isEmpty)
+        XCTAssertEqual(online.work(server, id: "audio")?.state, .sent)
+    }
 }
 
 private final class OfflineState: @unchecked Sendable {
@@ -698,6 +725,8 @@ private final class OfflineState: @unchecked Sendable {
         var messageStatus = 200
         var loseDecisionBeforeCommit = false
         var loseDecisionAfterCommit = false
+        /// Holds a transcription request open until the test signals it.
+        var voiceGate: DispatchSemaphore?
     }
     private func value<T>(_ key: KeyPath<Values, T>) -> T { lock.withLock { values[keyPath: key] } }
     private func store<T>(_ key: WritableKeyPath<Values, T>, _ new: T) { lock.withLock { values[keyPath: key] = new } }
@@ -715,6 +744,7 @@ private final class OfflineState: @unchecked Sendable {
     var messageStatus: Int { get { value(\.messageStatus) } set { store(\.messageStatus, newValue) } }
     var loseDecisionBeforeCommit: Bool { get { value(\.loseDecisionBeforeCommit) } set { store(\.loseDecisionBeforeCommit, newValue) } }
     var loseDecisionAfterCommit: Bool { get { value(\.loseDecisionAfterCommit) } set { store(\.loseDecisionAfterCommit, newValue) } }
+    var voiceGate: DispatchSemaphore? { get { value(\.voiceGate) } set { store(\.voiceGate, newValue) } }
     var ticket: Data { value(\.ticket) }
     var writes: [String] { value(\.writes) }
     var messageBodies: [(String, Data)] { value(\.messageBodies) }
@@ -834,6 +864,7 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasPrefix("offline-test") == true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if request.url?.path.hasSuffix("voice-transcriptions") == true { _ = Self.state.voiceGate?.wait(timeout: .now() + 10) }
         do {
             let data = try Self.state.response(request)
             client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: Self.state.status(request), httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)

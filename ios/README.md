@@ -147,10 +147,9 @@ regular for navigation and VPS, medium for configuration and Usage.
 `panelsNavigationTitle` sets the weight on each native navigation item. Usage
 keeps its semibold heading; other utility pages use medium. This retains native
 navigation geometry and restores the destination's style on back navigation.
-The Sidebar, proposals, and Ticket use web base sizes with Dynamic Type scaling.
-Other font roles remain native. Artifact Markdown headings retain their
-existing rendered body size, with the web's bold h1/h4–h6 and semibold h2/h3;
-the inline renderer accepts the shared font so its body default cannot mask it.
+The Sidebar, proposals, Ticket and all Markdown use web base sizes with Dynamic Type
+scaling. Other font roles remain native. Markdown text is 14 points, headings 15 points
+with bold h1/h4–h6 and semibold h2/h3, and code 12.5 points.
 
 ## Proposal decisions
 
@@ -271,6 +270,8 @@ methods. A selection that executes zero tests fails, even if Xcode returns succe
 They stay outside the permanent release suite. The existing fixture harnesses select
 that scheme with `--review`. These walks cover specialist attachment previews,
 Latest scrolling, detail navigation, large text, Goal edits, notification routing,
+the dock under an opened artifact with block Markdown (`ArtifactDockTests`, run with
+`PANELS_ARTIFACT_DOCK_SMOKE=1`),
 Review composer appearance, the shell (`SidebarNavigationTests/testDestinationsBackSwipeAndOneComposer`:
 Sidebar cards, destination switches, Back swipe over a root page, edge-only Sidebar
 swipe, one composer under an open conversation, and a Chief draft kept across
@@ -456,7 +457,7 @@ Manager link opens that destination at its root. `/#/review` opens Review at its
 Ticket and Orchestrator pages expand their artifact catalog beneath the Artifacts
 row. `ArtifactsRow(owner:count:)` supplies the shared 50pt entry row and count;
 it is absent at zero. Chief has no artifact catalog. Folders expand in place too.
-`AppRoute.artifact(owner:path:title:)` opens a specific managed file. Catalog links
+`AppRoute.artifact(owner:path:title:dock:)` opens a specific managed file. Catalog links
 retain their actual file owner, including links to files on another ticket.
 
 The inline list reads on expansion and when the owner's file count changes, with paging and a search
@@ -464,19 +465,26 @@ field for larger catalogs. HTML runs from its Panels URL in a persistent WKWebVi
 desktop. Fit desktop scales a 1024-point canvas into the available width; pinch
 zoom lets the reader inspect a fixed-width design without changing its styles. Folder sections show five files before
 expanding, with image thumbnails.
-Markdown uses native text, and images support pinch, pan and double-tap zoom.
+Markdown uses the shared renderer below, and images support pinch, pan and double-tap zoom.
 PDF uses continuous PDFKit scrolling, supported media uses AVKit, and other
 supported files use Quick Look. Text wraps and previews at most 256 KB.
 Sharing sends the downloaded file through the system share sheet. Temporary files
 are removed when their preview and share sheet release them. Files too large for the Markdown or original sandboxed HTML preview remain available to Quick Look or sharing. Copy link
 copies the web preview address. Artifact pushes and zooms are silent; Copy link
 uses success feedback and reload errors use error feedback. The shared shell
-retains ownership of global navigation feedback and deployment chrome. The
-viewer uses the same native conversation page as Ticket and Orchestrator,
-including image previews. Files opened from an inline catalog keep that catalog's
-conversation owner while managed links retain their actual file owner. Further
-artifact links preserve the conversation context. The viewer resolves the current
-conversation ID from the owner and uses the existing owner send door. Listing, opening, reloading and sharing
+retains ownership of global navigation feedback and deployment chrome. The route's
+`ArtifactDock` says what sits below the file, chosen by where it was opened, and
+further artifact links keep it. A Ticket, Orchestrator or conversation page docks
+the same native conversation as that page, image previews included: the viewer
+resolves the current conversation ID from the owner and uses the owner send door. A
+full conversation page keeps the model it opened with, so its draft, tail and read
+point stay one when an artifact docks a composer for the same owner. A Review card docks its own controls on the card's decision, so the
+note or reply is the card's draft: the proposal's note, voice, attachments, Skip,
+Return and Approve with its sheet, or the message's `Reply…`, Skip and Mark read, with
+any refusal. Only the top viewer docks them. Acting there, or the card leaving the
+screen, closes every stacked viewer back to Review, and the queue moves on as if the
+card had acted. Catalog files keep the catalog's conversation owner while managed
+links retain their actual file owner. Listing, opening, reloading and sharing
 artifacts do not write to the server; sending a message requires an explicit tap.
 
 Artifact links in proposals, messages, Ticket fields and Goal prose stay inline
@@ -487,8 +495,19 @@ A tap opens the existing native viewer. Conversation text resolves relative link
 against the configured server and uses the same managed-file route. Artifact
 catalogs and viewers keep their existing presentation.
 
+One renderer, `PanelsMarkdown`, shows Markdown on the artifact page, in proposals,
+messages, Ticket fields, Goal prose and conversation rows. The caller picks the text
+size: the artifact page and Goal prose read at the system body size, and Review cards,
+Ticket fields and conversation rows keep the compact size. Code and tables scroll
+sideways inside the page, and text hugs its width, so a short own message keeps a short
+bubble. Each view parses its source once. Only the artifact page lays blocks out lazily,
+so conversation rows keep stable heights. A closed `panels-chart` fence that passes the
+web's checks draws a Swift Charts bar or line chart with the goal number formats. Any
+other fence stays code. A fence inside a quote is not read, so a quoted chart, which the
+web draws, shows as quote text.
+
 Artifact logic tests cover cross-owner URLs and encoding, unsafe file paths,
-Markdown code blocks, and the photo/video-only rule. The media cases cover a gap
+Markdown code blocks, chart fences and specs, and the photo/video-only rule. The media cases cover a gap
 in the earlier URL tests: file links must not enter the automatic media loader,
 and literal code must not load photos. They reuse the existing XCTest target and
 require no server. Simulator captures are a separate read-only smoke
@@ -901,6 +920,14 @@ still cannot be sent. The outbox clears a note draft only after an applied recei
 and only when its text and saved timestamp still match the captured draft. Waiting
 and refused decisions retain drafts. Newer edits survive an older
 receipt, including edits that restore the same text.
+
+On both Review and the Ticket page the note takes pictures and files through the
+shared Attach sheet, paste and attachment tray. They are kept beside the note's words
+under the same draft identity, so a note started in one place opens in the other.
+Approve and Return prepare them first, with the note locked, and the outbox freezes
+them into the decision body. An approval with pictures but no words still carries
+the note's draft identity. An applied receipt clears them unless they changed since;
+a refusal keeps them with the note.
 
 ## Text entry and navigation
 

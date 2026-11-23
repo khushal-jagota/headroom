@@ -36,7 +36,7 @@ struct ArtifactListView: View {
     private var list: some View {
         VStack(alignment: .leading, spacing: PanelsTheme.Space.sm) {
             ForEach(entries.filter { $0.directory != nil }) { folder in
-                ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { openRoute(.artifact($0, conversationOwner: owner.conversationOwner)) })
+                ArtifactFolderSection(owner: owner, folder: folder, search: search, refreshVersion: refreshVersion, open: { openRoute(.artifact($0, dock: .conversation(owner.conversationOwner))) })
             }
             fileSection(entries.filter { $0.directory == nil && !$0.key.hasPrefix("linked:") }, title: directory.isEmpty ? "Files" : (directory as NSString).lastPathComponent)
             fileSection(entries.filter { $0.key.hasPrefix("linked:") }, title: "From Fields")
@@ -55,7 +55,7 @@ struct ArtifactListView: View {
             VStack(alignment: .leading, spacing: PanelsTheme.Space.xs) {
                 Text(title).font(.caption2).foregroundStyle(PanelsTheme.faint)
                 ForEach(files.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }) { entry in
-                ArtifactFileRow(owner: owner, entry: entry, open: { openRoute(.artifact($0, conversationOwner: owner.conversationOwner)) })
+                ArtifactFileRow(owner: owner, entry: entry, open: { openRoute(.artifact($0, dock: .conversation(owner.conversationOwner))) })
             } }
         }
     }

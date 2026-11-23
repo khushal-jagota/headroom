@@ -34,13 +34,13 @@ final class ReviewQueueTests: XCTestCase {
         queue.resolve(ticketMessage)
         reconcile(&queue, [chiefMessage, ask])
         XCTAssertEqual(queue.shown?.id, ticketMessage.id)
-        queue.finishExit(); reconcile(&queue, [chiefMessage, ask])
+        queue.finishExit(ticketMessage); reconcile(&queue, [chiefMessage, ask])
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
         // A card handled here stays hidden while nothing else hides it, such as an answered
         // ask or a message whose run was already read, so it never comes back before then.
-        queue.resolve(chiefMessage); queue.finishExit(); reconcile(&queue, [chiefMessage, ask])
+        queue.resolve(chiefMessage); queue.finishExit(chiefMessage); reconcile(&queue, [chiefMessage, ask])
         XCTAssertEqual(queue.shown?.id, ask.id)
-        queue.resolve(ask); queue.finishExit(); reconcile(&queue, [chiefMessage, ask])
+        queue.resolve(ask); queue.finishExit(ask); reconcile(&queue, [chiefMessage, ask])
         XCTAssertNil(queue.shown, "After the last card, the summary")
         XCTAssertEqual(queue.counts(queue.cards([chiefMessage, ask], refusals: []), unloaded: 0), ReviewSummary(newCount: 0, skippedCount: 0))
         // Once the saved work or the window hides it, a refusal can bring it back.
@@ -77,7 +77,7 @@ final class ReviewQueueTests: XCTestCase {
         // A card handled after the return is not "left while away" when the stream reconnects.
         queue.returnToCards(); reconcile(&queue, all)
         queue.leaveApp(session: 6)
-        queue.resolve(proposal); queue.finishExit(); reconcile(&queue, [chiefMessage])
+        queue.resolve(proposal); queue.finishExit(proposal); reconcile(&queue, [chiefMessage])
         reconcile(&queue, [chiefMessage], fresh: 7)
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
     }
@@ -141,7 +141,7 @@ final class ReviewQueueTests: XCTestCase {
         let late = ReviewRefusal(item: gone, note: "Not sent · changed.", refusalID: "op-3")
         reconcile(&queue, [ask], refusals: [late])
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
-        queue.finishExit(); reconcile(&queue, [ask], refusals: [late])
+        queue.finishExit(chiefMessage); reconcile(&queue, [ask], refusals: [late])
         XCTAssertEqual(queue.shown?.id, gone.id)
         // A refused card still in the window moves to the front and is listed once.
         let liveRefusal = ReviewRefusal(item: ask, note: "Refused", refusalID: "op-2")
@@ -162,7 +162,7 @@ final class ReviewQueueTests: XCTestCase {
         let refusal = ReviewRefusal(item: chiefMessage, note: "Refused", refusalID: "read@1")
         queue.reconcile([chiefMessage, ask], refusals: [refusal], moved: { _ in nil }, freshSession: nil)
         XCTAssertEqual(queue.shown?.id, chiefMessage.id)
-        queue.resolve(chiefMessage); queue.finishExit()
+        queue.resolve(chiefMessage); queue.finishExit(chiefMessage)
         queue.reconcile([chiefMessage, ask], refusals: [refusal], moved: { _ in nil }, freshSession: nil)
         XCTAssertEqual(queue.shown?.id, ask.id, "A refusal already seen cannot bring back a card handled since")
         XCTAssertFalse(queue.cards([chiefMessage, ask], refusals: [refusal]).contains { $0.id == chiefMessage.id })
@@ -175,7 +175,7 @@ final class ReviewQueueTests: XCTestCase {
         queue.skip(chiefMessage, in: queue.cards([chiefMessage, ask], refusals: [again]))
         queue.reconcile([chiefMessage, ask], refusals: [again], moved: { _ in nil }, freshSession: nil)
         XCTAssertEqual(queue.shown?.id, ask.id)
-        queue.resolve(ask); queue.finishExit()
+        queue.resolve(ask); queue.finishExit(ask)
         queue.reconcile([chiefMessage], refusals: [again], moved: { _ in nil }, freshSession: nil, window: [chiefMessage, ask])
         queue.reconcile([chiefMessage, ask], refusals: [again], moved: { _ in nil }, freshSession: nil)
         XCTAssertFalse(queue.cards([chiefMessage, ask], refusals: [again]).contains { $0.id == ask.id }, "Hidden until the window drops it")
@@ -284,6 +284,30 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertFalse(raced.dismissed())
     }
 
+    /// Risk: one saved reply moves the queue on twice. The card that sent it and an artifact
+    /// opened from it both see the reply land: the artifact's dock finishes the exit at once,
+    /// then the card's exit timer resolves and finishes again. The late calls must not bring
+    /// the card back or end the next card's exit.
+    func testASavedReplySeenByTwoSurfacesLeavesOnce() {
+        var queue = ReviewQueue()
+        queue.returnToCards()
+        reconcile(&queue, [ticketMessage, chiefMessage, ask])
+        XCTAssertEqual(queue.shown?.id, ticketMessage.id)
+        // The card saves the reply and starts its exit; the artifact's dock sees the same save.
+        queue.resolve(ticketMessage)
+        queue.resolve(ticketMessage); queue.finishExit(ticketMessage)
+        reconcile(&queue, [chiefMessage, ask])
+        XCTAssertEqual(queue.shown?.id, chiefMessage.id)
+        // The next card is handled and leaving when the first card's late calls arrive.
+        queue.resolve(chiefMessage)
+        queue.resolve(ticketMessage); queue.finishExit(ticketMessage)
+        reconcile(&queue, [ask])
+        XCTAssertEqual(queue.leaving?.id, chiefMessage.id, "A late finish leaves the next card's exit alone")
+        XCTAssertEqual(queue.shown?.id, chiefMessage.id)
+        queue.finishExit(chiefMessage); reconcile(&queue, [ask])
+        XCTAssertEqual(queue.shown?.id, ask.id)
+    }
+
     /// Risk: an ask with no recorded time shares its identity with the next ask in its
     /// conversation, so a follow-up ask stays hidden behind an answered one.
     func testAnAskWithNoTimeIsNotHeldPastItsAnswer() {
@@ -292,7 +316,7 @@ final class ReviewQueueTests: XCTestCase {
         var queue = ReviewQueue()
         queue.returnToCards()
         queue.reconcile([timeless], refusals: [], moved: { _ in nil }, freshSession: nil)
-        queue.resolve(timeless); queue.finishExit()
+        queue.resolve(timeless); queue.finishExit(timeless)
         // The answer is sent; the window still carries an ask under the same identity.
         queue.reconcile([], refusals: [], moved: { _ in nil }, freshSession: nil, window: [timeless])
         queue.reconcile([timeless], refusals: [], moved: { _ in nil }, freshSession: nil)

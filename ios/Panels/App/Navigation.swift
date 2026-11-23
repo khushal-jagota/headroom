@@ -5,6 +5,14 @@ enum AppDestination: Hashable {
     case review, chief, manager(String), settings
 }
 
+/// What sits below an open artifact, chosen by where it was opened from: the composer
+/// of that page's conversation, or the Review card's own note or reply.
+enum ArtifactDock: Hashable {
+    case conversation(ConversationOwner)
+    case reviewProposal(itemID: String)
+    case reviewMessage(itemID: String)
+}
+
 enum AppRoute: Hashable {
     case chief
     case goals, goal(String)
@@ -13,13 +21,13 @@ enum AppRoute: Hashable {
     case conversation(owner: ConversationOwner, id: String?, linked: Bool = true)
     case orchestrator(String)
     case ticket(String)
-    case artifact(owner: ArtifactOwner, path: String, title: String, conversationOwner: ConversationOwner? = nil, showsConversation: Bool = true)
+    case artifact(owner: ArtifactOwner, path: String, title: String, dock: ArtifactDock)
     case ideas, usage, vps, settings
 }
 
 extension AppRoute {
-    static func artifact(_ target: ArtifactTarget, conversationOwner: ConversationOwner? = nil, showsConversation: Bool = true) -> AppRoute {
-        .artifact(owner: target.owner, path: target.path, title: target.title, conversationOwner: conversationOwner, showsConversation: showsConversation)
+    static func artifact(_ target: ArtifactTarget, dock: ArtifactDock) -> AppRoute {
+        .artifact(owner: target.owner, path: target.path, title: target.title, dock: dock)
     }
 }
 
@@ -30,8 +38,16 @@ struct OpenRouteAction {
     func callAsFunction(_ route: AppRoute) { open(route) }
 }
 
+/// Removes every artifact viewer at the top of the page path in one step, back to the
+/// page they were opened from.
+struct CloseArtifactsAction {
+    let close: () -> Void
+    func callAsFunction() { close() }
+}
+
 extension EnvironmentValues {
     @Entry var openRoute = OpenRouteAction { _ in }
+    @Entry var closeArtifacts = CloseArtifactsAction {}
     /// Changes each time Review becomes the destination.
     @Entry var reviewVisit = 0
 }
@@ -48,6 +64,11 @@ struct RouteStack<Root: View>: View {
                 .navigationDestination(for: AppRoute.self) { RouteDestination(route: $0) }
         }
         .environment(\.openRoute, OpenRouteAction { path.append($0) })
+        .environment(\.closeArtifacts, CloseArtifactsAction {
+            var trimmed = path
+            while case .artifact = trimmed.last { trimmed.removeLast() }
+            if trimmed != path { path = trimmed }
+        })
         .environment(\.conversationModels, conversationModels)
     }
 }
@@ -75,8 +96,8 @@ struct RouteDestination: View {
             }
         case .orchestrator(let id): OrchestratorView(managerID: id, editOwner: goalEdits)
         case .ticket(let id): TicketView(ticketID: id)
-        case .artifact(let owner, let path, let title, let conversationOwner, let showsConversation):
-            ArtifactViewerView(owner: owner, path: path, title: title, showsConversation: showsConversation, conversationOwner: conversationOwner)
+        case .artifact(let owner, let path, let title, let dock):
+            ArtifactViewerView(owner: owner, path: path, title: title, dock: dock)
         case .ideas: IdeasView()
         case .usage: UsageView()
         case .vps: VPSView()

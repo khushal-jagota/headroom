@@ -18,7 +18,7 @@ private struct GoalPageBlock: View {
     @ViewBuilder var body: some View {
         switch block.type {
         case "tickets": if let holder { HolderTickets(holder: holder) }
-        case "text": text(block["text"].text, markdown: true).panelsScaledFont(size: 18)
+        case "text": text(block["text"].text, markdown: true)
         case "chart": GoalChart(block: block, session: session)
         case "checklist": GoalChecklist(block: block, session: session, supplementary: true)
         case "grid": GoalPageBlocks(blocks: block["blocks"].array, session: session)
@@ -82,7 +82,7 @@ private struct GoalPageBlock: View {
         }
     }
     @ViewBuilder private func text(_ value: String, markdown: Bool = false) -> some View {
-        if markdown { ArtifactMarkdownContent(source: value, baseURL: session.baseURL) } else { GoalReadText(value: value) }
+        if markdown { PanelsMarkdown(source: value, baseURL: session.baseURL, textSize: .reading) } else { GoalReadText(value: value) }
     }
     private var views: some View {
         let views = block["views"].array
