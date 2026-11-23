@@ -353,10 +353,28 @@ export async function native_copied_updates(options: {
         await rename(previous, retired);
         await chmod(retired, 0);
         await writeFile(policy, '{}');
-      } else {
+      }
+      record.update_observation = 'terminal attempt';
+      const state = await wait(async () => {
+        const value = await json(attempt_path);
+        return ['done', 'failed'].includes(value.state) ? value : undefined;
+      }, 90);
+      record.update_observation = 'restoration assertions';
+      assert.equal(state.state, name === 'success' ? 'done' : 'failed');
+      assert(
+        await lstat(join(root, 'data/update-barrier.json')).then(
+          () => false,
+          (error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return true;
+            throw error;
+          },
+        ),
+      );
+      assert(name === 'success' ? state.steps.healthy : state.steps.rollback_database_restored);
+      if (name === 'rollback') {
         record.update_observation = 'failed candidate health';
-        // The updater can restore B before this observer runs. Retain the actual
-        // unhealthy response and its exact native process births in candidate A.
+        // Read only after rollback finishes. Candidate A no longer serves health,
+        // so this case must prove its response and births through retained evidence.
         const witness = await wait(async () => {
           try {
             return await json(join(root, 'data/probe-failed-candidate-health.json'));
@@ -379,23 +397,6 @@ export async function native_copied_updates(options: {
         births.push(trial_birth, supervisor);
         record.failed_candidate_health = witness;
       }
-      record.update_observation = 'terminal attempt';
-      const state = await wait(async () => {
-        const value = await json(attempt_path);
-        return ['done', 'failed'].includes(value.state) ? value : undefined;
-      }, 90);
-      record.update_observation = 'restoration assertions';
-      assert.equal(state.state, name === 'success' ? 'done' : 'failed');
-      assert(
-        await lstat(join(root, 'data/update-barrier.json')).then(
-          () => false,
-          (error: NodeJS.ErrnoException) => {
-            if (error.code === 'ENOENT') return true;
-            throw error;
-          },
-        ),
-      );
-      assert(name === 'success' ? state.steps.healthy : state.steps.rollback_database_restored);
       await wait(async () =>
         (await primitives.is_absent(old.app, performance.now() / 1000 + 5)) ? true : undefined,
       );
