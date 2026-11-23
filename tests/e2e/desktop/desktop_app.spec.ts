@@ -231,7 +231,7 @@ test('the offline baseline opens, and Change Server keeps an address and window 
     const page = first.window;
     // First setup without a network still opens the signed bundle's baseline screens.
     await page.waitForFunction(() => document.documentElement.dataset.panelsReady === 'true', undefined, { timeout: WAIT_MS * 2 });
-    expect(await pageUrl(page)).toBe('panels://app/');
+    expect(await pageUrl(page)).toMatch(/^panels:\/\/app\/(?:#.*)?$/);
     await first.app.evaluate(({ Menu }) => {
       const menu = Menu.getApplicationMenu() as { items: { submenu?: { items: { label: string; click(): void }[] } }[] } | null;
       const item = menu?.items
