@@ -917,6 +917,14 @@ and only when its text and saved timestamp still match the captured draft. Waiti
 and refused decisions retain drafts. Newer edits survive an older
 receipt, including edits that restore the same text.
 
+On both Review and the Ticket page the note takes pictures and files through the
+shared Attach sheet, paste and attachment tray. They are kept beside the note's words
+under the same draft identity, so a note started in one place opens in the other.
+Approve and Return prepare them first, with the note locked, and the outbox freezes
+them into the decision body. An approval with pictures but no words still carries
+the note's draft identity. An applied receipt clears them unless they changed since;
+a refusal keeps them with the note.
+
 ## Text entry and navigation
 
 Each visible screen owns focus for its conversation fields and decision notes.

@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import Panels
 
 final class TicketTests: XCTestCase {
@@ -94,6 +95,37 @@ final class TicketTests: XCTestCase {
         let other = APIClient(baseURL: URL(string: "https://other-note-stub.invalid")!)
         XCTAssertFalse(state.matches(presentation: presentation, proposal: proposal, api: other))
         XCTAssertNil(state.capture(presentation: presentation, proposal: proposal, api: other).guidance)
+    }
+
+    /// Risk: a Ticket-page approval drops the note's pictures and files, or leaves out the
+    /// note's draft identity when the note has no words, so an applied receipt cannot clear them.
+    @MainActor func testTicketApprovalCarriesNoteAttachmentsAndDraftIdentity() async throws {
+        let ticket = try ticket()
+        let proposal = try XCTUnwrap(ticket.pendingProposal)
+        let manifest = TicketWorkerType(workerType: "product_design", label: "Product design", stages: [], fields: [])
+        let presentation = TicketPresentation(ticket: ticket, manifest: manifest)
+        let api = APIClient(baseURL: URL(string: "https://ticket-attach-stub.invalid")!)
+        let server = LocalStore.server(api.baseURL)
+        let draftID = DecisionGuidance.draftIdentity(ticketID: ticket.id, proposal: proposal) + ":guidance"
+        func clear() {
+            for kind in ["draft", "attachments", "outbox"] {
+                for entry in (try? LocalStore.shared.records(server: server, kind: kind)) ?? [] {
+                    try? LocalStore.shared.remove(server: server, kind: kind, id: entry.key.components(separatedBy: "\u{1f}").last!)
+                }
+            }
+        }
+        clear(); defer { clear() }
+        let state = TicketDecisionState()
+        state.load(presentation: presentation, proposal: proposal, api: api)
+        let attached = await state.noteAttachments.attach(Data("Notes for the worker".utf8), type: .plainText, fileName: "notes.txt")
+        XCTAssertTrue(attached)
+        try await state.approve(state.capture(presentation: presentation, proposal: proposal, api: api))
+        let work = try XCTUnwrap(Outbox.shared.entries(server).last)
+        XCTAssertEqual(work.draftID, draftID, "The note's draft identity goes with its pictures and files")
+        let command = try APIClient.decoder().decode(DecisionCommand.self, from: XCTUnwrap(work.protectedDecisionBody))
+        XCTAssertEqual(command.attachments?.map(\.fileName), ["notes.txt"])
+        XCTAssertNil(command.message)
+        XCTAssertTrue(state.pending)
     }
 
     func testWriteFailureRemainsAnErrorAndRefusedRecapIsNotSuccess() async throws {

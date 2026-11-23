@@ -124,7 +124,7 @@ struct DecisionNoteActions: View {
     var error: String? = nil
     var noteEnabled = true
     var accessory: AnyView? = nil
-    /// The note's pictures and files, where the note takes them (Review).
+    /// The note's pictures and files, where the note takes them (Review and the Ticket page).
     var attachments: ConversationModel? = nil
     var focusRequest = 0
     var blurRequest = 0
