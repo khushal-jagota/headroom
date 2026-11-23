@@ -46,6 +46,10 @@ struct ConversationNavigation: ViewModifier {
     /// The docked composer exists only while its page is the top page, so a pushed
     /// page, the full conversation included, never has a second composer under it.
     @State private var pageVisible = false
+    /// The docked surface's last height. While a pushed page covers this one, the same
+    /// room stays at the bottom, so the page's scroll position is not clamped to a shorter
+    /// inset and Back returns to where Khushal left it.
+    @State private var surfaceHeight: CGFloat = 0
     @State private var model = ConversationModel()
     @State private var speech = ConversationSpeech()
 
@@ -62,6 +66,9 @@ struct ConversationNavigation: ViewModifier {
                                         active: !(conversationModels?.openPages.contains(owner) ?? false),
                                         open: { textEntry.endEditingBeforeNavigation { open() } },
                                         model: model, speech: speech, refreshError: refreshError, retry: retry)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { surfaceHeight = $0 }
+                } else {
+                    Color.clear.frame(height: surfaceHeight).accessibilityHidden(true)
                 }
             }
             .onAppear { pageVisible = true; conversationModels?.register(model, for: owner) }
