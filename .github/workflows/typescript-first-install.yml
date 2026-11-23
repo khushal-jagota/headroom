@@ -46,6 +46,7 @@ jobs:
           umask 077
           FIRST_INSTALL_ROOT="$RUNNER_TEMP/first-install-proof"
           echo "FIRST_INSTALL_ROOT=$FIRST_INSTALL_ROOT" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$FIRST_INSTALL_ROOT/browsers" >> "$GITHUB_ENV"
           mkdir -p "$FIRST_INSTALL_ROOT"/{build,evidence,tmp,inputs,build-home}
           echo "TMPDIR=$FIRST_INSTALL_ROOT/tmp/" >> "$GITHUB_ENV"
           if [ "$RUNNER_OS" = Linux ]; then
@@ -62,6 +63,12 @@ jobs:
           fi
           scripts/dev npm --prefix server ci
           python3 scripts/panels_install_test.py
+      - name: Prepare Chromium for the requested Apple Silicon visual evidence
+        if: runner.os == 'macOS'
+        run: |
+          browser_setup_started=$SECONDS
+          node server/node_modules/playwright/cli.js install chromium
+          printf 'seconds=%s\n' "$((SECONDS-browser_setup_started))" > "$FIRST_INSTALL_ROOT/evidence/browser-setup-time.txt"
       - name: Build the real native server and machine packages from this revision
         run: |
           set -euo pipefail

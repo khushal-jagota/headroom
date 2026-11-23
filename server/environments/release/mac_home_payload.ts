@@ -73,6 +73,7 @@ export async function compose_mac_home_payload(
   for (const name of ['package.json', 'node_modules'])
     await copy(join(providers, name), join(app, 'agent_backends', name));
   await copy(web, join(app, 'web/dist'));
+  await copy(join(exported, 'assets'), join(app, 'assets'));
   // The server re-exports these generated protocol values at runtime.
   const view_contract = 'web/src/lib/conversation/view/contracts.ts';
   await copy(join(exported, view_contract), join(app, view_contract));

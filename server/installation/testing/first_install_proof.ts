@@ -118,7 +118,7 @@ const report: Record<string, unknown> = {
   boundary:
     'Real sealed candidate archives, the Python bootstrap, native service managers, first machine local socket, and second machine credential enrollment on the same clean runner account.',
   exclusions:
-    'No browser, provider login, remote HTTPS, physical sleep or macOS permission consent. The hosted Apple launcher uses an ad-hoc signature.',
+    'No provider login, remote HTTPS, physical sleep or macOS permission consent. The hosted Apple launcher uses an ad-hoc signature.',
   phases_seconds: phases,
 };
 const run = async (
@@ -220,6 +220,27 @@ try {
     ],
     no_node_environment,
   );
+  // The native package can boot while its shared styles are absent. Check the
+  // actual HTTP output on both existing hosts; a SPA HTML fallback is not CSS.
+  const styles_started = performance.now();
+  const stylesheet_checks = [];
+  for (const path of ['/assets/tokens.css', '/assets/app.css']) {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    assert.equal(response.status, 200, `The installed package must serve ${path}`);
+    const content_type = response.headers.get('content-type') ?? '';
+    assert.match(
+      content_type,
+      /^text\/css(?:;|$)/i,
+      `${path} must return CSS, not the SPA fallback`,
+    );
+    const content = await response.text();
+    assert.ok(content.trim().length > 0, `${path} must contain a stylesheet`);
+    stylesheet_checks.push({ path, content_type, bytes: Buffer.byteLength(content) });
+  }
+  phases['installed-stylesheets'] = (performance.now() - styles_started) / 1000;
+  report.stylesheets = stylesheet_checks;
   report.host_node_at_install = 'absent from PATH';
   const panels = join(root, 'app/bin/panels');
   await run('cli-with-incompatible-host-node', [panels, '--help'], incompatible_environment);
@@ -325,6 +346,42 @@ try {
     'The server and both machine programs must be distinct processes',
   );
   report.service_pids = pids;
+  if (system === 'darwin') {
+    // The requested screenshot uses the real installed package on this existing
+    // native host. It adds no preview server, browser host, or permanent test case.
+    const visual_started = performance.now();
+    const { chromium } = await import('playwright');
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+      await page.goto(`http://127.0.0.1:${port}/#/settings/machines`, {
+        waitUntil: 'domcontentloaded',
+      });
+      await page.getByRole('heading', { name: 'Machines', exact: true }).waitFor();
+      await page.getByText('Second proof machine', { exact: true }).waitFor();
+      await page.waitForFunction(() =>
+        ['/assets/tokens.css', '/assets/app.css'].every((path) =>
+          [...document.styleSheets].some(
+            (sheet) => sheet.href?.endsWith(path) && sheet.cssRules.length > 0,
+          ),
+        ),
+      );
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+      });
+      const screenshot = join(evidence, 'installed-server.png');
+      await page.screenshot({ path: screenshot, fullPage: true });
+      report.visual_evidence = {
+        file: 'installed-server.png',
+        page: '/#/settings/machines',
+        boundary:
+          'Chromium renders the served Apple Silicon package with its real stylesheets and fonts.',
+      };
+    } finally {
+      await browser.close();
+      phases['installed-server-screenshot'] = (performance.now() - visual_started) / 1000;
+    }
+  }
   report.result = 'passed';
 } catch (error) {
   failed = error;
