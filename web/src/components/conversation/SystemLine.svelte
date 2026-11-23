@@ -45,27 +45,13 @@
   let hanging = $derived(hangMark && align === "start");
 </script>
 
+<!-- No whitespace between the parts: the line's text is exactly its words ("Working · 2m"). -->
 <div
   class="cv-system-line cv-system-line--{align}"
   class:is-hanging={hanging && mark !== null}
   data-conversation-system-line={align}
   {...attributes}
->
-  <div class="cv-system-line-row">
-    {#if mark !== null}
-      <span class="cv-system-line-mark" aria-hidden="true" data-conversation-system-mark={mark}>
-        {#if mark === "spinner"}
-          <span class="cv-system-line-spinner" class:is-turning={turning} data-conversation-live-mark></span>
-        {:else}
-          <span class="cv-system-line-dot" class:is-failure={mark === "failure"}></span>
-        {/if}
-      </span>
-    {/if}
-    <span class="cv-system-line-words">{@render children()}</span>
-    {#if actions}<span class="cv-system-line-actions">{@render actions()}</span>{/if}
-  </div>
-  {#if below}{@render below()}{/if}
-</div>
+><div class="cv-system-line-row">{#if mark !== null}<span class="cv-system-line-mark" aria-hidden="true" data-conversation-system-mark={mark}>{#if mark === "spinner"}<span class="cv-system-line-spinner" class:is-turning={turning} data-conversation-live-mark></span>{:else}<span class="cv-system-line-dot" class:is-failure={mark === "failure"}></span>{/if}</span>{/if}<span class="cv-system-line-words">{@render children()}</span>{#if actions}<span class="cv-system-line-actions">{@render actions()}</span>{/if}</div>{#if below}{@render below()}{/if}</div>
 
 <style>
   .cv-system-line {

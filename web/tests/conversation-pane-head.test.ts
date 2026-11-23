@@ -110,6 +110,9 @@ describe("the dock's status line", () => {
     // The status is the shared system line, its mark inline (the dock has no gutter).
     expect(rest({ kind: "idle", clock: null })).toMatch(/<div class="cv-system-line[^"]*"[^>]*data-conversation-rest-line/);
     expect(rest({ kind: "idle", clock: null })).not.toContain("is-hanging");
+    // The line's text is exactly its words: no spaces around them from the markup.
+    const line = working.slice(working.indexOf("<div class=\"cv-system-line"), working.indexOf("</div></div>") + 12).replace(/<[^>]+>/g, "");
+    expect(line).toBe("Working · 29h 28m");
     const open = rest({ kind: "idle", clock: null });
     expect(open).toMatch(/<button[^>]*data-conversation-rest-bar/);
     expect(open).toMatch(/c2-rest-control-label[^>]*>Open<\/span>[\s\S]*?<svg class="c2-rest-control-arrow[^"]*" viewBox="0 0 16 16" data-conversation-open-arrow=""><path d="m4 10 4-4 4 4"><\/path><\/svg>/);
