@@ -3,14 +3,18 @@
  *  follows. It never adds space and never covers anything.
  *
  *  - The gap under the message holds the slot (a turn's 32): the row stands there.
+ *  - A system line stands closer but its words end well clear of the row's side (a left
+ *    line such as "Stopped before it finished" under a right-hand bubble): the row stands
+ *    beside it, at the same place.
  *  - A system line stands closer (the end-of-turn line, the live "Working" line): the row
  *    goes under that line, as it goes under a caption inside the message.
  *  - Anything else stands closer (prose or a tool row in the same turn): no row. */
 
 export const HOVER_ROW_REACH_PIXELS = 4 + 24;
 
-/** What follows the message in the thread, top to bottom, measured. */
-export type FollowingItem = { top: number; bottom: number; isSystemLine: boolean };
+/** What follows the message in the thread, top to bottom, measured. `besideRow`: what the
+ *  item draws stays clear of the row's side of the column. */
+export type FollowingItem = { top: number; bottom: number; isSystemLine: boolean; besideRow?: boolean };
 
 /** The row's place: how far under the message's bottom edge its slot starts, and how many
  *  of the following items (system lines) it reaches past. Null draws no row. */
@@ -22,7 +26,7 @@ export function placeHoverRow(messageBottom: number, following: readonly Followi
     const next = following[passes];
     if (next === undefined || next.top - edge >= HOVER_ROW_REACH_PIXELS) return { offset: edge - messageBottom, passes };
     if (!next.isSystemLine) return null;
-    edge = next.bottom;
+    if (!next.besideRow) edge = next.bottom;
   }
   return null;
 }

@@ -2,8 +2,8 @@
   /** What a message offers when the reader points at it: when it was said, and a copy of
    *  its words. Its 24 px slot stands 4 px under the message, inside the gap that already
    *  follows, so showing it moves nothing and adds no space (B9). Where that gap is too
-   *  small, it stands under the system line that follows instead, or it is not drawn
-   *  (hoverRowPlacement.ts). The pointer keeps it shown across the message, the gap, those
+   *  small, it stands beside or under the system line that follows instead, or it is not
+   *  drawn (hoverRowPlacement.ts). The pointer keeps it shown across the message, the gap, those
    *  lines and the row itself; keyboard focus on the copy button keeps it shown too. */
   import { messageCopyText, messageTimeLabel } from "../../lib/conversation/transcript";
   import { placeHoverRow, type FollowingItem } from "../../lib/conversation/hoverRowPlacement";
@@ -81,13 +81,37 @@
     const box = item.getBoundingClientRect(), lineBox = line.getBoundingClientRect();
     return Math.abs(lineBox.top - box.top) < 1 && lineBox.bottom >= box.bottom - 1;
   }
+  /** The left and right edges of what an item draws: its words and its painted boxes, not
+   *  the empty width of its blocks. */
+  function drawnSpan(item: Element): { left: number; right: number } {
+    let left = Infinity, right = -Infinity;
+    const take = (box: DOMRect): void => { if (box.width > 0) { left = Math.min(left, box.left); right = Math.max(right, box.right); } };
+    const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    for (let node: Node | null = walker.currentNode; node !== null; node = walker.nextNode()) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (!node.textContent?.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        take(range.getBoundingClientRect());
+      } else if (node instanceof Element && node !== item) {
+        const style = getComputedStyle(node);
+        if (style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.borderTopWidth !== "0px" || node.matches("svg, img")) take(node.getBoundingClientRect());
+      }
+    }
+    return { left, right };
+  }
+  /** Room the row keeps on its open side for "Copied" and a gap. */
+  const ROW_SIDE_ROOM = 64;
   function place(): void {
     const message = actions?.parentElement;
-    if (!message) return;
+    if (!message || !actions) return;
+    const row = actions.getBoundingClientRect();
     const following: (FollowingItem & { element: Element })[] = [];
     for (let item = drawnAfter(message); item !== null && following.length < 3; item = drawnAfter(item)) {
       const box = item.getBoundingClientRect();
-      following.push({ element: item, top: paintedTop(item), bottom: box.bottom, isSystemLine: isSystemLine(item) });
+      const span = drawnSpan(item);
+      const besideRow = span.right <= row.left - ROW_SIDE_ROOM || span.left >= row.right + ROW_SIDE_ROOM;
+      following.push({ element: item, top: paintedTop(item), bottom: box.bottom, isSystemLine: isSystemLine(item), besideRow });
       if (!following.at(-1)!.isSystemLine) break;
     }
     const where = placeHoverRow(message.getBoundingClientRect().bottom, following);

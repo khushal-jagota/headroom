@@ -134,6 +134,11 @@ describe("where a message's hover row stands", () => {
     expect(placeHoverRow(100, [{ top: 116, bottom: 136, isSystemLine: true }, { top: 168, bottom: 200, isSystemLine: false }])).toEqual({ offset: 36, passes: 1 });
     expect(placeHoverRow(100, [{ top: 116, bottom: 136, isSystemLine: true }])).toEqual({ offset: 36, passes: 1 });
   });
+  it("beside a system line whose words keep clear of the row's side", () => {
+    expect(placeHoverRow(100, [{ top: 116, bottom: 136, isSystemLine: true, besideRow: true }, { top: 152, bottom: 200, isSystemLine: false }])).toEqual({ offset: 0, passes: 1 });
+    expect(placeHoverRow(100, [{ top: 116, bottom: 136, isSystemLine: true, besideRow: true }, { top: 120, bottom: 200, isSystemLine: false }])).toBeNull();
+    expect(placeHoverRow(100, [{ top: 116, bottom: 200, isSystemLine: false, besideRow: true }])).toBeNull();
+  });
   it("nowhere when anything else stands closer", () => {
     expect(placeHoverRow(100, [{ top: 116, bottom: 200, isSystemLine: false }])).toBeNull();
     expect(placeHoverRow(100, [{ top: 116, bottom: 136, isSystemLine: true }, { top: 152, bottom: 200, isSystemLine: false }])).toBeNull();
