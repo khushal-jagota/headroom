@@ -488,12 +488,24 @@ def linux_executor_node(payload: Path, revision: str) -> Path:
 def mac_executor_node(payload: Path, revision: str) -> Path:
     """Bind the Apple Silicon machine code and its own Node before any of it executes."""
     marker = json.loads((payload / "mac-runtime.json").read_text())
-    if not isinstance(marker, dict) or marker != {
-        "schema_version": 1,
-        "application_revision": revision,
-        "platform": "darwin",
-        "architecture": "arm64",
-    }:
+    if (
+        not isinstance(marker, dict)
+        or type(marker.get("schema_version")) is not int
+        or marker["schema_version"] != 1
+        or (
+            marker.get("application_revision"),
+            marker.get("platform"),
+            marker.get("architecture"),
+        )
+        != (revision, "darwin", "arm64")
+        or (
+            "build_id" in marker
+            and (
+                not isinstance(marker["build_id"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", marker["build_id"]) is None
+            )
+        )
+    ):
         raise ValueError("The release is not the Apple Silicon machine code of this revision.")
     node = payload / "node/bin/node"
     if not node.is_file() or node.is_symlink():

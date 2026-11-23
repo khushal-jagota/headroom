@@ -3,6 +3,13 @@ name: Publish TypeScript server release
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [staging, main, feature/server-and-machine-code]
+    paths:
+      - 'server/**'
+      - 'agent_backends/**'
+      - '.github/workflows/publish-typescript-release.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -84,7 +91,6 @@ jobs:
           retention-days: 30
 
   linux-executor:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -144,7 +150,6 @@ jobs:
           compression-level: 0
 
   mac:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 30
     outputs:
@@ -165,6 +170,7 @@ jobs:
       - name: Install the launcher build's dependencies without the signing secrets
         run: npm ci --prefix server --omit=dev
       - name: Build the shared launcher and sign it with the Developer ID
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         # Every Apple Silicon join installs this one signed launcher. macOS keys folder
         # permissions on the team identity, so they stay when a later release changes it.
         env:
@@ -194,6 +200,11 @@ jobs:
           grep -q '^Authority=Developer ID Application: ' "$RUNNER_TEMP/launcher-codesign.txt"
           grep -q '^Identifier=com.panels.executor.typescript.app$' "$RUNNER_TEMP/launcher-codesign.txt"
           security delete-keychain "$keychain"
+      - name: Build an ad-hoc launcher for verification
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        run: |
+          mkdir -p "$RUNNER_TEMP/panels-launcher"
+          node server/executor/mac/packaging/launcher_main.ts --output "$RUNNER_TEMP/panels-launcher/Panels TypeScript.app" --sign -
       - name: Build and prove the sealed TypeScript Mac runtime
         run: |
           set -euo pipefail
@@ -213,10 +224,14 @@ jobs:
           printf '{}\n' > "$PLAN_CONFIG_PATH"
           git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$PUBLICATION_ROOT/source"
           NODE_ENV=production "$PUBLICATION_ROOT/source/scripts/dev" npm --prefix server ci
+          mkdir "$PUBLICATION_ROOT/source-repeat"
+          git archive --format=tar "$GITHUB_SHA" | tar -xf - -C "$PUBLICATION_ROOT/source-repeat"
+          NODE_ENV=production "$PUBLICATION_ROOT/source-repeat/scripts/dev" npm --prefix server ci
           node_distribution=$(node --input-type=module -e 'import{realpathSync}from"node:fs";import{dirname}from"node:path";console.log(dirname(dirname(realpathSync(process.execPath))));')
           node "$PUBLICATION_ROOT/source/server/executor/mac/packaging/publication_main.ts" \
             --source "$PUBLICATION_ROOT/source" --node-distribution "$node_distribution" \
             --node-modules "$PUBLICATION_ROOT/source/server/node_modules" \
+            --repeat-node-modules "$PUBLICATION_ROOT/source-repeat/server/node_modules" \
             --output "$PUBLICATION_ROOT/mac" --revision "$GITHUB_SHA" \
             --launcher-app "$LAUNCHER_APP" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
@@ -246,6 +261,7 @@ jobs:
           retention-days: 30
 
       - name: Build and prove the sealed Darwin home archive
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
           umask 077
@@ -280,6 +296,7 @@ jobs:
             --public-cli-entrypoint server/cli/main.ts
           MAC_HOME
       - name: Upload the checked Darwin home archive
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: mac_home
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -289,6 +306,7 @@ jobs:
           retention-days: 30
           compression-level: 0
       - name: Upload Darwin home build, admission, and boot evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: mac_home_build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -297,12 +315,89 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  machine-compatibility:
+    name: Historical machine compatibility (${{ matrix.platform }})
+    needs: [mac, linux-executor]
+    if: always() && (needs.mac.result == 'success' || needs.linux-executor.result == 'success')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: darwin
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prepare Linux native tools
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf binutils libicu-dev pkg-config
+          selected_node=$(node -p 'require("node:fs").realpathSync(process.execPath)')
+          if [ "$selected_node" != /usr/local/bin/node ]; then sudo ln -sfn "$selected_node" /usr/local/bin/node; fi
+      - name: Prepare Darwin native tools
+        if: matrix.platform == 'darwin'
+        run: brew install icu4c pkgconf
+      - name: Restore digest-pinned oldest machine archive
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/machine-baseline-cache
+          key: machine-baseline-${{ matrix.platform }}-${{ hashFiles('server/environments/release/machine_baselines.json') }}
+      - name: Download the candidate and prove historical compatibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_ARTIFACT_ID: ${{ matrix.platform == 'linux' && needs.linux-executor.outputs.artifact_id || needs.mac.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/machine-compatibility/tmp"
+          export TMPDIR="$RUNNER_TEMP/machine-compatibility/tmp"
+          npm ci --prefix server
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID/zip" > "$RUNNER_TEMP/machine-compatibility/candidate.zip"
+          node --input-type=module <<'REQUEST'
+          import { writeFileSync } from 'node:fs';
+          const root = process.env.RUNNER_TEMP;
+          writeFileSync(root + '/machine-compatibility/request.json', JSON.stringify({candidate_zip:root + '/machine-compatibility/candidate.zip', output_directory:root + '/machine-compatibility/tmp/proof', cache_directory:root + '/machine-baseline-cache'}));
+          REQUEST
+          if [ "$RUNNER_OS" = Linux ]; then
+            systemd-run --user --scope --quiet -p Delegate=yes -- \
+              node server/environments/release/machine_compatibility_main.ts "$RUNNER_TEMP/machine-compatibility/request.json"
+          else
+            node server/environments/release/machine_compatibility_main.ts "$RUNNER_TEMP/machine-compatibility/request.json"
+          fi
+      - name: Preserve compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: panels-machine-compatibility-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/machine-compatibility-*.json
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/failure.txt
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/server-failure.json
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-stdout.log
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-stderr.log
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-codex.jsonl
+            ${{ runner.temp }}/machine-compatibility/tmp/proof/*-claude.jsonl
+          if-no-files-found: error
+          retention-days: 30
+
   receipt:
     permissions:
       contents: write
       actions: read
-    needs: [linux, mac, linux-executor]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.linux.result == 'success' && needs.mac.result == 'success' && needs.linux-executor.result == 'success'
+    needs: [linux, mac, linux-executor, machine-compatibility]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.linux.result == 'success' && needs.mac.result == 'success' && needs.linux-executor.result == 'success' && needs.machine-compatibility.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -348,6 +443,20 @@ jobs:
           }
           writeFileSync(root + '/mac-home-receipt-options.json', JSON.stringify({ mac_home_artifact_zip: root + '/inputs/mac-home.zip', mac_home_build_artifact_zip: root + '/inputs/mac-home-build.zip', mac_home_artifact_id: e.MAC_HOME_ARTIFACT_ID, mac_home_build_artifact_id: e.MAC_HOME_BUILD_ARTIFACT_ID, mac_home_build_result: e.MAC_HOME_BUILD_RESULT }) + '\n', { flag: 'wx', mode: 0o600 });
           MAC_HOME_INPUTS
+      - name: Resolve the two compatibility proof artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" --paginate --slurp > "$RUNNER_TEMP/compatibility-artifacts.json"
+          node --input-type=module <<'PROOFS'
+          import {readFileSync, appendFileSync} from 'node:fs';
+          const artifacts = JSON.parse(readFileSync(process.env.RUNNER_TEMP + '/compatibility-artifacts.json', 'utf8')).flatMap(page => page.artifacts);
+          for (const platform of ['linux','darwin']) {
+            const matches=artifacts.filter(a=>a.name === 'panels-machine-compatibility-' + platform && !a.expired);
+            if(matches.length !== 1) throw Error('Missing or ambiguous machine compatibility proof');
+            appendFileSync(process.env.GITHUB_ENV, 'MACHINE_COMPATIBILITY_' + platform.toUpperCase() + '_ARTIFACT_ID=' + matches[0].id + '\n');
+          }
+          PROOFS
       - name: Download raw artifact ZIPs and write the source-bound receipt
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -368,6 +477,7 @@ jobs:
             GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" GITHUB_WORKFLOW_SHA="$GITHUB_WORKFLOW_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             GITHUB_TOKEN="$GITHUB_TOKEN" APP_ARTIFACT_ID="$APP_ARTIFACT_ID" BUILD_ARTIFACT_ID="$BUILD_ARTIFACT_ID" MAC_ARTIFACT_ID="$MAC_ARTIFACT_ID" MAC_BUILD_RESULT="$MAC_BUILD_RESULT" \
             LINUX_EXECUTOR_ARTIFACT_ID="$LINUX_EXECUTOR_ARTIFACT_ID" LINUX_EXECUTOR_BUILD_RESULT="$LINUX_EXECUTOR_BUILD_RESULT" \
+            MACHINE_COMPATIBILITY_LINUX_ARTIFACT_ID="$MACHINE_COMPATIBILITY_LINUX_ARTIFACT_ID" MACHINE_COMPATIBILITY_DARWIN_ARTIFACT_ID="$MACHINE_COMPATIBILITY_DARWIN_ARTIFACT_ID" \
             PUBLICATION_ROOT="$private" HOME="$private/home" CODEX_HOME="$private/home/.codex" CLAUDE_CONFIG_DIR="$private/home/.claude" \
             XDG_CONFIG_HOME="$private/config" XDG_CACHE_HOME="$private/cache" XDG_DATA_HOME="$private/data" XDG_STATE_HOME="$private/data" XDG_RUNTIME_DIR="$private/runtime" \
             TMPDIR="$private/tmp" TMP="$private/tmp" TEMP="$private/tmp" npm_config_cache="$private/cache/npm" PIP_CONFIG_FILE=/dev/null \
@@ -384,13 +494,13 @@ jobs:
           import { Readable } from 'node:stream';
           import { pipeline } from 'node:stream/promises';
           const e = process.env, root = e.PUBLICATION_ROOT;
-          for (const [name, id] of [['app', e.APP_ARTIFACT_ID], ['build', e.BUILD_ARTIFACT_ID], ['mac', e.MAC_ARTIFACT_ID], ['linux-executor', e.LINUX_EXECUTOR_ARTIFACT_ID]]) {
+          for (const [name, id] of [['app', e.APP_ARTIFACT_ID], ['build', e.BUILD_ARTIFACT_ID], ['mac', e.MAC_ARTIFACT_ID], ['linux-executor', e.LINUX_EXECUTOR_ARTIFACT_ID], ['machine-compatibility-linux',e.MACHINE_COMPATIBILITY_LINUX_ARTIFACT_ID], ['machine-compatibility-darwin',e.MACHINE_COMPATIBILITY_DARWIN_ARTIFACT_ID]]) {
             const signal = AbortSignal.timeout(600_000);
             const response = await fetch(`https://api.github.com/repos/${e.GITHUB_REPOSITORY}/actions/artifacts/${id}/zip`, { headers: { Authorization: `Bearer ${e.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' }, signal });
             if (!response.ok || response.body === null) throw Error('Raw artifact download failed');
             await pipeline(Readable.fromWeb(response.body), createWriteStream(`${root}/inputs/${name}.zip`, { flags: 'wx', mode: 0o600 }), { signal });
           }
-          writeFileSync(root + '/receipt-request.json', JSON.stringify({ source_root: e.GITHUB_WORKSPACE, linux_artifact_zip: root + '/inputs/app.zip', linux_build_artifact_zip: root + '/inputs/build.zip', mac_artifact_zip: root + '/inputs/mac.zip', output_directory: root + '/receipt', artifact_id: e.APP_ARTIFACT_ID, linux_build_artifact_id: e.BUILD_ARTIFACT_ID, mac_artifact_id: e.MAC_ARTIFACT_ID, mac_build_result: e.MAC_BUILD_RESULT, linux_executor_artifact_zip: root + '/inputs/linux-executor.zip', linux_executor_artifact_id: e.LINUX_EXECUTOR_ARTIFACT_ID, linux_executor_build_result: e.LINUX_EXECUTOR_BUILD_RESULT }));
+          writeFileSync(root + '/receipt-request.json', JSON.stringify({ source_root: e.GITHUB_WORKSPACE, linux_artifact_zip: root + '/inputs/app.zip', linux_build_artifact_zip: root + '/inputs/build.zip', mac_artifact_zip: root + '/inputs/mac.zip', output_directory: root + '/receipt', artifact_id: e.APP_ARTIFACT_ID, linux_build_artifact_id: e.BUILD_ARTIFACT_ID, mac_artifact_id: e.MAC_ARTIFACT_ID, mac_build_result: e.MAC_BUILD_RESULT, linux_executor_artifact_zip: root + '/inputs/linux-executor.zip', linux_executor_artifact_id: e.LINUX_EXECUTOR_ARTIFACT_ID, linux_executor_build_result: e.LINUX_EXECUTOR_BUILD_RESULT, machine_compatibility_linux_zip: root + '/inputs/machine-compatibility-linux.zip', machine_compatibility_linux_artifact_id: e.MACHINE_COMPATIBILITY_LINUX_ARTIFACT_ID, machine_compatibility_darwin_zip: root + '/inputs/machine-compatibility-darwin.zip', machine_compatibility_darwin_artifact_id: e.MACHINE_COMPATIBILITY_DARWIN_ARTIFACT_ID }));
           JS
           node --input-type=module <<'MAC_HOME_RECEIPT'
           import { readFileSync, writeFileSync } from 'node:fs';

@@ -60,7 +60,9 @@ export async function write_app_entrypoints(
   await writeFile(
     join(root, 'bin/panels'),
     prefix +
-      `export PLAN_APP_ROOT="$root" PLAN_APP_SHA=${shell_quote(app_sha)}\n` +
+      'export PLAN_APP_ROOT="$root"\n' +
+      `PLAN_APP_SHA=$(node -e 'const m=require(process.argv[1]);if(!/^[0-9a-f]{40}$/.test(m.app_sha))throw Error("Invalid application revision");process.stdout.write(m.app_sha)' "$root/manifest.json")\n` +
+      'export PLAN_APP_SHA\n' +
       `exec "$root"/${shell_quote(input)} "$@"\n`,
   );
   assert_release_execution(execution);

@@ -272,6 +272,7 @@ export class MacService {
       configuration.identity ?? {
         protocol_version: PROTOCOL_VERSION,
         application_revision: configuration.revision,
+        ...(configuration.build_id === undefined ? {} : { build_id: configuration.build_id }),
         spool_format_version: SPOOL_FORMAT_VERSION,
         executor_incarnation: randomUUID(),
         connection_generation: 0,

@@ -1,4 +1,8 @@
-import { ORIGINAL_MAC_MACHINE_ID, valid_uuid } from '../../../execution_identity.ts';
+import {
+  ORIGINAL_MAC_MACHINE_ID,
+  same_machine_build,
+  valid_uuid,
+} from '../../../execution_identity.ts';
 import { counter } from '../../../executor/logic/counters.ts';
 import { same_identity } from '../../../executor/vps_presence_store.ts';
 /** Pinned Mac bytes and reports survive publication expiry and later VPS failures. */
@@ -535,6 +539,11 @@ export class MacUpdateService implements MacUpdateServiceContract {
     const retained = this.read_applied();
     return retained !== null && retained.to_sha === this.current_app_sha ? retained : null;
   }
+  private build_identity(release: PublishedUpdate): { build_id?: string } {
+    const key = this.platform === 'linux' ? 'linux-x86_64' : 'darwin-arm64';
+    const build_id = release.parts?.machines[key]?.build_id;
+    return build_id == null ? {} : { build_id };
+  }
   private target(): MacUpdateTarget | null {
     const attempt = this.selected_attempt();
     if (attempt === null) return null;
@@ -549,6 +558,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
     return {
       request_id,
       application_revision: attempt.to_sha,
+      ...this.build_identity(attempt.release),
       mode: attempt.confirm_activity ? attempt.mode : 'idle',
       activate: attempt.state === 'done' && attempt.to_sha === this.current_app_sha,
       archive_sha256: mac.archive_sha256,
@@ -583,6 +593,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
         release && mac
           ? {
               application_revision: release.manifest.app_sha,
+              ...this.build_identity(release),
               archive_sha256: mac.archive_sha256,
               archive_size: counter(mac.archive_size),
               archive_path: `/api/executor/update/prefetch/${mac.archive_sha256}`,
@@ -676,7 +687,7 @@ export class MacUpdateService implements MacUpdateServiceContract {
       report.phase === 'current' &&
       (!target.activate ||
         identity === null ||
-        identity.application_revision !== target.application_revision ||
+        !same_machine_build(identity, target) ||
         !same_identity(leased, identity))
     )
       throw new UpdateConflict('The target Mac runtime is not the present, leased one.');

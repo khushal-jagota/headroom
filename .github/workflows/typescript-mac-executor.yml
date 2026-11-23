@@ -57,10 +57,12 @@ jobs:
           set -euo pipefail
           umask 077
           native_root="$RUNNER_TEMP/mac-executor-rehearsal"
-          mkdir -p "$native_root"/{source,home,tmp,tls,evidence,config,data,logs,backups,workspace,files,scratch,run}
+          mkdir -p "$native_root"/{source,source-repeat,home,tmp,tls,evidence,config,data,logs,backups,workspace,files,scratch,run}
           git archive --format=tar HEAD | tar -xf - -C "$native_root/source"
+          git archive --format=tar HEAD | tar -xf - -C "$native_root/source-repeat"
           npm ci --prefix server
           npm ci --prefix "$native_root/source/server" --omit=dev
+          npm ci --prefix "$native_root/source-repeat/server" --omit=dev
           cat > "$native_root/tls/request.cnf" <<'TLS'
           [req]
           distinguished_name = dn
@@ -89,7 +91,7 @@ jobs:
           env -i PATH="$PATH" LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
             HOME="$native_root/home" TMPDIR="$RUNNER_TEMP/" \
             MAC_REHEARSAL_ROOT="$native_root" MAC_REHEARSAL_EVIDENCE="$native_root/evidence" \
-            MAC_REHEARSAL_INPUTS="$native_root/source" MAC_REHEARSAL_REVISION="$native_revision" \
+            MAC_REHEARSAL_INPUTS="$native_root/source" MAC_REHEARSAL_REPEAT_INPUTS="$native_root/source-repeat" MAC_REHEARSAL_REVISION="$native_revision" \
             MAC_REHEARSAL_RUN_ID="$GITHUB_RUN_ID" MAC_REHEARSAL_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             PLAN_TEST_MODE=1 PLAN_DISPATCH_ENABLED=false PLAN_PORT=0 PLAN_SERVER_URL=http://127.0.0.1:0 \
             PLAN_CONFIG_PATH="$native_root/config/config.yaml" PLAN_DB_PATH="$native_root/data/planner.sqlite" \

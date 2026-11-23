@@ -1,10 +1,13 @@
 /** CLI ownership around the fixed supervisor or its versioned Mac host child. */
 import { MachineServerLink } from '../../server_link/machine.ts';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { decode_bounded } from '../protocol.ts';
 import { ChildProcesses } from '../../lifecycle/owned_processes.ts';
 import { OneShotChildren } from '../../lifecycle/one_shot_children.ts';
 import { SHUTDOWN_GRACE_SECONDS } from '../../lifecycle/configuration.ts';
-import { mac_runtime_settings } from '../../core/config.ts';
+import { applicationRootFromEnvironment, mac_runtime_settings } from '../../core/config.ts';
 import { ExecutorValidationError } from '../../executor/protocol_errors.ts';
 import { CliFailure, human_error } from '../../cli/errors.ts';
 import type { CommandResult, Invocation } from '../../cli/contracts.ts';
@@ -36,15 +39,37 @@ export async function run_executor(invocation: Invocation): Promise<CommandResul
   if (local_link !== null && executor_id === HOME_MACHINE_ID)
     paths = new ExecutorPaths(paths.root, executor_link_server_folders(local_link));
   const runtime = mac_runtime_settings(invocation.environment);
-  if (runtime.child)
+  if (runtime.child) {
+    let build_id: string | undefined;
+    try {
+      const manifest = decode_bounded(
+        await readFile(
+          join(applicationRootFromEnvironment(invocation.environment), 'mac-runtime.json'),
+        ),
+        'MacRuntimeManifest',
+      );
+      if (manifest.application_revision !== revision)
+        throw new Error('Machine runtime provenance differs from the launch revision.');
+      build_id = manifest.build_id;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
     return {
       exit_code: await run_mac_service(
-        { paths, revision, executor_id, panels_server_url, runtime },
+        {
+          paths,
+          revision,
+          ...(build_id === undefined ? {} : { build_id }),
+          executor_id,
+          panels_server_url,
+          runtime,
+        },
         invocation.environment,
       ),
       stdout: '',
       stderr: '',
     };
+  }
   const child_processes = new ChildProcesses();
   const one_shot_children = new OneShotChildren(child_processes);
   const files = new FilesService();

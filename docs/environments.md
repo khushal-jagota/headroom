@@ -20,7 +20,7 @@ All of them run as one Unix user, the existing `vps` account. They are separated
 
 Live and staging are registered environments. Headroom validates them together: one live environment, distinct ports, and no staging root inside the live tree. Ticket servers and local checkouts are outside that registry. Their isolation is the checkout and their private `PLAN_*` paths. [`AGENTS.md`](../AGENTS.md) holds the setup rules agents follow. A second isolated server on one machine is set up with [ops/runbooks/isolated-server.md](../ops/runbooks/isolated-server.md).
 
-Each development checkout installs its own Node dependencies with `npm ci`, separate from the installed release. Backend CLIs still resolve current versions.
+Each development checkout installs its own Node dependencies with `npm ci`, separate from the installed release. Packaged backend CLIs use the checked-in lockfile.
 
 ## The server state folder
 

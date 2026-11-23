@@ -13,8 +13,12 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { create as create_tar } from 'tar';
-import { hash_archive } from '../../../environments/release/archive.ts';
-import { ARCHIVE_GZIP_LEVEL } from '../../../environments/release/configuration.ts';
+import { hash_archive, write_hardlinks_as_files } from '../../../environments/release/archive.ts';
+import { digest_machine_build } from '../../../environments/release/machine_identity.ts';
+import {
+  ARCHIVE_GZIP_LEVEL,
+  PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES,
+} from '../../../environments/release/configuration.ts';
 import { path_is_within } from '../../../core/path_containment.ts';
 import { mac_launcher_bundle, MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
 import {
@@ -138,6 +142,7 @@ export async function build_mac_package(options: MacPackageOptions) {
   await cp(modules, join(runtime, 'server/node_modules'), {
     recursive: true,
     verbatimSymlinks: true,
+    filter: (path) => !PRODUCTION_PACKAGE_BUILD_SCRATCH_FILES.includes(relative(modules, path)),
   });
   await mkdir(join(runtime, 'node/bin'), { recursive: true });
   await cp(join(node, 'bin/node'), join(runtime, 'node/bin/node'));
@@ -198,17 +203,31 @@ export async function build_mac_package(options: MacPackageOptions) {
   }
   if (expanded > MAX_MAC_RUNTIME_EXPANDED_BYTES)
     throw new Error('Mac runtime exceeds its expanded size limit.');
+  const build_id = await digest_machine_build(runtime);
+  const marker = JSON.parse(await readFile(join(runtime, 'mac-runtime.json'), 'utf8'));
+  await writeFile(
+    join(runtime, 'mac-runtime.json'),
+    JSON.stringify({ ...marker, build_id }) + '\n',
+  );
   const archive = join(output, MAC_RUNTIME_ARCHIVE_NAME);
   // Every top-level entry of the assembled runtime: a driver's release files
   // may add one beside server/, and with none there is no src/ to archive.
   await create_tar(
-    { cwd: runtime, file: archive, gzip: { level: ARCHIVE_GZIP_LEVEL }, portable: true },
+    {
+      cwd: runtime,
+      file: archive,
+      gzip: { level: ARCHIVE_GZIP_LEVEL },
+      portable: true,
+      onWriteEntry: write_hardlinks_as_files,
+    },
     (await readdir(runtime)).sort(),
   );
   if ((await stat(archive)).size > MAX_MAC_RUNTIME_ARCHIVE_BYTES)
     throw new Error('Mac runtime exceeds its archive size limit.');
   const result = {
     application_revision: options.revision,
+    build_id,
+    launcher_sha256: await digest_machine_build(join(runtime, MAC_RUNTIME_LAUNCHER_APP)),
     node_version: version,
     node_sha256: await hash_archive(join(runtime, 'node/bin/node')),
     archive_sha256: await hash_archive(archive),

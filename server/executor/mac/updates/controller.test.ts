@@ -409,3 +409,33 @@ test('Linux activation passes the executor target through extraction and retaine
   expect(f.downloads()).toBe(1);
   expect(f.on_failure).not.toHaveBeenCalled();
 });
+
+// Existing revision-only cases do not prove that release metadata cannot stop agents.
+test('equal content identities across release revisions confirm without prefetch or restart', async () => {
+  const f = fixture();
+  f.identity.build_id = 'd'.repeat(64);
+  const target = { ...f.target, build_id: f.identity.build_id, activate: true };
+  await f.controller.apply({
+    ...f.check(target),
+    prefetch: {
+      application_revision: target.application_revision,
+      build_id: target.build_id,
+      archive_sha256: target.archive_sha256,
+      archive_size: target.archive_size,
+      archive_path: `/api/executor/update/prefetch/${target.archive_sha256}`,
+    },
+  });
+  expect(f.phases).toEqual(['current']);
+  expect(f.downloads()).toBe(0);
+  expect(f.identity.application_revision).not.toBe(target.application_revision);
+  await f.controller.apply(
+    f.check({
+      ...target,
+      request_id: 'changed-content',
+      application_revision: f.identity.application_revision,
+      build_id: 'f'.repeat(64),
+      activate: false,
+    }),
+  );
+  expect(f.phases).toEqual(['current']);
+});

@@ -157,6 +157,8 @@ try {
     dirname(dirname(process.execPath)),
     '--node-modules',
     join(process.env.MAC_REHEARSAL_INPUTS!, 'server/node_modules'),
+    '--repeat-node-modules',
+    join(process.env.MAC_REHEARSAL_REPEAT_INPUTS!, 'server/node_modules'),
     '--output',
     join(root, 'package'),
     '--revision',

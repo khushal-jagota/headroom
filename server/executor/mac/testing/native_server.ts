@@ -51,7 +51,14 @@ async function wait_until<T>(
   }
 }
 
-export async function start_native_server(reopen_credential?: string) {
+export async function start_native_server(
+  reopen_credential?: string,
+  options: {
+    expected_protocol?: number;
+    create_environments?: typeof create_test_environment_runtime;
+    platform?: 'linux' | 'darwin';
+  } = {},
+) {
   const path = process.env.PLAN_DB_PATH;
   assert.ok(path, 'A private home database path is required');
   assert.equal(process.env.PLAN_TEST_MODE, '1');
@@ -111,12 +118,19 @@ export async function start_native_server(reopen_credential?: string) {
       return core;
     },
     createBackendServices: () => bound.http,
-    createEnvironments: create_test_environment_runtime,
+    createEnvironments: options.create_environments ?? create_test_environment_runtime,
   });
   const endpoint = registry.get(ORIGINAL_MAC_MACHINE_ID)!;
   assert.ok(endpoint);
   const credential =
     reopen_credential ?? issue_original_credential(context.database, randomUUID()).credential;
+  if (options.platform)
+    context.database.write((tx) => {
+      tx.run('UPDATE machine_executor_credentials SET platform=? WHERE machine_id=?', [
+        options.platform!,
+        ORIGINAL_MAC_MACHINE_ID,
+      ]);
+    });
   return {
     address: server.address,
     context,
@@ -156,7 +170,10 @@ export async function start_native_server(reopen_credential?: string) {
         ),
       );
       assert.ok(identity);
-      assert.equal(JSON.parse(identity.identity_json).protocol_version, PROTOCOL_VERSION);
+      assert.equal(
+        JSON.parse(identity.identity_json).protocol_version,
+        options.expected_protocol ?? PROTOCOL_VERSION,
+      );
       return endpoint.health_payload();
     },
     async create_turn(

@@ -1,10 +1,12 @@
 # Mac runtime package producer
 
 `build.ts` assembles an exported source tree, a supplied Darwin arm64 Node distribution,
-complete production dependencies from `npm ci --omit=dev`, and a signed launcher app. It downloads and executes none of them.
+production dependencies from `npm ci --omit=dev`, and a signed launcher app.
+The payload omits only node-gyp’s generated `better-sqlite3/build/Makefile` and `config.gypi`.
+These build inputs contain installation paths. Runtime native addons remain in the payload and content identity. It downloads and executes none of them.
 It writes a new output directory and leaves any failed partial output for inspection.
 
-`runtime/` is the release payload. Its four-field `mac-runtime.json` identifies the revision and target.
+`runtime/` is the release payload. Its `mac-runtime.json` identifies the revision, target, and machine content build.
 `bin/panels` uses that payload's Node and entrypoint after relocation. The wire schema stays embedded.
 The payload keeps any driver's own scripts, static skill/Worker seed data, version metadata,
 server JSON/bash assets and complete production packages. It contains no Python interpreter.
@@ -18,7 +20,9 @@ The one synthetic check uses structural Mach-O headers. It proves layout and a w
 not executable provenance, native addon loading, signing or a genuine Darwin runtime.
 
 The release workflow calls `publication_main.ts`. It unpacks the sealed archive at a separate path and uses the bundled Node for CLI and native checks.
-It also checks the signature of the unpacked launcher.
+It also checks the signature of the unpacked launcher. The publication evidence records the signed launcher tree hash.
+The Manager chose the signed launcher as a fixed external input, like Node. Repeat builds use that same checked launcher
+and independent locked dependency installations. The content build identity includes every launcher byte.
 The native probe loads SQLite and the Mac host and copies verified bytes through the Darwin file worker.
 Only a successful proof produces `mac-runtime-publication.json`, bound to the source, workflow run and attempt, and archive bytes.
 The update and join artifact contains only the archive and receipt.

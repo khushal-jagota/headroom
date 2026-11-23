@@ -115,7 +115,12 @@ export async function publish_github_release(options: GitHubPublicationOptions):
     };
   }
   // The proof and all producer evidence remain available after Actions retention ends.
-  for (const name of ['build.zip', 'mac-home-build.zip']) {
+  for (const name of [
+    'build.zip',
+    'mac-home-build.zip',
+    'machine-compatibility-linux.zip',
+    'machine-compatibility-darwin.zip',
+  ]) {
     const path = join(root, 'inputs', name);
     const sha256 = await sha256_file(path);
     if (!artifacts.some((item) => item.digest === `sha256:${sha256}`))

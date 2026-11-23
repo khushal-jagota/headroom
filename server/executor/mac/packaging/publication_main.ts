@@ -1,10 +1,14 @@
 /** Build and prove the sealed Mac archive on the native hosted runner. */
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { extract } from 'tar';
-import { hash_archive } from '../../../environments/release/archive.ts';
+import { hash_archive, remove_owned_tree } from '../../../environments/release/archive.ts';
+import {
+  digest_machine_build,
+  machine_build_differences,
+} from '../../../environments/release/machine_identity.ts';
 import { with_publication_entry } from '../../../environments/release/publication_entry.ts';
 import { run_release_command } from '../../../environments/release/process.ts';
 import { publication_id } from '../../../environments/release/publication_identity.ts';
@@ -12,6 +16,16 @@ import type { MacRuntimePublication } from '../../../environments/release/mac_pu
 import { build_mac_package } from './build.ts';
 import { MAC_RUNTIME_LAUNCHER_APP } from '../platform.ts';
 import { PUBLICATION_MAC_VALIDATION_SECONDS } from '../../../environments/release/publication_configuration.ts';
+
+/** The proof lives below a private parent. Preserve sealed modes instead of applying its umask. */
+export async function extract_publication_archive(archive: string, output: string): Promise<void> {
+  const previous_umask = process.umask(0);
+  try {
+    await extract({ file: archive, cwd: output, strict: true, chmod: true });
+  } finally {
+    process.umask(previous_umask);
+  }
+}
 
 export function publication_main(args: string[]): Promise<0 | 1> {
   return with_publication_entry(async (execution) => {
@@ -21,6 +35,7 @@ export function publication_main(args: string[]): Promise<0 | 1> {
       'source',
       'node-distribution',
       'node-modules',
+      'repeat-node-modules',
       'output',
       'revision',
       'launcher-app',
@@ -39,14 +54,42 @@ export function publication_main(args: string[]): Promise<0 | 1> {
     };
     const run_id = publication_id(text('run-id'), 'run ID'),
       run_attempt = publication_id(text('run-attempt'), 'run attempt');
-    const built = await build_mac_package({
+    const package_options = {
       source_root: text('source'),
       node_distribution: text('node-distribution'),
       production_node_modules: text('node-modules'),
       output: text('output'),
       revision: text('revision'),
       launcher_app: text('launcher-app'),
+    };
+    const repeat_node_modules = text('repeat-node-modules');
+    if (
+      (await realpath(package_options.production_node_modules)) ===
+      (await realpath(repeat_node_modules))
+    )
+      throw new Error('Darwin repeat builds require independent dependency inputs');
+    const built = await build_mac_package(package_options);
+    const repeat_output = text('output') + '-repeat';
+    // The owner treats the checked signed launcher as a fixed input, like the Node distribution.
+    // Its exact bytes remain part of both machine identities.
+    const repeated = await build_mac_package({
+      ...package_options,
+      production_node_modules: repeat_node_modules,
+      output: repeat_output,
     });
+    if (built.build_id !== repeated.build_id) {
+      const differences = await machine_build_differences(
+        join(text('output'), 'runtime'),
+        join(repeat_output, 'runtime'),
+      );
+      console.error(
+        'Darwin repeat build differences (%d):\n%s',
+        differences.length,
+        differences.slice(0, 30).join('\n'),
+      );
+      throw new Error('Independent Darwin machine builds produced different identities');
+    }
+    await remove_owned_tree(repeat_output);
     const output = text('output'),
       archive = join(output, 'panels-mac-runtime.tar.gz');
     // Retire the assembly path. All execution below uses a fresh unpack of the sealed bytes.
@@ -55,7 +98,7 @@ export function publication_main(args: string[]): Promise<0 | 1> {
       work = join(output, 'proof-work');
     await mkdir(relocated);
     await mkdir(work);
-    await extract({ file: archive, cwd: relocated, strict: true });
+    await extract_publication_archive(archive, relocated);
     const node = join(relocated, 'node/bin/node');
     const started = performance.now();
     const environment = {
@@ -119,11 +162,31 @@ export function publication_main(args: string[]): Promise<0 | 1> {
     if (node_sha256 !== built.node_sha256 || (await hash_archive(archive)) !== built.archive_sha256)
       throw new Error('Mac package changed during native proof');
     const manifest = JSON.parse(await readFile(join(relocated, 'mac-runtime.json'), 'utf8'));
-    if (manifest.application_revision !== text('revision'))
-      throw new Error('Relocated revision differs');
+    if (manifest.application_revision !== text('revision') || manifest.build_id !== built.build_id)
+      throw new Error('Relocated machine marker differs from its release or content identity');
+    if ((await digest_machine_build(relocated)) !== built.build_id) {
+      const differences = await machine_build_differences(
+        join(output, 'unproved-assembly'),
+        relocated,
+      );
+      console.error(
+        'Relocated machine differences (%d):\n%s',
+        differences.length,
+        differences.slice(0, 30).join('\n'),
+      );
+      throw new Error('Relocated machine content differs from the sealed build');
+    }
+    if (
+      (await digest_machine_build(join(relocated, MAC_RUNTIME_LAUNCHER_APP))) !==
+      built.launcher_sha256
+    )
+      throw new Error('Relocated signed launcher differs from its pinned input');
     const receipt: MacRuntimePublication = {
       schema_version: 1,
       application_revision: text('revision'),
+      build_id: built.build_id,
+      launcher_sha256: built.launcher_sha256,
+      repeat_build_id: repeated.build_id,
       platform: 'darwin',
       architecture: 'arm64',
       publication_run_id: run_id,
